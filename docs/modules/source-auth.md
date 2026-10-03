@@ -51,7 +51,7 @@ class SourceAuthContract(BaseModel):
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、tiktok、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、tiktok（未配置 Cookie 时）、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
@@ -287,16 +287,23 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 
 ## TikTok 的接入
 
-TikTok 是「匿名可用 + 可选凭据（暂不可验证）」形态。Web API 后端以 TikTok 自己签发的
-**访客身份**读取公开推荐流 / 创作者 / 话题标签列表，访客身份是完整合法的运行模式，因此
-`auth_required` 恒为 `False`、`legacy_state` 恒为 `no_auth`：无 Cookie 时返回与 YouTube 同形的
-`credential=none` / `verify_method=none`。
+TikTok 是「匿名可用 + 可选可验证凭据」形态（与 Bangumi 同族）。Web API 后端以 TikTok 自己
+签发的**访客身份**读取公开推荐流 / 创作者 / 话题标签列表，访客身份是完整合法的运行模式，
+因此 `auth_required` 恒为 `False`、`legacy_state` 恒为 `no_auth`：无 Cookie 时返回与 YouTube
+同形的 `credential=none` / `verify_method=none`。
 
 可选登录 Cookie（`[sources.tiktok].cookie_env`，默认 `OPENBILICLAW_TIKTOK_COOKIE`，兜底
 `data/tiktok_cookie.json`）解锁关键词搜索（访客身份被上游 gate，2026-10-03 实测）与更高限额。
-配置后契约报 `credential=present`（origin `env` / `data_file`），但 `verify_method` 诚实保持
-`none`——TikTok 凭据暂无主动探针，报 `live_probe` 会是 I3 的过度声称；`VERIFY_ACTIONS["tiktok"]`
-同样保持 `none`。与 Bangumi 令牌的差别只在验证能力有无，凭据存在性都如实上报。
+配置后契约报 `credential=present`（origin `env` / `data_file`）+ `verify_method=live_probe`：
+主动探针调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳，
+`probe_tiktok_login`），`{"message":"success"}` 为 verified，401/403 或显式 error 为 failed，
+传输失败与风控空响应一律 indeterminate（绝不误判为失效）。`VERIFY_ACTIONS["tiktok"]` 相应登记为
+`live_probe`，动作恒定而方法的读数随有无凭据变化（与 Bangumi 同一 action-vs-method 拆分）。
+
+凭据写入门面同步开通：`CREDENTIAL_SPECS["tiktok"]` 结构门要求 sessionid / sessionid_ss /
+sid_tt 至少其一（访客 jar 只有 ttwid / msToken），live gate 复用同一探针，
+`POST /api/sources/tiktok/credential` 与 `PUT /api/config` 两个写入面验证强度一致，落盘
+`data/tiktok_cookie.json`。
 
 ## 新增平台的强制契约
 

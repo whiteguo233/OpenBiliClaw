@@ -139,3 +139,123 @@ async def test_user_strategy_accepts_discovered_content_from_web_backend() -> No
 
     assert [item.content_id for item in results] == ["w2"]
     assert results[0].source_strategy == "tiktok_user"
+
+
+# ---------------------------------------------------------------------------
+# TiktokSearchStrategy
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SearchClient:
+    """Mimics the router's search surface."""
+
+    results: dict[str, Any] = field(default_factory=dict)
+    search_calls: list[tuple[str, int]] = field(default_factory=list)
+
+    async def search_videos(self, keyword: str, *, limit: int = 20) -> Any:
+        self.search_calls.append((keyword, limit))
+        return self.results.get(keyword, [])
+
+
+async def test_search_strategy_uses_planner_words_verbatim() -> None:
+    from openbiliclaw.discovery.strategies.tiktok import TiktokSearchStrategy
+
+    client = _SearchClient(
+        results={
+            "machine learning": [_content("s1")],
+            "cooking tips": [_content("s2")],
+        }
+    )
+    llm = _FakeLLMService(payload='{"keywords": ["unused"]}')
+    strategy = TiktokSearchStrategy(
+        client=client,  # type: ignore[arg-type]
+        llm_service=llm,  # type: ignore[arg-type]
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(
+        _profile(),
+        limit=10,
+        # The whole point of search vs hashtags: multi-word phrases stay intact.
+        queries=["machine learning", "cooking tips", "Machine Learning"],
+        keyword_ids={"machine learning": 3, "cooking tips": 4},
+    )
+
+    called = [keyword for keyword, _ in client.search_calls]
+    assert called == ["machine learning", "cooking tips"]
+    # Injected words never hit the LLM.
+    assert llm.calls == []
+    by_id = {item.content_id: item for item in results}
+    assert by_id["s1"].source_keyword_id == 3
+    assert by_id["s2"].source_keyword_id == 4
+    assert all(item.source_strategy == "tiktok_search" for item in results)
+    assert strategy.last_intermediates["queries"] == ["machine learning", "cooking tips"]
+
+
+async def test_search_strategy_llm_generates_keywords() -> None:
+    from openbiliclaw.discovery.strategies.tiktok import TiktokSearchStrategy
+
+    client = _SearchClient(results={"ai tools": [_content("s1")]})
+    strategy = TiktokSearchStrategy(
+        client=client,  # type: ignore[arg-type]
+        llm_service=_FakeLLMService(payload='{"keywords": ["ai tools", "booktok"]}'),  # type: ignore[arg-type]
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(_profile(), limit=10)
+
+    assert [keyword for keyword, _ in client.search_calls] == ["ai tools", "booktok"]
+    assert [item.content_id for item in results] == ["s1"]
+
+
+async def test_search_strategy_llm_failure_falls_back_to_interests() -> None:
+    from openbiliclaw.discovery.strategies.tiktok import TiktokSearchStrategy
+
+    class _BrokenLLM(_FakeLLMService):
+        async def complete_structured_task(self, **kwargs: Any) -> object:
+            raise RuntimeError("llm down")
+
+    client = _SearchClient(results={"人工智能": [_content("s9")]})
+    strategy = TiktokSearchStrategy(
+        client=client,  # type: ignore[arg-type]
+        llm_service=_BrokenLLM(),  # type: ignore[arg-type]
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(_profile(), limit=10)
+
+    assert [keyword for keyword, _ in client.search_calls] == ["人工智能"]
+    assert [item.content_id for item in results] == ["s9"]
+
+
+async def test_search_strategy_tolerates_batch_failures_and_junk() -> None:
+    from openbiliclaw.discovery.strategies.tiktok import TiktokSearchStrategy
+
+    class _FlakySearchClient(_SearchClient):
+        async def search_videos(self, keyword: str, *, limit: int = 20) -> Any:
+            self.search_calls.append((keyword, limit))
+            if keyword == "bad":
+                raise RuntimeError("transport")
+            return [_content("ok-1"), "not-a-content", _content("ok-1")]
+
+    client = _FlakySearchClient()
+    strategy = TiktokSearchStrategy(
+        client=client,  # type: ignore[arg-type]
+        llm_service=_FakeLLMService(),  # type: ignore[arg-type]
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(_profile(), limit=10, queries=["good", "bad"])
+
+    assert [item.content_id for item in results] == ["ok-1"]
+
+
+def test_search_strategy_platform_and_name() -> None:
+    from openbiliclaw.discovery.strategies.tiktok import TiktokSearchStrategy
+
+    strategy = TiktokSearchStrategy(
+        client=_SearchClient(),  # type: ignore[arg-type]
+        llm_service=_FakeLLMService(),  # type: ignore[arg-type]
+    )
+    assert (strategy.name, strategy.source_platform) == ("tiktok_search", "tiktok")

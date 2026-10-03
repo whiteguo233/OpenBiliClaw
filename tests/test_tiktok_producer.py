@@ -269,3 +269,53 @@ async def test_tiktok_producer_feed_budget_gates_feed_strategy(tmp_path: Any) ->
     assert first["reason"] == "ok"
     assert calls == ["tiktok_feed"]
     assert second["reason"] == "budget_exhausted"
+
+
+async def test_tiktok_producer_search_strategy_budget_and_opt_in_tuple(tmp_path: Any) -> None:
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+    )
+
+    db = _mk_db(tmp_path)
+    calls: list[str] = []
+
+    async def discover(profile: Any, **kwargs: Any) -> TiktokStrategyRunResult:
+        calls.append(str(kwargs["strategy"]))
+        return _result(str(kwargs["strategy"]), 1, units=int(kwargs["unit_budget"]))
+
+    producer = TiktokDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        daily_feed_budget=-1,
+        daily_search_budget=2,
+        daily_tag_budget=-1,
+        daily_user_budget=-1,
+    )
+
+    first = await producer.produce_if_due(limit=5)
+    second = await producer.produce_if_due(limit=5)
+
+    assert first["reason"] == "ok"
+    # Search spends both daily keyword units on the first run.
+    assert calls == ["tiktok_search"]
+    assert second["reason"] == "budget_exhausted"
+
+
+def test_tiktok_search_not_in_default_strategies() -> None:
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES,
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+    )
+
+    # Search is opt-in by credential: never in the default tuple.
+    assert "tiktok_search" not in TIKTOK_DISCOVERY_STRATEGIES
+    assert TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH == (
+        "tiktok_feed",
+        "tiktok_search",
+        "tiktok_tag",
+        "tiktok_user",
+    )

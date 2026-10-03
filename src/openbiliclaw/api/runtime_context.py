@@ -192,6 +192,7 @@ def build_tiktok_discovery_strategies(
 
     from openbiliclaw.discovery.strategies.tiktok import (
         TiktokFeedStrategy,
+        TiktokSearchStrategy,
         TiktokTagStrategy,
         TiktokUserStrategy,
     )
@@ -209,9 +210,10 @@ def build_tiktok_discovery_strategies(
         return default_run_budget if configured <= 0 else configured
 
     feed_budget = _strategy_budget("tiktok_feed", "daily_feed_budget")
+    search_budget = _strategy_budget("tiktok_search", "daily_search_budget")
     tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
     user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
-    return [
+    strategies: list[Any] = [
         TiktokFeedStrategy(
             client=client,
             llm_service=llm_service,
@@ -220,25 +222,45 @@ def build_tiktok_discovery_strategies(
             results_per_run=max(1, feed_budget),
             date_preference=tt_date_preference,
         ),
-        TiktokTagStrategy(
-            client=client,
-            llm_service=llm_service,
-            concurrency=concurrency,
-            database=database,
-            tags=tuple(getattr(tt_cfg, "tags", ()) or ()),
-            tags_per_run=max(1, tag_budget),
-            date_preference=tt_date_preference,
-        ),
-        TiktokUserStrategy(
-            client=client,
-            llm_service=llm_service,
-            concurrency=concurrency,
-            database=database,
-            creators=tuple(getattr(tt_cfg, "creators", ()) or ()),
-            max_creators=max(0, user_budget),
-            date_preference=tt_date_preference,
-        ),
     ]
+    # Keyword search is opt-in by credential: only mounted when the router
+    # says it can work (web backend + login cookie). Guest identities are
+    # gated upstream and logged-in scraping carries account risk, so the
+    # strategy simply does not exist without a cookie.
+    if bool(getattr(client, "search_available", False)):
+        strategies.append(
+            TiktokSearchStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                keywords_per_run=max(1, search_budget),
+                date_preference=tt_date_preference,
+            )
+        )
+    strategies.extend(
+        [
+            TiktokTagStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                tags=tuple(getattr(tt_cfg, "tags", ()) or ()),
+                tags_per_run=max(1, tag_budget),
+                date_preference=tt_date_preference,
+            ),
+            TiktokUserStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                creators=tuple(getattr(tt_cfg, "creators", ()) or ()),
+                max_creators=max(0, user_budget),
+                date_preference=tt_date_preference,
+            ),
+        ]
+    )
+    return strategies
 
 
 def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
@@ -250,6 +272,10 @@ def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
         fetched = intermediates.get("fetched")
         if isinstance(fetched, int):
             return 1
+    if name == "tiktok_search":
+        queries = intermediates.get("queries")
+        if isinstance(queries, list):
+            return len(queries)
     if name == "tiktok_tag":
         tags = intermediates.get("tags")
         if isinstance(tags, list):
@@ -306,6 +332,9 @@ def _build_tiktok_client(config: Any, tt_cfg: Any) -> Any:
             identity = TiktokWebIdentity(
                 proxy=outbound_ytdlp_proxy(),
                 login_cookie=cookie,
+                region=str(getattr(tt_cfg, "region", "JP") or "JP").strip() or "JP",
+                tz_name=str(getattr(tt_cfg, "tz_name", "Asia/Tokyo") or "Asia/Tokyo").strip()
+                or "Asia/Tokyo",
             )
             web_client = TiktokWebClient(identity=identity)
         except ImportError:
@@ -339,6 +368,8 @@ def build_tiktok_discovery_producer(
         return None
 
     from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES,
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
         TiktokDiscoveryProducer,
         TiktokStrategyRunResult,
     )
@@ -414,6 +445,11 @@ def build_tiktok_discovery_producer(
             source_counts={strategy: len(items)},
         )
 
+    strategies = (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH
+        if bool(getattr(tt_client, "search_available", False))
+        else TIKTOK_DISCOVERY_STRATEGIES
+    )
     return TiktokDiscoveryProducer(
         database=database,
         soul_engine=soul_engine,
@@ -421,8 +457,10 @@ def build_tiktok_discovery_producer(
         enabled=True,
         min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
         daily_feed_budget=int(getattr(tt_cfg, "daily_feed_budget", 3)),
+        daily_search_budget=int(getattr(tt_cfg, "daily_search_budget", 3)),
         daily_tag_budget=int(getattr(tt_cfg, "daily_tag_budget", 0)),
         daily_user_budget=int(getattr(tt_cfg, "daily_user_budget", 0)),
+        strategies=strategies,
         candidate_pipeline=candidate_pipeline,
         keyword_fetch=keyword_fetch,
     )

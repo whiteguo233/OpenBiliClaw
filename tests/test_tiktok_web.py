@@ -562,13 +562,14 @@ def test_auth_tiktok_env_cookie_is_optional_present_credential(
     monkeypatch.setenv("OPENBILICLAW_TIKTOK_COOKIE", "sessionid=abc")
     contract = auth_tiktok(_auth_ctx(tmp_path))
 
-    # Optional credential: present but never required, and honestly
-    # verify_method="none" — no TikTok cookie probe exists yet.
+    # Optional credential: present but never required, and verifiable via
+    # the passport-beat live probe (unverified until one runs).
     assert contract.auth_required is False
     assert contract.credential == "present"
     assert contract.credential_origin == "env"
-    assert contract.verify_method == "none"
-    assert contract.can_verify_now is False
+    assert contract.verify_method == "live_probe"
+    assert contract.verification == "unverified"
+    assert contract.can_verify_now is True
     assert contract.legacy_state == "no_auth"
 
 
@@ -605,3 +606,148 @@ def test_resolve_tiktok_cookie_env_first_then_data_file(tmp_path: Any, monkeypat
 
     monkeypatch.setenv("OPENBILICLAW_TIKTOK_COOKIE", "sessionid=env")
     assert resolve_tiktok_cookie(data_dir=tmp_path) == "sessionid=env"
+
+
+# ---------------------------------------------------------------------------
+# Login probe (passport beat)
+# ---------------------------------------------------------------------------
+
+
+async def test_probe_authenticated_on_beat_success() -> None:
+    from openbiliclaw.sources.tiktok_web import LOGIN_PROBE_PATH, probe_tiktok_login
+
+    session = _FakeSession()
+    session.queue.append(_FakeHttpResponse(b'{"message":"success"}'))
+
+    status = await probe_tiktok_login("sessionid=abc", session_factory=lambda: session)
+
+    assert (status.has_cookie, status.authenticated, status.network_error) == (
+        True,
+        True,
+        False,
+    )
+    assert LOGIN_PROBE_PATH in session.urls[0]
+    assert "aid=1459" in session.urls[0]
+    # The probe is unsigned: no X-Bogus / X-Gnarly on the URL.
+    assert "X-Bogus" not in session.urls[0]
+
+
+async def test_probe_failed_on_explicit_rejection() -> None:
+    from openbiliclaw.sources.tiktok_web import probe_tiktok_login
+
+    for body, status_code in (
+        (b'{"message":"error"}', 200),
+        (b"", 401),
+        (b"", 403),
+    ):
+        session = _FakeSession()
+        session.queue.append(_FakeHttpResponse(body, status=status_code))
+        status = await probe_tiktok_login(
+            "sessionid=abc", session_factory=lambda session=session: session
+        )
+        # An explicit platform rejection is a real failed verdict, never
+        # a transport-class indeterminate.
+        assert status.authenticated is False
+        assert status.network_error is False
+
+
+async def test_probe_network_error_is_never_a_logged_out_verdict() -> None:
+    from openbiliclaw.sources.tiktok_web import probe_tiktok_login
+
+    # Transport exhausted after retries.
+    session = _FakeSession()
+    session.queue.extend([ConnectionError("tls reset")] * 3)
+    status = await probe_tiktok_login("sessionid=abc", session_factory=lambda: session)
+    assert status.network_error is True
+    assert status.authenticated is False
+
+    # Risk-control gate (empty body + orcas) is not a cookie verdict either.
+    session2 = _FakeSession()
+    session2.queue.append(_FakeHttpResponse(b"", headers={"tt_orcas_res": "1"}))
+    status2 = await probe_tiktok_login("sessionid=abc", session_factory=lambda: session2)
+    assert status2.network_error is True
+
+    # A 200 the probe cannot interpret is indeterminate too.
+    session3 = _FakeSession()
+    session3.queue.append(_FakeHttpResponse(b"not-json"))
+    status3 = await probe_tiktok_login("sessionid=abc", session_factory=lambda: session3)
+    assert status3.network_error is True
+
+
+async def test_probe_without_cookie_short_circuits() -> None:
+    from openbiliclaw.sources.tiktok_web import probe_tiktok_login
+
+    status = await probe_tiktok_login("")
+    assert status.has_cookie is False
+    assert status.authenticated is False
+
+
+# ---------------------------------------------------------------------------
+# Region / tz configuration
+# ---------------------------------------------------------------------------
+
+
+def test_base_params_use_configured_region_and_tz() -> None:
+    session = _FakeSession()
+    identity = _identity(session, region="US", tz_name="America/New_York")
+
+    params = identity.base_params("fyp")
+
+    assert params["region"] == "US"
+    assert params["priority_region"] == "US"
+    assert params["tz_name"] == "America/New_York"
+
+
+def test_base_params_default_region_and_tz() -> None:
+    session = _FakeSession()
+    params = _identity(session).base_params("fyp")
+    assert params["region"] == "JP"
+    assert params["tz_name"] == "Asia/Tokyo"
+
+
+# ---------------------------------------------------------------------------
+# Search: mixed-card filtering + router gating
+# ---------------------------------------------------------------------------
+
+
+async def test_search_filters_non_video_cards() -> None:
+    session = _FakeSession()
+    user_card = {"id": "7000", "desc": "a creator card", "author": {"uniqueId": "x"}}
+    session.queue.extend(
+        [
+            _bootstrap_response(),
+            _FakeHttpResponse(_json_body({"item_list": [_item_struct(), user_card, "garbage"]})),
+        ]
+    )
+    client = _client(session)
+
+    results = await client.search_videos("cat", limit=10)
+
+    # Only the real video item survives; user cards and junk are dropped.
+    assert [item.content_id for item in results] == ["7234567890123456789"]
+
+
+def test_router_search_available_requires_cookie_and_web() -> None:
+    session = _FakeSession()
+    web = _client(session)
+    router = TiktokRouterClient(web=web, mode="auto")
+    assert router.search_available is False  # guest identity: gated upstream
+
+    web_with_cookie = _client(session, login_cookie="sessionid=abc")
+    router = TiktokRouterClient(web=web_with_cookie, mode="auto")
+    assert router.search_available is True
+
+    router = TiktokRouterClient(web=web_with_cookie, mode="ytdlp")
+    assert router.search_available is False
+
+    router = TiktokRouterClient(web=None, mode="auto")
+    assert router.search_available is False
+
+
+async def test_router_search_videos_delegates_to_web_only() -> None:
+    session = _FakeSession()
+    web = _client(session, login_cookie="sessionid=abc")
+    router = TiktokRouterClient(web=web, mode="ytdlp")
+    # ytdlp mode: search has no fallback, so it is empty without touching web.
+    assert await router.search_videos("cat", limit=5) == []
+    assert session.urls == []

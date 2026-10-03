@@ -27,9 +27,17 @@ from openbiliclaw.runtime.producer_cadence import (
 logger = logging.getLogger(__name__)
 
 TIKTOK_DISCOVERY_STRATEGIES = ("tiktok_feed", "tiktok_tag", "tiktok_user")
+#: Strategies tuple when keyword search is mounted (login cookie + web mode).
+TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH = (
+    "tiktok_feed",
+    "tiktok_search",
+    "tiktok_tag",
+    "tiktok_user",
+)
 _TIKTOK_TAG = "tiktok_tag"
 _TIKTOK_SCORE_THRESHOLDS = {
     "tiktok_feed": 0.60,
+    "tiktok_search": 0.60,
     "tiktok_tag": 0.60,
     "tiktok_user": 0.60,
 }
@@ -59,6 +67,9 @@ class TiktokDiscoveryProducer:
     # The For-You feed is a high-visibility surface; keep its daily pull
     # count small by default (one unit = one feed pull, not one item).
     daily_feed_budget: int = 3
+    # Keyword search only runs with a login cookie (account risk, TikTok
+    # ToS); the budget stays small even then (one unit = one keyword).
+    daily_search_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     strategies: tuple[str, ...] = TIKTOK_DISCOVERY_STRATEGIES
@@ -215,6 +226,7 @@ class TiktokDiscoveryProducer:
         run_budget = max(1, int(per_run_budget or 10))
         configured = {
             "tiktok_feed": int(self.daily_feed_budget),
+            "tiktok_search": int(self.daily_search_budget),
             "tiktok_tag": int(self.daily_tag_budget),
             "tiktok_user": int(self.daily_user_budget),
         }

@@ -382,11 +382,15 @@ mode = "auto"
 # 可选登录 cookie 环境变量（优先级高于 data/tiktok_cookie.json）；不配置也能以访客身份运行，
 # 配置后解锁关键词搜索与更高限额。切勿伪造 msToken。
 cookie_env = "OPENBILICLAW_TIKTOK_COOKIE"
+# Web API 请求携带的地区 / 时区参数，应匹配你的网络出口地区；被风控 gate（空响应）时首先检查这两项。
+region = "JP"
+tz_name = "Asia/Tokyo"
 # 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
 tags = []
 # 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
 creators = []
 daily_feed_budget = 3                    # 推荐流每日拉取上限（高曝光，建议压低）；0 = 不设每日上限
+daily_search_budget = 3                  # 关键词搜索每日上限；搜索需登录 Cookie（有账号风险，默认不启用）
 daily_tag_budget = 0                     # 0 = 不设每日上限
 daily_user_budget = 0                    # 0 = 不设每日上限
 request_interval_seconds = 2

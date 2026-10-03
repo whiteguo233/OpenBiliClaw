@@ -551,7 +551,7 @@ from openbiliclaw.runtime.tiktok_producer import TiktokDiscoveryProducer
 result = await producer.produce_if_due(limit=20)
 ```
 
-`TiktokDiscoveryProducer` 与 `YoutubeDiscoveryProducer` 完全同构（实验性 TikTok 源）：调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user`，`tiktok_discovery_runs` 每日执行 ledger + `min_interval_minutes` 节流 + pool 缺口门；`reason` 取值与 YouTube producer 相同（`ok` / `throttled` / `budget_exhausted` / `pool_full` / `disabled` / `no_profile` / `error`）。`tiktok_feed` 按拉取次数计费（默认 `daily_feed_budget=3`，高曝光面压低）。取数后端由 `[sources.tiktok].mode` 选择（`auto` = Web API 访客身份 + yt-dlp 回退，`web`，`ytdlp`）。统一关键词规划器 flag 开启时，`tiktok_tag` 走 claim → 注入（搜索词压缩为 hashtag）→ `used` / `failed` 的 fetch-only 生命周期，P1.8 keyword id 随候选传递用于 yield 回填。
+`TiktokDiscoveryProducer` 与 `YoutubeDiscoveryProducer` 完全同构（实验性 TikTok 源）：调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user`（配置登录 Cookie 且 mode 允许 web 时额外挂载 `tiktok_search`，默认 `daily_search_budget=3`），`tiktok_discovery_runs` 每日执行 ledger + `min_interval_minutes` 节流 + pool 缺口门；`reason` 取值与 YouTube producer 相同（`ok` / `throttled` / `budget_exhausted` / `pool_full` / `disabled` / `no_profile` / `error`）。`tiktok_feed` 按拉取次数计费（默认 `daily_feed_budget=3`，高曝光面压低）。取数后端由 `[sources.tiktok].mode` 选择（`auto` = Web API 访客身份 + yt-dlp 回退，`web`，`ytdlp`）。统一关键词规划器 flag 开启时，`tiktok_tag` 走 claim → 注入（搜索词压缩为 hashtag）→ `used` / `failed` 的 fetch-only 生命周期，P1.8 keyword id 随候选传递用于 yield 回填。
 
 ### XDiscoveryProducer
 

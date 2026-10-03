@@ -1311,12 +1311,21 @@ class TiktokSourceConfig(SourceDatePreferenceConfig):
     # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
     # is the fallback. Guest identity remains a legitimate mode without it.
     cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    # Geo parameters sent with every web API request; they should match the
+    # proxy egress region. When TikTok gates every response (empty body +
+    # ``tt_orcas_res: 1``), these two are the first thing to check.
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
     # Baseline hashtags for the tag strategy (without the leading ``#``).
     tags: tuple[str, ...] = ()
     # TikTok creator handles for the user strategy (``@`` prefix optional).
     creators: tuple[str, ...] = ()
     # For-You feed pulls per day (high-visibility surface; kept small).
     daily_feed_budget: int = 3
+    # Keyword search runs per day. Search only works with a login cookie and
+    # logged-in scraping carries account risk (TikTok ToS), so it is off
+    # unless a cookie is configured; the budget stays small regardless.
+    daily_search_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     request_interval_seconds: int = 2
@@ -2435,9 +2444,14 @@ def _build_config(
             enabled=bool(tiktok_raw.get("enabled", False)),
             mode=str(tiktok_raw.get("mode", "auto")),
             cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
+            # Empty geo values are meaningless and would gate every request;
+            # fall back to the verified defaults instead of saving them.
+            region=str(tiktok_raw.get("region", "JP")).strip() or "JP",
+            tz_name=str(tiktok_raw.get("tz_name", "Asia/Tokyo")).strip() or "Asia/Tokyo",
             tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
             creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
             daily_feed_budget=int(tiktok_raw.get("daily_feed_budget", 3)),
+            daily_search_budget=int(tiktok_raw.get("daily_search_budget", 3)),
             daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
             daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
             request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
@@ -5981,9 +5995,12 @@ def _render_config_toml(
             f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
             f"mode = {_toml_string(config.sources.tiktok.mode)}",
             f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
+            f"region = {_toml_string(config.sources.tiktok.region)}",
+            f"tz_name = {_toml_string(config.sources.tiktok.tz_name)}",
             f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
             f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
             f"daily_feed_budget = {config.sources.tiktok.daily_feed_budget}",
+            f"daily_search_budget = {config.sources.tiktok.daily_search_budget}",
             f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
             f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
             f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",

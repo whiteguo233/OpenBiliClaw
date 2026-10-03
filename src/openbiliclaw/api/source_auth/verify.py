@@ -71,7 +71,11 @@ VERIFY_ACTIONS: dict[str, VerifyAction] = {
     "xiaohongshu": "browser_heartbeat",
     "douyin": "live_probe",
     "youtube": "none",
-    "tiktok": "none",
+    # Same action-vs-method split as Bangumi: the *action* is a constant —
+    # a click runs the passport-beat probe when a cookie exists, and resolves
+    # to ``indeterminate`` without one — while the contract's ``verify_method``
+    # honestly stays ``none`` in guest mode (nothing to verify).
+    "tiktok": "live_probe",
     "twitter": "live_probe",
     "zhihu": "browser_heartbeat",
     "reddit": "local_file",
@@ -477,6 +481,71 @@ async def _probe_douyin(
         network_error=bool(status.network_error),
         message=status.message or "抖音登录态探测完成。",
         username=who,
+    )
+
+
+async def _probe_tiktok(
+    cfg: Config, probes: LiveProbeCache, *, cookie: str | None, record: bool
+) -> LiveProbeOutcome:
+    """Live probe on ``/passport/token/beat/web/`` for the *optional* cookie.
+
+    TikTok discovery works on a guest identity, so "no credential" is a
+    normal state, not a failure — ``has_credential=False`` returns before any
+    network call and the click resolves to ``indeterminate``, never a
+    logged-out verdict (the Bangumi shape).
+
+    With a cookie the discriminator lives in
+    :func:`openbiliclaw.sources.tiktok_web.probe_tiktok_login`: a beat that
+    answers ``success`` means the session is alive; an explicit rejection
+    (401 / 403 / an error ``message``) is a real ``failed`` verdict; transport
+    failures and risk-control gates are ``network_error`` (→ indeterminate),
+    never ``failed``.
+    """
+    from openbiliclaw.api.source_auth.write import credential_fingerprint
+    from openbiliclaw.network import outbound_ytdlp_proxy
+    from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+    from openbiliclaw.sources.tiktok_web import probe_tiktok_login
+
+    if cookie is None:
+        tt_cfg = getattr(cfg.sources, "tiktok", None)
+        cookie_env = str(getattr(tt_cfg, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE"))
+        try:
+            cookie = resolve_tiktok_cookie(data_dir=cfg.data_path, cookie_env=cookie_env)
+        except Exception:  # noqa: BLE001 - unreadable store must not 500 the click
+            logger.debug("tiktok cookie store unreadable during verify", exc_info=True)
+            cookie = ""
+
+    if not cookie.strip():
+        if record:
+            probes.clear("tiktok")
+        return LiveProbeOutcome(
+            slug="tiktok",
+            has_credential=False,
+            authenticated=False,
+            network_error=False,
+            message=(
+                "未配置 TikTok Cookie —— 访客身份已可正常发现；如需关键词搜索，"
+                "请配置登录 Cookie 后再验证。"
+            ),
+        )
+
+    status = await probe_tiktok_login(cookie, proxy=outbound_ytdlp_proxy())
+    if record:
+        probes.record(
+            "tiktok",
+            authenticated=bool(status.authenticated),
+            detail=status.message,
+            network_error=bool(status.network_error),
+            # Over the login-bearing names only, so the constant ``msToken``
+            # rotation does not invalidate the verdict.
+            fingerprint=credential_fingerprint("tiktok", cookie),
+        )
+    return LiveProbeOutcome(
+        slug="tiktok",
+        has_credential=True,
+        authenticated=bool(status.authenticated),
+        network_error=bool(status.network_error),
+        message=status.message or "TikTok 登录态探测完成。",
     )
 
 
@@ -932,6 +1001,8 @@ async def run_live_probe(
             cookie=cookie,
             record=record,
         )
+    if slug == "tiktok":
+        return await _probe_tiktok(cfg, probes, cookie=cookie, record=record)
     if slug == "bangumi":
         return await _probe_bangumi(cfg, probes, cookie=cookie, record=record)
     if slug == "github":

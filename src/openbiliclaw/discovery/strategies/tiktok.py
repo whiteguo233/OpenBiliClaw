@@ -21,6 +21,14 @@ TiktokUserStrategy
     Reads configured creator handles → fetches recent uploads → LLM
     evaluates.
 
+TiktokSearchStrategy
+    Keyword search via the web API backend (``/api/search/item/full/``).
+    Unlike the tag path, planner-injected words are used **verbatim** (no
+    hashtag compaction) — that is search's core value over hashtags. Only
+    mounted when a login cookie is configured and the mode allows the web
+    backend: guest identities are gated upstream, and logged-in scraping
+    carries account risk (TikTok ToS), so it is off by default.
+
 Client methods may return raw yt-dlp entry dicts (yt-dlp backend) or
 ready-made ``DiscoveredContent`` (web backend); ``_coerce_candidate``
 normalizes both.
@@ -73,6 +81,8 @@ class SupportsTiktokDiscovery(Protocol):
 
     async def get_user_videos(self, handle: str, *, limit: int = 10) -> list[Any]: ...
 
+    async def search_videos(self, keyword: str, *, limit: int = 20) -> list[Any]: ...
+
 
 _TAGS_SYSTEM_PROMPT = """\
 你要为 TikTok 内容发现生成一组适合 TikTok 话题标签（hashtag）的词。
@@ -86,6 +96,20 @@ _TAGS_SYSTEM_PROMPT = """\
 
 输出格式：
 {"tags": ["booktok", "historyfacts", ...]}
+"""
+
+_SEARCH_SYSTEM_PROMPT = """\
+你要为 TikTok 内容发现生成一组搜索关键词。
+
+规则：
+1. 输出必须是严格 JSON，不要附带解释。
+2. keyword 是直接用于 TikTok 搜索框的词或短语，可以带空格，
+   例如 "machine learning"、"cooking tips"；中文关键词可用中文。
+3. 数量 4 到 8 个，覆盖用户画像中不同兴趣领域。
+4. 避免与已有很多内容的领域过度集中。
+
+输出格式：
+{"keywords": ["machine learning", "cooking tips", ...]}
 """
 
 
@@ -418,3 +442,152 @@ class TiktokFeedStrategy(DiscoveryStrategy):
             if len(results) >= limit:
                 break
         return results
+
+
+# ---------------------------------------------------------------------------
+# TiktokSearchStrategy
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TiktokSearchStrategy(DiscoveryStrategy):
+    """Discover TikTok content by keyword search (web API backend).
+
+    Only mounted when the router reports ``search_available`` (web backend +
+    login cookie): guest identities are gated on the search endpoint
+    upstream, and logged-in scraping carries account risk (TikTok ToS), so
+    this strategy never runs by default.
+
+    Planner-injected words are used **verbatim** — unlike the tag strategy
+    there is no hashtag compaction, which is exactly search's value over the
+    hashtag path (multi-word phrases, natural language). Search responses
+    mix card types; the client already filters down to video items
+    (``parse_tiktok_item(..., require_video=True)``).
+    """
+
+    client: SupportsTiktokDiscovery
+    llm_service: SupportsStructuredTask
+    concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
+    keywords_per_run: int = 4
+    results_per_keyword: int = 10
+    score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
+    llm_evaluation: bool = True
+    last_intermediates: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def name(self) -> str:
+        return "tiktok_search"
+
+    @property
+    def source_platform(self) -> str:
+        return "tiktok"
+
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+        *,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> list[DiscoveredContent]:
+        if queries is None:
+            # Self-generated keywords are capped inside ``_generate_keywords``.
+            keywords = await self._generate_keywords(profile)
+        else:
+            # Verbatim planner words — no hashtag compaction here, and never
+            # truncated: the producer marks every injected word used after
+            # handoff, so dropping one would burn it unsearched.
+            keywords = self._dedupe_keywords(queries)
+        self.last_intermediates = {"queries": list(keywords)}
+        if not keywords:
+            return []
+
+        raw_batches = await asyncio.gather(
+            *[
+                self.client.search_videos(keyword, limit=self.results_per_keyword)
+                for keyword in keywords
+            ],
+            return_exceptions=True,
+        )
+
+        seen: set[str] = set()
+        candidates: list[DiscoveredContent] = []
+        for keyword, batch in zip(keywords, raw_batches, strict=True):
+            if isinstance(batch, BaseException):
+                logger.warning("tiktok_search batch failed: %s", batch)
+                continue
+            keyword_id = keyword_ids.get(keyword) if keyword_ids else None
+            for raw in batch:
+                content = _coerce_candidate(raw, self.name)
+                if content is None or content.content_id in seen:
+                    continue
+                content.source_keyword_id = keyword_id
+                seen.add(content.content_id)
+                candidates.append(content)
+
+        logger.info("tiktok_search: %d keywords → %d candidates", len(keywords), len(candidates))
+        if not candidates:
+            return []
+
+        if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
+            return candidates[:limit]
+
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
+        trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
+        scores = await evaluator.evaluate_content_batch(trimmed, profile)
+        results: list[DiscoveredContent] = []
+        for content, score in zip(trimmed, scores, strict=True):
+            if score < self.score_threshold:
+                continue
+            results.append(content)
+            if len(results) >= limit:
+                break
+        return results
+
+    @staticmethod
+    def _dedupe_keywords(words: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in words:
+            word = str(item or "").strip()
+            if not word or word.casefold() in seen:
+                continue
+            seen.add(word.casefold())
+            deduped.append(word)
+        return deduped
+
+    async def _generate_keywords(self, profile: SoulProfile) -> list[str]:
+        profile_summary = build_query_generation_profile_summary(profile)
+        user_input = json.dumps(
+            {"profile": profile_summary, "max_keywords": self.keywords_per_run},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        try:
+            complete_structured = self.llm_service.complete_structured_task
+            raw = await complete_structured(
+                system_instruction=_SEARCH_SYSTEM_PROMPT,
+                user_input=user_input,
+                temperature=0.8,
+                max_tokens=512,
+                caller="tiktok_search.generate_keywords",
+                **without_core_memory_kwargs(complete_structured),
+            )
+            parsed = _extract_llm_json_payload(raw)
+            if isinstance(parsed, dict):
+                keywords = parsed.get("keywords") or []
+                return self._dedupe_keywords([str(item) for item in keywords])[
+                    : self.keywords_per_run
+                ]
+        except Exception as exc:
+            logger.warning(
+                "tiktok_search: keyword generation failed, falling back to interests: %s", exc
+            )
+
+        return [interest.name for interest in profile.preferences.interests][
+            : self.keywords_per_run
+        ]

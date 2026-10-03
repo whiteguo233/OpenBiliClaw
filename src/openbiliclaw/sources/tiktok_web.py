@@ -43,6 +43,7 @@ import random
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
+from urllib.parse import urlencode
 
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.published_time import normalize_published_time
@@ -166,6 +167,10 @@ class TiktokWebIdentity:
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS
     request_timeout: float = _REQUEST_TIMEOUT_SECONDS
     device_id: str = field(default_factory=_new_device_id)
+    # Geo parameters should match the proxy egress; a mismatch is a prime
+    # suspect when TikTok gates every response (empty body + orcas).
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
     # Test seam: builds the curl_cffi session. Production default None.
     session_factory: Any = None
     _session: Any = field(default=None, init=False, repr=False)
@@ -233,20 +238,18 @@ class TiktokWebIdentity:
             "browser_version": self.user_agent,
             "device_id": self.device_id,
             "from_page": from_page,
+            "priority_region": self.region,
+            "region": self.region,
+            "tz_name": self.tz_name,
         }
 
-    def signed_get(self, path: str, params: dict[str, str]) -> TiktokWebResponse:
-        """One signed GET with transport retries (TLS resets are expected).
+    def _get_with_retries(self, path: str, url: str) -> TiktokWebResponse:
+        """GET *url* with transport retries (TLS resets are expected).
 
-        Transport errors retry up to ``max_attempts``; a gated response is
-        returned as-is for the caller to interpret (it is not a transport
-        problem and must not be retried unchanged).
+        A gated response is returned as-is for the caller to interpret (it is
+        not a transport problem and must not be retried unchanged).
         """
         session = self._ensure_session()
-        query, _parameters = tiktok_sign.sign(
-            list(params.items()), self.user_agent, ms_token=self.ms_token()
-        )
-        url = f"{_TIKTOK_BASE_URL}{path}?{query}"
         attempts = max(1, int(self.max_attempts))
         last_error: Exception | None = None
         for attempt in range(attempts):
@@ -269,6 +272,21 @@ class TiktokWebIdentity:
         raise TiktokWebTransportError(
             f"tiktok web {path}: all {attempts} transport attempts failed"
         ) from last_error
+
+    def signed_get(self, path: str, params: dict[str, str]) -> TiktokWebResponse:
+        """One signed GET (X-Dynosaur / msToken / X-Bogus / X-Gnarly)."""
+        # The session must exist before signing: ``ms_token()`` reads the jar.
+        self._ensure_session()
+        query, _parameters = tiktok_sign.sign(
+            list(params.items()), self.user_agent, ms_token=self.ms_token()
+        )
+        return self._get_with_retries(path, f"{_TIKTOK_BASE_URL}{path}?{query}")
+
+    def unsigned_get(self, path: str, params: dict[str, str]) -> TiktokWebResponse:
+        """One plain GET — for endpoints TikTok serves without the webmssdk
+        signature (the passport session heartbeat the login probe uses)."""
+        query = urlencode(params)
+        return self._get_with_retries(path, f"{_TIKTOK_BASE_URL}{path}?{query}")
 
     def ensure_bootstrapped(self) -> bool:
         """Mint the guest identity once (one anonymous feed request)."""
@@ -298,6 +316,127 @@ class TiktokWebIdentity:
     def invalidate(self) -> None:
         """Force a re-bootstrap on the next request (gated response seen)."""
         self._bootstrapped = False
+
+
+# ---------------------------------------------------------------------------
+# Login probe (optional cookie)
+# ---------------------------------------------------------------------------
+
+# TikTok's own session heartbeat: unsigned, cookie-only, and the lightest
+# endpoint that answers "is this session alive" (DTK uses it the same way).
+LOGIN_PROBE_PATH = "/passport/token/beat/web/"
+_LOGIN_PROBE_PARAMS = {"aid": "1459", "device_platform": "web", "scene": "active"}
+
+
+@dataclass(frozen=True)
+class TiktokAuthStatus:
+    """Structured TikTok auth status (mirrors ``DouyinAuthStatus``)."""
+
+    has_cookie: bool
+    authenticated: bool
+    network_error: bool = False
+    message: str = ""
+
+
+def _probe_tiktok_sync(
+    cookie: str,
+    *,
+    proxy: str | None = None,
+    session_factory: Any = None,
+) -> TiktokAuthStatus:
+    """Blocking probe body; runs in the executor from ``probe_tiktok_login``.
+
+    Verdict mapping (the probe transport seam is faked in tests, this mapping
+    is the code under test):
+
+    * transport exhausted or gated (0-byte + orcas) -> ``network_error``:
+      risk control / a flaky proxy is not an expired cookie.
+    * HTTP 401 / 403 -> a real ``failed`` verdict: the platform refused the
+      session itself.
+    * HTTP 200 + JSON ``{"message": "success"}`` -> authenticated.
+    * HTTP 200 + JSON with any other explicit ``message`` -> the platform
+      answered and rejected the session: ``failed``.
+    * anything else (unparseable / empty 200) -> ``network_error``: a round
+      trip that could not conclude says nothing about the cookie.
+    """
+    identity = TiktokWebIdentity(
+        proxy=proxy,
+        login_cookie=cookie,
+        session_factory=session_factory,
+    )
+    try:
+        response = identity.unsigned_get(LOGIN_PROBE_PATH, dict(_LOGIN_PROBE_PARAMS))
+    except Exception as exc:
+        return TiktokAuthStatus(
+            has_cookie=True,
+            authenticated=False,
+            network_error=True,
+            message=f"TikTok 登录态探测失败（网络 / 代理 / 风控）：{exc}",
+        )
+
+    if response.gated:
+        return TiktokAuthStatus(
+            has_cookie=True,
+            authenticated=False,
+            network_error=True,
+            message="TikTok 登录态探测被风控拦截（空响应），暂时无法判定。",
+        )
+    if response.status_code in {401, 403}:
+        return TiktokAuthStatus(
+            has_cookie=True,
+            authenticated=False,
+            message="TikTok 拒绝了该 Cookie（缺失、无效或已过期）。",
+        )
+    if response.status_code == 200 and response.body:
+        try:
+            payload = json.loads(response.body)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            note = str(payload.get("message") or "").strip()
+            if note == "success":
+                return TiktokAuthStatus(
+                    has_cookie=True,
+                    authenticated=True,
+                    message="TikTok Cookie 有效，会话存活（passport beat 确认）。",
+                )
+            if note:
+                return TiktokAuthStatus(
+                    has_cookie=True,
+                    authenticated=False,
+                    message=f"TikTok 拒绝了该 Cookie（passport beat: {note}）。",
+                )
+    return TiktokAuthStatus(
+        has_cookie=True,
+        authenticated=False,
+        network_error=True,
+        message=f"TikTok 登录态探测结果不明（HTTP {response.status_code}），暂时无法判定。",
+    )
+
+
+async def probe_tiktok_login(
+    cookie: str,
+    *,
+    proxy: str | None = None,
+    session_factory: Any = None,
+) -> TiktokAuthStatus:
+    """Probe whether *cookie* is a live TikTok session (passport beat).
+
+    Network failures are reported via ``network_error`` rather than as a
+    logged-out verdict, so a flaky proxy never looks like an expired cookie.
+    """
+    normalized = cookie.strip()
+    if not normalized:
+        return TiktokAuthStatus(
+            has_cookie=False,
+            authenticated=False,
+            message="尚未配置 TikTok Cookie。",
+        )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        partial(_probe_tiktok_sync, normalized, proxy=proxy, session_factory=session_factory),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +478,7 @@ def parse_tiktok_item(
     item: Any,
     *,
     source_strategy: str = "",
+    require_video: bool = False,
 ) -> DiscoveredContent | None:
     """Map one web API ``itemStruct`` to ``DiscoveredContent``.
 
@@ -354,6 +494,10 @@ def parse_tiktok_item(
     video_id = _first_text(item.get("id"), item.get("aweme_id"))
     description = _first_text(item.get("desc"))
     if not video_id or not description:
+        return None
+    if require_video and not isinstance(item.get("video"), dict):
+        # Search responses mix card types (user / live / challenge cards);
+        # only video cards carry a ``video`` object.
         return None
 
     author = _as_dict(item.get("author"))
@@ -584,7 +728,16 @@ class TiktokWebClient:
                 keyword,
             )
             return []
-        return _parse_item_list(data.get("item_list") or data.get("itemList"))
+        raw = data.get("item_list") or data.get("itemList")
+        if not isinstance(raw, list):
+            return []
+        results: list[DiscoveredContent] = []
+        for item in raw:
+            # Search mixes card types; keep only video items.
+            content = parse_tiktok_item(item, require_video=True)
+            if content is not None:
+                results.append(content)
+        return results
 
     # -- async surface -------------------------------------------------------
 
@@ -676,6 +829,32 @@ class TiktokRouterClient:
                 )
         else:
             self._web_failures = 0
+
+    @property
+    def search_available(self) -> bool:
+        """Whether keyword search can work: web backend + a login cookie.
+
+        Guest identities are gated on ``/api/search/item/full/`` upstream
+        (verified 2026-10-03), so search is only meaningful with a configured
+        login cookie, and only the web backend has a search surface at all.
+        """
+        return (
+            self.web is not None
+            and self.mode in {"auto", "web"}
+            and bool(self.web.identity.login_cookie.strip())
+        )
+
+    async def search_videos(self, keyword: str, *, limit: int = 20) -> list[Any]:
+        """Keyword search — web backend only (yt-dlp has no search surface).
+
+        Returns ``[]`` when the web backend is unusable: there is no yt-dlp
+        fallback to fail over to, so a backend failure and an empty result
+        are the same outcome here.
+        """
+        if not self._web_usable() or self.web is None:
+            return []
+        result = await self.web.search_videos(keyword, limit=limit)
+        return list(result)
 
     async def get_feed(self, *, limit: int = 12) -> list[DiscoveredContent] | None:
         """For-You feed — web backend only (yt-dlp has no feed surface)."""

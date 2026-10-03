@@ -2379,9 +2379,12 @@ class TiktokSourceConfigOut(SourceDatePreferenceOut):
     # legitimate mode, so an empty cookie is not an error state.
     cookie: str = ""
     cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
     tags: list[str] = Field(default_factory=list)
     creators: list[str] = Field(default_factory=list)
     daily_feed_budget: int = 3
+    daily_search_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     request_interval_seconds: int = 2

@@ -24,7 +24,8 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 2. **签名**：每个请求用 vendor 的 `sources/tiktok_sign.py`（来源 Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0，纯 stdlib）产出 `X-Dynosaur` / `msToken` / `X-Bogus` / `X-Gnarly` 四个签名参数；签名时的 `user_agent` 与发送 UA 完全一致（`browser_version` 参数同）。
 3. **失效检测**：响应 0 字节 + `tt_orcas_res: 1` = 被 gate（身份/参数问题，**不是传输问题，不无脑重试**）。触发一次重新 bootstrap 后重试；仍被 gate 则该次调用降级为"后端不可用"（`auto` 模式下 router 回退 yt-dlp）。
 4. **传输重试**：TikTok 边缘对数据中心 IP 做 TLS 指纹级重置（实测约 5/6 失败率），每次请求最多重试 5 次传输错误。
-5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于解锁关键词搜索与更高限额；不配置时访客身份是完整合法的运行模式。
+5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于解锁关键词搜索与更高限额；不配置时访客身份是完整合法的运行模式。已配置的 Cookie 可通过 `/passport/token/beat/web/` 主动探针验证（无签名、仅带 cookie 的会话心跳），写入门面（`PUT /api/config` 与 `POST /api/sources/tiktok/credential`）在保存前都会先过该探针，验证不通过不落盘。
+6. **地区参数**：`region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）随每个请求发送，应匹配代理出口地区；被风控 gate（空响应）时首先检查这两项。
 
 请求构造要点（2026-10-03 spike 实测固化）：`aid=1988`、`device_platform=web_pc`、19 位随机 `device_id`（**缺失会导致 0 字节空响应**）、`region` / `priority_region` / `tz_name` 默认匹配东京出口（JP / Asia/Tokyo）；HTTP 层用 curl_cffi `impersonate="chrome"`；代理策略与 yt-dlp 后端一致（`outbound_ytdlp_proxy()`：`system` 继承环境、`direct` 强制直连、`custom` 固定代理）。
 
@@ -38,7 +39,8 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | `/api/user/detail/` | ✅ | uniqueId → secUid、昵称等 |
 | `/api/post/item_list/` | ✅ | 15 条真实视频；替代失效的 yt-dlp `tiktok:user` |
 | `/api/challenge/detail/` + `item_list/` | ✅ | 20 条真实视频（~590KB）；替代失效的 yt-dlp `tiktok:tag` |
-| `/api/search/item/full/` | ❌ 被 gate | 200 但 0 字节 + orcas=1（真实 msToken 亦然）；需登录 Cookie |
+| `/api/search/item/full/` | ❌ 访客被 gate | 200 但 0 字节 + orcas=1（真实 msToken 亦然）；需登录 Cookie，已按条件挂载 `tiktok_search` 策略（默认不启用） |
+| `/passport/token/beat/web/` | ✅（登录 cookie 探针） | 无签名、仅带 cookie 的会话心跳；用于验证可选登录 Cookie 是否存活（`probe_tiktok_login`） |
 | yt-dlp `TikTok` 单视频 extractor | ✅ | 网页解析路径正常（yt-dlp stable 2026.08.19 / nightly 2026.09.27） |
 | yt-dlp `tiktok:tag` / `tiktok:user` | ❌ 上游失效 | `No working app info is available`（yt-dlp 官方已标记 TikTok broken） |
 
@@ -59,6 +61,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 - 只读公开元数据，使用 TikTok 自己签发的访客身份；**绝不伪造 msToken**（伪造比没有更糟，会被整体 gate）。
 - 不下载媒体、不抓登录态、不做账号画像导入。
 - 频率由 producer 预算与节流控制：推荐流属高曝光面，`daily_feed_budget` 默认压到每日 3 次拉取；`min_interval_minutes` 控制两次执行最小间隔。
+- **登录态关键词搜索有账号风险**：`tiktok_search` 使用用户自己的登录 Cookie 调用搜索端点，这类登录态抓取违反 TikTok ToS，可能导致账号被限制。因此该策略默认不启用——只有配置了登录 Cookie 且 mode 允许 web 时才挂载，预算同样压低（`daily_search_budget` 默认 3）。
 
 ## 已实现功能
 
@@ -68,12 +71,16 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | 请求签名（vendored） | ✅ | `sources/tiktok_sign.py`（Evil0ctal/Douyin_TikTok_Download_API, Apache-2.0，纯 stdlib，仅 ruff 适配性微调）产出 X-Dynosaur / X-Gnarly；行为测试固定输出结构与 msToken 透传契约，算法正确性由上游保证 |
 | `tiktok_feed` discovery | ✅ | 匿名 For-You 推荐流，无配置依赖；LLM 评估路径与 tag/user 策略一致；高曝光面，`daily_feed_budget` 默认 3（1 单位 = 1 次拉取） |
 | `tiktok_tag` / `tiktok_user` web 路径 | ✅ | 策略接受两种后端返回形态（yt-dlp dict / web `DiscoveredContent`），由 `_coerce_candidate` 归一；`TiktokRouterClient` 按 `mode` 分发并在 `auto` 下回退 |
-| 可选登录 Cookie | ✅ | `sources/tiktok_auth.py`（env 优先、`data/tiktok_cookie.json` 兜底，仿 douyin_auth）；`PUT /api/config` 粘贴路由到数据文件；GET 只回脱敏预览 |
+| 可选登录 Cookie | ✅ | `sources/tiktok_auth.py`（env 优先、`data/tiktok_cookie.json` 兜底，仿 douyin_auth）；`PUT /api/config` 与统一凭据端点粘贴都先过探针再落盘；GET 只回脱敏预览 |
+| Cookie 主动探针 | ✅ | `probe_tiktok_login()` 调 `/passport/token/beat/web/`（无签名、仅 cookie）；verified / failed / indeterminate 三态映射（传输失败与风控 gate 绝不误判为失效）；`VERIFY_ACTIONS["tiktok"]="live_probe"` |
+| 凭据写入门面 | ✅ | `CREDENTIAL_SPECS["tiktok"]`：结构门要求 sessionid / sessionid_ss / sid_tt 至少其一，live gate 接 passport 探针；store 落 `data/tiktok_cookie.json` |
+| `tiktok_search` discovery | ✅（默认不启用） | 仅当配置登录 Cookie 且 mode 允许 web 时挂载；planner 注入词**原样使用**（不做 hashtag 压缩），LLM 画像兜底生成；搜索响应混合卡片只收视频条目（`require_video` 过滤）；`daily_search_budget` 默认 3 |
+| 地区参数配置化 | ✅ | `region` / `tz_name` 配置项注入 `TiktokWebIdentity`，空值回退默认；应匹配网络出口地区 |
 | yt-dlp 轻量 client | ✅ | `TiktokClient` 封装 `tiktok:user` / `tiktok:tag` flat-extract 与单视频 `TikTok` extract；阻塞调用全部跑在线程池 executor，永不下载媒体 |
 | 条目归一化 | ✅ | `normalize_tiktok_video()`（yt-dlp 条目）与 `parse_tiktok_item()`（web itemStruct）产出等价 `DiscoveredContent`；毫秒 duration 启发式换算为秒，`source_metadata.tiktok_aweme_id` 保留稳定身份 |
 | 后台 discovery producer | ✅ | `TiktokDiscoveryProducer` 镜像 YouTube producer：`tiktok_discovery_runs` 每日执行 ledger、`min_interval_minutes` 节流、`daily_feed_budget` / `daily_tag_budget` / `daily_user_budget`、pool 缺口门、统一 candidate pipeline 入队 |
 | 平台族注册 | ✅ | `tiktok` 独立平台族（`requires_overseas_network=True`、`routed_by_network_mode=True`、host `tiktok.com`） |
-| source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录）；配置 Cookie 后 `credential="present"`（origin env / data_file），`verify_method` 诚实保持 `"none"`（暂无 TikTok 探针） |
+| source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录，`verify_method="none"`）；配置 Cookie 后 `credential="present"` + `verify_method="live_probe"`（passport beat 探针） |
 | 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；`tiktok_tag` 走 claim → 注入（压缩为 hashtag）→ used/failed 生命周期（P1.7），P1.8 keyword id 随候选传递 |
 | 配置面 | ✅ | `TiktokSourceConfig`（`mode` / `cookie_env` / `daily_feed_budget` 等）+ `config.example.toml` + `[scheduler.pool_source_shares] tiktok` + API config GET/PUT（非法 `mode` 保存时拒绝）+ credentials 只读行 |
 | 依赖 | ✅ | `curl-cffi>=0.15` 进入默认依赖（Chrome TLS 指纹；与 yt-dlp 可选依赖同包，版本天然兼容） |
@@ -95,6 +102,7 @@ from openbiliclaw.sources.tiktok_web import (
     parse_tiktok_item,
 )
 from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+from openbiliclaw.sources.tiktok_web import probe_tiktok_login
 from openbiliclaw.discovery.strategies.tiktok import (
     TiktokFeedStrategy,
     TiktokTagStrategy,
@@ -132,9 +140,12 @@ result = await producer.produce_if_due(limit=20)
 | `sources.tiktok.enabled` | `false` | 是否启用 TikTok steady-state discovery 和候选池配额；实验性，默认关闭 |
 | `sources.tiktok.mode` | `"auto"` | 后端选择：`auto`（web 优先 + yt-dlp 回退）/ `web` / `ytdlp`；非法值保存时拒绝 |
 | `sources.tiktok.cookie_env` | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量；兜底 `data/tiktok_cookie.json`；不配置时访客身份运行 |
+| `sources.tiktok.region` | `"JP"` | Web API 请求的地区参数，应匹配网络出口地区；被风控 gate 时首先检查 |
+| `sources.tiktok.tz_name` | `"Asia/Tokyo"` | Web API 请求的时区参数，与 `region` 配套 |
 | `sources.tiktok.tags` | `[]` | 话题标签策略的常驻 hashtag（不带 `#`） |
 | `sources.tiktok.creators` | `[]` | 创作者策略跟踪的 handle（`@` 前缀可省略） |
 | `sources.tiktok.daily_feed_budget` | `3` | `tiktok_feed` 每日拉取上限（1 单位 = 1 次拉取）；`0` = 不设每日上限 |
+| `sources.tiktok.daily_search_budget` | `3` | `tiktok_search` 每日关键词上限（1 单位 = 1 个关键词）；搜索需登录 Cookie，默认不启用 |
 | `sources.tiktok.daily_tag_budget` | `0` | `tiktok_tag` 每日执行预算；`0` = 不设每日上限 |
 | `sources.tiktok.daily_user_budget` | `0` | `tiktok_user` 每日执行预算；`0` = 不设每日上限 |
 | `sources.tiktok.request_interval_seconds` | `2` | 预留的请求间隔配置位（与 YouTube 对齐） |
@@ -146,7 +157,7 @@ result = await producer.produce_if_due(limit=20)
 - **为什么新增 Web API 后端**：yt-dlp 的 `tiktok:tag` / `tiktok:user` 列表 extractor 上游失效且短期无修复迹象；2026-10-03 spike 实测证明纯 Python 签名 + 访客身份可以打通 TikTok Web API 的 feed / 创作者 / 话题标签列表，覆盖与 yt-dlp 路径相同甚至更多（feed 是新增面）。yt-dlp 路径保留为 `auto` / `ytdlp` 模式的兜底，上游修复后仍可用。
 - **Router 而不是双 client 注入策略**：`TiktokRouterClient` 实现与 `TiktokClient` 相同的 async 接口并按 `mode` 分发，策略只拿一个 client，改动最小；回退语义（`None` = 后端不可用、`[]` = 无内容）集中在 router 一处。
 - **web client 直接产 `DiscoveredContent`**：itemStruct 字段齐全（id / desc / createTime / author / stats / video），`parse_tiktok_item()` 一次映射到位；策略侧用 `_coerce_candidate` 兼容 yt-dlp dict 形态，单一策略代码服务两个后端。
-- **没有搜索策略**：访客身份搜索被上游 gate（实测），yt-dlp 亦无搜索 extractor；`search_videos()` 仅作 client 预留（配置登录 Cookie 后可用），不进 planner、不做策略。
+- **搜索策略按凭据挂载**：访客身份搜索被上游 gate（实测），因此 `tiktok_search` 只在"配置了登录 Cookie 且 mode 允许 web"时才由装配处挂载（router 的 `search_available` 判定），否则 producer 策略元组里根本没有它。登录态抓取违反 TikTok ToS、有账号风险，文档与配置注释都明确写出，默认不启用。planner 注入词原样使用（搜索相对 hashtag 的核心价值就是多词短语），但 producer 的 planner claim 生命周期仍只接 `tiktok_tag`，搜索走 LLM 画像生成 / 手动注入。
 - **feed 预算按"次"计费**：推荐流一次拉取即一批候选，`daily_feed_budget` 计拉取次数而非条目数，默认 3 次/天压低高曝光面。
 - **签名 vendor 而非自研**：复用上游已逐字节验证过的纯 Python 实现（Apache-2.0 兼容 MIT），文件头注明来源与修改；算法正确性测试归上游，本仓只测调用契约。
 - **`tiktok` 拆出 douyin 族**：过去 `tiktok` 是 douyin 平台族别名，URL / 平台归属会把 tiktok.com 错记到 douyin。拆分后两族的配额、海外网络提示和事件归因各自独立。

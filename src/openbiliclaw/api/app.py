@@ -20011,9 +20011,12 @@ def create_app(
                     mode=cfg.sources.tiktok.mode,
                     cookie=_mask(tt_cookie),
                     cookie_env=cfg.sources.tiktok.cookie_env,
+                    region=cfg.sources.tiktok.region,
+                    tz_name=cfg.sources.tiktok.tz_name,
                     tags=list(cfg.sources.tiktok.tags),
                     creators=list(cfg.sources.tiktok.creators),
                     daily_feed_budget=cfg.sources.tiktok.daily_feed_budget,
+                    daily_search_budget=cfg.sources.tiktok.daily_search_budget,
                     daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
                     daily_user_budget=cfg.sources.tiktok.daily_user_budget,
                     request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
@@ -22092,18 +22095,37 @@ def create_app(
                         new_env = str(tt_data["cookie_env"]).strip()
                         if new_env:
                             cfg.sources.tiktok.cookie_env = new_env
+                    for str_key in ("region", "tz_name"):
+                        # Empty geo values would gate every request; ignore
+                        # them rather than persisting a broken identity.
+                        if str_key in tt_data:
+                            new_geo = str(tt_data[str_key]).strip()
+                            if new_geo:
+                                setattr(cfg.sources.tiktok, str_key, new_geo)
                     if "cookie" in tt_data:
-                        # Manual paste — routed to data/tiktok_cookie.json;
-                        # never lands in config.toml. Optional credential:
-                        # no gate probe exists for TikTok yet, so the cookie
-                        # is stored as-is (guest identity stays the fallback).
-                        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+                        # Manual paste — routed to data/tiktok_cookie.json like
+                        # the unified credential endpoint; never lands in
+                        # config.toml. Same write gate as everywhere else
+                        # (spec D4): the passport-beat probe must accept the
+                        # cookie before it is stored.
+                        from openbiliclaw.sources.tiktok_auth import (
+                            TiktokCookieManager,
+                            resolve_tiktok_cookie,
+                        )
 
                         new_cookie = str(tt_data["cookie"]).strip()
                         if new_cookie and not _is_masked_echo(new_cookie):
-                            TiktokCookieManager(active_data_path).set_cookie(
-                                new_cookie, source="config-update"
-                            )
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_tiktok_cookie(
+                                    data_dir=active_data_path,
+                                    cookie_env=cfg.sources.tiktok.cookie_env,
+                                )
+                            if new_cookie != current:
+                                await _gate_credential("tiktok", new_cookie)
+                                TiktokCookieManager(active_data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
                     for list_key in ("tags", "creators"):
                         raw_list = tt_data.get(list_key)
                         if isinstance(raw_list, list):
@@ -22114,6 +22136,7 @@ def create_app(
                             )
                     for key in (
                         "daily_feed_budget",
+                        "daily_search_budget",
                         "daily_tag_budget",
                         "daily_user_budget",
                         "request_interval_seconds",

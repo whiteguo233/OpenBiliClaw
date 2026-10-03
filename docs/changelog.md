@@ -10,6 +10,13 @@
 - 新增 `tiktok_feed` 匿名推荐流策略（默认 `daily_feed_budget=3`）；`tiktok_tag` / `tiktok_user` 支持 web 路径，由 `TiktokRouterClient` 按 `[sources.tiktok].mode`（`auto` / `web` / `ytdlp`，默认 `auto` = web 优先 + yt-dlp 回退）分发；新增可选登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`），source-auth 契约改为可选凭据语义。
 - 新增默认依赖 `curl-cffi>=0.15`（Chrome TLS impersonation，与 yt-dlp 可选依赖同包兼容）。
 
+### 功能：TikTok Cookie 探针、凭据写入门面、地区配置与搜索策略（issue #88）
+
+- **Cookie 主动探针**：新增 `probe_tiktok_login()`，调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳）验证可选登录 Cookie；`success` → verified，401/403 / 显式 error → failed，传输失败与风控空响应 → indeterminate。`VERIFY_ACTIONS["tiktok"]` 登记为 `live_probe`，契约在无 Cookie 时仍诚实报 `verify_method="none"`。
+- **凭据写入门面**：`CREDENTIAL_SPECS["tiktok"]` 开通 `POST /api/sources/tiktok/credential`（结构门 sessionid / sessionid_ss / sid_tt 至少其一 + live gate），`PUT /api/config` 粘贴同强度验证，落盘 `data/tiktok_cookie.json`。
+- **地区参数配置化**：`[sources.tiktok].region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）注入访客身份 base params；空值回退默认。
+- **`tiktok_search` 搜索策略**（默认不启用）：仅当配置登录 Cookie 且 mode 允许 web 时挂载；planner 注入词原样使用（不做 hashtag 压缩），搜索响应混合卡片只收视频条目；`daily_search_budget` 默认 3。登录态抓取违反 TikTok ToS 有账号风险，文档与配置注释已明确。
+
 ### 功能：新增 TikTok 内容源（yt-dlp 轻量后端，实验性，issue #88）
 
 - 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。

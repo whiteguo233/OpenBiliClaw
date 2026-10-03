@@ -4491,7 +4491,10 @@ class TestTiktokSourceConfig:
         assert config.sources.tiktok.enabled is False
         assert config.sources.tiktok.mode == "auto"
         assert config.sources.tiktok.cookie_env == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert config.sources.tiktok.region == "JP"
+        assert config.sources.tiktok.tz_name == "Asia/Tokyo"
         assert config.sources.tiktok.daily_feed_budget == 3
+        assert config.sources.tiktok.daily_search_budget == 3
 
     def test_tiktok_source_fields_round_trip(self, tmp_path: Path) -> None:
         config = Config()
@@ -4501,6 +4504,9 @@ class TestTiktokSourceConfig:
         config.sources.tiktok.tags = ("booktok",)
         config.sources.tiktok.creators = ("@creator",)
         config.sources.tiktok.daily_feed_budget = 5
+        config.sources.tiktok.daily_search_budget = 7
+        config.sources.tiktok.region = "US"
+        config.sources.tiktok.tz_name = "America/New_York"
 
         config_path = tmp_path / "config.toml"
         save_config(config, config_path)
@@ -4512,6 +4518,16 @@ class TestTiktokSourceConfig:
         assert loaded.sources.tiktok.tags == ("booktok",)
         assert loaded.sources.tiktok.creators == ("@creator",)
         assert loaded.sources.tiktok.daily_feed_budget == 5
+        assert loaded.sources.tiktok.daily_search_budget == 7
+        assert loaded.sources.tiktok.region == "US"
+        assert loaded.sources.tiktok.tz_name == "America/New_York"
+
+    def test_tiktok_empty_geo_values_fall_back_to_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[sources.tiktok]\nregion = ""\ntz_name = "  "\n', encoding="utf-8")
+        loaded = load_config(config_path)
+        assert loaded.sources.tiktok.region == "JP"
+        assert loaded.sources.tiktok.tz_name == "Asia/Tokyo"
 
     def test_example_config_tiktok_section_parses(self) -> None:
         example_path = Path(__file__).parents[1] / "config.example.toml"
@@ -4522,4 +4538,7 @@ class TestTiktokSourceConfig:
         tiktok = example["sources"]["tiktok"]
         assert tiktok["mode"] == "auto"
         assert tiktok["cookie_env"] == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert tiktok["region"] == "JP"
+        assert tiktok["tz_name"] == "Asia/Tokyo"
         assert tiktok["daily_feed_budget"] == 3
+        assert tiktok["daily_search_budget"] == 3
