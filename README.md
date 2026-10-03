@@ -51,9 +51,7 @@
 
 **70 秒看懂 OpenBiliClaw：推荐、画像、兴趣探针、对话，以及桌面、插件和手机界面。**
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe" controls width="820"></video>
-</p>
+https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe
 
 [桌面实录 · 25 秒](#desktop-demo) · [插件实录 · 18 秒](#extension-demo) · [手机 Web 实录 · 20 秒](#mobile-demo) · [GIF 快速预览](docs/media/product-tour.gif) · [下载视频](docs/media/product-tour.mp4)
 
@@ -190,9 +188,7 @@
 
 **桌面实录 · 25 秒：** 展开推荐理由 → 加入稍后再看 → 到内容库确认。
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504" controls width="820"></video>
-</p>
+https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504
 
 [下载视频](docs/media/recommendation-walkthrough.mp4) · [GIF 预览](docs/media/recommendation-save.gif) · [本次桌面截图](docs/images/live-desktop-home.jpg)
 
@@ -224,9 +220,7 @@
 
 **手机 Web 实录 · 20 秒：** 点喜欢反馈 → 查看共享内容库。
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d" controls width="300"></video>
-</p>
+https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d
 
 [下载视频](docs/media/mobile-feedback.mp4) · [GIF 预览](docs/media/mobile-feedback.gif) · [本次手机截图](docs/images/live-mobile-recommend.jpg)
 

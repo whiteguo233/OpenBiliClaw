@@ -48,9 +48,7 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 
 **70-second product tour: recommendations, your profile, interest probes, chat, and all three interfaces.**
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe" controls width="820"></video>
-</p>
+https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe
 
 [Desktop recording · 25 sec](#desktop-demo) · [Extension recording · 18 sec](#extension-demo) · [Mobile Web recording · 20 sec](#mobile-demo) · [GIF preview](docs/media/product-tour.gif) · [Download video](docs/media/product-tour.mp4)
 
@@ -170,9 +168,7 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 **Desktop recording · 25 sec:** expand a reason → save for later → confirm in the library.
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504" controls width="820"></video>
-</p>
+https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504
 
 [Download video](docs/media/recommendation-walkthrough.mp4) · [GIF preview](docs/media/recommendation-save.gif) · [New desktop screenshot](docs/images/live-desktop-home.jpg)
 
@@ -204,9 +200,7 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 **Mobile Web recording · 20 sec:** send Like feedback → open the shared library.
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d" controls width="300"></video>
-</p>
+https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d
 
 [Download video](docs/media/mobile-feedback.mp4) · [GIF preview](docs/media/mobile-feedback.gif) · [New mobile screenshot](docs/images/live-mobile-recommend.jpg)
 

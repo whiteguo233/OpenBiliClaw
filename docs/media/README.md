@@ -140,5 +140,5 @@ remain available here. Attachment URLs and upload dates are recorded alongside t
 
 先核对[产品演示素材指南](../media-guide.md)中的真实性、隐私和压缩要求。更新视频或 GIF 时，同时更新
 本页的版本、日期、内容范围、文字稿、两套字幕和 [manifest.json](manifest.json)；截图与封面也应来自同一轮经过检查的真实运行。
-视频内容变化后重新上传 GitHub 附件，同步中英文 README 的播放器地址，并以未登录访问检查公开播放与文件校验值。
+视频内容变化后重新上传 GitHub 附件，同步中英文 README 的播放器地址，并在未登录的 GitHub README 页面检查实际播放与文件校验值；页面生成的临时签名 CDN 地址不能写回 README。
 不要只替换文件而保留旧的来源说明。网页引用、字幕语言切换和静态封面按[主页维护指南](../seo.md)验证。
