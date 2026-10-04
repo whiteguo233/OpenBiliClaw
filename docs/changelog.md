@@ -10,7 +10,7 @@
 
 - 公证凭据支持显式 `--macos-notary-keychain` / `APPLE_NOTARY_KEYCHAIN`；CI 将凭据保存到临时文件钥匙串，预检、上传、等待与诊断均使用同一路径，避免默认数据保护钥匙串保存后不可读。
 
-- Intel 本机 Developer ID 整包签名、严格签名校验和签名后启动自检已通过；Apple 公证仍待凭据持久化问题解决，尚未发布正式包。见[验证记录](testing/2026-10-05-macos-signing.md)。
+- Intel 本机 Developer ID 整包签名、严格签名校验和签名后启动自检已通过；公证凭据持久化问题已修复，应用已提交 Apple，审核中；尚未发布正式包。见[验证记录](testing/2026-10-05-macos-signing.md)。
 
 - 后端打包支持正式 Developer ID 签名、Hardened Runtime、应用与 DMG 公证/票据附加/Gatekeeper 验证；凭据不完整或公证失败会中止，保留 Apple 诊断记录。
 - 正式 DMG 使用拖入 Applications 的双语安装说明；实验包保留原助手。桌面 CI 共用临时钥匙串流程，并复用 Safari 的 Apple Secrets；本机登录 Xcode 不会自动配置 CI。详见 [打包模块](modules/packaging.md)。
