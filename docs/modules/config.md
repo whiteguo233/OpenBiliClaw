@@ -1487,3 +1487,5 @@ Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP
 ### TikTok 来源验收补全（2026-10-04）
 
 `sources.tiktok.request_interval_seconds` 现在实际约束每个上游请求（含 bootstrap/重试），formal 和 inspiration 共享。`daily_feed_budget` 是每日调用次数，不影响单次默认 12 条的取数上限；`mode=web` 在失败与冷却期间都禁止 yt-dlp 回退。
+
+TikTok 封面的 DoH 查询和固定地址下载遵循 `[network]` 路由，system 模式会把系统代理传给 libcurl；不存在额外 Cookie 或模型配置。该安全路径依赖 `cloudflare-dns.com` 可达，失败时不降级到未验证 DNS。

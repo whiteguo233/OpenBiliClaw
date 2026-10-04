@@ -464,32 +464,6 @@ async def test_fetch_routes_cn_cdn_direct_and_overseas_by_network_mode(
             assert "proxy" not in kwargs
 
 
-@pytest.mark.usefixtures("_reset_outbound_network")
-async def test_fetch_routes_tiktok_cdn_via_network_policy_not_direct(
-    fake_httpx: _FakeHTTPX,
-) -> None:
-    """TikTok cover CDNs are overseas: they must NOT join the CN direct-fetch
-    list and instead ride the ``[network]`` outbound routing policy, same as
-    i.ytimg.com (custom mode passes the explicit proxy)."""
-    from openbiliclaw import network
-
-    network.set_outbound_proxy(_GUARD_PROXY, mode="custom")
-
-    urls = [
-        "https://p16-sign.tiktokcdn.com/tos-maliva-avt-0068/x.jpeg",
-        "https://p16-sign-va.tiktokcdn-us.com/tos-useast5-avt-0068-tx/x.jpeg",
-        "https://p16-sign.tiktokcdn-eu.com/tos-alisg-avt-0068/x.jpeg",
-    ]
-    for url in urls:
-        fake_httpx.add(url, status_code=200, headers={"content-type": "image/jpeg"}, chunks=[b"a"])
-        await fetch_cover_bytes(url)
-
-    assert len(fake_httpx.client_kwargs) == 3
-    for kwargs in fake_httpx.client_kwargs:
-        assert kwargs.get("proxy") == _GUARD_PROXY
-        assert kwargs.get("trust_env") is False
-
-
 async def test_fetch_cover_bytes_rejects_non_whitelisted() -> None:
     with pytest.raises(CoverFetchError) as exc:
         await fetch_cover_bytes("https://example.com/a.jpg")

@@ -820,3 +820,5 @@ localhost。两个入口互斥，默认 HTTP 不变。
 ---
 
 *文档版本: v0.3 | 日期: 2026-08-09 | 状态: 持续更新*
+
+TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（保持 Host/SNI 与 network 代理）→ 有界缓存`。

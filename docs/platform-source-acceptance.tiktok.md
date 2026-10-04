@@ -5,10 +5,10 @@
 ## 范围与 provenance
 
 - Integration level：`discovery-only`；账号历史、画像初始化、增量行为采集、站内收藏均明确排除，见 [contract](platform-source-contract.tiktok.toml) 和 `tests/test_tiktok_contract.py`。
-- 原分支：`feat/tiktok-source`，起点 `8c4ed1a5eeef75ad8bafa6656ff219937115e4d7`，PR #275。修复 worktree：`.worktrees/tiktok-source-readiness`，分支 `fix/tiktok-source-readiness`；合入 main 基线 `d6588ce6`，保留 Ollama 修复和文档。
+- 原分支：`feat/tiktok-source`，起点 `8c4ed1a5eeef75ad8bafa6656ff219937115e4d7`，PR #275。修复 worktree：`.worktrees/tiktok-source-readiness`，分支 `fix/tiktok-source-readiness`；先合入 `d6588ce6`，再同步 main `00a193f8`（v0.3.226），保留 Ollama 修复、测试隔离及发版文档。
 - 所有 Python 命令使用 `PYTHONPATH="$PWD/src" ../../.venv/bin/python`，从修复 worktree 导入；不使用主工作区的 editable 源码。原 worktree 的未跟踪文件未修改。
-- 真实链路读取主工作区实际配置加载器的模型/网络设置；数据目录和 SQLite 全部改到临时目录，画像为显式的 science 合成兴趣。未修改用户配置或生产数据库。
-- Chrome/Firefox 构建版本 `0.3.225`，Chrome 装载根为 `extension/`（编译脚本在 `dist/`），Firefox 产物为 `extension/dist-firefox`；树摘要见 [builds.json](testing/assets/2026-10-04-tiktok/builds.json)。本轮未安装这两份构建，不声称有 installed-app 证据。
+- 真实链路读取主工作区实际配置加载器的模型/网络设置；数据目录和 SQLite 全部改到临时目录，画像为显式的 science 合成兴趣。实际配置 chat 默认链为 `deepseek-v4-flash` / `sensenova-6.8-flash-lite`（OpenAI-compatible provider），embedding 为本地 Ollama `nomic-embed-text`（768 维）；未以桩替换模型。未修改用户配置或生产数据库。
+- Chrome/Firefox 最初构建版本 `0.3.225`；同步 main 后重建为 `0.3.226`，Chrome 装载根为 `extension/`（编译脚本在 `dist/`），Firefox 产物为 `extension/dist-firefox`；树摘要见 [builds.json](testing/assets/2026-10-04-tiktok/builds.json)。本轮未安装这两份构建，不声称有 installed-app 证据。
 
 ## Gate ledger
 
@@ -29,16 +29,16 @@
 | Desktop / mobile full actions | required | NOT_RUN | 渲染验证不覆盖所有设置、保存及凭据动作 |
 | Extension popup / mobile credentials | required | BLOCKED | build/assets + unit/static 通过；已安装扩展登录态交互未执行 |
 | Image delivery | required | PASS | live-transport；3 个真实 cover 通过应用 fetch_cover_bytes，均为 image/*，见 covers.json |
-| Image proxy DNS / redirect boundary | required | NOT_RUN | 共享边界由已有自动测试覆盖；本轮未做真实恶意重定向/DNS 环境演练 |
+| Image proxy DNS / redirect boundary | required | PASS | TikTok 专用路径逐跳 DoH 解析、拒绝非 global/过渡地址并固定连接 IP；22 项安全测试 + 3/3 真实代理封面下载，见 covers-pinned.json。其他来源的旧下载路径不在此证明范围 |
 | Mobile deep link | N/A | PASS | HTTPS browser fallback，contract 测试 |
 | Native save | N/A | PASS | TikTok local-only，contract 测试；未调用站内 mutation |
-| Focused backend verification | required | PASS | 244 个专项测试通过；后增边界用例单独 14/14 通过 |
-| Full backend verification | required | NOT_RUN | 全量测试运行中，交付前更新结果 |
+| Focused backend verification | required | PASS | 244 个专项测试通过；后增 readiness 18 项通过，图片/CLI/API/声明/版本相关 118 项通过 |
+| Full backend verification | required | NOT_RUN | 全量扫描 10029 passed / 65 skipped / 5 failed；失败原因已修复，相关 178 项与图片/CLI/声明/版本 118 项复跑通过。最终整套绿灯待 PR CI，不能把分阶段复跑写成单次全绿 |
 | Chrome + Firefox tests/build/assets | required | PASS | 两目标构建、类型检查、资源检查通过；扩展测试 1536/1536 |
 | Safe real E2E | required | PASS | 匿名 tag → pending_eval → 真实 LLM → 推荐 API；限于此明确切片 |
 | Authenticated / expired credential E2E | required | BLOCKED | 需要用户实际登录环境，不捏造 Cookie 或账号身份 |
 | State-changing E2E | N/A | PASS | 当前请求为修复公开来源，未请求站内点赞/收藏/关注；上游 mutation 为 none |
-| Documentation / delivery | required | NOT_RUN | 模块、架构、CLI、隐私、第三方声明已同步；提交/推送记录待最终补齐 |
+| Documentation / delivery | required | PASS | 模块、架构、CLI、隐私、第三方声明已同步；修复提交 328bd5e1，后续主线同步及图片边界提交见 PR #275 |
 
 ## 传输与故障语义
 
@@ -56,7 +56,7 @@ HTTP 200、业务状态成功且存在显式列表时，`[]` 才是有效空结�
 | --- | ---: | --- |
 | `python scripts/audit_platform_source.py --contract docs/platform-source-contract.tiktok.toml --check --json` | 0 | [contract-audit.json](testing/assets/2026-10-04-tiktok/contract-audit.json)，只证明 registration_check |
 | `python -m ruff check src/ tests/ scripts/smoke_tiktok_pipeline.py` | 0 | 无 lint 错误 |
-| `python -m mypy src/` | 0 | 312 source files |
+| `python -m mypy src/` | 0 | 313 source files |
 | TikTok + planner + inspiration 专项 pytest | 0 | 244 passed；后增 readiness/contract/image-cache 边界用例 67 passed |
 | `npm run build && npm run verify:assets` | 0 | Chrome build/assets |
 | `npm run build:firefox && npm run verify:assets:firefox` | 0 | Firefox typecheck/build/assets |
@@ -68,6 +68,14 @@ HTTP 200、业务状态成功且存在显式列表时，`[]` 才是有效空结�
 
 ## UI 证据范围及剩余前提
 
-桌面/手机使用当前源码和真实推荐 DTO，在 loopback 的专用 fixture 服务渲染；封面字节来自应用真实下载路径。fixture 未提供 WebSocket，因此有 runtime-stream 重连控制台信息，这不算真实后端故障，也不当作全应用 E2E 通过。扩展仅构建/测试，尚未安装验收。截图：[桌面](testing/assets/2026-10-04-tiktok/desktop.png)、[手机](testing/assets/2026-10-04-tiktok/mobile.png)。
+桌面/手机使用当前源码和真实推荐 DTO，在 loopback 的专用 fixture 服务渲染；封面字节来自应用真实下载路径。fixture 未提供 WebSocket，因此有 runtime-stream 重连控制台信息，这不算真实后端故障，也不当作全应用 E2E 通过。扩展仅构建/测试，尚未安装验收。截图：[桌面](images/tiktok-2026-10-04/desktop.png)、[手机](images/tiktok-2026-10-04/mobile.png)。
 
-要关闭剩余 required 项，需要可用的 TikTok 登录会话及装有本次构建的浏览器，完成 Cookie 同步、passport 探针、真实关键词搜索、过期 Cookie 状态与三端凭据/设置操作；共享图片 DNS 安全边界仍需独立验收。所有公开来源实现修复可独立交付，账号行为接入属于 contract 明确排除的另一个功能范围。
+要关闭剩余 required 项，需要可用的 TikTok 登录会话及装有本次构建的浏览器，完成 Cookie 同步、passport 探针、真实关键词搜索、过期 Cookie 状态与三端凭据/设置操作；图片 DNS 边界已补齐并实测，不再是本次待办。所有公开来源实现修复可独立交付，账号行为接入属于 contract 明确排除的另一个功能范围。
+
+## 最终复核补充
+
+完整扫描耗时 34 分钟：5 项失败分别为旧 hashtag 断言、测试运行期间主线版本更新引发的两项版本一致性断言、推荐服务地址测试隔离和生成式第三方声明不同步。已修正断言、合入 main 的隔离 fixture，并把 signer notice 写入生成器而非手改生成结果；这 7 个相关测试文件合并复跑 178 项通过。安全下载路径与图片 API/CLI/声明/版本的 118 项测试另外通过。最终 CI 结果以 PR 当前 head 为准。
+
+TikTok 封面经 `runtime/tiktok_images.py` 处理：Cloudflare DNS-over-HTTPS 仅接收公开 CDN hostname，服从现有 network 路由；固定 IP 用 curl CONNECT_TO，Host/SNI/证书验证保留原域名。每次跳转重新执行白名单、443 端口、解析地址校验并使用新会话；DNS 失败时关闭本次下载，不回退未经验证的本地解析。正文流有 10MB 上限，拒绝后主动取消下载。真实网络最终结果见 [covers-pinned.json](testing/assets/2026-10-04-tiktok/covers-pinned.json)。此路径增加对 Cloudflare DoH 可达性的依赖，不携带账号 Cookie。
+
+实现依据：[libcurl CONNECT_TO](https://curl.se/libcurl/c/CURLOPT_CONNECT_TO.html)、[Cloudflare DoH JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。初次本地 DNS 地址固定测试超时，随后改为沿配置代理的 DoH 解析并完成 3/3 真图复验；不将中间失败结果写成成功。

@@ -1,9 +1,9 @@
 ; Inno Setup script for the OpenBiliClaw Windows installer.
 ;
 ; Compile on Windows (Inno Setup 6):
-;     iscc /DMyAppVersion=0.3.225 packaging\openbiliclaw.iss
+;     iscc /DMyAppVersion=0.3.226 packaging\openbiliclaw.iss
 ; Produces:
-;     dist\release\OpenBiliClaw-windows-0.3.225-Setup.exe
+;     dist\release\OpenBiliClaw-windows-0.3.226-Setup.exe
 ;
 ; Expects the PyInstaller onedir output at dist\OpenBiliClaw\ with a bundled
 ; ollama.exe + lib\ runners already staged inside it. The GitHub Actions

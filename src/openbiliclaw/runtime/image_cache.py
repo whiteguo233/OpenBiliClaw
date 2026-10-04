@@ -524,6 +524,13 @@ async def fetch_cover_bytes(url: str) -> tuple[bytes, str]:
     network failures additionally emit a per-host rate-limited WARNING.
     """
     parsed = _parse_image_url(url)
+    if any(
+        parsed.host == suffix or parsed.host.endswith(f".{suffix}")
+        for suffix in ("tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com")
+    ):
+        from openbiliclaw.runtime.tiktok_images import fetch_tiktok_cover
+
+        return await fetch_tiktok_cover(parsed)
     try:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT_SECONDS,

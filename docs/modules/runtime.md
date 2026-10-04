@@ -730,3 +730,7 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 ### TikTok 来源验收补全（2026-10-04）
 
 TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRequestState`：请求间隔和 429 冷却持久化到 data root 的独立 SQLite。关键词领取受剩余预算限制；部分失败保留成功候选并返回 degraded；Web 熔断 60 秒后自动恢复。
+
+### TikTok 封面网络边界
+
+`runtime.tiktok_images.fetch_tiktok_cover(httpx.URL) -> (bytes, content_type)` 由共享 image cache 对三个 TikTok CDN 后缀分发。每跳经配置网络路由调用 Cloudflare DoH（仅 hostname），拒绝非公开/过渡地址、非白名单 host 和非 443 端口，以 CONNECT_TO 固定 IP 并保持 TLS 主机身份；使用新会话、无账号 Cookie、10MB 流式上限。DNS 失败时不回退到不安全下载。其他来源保留原 image cache 路径。

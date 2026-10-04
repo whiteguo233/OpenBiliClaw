@@ -139,3 +139,5 @@ OpenBiliClaw 开发者不会出售用户数据，也不会为了与插件单一�
 ### TikTok 来源验收补全（2026-10-04）
 
 TikTok 的可选 Cookie 同步：扩展在 tiktok.com 检测到 sessionid/sessionid_ss/sid_tt 登录字段后，将该域 Cookie jar 发送至用户配置的后端统一凭据端点。后端验证会话后保存于本地 data/tiktok_cookie.json，用于可选搜索；不上传给开发者，不采集 TikTok 账号历史来初始化画像。限流账本 tiktok_request_state.sqlite3 仅保存请求时隙与冷却时间。
+
+TikTok 封面下载会通过当前网络路由向 Cloudflare DNS-over-HTTPS 查询公开 CDN 域名，以校验并固定连接地址。查询不包含图片路径/签名参数、Cookie、账号信息或画像；封面 HTTP 请求也不携带 TikTok 登录 Cookie。DoH 不可用时该次封面下载失败。

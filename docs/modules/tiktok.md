@@ -192,3 +192,7 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 
 `discover-tiktok` 在临时目录保存请求状态，不写生产候选、记忆或画像；search 需要有效登录态。
 完整 pipeline 脚本保留用户配置的模型与网络路线，以明确的合成 science 兴趣画像在隔离数据库中测试评估、入池和推荐 API。两者均只读上游。
+
+### TikTok 封面网络边界
+
+`runtime.tiktok_images.fetch_tiktok_cover(httpx.URL) -> (bytes, content_type)` 由共享 image cache 对三个 TikTok CDN 后缀分发。每跳经配置网络路由调用 Cloudflare DoH（仅 hostname），拒绝非公开/过渡地址、非白名单 host 和非 443 端口，以 CONNECT_TO 固定 IP 并保持 TLS 主机身份；使用新会话、无账号 Cookie、10MB 流式上限。DNS 失败时不回退到不安全下载。其他来源保留原 image cache 路径。

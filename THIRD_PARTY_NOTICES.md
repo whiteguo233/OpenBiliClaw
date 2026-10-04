@@ -2313,7 +2313,6 @@ for this implementation of Tailscale shall terminate as of the date
 such litigation is filed.
 ```
 
-
 ## Vendored TikTok request signer
 
 `src/openbiliclaw/sources/tiktok_sign.py` was vendored on 2026-10-03 from

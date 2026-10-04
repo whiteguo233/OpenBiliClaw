@@ -697,7 +697,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 148,
+          "line": 147,
           "path": "src/openbiliclaw/runtime/tiktok_producer.py"
         }
       ],
@@ -772,7 +772,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 53,
+          "line": 55,
           "path": "tests/test_tiktok_contract.py"
         }
       ],
@@ -787,7 +787,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 57,
+          "line": 59,
           "path": "tests/test_tiktok_contract.py"
         }
       ],
@@ -802,7 +802,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 61,
+          "line": 63,
           "path": "tests/test_tiktok_contract.py"
         }
       ],
@@ -817,7 +817,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 66,
+          "line": 68,
           "path": "tests/test_tiktok_contract.py"
         }
       ],
@@ -868,7 +868,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 70,
+          "line": 72,
           "path": "tests/test_tiktok_contract.py"
         }
       ],
@@ -1156,7 +1156,7 @@
         {
           "changed_since_base": null,
           "excerpt": "<source excerpt omitted>",
-          "line": 76,
+          "line": 78,
           "path": "tests/test_tiktok_contract.py"
         }
       ],

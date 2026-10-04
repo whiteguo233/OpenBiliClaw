@@ -26,6 +26,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore transport keys even when runtime code creates an absent key."""
+    for name in (RECOMMENDATION_SOCK_ENV, RECOMMENDATION_PORT_ENV):
+        # delenv(raising=False) does not record an absent key for teardown.
+        # Register it first so direct os.environ writes cannot leak into later
+        # API tests and incorrectly enable the recommendation worker proxy.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+
+
 def _hold_loopback_port(port: int = 0) -> socket.socket:
     """Bind and hold a 127.0.0.1 port so probes see it as occupied."""
     held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

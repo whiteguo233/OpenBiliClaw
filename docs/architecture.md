@@ -599,3 +599,5 @@ flowchart LR
 ```
 
 状态库仅含时间戳，独立于候选数据库；失败原因经 strategy intermediates 返回 producer，成功分支候选仍可入池。
+
+TikTok 图片：`image_cache → tiktok_images → 配置网络路由内的 Cloudflare DoH → 公网 IP 固定 + 原 host TLS 校验 → 有界图片流/缓存`；每次 redirect 重走校验，无账号 Cookie。
