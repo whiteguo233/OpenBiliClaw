@@ -225,3 +225,26 @@ def test_strategy_platform_and_names() -> None:
     user = TiktokUserStrategy(client=client, llm_service=llm)  # type: ignore[arg-type]
     assert (tag.name, tag.source_platform) == ("tiktok_tag", "tiktok")
     assert (user.name, user.source_platform) == ("tiktok_user", "tiktok")
+
+
+async def test_engine_default_phase_preserves_claimed_tiktok_keyword_and_identity() -> None:
+    """The default engine path must consume the claimed word without asking an LLM."""
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+
+    client = _FakeTiktokClient()
+    llm = _FakeLLMService(payload='{"tags": ["unclaimed"]}')
+    engine = ContentDiscoveryEngine(llm_service=llm)
+    engine.register_strategy(TiktokTagStrategy(client=client, llm_service=llm))
+
+    rows = await engine.produce_candidates(
+        _profile(),
+        strategies=["tiktok_tag"],
+        limit=2,
+        keywords=["science experiments"],
+        keyword_ids={"science experiments": 42},
+    )
+
+    assert [tag for tag, _ in client.tag_calls] == ["scienceexperiments"]
+    assert llm.calls == []
+    assert rows
+    assert all(row.source_keyword_id == 42 for row in rows)

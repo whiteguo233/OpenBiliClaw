@@ -1,6 +1,6 @@
 # TikTok 来源验收报告
 
-本轮日期：2026-10-04。结论为 **incremental only**：公开发现链路已实现并有真实模型证据；登录态搜索、已安装扩展 Cookie 同步及三端完整交互仍缺验收，不能把实现完成等同于所有 required gate 通过。
+本轮日期：2026-10-04，真实 HTTP/UI 续验于 2026-10-05 完成。结论为 **incremental only**：公开发现链路已实现并有真实模型证据；登录态搜索、已安装扩展 Cookie 同步及三端完整交互仍缺验收，不能把实现完成等同于所有 required gate 通过。
 
 ## 范围与 provenance
 
@@ -25,8 +25,8 @@
 | Eval / recommendation | required | PASS | full-pipeline；真实配置模型评估 4 条，3 条入池，3 条生成推荐文案，API HTTP 200 返回 3 条 |
 | Config / API / status convergence | required | PASS | unit/static + config-show；已更新凭据 verified 文案，明确搜索需另测 |
 | Setup surface | N/A | PASS | guidedInit=false，contract 测试 |
-| Desktop / mobile recommendation rendering | required | PASS | 真实推荐 DTO 的隔离 HTTP 渲染 fixture，TikTok 身份、计数、推荐文字可见；不是 installed-app 全流程 |
-| Desktop / mobile full actions | required | NOT_RUN | 渲染验证不覆盖所有设置、保存及凭据动作 |
+| Desktop / mobile recommendation rendering | required | PASS | 2026-10-05 正常 Uvicorn 后端 + 独立 Chrome 普通 UI，真实封面/推荐/跨端本地保存；见续验 |
+| Desktop / mobile full actions | required | PARTIAL | 桌面来源开关、mode/region/budget 保存及过滤、两端本地保存通过；手机无来源凭据管理入口，完整动作仍未齐备 |
 | Extension popup / mobile credentials | required | BLOCKED | build/assets + unit/static 通过；已安装扩展登录态交互未执行 |
 | Image delivery | required | PASS | live-transport；3 个真实 cover 通过应用 fetch_cover_bytes，均为 image/*，见 covers.json |
 | Image proxy DNS / redirect boundary | required | PASS | TikTok 专用路径逐跳 DoH 解析、拒绝非 global/过渡地址并固定连接 IP；22 项安全测试 + 3/3 真实代理封面下载，见 covers-pinned.json。其他来源的旧下载路径不在此证明范围 |
@@ -36,7 +36,7 @@
 | Full backend verification | required | PASS | 代码基线 `1c632c29` 云端全量 9970 passed / 111 skipped / 0 failed；其后资料缺 ID 补丁的相关 157 项通过。最新 head 的完整状态以 PR CI 为准，分阶段证据不冒充同一次执行 |
 | Chrome + Firefox tests/build/assets | required | PASS | 两目标构建、类型检查、资源检查通过；扩展测试 1536/1536 |
 | Safe real E2E | required | PASS | 匿名 tag → pending_eval → 真实 LLM → 推荐 API；限于此明确切片 |
-| Authenticated / expired credential E2E | required | BLOCKED | 需要用户实际登录环境，不捏造 Cookie 或账号身份 |
+| Authenticated / expired credential E2E | required | BLOCKED | 无效测试 Cookie 的真实 passport 拒绝且不落盘已通过；有效登录/自然过期场景仍无会话 |
 | State-changing E2E | N/A | PASS | 当前请求为修复公开来源，未请求站内点赞/收藏/关注；上游 mutation 为 none |
 | Documentation / delivery | required | PASS | 模块、架构、CLI、隐私、第三方声明已同步；修复提交 328bd5e1，后续主线同步及图片边界提交见 PR #275 |
 
@@ -89,3 +89,21 @@ TikTok 封面经 `runtime/tiktok_images.py` 处理：Cloudflare DNS-over-HTTPS �
 5. 把结果、受测 commit、安装路径与真实 pipeline 终态补回本报告；只有相应 required 行逐一 PASS，才把总体 verdict 从 incremental only 改为 complete。
 
 资料查找终态补充：HTTP/业务成功但作者资料缺少 secUid，或话题资料缺少 challenge ID，均记录 `invalid_response`；不能把这种无法确认的响应视为“用户/话题不存在”并消费关键词。对应用户与话题反例已加入 `tests/test_tiktok_web.py`。
+
+
+## 真实 HTTP 后端与浏览器续验（2026-10-05）
+
+本轮使用 `0a65d30c` 加发现第二阶段参数转发修复，在独立 worktree 启动正常 `create_app()` + Uvicorn（loopback 18477），未注入假 API 响应、假模型或 fake SoulEngine。主项目配置通过默认 loader 读取，保留 config.local 与环境覆盖；保存到权限 0700 的临时 runtime 根后，配置/数据/日志均隔离。画像为显式合成的 science 兴趣；关闭周期调度，仅手动运行一次真实 producer，评估最小批量调为 1、等待窗口为 0，使用真实 inline evaluator 与推荐引擎。这里证明有界人工触发链路，不冒充无人值守调度验收。
+
+实际发现一个此前测试遗漏：默认两阶段发现的第二阶段未转发 `keywords` / `keyword_ids`。TikTok 已 claim `science`，却进入 LLM 标签生成。新回归先失败（请求 unclaimed 而非 scienceexperiments），补齐参数转发后通过。影响范围内的 engine/keyword yield/TikTok 测试共 199 passed；Ruff 全 src/tests、MyPy 313 文件通过。此前 head `0a65d30c` 的全量 CI 为 9973 passed / 111 skipped；本轮补丁的 199 项是独立执行，不冒充重新全量。
+
+[脱敏原始结果](testing/assets/2026-10-05-tiktok/live-http-e2e.json)：
+
+- 真实 TikTok 话题请求发现 4、入候选 4；真实评估 4、入池 3、低分拒绝 1；生成文案 3；真实 TCP HTTP `/api/recommendations` 返回 3 条 TikTok。关键词 `science` 终态 used。
+- 评估遇到主服务限流并自动 fallback，成功调用模型 `sensenova-6.8-flash-lite`；文案成功调用 `deepseek-v4-flash`。未更换配置模型或伪造评估。
+- 桌面设置修改 mode=auto、region=US、feed budget=4，真实保存、后端读取和热加载一致；来源 off/on 保存后分别读取 false/true。以上修改仅在临时配置内。无 Cookie 测试连接正确提示访客可发现、搜索需登录。
+- 桌面 TikTok 过滤、真实封面/计数/文案展示通过；桌面收藏 1 条，手机稍后再看 1 条，真实 saved API 两条均为 TikTok、sync_status=unsupported。手机可看到桌面收藏的选中状态。没有 TikTok 站内 mutation。
+- 向统一 credential API 提交专用无效测试值，真实 passport probe 返回 cookie_invalid，accepted=false、persisted=false、checked=live_probe；临时数据目录没有 Cookie 文件。这是无效凭据拒绝验收，不是有效登录后自然过期的替代证据。
+- Playwright 独立 Chrome profile 仅用于普通桌面/移动网页验证：两次连接浏览器 inventory 均失败，主项目及原 TT worktree 均无可用 Cookie，故没有已安装扩展、有效登录搜索、Cookie 自动同步证据。手机版现有入口只有保存同步设置，没有平台来源/凭据管理入口；不能标为手机凭据流程通过。
+
+截图：[真实后端桌面推荐](images/tiktok-2026-10-05/desktop.png)、[真实后端手机保存状态](images/tiktok-2026-10-05/mobile.png)。本轮替代此前渲染 fixture 的网页证据，但总体仍为 **incremental only**。有效登录搜索、安装版扩展同步和完整凭据跨端流程仍待完成。临时浏览器和 Uvicorn 在验收后关闭；生产服务、配置、数据及已安装扩展未改动。
