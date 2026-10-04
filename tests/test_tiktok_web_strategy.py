@@ -101,7 +101,7 @@ async def test_feed_strategy_backend_unavailable_returns_empty() -> None:
     )
 
     assert await strategy.discover(_profile(), limit=10) == []
-    assert strategy.last_intermediates == {"fetched": 0}
+    assert strategy.last_intermediates == {"fetched": 0, "errors": {"feed": "unavailable"}}
 
 
 def test_feed_strategy_platform_and_name() -> None:

@@ -3650,3 +3650,18 @@ async def test_coexist_explore_budget_one_extra_call_when_due(db: Database) -> N
     assert _by_caller(llm_on.calls, "discovery.keyword_planner") == _by_caller(
         llm_off.calls, "discovery.keyword_planner"
     )
+
+
+async def test_tiktok_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
+    profile = _profile(("AI Agent", 0.93), ("动画制作", 0.81))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={"tiktok": ["AI Agent 热议", "动画制作 业内回应"]})
+    deficit = _FakeDeficitSource(deficits={"tiktok": 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert ledger == {"tiktok": 2}
+    assert len(llm.calls) == 1
+    assert "tiktok" in llm.calls[0]["user"]
+    assert _pending(db, "tiktok", digest) == ["AI Agent 热议", "动画制作 业内回应"]

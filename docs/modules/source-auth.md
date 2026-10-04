@@ -320,3 +320,8 @@ sid_tt 至少其一（访客 jar 只有 ttwid / msToken），live gate 复用同
 - `src/openbiliclaw/web/shared/source-status.js`（三端共享渲染）
 - `scripts/source_contract_metrics.py`（CI 量化门）
 - `tests/test_source_auth_contract.py`、`tests/test_douyin_login_probe.py`
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 的 passport heartbeat verified 只证明会话有效；搜索可用性须由单独真实搜索验收证明，不由凭据验证状态推导。

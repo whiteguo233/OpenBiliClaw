@@ -395,12 +395,11 @@ async def test_search_gated_returns_empty_with_warning(
     )
     client = _client(session)
 
-    with caplog.at_level(logging.WARNING):
-        results = await client.search_videos("cat", limit=10)
+    with caplog.at_level(logging.WARNING), pytest.raises(RuntimeError, match="unavailable"):
+        await client.search_videos("cat", limit=10)
 
     # Search degrades to [] (never a backend-down signal): guest identities
     # are gated upstream and there is no yt-dlp search fallback.
-    assert results == []
     assert any("login" in record.getMessage() for record in caplog.records)
 
 
@@ -484,7 +483,8 @@ async def test_router_web_mode_never_falls_back() -> None:
     ytdlp = _StubYtdlp()
     router = TiktokRouterClient(web=web, ytdlp=ytdlp, mode="web")  # type: ignore[arg-type]
 
-    assert await router.get_user_videos("creator", limit=5) == []
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await router.get_user_videos("creator", limit=5)
     assert ytdlp.user_calls == 0
 
 
@@ -749,5 +749,12 @@ async def test_router_search_videos_delegates_to_web_only() -> None:
     web = _client(session, login_cookie="sessionid=abc")
     router = TiktokRouterClient(web=web, mode="ytdlp")
     # ytdlp mode: search has no fallback, so it is empty without touching web.
-    assert await router.search_videos("cat", limit=5) == []
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await router.search_videos("cat", limit=5)
     assert session.urls == []
+
+
+def test_tiktok_favorite_count_matches_collect_count():
+    content = parse_tiktok_item(_item_struct())
+    assert content is not None
+    assert content.favorite_count == content.collect_count == 45

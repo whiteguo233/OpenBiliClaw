@@ -2,8 +2,9 @@
 
 A TikTok login cookie is *optional*: the web backend runs anonymously on a
 minted guest identity (see ``tiktok_web.py``). When present, the cookie
-unlocks surfaces the guest identity cannot reach (keyword search today,
-higher rate limits in general). Resolution mirrors the Douyin/X pattern:
+enables attempts at surfaces the guest identity cannot reach (keyword search).
+Session verification does not prove search availability or higher quotas.
+Resolution mirrors the Douyin/X pattern:
 environment variable first, ``data/tiktok_cookie.json`` as the fallback.
 """
 

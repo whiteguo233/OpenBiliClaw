@@ -14795,6 +14795,53 @@ def _run_douyin_formal_discovery(*, limit: int) -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("discover-tiktok")
+def discover_tiktok_smoke(
+    mode: str = typer.Option("feed", help="只读取数分支：feed / tag / user / search"),
+    query: str = typer.Option("", help="标签、创作者或搜索词；feed 不需要"),
+    limit: int = typer.Option(5, min=1, max=20, help="最多显示的条目数"),
+) -> None:
+    """Read TikTok metadata with isolated state; never write the user's candidate pool."""
+    import tempfile
+
+    from openbiliclaw.api.runtime_context import _build_tiktok_client
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+    if mode not in {"feed", "tag", "user", "search"} or (mode != "feed" and not query.strip()):
+        raise typer.BadParameter("mode 必须是 feed/tag/user/search，非 feed 分支需要 --query")
+    cfg = load_config()
+    from openbiliclaw.network import set_outbound_proxy
+
+    set_outbound_proxy(cfg.network.proxy, mode=cfg.network.mode)
+    cookie = resolve_tiktok_cookie(data_dir=cfg.data_path, cookie_env=cfg.sources.tiktok.cookie_env)
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-tiktok-smoke-") as directory:
+        cfg.data_dir = directory
+        client = _build_tiktok_client(cfg, cfg.sources.tiktok)
+        if client.web is not None:
+            client.web.identity.login_cookie = cookie
+
+        async def run() -> list[Any]:
+            if mode == "feed":
+                rows = await client.get_feed(limit=limit)
+                if rows is None:
+                    raise RuntimeError("TikTok feed unavailable")
+                return list(rows)
+            method = {
+                "tag": client.get_tag_videos,
+                "user": client.get_user_videos,
+                "search": client.search_videos,
+            }[mode]
+            return list(await method(query, limit=limit))
+
+        try:
+            rows = asyncio.run(run())
+        except Exception as exc:
+            console.print(f"TikTok smoke: {getattr(exc, 'reason', type(exc).__name__)}")
+            raise typer.Exit(code=1) from exc
+        console.print(f"TikTok {mode}: fetched={len(rows)}; storage=isolated; candidate_writes=0")
+
+
 def _run_tiktok_discovery(*, limit: int) -> None:
     """Run the formal TikTok producer without the daemon master switch."""
     from openbiliclaw.api.runtime_context import build_tiktok_discovery_producer
@@ -14886,7 +14933,9 @@ def _run_tiktok_discovery(*, limit: int) -> None:
     )
 
     _print_page_title("TikTok 内容发现", "正式 producer · unified keywords · candidate pipeline")
-    if reason in {"ok", "empty"}:
+    if reason in {"ok", "empty", "degraded"}:
+        if reason == "degraded":
+            console.print("  [yellow]部分 TikTok 分支失败，已保留成功候选；详见后端日志。[/yellow]")
         _print_key_value_table(
             "发现摘要",
             [
@@ -14904,6 +14953,8 @@ def _run_tiktok_discovery(*, limit: int) -> None:
         return
 
     messages = {
+        "rate_limited": ("warning", "TikTok 暂时限流", "共享冷却期结束后会自动恢复。"),
+        "no_keywords": ("info", "暂无待执行关键词", "等待关键词规划器补充。"),
         "disabled": ("info", "TikTok discovery 已禁用", "请启用 TikTok 来源后重试。"),
         "throttled": (
             "info",

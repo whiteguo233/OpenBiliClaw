@@ -1176,7 +1176,7 @@ async def test_tiktok_platform_backend_falls_back_to_tag_listing_for_guest() -> 
         search_available = False
 
         async def get_tag_videos(self, tag: str, *, limit: int) -> list[dict]:
-            assert tag == "urban sketching"
+            assert tag == "urbansketching"
             assert limit == 3
             # yt-dlp raw entry shape (flat extraction).
             return [

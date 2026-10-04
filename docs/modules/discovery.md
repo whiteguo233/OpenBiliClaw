@@ -1491,3 +1491,8 @@ for each epoch:
 24. **长期避雷项必须进入发现前置上下文**：近期 negative exemplars 只能覆盖短期样本，`disliked_topics` 才代表稳定画像里的长期避让；因此 discovery 的共享 `profile_summary` 必须显式携带它，供 query 生成和内容评估共同消费
 25. **画像摘要要保留决策上下文而不是只传兴趣标签**：Search / Trending / Explore 都在问“什么内容适合这个人”，只传兴趣名会让模型退化成关键词扩写；因此 `build_profile_summary()` 同步携带认知风格、价值观、当前阶段、MBTI、近期觉察、当前洞察、来源分布和兴趣来源时间，但仍按前若干项裁剪，避免无界 prompt 膨胀
 26. **评估批次保留成功 sibling**：keyed partial payload 先写入有效评分，只对缺失 ID 使用共享 depth=3 / 六次额外请求预算；预算耗尽仍未解析的候选标记 `evaluation_response_missing`，不以零分拒绝，而是在 claim token 仍匹配时无 attempt 增量回到 `pending_eval`。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；匿名 inspiration 与 formal tag 使用同一 hashtag 归一化。失败查询不会标 used，feed 单次 12 条与每日调用次数解耦，收藏计数贯穿 favorite_count/collect_count。

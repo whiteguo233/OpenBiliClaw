@@ -725,3 +725,8 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 | 遗留队列恢复 | `ServeOutbox.append()` 用独立原子发布的 batch 文件；`claim_batches()` 将旧 JSONL 纳入独立批次，`acknowledge(batch)` 只删除该已提交批次。失败保留待重试，处理中新增批次不会被清空。升级时需一起重启旧 API / worker，不能混跑仍写旧 JSONL 的旧版本。 |
 
 公开 API：`ServeOutbox.read_all()/count()` 兼容读取遗留文件和新 spool；worker 排空流程使用逐批 ACK，`clear()` 只用于显式清理。普通推荐不再产生 outbox 记录；worker 快照仍可用于观察，不能作为已消费状态的权威来源。没有新增配置或依赖。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRequestState`：请求间隔和 429 冷却持久化到 data root 的独立 SQLite。关键词领取受剩余预算限制；部分失败保留成功候选并返回 degraded；Web 熔断 60 秒后自动恢复。

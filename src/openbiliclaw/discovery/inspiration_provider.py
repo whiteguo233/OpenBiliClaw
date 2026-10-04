@@ -1158,6 +1158,9 @@ class TiktokPlatformSearchBackend:
     def __init__(self, client: object) -> None:
         self._client = client
 
+    def cooldown_remaining(self) -> float:
+        return _backend_cooldown_remaining(self._client)
+
     async def search(self, query: str, *, limit: int, pages: int = 1) -> list[ExaPreviewItem]:
         count = max(1, int(limit))
         rows: list[Any] | None
@@ -1170,7 +1173,12 @@ class TiktokPlatformSearchBackend:
             get_tag = getattr(self._client, "get_tag_videos", None)
             if not callable(get_tag):
                 return []
-            rows = await get_tag(query, limit=count)
+            from openbiliclaw.sources.tiktok import tag_from_query
+
+            tag = tag_from_query(query)
+            if not tag:
+                return []
+            rows = await get_tag(tag, limit=count)
         previews = [_tiktok_preview(row) for row in rows or []]
         return _dedupe_previews([item for item in previews if item is not None], limit=count)
 

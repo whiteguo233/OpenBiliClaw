@@ -633,7 +633,8 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ TiktokDiscoveryProducer: Web API 访客身份 tiktok_feed/tag/user  │ │
+│  │ TiktokDiscoveryProducer: Web API 访客身份 feed/tag/user/search │ │
+│  │ formal/inspiration → TiktokRequestState → shared pacing/429   │ │
 │  │   (签名+curl_cffi, mode=auto 时 yt-dlp 兜底, 实验性)            │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -684,6 +685,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ Cheaper Inference        │  │                        │   │
 │  └──────────────────────────┘  └────────────────────────┘   │
 │  可选视觉 / 弹幕预热：质心、关键帧、完整 document embedding；endpoint provenance + stable slot retry │
+│  Local embedding: auto GPU → runner failure → CPU → validated vector      │
 │  Desktop bundle: official Ollama.app runtime (ollama + runner dylibs/assets) │
 │  LLMService caller bucket → inherit global chain / custom chain │
 │  cognition named views → task gate: awareness_confusions compact; others legacy │

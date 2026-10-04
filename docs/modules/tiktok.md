@@ -24,7 +24,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 2. **签名**：每个请求用 vendor 的 `sources/tiktok_sign.py`（来源 Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0，纯 stdlib）产出 `X-Dynosaur` / `msToken` / `X-Bogus` / `X-Gnarly` 四个签名参数；签名时的 `user_agent` 与发送 UA 完全一致（`browser_version` 参数同）。
 3. **失效检测**：响应 0 字节 + `tt_orcas_res: 1` = 被 gate（身份/参数问题，**不是传输问题，不无脑重试**）。触发一次重新 bootstrap 后重试；仍被 gate 则该次调用降级为"后端不可用"（`auto` 模式下 router 回退 yt-dlp）。
 4. **传输重试**：TikTok 边缘对数据中心 IP 做 TLS 指纹级重置（实测约 5/6 失败率），每次请求最多重试 5 次传输错误。
-5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于解锁关键词搜索与更高限额；不配置时访客身份是完整合法的运行模式。已配置的 Cookie 可通过 `/passport/token/beat/web/` 主动探针验证（无签名、仅带 cookie 的会话心跳），写入门面（`PUT /api/config` 与 `POST /api/sources/tiktok/credential`）在保存前都会先过该探针，验证不通过不落盘。**浏览器插件自动同步**：安装了扩展的用户只需在浏览器登录 tiktok.com，service worker 检测到 sessionid 家族 Cookie 后会把完整 jar 推送到统一凭据端点（与手动粘贴同一验证强度）；未登录 / 登出时静默跳过（访客身份照常工作），无任何报错打扰。
+5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于尝试登录态关键词搜索（会话有效不证明搜索可用，也不承诺更高限额）；不配置时访客身份是完整合法的运行模式。已配置的 Cookie 可通过 `/passport/token/beat/web/` 主动探针验证（无签名、仅带 cookie 的会话心跳），写入门面（`PUT /api/config` 与 `POST /api/sources/tiktok/credential`）在保存前都会先过该探针，验证不通过不落盘。**浏览器插件自动同步**：安装了扩展的用户只需在浏览器登录 tiktok.com，service worker 检测到 sessionid 家族 Cookie 后会把完整 jar 推送到统一凭据端点（与手动粘贴同一验证强度）；未登录 / 登出时静默跳过（访客身份照常工作），无任何报错打扰。
 6. **地区参数**：`region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）随每个请求发送，应匹配代理出口地区；被风控 gate（空响应）时首先检查这两项。
 
 请求构造要点（2026-10-03 spike 实测固化）：`aid=1988`、`device_platform=web_pc`、19 位随机 `device_id`（**缺失会导致 0 字节空响应**）、`region` / `priority_region` / `tz_name` 默认匹配东京出口（JP / Asia/Tokyo）；HTTP 层用 curl_cffi `impersonate="chrome"`；代理策略与 yt-dlp 后端一致（`outbound_ytdlp_proxy()`：`system` 继承环境、`direct` 强制直连、`custom` 固定代理）。
@@ -50,8 +50,8 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 
 `[sources.tiktok].mode`：
 
-- `auto`（默认）：Web API 优先；单次调用的后端级失败（传输耗尽或重 bootstrap 后仍被 gate）回退 yt-dlp；连续 3 次后端失败后 web 后端停放至进程结束，全部由 yt-dlp 服务。**返回空列表不等于失败**（标签/用户可能真的没有内容），不触发回退。
-- `web`：强制 Web API；失败返回空结果，不回退。curl_cffi 缺失时 producer 不装配（日志说明）。
+- `auto`（默认）：Web API 优先；单次调用的后端级失败（传输耗尽或重 bootstrap 后仍被 gate）回退 yt-dlp；连续 3 次后端失败后 Web 后端冷却 60 秒，随后自动恢复探测。**返回空列表不等于失败**（标签/用户可能真的没有内容），不触发回退。
+- `web`：强制 Web API；失败保留错误状态，包括熔断期间也不回退。curl_cffi 缺失时 producer 不装配（日志说明）。
 - `ytdlp`：仅 yt-dlp（Web API 后端引入前的行为）；`tiktok_feed` 策略在该模式下无产出（yt-dlp 无 Feed 面）。
 
 分发由 `TiktokRouterClient` 完成，它实现与 `TiktokClient` 相同的 async 接口，策略代码不感知后端差异。
@@ -153,7 +153,7 @@ result = await producer.produce_if_due(limit=20)
 | `sources.tiktok.daily_search_budget` | `3` | `tiktok_search` 每日关键词上限（1 单位 = 1 个关键词）；搜索需登录 Cookie，默认不启用 |
 | `sources.tiktok.daily_tag_budget` | `0` | `tiktok_tag` 每日执行预算；`0` = 不设每日上限 |
 | `sources.tiktok.daily_user_budget` | `0` | `tiktok_user` 每日执行预算；`0` = 不设每日上限 |
-| `sources.tiktok.request_interval_seconds` | `2` | 预留的请求间隔配置位（与 YouTube 对齐） |
+| `sources.tiktok.request_interval_seconds` | `2` | 实际请求最小间隔，包含 bootstrap 与重试；formal/inspiration 共享 SQLite 时隙 |
 | `sources.tiktok.min_interval_minutes` | `3` | producer 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都可检查执行 |
 | `scheduler.pool_source_shares.tiktok` | `1` | TikTok 平台族候选池占比 |
 
@@ -167,4 +167,28 @@ result = await producer.produce_if_due(limit=20)
 - **feed 预算按"次"计费**：推荐流一次拉取即一批候选，`daily_feed_budget` 计拉取次数而非条目数，默认 3 次/天压低高曝光面。
 - **签名 vendor 而非自研**：复用上游已逐字节验证过的纯 Python 实现（Apache-2.0 兼容 MIT），文件头注明来源与修改；算法正确性测试归上游，本仓只测调用契约。
 - **`tiktok` 拆出 douyin 族**：过去 `tiktok` 是 douyin 平台族别名，URL / 平台归属会把 tiktok.com 错记到 douyin。拆分后两族的配额、海外网络提示和事件归因各自独立。
-- **不做的事**：账号行为采集、个性化登录态 Feed、视频下载、`recommendation/storage` 的 bvid 遗留路径、浏览器扩展改动，全部明确不在本模块范围。
+- **不做的事**：账号行为采集、个性化登录态 Feed、视频下载、账号画像初始化和上游原生收藏不在本次 discovery-only 范围；扩展支持 Cookie 同步与设置展示。
+
+
+## 2026-10-04 验收修复与运行状态
+
+范围冻结为 `discovery-only`，见 [机器契约](../platform-source-contract.tiktok.toml) 与
+[验收记录](../platform-source-acceptance.tiktok.md)。Cookie 心跳成功只证明会话仍有效，不能代替搜索端点的真实成功证据。
+
+- `TiktokRequestError.reason` 区分 `rate_limited / login_required / upstream_error / invalid_response / unavailable / fallback_unavailable`；HTTP/业务错误、challenge、未知结构不再算正常空列表。失败查询保留诊断，成功查询候选不丢弃；producer 返回 `degraded` 或错误。
+- `TiktokRequestState(path, interval_seconds)` 的 `before_request()`、`defer(seconds)`、`cooldown_remaining()` 供正式发现和 inspiration 共用。账本位于用户 data root 的 `tiktok_request_state.sqlite3`，只保存时间戳，不存 Cookie 或响应正文；跨进程原子保留请求时隙，429 冷却在进程重启后仍有效。
+- 每日 search/tag 预算在领取关键词前约束数量。失败词标 failed、成功词标 used，未领取的词保留 pending；实际执行量不再截断后少记。feed 每次默认取 12 条，每日调用预算独立计数。
+- 强制 `web` 永不进入 yt-dlp；`auto` 熔断 60 秒后可恢复。`ytdlp` 模式不调度不存在的 feed 分支。
+- 收藏数同时映射 `favorite_count` 和兼容字段 `collect_count`，两种 transport 保持一致。
+
+### 只读 smoke
+
+```bash
+openbiliclaw discover-tiktok --mode feed --limit 5
+openbiliclaw discover-tiktok --mode tag --query science --limit 5
+openbiliclaw discover-tiktok --mode search --query "machine learning" --limit 5
+PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.toml
+```
+
+`discover-tiktok` 在临时目录保存请求状态，不写生产候选、记忆或画像；search 需要有效登录态。
+完整 pipeline 脚本保留用户配置的模型与网络路线，以明确的合成 science 兴趣画像在隔离数据库中测试评估、入池和推荐 API。两者均只读上游。

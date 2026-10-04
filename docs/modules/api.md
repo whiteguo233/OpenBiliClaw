@@ -8,6 +8,13 @@
 
 `GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型。
 
+## 本地向量 CPU 回退后的健康检查
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/health` | ✅ | 本地 Ollama 已因 runner 错误切到 CPU 时，probe 超时返回 `embedding_ready=false`；有效向量成功后恢复为 true。普通未回退冷加载仍沿用原兼容策略。 |
+| 初始化 / embedding 诊断 | ✅ | 正式请求与诊断共享 CPU 选择，CPU 也失败时保留具体故障；不把 `/api/version` 成功当作模型可用。 |
+
 ## 推荐通知测试生命周期
 
 `POST /api/recommendations/append` 会在响应关键路径外安排推荐池状态通知。验证该通知的测试使用 `httpx.AsyncClient` + `ASGITransport`，让请求和有界异步等待共享 pytest 的事件循环；不得在请求级同步 `TestClient` portal 已关闭后用阻塞等待验证后台任务。追加推荐回归覆盖无延迟及 50ms 状态读取延迟，并保持完整响应与通知内容断言。生产接口、通知调度及应用启动流程不变。

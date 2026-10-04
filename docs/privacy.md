@@ -134,3 +134,8 @@ OpenBiliClaw 开发者不会出售用户数据，也不会为了与插件单一�
 如需报告隐私问题、请求更正说明或提交安全相关反馈，请通过 GitHub Issues 联系项目维护者：
 
 <https://github.com/whiteguo233/OpenBiliClaw/issues>
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 的可选 Cookie 同步：扩展在 tiktok.com 检测到 sessionid/sessionid_ss/sid_tt 登录字段后，将该域 Cookie jar 发送至用户配置的后端统一凭据端点。后端验证会话后保存于本地 data/tiktok_cookie.json，用于可选搜索；不上传给开发者，不采集 TikTok 账号历史来初始化画像。限流账本 tiktok_request_state.sqlite3 仅保存请求时隙与冷却时间。

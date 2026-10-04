@@ -4188,8 +4188,9 @@ class TestBackendAPI:
 
         assert service.calls == 1
 
+    @pytest.mark.parametrize("cpu_fallback", [False, True])
     def test_health_endpoint_treats_loopback_ollama_timeout_as_cold_load(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, cpu_fallback: bool
     ) -> None:
         import asyncio
 
@@ -4198,6 +4199,11 @@ class TestBackendAPI:
         import openbiliclaw.api.app as appmod
 
         monkeypatch.setattr(appmod, "_EMBEDDING_PROBE_TIMEOUT_SECONDS", 0.01)
+        from openbiliclaw.llm import ollama_embedding_runtime
+
+        monkeypatch.setattr(
+            ollama_embedding_runtime, "cpu_fallback_active", lambda *_: cpu_fallback
+        )
 
         class _SlowProbeService:
             async def probe(self) -> bool:
@@ -4221,7 +4227,7 @@ class TestBackendAPI:
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json()["embedding_ready"] is True
+        assert response.json()["embedding_ready"] is (not cpu_fallback)
 
     @pytest.mark.parametrize(
         ("provider", "base_url"),

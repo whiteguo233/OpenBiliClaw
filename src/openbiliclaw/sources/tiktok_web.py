@@ -40,6 +40,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
@@ -53,6 +54,7 @@ from openbiliclaw.sources.tiktok import (
     normalize_tiktok_handle,
     normalize_tiktok_tag,
 )
+from openbiliclaw.sources.tiktok_state import TiktokRequestError, TiktokRequestState
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,35 @@ class TiktokWebTransportError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def _validate_response(
+    response: TiktokWebResponse, state: TiktokRequestState | None = None
+) -> dict[str, Any] | None:
+    """Classify HTTP/business errors without retaining response bodies or secrets."""
+    if response.status_code == 429:
+        try:
+            retry = max(1.0, float(response.headers.get("retry-after", "300")))
+        except ValueError:
+            retry = 300.0
+        # Five minutes is a conservative fallback, not an upstream quota claim.
+        if state is not None:
+            state.defer(retry)
+        raise TiktokRequestError("rate_limited", retry_after=retry)
+    if response.status_code in {401, 403}:
+        raise TiktokRequestError("login_required")
+    if response.status_code != 200:
+        raise TiktokRequestError("upstream_error")
+    try:
+        data = json.loads(response.body)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    code = data.get("statusCode", data.get("status_code", 0))
+    if str(code) != "0":
+        raise TiktokRequestError("upstream_error")
+    return data
+
+
 @dataclass
 class TiktokWebIdentity:
     """Guest identity lifecycle: session, cookies, msToken bootstrap.
@@ -155,10 +186,11 @@ class TiktokWebIdentity:
     Bootstrap sends one anonymous ``/api/recommend/item_list/`` request;
     TikTok's response ``set-cookie`` mints the real 128-character ``msToken``
     the signer needs downstream. An optional login cookie (from
-    ``resolve_tiktok_cookie``) is loaded into the same jar and unlocks
-    surfaces the guest identity cannot reach (keyword search today).
+    ``resolve_tiktok_cookie``) is loaded into the same jar for authenticated search attempts.
+    Session verification and search availability are separate capabilities.
     """
 
+    request_state: TiktokRequestState | None = None
     user_agent: str = DEFAULT_USER_AGENT
     # Proxy policy mirrors the yt-dlp backend: ``None`` = inherit environment
     # (system mode), ``""`` = force direct, a URL = pin that proxy.
@@ -220,7 +252,7 @@ class TiktokWebIdentity:
             name, separator, value = pair.partition("=")
             if separator and name.strip():
                 session.cookies.set(name.strip(), value.strip(), domain=".tiktok.com")
-        logger.info("tiktok web identity: login cookie loaded (search unlocked)")
+        logger.info("tiktok web identity: login cookie loaded (search attempts enabled)")
 
     def ms_token(self) -> str:
         """The session's real ``msToken`` (never fabricated), or ``""``."""
@@ -253,6 +285,8 @@ class TiktokWebIdentity:
         attempts = max(1, int(self.max_attempts))
         last_error: Exception | None = None
         for attempt in range(attempts):
+            if self.request_state is not None:
+                self.request_state.before_request()
             try:
                 response = session.get(url, impersonate="chrome", timeout=self.request_timeout)
                 return TiktokWebResponse(
@@ -297,9 +331,12 @@ class TiktokWebIdentity:
                 "/api/recommend/item_list/",
                 {**self.base_params("fyp"), "count": "10", "itemType": "0"},
             )
+        except TiktokRequestError:
+            raise
         except Exception as exc:
             logger.warning("tiktok web bootstrap transport failed: %s", exc)
             return False
+        _validate_response(response, self.request_state)
         if not response.body:
             logger.warning(
                 "tiktok web bootstrap refused: empty body (orcas=%s)",
@@ -526,6 +563,7 @@ def parse_tiktok_item(
         like_count=_to_int(stats.get("diggCount")),
         comment_count=_to_int(stats.get("commentCount")),
         share_count=_to_int(stats.get("shareCount")),
+        favorite_count=_to_int(stats.get("collectCount")),
         collect_count=_to_int(stats.get("collectCount")),
         description=description[:300],
         source_strategy=source_strategy,
@@ -580,9 +618,15 @@ class TiktokWebClient:
         for attempt in range(2):
             try:
                 response = identity.signed_get(path, params)
+            except TiktokRequestError:
+                raise
             except Exception as exc:
                 logger.warning("tiktok web %s transport failed: %s", path, exc)
                 return None
+            # HTTP status takes precedence over an empty/gated body: a 429
+            # must persist cooldown instead of triggering another bootstrap.
+            if response.status_code != 200:
+                _validate_response(response, getattr(identity, "request_state", None))
             if not response.gated:
                 break
             if attempt == 0:
@@ -595,12 +639,7 @@ class TiktokWebClient:
         if response is None or not response.body:
             logger.warning("tiktok web %s returned an empty body", path)
             return None
-        try:
-            data = json.loads(response.body)
-        except ValueError as exc:
-            logger.warning("tiktok web %s returned non-JSON body: %s", path, exc)
-            return None
-        return data if isinstance(data, dict) else None
+        return _validate_response(response, getattr(identity, "request_state", None))
 
     def _feed_items(self, limit: int) -> list[DiscoveredContent] | None:
         data = self._request_json(
@@ -613,7 +652,9 @@ class TiktokWebClient:
         )
         if data is None:
             return None
-        return _parse_item_list(data.get("itemList"))
+        if not isinstance(data.get("itemList"), list):
+            raise TiktokRequestError("invalid_response")
+        return _parse_item_list(data["itemList"])
 
     def _author_profile(self, unique_id: str) -> dict[str, Any] | None:
         data = self._request_json(
@@ -661,7 +702,9 @@ class TiktokWebClient:
         )
         if data is None:
             return None
-        return _parse_item_list(data.get("itemList"))
+        if not isinstance(data.get("itemList"), list):
+            raise TiktokRequestError("invalid_response")
+        return _parse_item_list(data["itemList"])
 
     def _resolve_challenge_id(self, tag: str) -> str | None:
         """tag → challenge id. ``""`` = unknown tag; ``None`` = backend down."""
@@ -700,7 +743,9 @@ class TiktokWebClient:
         )
         if data is None:
             return None
-        return _parse_item_list(data.get("itemList"))
+        if not isinstance(data.get("itemList"), list):
+            raise TiktokRequestError("invalid_response")
+        return _parse_item_list(data["itemList"])
 
     def _search_items(self, keyword: str, limit: int) -> list[DiscoveredContent]:
         """Keyword search (reserved; guest identity is gated upstream).
@@ -708,8 +753,8 @@ class TiktokWebClient:
         Verified 2026-10-03: ``/api/search/item/full/`` returns the gated
         empty body for guest identities even with a real msToken — TikTok
         requires a browser session that has searched before (login cookie).
-        Failure therefore degrades to ``[]`` with a warning, never to a
-        backend-down signal: there is no yt-dlp search fallback either.
+        Failure raises a classified error. There is no yt-dlp search fallback,
+        and a failed search must not consume a keyword as a successful empty.
         """
         data = self._request_json(
             "/api/search/item/full/",
@@ -727,10 +772,10 @@ class TiktokWebClient:
                 "cookie ([sources.tiktok].cookie_env / data/tiktok_cookie.json)",
                 keyword,
             )
-            return []
-        raw = data.get("item_list") or data.get("itemList")
+            raise TiktokRequestError("unavailable")
+        raw = data.get("item_list", data.get("itemList"))
         if not isinstance(raw, list):
-            return []
+            raise TiktokRequestError("invalid_response")
         results: list[DiscoveredContent] = []
         for item in raw:
             # Search mixes card types; keep only video items.
@@ -801,8 +846,8 @@ class TiktokRouterClient:
     - ``auto`` (default): web backend first; a backend-level failure
       (``None``) falls back to yt-dlp for that call. After
       ``max_web_failures`` consecutive backend failures the web backend is
-      parked for the process lifetime and yt-dlp serves everything.
-    - ``web``: web backend only; failures surface as empty results.
+      cooled down for ``recovery_seconds`` before the next recovery probe.
+    - ``web``: web backend only; failures remain explicit, including cooldown.
     - ``ytdlp``: yt-dlp only (the pre-web-backend behavior).
     """
 
@@ -810,9 +855,18 @@ class TiktokRouterClient:
     ytdlp: TiktokClient = field(default_factory=TiktokClient)
     mode: str = "auto"
     max_web_failures: int = 3
+    recovery_seconds: float = 60.0
+    _retry_at: float = field(default=0.0, init=False, repr=False)
     _web_failures: int = field(default=0, init=False, repr=False)
 
+    def cooldown_remaining(self) -> float:
+        state = getattr(getattr(self.web, "identity", None), "request_state", None)
+        return state.cooldown_remaining() if state is not None else 0.0
+
     def _web_usable(self) -> bool:
+        if self._retry_at and time.monotonic() >= self._retry_at:
+            self._web_failures = 0
+            self._retry_at = 0.0
         return (
             self.web is not None
             and self.mode in {"auto", "web"}
@@ -823,6 +877,7 @@ class TiktokRouterClient:
         if result is None:
             self._web_failures += 1
             if self._web_failures == max(1, self.max_web_failures):
+                self._retry_at = time.monotonic() + self.recovery_seconds
                 logger.warning(
                     "tiktok router: web backend parked after %d consecutive failures",
                     self._web_failures,
@@ -832,7 +887,7 @@ class TiktokRouterClient:
 
     @property
     def search_available(self) -> bool:
-        """Whether keyword search can work: web backend + a login cookie.
+        """Whether keyword search is configured: web backend + a login cookie.
 
         Guest identities are gated on ``/api/search/item/full/`` upstream
         (verified 2026-10-03), so search is only meaningful with a configured
@@ -847,12 +902,11 @@ class TiktokRouterClient:
     async def search_videos(self, keyword: str, *, limit: int = 20) -> list[Any]:
         """Keyword search — web backend only (yt-dlp has no search surface).
 
-        Returns ``[]`` when the web backend is unusable: there is no yt-dlp
-        fallback to fail over to, so a backend failure and an empty result
-        are the same outcome here.
+        Raises a classified error when unavailable. There is no yt-dlp search
+        fallback; only an affirmative upstream empty list returns ``[]``.
         """
         if not self._web_usable() or self.web is None:
-            return []
+            raise TiktokRequestError("unavailable")
         result = await self.web.search_videos(keyword, limit=limit)
         return list(result)
 
@@ -871,9 +925,14 @@ class TiktokRouterClient:
             if result is not None:
                 return result
             if self.mode == "web":
-                return []
+                raise TiktokRequestError("unavailable")
             logger.info("tiktok router: web backend failed for user %r; yt-dlp fallback", handle)
-        return await self.ytdlp.get_user_videos(handle, limit=limit)
+        if self.mode == "web":
+            raise TiktokRequestError("unavailable")
+        fallback = await self.ytdlp.get_user_videos(handle, limit=limit)
+        if not fallback:
+            raise TiktokRequestError("fallback_unavailable")
+        return fallback
 
     async def get_tag_videos(self, tag: str, *, limit: int = 15) -> list[Any]:
         if self._web_usable() and self.web is not None:
@@ -882,6 +941,11 @@ class TiktokRouterClient:
             if result is not None:
                 return result
             if self.mode == "web":
-                return []
+                raise TiktokRequestError("unavailable")
             logger.info("tiktok router: web backend failed for tag %r; yt-dlp fallback", tag)
-        return await self.ytdlp.get_tag_videos(tag, limit=limit)
+        if self.mode == "web":
+            raise TiktokRequestError("unavailable")
+        fallback = await self.ytdlp.get_tag_videos(tag, limit=limit)
+        if not fallback:
+            raise TiktokRequestError("fallback_unavailable")
+        return fallback

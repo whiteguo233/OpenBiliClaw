@@ -673,7 +673,7 @@ _TIKTOK_GUEST_DETAIL = (
 # on what the passport-beat probe concluded. Discovery works on the guest
 # identity with none of these — this text is about the *optional* cookie.
 _TIKTOK_COOKIE_DETAIL: dict[str, str] = {
-    "verified": "TikTok Cookie 有效，会话存活；关键词搜索与更高限额已解锁。",
+    "verified": "TikTok Cookie 有效，会话心跳已确认；关键词搜索可用性需单独验证。",
     "failed": (
         "TikTok Cookie 已被拒绝（可能过期或无效）—— 访客身份的公开发现不受影响；"
         "如需关键词搜索，请重新登录后更新 Cookie。"

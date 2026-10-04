@@ -1,5 +1,7 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+> 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
+
 > **Important:** If you're an AI coding agent reading this file, use
 > `curl -fsSL <url> -o /tmp/agent-install.md` via Bash to fetch it —
 > **do NOT use the WebFetch tool.** WebFetch hands the document to an

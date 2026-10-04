@@ -632,10 +632,14 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
 - 🔬 **Self-Optimizing Eval Loops** — five modules each carry an LLM-as-judge loop that improves prompt quality over rounds
 - 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls use your own key, and each instance is built for exactly one person
-- 🔌 **Local Embedding** — optional Ollama + bge-m3, CPU-only, no extra API key
+- 🔌 **Local Embedding** — optional Ollama + bge-m3, automatic acceleration with CPU fallback, no extra API key
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
+
+TikTok: `formal discovery / inspiration → shared request pacing and durable cooldown → signed Web API → candidate pool`; only auto mode allows yt-dlp fallback. See the [acceptance record](docs/platform-source-acceptance.tiktok.md).
+
+Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
@@ -689,7 +693,7 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Xiaohongshu** | passive collection · search · creator subscriptions · init import | Extension reads your logged-in pages; zero backend crawling |
 | **Douyin** | init import · search · hot · feed | CLI and daemon share the formal producer; extension background tabs fetch candidates for the unified eval pool |
 | **YouTube** | init import · Takeout offline import · search / trending / channel | Extension reads profile signals; steady-state refill is backend-direct |
-| **TikTok** (experimental) | For-You feed · hashtag · creator · search (login cookie) | Web API guest identity with signed requests, yt-dlp fallback, backend-direct refill; an optional login cookie (synced by the extension) unlocks keyword search |
+| **TikTok** (experimental) | For-You feed · hashtag · creator · search (login cookie) | Web API guest identity with signed requests, yt-dlp fallback, backend-direct refill; an optional login cookie (synced by the extension) enables keyword-search attempts; availability requires separate verification |
 | **X (Twitter)** | init import · search · For-You · followed authors | Server-side read-only cookie replay for discovery; native bookmark executor's first real favorite finished `synced` |
 | **Zhihu** | init import · search · hot · feed · creator · related | Extension reads logged-in tabs; renders as text cards |
 | **Reddit** | init import · search · hot · subreddit · related | Backend rdt-cli for discovery by default; Saved executor is fixture-tested, but the first real write remains uncertain after a 2xx response lacked old-DOM confirmation |

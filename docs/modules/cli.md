@@ -1652,3 +1652,8 @@ $ openbiliclaw db-repair
 ### Stub 命令的输出约定
 
 当前仍是 stub 的命令会统一使用”开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+新增 `discover-tiktok --mode feed|tag|user|search --query TEXT --limit 1..20`：使用配置中的网络路线及可选 Cookie，在临时目录执行只读取数 smoke，不写生产候选/记忆/画像。正式 `discover --source tiktok` 支持 rate_limited、no_keywords 和 degraded 的真实状态提示。

@@ -5,6 +5,8 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+local embedding provider / diagnosis → automatic acceleration → valid vector
+                                     └ runner failure → shared CPU mode → validated vector / failure
 recommendation request → main API → optional Unix-socket recommendation process
                                   （socket 路径超过 AF_UNIX sun_path 上限时自动回退 loopback TCP）
                                   → current SQLite snapshot → full ranking worker
@@ -515,6 +517,7 @@ flowchart LR
 - `codex_auth.py` 提供实验性的 Codex CLI ChatGPT OAuth 凭据导入、刷新与能力探测状态持久化；OpenAI 实例设置 `auth_mode="codex_oauth"` 时构造独立的 `CodexChatGPTProvider`，请求发往官方 Codex 传输端点 `https://chatgpt.com/backend-api/codex/responses`（SSE Responses 流），并限制 `base_url` 只能为官方 Codex 域名
 - DeepSeek 的连通性探针显式关闭 thinking；普通请求的 reasoning effort 是 request-local 参数，不修改共享 adapter 状态。每个 DeepSeek 实例的 `base_url` 分别进入 SDK 和 endpoint 代理裁决
 - 结构化输出共享解析：`llm/json_utils.py` 为 discovery eval-batch、recommendation copy/classify、soul awareness/insight/profile/speculator 提供统一 JSON 容错，兼容 MiMo / OpenAI-compatible wrapper、fenced JSON、JSONL、schema echo 和 malformed `{ [ ... ] }`
+- `llm.ollama_embedding_runtime` 统一本机向量的自动加速 → CPU 回退；状态按进程内 endpoint/model 共享，健康探针与正式请求一致，CPU 超时不报告可用。
 - v0.3.0+ embedding 兜底：`OllamaProvider.embed()` 走原生 `/api/embeddings`，配 `bge-m3` 模型可在 Mac/Win/Linux CPU 跑相似度计算，不需额外 API Key
 - `EmbeddingService` L1 内存 + L2 SQLite 双层缓存；`embedding.provider="ollama"` 且 embedding 凭据为空时直接使用本地 Ollama 默认地址，不再产生向后兼容 warning
 - `DashScopeEmbeddingProvider`（`provider="dashscope"`，阿里百炼原生 multimodal-embedding API，仅 embedding）加入 embedding provider 家族，其 `embed()` 文本向量与 openai/gemini/ollama 一样接入既有文本 embedding 消费方；出站走 `network.httpx_kwargs_for_endpoint(base_url)`——dashscope.aliyuncs.com 属国内 endpoint，即使 `[network].mode` 切到 system/custom 也强制直连（对齐 v0.3.167）。可选 `[llm.embedding].multimodal_enabled` + 多模态模型（`gemini-embedding-2` / `qwen3-vl-embedding`）时启用**封面视觉链路**：discovery 入池预热封面向量（按 URL 派生键），Recommendation 两条路径一致消费「封面↔兴趣锚点」跨模态余弦的有界正向加成——惊喜 `precompute_delight_scores`(加到 delight_score) 与正常 `serve()` 排序(并入 relevance 项;热路径只读缓存、不现抓)。跨模态 floor/ceil 已按真实部署数据标定（`_VISUAL_COVER_SIM_FLOOR/CEIL=0.35/0.48`，per-cover max anchor cosine 的 p50/p95，834 covers）。默认关闭、纯文本零成本、只加不减、默认路径逐字节一致
@@ -582,3 +585,17 @@ embedding 和空向量失败留待下轮重试，成功槽位会复用。已有�
    学习、推荐、反馈回流仍由 `runtime/`、`soul/`、`recommendation/` 等模块负责，`integrations/openclaw/skill.py` 只负责对外暴露稳定 handler；新功能必须同时进入 operation、descriptor、CLI（若适合）和 capability manifest。
 3. **宿主发现走能力协商 + 仓库根目录 `skills/`**
    当前仓库通过 `skills/openbiliclaw-adapter/SKILL.md` 提供真实 workspace skill，再由 skill 内部调用 adapter CLI bridge；`capabilities` 是避免宿主继续使用旧能力子集的权威入口。
+
+
+### TikTok 请求状态边界
+
+```mermaid
+flowchart LR
+  Producer[TikTok formal producer] --> Router[TiktokRouterClient]
+  Inspiration[Inspiration backend] --> Router
+  Router --> State[TiktokRequestState: shared SQLite pacing/cooldown]
+  State --> Web[Signed Web API]
+  Router -->|auto only| Fallback[yt-dlp]
+```
+
+状态库仅含时间戳，独立于候选数据库；失败原因经 strategy intermediates 返回 producer，成功分支候选仍可入池。

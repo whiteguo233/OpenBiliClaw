@@ -1,0 +1,20 @@
+[
+  {
+    "index": 0,
+    "bytes": 77834,
+    "mime": "image/jpeg",
+    "passed": true
+  },
+  {
+    "index": 1,
+    "bytes": 175556,
+    "mime": "image/jpeg",
+    "passed": true
+  },
+  {
+    "index": 2,
+    "bytes": 801827,
+    "mime": "image/png",
+    "passed": true
+  }
+]

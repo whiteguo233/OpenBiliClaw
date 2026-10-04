@@ -848,7 +848,7 @@ TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由�
 | `daily_search_budget` | int | `3` | `tiktok_search` 每日关键词搜索上限（1 单位 = 1 个关键词）；搜索需登录 Cookie（登录态抓取违反 TikTok ToS，有账号风险），仅在配置 Cookie 且 mode 允许 web 时挂载 |
 | `daily_tag_budget` | int | `0` | `tiktok_tag` 每天最多执行的话题标签批次数；`0` 表示不设每日上限 |
 | `daily_user_budget` | int | `0` | `tiktok_user` 每天最多抓取的创作者数；`0` 表示不设每日上限 |
-| `request_interval_seconds` | int | `2` | 预留的 TikTok 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
+| `request_interval_seconds` | int | `2` | 每个 TikTok Web 请求的最小间隔（含 bootstrap/重试），formal/inspiration 通过持久状态共享 |
 | `min_interval_minutes` | int | `3` | `TiktokDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
 
 ### `[sources.twitter]`
@@ -1097,7 +1097,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
 | `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
-| `tiktok` | int | `1` | TikTok 平台族占比；`tiktok_tag` / `tiktok_user` 统一计入该族 |
+| `tiktok` | int | `1` | TikTok 平台族占比；`tiktok_feed` / `tiktok_search` / `tiktok_tag` / `tiktok_user` 统一计入该族 |
 | `twitter` | int | `1` | X (Twitter) 平台族占比；`search` / `feed`（For-You）/ `creator`（账号订阅）三个策略统一计入该族 |
 | `github` | int | `1` | GitHub 平台族占比；`github-search` / `github-ranked` / `github-latest` 统一计入该族，`gh` alias 在写入前归一化 |
 | `zhihu` | int | `1` | 知乎平台族占比；插件 `zhihu-search` / `zhihu-hot` / `zhihu-feed` / `zhihu-creator` / `zhihu-related` 候选统一计入该族 |
@@ -1482,3 +1482,8 @@ Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP
 免费端点限流直接报告。read_webpage 为避免代理改变已校验目标，使用不继承环境代理的
 公开 IP 绑定直连，只支持标准 HTTP(S) 端口。无法直达、需登录或依赖脚本的正文会明确
 提示限制，不自动调用用户浏览器会话。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+`sources.tiktok.request_interval_seconds` 现在实际约束每个上游请求（含 bootstrap/重试），formal 和 inspiration 共享。`daily_feed_budget` 是每日调用次数，不影响单次默认 12 条的取数上限；`mode=web` 在失败与冷却期间都禁止 yt-dlp 回退。

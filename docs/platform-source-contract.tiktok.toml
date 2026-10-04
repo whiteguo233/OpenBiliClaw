@@ -1,0 +1,162 @@
+"schema_version" = 1
+"canonical_slug" = "tiktok"
+"display_name" = "TikTok"
+"integration_level" = "discovery-only"
+"aliases" = []
+"hosts" = ["tiktok.com"]
+"content_types" = ["video"]
+
+["transport"]
+"kind" = "hybrid"
+"owner" = "backend"
+"entrypoints" = ["src/openbiliclaw/sources/tiktok_web.py", "src/openbiliclaw/sources/tiktok.py"]
+"route_aliases" = []
+"fallback_owner" = "external-cli"
+"requires_overseas_network" = true
+"routed_by_network_mode" = true
+"network_policy" = "Signed curl_cffi and yt-dlp follow shared outbound network routing."
+
+["transport"."capability_routes"]
+"discover" = "backend:signed-web-api:guest-or-cookie"
+"cookie-sync" = "extension:unified-credential:passport-probe"
+
+["identity"]
+"item_id" = "TikTok numeric video id; item_key=tiktok:<id>"
+"url" = "https://www.tiktok.com/@<handle>/video/<id>"
+"dedupe" = "Canonical tiktok family plus video id"
+"account_scope" = "Public discovery only; no account behavior or ownership import"
+
+["auth"]
+"mode" = "anonymous-with-optional-credentials"
+"credential_kinds" = ["cookie"]
+"verify_action" = "live_probe"
+"write_path" = "unified"
+"account_resolution" = "Environment cookie precedes data-file cookie; no account bootstrap"
+"identity_evidence" = "Passport heartbeat confirms a session, never proves search availability or account ownership"
+"login_cookie_names" = ["sessionid", "sessionid_ss", "sid_tt"]
+"login_state_path" = "credential"
+
+["auth"."capability_modes"]
+"discover" = "optional-credential"
+"cookie-sync" = "login-required"
+
+["auth"."capability_required"]
+"discover" = true
+"cookie-sync" = false
+
+["upstream"]
+"success_content_types" = ["application/json"]
+"pagination" = "Bounded first-page snapshots only; no full-history completeness claim"
+"terminal_evidence" = "HTTP 200, business status zero and explicit itemList/item_list array; only [] means empty"
+"terminal_policy" = "429 persists shared cooldown; auth/error/schema/gate/transport failures are not empty"
+"partial_policy" = "Retain successful query candidates and mark only failed query claims failed"
+"publication_time_policy" = "createTime epoch UTC; no discovered-time substitution"
+
+["discover"]
+"modes" = ["feed", "tag", "user", "search"]
+"search_generation" = "Merged planner and inspiration axis; guest phrases compact to hashtags; cookie search keeps phrases"
+"budget" = "Daily feed calls independent of per-pull size; search/tag claim bounded by remaining execution units"
+"cursor" = "First-page snapshot; no completeness or retraction inference"
+
+["profile"]
+"signals" = false
+"incremental" = false
+"refresh_mode" = "none"
+
+["extension"]
+"task" = "none"
+"hosts" = ["tiktok.com"]
+"task_marker" = false
+"background" = false
+"early_response" = false
+"cookie_sync" = true
+
+["surfaces"]
+"cli" = true
+"setup" = false
+"desktop" = true
+"mobile" = true
+"extension_popup" = true
+"source_status" = true
+"credentials" = true
+"recommendation" = true
+
+["engagement"]
+"view" = "mapped"
+"like" = "mapped"
+"favorite" = "mapped"
+"comment" = "mapped"
+"share" = "mapped"
+"danmaku" = "unavailable"
+
+["media"]
+"image" = "proxy"
+"image_hosts" = ["tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com"]
+"deep_link" = "browser-fallback"
+"native_save" = false
+
+["e2e"]
+"safe_actions" = ["feed", "search", "fetch-public-collection"]
+"mutating_actions" = []
+
+["e2e"."safe_assertions"]
+"feed" = "upstream-state-unchanged"
+"search" = "upstream-state-unchanged"
+"fetch-public-collection" = "upstream-state-unchanged"
+
+["e2e"."safe_postconditions"]
+"feed" = "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
+"search" = "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
+"fetch-public-collection" = "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
+
+["events"]
+"strategy_prefixes" = ["tiktok_"]
+"mappings" = "Discovery candidates only; no upstream account behavior events"
+"scope_caps" = "Per-query result cap and per-source execution budgets; no account scopes"
+
+["task"]
+"lease" = "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+"idle_deadline" = "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+"absolute_deadline" = "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+"retry" = "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+"buffer" = "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+
+["smoke"]
+"storage_scope" = "isolated-only"
+
+["smoke"."sinks"]
+"task" = "forbidden"
+"task_result" = "forbidden"
+"seen" = "forbidden"
+"affinity" = "forbidden"
+"snapshot" = "forbidden"
+"schedule" = "forbidden"
+"event_ingress" = "forbidden"
+"memory" = "forbidden"
+"profile" = "forbidden"
+
+["exclusions"]
+"surface.setup" = "Discovery-only source is configured after initial setup; guided account init is excluded."
+"profile.signals" = "Discovery-only source; TikTok guided init is rejected."
+"profile.incremental" = "No account signals or periodic account tasks."
+"profile.refresh-mode" = "No TikTok account profile refresh."
+"extension.task" = "Cookie sync only; no task dispatcher or content collector."
+"extension.task-marker" = "No browser tasks."
+"extension.background" = "No task execution tabs; cookie sync is separate."
+"extension.early-response" = "Backend HTTP owns content responses."
+"media.deep-link" = "Canonical HTTPS browser fallback."
+"media.native-save" = "TikTok saves are local-only; upstream mutations unsupported."
+"engagement.danmaku" = "TikTok has no danmaku metric."
+
+["exclusion_tests"]
+"surface.setup" = ["tests/test_tiktok_contract.py::test_tiktok_surface_setup_excludes_guided_init"]
+"profile.signals" = ["tests/test_tiktok_contract.py::test_tiktok_profile_signals_are_excluded"]
+"profile.incremental" = ["tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"]
+"profile.refresh-mode" = ["tests/test_tiktok_contract.py::test_tiktok_profile_refresh_mode_is_none"]
+"extension.task" = ["tests/test_tiktok_contract.py::test_tiktok_extension_task_is_excluded"]
+"extension.task-marker" = ["tests/test_tiktok_contract.py::test_tiktok_extension_task_marker_is_absent"]
+"extension.background" = ["tests/test_tiktok_contract.py::test_tiktok_extension_background_task_is_absent"]
+"extension.early-response" = ["tests/test_tiktok_contract.py::test_tiktok_extension_early_response_is_absent"]
+"media.deep-link" = ["tests/test_tiktok_contract.py::test_tiktok_media_deep_link_uses_https"]
+"media.native-save" = ["tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"]
+"engagement.danmaku" = ["tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"]

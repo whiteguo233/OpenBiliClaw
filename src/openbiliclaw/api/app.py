@@ -5355,9 +5355,14 @@ def create_app(
         provider = str(getattr(emb, "provider", "") or "").strip().lower()
         if provider != "ollama":
             return False
+        from openbiliclaw.llm.ollama_embedding_runtime import cpu_fallback_active
         from openbiliclaw.runtime.ollama_supervisor import is_loopback
 
-        base_url, _ = _embedding_ollama_target()
+        base_url, model = _embedding_ollama_target()
+        # Once an actual runner failure forced CPU, a timeout is no longer
+        # evidence of an ordinary cold load. Require a real successful probe.
+        if cpu_fallback_active(base_url, model):
+            return False
         return is_loopback(base_url)
 
     def _peek_embedding_ready(*, strict: bool = False) -> bool:

@@ -4,7 +4,7 @@ TikTok steady-state discovery is backend-direct: the runtime calls the
 strategies itself and needs neither the browser-extension task queue nor
 any credential. The backend is selected by ``[sources.tiktok].mode``
 (web API / yt-dlp / auto); see ``openbiliclaw.sources.tiktok_web``.
-Mirrors the YouTube producer shape.
+Mirrors the YouTube producer shape. Modes: feed, search, tag, user.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from openbiliclaw.runtime.keyword_fetch import PLATFORM_TIKTOK as _PLATFORM_TIKTOK
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_TIKTOK
 from openbiliclaw.runtime.pool_gate import candidate_pool_full_for_source
 from openbiliclaw.runtime.producer_cadence import (
     ledger_available,
@@ -51,6 +51,7 @@ class TiktokStrategyRunResult:
     items: list[Any]
     units_used: int
     source_counts: dict[str, int]
+    errors: dict[str, str] = field(default_factory=dict)
 
 
 TiktokDiscoverCallable = Callable[..., Awaitable[TiktokStrategyRunResult]]
@@ -87,6 +88,7 @@ class TiktokDiscoveryProducer:
     # the candidate pipeline. ``None`` (default / flag off) → legacy self-gen
     # path.
     keyword_fetch: Any | None = None
+    cooldown_remaining: Callable[[], float] | None = None
     _last_run_at: datetime | None = field(default=None, init=False)
     _last_skip_reason: str = field(default="", init=False)
 
@@ -94,6 +96,8 @@ class TiktokDiscoveryProducer:
         """Run one TikTok discovery cycle if enabled, due, and under budget."""
         if not self.enabled:
             return self._skip("disabled")
+        if self.cooldown_remaining is not None and self.cooldown_remaining() > 0:
+            return self._skip("rate_limited")
         if not self._is_due():
             return self._skip("throttled")
         if self._candidate_pool_full():
@@ -116,7 +120,8 @@ class TiktokDiscoveryProducer:
         discovered_total = 0
         enqueued_total = 0
         source_counts: Counter[str] = Counter()
-        error_count = 0
+        errors: dict[str, str] = {}
+        failed_words: set[str] = set()
 
         # Unified keyword planner fetch path (P1.7, flag-gated): claim words
         # once and inject them as ``queries``. When keyword search is mounted
@@ -139,7 +144,9 @@ class TiktokDiscoveryProducer:
             elif _TIKTOK_TAG in runnable:
                 claim_strategy = _TIKTOK_TAG
             if claim_strategy:
-                claimed = coordinator.claim(_PLATFORM_TIKTOK)
+                claimed = coordinator.claim(
+                    PLATFORM_TIKTOK, n=min(coordinator.fetch_batch, int(remaining[claim_strategy]))
+                )
                 if not claimed:
                     # Flag on but the store has no claimable pending words →
                     # drop the claim-consuming strategy this cycle (the planner
@@ -167,7 +174,7 @@ class TiktokDiscoveryProducer:
                     **extra,
                 )
             except Exception as exc:
-                error_count += 1
+                errors[strategy] = str(getattr(exc, "reason", "unavailable"))
                 logger.warning(
                     "tiktok producer strategy failed: strategy=%s error=%s",
                     strategy,
@@ -181,13 +188,30 @@ class TiktokDiscoveryProducer:
                 )
                 continue
 
-            units_used = max(0, min(unit_budget, int(result.units_used)))
+            units_used = max(0, int(result.units_used))
+            if result.errors:
+                errors.update(
+                    {f"{strategy}:{key}": reason for key, reason in result.errors.items()}
+                )
+                if strategy == claim_strategy:
+                    from openbiliclaw.sources.tiktok import tag_from_query
+
+                    failed_words.update(
+                        item.keyword
+                        for item in claimed
+                        if (
+                            tag_from_query(item.keyword)
+                            if strategy == _TIKTOK_TAG
+                            else item.keyword
+                        )
+                        in result.errors
+                    )
             discovered = len(result.items)
             self.record_strategy_run(
                 strategy,
                 units_used=units_used,
                 discovered=discovered,
-                reason="ok",
+                reason="degraded" if result.errors else "ok",
             )
             discovered_total += discovered
             source_counts.update(result.source_counts)
@@ -205,21 +229,32 @@ class TiktokDiscoveryProducer:
                 claim_handed_off = True
 
         # Fetch-only lifecycle: claimed words → ``used`` once handed off by the
-        # consuming strategy (yield backfill is P1.8). If the strategy errored
-        # (never handed off), leave them claimed — the lease reclaim returns
-        # them to pending.
+        # consuming strategy (yield backfill is P1.8). Failed queries are marked
+        # failed independently, allowing successful candidates to keep progressing.
         if claimed and self.keyword_fetch is not None and claim_handed_off:
-            self.keyword_fetch.mark_used(claimed)
+            self.keyword_fetch.mark_used(
+                [item for item in claimed if item.keyword not in failed_words]
+            )
+            self.keyword_fetch.mark_failed(
+                [item for item in claimed if item.keyword in failed_words]
+            )
         elif claimed and self.keyword_fetch is not None:
             self.keyword_fetch.mark_failed(claimed)
 
         self._stamp_run(discovered_total)
-        if discovered_total <= 0 and error_count >= len(runnable):
-            return {"discovered": 0, "reason": "error"}
+        if discovered_total <= 0 and errors:
+            return {
+                "discovered": 0,
+                "reason": "rate_limited" if "rate_limited" in errors.values() else "error",
+                "errors": errors,
+            }
+        if not runnable:
+            return self._skip("no_keywords")
         payload: dict[str, object] = {
             "discovered": discovered_total,
             "source_counts": dict(source_counts),
-            "reason": "ok",
+            "reason": "degraded" if errors else "ok",
+            "errors": errors,
         }
         if self.candidate_pipeline is not None:
             payload["enqueued"] = enqueued_total
@@ -256,14 +291,14 @@ class TiktokDiscoveryProducer:
         return remaining
 
     def consumed_today(self, strategy: str) -> int:
-        """Return today's successful execution units for one strategy."""
+        """Return today's attempted execution units, including degraded batches."""
         self._ensure_ledger_table()
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         row = self.database.conn.execute(
             """
             SELECT COALESCE(SUM(units), 0)
             FROM tiktok_discovery_runs
-            WHERE strategy = ? AND created_at >= ? AND reason = 'ok'
+            WHERE strategy = ? AND created_at >= ? AND reason IN ('ok', 'degraded')
             """,
             (strategy, today),
         ).fetchone()

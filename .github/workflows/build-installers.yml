@@ -149,7 +149,7 @@ jobs:
           $env:OPENBILICLAW_FROZEN_EXE = (Resolve-Path "dist\OpenBiliClaw\OpenBiliClaw.exe").Path
           python -m pytest -q tests/test_windows_autostart_e2e.py -k real_frozen_bundle
 
-      - name: Stage bundled Ollama (CPU runner only — bge-m3 embedding is CPU)
+      - name: Stage bundled Ollama (Vulkan acceleration with CPU fallback)
         shell: pwsh
         run: |
           # Keep ollama current (0.18.2 was ancient). NOTE: even 0.32.x still
@@ -167,7 +167,8 @@ jobs:
           $lib = Join-Path $exe.Directory.FullName "lib"
           if (Test-Path $lib) {
             Copy-Item $lib dist\OpenBiliClaw\lib -Recurse -Force
-            # Drop large GPU runners; keep the installer lean (embedding runs on CPU).
+            # Drop large CUDA/ROCm runners; retain Vulkan and CPU.
+            # Embedding requests retry native runner failures with num_gpu=0.
             Get-ChildItem dist\OpenBiliClaw\lib\ollama -Directory -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -match 'cuda|rocm' } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

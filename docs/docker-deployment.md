@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 向量 GPU → CPU 自动回退仅适用于后端进程可见的 loopback Ollama 端点。Compose 默认通过 `http://ollama:11434` 访问独立容器，不自动更改其执行模式；该容器仍按部署的 GPU/CPU 配置运行。
+
 [← 返回 README](../README.md)
 
 > 🔒 **局域网访问安全（可选密码门禁）**：容器把后端暴露在 `8420`，同网段设备都能访问。需要为局域网 / 远程设备加登录密码时（本机与浏览器扩展仍免登录），设置环境变量 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…`（或进容器跑 `openbiliclaw set-password`）。若手动套其他反向代理，记得配 `[api.auth].trusted_proxies` 或让代理自行鉴权；仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见 [`docs/modules/api-auth.md`](modules/api-auth.md)。

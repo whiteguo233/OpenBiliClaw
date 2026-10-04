@@ -4,6 +4,12 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+### 修复：TikTok 来源交付验收（2026-10-04）
+
+- 修复 keyword claim 超预算、HTTP/业务失败伪装正常空、强制 Web 模式误回退与永久停用、feed 每次条数误用每日预算、匿名 inspiration 多词短语失效。
+- formal/inspiration 共享持久请求时隙和限流冷却；补全收藏字段、只读 CLI smoke、双轨关键词测试、discovery-only 契约与验收记录；同步最新 main 的 Ollama 修复。
+- 真实模型 pipeline 已验证：4 条候选进入评估，3 条入池，1 条低分拒绝，768 维 embedding；登录搜索和安装版扩展证据单独记录，不能用公开取数代替。
+
 ### 修复：TikTok 后端缺口（审计逐项）
 
 - **头图白名单**：`tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过。
@@ -49,6 +55,14 @@
 - 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。
 - 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
 - `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
+
+### 修复：本地向量模型自动回退 CPU（2026-10-04）
+
+- 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。
+
+- 本地 Ollama 向量请求先使用自动加速；遇到原生 runner 崩溃（包括 Windows `0xc0000409` / `0xc0000005`）、明确的 GPU / 内存分配错误或无效向量，原请求以 `num_gpu=0` 重试。同一后端进程的 endpoint/model 保持 CPU 到应用退出，正式调用与诊断共享选择。
+- CPU 返回有效向量才视为恢复；CPU 失败 / 无效向量不入缓存，回退后的健康探针超时不再乐观报告可用。缺模型、鉴权、路径错误、冷加载超时与远端服务不触发模式切换。
+- Windows 包保留 Vulkan 自动加速能力；CUDA/ROCm 仍按现有体积策略裁剪。桌面、移动 Web、插件与 CLI 共用后端逻辑，无新配置项或 UI 开关；详细行为见 [LLM 模块](modules/llm.md#本地-ollama-向量运行模式)，测试证据见 [验证记录](testing/2026-10-04-ollama-cpu-fallback.md)。
 
 ### 修复：最新聊天链路真实请求复验（2026-10-02）
 

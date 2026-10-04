@@ -194,6 +194,7 @@ def normalize_tiktok_video(
         like_count=_to_int(raw.get("like_count") or raw.get("digg_count")),
         comment_count=_to_int(raw.get("comment_count")),
         share_count=_to_int(raw.get("repost_count") or raw.get("share_count")),
+        favorite_count=_to_int(raw.get("save_count") or raw.get("collect_count")),
         collect_count=_to_int(raw.get("save_count") or raw.get("collect_count")),
         description=description[:300],
         source_strategy=source_strategy,

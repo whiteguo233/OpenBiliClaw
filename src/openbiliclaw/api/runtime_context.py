@@ -209,7 +209,6 @@ def build_tiktok_discovery_strategies(
         configured = int(getattr(tt_cfg, attr, 0))
         return default_run_budget if configured <= 0 else configured
 
-    feed_budget = _strategy_budget("tiktok_feed", "daily_feed_budget")
     search_budget = _strategy_budget("tiktok_search", "daily_search_budget")
     tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
     user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
@@ -219,7 +218,7 @@ def build_tiktok_discovery_strategies(
             llm_service=llm_service,
             concurrency=concurrency,
             database=database,
-            results_per_run=max(1, feed_budget),
+            results_per_run=12,
             date_preference=tt_date_preference,
         ),
     ]
@@ -329,7 +328,13 @@ def _build_tiktok_client(config: Any, tt_cfg: Any) -> Any:
                 logger.debug("tiktok cookie resolution failed (guest mode): %s", exc)
             # Same outbound policy as the yt-dlp backend: None = inherit env,
             # "" = force direct, URL = pinned proxy.
+            from openbiliclaw.sources.tiktok_state import TiktokRequestState
+
             identity = TiktokWebIdentity(
+                request_state=TiktokRequestState(
+                    config.data_path / "tiktok_request_state.sqlite3",
+                    interval_seconds=float(getattr(tt_cfg, "request_interval_seconds", 2)),
+                ),
                 proxy=outbound_ytdlp_proxy(),
                 login_cookie=cookie,
                 region=str(getattr(tt_cfg, "region", "JP") or "JP").strip() or "JP",
@@ -448,14 +453,18 @@ def build_tiktok_discovery_producer(
             items=items,
             units_used=units_used,
             source_counts={strategy: len(items)},
+            errors=dict(selected_strategy.last_intermediates.get("errors", {})),
         )
 
-    strategies = (
+    strategies: tuple[str, ...] = (
         TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH
         if bool(getattr(tt_client, "search_available", False))
         else TIKTOK_DISCOVERY_STRATEGIES
     )
+    if str(getattr(tt_cfg, "mode", "auto")) == "ytdlp":
+        strategies = tuple(name for name in strategies if name != "tiktok_feed")
     return TiktokDiscoveryProducer(
+        cooldown_remaining=getattr(tt_client, "cooldown_remaining", None),
         database=database,
         soul_engine=soul_engine,
         discover=_discover,

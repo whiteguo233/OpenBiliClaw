@@ -98,3 +98,8 @@
 
 - [贡献指南](contributing.md) — 环境搭建、代码规范、文档更新要求
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok discovery-only 接入的冻结范围、排除项与验证证据见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。

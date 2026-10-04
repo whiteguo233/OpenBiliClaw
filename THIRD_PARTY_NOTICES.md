@@ -2312,3 +2312,11 @@ infringement, then any patent rights granted to you under this License
 for this implementation of Tailscale shall terminate as of the date
 such litigation is filed.
 ```
+
+
+## Vendored TikTok request signer
+
+`src/openbiliclaw/sources/tiktok_sign.py` was vendored on 2026-10-03 from
+[Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API),
+`src/dtk/signing/native/tiktok_sign.py`, under Apache License 2.0 (license text included above).
+Local modifications move typing-only imports to satisfy Ruff; provenance is retained in the file header.

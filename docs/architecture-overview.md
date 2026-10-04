@@ -93,6 +93,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │ Soul 认知纪律：待聊双轨冷却 · 单对话锚 · worker-only 结算 · 轻量 winner receipt · 疑惑 FIFO · 台账 · 深层门控 │
 │   LLM 适配层 · 多平台源适配（SourceAdapter）        │
 │   模块路由 → LLM 实例链 → Provider 适配 · 多平台源适配（SourceAdapter） │
+│   本地向量请求 / 诊断 → 自动加速 → 失败时 CPU → 有效向量验证 │
 │   可选视觉预热：封面 / 画像质心 / 关键帧 + 弹幕 document embedding     │
 │   provenance（provider/model/dim/采样）→ 成功空 / 瞬时失败 → 下轮重试   │
 │   配置恢复草稿（正常/降级）→ 临时探测 / 精确实例 /models（不写盘）│
@@ -170,3 +171,13 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
+
+### TikTok 公开发现
+
+```text
+正式发现 / 灵感探索 → TikTok router → 共享请求间隔 / 持久 429 冷却 → 签名 Web API
+                                └─ auto 且 Web 不可用 → yt-dlp（列表能力受上游限制）
+                      → 统一候选池 → 评估 → 推荐
+```
+
+登录 Cookie 只增加可尝试的 search 能力；passport 验证与搜索可用性分别验收。

@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from .ollama_embedding_runtime import cpu_fallback_active, embedding_vector, post_embedding
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -332,12 +334,20 @@ async def diagnose_ollama_embedding(
             )
 
         try:
-            probe = await client.post(
-                f"{root}/api/embeddings",
-                json={"model": model, "prompt": "ping"},
+            probe = await post_embedding(
+                client,
+                root,
+                model,
+                "ping",
                 timeout=_PROBE_TIMEOUT_SECONDS,
             )
         except Exception as exc:
+            if cpu_fallback_active(root, model):
+                return (
+                    DIAG_MODEL_BROKEN,
+                    f"{model} 已切换 CPU，但调用失败（{type(exc).__name__}）。"
+                    "请查看 Ollama 运行日志，检查服务连接与可用内存后重试。",
+                )
             return (
                 DIAG_MODEL_BROKEN,
                 f"{model} 已安装但调用失败（{type(exc).__name__}）。"
@@ -354,11 +364,26 @@ async def diagnose_ollama_embedding(
                     "OLLAMA_MODELS 为纯英文路径（如 D:\\ollama\\models）后重启 Ollama 并重新拉取。",
                 )
             if _looks_like_model_oom(snippet):
-                return (DIAG_MODEL_OOM, _model_oom_detail(model))
+                cpu_hint = "已切换 CPU，仍然内存不足。" if cpu_fallback_active(root, model) else ""
+                return (DIAG_MODEL_OOM, cpu_hint + _model_oom_detail(model))
             if _looks_like_disk_full(snippet):
                 return (DIAG_DISK_FULL, _disk_full_detail(model))
             if _looks_like_network_failure(snippet):
                 return (DIAG_NETWORK, _network_detail(model))
+            if cpu_fallback_active(root, model):
+                return (
+                    DIAG_MODEL_BROKEN,
+                    f"{model} 自动模式运行失败，已切换 CPU，但 CPU 调用仍失败"
+                    f"（HTTP {probe.status_code}：{snippet}）。"
+                    "重复重新拉取不一定解决进程崩溃；请查看 Ollama 运行日志，"
+                    "检查内存与虚拟内存，或升级到最新安装包 / 更新 Ollama 后重试。",
+                )
+            if "0xc0000409" in snippet.lower():
+                return (
+                    DIAG_MODEL_BROKEN,
+                    f"{model} 的 llama-server 进程崩溃（0xc0000409）。"
+                    "请检查 Ollama 运行日志与 GPU 驱动，尝试 CPU 模式或更新 Ollama。",
+                )
             if _looks_like_native_access_violation(snippet):
                 return (DIAG_MODEL_BROKEN, _native_access_violation_detail(model, raw=snippet))
             return (
@@ -367,14 +392,11 @@ async def diagnose_ollama_embedding(
                 f"（{snippet}）。可能下载不完整或内存不足："
                 f"可一键修复重新拉取，或重启 Ollama 后重试。",
             )
-        try:
-            vec = probe.json().get("embedding")
-        except Exception:
-            vec = None
-        if not isinstance(vec, list) or not vec:
+        if not embedding_vector(probe):
+            mode = "CPU 模式下" if cpu_fallback_active(root, model) else ""
             return (
                 DIAG_MODEL_BROKEN,
-                f"{model} 返回了空向量。建议 `ollama pull {model}` 重新拉取。",
+                f"{model} {mode}返回了空向量或无效向量。请查看 Ollama 运行日志。",
             )
         return (DIAG_OK, "")
 

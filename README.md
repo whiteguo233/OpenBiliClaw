@@ -64,7 +64,7 @@
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
    ```
 
-3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok（实验性）以后端 Web API 访客身份做推荐流 / 话题标签 / 创作者发现，可选登录 Cookie 解锁关键词搜索；它不参与引导初始化。
+3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok（实验性）以后端 Web API 访客身份做推荐流 / 话题标签 / 创作者发现，可选登录 Cookie 后可尝试关键词搜索（需单独验证可用性）；它不参与引导初始化。
 4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在设置里填后端地址即可连接同一后端。
 
 不在同一局域网时，`OpenBiliClaw-mobile` 的 **Android / iOS 原生 App** 已内嵌 `tsnet`，电脑端
@@ -639,6 +639,10 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
+TikTok：`正式发现 / 灵感探索 → 共用请求间隔与持久限流状态 → 签名 Web API → 候选池`；仅 auto 模式允许 yt-dlp 回退。
+
+本地向量：`正式请求 / 诊断 → Ollama 自动加速 → 有效向量；runner 故障 → CPU 重试 → 验证结果`。CPU 选择在本次后端运行期间共享，重启后重新尝试自动加速。
+
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
 聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
@@ -686,7 +690,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 | **小红书** | 被动收集 · 搜索 · 创作者订阅 · 初始化导入 | 插件在已登录页面读取，零后端爬取 |
 | **抖音** | 初始化导入 · 搜索 · 热点 · 推荐流 | CLI/daemon 共用正式 producer，插件后台 tab 模拟 DOM 操作，候选统一进入待评估池 |
 | **YouTube** | 初始化导入 · Takeout 离线导入 · 搜索 / 热门 / 频道 | 插件读画像信号，日常发现后端直连补池 |
-| **TikTok**（实验性） | 推荐流 · 话题标签 · 创作者 · 搜索（需登录 Cookie） | Web API 访客身份 + 请求签名匿名读取，yt-dlp 兜底，后端直连补池；可选登录 Cookie（扩展自动同步）解锁关键词搜索 |
+| **TikTok**（实验性） | 推荐流 · 话题标签 · 创作者 · 搜索（需登录 Cookie） | Web API 访客身份 + 请求签名匿名读取，yt-dlp 兜底，后端直连补池；可选登录 Cookie（扩展自动同步）挂载关键词搜索，实际可用性需另验 |
 | **X（Twitter）** | 初始化导入 · 搜索 · For-You · 关注作者 | discovery 使用服务端只读 cookie 重放；原生书签 executor 已接入但未实号验证 |
 | **知乎** | 初始化导入 · 搜索 · 热榜 · 推荐 · 作者 · 相关 | 插件在已登录 tab 内读取，返回文字卡片 |
 | **Reddit** | 初始化导入 · 搜索 · 热门 · Subreddit · 相关 | discovery 默认 rdt-cli；Saved executor 已接入但未实号验证 |
@@ -738,6 +742,7 @@ OpenBiliClaw/
 │   │   ├── tiktok             # TikTok yt-dlp 兜底客户端（实验性，issue #88）
 │   │   ├── tiktok_web         # TikTok Web API 访客身份客户端 + 后端 router（签名 + curl_cffi）
 │   │   ├── tiktok_sign        # vendored TikTok Web 签名（X-Dynosaur / X-Gnarly，Apache-2.0）
+│   │   ├── tiktok_state       # formal/inspiration 共用的持久限流与请求间隔
 │   │   ├── tiktok_auth        # TikTok 可选登录 Cookie 解析（env 优先，data 文件兜底）
 │   │   ├── zhihu_tasks        # 知乎插件任务队列 / bootstrap_events + search/hot/feed/creator/related
 │   │   ├── reddit_tasks       # Reddit bootstrap 插件任务 / extension fallback discovery / rdt 默认 discovery helpers

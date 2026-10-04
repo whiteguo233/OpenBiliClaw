@@ -123,6 +123,17 @@ def _extract_llm_json_payload(raw: object) -> object:
     return raw
 
 
+def _record_batch_failures(
+    intermediates: dict[str, object], keys: list[str], batches: list[Any]
+) -> None:
+    errors = {
+        key: str(getattr(batch, "reason", "unavailable"))
+        for key, batch in zip(keys, batches, strict=True)
+        if batch is None or isinstance(batch, BaseException)
+    }
+    intermediates["errors"] = errors
+
+
 def _coerce_candidate(raw: object, source_strategy: str) -> DiscoveredContent | None:
     """Accept both backend shapes: yt-dlp entry dict or web DiscoveredContent."""
     if isinstance(raw, DiscoveredContent):
@@ -195,11 +206,12 @@ class TiktokTagStrategy(DiscoveryStrategy):
             return_exceptions=True,
         )
 
+        _record_batch_failures(self.last_intermediates, tags, raw_batches)
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
         # ``raw_batches[i]`` corresponds to ``tags[i]`` (gather preserves order).
         for tag, batch in zip(tags, raw_batches, strict=True):
-            if isinstance(batch, BaseException):
+            if batch is None or isinstance(batch, BaseException):
                 logger.warning("tiktok_tag batch failed: %s", batch)
                 continue
             keyword_id = keyword_ids.get(tag) if keyword_ids else None
@@ -336,10 +348,11 @@ class TiktokUserStrategy(DiscoveryStrategy):
             return_exceptions=True,
         )
 
+        _record_batch_failures(self.last_intermediates, handles, batches)
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
         for batch in batches:
-            if isinstance(batch, BaseException):
+            if batch is None or isinstance(batch, BaseException):
                 logger.warning("tiktok_user batch failed: %s", batch)
                 continue
             for raw in batch:
@@ -406,7 +419,17 @@ class TiktokFeedStrategy(DiscoveryStrategy):
         return "tiktok"
 
     async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
-        batch = await self.client.get_feed(limit=max(1, self.results_per_run))
+        try:
+            batch = await self.client.get_feed(limit=max(1, self.results_per_run))
+        except Exception as exc:
+            self.last_intermediates = {
+                "fetched": 0,
+                "errors": {"feed": str(getattr(exc, "reason", "unavailable"))},
+            }
+            return []
+        if batch is None:
+            self.last_intermediates = {"fetched": 0, "errors": {"feed": "unavailable"}}
+            return []
         if not batch:
             # ``None`` (backend unavailable / ytdlp mode) and ``[]`` both mean
             # "nothing this run"; the router already logged the reason.
@@ -512,10 +535,11 @@ class TiktokSearchStrategy(DiscoveryStrategy):
             return_exceptions=True,
         )
 
+        _record_batch_failures(self.last_intermediates, keywords, raw_batches)
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
         for keyword, batch in zip(keywords, raw_batches, strict=True):
-            if isinstance(batch, BaseException):
+            if batch is None or isinstance(batch, BaseException):
                 logger.warning("tiktok_search batch failed: %s", batch)
                 continue
             keyword_id = keyword_ids.get(keyword) if keyword_ids else None

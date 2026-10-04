@@ -20,6 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
 | Responses JSON 输入契约（issue #265） | ✅ | 拆分 system 后检查 `input`，缺少 JSON 标记时追加最小 user 指令，避免偏好分析 HTTP 400。 |
 | v0.3.x OrcaRouter Provider 支持 | ✅ | 新增 `OrcaRouterProvider`（OpenAI 兼容协议）：一个 Key 跑 150+ 模型，默认 `openai/gpt-4o`，默认端点 `https://api.orcarouter.ai/v1`；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖。网关把 `reasoning_effort` 与嵌套 `reasoning` 对象都原样转发给上游路由，非推理模型会以 HTTP 400 拒绝（已对 `openai/gpt-4o` 实测），因此适配器**不发送任何推理参数**，推理模型使用自身默认档位 |
@@ -123,6 +124,33 @@
 此约束仅在 adaptive prompt 中声明，不删除或正则清洗模型输出，旧默认风格保持。
 
 `OpenAIProvider.complete(..., json_mode=True)` 在 Responses flavor 下确保 `input` 消息包含大小写不敏感的 `json` 标记；缺失时追加 `Return valid json.` user 指令。调用方消息和 `instructions` 缓存前缀不变，已有 JSON 输入和普通文本调用保持原样。连接测试仍表示普通文本连通性，不承诺所有结构化任务成功。
+
+### 本地 Ollama 向量运行模式
+
+`ollama_embedding_runtime.post_embedding(client, root, model, prompt, timeout=None)` 是
+`OllamaProvider.embed()` 与 `diagnose_ollama_embedding()` 共用的原生请求入口：
+
+```text
+provider / readiness / diagnosis → shared endpoint + model selection
+    → Ollama automatic acceleration → valid vector
+    → native runner/GPU/OOM failure → options.num_gpu=0 → valid vector / explicit failure
+```
+
+默认省略 GPU 参数，由 Ollama 使用可用加速设备；没有 GPU 时 Ollama 自行使用 CPU。
+本机 loopback 请求收到明确 runner 崩溃或分配错误的 HTTP 500，或 HTTP 200 返回无效向量后，立即记录 CPU 模式，
+原输入重试一次。状态在当前 Python 进程内按 endpoint/model 共享（`localhost` / `127.0.0.1`
+/ `::1` 与省略的 `:latest` 标签归一化）；配置重载、诊断或新 provider 不重新尝试 GPU。
+CPU 失败或请求取消也保留此选择，后续调用可继续探测 CPU 恢复；完整重启应用后重新自动选择。
+多进程部署各进程独立学习选择。远端 Ollama 不自动切换。
+
+`cpu_fallback_active(root, model)` 只表示已选择 CPU，不代表可用。
+`embedding_vector(response)` 校验非空、全数值且有限的向量；拒绝布尔、非数值、NaN/Infinity，
+不截去坏元素后缓存残缺向量。只有实际有效响应才算恢复，CPU 探针超时不使用普通冷加载的
+乐观 readiness。缺模型、鉴权、文件路径错误与普通传输超时沿用原诊断，不因它们切换 CPU。
+CPU 也不可用时保留故障与可重试状态，不承诺修复损坏的模型文件或主机内存不足。
+
+此策略只控制向量请求，不重启 Ollama、不修改全局环境，也不为聊天请求设置 CPU 参数。
+CLI、桌面 Web、移动 Web 和插件复用同一后端；没有新增配置字段或端侧开关。
 
 ### Provider 类
 
