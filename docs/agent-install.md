@@ -913,3 +913,7 @@ system-level package the user must consent to.
 - `docs/openclaw-quickstart.md` — OpenClaw-specific integration after install
 - `scripts/install.sh` — the installer itself (the command above)
 - `scripts/agent_bootstrap.py` — the Python contract core invoked by install.sh
+
+## macOS 桌面包签名
+
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。

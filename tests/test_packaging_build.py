@@ -578,3 +578,159 @@ def test_manual_installer_workflow_uses_official_macos_ollama_bundle() -> None:
     assert "Contents/Resources/llama-server" in workflow
     assert "Contents/Resources/libllama-server-impl.dylib" in workflow
     assert "brew install ollama" not in workflow
+
+
+def test_developer_id_signing_covers_nested_code_but_not_symlinks_or_data(tmp_path, monkeypatch):
+    app = tmp_path / "OpenBiliClaw.app"
+    framework = app / "Contents/Frameworks/Python.framework"
+    binary = framework / "Versions/3.12/Python"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"fake binary")
+    alias = framework / "Python"
+    alias.symlink_to(binary)
+    helper = app / "Contents/Resources/ollama"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(b"\xca\xfe\xba\xbe" + b"fake universal")
+    data = helper.with_name("model.bin")
+    data.write_bytes(b"not executable")
+    calls = []
+    monkeypatch.setattr(
+        build_module.subprocess, "check_output", lambda *a, **k: "Mach-O executable"
+    )
+    monkeypatch.setattr(build_module.subprocess, "check_call", lambda cmd: calls.append(cmd))
+    build_module.sign_macos_app(app, "Developer ID Application: Test (TEAM)")
+    signed = [Path(cmd[-1]) for cmd in calls if "--sign" in cmd]
+    assert set(signed) == {binary, framework, helper, app}
+    assert signed.index(binary) < signed.index(framework) < signed.index(app)
+    assert signed.index(helper) < signed.index(app)
+    assert all("--deep" not in cmd for cmd in calls if "--sign" in cmd)
+    assert all("--timestamp" in cmd and "runtime" in cmd for cmd in calls if "--sign" in cmd)
+    assert "--verify" in calls[-1]
+
+
+@pytest.mark.parametrize("status", ["Accepted", "Invalid", "Rejected"])
+def test_notarization_requires_accepted_status_and_saves_diagnostics(tmp_path, monkeypatch, status):
+    artifact = tmp_path / "app.zip"
+    log_dir = tmp_path / "logs"
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        if "submit" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"id":"submission-id"}', "")
+        if "wait" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0 if status == "Accepted" else 65, '{"status":"' + status + '"}', ""
+            )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(build_module.subprocess, "run", run)
+    if status == "Accepted":
+        build_module.notarize_macos_artifact(artifact, "profile", log_dir)
+    else:
+        with pytest.raises(RuntimeError, match=status):
+            build_module.notarize_macos_artifact(artifact, "profile", log_dir)
+    assert (log_dir / "app.zip.submission.json").read_text() == '{"id":"submission-id"}'
+    assert status in (log_dir / "app.zip.status.json").read_text()
+    assert calls[-1][2] == "log"
+    assert not any("staple" in cmd for cmd in calls)
+
+
+def test_notary_timeout_preserves_submission_for_resume(tmp_path, monkeypatch):
+    def run(cmd, **kwargs):
+        if "submit" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"id":"resume-me"}', "")
+        return subprocess.CompletedProcess(cmd, 1, "", "timed out")
+
+    monkeypatch.setattr(build_module.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="resume-me"):
+        build_module.notarize_macos_artifact(tmp_path / "app.zip", "profile", tmp_path / "logs")
+    assert "resume-me" in (tmp_path / "logs/app.zip.submission.json").read_text()
+
+
+@pytest.mark.parametrize(
+    "identity,profile",
+    [
+        ("Developer ID Application: Test (TEAM)", None),
+        (None, "profile"),
+        ("Apple Development: Test", "profile"),
+        ("-", "profile"),
+    ],
+)
+def test_incomplete_or_development_signing_configuration_is_rejected(
+    monkeypatch, identity, profile
+):
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    with pytest.raises(ValueError, match="Developer ID Application"):
+        build_module.validate_macos_signing(identity, profile)
+
+
+def test_notarized_dmg_uses_drag_install_without_gatekeeper_bypass(tmp_path, monkeypatch):
+    app = tmp_path / "OpenBiliClaw.app"
+    app.mkdir()
+    monkeypatch.setattr(build_module.subprocess, "check_call", lambda cmd: None)
+
+    def run(cmd, **kwargs):
+        stage = Path(cmd[cmd.index("-srcfolder") + 1])
+        guide = (stage / build_module.MACOS_FIRST_LAUNCH_GUIDE_NAME).read_text()
+        assert "Apple 公证" in guide
+        assert "Applications" in guide
+        assert "xattr" not in guide and "仍要打开" not in guide
+        assert not (stage / build_module.MACOS_INSTALLER_COMMAND_NAME).exists()
+        assert not (stage / build_module.MACOS_FIRST_LAUNCH_IMAGE_NAME).exists()
+        Path(cmd[-1]).touch()
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(build_module.subprocess, "run", run)
+    result = build_module.make_macos_dmg(
+        app_bundle=app,
+        output_dir=tmp_path / "release",
+        version="v1-x64",
+        notarized=True,
+    )
+    assert result.exists()
+
+
+@pytest.mark.parametrize(
+    "mode,present,success",
+    [
+        ("", False, True),
+        ("true", False, False),
+        ("false", True, True),
+        ("", True, False),
+    ],
+)
+def test_ci_signing_never_silently_downgrades_partial_credentials(mode, present, success):
+    import os
+
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("APPLE_"):
+            del env[key]
+    env["MACOS_SIGNING_ENABLED"] = mode
+    if present:
+        env["APPLE_TEAM_ID"] = "TEAM"
+    script = Path(__file__).resolve().parent.parent / ".github/actions/macos-signing/setup.sh"
+    result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) is success
+    if not success:
+        assert "Missing required signing credential" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "label", ["v0.3.226-arm64", "desktop-v0.3.226-with-embedding-x64", "v0.3.226.ab12345-x64"]
+)
+def test_macos_bundle_versions_exclude_artifact_labels(label):
+    assert build_module.make_macos_bundle_version(label) == "0.3.226"
+
+
+def test_notary_upload_error_preserves_real_cause(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        build_module.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 69, "", "No Keychain password item found"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="No Keychain password item found"):
+        build_module.notarize_macos_artifact(tmp_path / "app.zip", "profile", tmp_path / "logs")

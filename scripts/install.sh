@@ -734,6 +734,7 @@ PY
     echo "Reference docs:"
     echo "  - $INSTALL_DIR/docs/agent-install.md     (install guide)"
     echo "  - $INSTALL_DIR/docs/agent-deployment.md  (troubleshooting)"
+    echo "  - $INSTALL_DIR/docs/modules/packaging.md (macOS signed desktop builds; separate from this source install)"
     echo "================================================================"
 }
 

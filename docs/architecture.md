@@ -584,3 +584,14 @@ embedding 和空向量失败留待下轮重试，成功槽位会复用。已有�
    学习、推荐、反馈回流仍由 `runtime/`、`soul/`、`recommendation/` 等模块负责，`integrations/openclaw/skill.py` 只负责对外暴露稳定 handler；新功能必须同时进入 operation、descriptor、CLI（若适合）和 capability manifest。
 3. **宿主发现走能力协商 + 仓库根目录 `skills/`**
    当前仓库通过 `skills/openbiliclaw-adapter/SKILL.md` 提供真实 workspace skill，再由 skill 内部调用 adapter CLI bridge；`capabilities` 是避免宿主继续使用旧能力子集的权威入口。
+
+## macOS 分发构建链
+
+```text
+PyInstaller + Ollama/Tailnet/可选模型资源
+  → 内层 Mach-O / framework 签名 → .app 签名（Developer ID + Hardened Runtime）
+  → ZIP 提交 Apple → Accepted → .app 附加公证票据 + Gatekeeper 检查
+  → 最终 ZIP / DMG → DMG 签名 + Apple 公证 + 票据附加 + Gatekeeper 检查
+```
+
+两个桌面 workflow 共用 `.github/actions/macos-signing`，从 Actions Secrets 临时导入钥匙串，交给 `packaging/build.py`；无运行时 Apple 依赖。详见[打包模块](modules/packaging.md)。

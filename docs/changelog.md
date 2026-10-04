@@ -6,6 +6,11 @@
 
 - 发布回执、商店审核状态及国内源码/安装包镜像范围见[发布与验证记录](testing/2026-10-04-release-0.3.226.md)；国内下载入口按实际已上传版本标注。
 
+### 构建：macOS Developer ID 签名与 Apple 公证（2026-10-05）
+
+- 后端打包支持正式 Developer ID 签名、Hardened Runtime、应用与 DMG 公证/票据附加/Gatekeeper 验证；凭据不完整或公证失败会中止，保留 Apple 诊断记录。
+- 正式 DMG 使用拖入 Applications 的双语安装说明；实验包保留原助手。桌面 CI 共用临时钥匙串流程，并复用 Safari 的 Apple Secrets；本机登录 Xcode 不会自动配置 CI。详见 [打包模块](modules/packaging.md)。
+
 ### 修复：本地向量模型自动回退 CPU（2026-10-04）
 
 - 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。
