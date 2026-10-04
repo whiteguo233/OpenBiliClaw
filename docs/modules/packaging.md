@@ -16,8 +16,9 @@
 
 - `--macos-signing-identity 'Developer ID Application: Name (TEAMID)'`, or `APPLE_SIGNING_IDENTITY`.
 - `--macos-notary-profile openbiliclaw-notary`, or `APPLE_NOTARY_PROFILE`.
+- `--macos-notary-keychain /path/to/signing.keychain-db`, or `APPLE_NOTARY_KEYCHAIN`: use the same explicit file keychain for saving, preflight, submit, wait and log.
 
-Both must be supplied on macOS. Bundle version metadata uses numeric `X.Y.Z`; architecture, commit and variant labels remain in the artifact filenames. These are build settings, not `config.toml` fields or application CLI commands. Configure a local profile with `xcrun notarytool store-credentials openbiliclaw-notary`; use your **paid team's Team ID**, Apple ID and an app-specific password, stored in the macOS Keychain. Xcode login and an Apple Development certificate alone are insufficient.
+Both must be supplied on macOS. Bundle version metadata uses numeric `X.Y.Z`; architecture, commit and variant labels remain in the artifact filenames. These are build settings, not `config.toml` fields or application CLI commands. Configure a local profile with `xcrun notarytool store-credentials openbiliclaw-notary --keychain "$HOME/Library/Keychains/login.keychain-db"`; use your **paid team's Team ID**, Apple ID and an app-specific password, stored in the macOS Keychain. Xcode login and an Apple Development certificate alone are insufficient. Without `--keychain`, Apple uses the data protection keychain, which was observed to become unreadable shortly after a successful save on the local build host. For automation, explicitly pass the same file keychain to both store and every subsequent operation; CI now uses its temporary signing keychain. Verify with `notarytool history --keychain-profile PROFILE --keychain PATH` in a new process before announcing success.
 
 All resource mutations (Ollama, Tailnet, model seed, compatibility links) must finish before `sign_macos_app`. Never alter the app after signing/stapling. Signing enumerates real files without following symbolic links; data and model files are sealed as resources, not signed as executable code. No blanket Hardened Runtime exceptions are enabled.
 
@@ -41,7 +42,7 @@ Set these GitHub Actions repository secrets (same names used by Safari):
 
 ## Diagnostics and verification
 
-`dist/notary-logs/` holds submission ID, final status and Apple diagnostic JSON, also uploaded by CI on failure. A wait timeout (20 minutes) does not imply rejection. Use `xcrun notarytool info ID --keychain-profile PROFILE` or `wait ID` before retrying; do not blindly resubmit. For an accepted timed-out submission, use `notarytool log ID --keychain-profile PROFILE PATH`, then staple/validate the exact submitted app or DMG. Rebuilds change signatures and may require another submission.
+`dist/notary-logs/` holds submission ID, final status and Apple diagnostic JSON, also uploaded by CI on failure. A wait timeout (20 minutes) does not imply rejection. Use `xcrun notarytool info ID --keychain-profile PROFILE --keychain PATH` or `wait ID --keychain-profile PROFILE --keychain PATH` before retrying; do not blindly resubmit. For an accepted timed-out submission, use `notarytool log ID --keychain-profile PROFILE PATH`, then staple/validate the exact submitted app or DMG. Rebuilds change signatures and may require another submission.
 
 Automated checks cover nested-code ordering, symlink/data exclusion, incomplete credentials, Apple rejection/timeouts and signed DMG contents. Release acceptance also requires real `codesign --verify --deep --strict`, `stapler validate`, `spctl --assess`, and a frozen application startup with an isolated data directory. Gatekeeper verification must not clear quarantine. A first internet-download confirmation is normal.
 

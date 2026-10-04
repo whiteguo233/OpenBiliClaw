@@ -867,9 +867,19 @@ def repair_macos_ad_hoc_signature(app_bundle: Path) -> None:
     )
 
 
-def validate_macos_signing(identity: str | None, profile: str | None) -> None:
+def notary_credentials(profile: str, keychain: str | None = None) -> list[str]:
+    """Keep every notary operation on the keychain that stored the profile."""
+    args = ["--keychain-profile", profile]
+    if keychain:
+        args.extend(["--keychain", keychain])
+    return args
+
+
+def validate_macos_signing(
+    identity: str | None, profile: str | None, keychain: str | None = None
+) -> None:
     """Reject incomplete signing configuration before building any artifacts."""
-    if not identity and not profile:
+    if not identity and not profile and not keychain:
         return
     if platform.system() != "Darwin":
         raise ValueError("macOS signing options require macOS")
@@ -878,7 +888,7 @@ def validate_macos_signing(identity: str | None, profile: str | None) -> None:
             "Provide a Developer ID Application identity and a notary keychain profile"
         )
     subprocess.check_call(
-        ["xcrun", "notarytool", "history", "--keychain-profile", profile],
+        ["xcrun", "notarytool", "history", *notary_credentials(profile, keychain)],
         stdout=subprocess.DEVNULL,
     )
 
@@ -930,7 +940,9 @@ def sign_macos_app(app_bundle: Path, identity: str) -> None:
     subprocess.check_call(["codesign", "--verify", "--deep", "--strict", str(app_bundle)])
 
 
-def notarize_macos_artifact(artifact: Path, profile: str, log_dir: Path) -> None:
+def notarize_macos_artifact(
+    artifact: Path, profile: str, log_dir: Path, keychain: str | None = None
+) -> None:
     """Require an Accepted Apple response; preserve the submission ID and log."""
     log_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
@@ -939,8 +951,7 @@ def notarize_macos_artifact(artifact: Path, profile: str, log_dir: Path) -> None
             "notarytool",
             "submit",
             str(artifact),
-            "--keychain-profile",
-            profile,
+            *notary_credentials(profile, keychain),
             "--output-format",
             "json",
         ],
@@ -960,8 +971,7 @@ def notarize_macos_artifact(artifact: Path, profile: str, log_dir: Path) -> None
             "notarytool",
             "wait",
             submission_id,
-            "--keychain-profile",
-            profile,
+            *notary_credentials(profile, keychain),
             "--timeout",
             "20m",
             "--output-format",
@@ -986,8 +996,7 @@ def notarize_macos_artifact(artifact: Path, profile: str, log_dir: Path) -> None
             "notarytool",
             "log",
             submission_id,
-            "--keychain-profile",
-            profile,
+            *notary_credentials(profile, keychain),
             str(log_dir / f"{artifact.name}.notary.json"),
         ],
         check=True,
@@ -1002,7 +1011,9 @@ def staple_macos_artifact(artifact: Path) -> None:
     subprocess.check_call(["xcrun", "stapler", "validate", str(artifact)])
 
 
-def notarize_macos_app(app_bundle: Path, profile: str, log_dir: Path) -> None:
+def notarize_macos_app(
+    app_bundle: Path, profile: str, log_dir: Path, keychain: str | None = None
+) -> None:
     """Notarize the app before making its final ZIP and DMG."""
     import tempfile
 
@@ -1018,7 +1029,7 @@ def notarize_macos_app(app_bundle: Path, profile: str, log_dir: Path) -> None:
                 str(archive),
             ]
         )
-        notarize_macos_artifact(archive, profile, log_dir)
+        notarize_macos_artifact(archive, profile, log_dir, keychain)
     staple_macos_artifact(app_bundle)
     subprocess.check_call(
         ["spctl", "--assess", "--type", "execute", "--verbose=2", str(app_bundle)]
@@ -1075,9 +1086,10 @@ def build(
     model_seed_dir: str | None = None,
     macos_signing_identity: str | None = None,
     macos_notary_profile: str | None = None,
+    macos_notary_keychain: str | None = None,
 ) -> None:
     """Run PyInstaller, optionally signing and notarizing macOS artifacts."""
-    validate_macos_signing(macos_signing_identity, macos_notary_profile)
+    validate_macos_signing(macos_signing_identity, macos_notary_profile, macos_notary_keychain)
     ensure_pyinstaller()
     version_label = archive_version or read_project_version()
     bundle_version = (
@@ -1172,7 +1184,12 @@ def build(
             if app_bundle.exists():
                 if macos_signing_identity and macos_notary_profile:
                     sign_macos_app(app_bundle, macos_signing_identity)
-                    notarize_macos_app(app_bundle, macos_notary_profile, DIST_DIR / "notary-logs")
+                    notarize_macos_app(
+                        app_bundle,
+                        macos_notary_profile,
+                        DIST_DIR / "notary-logs",
+                        macos_notary_keychain,
+                    )
                 else:
                     repair_macos_ad_hoc_signature(app_bundle)
 
@@ -1229,7 +1246,10 @@ def build(
                             ]
                         )
                         notarize_macos_artifact(
-                            dmg_path, macos_notary_profile, DIST_DIR / "notary-logs"
+                            dmg_path,
+                            macos_notary_profile,
+                            DIST_DIR / "notary-logs",
+                            macos_notary_keychain,
                         )
                         staple_macos_artifact(dmg_path)
                         subprocess.check_call(
@@ -1304,8 +1324,15 @@ def main() -> None:
         default=os.environ.get("APPLE_NOTARY_PROFILE"),
         help="Validated notarytool keychain profile; requires --macos-signing-identity",
     )
+    parser.add_argument(
+        "--macos-notary-keychain",
+        default=os.environ.get("APPLE_NOTARY_KEYCHAIN"),
+        help="File keychain used to store the notary profile (recommended for automation)",
+    )
     args = parser.parse_args()
-    validate_macos_signing(args.macos_signing_identity, args.macos_notary_profile)
+    validate_macos_signing(
+        args.macos_signing_identity, args.macos_notary_profile, args.macos_notary_keychain
+    )
 
     bundle_embedding = args.bundle_embedding or os.environ.get(
         "OPENBILICLAW_BUNDLE_EMBEDDING", ""
@@ -1324,6 +1351,7 @@ def main() -> None:
         model_seed_dir=args.model_seed_dir,
         macos_signing_identity=args.macos_signing_identity,
         macos_notary_profile=args.macos_notary_profile,
+        macos_notary_keychain=args.macos_notary_keychain,
     )
 
 

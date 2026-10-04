@@ -8,6 +8,8 @@
 
 ### 构建：macOS Developer ID 签名与 Apple 公证（2026-10-05）
 
+- 公证凭据支持显式 `--macos-notary-keychain` / `APPLE_NOTARY_KEYCHAIN`；CI 将凭据保存到临时文件钥匙串，预检、上传、等待与诊断均使用同一路径，避免默认数据保护钥匙串保存后不可读。
+
 - Intel 本机 Developer ID 整包签名、严格签名校验和签名后启动自检已通过；Apple 公证仍待凭据持久化问题解决，尚未发布正式包。见[验证记录](testing/2026-10-05-macos-signing.md)。
 
 - 后端打包支持正式 Developer ID 签名、Hardened Runtime、应用与 DMG 公证/票据附加/Gatekeeper 验证；凭据不完整或公证失败会中止，保留 Apple 诊断记录。

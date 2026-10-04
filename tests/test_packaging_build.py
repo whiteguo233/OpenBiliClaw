@@ -734,3 +734,38 @@ def test_notary_upload_error_preserves_real_cause(tmp_path, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="No Keychain password item found"):
         build_module.notarize_macos_artifact(tmp_path / "app.zip", "profile", tmp_path / "logs")
+
+
+def test_notary_profile_reads_use_the_same_explicit_keychain(tmp_path, monkeypatch):
+    calls = []
+    keychain = str(tmp_path / "signing.keychain-db")
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_module.subprocess, "check_call", lambda cmd, **kwargs: calls.append(cmd)
+    )
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        output = '{"id":"id"}' if "submit" in cmd else '{"status":"Accepted"}'
+        return subprocess.CompletedProcess(cmd, 0, output, "")
+
+    monkeypatch.setattr(build_module.subprocess, "run", run)
+    build_module.validate_macos_signing(
+        "Developer ID Application: Test (TEAM)", "profile", keychain
+    )
+    build_module.notarize_macos_artifact(
+        tmp_path / "app.zip", "profile", tmp_path / "logs", keychain
+    )
+    assert {cmd[2] for cmd in calls} == {"history", "submit", "wait", "log"}
+    for cmd in calls:
+        assert cmd[cmd.index("--keychain") + 1] == keychain
+        assert cmd[cmd.index("--keychain-profile") + 1] == "profile"
+
+
+def test_ci_notary_credentials_are_stored_and_read_in_temporary_keychain():
+    script = (
+        Path(__file__).resolve().parent.parent / ".github/actions/macos-signing/setup.sh"
+    ).read_text()
+    store = script[script.index("xcrun notarytool store-credentials") :]
+    assert '--keychain "$keychain_path"' in store
+    assert "APPLE_NOTARY_KEYCHAIN=" in store

@@ -41,5 +41,5 @@ if [[ -z "$identity" || "$identity" != *"($APPLE_TEAM_ID)" ]]; then
 fi
 xcrun notarytool store-credentials obc-desktop-notary \
   --apple-id "$APPLE_NOTARY_USER" --team-id "$APPLE_TEAM_ID" \
-  --password "$APPLE_NOTARY_PASSWORD"
-printf 'APPLE_SIGNING_IDENTITY=%s\nAPPLE_NOTARY_PROFILE=obc-desktop-notary\n' "$identity" >> "$GITHUB_ENV"
+  --password "$APPLE_NOTARY_PASSWORD" --keychain "$keychain_path"
+printf 'APPLE_SIGNING_IDENTITY=%s\nAPPLE_NOTARY_PROFILE=obc-desktop-notary\nAPPLE_NOTARY_KEYCHAIN=%s\n' "$identity" "$keychain_path" >> "$GITHUB_ENV"
