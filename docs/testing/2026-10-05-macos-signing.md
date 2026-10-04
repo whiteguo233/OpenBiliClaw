@@ -22,9 +22,9 @@ Worktree: `../OpenBiliClaw-macos-signing`.
 | MyPy | `mypy src/`: no issues in 305 source files. |
 | Shell / YAML | Installer and CI setup parse with `bash -n`; both desktop workflows and composite action parse as YAML. |
 | Full pytest | `pytest`: 9774 passed, 112 skipped, 1 failed in 1275.92s. Failure: `TestBackendAPI::test_put_config_does_not_block_on_speculator` hit its 0.5-second asyncio timeout. The case passed independently on both main (5.62s test session) and this branch (4.17s) with the same environment. This looks timing-sensitive; the full run is not reported as green. New packaging cases were also run separately after being added. |
-| Developer ID signing | Started; first keychain-backed codesign call awaiting completion. A process sample shows `SecKeyCreateSignature` → SecurityServer `generateSignature` waiting for a reply, before timestamp/network work. |
-| Apple notarization / stapler / Gatekeeper | Pending `openbiliclaw-notary` credential profile and completed signing. |
-| Signed app / DMG installation smoke | Pending. The native Tailnet helper independently returned `self-test ok` before signing. |
+| Developer ID signing | Passed after local keychain authorization. App and nested Mach-O components use team `JX4KDJUY28`, secure timestamps and Hardened Runtime. `codesign --verify --deep --strict` passed. An interrupted signing attempt left a temporary `.cstemp` file; retrying after codesign removed that temporary file completed successfully. |
+| Apple notarization / stapler / Gatekeeper | Not submitted yet. Profile validation briefly returned `No submission history`, but the subsequent upload failed with `No Keychain password item found for profile: openbiliclaw-notary`; no submission ID was issued. Credential persistence remains to be resolved. |
+| Signed app / DMG installation smoke | Signed app startup passed (exit 0, `selftest OK`), and the signed native Tailnet helper returned `self-test ok`. Final notarized DMG installation remains pending. |
 | GitHub hosted CI | Not run. Repository Apple secrets are not configured. |
 | arm64 / Windows / Docker | Not rebuilt locally. Changes are macOS build-only; Windows build commands and Docker/source runtime remain unchanged. |
 
