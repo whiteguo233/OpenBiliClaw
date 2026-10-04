@@ -26,8 +26,9 @@
 | Config / API / status convergence | required | PASS | unit/static + config-show；已更新凭据 verified 文案，明确搜索需另测 |
 | Setup surface | N/A | PASS | guidedInit=false，contract 测试 |
 | Desktop / mobile recommendation rendering | required | PASS | 2026-10-05 正常 Uvicorn 后端 + 独立 Chrome 普通 UI，真实封面/推荐/跨端本地保存；见续验 |
-| Desktop / mobile full actions | required | PARTIAL | 桌面来源开关、mode/region/budget 保存及过滤、两端本地保存通过；手机无来源凭据管理入口，完整动作仍未齐备 |
-| Extension popup / mobile credentials | required | BLOCKED | build/assets + unit/static 通过；已安装扩展登录态交互未执行 |
+| Desktop settings / mobile consumption actions | required | PASS | 桌面来源开关、mode/region/budget 保存及过滤、两端本地保存与状态一致通过；手机来源设置/凭据/verify 按规范 §0.3 排除 |
+| Extension popup credentials | required | BLOCKED | build/assets + unit/static 通过；已安装扩展登录态交互未执行 |
+| Mobile credentials / source settings / verify | N/A | PASS | 接入规范 §0.3 的全产品范围排除，contract 显式声明 + test_tiktok_mobile_consumption_excludes_credential_management |
 | Image delivery | required | PASS | live-transport；3 个真实 cover 通过应用 fetch_cover_bytes，均为 image/*，见 covers.json |
 | Image proxy DNS / redirect boundary | required | PASS | TikTok 专用路径逐跳 DoH 解析、拒绝非 global/过渡地址并固定连接 IP；22 项安全测试 + 3/3 真实代理封面下载，见 covers-pinned.json。其他来源的旧下载路径不在此证明范围 |
 | Mobile deep link | N/A | PASS | HTTPS browser fallback，contract 测试 |
@@ -107,3 +108,14 @@ TikTok 封面经 `runtime/tiktok_images.py` 处理：Cloudflare DNS-over-HTTPS �
 - Playwright 独立 Chrome profile 仅用于普通桌面/移动网页验证：两次连接浏览器 inventory 均失败，主项目及原 TT worktree 均无可用 Cookie，故没有已安装扩展、有效登录搜索、Cookie 自动同步证据。手机版现有入口只有保存同步设置，没有平台来源/凭据管理入口；不能标为手机凭据流程通过。
 
 截图：[真实后端桌面推荐](images/tiktok-2026-10-05/desktop.png)、[真实后端手机保存状态](images/tiktok-2026-10-05/mobile.png)。本轮替代此前渲染 fixture 的网页证据，但总体仍为 **incremental only**。有效登录搜索、安装版扩展同步和完整凭据跨端流程仍待完成。临时浏览器和 Uvicorn 在验收后关闭；生产服务、配置、数据及已安装扩展未改动。
+
+
+### 验收范围纠正（2026-10-05）
+
+此前将手机缺少凭据入口列为实现缺口不准确。[接入规范 §0.3](platform-source-integration.md#03-桌面与插件测试连接按钮移动端有意排除) 明确排除移动凭据管理和测试连接；§4 的来源设置要求针对桌面与 popup。已在 TikTok contract 增加 mobile_credentials/mobile_source_settings/mobile_verify=false，并用契约测试锁定。手机 required 消费面（真实推荐、封面、本地保存、跨端保存状态）已通过；这不是为了跳过缺测而缩小范围。旧段落中的“手机无凭据入口”是观察事实，不再作为未完成项。
+
+### 已登录 Chrome 的安装预检（2026-10-05）
+
+用户确认 Chrome 已登录 TikTok。通过 Chrome 安装记录确认 OpenBiliClaw 是商店版 0.3.226（ID `cdfjfkdjjhdaccbldipkjhpibnfbiamg`），其 manifest 无 TikTok host permission，不能靠重启加载出分支新增能力。分支 Chrome build、verify:assets 与 package:only 全部完成，[构建与预检摘要](testing/assets/2026-10-05-tiktok/chrome-update-preflight.json) 记录安装包 SHA-256。后端重载广播返回 delivered=true，但它只证明广播被订阅者接收，不能证明新构建部署或 Cookie 同步成功。
+
+Chrome 连接工具可列出浏览器，但会话命名/标签控制均超时；已有本地调试端点也握手超时。未改写商店版受校验文件、未读取 Cookie 原值，等待恢复浏览器控制后加载分支构建再执行真实登录链路。用户已登录的陈述与工具连接不可用是两个独立事实，不能因后者声称用户未登录。`6ca8f5cc` 的完整 CI 已全绿（run 37215382565）。

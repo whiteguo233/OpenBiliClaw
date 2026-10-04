@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-05",
+  "base_commit": "6ca8f5cc4c91d795b16de40b716aa7c6893c454d",
+  "build": "Chrome",
+  "version": "0.3.226",
+  "load_root": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-source-readiness/extension",
+  "zip_sha256": "6b46056da2d7cc9372f29d8a2e20d34564393c7713ee727f287cf922b87f6bea",
+  "build_assets": "pass",
+  "installed_artifact_updated": false,
+  "installed_existing": {
+    "id": "cdfjfkdjjhdaccbldipkjhpibnfbiamg",
+    "version": "0.3.226",
+    "channel": "webstore",
+    "tiktok_host_permission": false
+  },
+  "reload_broadcast_delivered": true,
+  "browser_control": "Chrome connector operations and existing CDP handshake timeout",
+  "cookies_accessed": false
+}

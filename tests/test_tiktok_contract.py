@@ -1,6 +1,7 @@
 """Executable exclusions for TikTok's discovery-only contract."""
 
 import json
+import tomllib
 from pathlib import Path
 
 from openbiliclaw.runtime.init_prereqs import _PLATFORM_SOURCE_FIELDS
@@ -79,3 +80,17 @@ def test_tiktok_media_deep_link_uses_https() -> None:
     item = parse_tiktok_item({"id": "123", "desc": "title", "author": {"uniqueId": "creator"}})
     assert item is not None
     assert item.content_url == "https://www.tiktok.com/@creator/video/123"
+
+
+def test_tiktok_mobile_consumption_excludes_credential_management() -> None:
+    contract = tomllib.loads((ROOT / "docs/platform-source-contract.tiktok.toml").read_text())
+    surfaces = contract["surfaces"]
+    assert surfaces["mobile"] is True
+    assert surfaces["mobile_credentials"] is False
+    assert surfaces["mobile_source_settings"] is False
+    assert surfaces["mobile_verify"] is False
+    # Mobile intentionally has no credential read/write/probe API surface.
+    mobile_api = (ROOT / "src/openbiliclaw/web/js/api.js").read_text()
+    assert "/sources/credentials" not in mobile_api
+    assert "/credential" not in mobile_api
+    assert "/verify" not in mobile_api

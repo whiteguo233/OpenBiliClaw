@@ -76,6 +76,10 @@
 "setup" = false
 "desktop" = true
 "mobile" = true
+# Shared product policy: mobile consumes recommendations/saves, not credentials.
+"mobile_credentials" = false
+"mobile_source_settings" = false
+"mobile_verify" = false
 "extension_popup" = true
 "source_status" = true
 "credentials" = true
