@@ -33,7 +33,7 @@
 | Mobile deep link | N/A | PASS | HTTPS browser fallback，contract 测试 |
 | Native save | N/A | PASS | TikTok local-only，contract 测试；未调用站内 mutation |
 | Focused backend verification | required | PASS | 244 个专项测试通过；后增 readiness 18 项通过，图片/CLI/API/声明/版本相关 118 项通过 |
-| Full backend verification | required | NOT_RUN | 全量扫描 10029 passed / 65 skipped / 5 failed；失败原因已修复，相关 178 项与图片/CLI/声明/版本 118 项复跑通过。最终整套绿灯待 PR CI，不能把分阶段复跑写成单次全绿 |
+| Full backend verification | required | PASS | 代码基线 `1c632c29` 云端全量 9970 passed / 111 skipped / 0 failed；其后资料缺 ID 补丁的相关 157 项通过。最新 head 的完整状态以 PR CI 为准，分阶段证据不冒充同一次执行 |
 | Chrome + Firefox tests/build/assets | required | PASS | 两目标构建、类型检查、资源检查通过；扩展测试 1536/1536 |
 | Safe real E2E | required | PASS | 匿名 tag → pending_eval → 真实 LLM → 推荐 API；限于此明确切片 |
 | Authenticated / expired credential E2E | required | BLOCKED | 需要用户实际登录环境，不捏造 Cookie 或账号身份 |
@@ -74,8 +74,18 @@ HTTP 200、业务状态成功且存在显式列表时，`[]` 才是有效空结�
 
 ## 最终复核补充
 
-完整扫描耗时 34 分钟：5 项失败分别为旧 hashtag 断言、测试运行期间主线版本更新引发的两项版本一致性断言、推荐服务地址测试隔离和生成式第三方声明不同步。已修正断言、合入 main 的隔离 fixture，并把 signer notice 写入生成器而非手改生成结果；这 7 个相关测试文件合并复跑 178 项通过。安全下载路径与图片 API/CLI/声明/版本的 118 项测试另外通过。最终 CI 结果以 PR 当前 head 为准。
+完整扫描耗时 34 分钟：5 项失败分别为旧 hashtag 断言、测试运行期间主线版本更新引发的两项版本一致性断言、推荐服务地址测试隔离和生成式第三方声明不同步。已修正断言、合入 main 的隔离 fixture，并把 signer notice 写入生成器而非手改生成结果；这 7 个相关测试文件合并复跑 178 项通过。安全下载路径与图片 API/CLI/声明/版本的 118 项测试另外通过。随后 `1c632c29` 的 [完整 CI](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37207105480) 全绿：后端 9970 passed / 111 skipped，独立引导初始化浏览器测试 39 passed，Windows 和 Firefox 检查通过。其后资料查找缺少 ID 的补丁单独通过 157 项回归；最新 CI 状态以 PR 当前 head 为准。
 
 TikTok 封面经 `runtime/tiktok_images.py` 处理：Cloudflare DNS-over-HTTPS 仅接收公开 CDN hostname，服从现有 network 路由；固定 IP 用 curl CONNECT_TO，Host/SNI/证书验证保留原域名。每次跳转重新执行白名单、443 端口、解析地址校验并使用新会话；DNS 失败时关闭本次下载，不回退未经验证的本地解析。正文流有 10MB 上限，拒绝后主动取消下载。真实网络最终结果见 [covers-pinned.json](testing/assets/2026-10-04-tiktok/covers-pinned.json)。此路径增加对 Cloudflare DoH 可达性的依赖，不携带账号 Cookie。
 
 实现依据：[libcurl CONNECT_TO](https://curl.se/libcurl/c/CURLOPT_CONNECT_TO.html)、[Cloudflare DoH JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。初次本地 DNS 地址固定测试超时，随后改为沿配置代理的 DoH 解析并完成 3/3 真图复验；不将中间失败结果写成成功。
+
+## 登录环境就绪后的执行步骤
+
+1. 使用隔离后端配置/数据目录和独立端口，将本次构建的扩展连接到该后端。Chrome 的装载根为修复 worktree 的 `extension/`，Firefox 为 `extension/dist-firefox/`；先核对 builds.json 的版本与树摘要。
+2. 在这个装有扩展的浏览器登录 TikTok，确认统一凭据端点收到 Cookie 同步并通过 passport 心跳。分别记录未登录、已验证、过期/拒绝三种状态；不以“Cookie 存在”替代验证成功。
+3. 在同一隔离配置下执行 `openbiliclaw discover-tiktok --mode search --query "science experiments" --limit 3`，记录实际错误分类或条目数。再让正式 producer 消费同一短语，核对 pending keyword 的 used/failed 状态和候选来源；搜索必须保留短语，不能转 hashtag。
+4. 桌面、手机、已安装 popup 分别操作 TikTok 启用、mode、预算、地区、验证/凭据管理及推荐过滤；刷新后核对后端配置与状态一致。暂存/收藏只验证本地语义，不调用 TikTok 站内收藏接口。
+5. 把结果、受测 commit、安装路径与真实 pipeline 终态补回本报告；只有相应 required 行逐一 PASS，才把总体 verdict 从 incremental only 改为 complete。
+
+资料查找终态补充：HTTP/业务成功但作者资料缺少 secUid，或话题资料缺少 challenge ID，均记录 `invalid_response`；不能把这种无法确认的响应视为“用户/话题不存在”并消费关键词。对应用户与话题反例已加入 `tests/test_tiktok_web.py`。

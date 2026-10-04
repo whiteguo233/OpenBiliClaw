@@ -667,7 +667,7 @@ class TiktokWebClient:
         return user_info if isinstance(user_info, dict) else {}
 
     def _resolve_sec_uid(self, handle: str) -> str | None:
-        """handle → secUid. ``""`` = user not found; ``None`` = backend down."""
+        """handle → secUid; absent metadata is an error, ``None`` is backend down."""
         cached = self._sec_uid_cache.get(handle)
         if cached:
             return cached
@@ -676,17 +676,15 @@ class TiktokWebClient:
             return None
         user = _as_dict(profile.get("user"))
         sec_uid = _first_text(user.get("secUid"))
-        if sec_uid:
-            self._sec_uid_cache[handle] = sec_uid
+        if not sec_uid:
+            raise TiktokRequestError("invalid_response")
+        self._sec_uid_cache[handle] = sec_uid
         return sec_uid
 
     def _user_video_items(self, handle: str, limit: int) -> list[DiscoveredContent] | None:
         sec_uid = self._resolve_sec_uid(handle)
         if sec_uid is None:
             return None
-        if not sec_uid:
-            logger.info("tiktok web: no secUid for handle %r (unknown user?)", handle)
-            return []
         data = self._request_json(
             "/api/post/item_list/",
             {
@@ -707,7 +705,7 @@ class TiktokWebClient:
         return _parse_item_list(data["itemList"])
 
     def _resolve_challenge_id(self, tag: str) -> str | None:
-        """tag → challenge id. ``""`` = unknown tag; ``None`` = backend down."""
+        """tag → challenge id; absent metadata is an error, ``None`` is backend down."""
         cached = self._challenge_id_cache.get(tag.casefold())
         if cached:
             return cached
@@ -720,17 +718,15 @@ class TiktokWebClient:
         info = _as_dict(data.get("challengeInfo"))
         challenge = _as_dict(info.get("challenge"))
         challenge_id = _first_text(challenge.get("id"))
-        if challenge_id:
-            self._challenge_id_cache[tag.casefold()] = challenge_id
+        if not challenge_id:
+            raise TiktokRequestError("invalid_response")
+        self._challenge_id_cache[tag.casefold()] = challenge_id
         return challenge_id
 
     def _tag_video_items(self, tag: str, limit: int) -> list[DiscoveredContent] | None:
         challenge_id = self._resolve_challenge_id(tag)
         if challenge_id is None:
             return None
-        if not challenge_id:
-            logger.info("tiktok web: no challenge id for tag %r (unknown tag?)", tag)
-            return []
         data = self._request_json(
             "/api/challenge/item_list/",
             {

@@ -341,7 +341,7 @@ async def test_get_user_videos_resolves_sec_uid_and_caches_it() -> None:
     assert "secUid=SEC" in post_calls[0]
 
 
-async def test_get_user_videos_unknown_user_returns_empty() -> None:
+async def test_get_user_videos_missing_metadata_is_not_affirmative_empty() -> None:
     session = _FakeSession()
     session.queue.extend(
         [
@@ -351,8 +351,19 @@ async def test_get_user_videos_unknown_user_returns_empty() -> None:
     )
     client = _client(session)
 
-    assert await client.get_user_videos("@ghost", limit=5) == []
+    with pytest.raises(RuntimeError, match="invalid_response"):
+        await client.get_user_videos("@ghost", limit=5)
     assert await client.get_user_videos("not a handle", limit=5) == []
+
+
+@pytest.mark.parametrize(
+    "payload", [{}, {"challengeInfo": {}}, {"challengeInfo": {"challenge": {}}}]
+)
+async def test_get_tag_videos_missing_metadata_is_not_affirmative_empty(payload: dict) -> None:
+    session = _FakeSession()
+    session.queue.extend([_bootstrap_response(), _FakeHttpResponse(_json_body(payload))])
+    with pytest.raises(RuntimeError, match="invalid_response"):
+        await _client(session).get_tag_videos("ghost", limit=5)
 
 
 async def test_get_tag_videos_resolves_challenge_id_and_caches_it() -> None:

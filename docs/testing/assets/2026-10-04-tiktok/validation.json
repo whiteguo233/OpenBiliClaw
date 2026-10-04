@@ -30,5 +30,20 @@
     "source_files": 313,
     "passed": true
   },
-  "config_show_exit": 0
+  "config_show_exit": 0,
+  "ci_baseline": {
+    "head": "1c632c29fdaf0a797a7be9552225e8ca20e8b3c9",
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37207105480",
+    "conclusion": "success",
+    "pytest_passed": 9970,
+    "pytest_skipped": 111,
+    "pytest_failed": 0,
+    "guided_init_passed": 39,
+    "windows": "success",
+    "firefox": "success"
+  },
+  "metadata_fix_regression": {
+    "passed": 157,
+    "failed": 0
+  }
 }
