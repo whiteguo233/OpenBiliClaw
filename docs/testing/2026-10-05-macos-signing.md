@@ -58,4 +58,5 @@ Completed locally on 2026-10-05 around 04:57 Asia/Shanghai.
 - Updated runners to `macos-15` (arm64) and `macos-15-intel` (x64). The manual workflow supports `macos_only=true` for verification of both architectures.
 - Increased each Apple submission wait to 90 minutes; timeouts still fail closed and preserve submission IDs.
 - Packaging regression suite: 65 passed in 17.72s. Ruff, workflow YAML parsing, embedded Python compilation and signing setup shell syntax passed.
-- Hosted acceptance and repository credential provisioning are being verified separately; local success alone is not evidence of a hosted build.
+- GitHub CI run `37305641917` passed: 9796 tests passed, 111 skipped; Windows HKCU checks passed (4 passed, 1 skipped); web guided-init E2E passed (39 tests); Firefox smoke build, Ruff and MyPy passed. The local follow-up full run was interrupted before completion and is not counted as a passing run.
+- Hosted signed installer acceptance and repository credential provisioning are being verified separately; ordinary CI success alone is not evidence of a signed hosted build.
