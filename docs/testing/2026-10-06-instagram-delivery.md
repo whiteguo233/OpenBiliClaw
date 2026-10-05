@@ -6,6 +6,7 @@
 
 - Instagram 修复提交：`c642ec58`，首次接入为 `6975e9e9`。
 - main 整合基线：`fcb170bc`（v0.3.226），相对原分支增加 471 个提交；保留 GitHub 来源、时效准入、Safari 守卫、聊天与 Tailnet 等主线改动。
+- 首次整合提交为 `789382a4`；等待测试期间 main 新增 `1d9e8291` 的 macOS 签名/公证改动，随后无冲突整合并保留其全部安装器与文档更新。
 - 解决共享注册表、任务恢复、失败提示、图片网络边界与文档冲突；Instagram 补接主线共享发布日期偏好（TOML → API → 桌面/插件 → 候选准入）。
 - 手机仓库 `485269f` 已合并并推送 main：显式启用的消费测试、README 和验收说明；临时测试包名没有提交。主工作区原有改动的二进制 diff 哈希在合并前后相同，未混入提交。
 
@@ -23,6 +24,7 @@ Python 使用独立 worktree 的 `PYTHONPATH=src`，已核对 `openbiliclaw.__fi
 | 后端全量首轮 | 10,093 PASS / 65 SKIP / 13 FAIL，44 分 35 秒；不是一次全绿 |
 | 首轮失败最终复测 | 13/13 PASS；CLI 输入、状态缓存隔离、共享来源数量、初始化请求字段与首页断言已修正 |
 | 最终增量检查 | 184 PASS（含新增日期 API / UI / 准入检查）；配置模块 361 PASS；首页最终 5 PASS |
+| 最新 main 合并后检查 | 安装器、工作流、文档及 Instagram 契约 94 PASS；Ruff / MyPy 重新通过 |
 | 扩展全量 | 1,671 PASS；原先一项依赖固定源码截取长度的断言已改按函数边界截取 |
 | Chrome / Firefox | TypeScript、构建与各 21 项 manifest 资源检查 PASS |
 | 原生 mobile | `flutter analyze --no-pub` 无问题；`flutter test --no-pub` 139 PASS |

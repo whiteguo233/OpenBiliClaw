@@ -51,6 +51,19 @@
 
 - 发布回执、商店审核状态及国内源码/安装包镜像范围见[发布与验证记录](testing/2026-10-04-release-0.3.226.md)；国内下载入口按实际已上传版本标注。
 
+### 构建：macOS Developer ID 签名与 Apple 公证（2026-10-05）
+
+- 2026-10-06：仓库 Apple Secrets 配置完成，GitHub Actions 的 arm64 / x64 安装包均通过实际签名、公证、票据和 Gatekeeper 校验及启动自检，产物已上传；[云端构建记录](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37337056080)。
+
+- GitHub 常规 CI 已通过（9796 项测试通过，111 跳过）；GitHub Actions 桌面 macOS 构建强制正式签名、公证及校验，缺少凭据即失败；移除实验包回退和旧开关，Intel runner 更新为 `macos-15-intel`、arm64 为 `macos-15`，单次公证等待放宽到 90 分钟。
+
+- 公证凭据支持显式 `--macos-notary-keychain` / `APPLE_NOTARY_KEYCHAIN`；CI 将凭据保存到临时文件钥匙串，预检、上传、等待与诊断均使用同一路径，避免默认数据保护钥匙串保存后不可读。
+
+- Intel 本机应用与 DMG 均已通过 Apple 公证、票据附加和 Gatekeeper 验证；从最终 DMG 复制并添加隔离属性后的启动、Tailnet 与 llama-server 验收通过，已生成本地 x64 安装包；尚未上传 GitHub Release。见[验证记录](testing/2026-10-05-macos-signing.md)。
+
+- 后端打包支持正式 Developer ID 签名、Hardened Runtime、应用与 DMG 公证/票据附加/Gatekeeper 验证；凭据不完整或公证失败会中止，保留 Apple 诊断记录。
+- 正式 DMG 使用拖入 Applications 的双语安装说明；实验包保留原助手。桌面 CI 共用临时钥匙串流程，并复用 Safari 的 Apple Secrets；本机登录 Xcode 不会自动配置 CI。详见 [打包模块](modules/packaging.md)。
+
 ### 修复：本地向量模型自动回退 CPU（2026-10-04）
 
 - 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。

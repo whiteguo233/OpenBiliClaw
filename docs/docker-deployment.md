@@ -516,3 +516,7 @@ curl -s http://127.0.0.1:8420/api/health | python -m json.tool
 ```
 
 v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。
+
+## macOS 桌面包签名
+
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
