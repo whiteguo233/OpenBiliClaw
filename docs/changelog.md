@@ -4,6 +4,8 @@
 
 ## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
 
+- v0.3.227 发布回执已归档：Chrome / Firefox 已提交待审核，正式签名的 Mac 与 Safari 安装包、Windows 安装包和双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。详见 [发布记录](testing/2026-10-06-release-0.3.227.md)。
+
 - Safari 正式包关闭 Xcode 自动注入的调试权限，公证拒绝时立即输出诊断并停止；支持钥匙串公证凭据及保留原标签的打包修复。
 
 - macOS 桌面包强制 Developer ID 签名、Apple 公证、票据和 Gatekeeper 校验，使用拖入 Applications 的安装流程，聚合发行页同步移除旧的未签名放行说明；arm64 / Intel 云端流程已验收。
