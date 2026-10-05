@@ -148,3 +148,16 @@ clean/typecheck 目标隔离；`build-assets.test.ts` 新增 `verifyBuildAssets(
 `extension/tests/cookie-sync.test.ts` 覆盖 Safari 精确域过滤与 unfiltered `getAll({})`
 回退路径；`extension/tests/package-safari.test.ts` 钉死 Safari 发布资产命名。
 完整签名/公证链只在本机 macOS + 真实 Apple 凭据或 `extension-v*` CI 上验证。
+
+## v0.3.227 正式签名修复
+
+Xcode 的普通 build 会注入调试基础权限，正式打包显式设置
+`CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` 与 `ENABLE_HARDENED_RUNTIME=YES`，避免
+宿主和 appex 携带 `com.apple.security.get-task-allow` 被 Apple 拒绝。
+公证必须返回 `Accepted` 后才 staple；拒绝时输出 Apple 诊断并终止。
+本地可用 `APPLE_NOTARY_KEYCHAIN_PROFILE`（可选 `APPLE_NOTARY_KEYCHAIN`）复用
+钥匙串凭据；CI 继续使用既有 Apple Secrets，不需要新增秘密。
+
+修复已发布版本的打包流程时，可从修复分支手动触发 Release Extension Package，
+`release_tag` 填现有 `extension-vX.Y.Z`。版本校验仍生效；仅修复打包签名，
+不得用此入口替换不同应用代码。保持原 tag 不变，并在发布验证记录中记录构建提交。
