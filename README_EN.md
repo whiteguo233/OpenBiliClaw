@@ -30,7 +30,7 @@ Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo23
 
 ## OpenBiliClaw in 10 Seconds
 
-> Instagram is available in main source as **experimental, disabled by default, and not yet released**. Real-account initialization → configured models → recommendations, plus Web, extension, and iOS simulator consumption have been exercised. Complete Likes termination, two accounts, signed-in Firefox, and physical phones remain unverified; cross-device saved state needs a refresh. See [setup and network requirements](docs/modules/instagram.md) and the [acceptance ledger](docs/platform-source-acceptance.instagram.md).
+> Instagram is included in v0.3.227 as **experimental and disabled by default**. Real-account initialization → configured models → recommendations, plus Web, extension, and iOS simulator consumption have been exercised. Complete Likes termination, two accounts, signed-in Firefox, and physical phones remain unverified; cross-device saved state needs a refresh. See [setup and network requirements](docs/modules/instagram.md) and the [acceptance ledger](docs/platform-source-acceptance.instagram.md).
 
 A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web — without handing your profile to another platform.
 
@@ -217,12 +217,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.226 (2026-10-04)**
+📌 Latest: **v0.3.227 (2026-10-06)**
 
-- **Automatic CPU fallback**: local Ollama embedding failures retry on CPU, reducing repeated errors and unnecessary model downloads.
-- **Web tools and editable notes**: chat can search public webpages, read links, correct notes, and request approval before deleting them.
-- **Smoother conversations**: choose from six styles per conversation, with fixes for drafts, streaming replies, and obstructed buttons across all three clients.
-- **More reliable Bilibili search**: processes share cooldown state, probe recovery halfway through the cooldown, and reuse cached video details.
+- **Simpler Mac installation**: desktop apps use Developer ID signing and Apple notarization; drag into Applications to launch.
+- **Experimental Instagram source**: disabled by default, with bounded read-only discovery and account imports; documented acceptance limits remain.
+- **Clearer initialization failures**: discovery failures and recovery status are shown accurately instead of appearing as ongoing replenishment.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -312,7 +311,7 @@ Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Rele
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
 - Current desktop installer release: `desktop-v*`, with available `.dmg` / `.exe` assets when the same-version desktop channel has shipped; missing channels are shown as unpublished instead of being backfilled from a previous release
 
-- **macOS**: download the DMG that matches your Mac: `OpenBiliClaw-macos-v*-arm64.dmg` for Apple silicon, or `OpenBiliClaw-macos-v*-x64.dmg` for Intel when the release provides it. The recommended path is to double-click `安装并启动 Install OpenBiliClaw.command`: it verifies the new bundle, quits the old instance, atomically replaces the app in Applications, and launches the version just installed. Traditional drag-and-drop remains available, but upgrades must quit the old version first and reopen the replacement manually.
+- **macOS**: download the DMG that matches your Mac: `OpenBiliClaw-macos-v*-arm64.dmg` for Apple silicon, or `OpenBiliClaw-macos-v*-x64.dmg` for Intel when the release provides it. Quit the old version, open the DMG, drag the app into Applications, then launch it. New packages use Developer ID signing and Apple notarization; no quarantine-removal command is needed.
 - **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install. The final wizard page offers a checked "Launch OpenBiliClaw" checkbox; the newly installed version starts only when you click Finish (upgrades stop mutex-less old instances first; when the running app is an AppMutex build, Setup/Uninstall first show the standard "OpenBiliClaw is currently running" prompt and re-check after you close it — clicking Finish hands off to the new version, and unchecking skips the launch). `/SILENT` / `/VERYSILENT` installs have no wizard pages and still launch the new version automatically once Setup succeeds; with the app still running, a silent install/uninstall paired with `/SUPPRESSMSGBOXES` is cancelled instead, so close the app first.
 
 The macOS app still targets 10.15+. Only the optional Tailnet helper built with Go 1.26.6 has a
@@ -321,21 +320,9 @@ is unavailable.
 
 It bundles local Ollama + `bge-m3` embedding (works out of the box), the default source dependencies including X's `twitter-cli` and Reddit's `rdt-cli`, and the default-off embedded Tailnet helper. The latter lets the desktop app join your tailnet without installing system Tailscale. Enable it from Desktop Web or the browser extension's **Settings → General**, choose browser login, an Auth Key, or an OAuth Client Secret plus an authorized device tag, then fully restart the app. Reddit's rdt command backend prefers the connected extension's synced `reddit_session`; `rdt login` remains a manual fallback, and unauthenticated runs fall back to extension tasks. It lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files. If a broken `config.toml` / `config.local.toml` prevents startup, the desktop package backs the bad file up as `*.invalid`, regenerates the default config, then opens `/setup/` so initialization can run again; `data/` is left untouched.
 
-> **Signed builds**: GitHub Actions macOS desktop builds require Developer ID signing and Apple notarization; missing credentials fail the build. Follow the DMG instructions: quit the old version, drag the app into Applications, then launch it. The bypass guidance below applies only to historical or explicitly unnotarized experimental builds. CI requires Apple Secrets separately; see [macOS signing](docs/modules/packaging.md).
-
-> ⚠️ **macOS security blocking (the app isn't signed / notarized yet)**:
-> - The current Release is ad-hoc signed but not notarized. On first launch, if macOS blocks either the install helper or the app, right-click / Control-click that item → "Open" → click "Open" again in the dialog; or allow it under "System Settings → Privacy & Security" with "Open Anyway".
-> - If macOS says "`OpenBiliClaw.app` is damaged and can't be opened", it is usually the download quarantine attribute. After confirming the package came from this project's Releases, run:
+> **macOS signing and notarization**: GitHub Actions requires Developer ID signing and Apple notarization; failed validation produces no experimental fallback. A normal internet-download confirmation may appear on first launch. Quit the old version before upgrading. See [signing details](docs/modules/packaging.md).
 >
->   ```bash
->   APP="/Applications/OpenBiliClaw.app"
->   xattr -dr com.apple.quarantine "$APP"
->   ```
->
->   Then open the app again.
-> - **Windows**: on the SmartScreen prompt, click "More info → Run anyway".
->
-> This is an **experimental pre-release**: unsigned, rolling with the backend version, best for trying it fast without the command line. To hack on the source, use Option B.
+> **Windows**: choose “More info → Run anyway” if SmartScreen appears. The desktop app remains a pre-release; use Option B below to customize its source.
 
 #### Option B: AI one-line deploy (customizable / editable source)
 

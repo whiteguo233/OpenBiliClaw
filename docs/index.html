@@ -79,7 +79,7 @@
         "description": "纯本地、私有、开源的自进化跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web。",
         "url": "https://whiteguo233.github.io/OpenBiliClaw/",
         "downloadUrl": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
-        "softwareVersion": "0.3.226",
+        "softwareVersion": "0.3.227",
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
@@ -1240,7 +1240,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <div class="note">
             <h3 data-i18n="desktopNoteTitle">桌面安装包（最省事）</h3>
             <p data-i18n="desktopNoteText">
-              macOS Apple 芯片下载 OpenBiliClaw-macos-v*-arm64.dmg，Intel 下载 x64 包（如发布页提供）；DMG 内推荐双击「安装并启动 Install OpenBiliClaw.command」，它会校验新包、退出旧实例、原子替换并启动刚安装的版本。Windows 下载 OpenBiliClaw-windows-*-Setup.exe，安装或升级成功后同样会结束旧实例并自动启动新版本。可用安装包都附在 openbiliclaw-v* 聚合 Latest Release 里；本版国内安装包镜像待上传，123 云盘保留历史版本，请核对包名版本号。当前为 ad-hoc signed、未公证的实验性预发布：Mac 首次打开安装助手或应用时请右键 / Control-click → 打开，或到系统设置 → 隐私与安全性点仍要打开；若提示“已损坏”，确认来源后执行 xattr -dr com.apple.quarantine /Applications/OpenBiliClaw.app。
+              macOS Apple 芯片下载 OpenBiliClaw-macos-v*-arm64.dmg，Intel 下载 x64 包（如发布页提供）；退出旧版后打开 DMG，将 app 拖入应用程序并启动。v0.3.227 起的桌面 Mac 包经过 Developer ID 签名与 Apple 公证，无需解除隔离命令。Windows 下载 OpenBiliClaw-windows-*-Setup.exe，安装或升级后启动新版本。安装包见同版本聚合 Latest Release；国内镜像可能滞后，请核对包名版本号。
             </p>
           </div>
 
@@ -1429,7 +1429,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <article class="source-card reveal" data-source="instagram">
             <span>Instagram · Experimental</span>
             <h3 data-i18n="sourceInstagramTitle">Instagram（实验性）</h3>
-            <p data-i18n="sourceInstagramText">main 源码新增，默认关闭、尚未随版本发布。浏览器只读发现 topic / creator，登录后可按需导入点赞、收藏和关注；推荐卡仅本地保存，不写回 Instagram。</p>
+            <p data-i18n="sourceInstagramText">v0.3.227 新增，实验性、默认关闭。浏览器只读发现 topic / creator，登录后可按需导入点赞、收藏和关注；推荐卡仅本地保存，不写回 Instagram。</p>
             <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/platform-source-acceptance.instagram.md" data-i18n="sourceInstagramEvidence">查看实测范围与剩余限制</a>
           </article>
 	          <article class="source-card reveal" data-source="web">
@@ -1619,7 +1619,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         copySuccess: "已复制",
         copyFallback: "手动复制",
         desktopNoteTitle: "桌面安装包（最省事）",
-        desktopNoteText: "macOS Apple 芯片下载 OpenBiliClaw-macos-v*-arm64.dmg，Intel 下载 x64 包（如发布页提供）；DMG 内推荐双击「安装并启动 Install OpenBiliClaw.command」，它会校验新包、退出旧实例、原子替换并启动刚安装的版本。Windows 下载 OpenBiliClaw-windows-*-Setup.exe，安装或升级成功后同样会结束旧实例并自动启动新版本。可用安装包都附在 openbiliclaw-v* 聚合 Latest Release 里；本版国内安装包镜像待上传，123 云盘保留历史版本，请核对包名版本号。当前为 ad-hoc signed、未公证的实验性预发布：Mac 首次打开安装助手或应用时请右键 / Control-click → 打开，或到系统设置 → 隐私与安全性点仍要打开；若提示“已损坏”，确认来源后执行 xattr -dr com.apple.quarantine /Applications/OpenBiliClaw.app。",
+        desktopNoteText: "macOS Apple 芯片下载 OpenBiliClaw-macos-v*-arm64.dmg，Intel 下载 x64 包（如发布页提供）；退出旧版后打开 DMG，将 app 拖入应用程序并启动。v0.3.227 起的桌面 Mac 包经过 Developer ID 签名与 Apple 公证，无需解除隔离命令。Windows 下载 OpenBiliClaw-windows-*-Setup.exe，安装或升级后启动新版本。安装包见同版本聚合 Latest Release；国内镜像可能滞后，请核对包名版本号。",
         pluginNoteTitle: "浏览器插件负责连接平台",
         pluginNoteText: "浏览器插件既是推荐、反馈和聊天入口，也是平台登录态与行为信号的连接层，并为 Linux.do / V2EX / 微博等来源执行有界只读任务；微博公开 discovery 由后端完成，个人初始化才打开微博同源任务页，Cookie 不回传。最新版可从 GitHub Latest Release 下载同版本 Chrome / Firefox 包，或使用审核通过后自动更新的插件市场版本。",
         mobileInstallNoteTitle: "手机桌面快捷入口",
@@ -1684,7 +1684,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "官方 REST API 匿名发现公开 repository；公开用户名的 starred repositories 可初始化画像，PAT 可选。没有扩展权限、Cookie 或站内写入。",
         sourceInstagramTitle: "Instagram（实验性）",
-        sourceInstagramText: "main 源码新增，默认关闭、尚未随版本发布。浏览器只读发现 topic / creator，登录后可按需导入点赞、收藏和关注；推荐卡仅本地保存，不写回 Instagram。",
+        sourceInstagramText: "v0.3.227 新增，实验性、默认关闭。浏览器只读发现 topic / creator，登录后可按需导入点赞、收藏和关注；推荐卡仅本地保存，不写回 Instagram。",
         sourceInstagramEvidence: "查看实测范围与剩余限制",
 	        sourceWebTitle: "通用 Web",
         sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
@@ -1787,7 +1787,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         copySuccess: "Copied",
         copyFallback: "Copy manually",
         desktopNoteTitle: "Desktop installer (easiest)",
-        desktopNoteText: "For macOS, Apple silicon uses OpenBiliClaw-macos-v*-arm64.dmg and Intel uses the x64 package when available. In the DMG, double-click 安装并启动 Install OpenBiliClaw.command to verify the new bundle, quit the old instance, atomically replace the app, and launch the installed version. Windows uses OpenBiliClaw-windows-*-Setup.exe and performs the same old-to-new process handoff after a successful install or upgrade. Installers are attached to the openbiliclaw-v* aggregate Latest Release; domestic installer mirrors for this version are pending. 123 Cloud retains older versions; check the version in each filename. The Mac build is ad-hoc signed but not notarized: Control-click the helper or app -> Open on first launch, or allow it in System Settings -> Privacy & Security. If macOS says the app is damaged, verify the release source and run xattr -dr com.apple.quarantine /Applications/OpenBiliClaw.app.",
+        desktopNoteText: "For macOS, use OpenBiliClaw-macos-v*-arm64.dmg for Apple silicon or the x64 package for Intel when provided. Quit the old app, open the DMG, drag into Applications, and launch. Mac desktop packages from v0.3.227 use Developer ID signing and Apple notarization; no quarantine-removal command is needed. Windows uses OpenBiliClaw-windows-*-Setup.exe. Use the same-version aggregate Latest Release; domestic mirrors may lag, so check filenames.",
         pluginNoteTitle: "The browser extension connects platforms",
         pluginNoteText: "The browser extension is both a recommendation, feedback, and chat surface and the connection layer for platform sessions and behavior signals. It also runs bounded read-only tasks for sources including Linux.do, V2EX, and Weibo. Weibo public discovery stays backend-owned; personal init uses a same-origin task tab and never sends cookies to the backend. Download matching Chrome / Firefox packages from the GitHub Latest Release or use the marketplace build after review approval.",
         mobileInstallNoteTitle: "Phone home-screen shortcut",
@@ -1852,7 +1852,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "The official REST API anonymously discovers public repositories; a public username can bootstrap starred repositories, while a PAT is optional. No extension permission, cookie, or upstream write is used.",
         sourceInstagramTitle: "Instagram (experimental)",
-        sourceInstagramText: "New in main source, disabled by default and not yet released. Read-only browser tasks discover topics/creators and optionally import signed-in likes, saves, and follows. Card saves stay local, with no Instagram write-back.",
+        sourceInstagramText: "Included in v0.3.227, experimental and disabled by default. Read-only browser tasks discover topics/creators and optionally import signed-in likes, saves, and follows. Card saves stay local, with no Instagram write-back.",
         sourceInstagramEvidence: "Tested scope and remaining limitations",
 	        sourceWebTitle: "Generic Web",
         sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",

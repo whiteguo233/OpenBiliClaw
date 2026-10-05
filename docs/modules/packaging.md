@@ -7,7 +7,7 @@
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
 | Local experimental builds | Retained outside hosted CI | Without either signing option, retain ad-hoc signing and the existing installation helper/first-launch guidance. Partial signing configuration is an error. |
-| Signed installation | Implemented | Notarized DMG contains app, Applications link, and bilingual drag-install instructions; no shell installer or Gatekeeper bypass instructions. Quit the old app before replacing it. |
+| Signed installation | Implemented | Notarized DMG contains app, Applications link, and bilingual drag-install instructions; no shell installer or Gatekeeper bypass instructions. Quit the old app before replacing it. Aggregate release notes use the same signed installation instructions. |
 | CI keychain | Implemented | Desktop workflows require signing and share a temporary keychain action; credentials match the Safari secret names. Delete the temporary keychain even after failure. |
 
 ## Public build interface

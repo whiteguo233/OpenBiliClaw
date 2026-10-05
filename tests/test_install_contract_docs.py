@@ -82,22 +82,20 @@ def test_docs_make_auto_init_primary_for_all_install_channels() -> None:
     assert "手动 fallback" in docker_doc
 
 
-def test_readmes_explain_macos_first_launch_security_bypass() -> None:
+def test_readmes_explain_notarized_macos_installation() -> None:
     readme = _read("README.md")
     readme_en = _read("README_EN.md")
 
-    assert "macOS 安全阻挡" in readme
-    assert "Control-click" in readme
-    assert "隐私与安全性" in readme
-    assert "已损坏" in readme
-    assert "xattr -dr com.apple.quarantine" in readme
+    assert "macOS 签名与公证" in readme
+    assert "拖入「应用程序」" in readme
+    assert "Apple 公证" in readme
+    assert "xattr -dr com.apple.quarantine" not in readme
     assert "codesign --force" not in readme
 
-    assert "macOS security blocking" in readme_en
-    assert "Control-click" in readme_en
-    assert "Privacy & Security" in readme_en
-    assert "is damaged and can't be opened" in readme_en
-    assert "xattr -dr com.apple.quarantine" in readme_en
+    assert "macOS signing and notarization" in readme_en
+    assert "drag the app into Applications" in readme_en
+    assert "Apple notarization" in readme_en
+    assert "xattr -dr com.apple.quarantine" not in readme_en
     assert "codesign --force" not in readme_en
 
 

@@ -51,8 +51,8 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceGithubText" in html
     assert "sourceInstagramTitle" in html
     assert "sourceInstagramText" in html
-    assert "默认关闭、尚未随版本发布" in html
-    assert "disabled by default and not yet released" in html
+    assert "实验性、默认关闭" in html
+    assert "experimental and disabled by default" in html
     assert "docs/platform-source-acceptance.instagram.md" in html
     assert "Linux.do、V2EX、微博等十一类来源" not in html
     assert "Weibo, and eight other platform sources" not in html
@@ -82,14 +82,14 @@ def test_docs_homepage_chinese_weibo_translation_is_chinese() -> None:
     assert html.count("Public discovery covers search, hot, and creator") == 1
 
 
-def test_docs_homepage_mentions_macos_first_launch_security_bypass() -> None:
+def test_docs_homepage_explains_notarized_macos_installation() -> None:
     html = (ROOT / "docs/index.html").read_text(encoding="utf-8")
 
     assert "OpenBiliClaw-macos-v*-arm64.dmg" in html
-    assert "Control-click" in html
-    assert "隐私与安全性" in html
-    assert "已损坏" in html
-    assert "xattr -dr com.apple.quarantine /Applications/OpenBiliClaw.app" in html
+    assert "Developer ID 签名与 Apple 公证" in html
+    assert "拖入应用程序" in html
+    assert "Apple notarization" in html
+    assert "xattr -dr com.apple.quarantine" not in html
     assert "README bypass steps" not in html
 
 
