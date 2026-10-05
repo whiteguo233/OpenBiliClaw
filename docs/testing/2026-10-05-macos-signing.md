@@ -25,8 +25,8 @@ Worktree: `../OpenBiliClaw-macos-signing`.
 | Developer ID signing | Passed after local keychain authorization. App and nested Mach-O components use team `JX4KDJUY28`, secure timestamps and Hardened Runtime. `codesign --verify --deep --strict` passed. An interrupted signing attempt left a temporary `.cstemp` file; retrying after codesign removed that temporary file completed successfully. |
 | Apple notarization / stapler / Gatekeeper | Passed. Apple accepted both the app ZIP and final DMG. App and DMG tickets were stapled and validated; Gatekeeper reports `accepted`, `source=Notarized Developer ID`. Submission IDs are recorded below. |
 | Signed app / DMG installation smoke | Passed. Mounted final DMG read-only, copied app into an isolated Applications directory, added quarantine, verified signature/ticket/Gatekeeper, and ran startup with a separate data profile (exit 0, config created, `selftest OK`). Bundled Tailnet self-test and llama-server version also passed. |
-| GitHub hosted CI | Not run. Repository Apple secrets are not configured. |
-| arm64 / Windows / Docker | Not rebuilt locally. Changes are macOS build-only; Windows build commands and Docker/source runtime remain unchanged. |
+| GitHub hosted CI | Passed on code commit `48f46ecc` (run `37305641917`); signed arm64/x64 desktop builds passed on `57a02a48` (run `37337056080`, attempt 2). The intervening commit only updates documentation. All five Apple repository secrets are configured. |
+| arm64 / Windows / Docker | arm64 and x64 lean installers built and verified on hosted runners. Windows HKCU E2E passed in CI; no new Windows installer or Docker image was built for this signing-only change. |
 
 The local Intel x64 package is Apple-notarized and installation acceptance passed. No release/tag has been published and no installed application or user data was replaced.
 
@@ -50,7 +50,7 @@ Completed locally on 2026-10-05 around 04:57 Asia/Shanghai.
 - A quarantined app copy from the mounted DMG passed startup with an isolated profile, native Tailnet self-test, and bundled llama-server execution. Log markers: `QUARANTINED_APP_SELFTEST=PASS`, `DMG_ACCEPTANCE=PASS`.
 - The Terminal-owned continuation resumed the original app submission without uploading it again, verified local app hashes against the uploaded archive, then completed app stapling, archive creation, DMG signing/notarization/stapling and installation acceptance.
 - Ignored operational evidence remains under `dist/notary-logs/`: app/DMG status and diagnostic JSON, `finish.log`, verification scripts and `COMPLETE.txt`. The continuation has finished; no waiting process is required.
-- Scope: local Intel x64 lean build. Apple Silicon and hosted CI still require their own builds. No public release, GitHub secrets, existing application installation or real user data were changed.
+- Scope of this initial local acceptance: Intel x64 lean build. Hosted arm64/x64 acceptance is recorded below. No public release, GitHub secrets, existing application installation or real user data were changed.
 
 ## Hosted workflow enforcement follow-up
 
@@ -59,4 +59,21 @@ Completed locally on 2026-10-05 around 04:57 Asia/Shanghai.
 - Increased each Apple submission wait to 90 minutes; timeouts still fail closed and preserve submission IDs.
 - Packaging regression suite: 65 passed in 17.72s. Ruff, workflow YAML parsing, embedded Python compilation and signing setup shell syntax passed.
 - GitHub CI run `37305641917` passed: 9796 tests passed, 111 skipped; Windows HKCU checks passed (4 passed, 1 skipped); web guided-init E2E passed (39 tests); Firefox smoke build, Ruff and MyPy passed. The local follow-up full run was interrupted before completion and is not counted as a passing run.
-- Hosted signed installer acceptance and repository credential provisioning are being verified separately; ordinary CI success alone is not evidence of a signed hosted build.
+- Hosted signed installer acceptance and repository credential provisioning completed as recorded below.
+
+## Hosted signed installer acceptance — 2026-10-06
+
+[Build Desktop Installers run 37337056080](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37337056080), attempt 2, completed successfully on commit `57a02a48` with `macos_only=true`. Both native lean builds passed Developer ID import, credential validation, app/DMG notarization, stapler validation, Gatekeeper assessment (`source=Notarized Developer ID`), isolated frozen startup and the bundled Tailnet self-test. Installer archives and diagnostic logs were uploaded, and temporary runner keychains were removed.
+
+| Architecture | App submission (Accepted) | DMG submission (Accepted) |
+| --- | --- | --- |
+| arm64 | `d4319ef0-4d2a-4219-b383-c4e5a4c29416` | `43428aa6-09a4-4ad2-a1cb-98744537e69f` |
+| x64 | `d677139f-af51-439d-8d87-f6eebb1684e8` | `8f4c4567-5312-49f4-84ab-0ff6fe5f1b85` |
+
+Download the `openbiliclaw-macos-installer-arm64` or `openbiliclaw-macos-installer-x64` Actions artifact from the run. Each contains a DMG and app ZIP named with `v0.3.226.57a02a4` and the architecture. Artifact archives are 496,798,824 bytes (arm64) and 499,492,321 bytes (x64).
+
+All five required repository secrets are now configured. Only the selected Developer ID identity was exported; its randomly protected P12 and the existing notarization password were sent directly to GitHub Secrets without writing secret files or printing values. The initial attempt started before the last secret was saved and correctly failed at credential preflight; attempt 2 used the complete configuration.
+
+The prior complete CI run `37305641917` passed on the same source/workflow code; `57a02a48` changes documentation only. The repeat CI run `37336677965` also passed the main test, lint/type, Windows and Firefox jobs; at acceptance-record time its Web job was still downloading Playwright. The earlier Web E2E passed all 39 tests. No application/runtime code changed after those checks.
+
+This acceptance covers hosted lean installers for both architectures. Release lean/with-embedding variants share the mandatory signing action and packaging path; no new public release/tag or with-embedding artifact was created during this validation.
