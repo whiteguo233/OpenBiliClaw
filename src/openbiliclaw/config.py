@@ -1772,7 +1772,9 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
                 continue
             _warned_budget_keys.add(key)
             logger.warning(
-                "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
+                "config: %s=%d — 这是每日保留候选条数上限,不是开关;想不限条数请设为 0"
+                if source_name == "instagram"
+                else "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
                 key,
                 value,
             )

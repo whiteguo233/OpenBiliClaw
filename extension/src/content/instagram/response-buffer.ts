@@ -7,7 +7,7 @@ import {
 export { INSTAGRAM_REPLAY_EVENT, INSTAGRAM_RESPONSE_EVENT };
 
 export interface InstagramObservedEnvelope {
-  route: "topic" | "creator" | "unknown";
+  route: "topic" | "creator" | "liked" | "unknown";
   collection_id?: string;
   items: InstagramWireItem[];
   observed_count?: number;
@@ -16,6 +16,7 @@ export interface InstagramObservedEnvelope {
   cursor?: string;
   has_next_page?: boolean;
   affirmative_terminal?: boolean;
+  error?: "rate_limited" | "login_required" | "challenge_required" | "http_error" | "creator_not_public";
 }
 
 const MAX_ENVELOPES = 24;
@@ -86,7 +87,7 @@ function sanitizedEnvelope(value: unknown): InstagramObservedEnvelope | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<InstagramObservedEnvelope>;
   if (!Array.isArray(candidate.items)) return null;
-  const route = candidate.route === "topic" || candidate.route === "creator"
+  const route = candidate.route === "topic" || candidate.route === "creator" || candidate.route === "liked"
     ? candidate.route
     : "unknown";
   const rawItems = candidate.items.slice(0, MAX_ITEMS_PER_ENVELOPE);
@@ -102,6 +103,8 @@ function sanitizedEnvelope(value: unknown): InstagramObservedEnvelope | null {
   const rejectedCount = boundedCount(candidate.rejected_count);
   return {
     route,
+    ...(["rate_limited", "login_required", "challenge_required", "http_error", "creator_not_public"].includes(String(candidate.error))
+      ? { error: candidate.error } : {}),
     ...(typeof candidate.collection_id === "string" && candidate.collection_id.length <= 256
       ? { collection_id: candidate.collection_id }
       : {}),

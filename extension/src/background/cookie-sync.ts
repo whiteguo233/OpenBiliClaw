@@ -683,36 +683,57 @@ export async function syncV2EXLoginStateToBackend(
   }
 }
 
-/** Boolean readiness heartbeat; the sessionid value never leaves Chrome. */
-export async function isInstagramSourceSyncEnabled(): Promise<boolean> {
+type InstagramSourceSyncState = "enabled" | "disabled" | "unavailable";
+
+async function getInstagramSourceSyncState(): Promise<InstagramSourceSyncState> {
   const chromeApi = getChromeApi();
   try {
     if (chromeApi?.permissions?.contains) {
       const granted = await chromeApi.permissions.contains({
         origins: ["https://*.instagram.com/*"],
       });
-      if (!granted) return false;
+      if (!granted) return "disabled";
     }
     const response = await authenticatedFetch(await apiUrl("/config"), {
       method: "GET",
       cache: "no-store",
     });
-    if (!response.ok) return false;
+    if (!response.ok) return "unavailable";
     const config = await response.json() as {
       sources?: { instagram?: { enabled?: boolean } };
     };
-    return config.sources?.instagram?.enabled === true;
+    const enabled = config.sources?.instagram?.enabled;
+    if (enabled === true) return "enabled";
+    if (enabled === false) return "disabled";
+    return "unavailable";
   } catch {
     // Fail closed: a disabled/unreachable source must not trigger cookie reads.
-    return false;
+    return "unavailable";
   }
+}
+
+/** Probe opt-in readiness without accessing Instagram's browser cookies. */
+export async function isInstagramSourceSyncEnabled(): Promise<boolean> {
+  return (await getInstagramSourceSyncState()) === "enabled";
 }
 
 export async function syncInstagramLoginStateToBackend(
   source: string = "extension",
   bypassEnabledGate = false,
 ): Promise<boolean> {
-  if (!bypassEnabledGate && !(await isInstagramSourceSyncEnabled())) return true;
+  if (!bypassEnabledGate) {
+    const state = await getInstagramSourceSyncState();
+    if (state === "unavailable") {
+      // A backend that starts after this worker must receive the readiness
+      // heartbeat without waiting an hour or requiring another cookie change.
+      scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    if (state === "disabled") {
+      scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
+      return true;
+    }
+  }
   const loggedIn = await readInstagramLoginState();
   try {
     const response = await authenticatedFetch(await apiUrl("/sources/instagram/credential"), {

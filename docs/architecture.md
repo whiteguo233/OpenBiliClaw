@@ -22,6 +22,13 @@ background ─ background admission (default 3) ──────┘
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes
+             Instagram selected → init-owned topic/creator tasks → explicit small-batch flush
+                                → same evaluator/copy; no unselected Bilibili fallback
+
+Instagram browser task → storage.local claim / progress / exact-result outbox
+                       → form + fresh PolarisViewer identity → native Likes Bloks / saved+following GET
+                       → same-claim restart recovery → backend ACK → local cleanup
+                       → missing tab: failed / partial, never an invented empty result
 
 config recovery control plane (normal or degraded; business APIs stay gated)
                 ├─ draft → /api/config/probe-service → temporary registry → total gate
@@ -70,7 +77,13 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
 
 cover images: UI proxy foreground ───┐
               refresh prefetch bg ───┴→ app-stable ImageFetchCoordinator(total 4 / bg 3, fg priority)
-                                      → cache-key singleflight → whitelist fetch → atomic disk cache
+                                      → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
+                                      → pinned IP (direct / CONNECT / SOCKS; original Host + TLS)
+                                      → atomic disk cache
+
+Instagram manual replenish → source quota + producer/task locks → topic/creator
+                          → explicit bounded eval + copy (scheduler may be off)
+                          → usable pool / safe refresh.failed, preserve partial supply
 
 30-day content history: click events + recommendation rows + saved_item_removals
                      → canonical platform/item identity → latest-per-item/context projection
@@ -252,7 +265,7 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 - 「已消费」事件（`view` / `favorite` / `like` / `coin`，2026-07-26 起不再只有 `view`）在与事件行相同的 SQLite 事务内 upsert canonical `seen_items(source_platform:content_id)`；旧库按游标回填全部历史，类型集扩大时按 `scanned_event_types_version` 自动倒回重扫一次，不再用“最近 2000 条”扫描充当推荐去重。另有两条**非事件**入口：account sync 每轮把完整 B 站收藏快照经 `Database.mark_items_seen()` 直接写入账本；三端惊喜卡“× / 看过了”经 `Database.mark_delight_seen()` 先写 canonical ledger、再置 `delight_notified`。二者都幂等且不产生偏好事件，因此不会重复计入学习信号。普通推荐与 delight 动态阈值、打分 backlog、计数、pending 出口统一硬过滤这份账本。`reshuffle` 只记录一次强度 `0.1`、satisfaction-neutral 的批次导航事实，不把当前十张卡伪装成十条负反馈。
 
 ### Content Discovery (`discovery/`)
-- 多策略内容发现覆盖十二平台：B 站四策略、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do 五路同源任务、Bangumi 官方 API、V2EX 五路官方 API / Feed、微博三路匿名后端，以及 Instagram topic/creator 浏览器任务。`runtime.source_policy` 为启用来源分配独立 pool share，关闭来源不占 quota；各来源 producer 仅在可换 quota 和 raw-material ceiling 允许时写入统一待评估池。Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公共 URL；登录私有 SERP 与 Recent Searches 写入均不属于当前路径。
+- 多策略内容发现覆盖十二平台：B 站四策略、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do 五路同源任务、Bangumi 官方 API、V2EX 五路官方 API / Feed、微博三路匿名后端，以及 Instagram topic/creator 浏览器任务。`runtime.source_policy` 为启用来源分配独立 pool share，关闭来源不占 quota；各来源 producer 仅在可换 quota 和 raw-material ceiling 允许时写入统一待评估池。Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公共 URL；允许复用已有登录会话被动读取页面自然返回的公开 MediaGrid，不构造搜索请求或主动写 Recent Searches，结果单独标记 authenticated-topic 证据。
 - 统一关键词水位在 due 计算前经过 digest-grace 整理：`KeywordPlanner → Database.reconcile_pending_keyword_digests()` 在短事务中保留当前 digest 和宽限内安全的旧 `regular/pending`（原 digest/生成溯源不变），过龄、避雷、重复或超 cap 才过期；随后 `count_pending_keywords_all_digests()` 决定是否仍需 LLM 生成，retained pending 同时进入 history。整理失败或 DAO 不可用会退回 `expire_pending_by_digest()` + exact-digest count；grace=0 是显式旧行为。`claimed/executing/terminal` 与 explore 通道不经过这条迁移。
 - XHS 自动发现的停止与风控链路是 `config source/scheduler gate → /api/sources/xhs/next-task → xhs_task_runtime_state → extension dispatcher → task executor risk detector → rate_limited result → persistent cooldown / keyword requeue`。关闭来源只暂停 legacy discovery claim，不删除排队计划；扩展因此不再打开 search / creator / bootstrap 页面，重新开启后可恢复。可见安全验证、操作频繁或 429 会把 `rate_limit_strikes` 推进到下一个独立轮次，并打开 `1h → 2h → 4h … → 24h` 平台级冷却，阻断所有 XHS task claim（包括 native-save）并停止 producer；同一活动冷却内的重复报告不加轮次，冷却后的正常 search / creator 成功才重置。关联 planner 关键词从 executing 回到 pending、不增加 attempts。明确的用户 native-save 与 discovery 开关正交，但仍不能越过安全冷却。
 - Query inspiration cache 是关键词生成侧的可选基础设施：`[discovery].inspiration_search_enabled=true` 时，`KeywordPlanner` 会先读取 keyword / pool coverage snapshot，并统一归一化兴趣标签 join；随后从 like 二级兴趣中按覆盖缺口抽样，调用 `discovery.keyword_brainstorm` 生成带 `kind_fit` 的搜索 probe branch（解析失败时由 `discovery.keyword_brainstorm.repair` 修成标准 branch），再通过 search provider 链（默认已启用平台源 → Exa → You.com free MCP，由 `[discovery].inspiration_search_backends` 控制）grounding 具体实体 / 社区词 / 讨论点。grounding 有 stage 级搜索预算、平台源扇出预算、每 probe 页数预算和 B 站 / 抖音 / X 等风险源预算；regular + explore 同轮触发时共享一次 brainstorm / grounding stage，再按 kind 分流给 curator。`platform_sources` 只复用已启用同步 / bridge 来源（B站 / YouTube / X / Reddit / Bangumi；抖音 direct client；小红书 / 知乎 bridge 可用时）的搜索结果作为灵感 evidence，不写 `discovery_candidates` 或推荐池；Bangumi grounding 复用同一个匿名只读 client 与请求节流，返回 Subject 标题 / URL / 摘要。随后经 `discovery.keyword_inspiration` 做 Profile Curator / Detail Expander，并优先产出按平台 keyed 的 `platform_keywords`，再把 `inspiration_id -> expansion_id -> platform keyword` 溯源链写入 storage；curator 输入会复用旧 merged keyword planner 的平台供给优势，并附带每个平台的 query_style / recent / avoid / prefer / supply_hint 回压信号、选中二级兴趣、brainstorm 分支、搜索 grounding 记录和 coverage constraints。系统侧会过滤原样证据标题、URL、过长 query、明显平台语言不匹配和平台检索语法不匹配的词，用 grounding hint 校正疑似挂错的 `source_interest`，并为未覆盖兴趣保留 slot 后触发 bounded repair；repair 仍缺词时用 deterministic platform-native backfill 按平台模板补齐，保证 inspiration-only 模式仍按平台原生搜索风格产词，且不会让高频兴趣或单一 lens 吃完整批。admission 后的 keyword yield 会回填到 inspiration / expansion 计数。新配置默认以混合模式开启（`inspiration_search_enabled=true`、`inspiration_replace_merged_keywords=false`），与旧 merged planner 并行；成本敏感时可在设置页切回经典模式。实验开关 `inspiration_replace_merged_keywords=true` 会让 due 平台跳过旧 merged keyword planner，只通过 inspiration flow 填充各平台 `regular` 关键词池，并在 B 站 explore 到期时额外填充 `keyword_kind="explore"` 的探索词池；开 replace 前由 `keyword-inspiration-report` 按 cohort 门禁判定。
@@ -286,7 +299,7 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 - `linuxdo_tasks` — Linux.do 扩展任务队列（`bootstrap_events` 的书签 / 点赞 / 阅读记录，以及 `search` / `hot` / `feed` / `creator` / `related` discovery）；`runtime.linuxdo_producer.LinuxdoDiscoveryProducer` 只负责 claim 关键词/seed、入队和归一化结果，插件在隔离的真实 `linux.do` tab 内执行同源 GET。个人 bootstrap 以 `/session/current.json` 的正面身份为门槛，`_t` 仅作为登录布尔且值不上传；结果只含规范化字段或结构化错误，Cookie、CSRF、原始响应和 challenge HTML 一律不进入后端
 - `sources.bangumi_client` / `runtime.bangumi_producer` — 固定官方 `api.bgm.tv/v0` 的匿名只读 client 与 fetch-only producer；search 复用统一关键词，ranked/latest 维护按条目类型 cursor，三分支按 UTC 日条目预算和最小间隔执行，`429 Retry-After` 落 `bangumi_discovery_state` cooldown。Subject 归一化后写 `discovery_candidates`，公开用户名的收藏只在显式 guided init/fetch smoke 中转为事件；默认匿名，可选个人令牌（Bearer）读取私密收藏，令牌被拒（401/403）自动降级匿名；没有扩展 task queue、无 Cookie、无站内写方法。扩展在 `bgm.tv` / `bangumi.tv` 上仅上报公开 uid + 用户名做账号身份识别（`POST /api/sources/bangumi/identity`，含 uid↔用户名交叉校验），不采集浏览行为、不上传令牌
 - `sources.weibo_client` / `sources.weibo` / `runtime.weibo_producer` / `sources.weibo_tasks` — 项目自有 `httpx` 匿名公开 client、fail-closed normalizer、fetch-only producer 与 init-only 账号任务队列。client 固定 `trust_env=false` 国内直连，为移动 H5 search / creator 在内存申请短期 visitor `SUB`；hot endpoint 只产 query seed，随后搜索并只接纳真实 `content_type="post"`。个人收藏、关注和 mentions 由同源扩展任务读取，账号 key 和 scope 去重后进入画像事件；search / hot / creator 复用统一关键词、份额 pool gate、UTC 日预算、成功 cadence、持久化 `429 Retry-After` cooldown 和共享 candidate pipeline；schema drift / visitor reject / 429 都是 typed 终态。后端不接收用户 Cookie，普通微博页不做行为采集，不提供 native-save 或站内写方法
-- `sources.instagram` / `runtime.instagram_producer` / `sources.instagram_tasks` — 浏览器任务驱动的公开 topic/creator 发现与 init-only 个人事件。后端冻结 mode/scope/cap，扩展在真实 Instagram tab 中执行同源只读请求并只返回 canonical rows；`sessionid` 只缩成布尔 readiness，账号 ID 必须由任务内 current-user 响应正面确认。HTML/login wall/challenge/429/schema drift 不得变成 valid-empty，partial rows 在 staged result 中保留。
+- `sources.instagram` / `runtime.instagram_producer` / `sources.instagram_tasks` — 后端冻结 mode/scope/cap；扩展以账户表单 + 新鲜 `PolarisViewer` 校验身份，原生 Likes Bloks 数据解码与 saved/following GET 产生 canonical rows。`sessionid` 仅为布尔 readiness；HTML/login/challenge/429/schema drift 不得变成 valid-empty。非空 Likes 缺末页证据，保持 partial；原始 HTML/表达式不跨桥。
 - `web_adapter` — 通用 Web（Playwright CDP + LLM 内容抽取）
 - `SourceRecipe` — 源任务持久化与分发
 

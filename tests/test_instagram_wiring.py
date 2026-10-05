@@ -46,6 +46,169 @@ from openbiliclaw.sources.platforms import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+async def test_cli_instagram_init_reuses_source_aware_backfill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    import openbiliclaw.cli as cli
+    from openbiliclaw.runtime.refresh import ContinuousRefreshController
+    from openbiliclaw.storage.database import Database
+
+    config = Config()
+    config.sources.instagram.enabled = True
+    config.sources.bilibili.enabled = False
+    config.scheduler.enabled = False
+    db = Database(tmp_path / "cli-init.db")
+    db.initialize()
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
+    monkeypatch.setattr(cli, "_get_runtime_database", lambda: db)
+    for name in (
+        "_build_discovery_engine",
+        "_build_soul_engine",
+        "_build_memory_manager",
+        "_build_recommendation_engine",
+        "_build_llm_concurrency_gate",
+    ):
+        monkeypatch.setattr(cli, name, lambda: SimpleNamespace())
+    monkeypatch.setattr(cli, "_build_discovery_candidate_pipeline", lambda **_: SimpleNamespace())
+
+    async def backfill(self: Any, profile: Any, target: int, **kwargs: Any) -> int:
+        assert target == 7 and kwargs["sources"] == {"instagram"}
+        assert self.instagram_producer is not None
+        assert self.instagram_producer.candidate_evaluation_owned_by_coordinator is True
+        assert self.scheduler_config.enabled is False
+        assert "bilibili" not in self.pool_source_shares
+        return 3
+
+    monkeypatch.setattr(ContinuousRefreshController, "run_init_backfill", backfill)
+    assert (
+        await cli._run_init_discovery_backfill_async(
+            object(), target_pool_count=7, selected_sources={"instagram"}
+        )
+        == 3
+    )
+
+
+@pytest.mark.parametrize("recover", [False, True])
+async def test_active_init_can_claim_only_its_fresh_or_recovered_instagram_discovery(
+    recover: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from openbiliclaw.runtime.instagram_producer import InstagramDiscoveryProducer
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    config = Config()
+    config.sources.instagram.enabled = True
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
+    database = Database(tmp_path / "init-discovery.db")
+    database.initialize()
+    queue = InstagramTaskQueue(database)
+    unrelated = queue.enqueue_with_id("discover", {"mode": "topic", "topic": "art"}, daily_budget=0)
+    producer = InstagramDiscoveryProducer(
+        database=database,
+        task_queue=queue,
+        soul_engine=SimpleNamespace(
+            get_profile=AsyncMock(
+                return_value=SimpleNamespace(preferences=SimpleNamespace(interests=["technology"]))
+            )
+        ),
+        enabled=True,
+        source_modes=("topic",),
+        wait_seconds=0,
+    )
+    if recover:
+        await producer.produce_if_due(limit=2, force=True)
+    app = create_app(memory_manager=object(), database=database, soul_engine=object())
+    with TestClient(app) as client:
+        coord = app.state.runtime_context.init_coordinator
+        assert coord.try_start("instagram-init")
+        assert client.get("/api/sources/instagram/next-task").status_code == 204
+        claimed: list[str] = []
+
+        async def kick() -> None:
+            response = client.get("/api/sources/instagram/next-task")
+            assert response.status_code == 200
+            task = response.json()
+            assert task["id"] != unrelated
+            assert task["id"] in coord.owned_task_ids()
+            claimed.append(task["id"])
+            completed = client.post(
+                "/api/sources/instagram/task-result",
+                json={
+                    "task_id": task["id"],
+                    "claim_token": task["claim_token"],
+                    "status": "empty",
+                    "items": [],
+                    "scope_counts": {"discover": 0},
+                    "scope_complete": {"discover": True},
+                    "debug": {"response_observed": True},
+                },
+            )
+            assert completed.status_code == 200, completed.text
+
+        producer.kick = kick
+        await producer.produce_if_due(
+            limit=2,
+            force=True,
+            register_task=lambda task_id: coord.register_enqueued_task("instagram-init", task_id),
+        )
+        assert len(claimed) == 1
+        assert queue.get(unrelated)["status"] == "pending"
+
+
+@pytest.mark.parametrize("error", ["instagram_account_changed", "creator_not_public"])
+def test_instagram_browser_safety_failure_releases_claim(
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    config = Config()
+    config.sources.instagram.enabled = True
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
+    database = Database(tmp_path / "safety-failure.db")
+    database.initialize()
+    queue = InstagramTaskQueue(database)
+    is_bootstrap = error == "instagram_account_changed"
+    task_id = queue.enqueue_with_id(
+        "bootstrap_events" if is_bootstrap else "discover",
+        {} if is_bootstrap else {"mode": "creator", "username": "fixture"},
+        daily_budget=0,
+    )
+    assert task_id
+    claim = queue.next_pending()
+    assert claim
+    with TestClient(
+        create_app(memory_manager=object(), database=database, soul_engine=object())
+    ) as client:
+        response = client.post(
+            "/api/sources/instagram/task-result",
+            json={
+                "task_id": task_id,
+                "claim_token": claim["claim_token"],
+                "status": "failed",
+                "items": [],
+                "scope_counts": {} if is_bootstrap else {"discover": 0},
+                "scope_complete": {} if is_bootstrap else {"discover": False},
+                "error": error,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert queue.get(task_id)["status"] == "failed"
+        following = queue.enqueue_with_id(
+            "discover", {"mode": "topic", "topic": "technology"}, daily_budget=0
+        )
+        next_response = client.get("/api/sources/instagram/next-task")
+        assert next_response.status_code == 200
+        assert next_response.json()["id"] == following
+
+
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
@@ -177,6 +340,7 @@ def test_instagram_models_auth_and_explicit_logout_readiness() -> None:
     contract = auth_instagram(SourceAuthContext(cfg=Config(), database=LoggedOutDatabase()))
     assert contract.auth_required is False
     assert contract.capabilities["discover"].state == "ready"
+    assert contract.capabilities["discover"].mode == "optional-credential"
     assert contract.capabilities["profile"].state == "login_required"
     assert contract.capabilities["bootstrap"].state == "login_required"
     assert contract.verification == "failed"
@@ -192,10 +356,7 @@ def test_instagram_keyword_planner_and_merged_prompt_include_instagram() -> None
     assert "instagram" in keyword_planner._PLANNER_PLATFORMS
     assert keyword_planner._PLANNER_PLATFORMS[-1] == "instagram"
     assert "instagram" in keyword_planner._PLATFORM_QUERY_STYLES
-    assert (
-        "photography"
-        in keyword_planner._PLATFORM_QUERY_STYLES["instagram"]["native_markers"]
-    )
+    assert "photography" in keyword_planner._PLATFORM_QUERY_STYLES["instagram"]["native_markers"]
     assert "topic slug" in platform_supply_advantage("instagram")
 
     messages = build_merged_keywords_prompt(
@@ -1938,7 +2099,7 @@ async def test_instagram_recovered_failure_blocks_fresh_creator_suffix(
         "SELECT COUNT(*) FROM instagram_tasks WHERE type='discover'"
     ).fetchone()
 
-    assert result["mode_results"]["topic"] == "failed"
+    assert result["mode_results"]["topic"] == "http_error"
     assert "creator" not in result["mode_results"]
     assert count is not None and int(count[0]) == 2
 

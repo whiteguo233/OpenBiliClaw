@@ -957,8 +957,8 @@ test("getPopupState distinguishes offline uninitialized refreshing empty and rea
       runtimeStatus: { initialized: true, pending_signal_events: 4 },
     }),
     {
-      kind: "refreshing",
-      message: "正在根据你最近的新行为补货，再刷一会儿就会更新。",
+      kind: "empty",
+      message: "这会儿还没新东西，先运行 init、discover 或 recommend",
       items: [],
     },
   );
@@ -995,6 +995,47 @@ test("getPopupState distinguishes offline uninitialized refreshing empty and rea
   assert.equal(ready.kind, "ready");
   assert.equal(ready.items.length, 1);
   assert.equal(ready.items[0]?.bvid, "BV1ready");
+});
+
+test("terminal discovery failure is not advertised as active replenishment", () => {
+  const state = getPopupState({
+    online: true,
+    items: [],
+    runtimeStatus: {
+      initialized: true,
+      pending_signal_events: 5,
+      manual_refresh_state: "idle",
+      discovery_failure_message: "首轮内容发现未完成；画像已保存。请检查来源连接后点「补货」重试。",
+    },
+  });
+  assert.equal(state.kind, "discovery_failed");
+  assert.match(state.message, /画像已保存/);
+  assert.match(state.message, /重试/);
+});
+
+test("new running or successful discovery supersedes the earlier failure", () => {
+  const runtimeStatus = {
+    initialized: true,
+    pending_signal_events: 5,
+    discovery_failure_message: "首轮内容发现未完成，画像已保存。",
+  };
+  assert.equal(getPopupState({ online: true, items: [], runtimeStatus: {
+    ...runtimeStatus, manual_refresh_state: "running", manual_refresh_message: "正在重试内容发现。",
+  } }).kind, "refreshing");
+  assert.equal(getPopupState({ online: true, items: [], runtimeStatus: {
+    ...runtimeStatus, manual_refresh_state: "success", discovery_failure_message: "",
+  } }).kind, "empty");
+  const skipped = mergeRuntimeStatusEvent(runtimeStatus, {
+    type: "refresh.pool_updated", pool_available_count: 0,
+    discovery_failure_message: runtimeStatus.discovery_failure_message,
+  });
+  assert.equal(getPopupState({ online: true, items: [], runtimeStatus: skipped }).kind, "discovery_failed");
+  assert.equal(getPopupState({ online: true, items: [{ id: 1, title: "Recovered" }], runtimeStatus }).kind, "ready");
+  const failed = getPopupState({ online: true, items: [], runtimeStatus: {
+    ...runtimeStatus, manual_refresh_state: "failed", manual_refresh_message: "本次重试失败，请检查来源连接。",
+  } });
+  assert.equal(failed.kind, "discovery_failed");
+  assert.equal(failed.message, "本次重试失败，请检查来源连接。");
 });
 
 test("getPopupState surfaces a degraded backend as its own actionable state", () => {
@@ -1159,6 +1200,7 @@ test("normalizeRuntimeStatus fills stable fallback fields", () => {
     recent_pool_topics: [],
     manual_refresh_state: "idle",
     manual_refresh_message: "",
+    discovery_failure_message: "",
     auto_update_enabled: false,
     current_version: "",
     latest_remote_version: "",
@@ -1198,6 +1240,7 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       recent_pool_topics: [],
       manual_refresh_state: "idle",
       manual_refresh_message: "",
+      discovery_failure_message: "",
       auto_update_enabled: true,
       current_version: "0.3.91",
       latest_remote_version: "0.3.92",

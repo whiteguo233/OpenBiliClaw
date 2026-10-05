@@ -5,6 +5,25 @@ const DEFAULT_PORTRAIT = "画像还在慢慢攒，先多看一阵。";
 const DEFAULT_DELIGHT_TITLE = "这条惊喜推荐还没起好标题";
 const DEFAULT_DELIGHT_REASON = "这条可能会给你一点意外之喜。";
 
+/** Request within the click gesture, but never let an unanswered prompt pin the form. */
+export async function requestPermissionWithTimeout(request, { timeoutMs = 30_000 } = {}) {
+  if (typeof request !== "function") return "unavailable";
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), Math.max(1, timeoutMs));
+  });
+  try {
+    // Invoke synchronously before the first await: permissions.request needs
+    // the original user gesture. A late resolution has no save side effects.
+    return await Promise.race([
+      Promise.resolve(request()).then((granted) => granted === true ? "granted" : "denied"),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -937,6 +956,7 @@ export function normalizeRuntimeStatus(status) {
       : [],
     manual_refresh_state: normalizeText(status?.manual_refresh_state) || "idle",
     manual_refresh_message: normalizeText(status?.manual_refresh_message),
+    discovery_failure_message: normalizeText(status?.discovery_failure_message),
     auto_update_enabled: Boolean(status?.auto_update_enabled),
     current_version: normalizeText(status?.current_version),
     latest_remote_version: normalizeText(status?.latest_remote_version),
@@ -952,6 +972,20 @@ export function mergeRuntimeStatusEvent(status, event) {
   const next = {
     ...runtime,
   };
+  if (event?.type === "refresh.started" || event?.type === "refresh.strategy") {
+    next.manual_refresh_state = "running";
+    next.manual_refresh_message = normalizeText(event?.message);
+  } else if (event?.type === "refresh.pool_updated") {
+    next.manual_refresh_state = "success";
+  } else if (event?.type === "refresh.failed") {
+    next.manual_refresh_state = "failed";
+    next.manual_refresh_message = normalizeText(event?.message);
+  }
+  if (typeof event?.discovery_failure_message === "string") {
+    next.discovery_failure_message = normalizeText(event.discovery_failure_message);
+  } else if (Number(event?.pool_available_count) > 0) {
+    next.discovery_failure_message = "";
+  }
   if (typeof event?.pool_available_count === "number") {
     // A canonical pool snapshot is emitted only after the backend runtime is
     // initialized.  Let this authoritative stream event recover a first-load
@@ -1011,6 +1045,16 @@ export function getPoolStatusSummary(status) {
       topics: "后台还在继续给你找新的",
     };
   }
+  if (runtime.pool_available_count === 0
+      && (runtime.discovery_failure_message || runtime.manual_refresh_state === "failed")) {
+    return {
+      available: "暂无可换库存",
+      replenished: "内容发现未完成",
+      topics: runtime.manual_refresh_state === "failed"
+        ? runtime.manual_refresh_message || "请检查来源连接后重试内容发现"
+        : runtime.discovery_failure_message,
+    };
+  }
   if (runtime.pool_available_count === 0 && runtime.pool_pending_count > 0) {
     return {
       available: `找到 ${runtime.pool_pending_count} 条素材，正在整理成可换内容`,
@@ -1063,6 +1107,7 @@ export function getDisplayedPoolStatusSummary(status, event = null, refreshMessa
   if (summary == null) {
     return null;
   }
+  if (summary.replenished === "内容发现未完成") return summary;
   const activeMessage = normalizeText(refreshMessage) || normalizeText(event?.message);
   if (!activeMessage) {
     return summary;
@@ -1402,9 +1447,16 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
       };
     }
 
-    // Initialized: an active refresh or queued behavior signals → replenishing.
-    if (runtime.manual_refresh_state === "running" || runtime.pending_signal_events > 0) {
+    // Queued behavior is context, not evidence that a worker is running.
+    if (runtime.manual_refresh_state === "running") {
       return { kind: "refreshing", message: refreshMessage, items: [] };
+    }
+
+    const discoveryFailure = runtime.manual_refresh_state === "failed"
+      ? runtime.manual_refresh_message || "这次内容发现未完成，请检查来源连接后重试内容发现。"
+      : runtime.discovery_failure_message;
+    if (discoveryFailure) {
+      return { kind: "discovery_failed", message: discoveryFailure, items: [] };
     }
 
     return {

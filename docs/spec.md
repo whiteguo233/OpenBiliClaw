@@ -296,6 +296,8 @@ background ─ background admission (default 3) ──────┘
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes
+             Instagram selected → init-owned topic/creator tasks → explicit small-batch flush
+                                → same evaluator/copy; no unselected Bilibili fallback
 
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
         → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
@@ -328,8 +330,11 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
 
 cover images: proxy foreground ─┐
               refresh prefetch ─┴→ app-stable coordinator(total 4 / bg 3, fg priority)
-                                  → cache-key singleflight → whitelist fetch (sinaimg included, direct)
+                                  → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
+                                  → pinned IP/direct-or-proxy (original Host + verified TLS)
                                   → atomic cache
+Instagram manual replenish → producer/task locks + quota/budget → topic/creator
+                          → explicit bounded eval/copy → usable supply or refresh.failed
 dialogue entries → app-stable execution lease(max active 1; reload pause/drain)
   durable dialogue → confirmation entry(pending list / cards)
                  → chat_turn(reply_to_turn_id + payload + fixed turn time)
@@ -412,6 +417,8 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ bili/xhs/dy/yt/zhihu/reddit/linuxdo/v2ex/weibo/instagram 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ Instagram: local claim / progress / outbox → 同 claim 重启恢复 → ACK 后清理；丢 tab 明确 failed / partial │ │
+│  │ Instagram init: form + PolarisViewer → native Likes Bloks / saved+following GET（只返回白名单数据） │ │
 │  │ 微博任务仅在显式 guided init 运行：同源只读导入收藏、关注、mentions；不上传 Cookie、不采集普通行为 │ │
 │  │ XHS 自动任务：source/scheduler 领取门 → SQLite 节流/风控冷却 → 关闭/限流时不再开任务 tab │ │
 │  │ XHS search：inactive tab → MAIN 搜索响应归一化 → isolated replay / DOM 兜底          │ │
@@ -606,7 +613,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │   首个 complete 收藏 scope 种基线；后续连续两次缺失 -> durable retract/restore │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ InstagramDiscoveryProducer: queue-backed topic/creator task → canonical media → pending eval │ │
+│  │ InstagramDiscoveryProducer: optional-session topic/creator → canonical public media → eval │ │
 │  │   liked/saved/following → like/favorite/follow；sessionid 只作 bool，账号由 current-user 正证 │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │

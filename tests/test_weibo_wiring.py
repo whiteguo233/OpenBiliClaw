@@ -133,7 +133,9 @@ def test_weibo_url_inference_uses_exact_host_boundaries(url: str) -> None:
 
 def test_keyword_planner_and_merged_prompt_include_weibo() -> None:
     assert keyword_planner._PLANNER_PLATFORMS[-1] == "instagram"
-    assert keyword_planner._PLANNER_PLATFORMS.index("weibo") < keyword_planner._PLANNER_PLATFORMS.index("instagram")
+    assert keyword_planner._PLANNER_PLATFORMS.index(
+        "weibo"
+    ) < keyword_planner._PLANNER_PLATFORMS.index("instagram")
     assert "weibo" in keyword_planner._PLATFORM_QUERY_STYLES
     assert "热议" in keyword_planner._PLATFORM_QUERY_STYLES["weibo"]["native_markers"]
     assert "实时" in platform_supply_advantage("weibo")

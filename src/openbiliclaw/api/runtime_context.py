@@ -1204,6 +1204,9 @@ class RuntimeContext:
                 keyword_fetch=new_keyword_fetch,
                 kick=_kick_instagram_extension,
                 presence=self.presence,
+                # Explicit guided init owns this producer even with all
+                # background work disabled. Periodic ticks keep their gate.
+                manual=True,
                 presence_grace_seconds=int(
                     getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
                 ),

@@ -85,6 +85,7 @@ _INSTAGRAM_FAILURE_CODES = frozenset(
         "account_identity_missing",
         "bounded_public_snapshot",
         "cancelled",
+        "creator_not_public",
         "cursor_resume_not_observed",
         "duplicate_cursor",
         "executor_failed",
@@ -108,8 +109,10 @@ _INSTAGRAM_FAILURE_CODES = frozenset(
         "network_error",
         "next_cursor_missing",
         "page_cap_reached",
+        "progress_stalled",
         "parse_error",
         "progress_persistence_unavailable",
+        "public_page_unavailable",
         "recovery_tab_gone",
         "recovery_tab_not_owned",
         "request_timeout",
@@ -527,6 +530,7 @@ def _sanitize_debug(raw: object) -> dict[str, Any]:
         "identity_resolved",
         "identity_verified",
         "response_observed",
+        "authenticated_topic_observed",
         "schema_degraded",
     ):
         if isinstance(raw.get(field), bool):

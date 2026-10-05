@@ -23,6 +23,7 @@
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible，带 retry + 超时 |
 | 2.2 Provider Registry | ✅ | 多端点实例注册 + 全局 / 模块有序链 + 实例级 cooldown + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
+| OpenAI-compatible 成功兼容参数复用 | ✅ | `complete()` 首次仍走既有标准请求和有界空响应回退；只有回退成功（JSON 模式还须返回合法 object/list）才在当前 provider 实例内记忆去除 `response_format` / 显式关闭 thinking。按模型、effort、是否显式传 effort、JSON 模式隔离，最多 32 组、不落盘；provider 重建即清空，已记忆参数的请求失败/仍为空时清除。默认链、模型、token 上限、429 cooldown 和业务准入不变，不保证解决上游额度或所有空响应。 |
 | 画像整理裁决 prompt | ✅ | `build_profile_consolidation_prompt()` 保持静态 system + 确定性 user JSON；likes 从“仅严格同义”调整为“是否重复占用同一推荐意图”，允许合并“搞笑 / 娱乐搞笑”这类无新增选择价值的同粒度标签，同时明确保留“篮球 / NBA”“AI技术 / AI视频技术”等会改变召回范围的父子兴趣。每个簇携带 `known_distinct_pairs`，模型不得重判或合并用户回滚 / 当前策略已确认分开的 pair；代码侧仍作相同约束的强校验。dislikes 继续只合并近乎同义项并严禁向上泛化 |
 | Phase 2 provider-independent cognition views | ✅ | Preference、plain Awareness、Awareness-with-confusions 与 Insight builder 都有显式 `input_view="legacy"|"compact-v1"` seam；compact 使用 `CognitionEventViewV1` 与 `CognitionProfileViewV1` 删除 transport/storage 重复字段并按 stable soul → stable preference → volatile cognition → current batch 排序，system message、输出 schema、reasoning 和 token ceiling 不变。生产 rollout 逐 task 控制：只默认开启已通过 SenseTime 门的 `soul.awareness_confusions`，plain `soul.awareness` 固定 legacy，Preference/Insight 默认 legacy。该投影不依赖 tokenizer、模型或 provider cache。 |
 | v0.3.182+ 对话洞察锚 prompt | ✅ | `build_dialogue_insight_prompt(..., active_list=None, anchor=None)` 保持模块级静态 system 与确定性 `sort_keys=True` user JSON。`anchor=None` 保留无锚字节形态；非空 `anchor` 只在 user message 追加 `<current_anchor>` 与 kind×relation 输出契约，不把代次数据污染 prompt-cache system 前缀。 |
@@ -95,6 +96,8 @@
 ## 公开 API
 
 ### Provider 类
+
+`complete()` 调用签名与用户配置不变。通用 `openai_compatible` provider 在同一实例内、按模型 / reasoning 参数 / JSON mode 隔离复用已成功的格式兼容参数；最多 32 组，不写磁盘，不跨模型或 provider 传播。实例重建即清空，初始请求报错或仍为空时丢弃对应提示。它不替代 provider 路由、限流冷却或额度管理。
 
 ```python
 from openbiliclaw.llm import (

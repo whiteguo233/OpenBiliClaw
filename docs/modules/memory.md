@@ -104,6 +104,7 @@
 | 9.2 画像更新 | ✅ | 反馈达到阈值后自动重分析偏好，并持久化反馈处理状态 |
 | 对话学习状态 | ✅ | `dialogue` 事件 + `insight_candidates.json`，支撑聊天信号的受控学习 |
 | 持续刷新状态 | ✅ | `discovery_runtime.json` 记录候选池刷新、通知游标、最近处理事件位置、正向/负向 probe 冷却、probe distance 历史和短期探索 buffer |
+| 首轮内容池恢复凭据 | ✅ | `init_discovery_resolution.json` 仅保存一个已恢复 init run_id；与调度状态分文件避免旧快照覆盖。文件锁内重查当前 init owner 和真实供给，恢复后消费/重启不复活旧故障，不修改原始 init 结果。 |
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
 | 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、已见 ID 集合、签名、最近错误，以及最多 8 个去重后的 `{stage,kind}` 结构化同步问题 |
 | 多源 bootstrap 去重与周期状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / Instagram 已进入事件路径的 bootstrap identity key，每源按响应顺序保留最新 5,000 个；V2EX key 按 resolved username、Instagram key 按不可逆 current-account key 隔离，切号不共用去重集合。同文件的 `source_incremental` 只保存实际支持周期回拉来源的调度投影；Instagram 明确 init-only。所有写入经 `update_source_bootstrap_state()` 的文件锁 + 原子 replace，避免并发 task-result / scheduler 丢更新。 |
@@ -116,6 +117,8 @@
 ## 公开 API
 
 ### MemoryManager
+
+`load_resolved_init_discovery_run()` 读取唯一恢复 run ID；`record_resolved_init_discovery_run(run_id)` 在原子 JSON 文件锁内验证当前失败 init 与实际可用供给，成功返回 `True`。重复已确认 run 不重写，旧 owner 不覆盖较新 run。由 runtime-status 初次确认供给时调用，是明确有界的本地 reconciliation，而非上游请求或新推荐写入。
 
 ```python
 from openbiliclaw.memory.manager import MemoryManager

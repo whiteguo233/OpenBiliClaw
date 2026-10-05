@@ -10,6 +10,8 @@
 
 ## 全局选项
 
+`openbiliclaw rebuild-profile --source instagram --limit 5000` 从本地已保存事件重新分析偏好并生成画像，使用当前 LLM 路由，不重新抓取平台数据，也不要求 B 站登录（包括仅重建 B 站已有事件的情况）。它会更新所选 project/data root 的画像，验证时必须显式设置隔离的 `OPENBILICLAW_PROJECT_ROOT`。没有事件时仍非零退出；配置检查保持启用。`--source` 支持事件 metadata 中的来源标识，不限于旧帮助列出的四个平台。
+
 ```bash
 openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 ```
@@ -692,6 +694,8 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 
 > v0.3.102+：来源采集步骤的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动（交互提示 / 摘要仍在命令里），后端图形化初始化 `POST /api/init` 复用同一协程。CLI 行为 / 输出 / 退出码不变。**也可以不进终端**：插件「推荐」tab 未初始化时直接点「开始初始化」，详见 [init 模块文档](init.md) 与 [extension 模块文档](extension.md)。
 
+Instagram opt-in 的第 4 阶段传递本次来源选择，CLI 与 API 共用 source-aware `run_init_backfill`：正式 topic/creator → 同一候选 evaluator（显式小批量 flush）→ 推荐文案 → 可浏览校验。仅选 Instagram 时不再悄悄执行 B 站策略；scheduler 可以保持关闭，评分阈值与背景批量配置不变。其它来源旧路由不在此修复范围内。
+
 > Issue #113（v0.3.168+）：共享流水线仅在阶段 2 偏好分析和阶段 3 画像任务的 task-local scope 内绕过库存敏感的后台 admission，避免首次空库存与画像生成互相等待；阶段 4 只在完整画像落盘后开始且不继承 bypass，并同步完成发现、评估、推荐文案与 canonical 可用性校验。正向兴趣 / 避雷探针移到 init wrapper 恢复 runtime 后调度，普通后台任务、LLM 总并发 gate 及 Soul 公开 API 不变。
 
 > 阶段 2 的 ETA 心跳会附带实时分片进度 `已完成 X/N 批` 和实际 LLM 并发上限，超过原始预估后明确显示“已超预估、仍在处理”，不再长期显示“预计还需 ~0s”。分片完成行在 CLI 与 API 初始化路径都会写到 stdout，便于桌面端 `desktop.log` 直接定位进度；更细的分片起止、耗时、限流重试和取消记录写入 `openbiliclaw.log`。
@@ -1098,7 +1102,9 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery、知乎插件 discovery、Reddit discovery、Bangumi 官方 API discovery、V2EX discovery 或 Instagram browser-task discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。Instagram 正式流程复用 `InstagramDiscoveryProducer`，只执行 `[sources.instagram].source_modes` 中的 `topic` / `creator` 直接页面，不提交 Instagram Search、不写 Recent Searches；公开候选进入统一 `discovery_candidates` 后再由 evaluator 处理。它不会把个性化 Explore/Home Feed 或不稳定私有 keyword SERP 冒充成 formal discover。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery、知乎插件 discovery、Reddit discovery、Bangumi 官方 API discovery、V2EX discovery 或 Instagram browser-task discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。Instagram 正式流程复用 `InstagramDiscoveryProducer`，只执行 `[sources.instagram].source_modes` 中的 `topic` / `creator` 直接页面，不主动提交 Instagram Search；公开候选进入统一 `discovery_candidates` 后再由 evaluator 处理。页面自身请求是否改变 Recent Searches 仍需独立前后对照，不能仅凭直接导航推断。它不会把个性化 Explore/Home Feed 或不稳定私有 keyword SERP 冒充成 formal discover。
+
+Instagram 退出码区分失败和正常无产出：缺画像、来源/分支不可用、扩展离线、超时、登录/验证/限流、HTML 或未观察到内容响应，以及其它未知失败返回 **1**，同时保留具体 reason。成功与明确空结果返回 **0**；节流、池满、预算耗尽、没有 topic/creator seed、去重/准入后无新增等正常跳过也返回 **0**。因此自动化不能仅凭退出码 0 推断存在新候选，还需检查发现/入池计数。
 
 手动 `discover` 是一次性进程，其 candidate pipeline 固定 `eval_min_batch_size=1`、`eval_max_wait_seconds=0`，立即 drain 本次已入队候选；只有常驻 API daemon 才读取 `[scheduler]` 的默认 15 / 90 秒聚合策略。这样 CLI 不会在退出时遗失只存在内存里的凑批等待状态。
 

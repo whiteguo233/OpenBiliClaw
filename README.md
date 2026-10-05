@@ -617,6 +617,8 @@ background ─ background admission (default 3) ──────┘
 
 引导初始化：信号 → 偏好 → 完整画像提交 → 发现 → 评估 → 推荐文案 → canonical 内容可用
                                                      └→ 终态后再调度可选探针
+             选择 Instagram → 本次 init 所属 topic/creator 任务 → 小批量即时评估 → 文案
+                            （仅选 Instagram 时不回退到 B 站；后台调度可保持关闭）
 
 Agent 宿主（OpenClaw / Hermes / WorkBuddy）
          → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
@@ -648,7 +650,9 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 配置热重载：保持接单并排空旧 worker → 原子暂停/revoke → 新 worker；安全窗25分钟
 实时连接：runtime-stream 20s idle 心跳 → 短暂 close 显示重连中并自动续连
 封面：proxy 前台 + refresh 预取 → app-stable lane（总4/后台3、前台优先）
-                               → cache-key singleflight → 白名单抓取 → 原子缓存
+                               → cache-key singleflight → 逐跳域名/公网DNS（代理经固定DoH）
+                               → 固定IP连接（直连/代理，保留Host与TLS校验）→ 原子缓存
+Instagram 换一批 → 来源配额/任务锁 → 发现 → 显式评估/文案 → 可用库存或明确失败
 ```
 
 ```
@@ -656,6 +660,8 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │          浏览器插件（Chrome / Firefox）           │
 │   行为采集 · MAIN-world tap（评论/弹幕·xhs强信号）│
 │   Cookie 同步 · 平台任务 · 侧边栏推荐             │
+│   Instagram: local outbox → 重启恢复 → ACK 清理 │
+│   topic: 可选登录 → 公开媒体 → 统一候选评估      │
 └──────────────────────┬─────────────────────────┘
                        │ HTTP 默认：IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ HTTPS 可选：公网 Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → 同一 API
@@ -694,7 +700,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │ Bangumi 官方匿名 API → search/ranked/latest producer → shared eval │
 │ V2EX 匿名 API/Feed → 有界 Topic/Reply 增强 → 五分支 producer → shared eval │
 │ V2EX 身份梯级：PAT verified > browser observed > user accepted；冲突时只暂停账号画像写入 │
-│ Instagram 隔离任务 → topic/creator 公开发现 + liked/saved/following init；Cookie/原始响应不出浏览器 │
+│ Instagram 隔离任务 → topic/creator；form+viewer 身份 → Likes Bloks / saved+following GET；原始响应不出浏览器 │
 │ 候选评估时钟：published_at + 精确 UTC evaluated_at → 小时桶缓存失效 │
 │ evaluator prefilter 默认 shadow → 隐私安全决策/原始分数 join → 只读质量 gate（不自动 enforce）│
 │ cognition named views → task-scoped gate：仅 awareness_confusions compact；其余 legacy │

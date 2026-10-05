@@ -1,5 +1,9 @@
 """Tests for configuration management."""
 
+import json
+import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -74,6 +78,110 @@ account_sync_interval_hours = 6
 db_path = "data/openbiliclaw.db"
 """.strip(),
         encoding="utf-8",
+    )
+
+
+def _load_budget_config_in_fresh_process(config_path: Path) -> subprocess.CompletedProcess[str]:
+    """Observe public loader warnings without sharing once-per-process state."""
+    script = """
+import json
+import logging
+import sys
+from openbiliclaw.config import load_config
+
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+config = load_config(sys.argv[1])
+print(json.dumps({
+    "instagram": {
+        "daily_topic_budget": config.sources.instagram.daily_topic_budget,
+        "daily_creator_budget": config.sources.instagram.daily_creator_budget,
+    },
+    "daily_search_budgets": {
+        source: getattr(config.sources, source).daily_search_budget
+        for source in (
+            "xiaohongshu", "douyin", "youtube", "twitter", "zhihu",
+            "reddit", "bangumi", "linuxdo", "weibo",
+        )
+    },
+}))
+"""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("OPENBILICLAW_")}
+    env["PYTHONPATH"] = str(Path(config_module.__file__).resolve().parents[1])
+    env["OPENBILICLAW_PROJECT_ROOT"] = str(config_path.parent)
+    return subprocess.run(
+        [sys.executable, "-c", script, str(config_path)],
+        cwd=config_path.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize("field", ["daily_topic_budget", "daily_creator_budget"])
+@pytest.mark.parametrize("budget", [1, 4])
+def test_instagram_small_budget_warning_uses_retained_candidate_units(
+    tmp_path: Path, field: str, budget: int
+) -> None:
+    config = Config()
+    setattr(config.sources.instagram, field, budget)
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["instagram"][field] == budget
+    assert f"sources.instagram.{field}={budget}" in result.stderr
+    assert "每日保留候选条数上限" in result.stderr
+    assert "想不限条数请设为 0" in result.stderr
+    assert "每日任务次数上限" not in result.stderr
+
+
+def test_instagram_unlimited_budgets_are_preserved_without_warning(tmp_path: Path) -> None:
+    config = Config()
+    config.sources.instagram.daily_topic_budget = 0
+    config.sources.instagram.daily_creator_budget = 0
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["instagram"] == {
+        "daily_topic_budget": 0,
+        "daily_creator_budget": 0,
+    }
+    assert "sources.instagram." not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "xiaohongshu",
+        "douyin",
+        "youtube",
+        "twitter",
+        "zhihu",
+        "reddit",
+        "bangumi",
+        "linuxdo",
+        "weibo",
+    ],
+)
+def test_other_source_small_budget_warnings_keep_existing_units(
+    tmp_path: Path, source: str
+) -> None:
+    config = Config()
+    getattr(config.sources, source).daily_search_budget = 4
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["daily_search_budgets"][source] == 4
+    assert result.stderr.strip() == (
+        f"config: sources.{source}.daily_search_budget=4 — "
+        "这是每日任务次数上限,不是开关;想不限次数请设为 0"
     )
 
 

@@ -613,6 +613,8 @@ background ─ background admission (default 3) ──────┘
                 parked when canonical available = 0
 
 guided init: signals → preferences → full profile commit → discover → evaluate → copy → canonical ready
+             Instagram selected → init-owned topic/creator tasks → small-batch flush → copy
+                                (Instagram-only never falls back to Bilibili; scheduling may stay off)
                                                               └→ optional probes after terminal state
 
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
@@ -645,7 +647,9 @@ config save: persist → HTTP 202 queued/apply_revision → latest-wins backgrou
 config hot reload: accepting drain old worker → atomic pause/revoke → new worker; 25m safety window
 realtime: runtime-stream 20s idle heartbeat → transient close shows reconnecting and retries
 images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3, fg priority)
-                                            → cache-key singleflight → whitelist fetch → atomic cache
+                                            → cache-key singleflight → public DNS (proxied: fixed DoH)
+                                            → pinned IP/direct-or-proxy (original Host/TLS) → atomic cache
+Instagram manual replenish → quota/task locks → discovery → explicit eval/copy → supply or failure
 ```
 
 ```
@@ -653,6 +657,8 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │       Browser Extension (Chrome / Firefox)     │
 │  Behavior capture · MAIN-world taps (comment/  │
 │  danmaku, xhs strong signal) · Cookie · Tasks  │
+│  Instagram: local outbox → recover → ACK/clear │
+│  topic: optional session → public media → eval │
 └──────────────────────┬─────────────────────────┘
                        │ HTTP default: IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
                        │ Optional HTTPS: public Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → same API
@@ -692,7 +698,7 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │ Bangumi public API → search/ranked/date producer → shared eval │
 │ V2EX public API/Feed → bounded Topic/Reply enrichment → five modes → shared eval │
 │ V2EX identity ladder: verified PAT > observed browser > accepted user; mismatch pauses only account projection │
-│ Instagram isolated tasks → topic/creator discovery + liked/saved/following init; no cookie/raw-response egress │
+│ Instagram tasks → topic/creator; form+viewer identity → native Likes Bloks / saved+following GET; no raw-response egress │
 │ Eval clock: published_at + exact UTC evaluated_at → hourly cache invalidation │
 │ Evaluator prefilter stays shadow → privacy-safe decision/raw-score join → read-only gate (no auto-enforce) │
 │ Named cognition views → task gate: compact only for awareness_confusions; others legacy │

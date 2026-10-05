@@ -330,7 +330,7 @@
       already_initialized: "已经初始化过了；如需重建，请到设置页。",
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
-      no_profile_signal_sources: "只选择 Bangumi 时，请填写个人令牌（推荐）或公开用户名，或先在浏览器登录 bgm.tv 让扩展自动识别账号。",
+      no_profile_signal_sources: "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
       linuxdo_bootstrap_not_ready: "Linux.do 公开发现无需登录；收藏、点赞和阅读记录初始化需要浏览器已登录 linux.do。",
       v2ex_bootstrap_not_ready: "V2EX 账号初始化尚未就绪。请在浏览器登录 v2ex.com，并保持 OpenBiliClaw 扩展已连接。",
       invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
@@ -893,6 +893,14 @@
     function describeInitReason(reason) {
       if (!reason || reason === "none") return "";
       return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function initStartErrorText(details, fallback) {
+      // Admission is backend-owned; shared codes cannot name a specific source.
+      // setInitReason renders this bounded guidance as plain text.
+      const detail = typeof details?.detail === "string" ? details.detail.trim().slice(0, 2000) : "";
+      return detail || describeInitReason(details?.error || details?.reason)
+        || fallback || "初始化没能启动，请稍后重试。";
     }
 
     function initStatusReasonText(status) {
@@ -1672,7 +1680,7 @@
         }, 60000);
         startBody = await r.json().catch(() => ({}));
         if (!r.ok) {
-          throw new Error(describeInitReason(startBody.error || startBody.reason) || startBody.detail || `HTTP ${r.status}`);
+          throw new Error(initStartErrorText(startBody, `HTTP ${r.status}`));
         }
       } catch (e) {
         renderInitChecklist(status, selected);

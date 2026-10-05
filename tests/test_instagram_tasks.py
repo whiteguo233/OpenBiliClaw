@@ -450,14 +450,22 @@ def test_instagram_accepts_frozen_durable_partial_merge_evidence(tmp_path: Path)
         debug={
             "response_observed": True,
             "terminal_evidence": "durable_partial_progress_merged",
+            "authenticated_topic_observed": True,
         },
     )
 
     assert staged["status"] == "partial"
     assert staged["items"]
     assert staged["debug"]["terminal_evidence"] == "durable_partial_progress_merged"
+    assert staged["debug"]["authenticated_topic_observed"] is True
     assert normalize_instagram_failure_code("instagram_liked:http_error") == (
         "instagram_liked:http_error"
+    )
+
+
+def test_likes_progress_stall_retains_precise_machine_diagnostic() -> None:
+    assert normalize_instagram_failure_code("instagram_liked:progress_stalled") == (
+        "instagram_liked:progress_stalled"
     )
 
 

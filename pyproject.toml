@@ -25,7 +25,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx[socks]>=0.27",
+    "httpx[socks]>=0.28",
+    # Public network-backend API pins cover-image connections against DNS rebinding.
+    "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
     "bilibili-api-python>=16",

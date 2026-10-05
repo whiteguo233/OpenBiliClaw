@@ -87,7 +87,7 @@ _WEIBO_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
     "cookie-sync": "optional-credential",
 }
 _INSTAGRAM_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
-    "discover": "anonymous",
+    "discover": "optional-credential",
     "profile": "login-required",
     "bootstrap": "login-required",
     "cookie-sync": "optional-credential",
@@ -758,7 +758,7 @@ def weibo_capability_readiness(ctx: SourceAuthContext) -> dict[str, SourceCapabi
 def _instagram_capabilities(
     personal_readiness: CapabilityReadiness,
 ) -> dict[str, SourceCapabilityAuth]:
-    """Return the anonymous-discover/private-account capability matrix."""
+    """Return optional-session discovery and private-account capabilities."""
 
     personal_detail = "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
     return {
@@ -766,7 +766,9 @@ def _instagram_capabilities(
             mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["discover"],
             required=True,
             readiness="ready",
-            detail="公开 topic 与 creator 内容发现无需登录。",
+            detail=(
+                "保留匿名 topic/creator 路径；已登录时可读取页面自然返回的 topic 媒体，不提交搜索。"
+            ),
         ),
         "profile": SourceCapabilityAuth(
             mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["profile"],
@@ -790,7 +792,7 @@ def _instagram_capabilities(
 
 
 def auth_instagram(ctx: SourceAuthContext) -> SourceAuthContract:
-    """Instagram: anonymous discovery plus browser-owned personal bootstrap."""
+    """Instagram: optional-session discovery and browser-owned bootstrap."""
 
     logged_in, when, fresh = _login_heartbeat(
         ctx.database,

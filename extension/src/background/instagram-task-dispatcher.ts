@@ -1,6 +1,7 @@
 /** Durable dispatcher for bounded, read-only Instagram browser tasks. */
 
 import {
+  INSTAGRAM_API_REQUEST_TIMEOUT_MS,
   isKnownInstagramScope,
   type InstagramTask,
   type InstagramTaskProgress,
@@ -21,6 +22,7 @@ import {
 
 const OWNER = "instagram";
 const POLL_ALARM = "openbiliclaw-instagram-task-poll";
+const POLL_RETRY_ALARM = "openbiliclaw-instagram-poll-retry";
 const RESULT_RETRY_ALARM = "openbiliclaw-instagram-result-retry";
 const SESSION_KEY = "openbiliclaw_instagram_task_state_v1";
 const POLL_INTERVAL_MINUTES = 1;
@@ -86,6 +88,15 @@ function positiveInteger(value: unknown, maximum = MAX_ITEMS): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(maximum, parsed) : null;
 }
 
+function idleTimeoutForTask(task: InstagramTask): number {
+  if (task.type !== "bootstrap_events") return IDLE_TIMEOUT_MS;
+  const interval = positiveInteger(task.request_interval_ms, 30_000) || 3_000;
+  // One private page needs before-viewer, page GET and after-viewer requests;
+  // allow the scope transition wait plus bounded response/ACK time as well.
+  // Only accepted durable progress renews this window; absolute stays 12 min.
+  return Math.max(IDLE_TIMEOUT_MS, 4 * interval + 3 * INSTAGRAM_API_REQUEST_TIMEOUT_MS + 5_000);
+}
+
 /** Reject malformed/expanded task claims before opening an upstream tab. */
 export function isValidInstagramTask(value: unknown): value is InstagramTask {
   if (!value || typeof value !== "object") return false;
@@ -141,7 +152,7 @@ export function isValidInstagramTask(value: unknown): value is InstagramTask {
 
 export function instagramTaskUrl(task: InstagramTask): string {
   if (task.type === "bootstrap_events") {
-    return withInstagramTaskMarker("https://www.instagram.com/");
+    return withInstagramTaskMarker("https://www.instagram.com/your_activity/interactions/likes/");
   }
   if (task.mode === "creator") {
     return withInstagramTaskMarker(
@@ -174,7 +185,9 @@ export function instagramTaskSenderMatches(
 
 function storageArea(): chrome.storage.StorageArea | null {
   try {
-    return typeof chrome === "undefined" ? null : chrome.storage?.session ?? null;
+    // Session survives MV3 worker recycling, but not extension/browser reload.
+    // Keep the bounded claim/outbox until ACK; never store Instagram credentials.
+    return typeof chrome === "undefined" ? null : chrome.storage?.local ?? null;
   } catch {
     return null;
   }
@@ -188,20 +201,31 @@ function serializedStorageMutation(mutation: () => Promise<void>): Promise<void>
 
 async function persistState(): Promise<void> {
   const storage = storageArea();
-  if (!storage || !state) throw new Error("instagram_session_storage_unavailable");
+  if (!storage || !state) throw new Error("instagram_task_state_unavailable");
   await serializedStorageMutation(async () => storage.set({ [SESSION_KEY]: state }));
 }
 
 async function clearPersistedState(): Promise<void> {
   const storage = storageArea();
   if (!storage) return;
-  await serializedStorageMutation(async () => storage.remove(SESSION_KEY)).catch(() => {});
+  await serializedStorageMutation(async () => {
+    // Retire legacy session data too, so it cannot resurrect an ACKed claim.
+    await chrome.storage?.session?.remove(SESSION_KEY);
+    await storage.remove(SESSION_KEY);
+  }).catch(() => {});
 }
 
 async function loadPersistedState(): Promise<PersistedState | null> {
   const storage = storageArea();
-  if (!storage) throw new Error("instagram_session_storage_unavailable");
-  const stored = await storage.get(SESSION_KEY);
+  if (!storage) throw new Error("instagram_task_state_unavailable");
+  let stored = await storage.get(SESSION_KEY);
+  if (stored[SESSION_KEY] === undefined && chrome.storage?.session) {
+    // One-way migration of an already-running task from the previous build.
+    stored = await chrome.storage.session.get(SESSION_KEY);
+    if (stored[SESSION_KEY] !== undefined) {
+      await serializedStorageMutation(async () => storage.set(stored));
+    }
+  }
   const value = stored[SESSION_KEY] as Partial<PersistedState> | undefined;
   if (value === undefined) return null;
   if (
@@ -467,6 +491,10 @@ export async function postInstagramTaskResult(
 
 async function removeTabBestEffort(tabId: number): Promise<void> {
   try {
+    // Browser restarts can reuse tab IDs, and users can navigate away while an
+    // outbox waits for ACK. Never close a page that is no longer task-owned.
+    const tab = await chrome.tabs.get(tabId);
+    if (!ownedTaskUrl(tab.url || "")) return;
     await chrome.tabs.remove(tabId);
   } catch {
     // User closure and restart races are harmless.
@@ -684,7 +712,7 @@ export async function executeInstagramTaskInTab(
     task,
     tabId: null,
     lastProgress: null,
-    idleDeadlineAt: now + IDLE_TIMEOUT_MS,
+    idleDeadlineAt: now + idleTimeoutForTask(task),
     absoluteDeadlineAt: now + ABSOLUTE_TIMEOUT_MS,
     dispatchAttempts: 0,
     reloadUsed: false,
@@ -696,7 +724,7 @@ export async function executeInstagramTaskInTab(
     await persistState();
   } catch {
     // The backend claim remains lease-recoverable, but no upstream side effect
-    // starts until the claim record itself is durable in session storage.
+    // starts until the claim record itself is durable in local storage.
     initialPersistencePending = true;
     scheduleResultRetry();
     return "accepted";
@@ -737,6 +765,19 @@ function mergeProgressItems(
   ], task);
 }
 
+async function rejectChangedAccount(incoming: unknown): Promise<boolean> {
+  if (!state || state.task.type !== "bootstrap_events") return false;
+  const accountId = string(incoming, 128);
+  if (!/^\d+$/.test(accountId) || !state.accountId || state.accountId === accountId) return false;
+  // A recovered execution must never relabel previously accepted personal rows.
+  // Fail the entire conflicted snapshot rather than projecting either account.
+  await finalize({ task_id: state.task.id, claim_token: state.task.claim_token,
+    status: "failed", items: [], scope_counts: countsForItems(state.task, []),
+    scope_complete: normalizedScopeComplete(state.task, {}), error: "instagram_account_changed",
+    debug: { identity_resolved: false, response_observed: false } });
+  return true;
+}
+
 async function applyProgress(
   progress: InstagramTaskProgress,
   sender?: chrome.runtime.MessageSender,
@@ -754,6 +795,9 @@ async function applyProgress(
   if (state.pendingResult) {
     await persistState();
     return;
+  }
+  if (await rejectChangedAccount(progress.account_id)) {
+    throw new Error("instagram_account_changed");
   }
   state.lastProgress = {
     task_id: state.task.id,
@@ -774,12 +818,12 @@ async function applyProgress(
     if (incomingComplete[scope]) state.scopeComplete[scope] = true;
   }
   if (state.task.type === "bootstrap_events" && /^\d+$/.test(string(progress.account_id, 128))) {
-    state.accountId = string(progress.account_id, 128);
+    state.accountId ||= string(progress.account_id, 128);
   }
   const progressDebug = safeDebug(progress.debug);
   if (progressDebug) state.progressDebug = progressDebug;
   if (progress.accepted === true) {
-    state.idleDeadlineAt = Math.min(Date.now() + IDLE_TIMEOUT_MS, state.absoluteDeadlineAt);
+    state.idleDeadlineAt = Math.min(Date.now() + idleTimeoutForTask(state.task), state.absoluteDeadlineAt);
     armDeadline();
   }
   await persistState();
@@ -829,6 +873,7 @@ async function applyResult(
     await persistState();
     return;
   }
+  if (await rejectChangedAccount(result.account_id)) return;
   const safe = sanitizeInstagramTaskResult(result, state.task);
   if (!safe) throw new Error("instagram_task_result_identity_mismatch");
   await finalize(mergeResultWithProgress(state.task, safe, state));
@@ -930,8 +975,18 @@ export function ensureInstagramTaskRecovery(): Promise<void> {
 async function pollOnce(): Promise<void> {
   await ensureInstagramTaskRecovery();
   if (inFlight || state?.pendingResult) return;
-  if (!tryAcquireDispatcherMutex(OWNER)) return;
+  if (!tryAcquireDispatcherMutex(OWNER)) {
+    // Minute alarms for all sources may fire together every time. A separate
+    // durable half-minute wake avoids repeatedly losing the same mutex race.
+    try {
+      await chrome.alarms?.create(POLL_RETRY_ALARM, { delayInMinutes: 0.5 });
+    } catch {
+      // The regular poll remains the fallback if alarm persistence fails.
+    }
+    return;
+  }
   ownsMutex = true;
+  try { await chrome.alarms?.clear(POLL_RETRY_ALARM); } catch { /* regular poll remains */ }
   const task = await fetchNextTask();
   if (!task) {
     releaseDispatcherMutex(OWNER);
@@ -982,5 +1037,5 @@ export function handleInstagramTaskAlarm(name: string): void {
     }).catch(() => scheduleResultRetry());
     return;
   }
-  if (name === POLL_ALARM) pollInstagramTaskNow();
+  if (name === POLL_ALARM || name === POLL_RETRY_ALARM) pollInstagramTaskNow();
 }

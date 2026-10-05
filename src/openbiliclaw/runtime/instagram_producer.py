@@ -11,11 +11,15 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_INSTAGRAM
 from openbiliclaw.runtime.pool_gate import candidate_pool_full_for_source
@@ -30,6 +34,19 @@ from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue, is_instagra
 logger = logging.getLogger(__name__)
 
 INSTAGRAM_SOURCE_ORDER = ("topic", "creator")
+# These broad public routes were observed with media on 2026-09-26. They are
+# seeds, not search results or availability guarantees; each task still needs
+# affirmative upstream evidence and the shared evaluator retains relevance.
+_TOPIC_ALIASES = {
+    "animation": ("动漫", "动画", "二次元", "anime", "manga", "animation"),
+    "music": ("音乐", "乐器", "吉他", "钢琴", "作曲", "music", "guitar", "drums"),
+    "technology": ("科技", "人工智能", "机器学习", "机器人", "编程", "technology", "ai"),
+    "gaming": ("游戏", "电竞", "gaming", "games", "game"),
+    "art": ("艺术", "绘画", "摄影", "设计", "建筑", "art", "photography", "design"),
+}
+_DISCOVER_BOUNDED_PARTIAL_CODES = frozenset(
+    {"item_cap_reached", "page_cap_reached", "bounded_public_snapshot"}
+)
 
 
 @dataclass(frozen=True)
@@ -75,24 +92,29 @@ class InstagramDiscoveryProducer:
     _last_skip_reason: str = field(default="", init=False)
     _pending_consumption_task_ids: set[str] = field(default_factory=set, init=False)
     _finalized_keyword_ids: set[int] = field(default_factory=set, init=False)
+    _topic_claim_outcomes: dict[int, str] = field(default_factory=dict, init=False)
     _cycle_deadline: float | None = field(default=None, init=False)
     _owner_token: str = field(default_factory=lambda: uuid.uuid4().hex, init=False)
     _run_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _register_task: Callable[[str], None] | None = field(default=None, init=False, repr=False)
 
     async def produce_if_due(
         self,
         *,
         limit: int | None = None,
         force: bool = False,
+        register_task: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         """Serialize this instance and run one bounded discovery cycle."""
 
         if self._run_lock.locked():
             return self._skip("already_running")
         async with self._run_lock:
+            self._register_task = register_task
             try:
                 return await self._produce_if_due(limit=limit, force=force)
             finally:
+                self._register_task = None
                 self._release_owner_leases()
 
     async def _produce_if_due(
@@ -109,6 +131,7 @@ class InstagramDiscoveryProducer:
         # could acknowledge rows that this cycle never scanned or handed off.
         self._pending_consumption_task_ids.clear()
         self._finalized_keyword_ids.clear()
+        self._topic_claim_outcomes.clear()
         if not self.enabled:
             return self._skip("disabled")
         self._cycle_deadline = asyncio.get_running_loop().time() + max(
@@ -278,7 +301,7 @@ class InstagramDiscoveryProducer:
         if coordinator is not None and bool(getattr(coordinator, "should_claim", lambda: False)()):
             claims = list(coordinator.claim(PLATFORM_INSTAGRAM, n=min(5, limit)))
         queries: list[tuple[str, int | None]] = [
-            (str(item.keyword).strip(), int(item.id)) for item in claims
+            (_topic_seed(str(item.keyword)), int(item.id)) for item in claims
         ]
         # Instagram topic discovery is not a general site-search lane.  The
         # unified planner may therefore have no Instagram-specific pending
@@ -291,6 +314,7 @@ class InstagramDiscoveryProducer:
             return [], claims, "no_topics"
 
         contents: list[Any] = []
+        degraded = False
         for keyword, keyword_id in queries:
             if self._cycle_time_exhausted():
                 return contents, claims, "cycle_deadline"
@@ -320,9 +344,10 @@ class InstagramDiscoveryProducer:
             await self._kick_dispatcher()
             result = await self._wait_for_task(str(task_id))
             status = str(result.get("status", "") or "")
-            if status not in {"ok", "empty", "partial"}:
-                return contents, claims, status or "task_failed"
-            for row in result.get("items", []):
+            failure = _discover_failure(result)
+            if status not in {"ok", "empty", "partial"} and failure != "public_page_unavailable":
+                return contents, claims, failure
+            for row in result.get("items", []) if status in {"ok", "partial"} else []:
                 content = instagram_item_to_content(
                     row,
                     strategy=INSTAGRAM_SOURCE_STRATEGIES["topic"],
@@ -332,8 +357,21 @@ class InstagramDiscoveryProducer:
                     contents.append(content)
                     if len(contents) >= limit:
                         break
+            if failure == "public_page_unavailable":
+                degraded = True
+                if keyword_id is not None:
+                    self._topic_claim_outcomes[keyword_id] = failure
+            elif failure:
+                # Keep already accepted rows, but never issue another task
+                # after a challenge, login wall, rate limit or schema failure.
+                return contents, claims, failure
+            elif status == "empty" and keyword_id is not None:
+                self._topic_claim_outcomes[keyword_id] = "empty"
+            degraded = degraded or status == "partial"
             if len(contents) >= limit:
                 break
+        if degraded:
+            return contents, claims, "partial" if contents else "topics_unavailable"
         return contents, claims, "ok" if contents else "empty"
 
     async def _run_creators(
@@ -345,6 +383,7 @@ class InstagramDiscoveryProducer:
         if not usernames:
             return [], "no_creator_seeds"
         contents: list[Any] = []
+        degraded = False
         for username in usernames:
             if self._cycle_time_exhausted():
                 return contents, "cycle_deadline"
@@ -363,9 +402,10 @@ class InstagramDiscoveryProducer:
             await self._kick_dispatcher()
             result = await self._wait_for_task(str(task_id))
             status = str(result.get("status", "") or "")
-            if status not in {"ok", "empty", "partial"}:
-                return contents, status or "task_failed"
-            for row in result.get("items", []):
+            failure = _discover_failure(result)
+            if status not in {"ok", "empty", "partial"} and failure != "public_page_unavailable":
+                return contents, failure
+            for row in result.get("items", []) if status in {"ok", "partial"} else []:
                 content = instagram_item_to_content(
                     row,
                     strategy=INSTAGRAM_SOURCE_STRATEGIES["creator"],
@@ -374,8 +414,15 @@ class InstagramDiscoveryProducer:
                     contents.append(content)
                     if len(contents) >= limit:
                         break
+            if failure == "public_page_unavailable":
+                degraded = True
+            elif failure:
+                return contents, failure
+            degraded = degraded or status == "partial"
             if len(contents) >= limit:
                 break
+        if degraded:
+            return contents, "partial" if contents else "creators_unavailable"
         return contents, "ok" if contents else "empty"
 
     async def _wait_for_task(self, task_id: str) -> dict[str, Any]:
@@ -394,13 +441,16 @@ class InstagramDiscoveryProducer:
             await asyncio.sleep(max(0.01, float(self.poll_interval_seconds)))
         if not self._still_owns_task(task_id):
             return {"status": "owner_reassigned", "items": []}
-        if not task or state != "completed":
+        if not task or state == "cancelled" or (state == "failed" and not task.get("result_json")):
             if state in {"failed", "cancelled"}:
                 self._pending_consumption_task_ids.add(task_id)
             return {
                 "status": str((task or {}).get("error", "") or state or "task_failed"),
                 "items": [],
             }
+        # Failed terminal tasks also have a staged canonical result. Their
+        # machine error code lives there, not in a queue-level error column.
+        # Dropping it would turn a page-local soft 404 into a cycle-wide failure.
         try:
             parsed = json.loads(str(task.get("result_json") or "{}"))
         except json.JSONDecodeError:
@@ -462,6 +512,8 @@ class InstagramDiscoveryProducer:
                 mode_results[mode] = "owned_task_active"
                 blocked = True
                 break
+            if self._register_task is not None:
+                self._register_task(task_id)
             if state not in {"completed", "failed", "cancelled"}:
                 if not extension_present:
                     mode_results[mode] = "extension_absent"
@@ -469,7 +521,8 @@ class InstagramDiscoveryProducer:
                     break
                 await self._kick_dispatcher()
             result = await self._wait_for_task(task_id)
-            status = str(result.get("status", "") or "task_failed")
+            raw_status = str(result.get("status", "") or "task_failed")
+            status = _discover_failure(result) or raw_status
             if status == "timeout":
                 mode_results[mode] = status
                 blocked = True
@@ -487,13 +540,14 @@ class InstagramDiscoveryProducer:
                         status,
                     )
                 )
-            if status not in {"ok", "empty", "partial"}:
-                # Live topic execution stops its ordered suffix after any
-                # terminal failure.  Recovery must preserve that boundary;
-                # otherwise a restart can turn success→failed into a fresh
-                # creator task even though the original cycle had stopped.
-                blocked = True
+            if status == "public_page_unavailable" and raw_status != "partial":
+                # A missing public seed is local to that page, not an auth or
+                # transport failure. Preserve the same exception on recovery.
                 continue
+            if status not in {"ok", "empty", "partial", "public_page_unavailable"}:
+                blocked = True
+                if raw_status != "partial":
+                    continue
             if mode not in modes:
                 continue
             strategy = INSTAGRAM_SOURCE_STRATEGIES[mode]
@@ -533,6 +587,8 @@ class InstagramDiscoveryProducer:
         conn = getattr(self.database, "conn", None)
         if conn is None:
             raw_task_id = self.task_queue.enqueue_with_id("discover", payload, daily_budget=0)
+            if raw_task_id is not None and self._register_task is not None:
+                self._register_task(str(raw_task_id))
             return str(raw_task_id) if raw_task_id is not None else None
         participating = bool(conn.in_transaction)
         try:
@@ -556,6 +612,8 @@ class InstagramDiscoveryProducer:
                 )
             if not participating:
                 conn.commit()
+            if task_id is not None and self._register_task is not None:
+                self._register_task(task_id)
             return task_id
         except Exception:
             if not participating and conn.in_transaction:
@@ -874,7 +932,10 @@ class InstagramDiscoveryProducer:
             if int(claim.id) in retained_keyword_ids:
                 if int(claim.id) not in self._finalized_keyword_ids:
                     coordinator.mark_used([claim])
-            elif outcome == "empty":
+            elif self._topic_claim_outcomes.get(int(claim.id), outcome) in {
+                "empty",
+                "public_page_unavailable",
+            }:
                 coordinator.mark_failed([claim])
             else:
                 requeue = getattr(coordinator, "requeue_transient", None)
@@ -943,13 +1004,14 @@ def build_instagram_discovery_producer(
     kick: Any | None = None,
     presence: Any | None = None,
     presence_grace_seconds: int = 90,
+    manual: bool = False,
 ) -> InstagramDiscoveryProducer | None:
-    """Build the formal producer when Instagram and scheduling are enabled."""
+    """Build a source-enabled producer; explicit init need not enable scheduling."""
 
     source_cfg = getattr(getattr(config, "sources", None), "instagram", None)
     if source_cfg is None or not bool(getattr(source_cfg, "enabled", False)):
         return None
-    if not bool(getattr(getattr(config, "scheduler", None), "enabled", True)):
+    if not manual and not bool(getattr(getattr(config, "scheduler", None), "enabled", True)):
         return None
     if not hasattr(database, "conn"):
         logger.info("instagram producer disabled: database does not expose sqlite connection")
@@ -986,7 +1048,7 @@ def _profile_keywords(profile: Any, limit: int) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for interest in interests:
-        text = str(getattr(interest, "name", "") or interest).strip()
+        text = _topic_seed(str(getattr(interest, "name", "") or interest))
         if not text or text.casefold() in seen:
             continue
         seen.add(text.casefold())
@@ -994,6 +1056,30 @@ def _profile_keywords(profile: Any, limit: int) -> list[str]:
         if len(out) >= max(1, int(limit)):
             break
     return out
+
+
+def _topic_seed(value: str) -> str:
+    """Map known interest aliases to observed routes, without inventing search."""
+
+    value = value.strip().lstrip("#").casefold()
+    for topic, aliases in _TOPIC_ALIASES.items():
+        for alias in aliases:
+            if (alias.isascii() and re.search(rf"\b{re.escape(alias)}\b", value)) or (
+                not alias.isascii() and alias in value
+            ):
+                return topic
+    # Unknown terms remain bounded candidate routes, not asserted-valid URLs.
+    return re.sub(r"\s+", "-", value)[:300]
+
+
+def _discover_failure(result: dict[str, Any]) -> str:
+    status = str(result.get("status") or "task_failed")
+    error = str(result.get("error") or "")
+    if status not in {"ok", "empty", "partial"}:
+        return error or status
+    if status == "partial" and error and error not in _DISCOVER_BOUNDED_PARTIAL_CODES:
+        return error
+    return ""
 
 
 def _creator_seed_usernames(contents: list[Any]) -> list[str]:

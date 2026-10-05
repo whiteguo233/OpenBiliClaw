@@ -1,5 +1,5 @@
-# Instagram source contract. Public discovery uses direct, anonymous topic and
-# creator pages. Personal initialization runs bounded, same-origin browser
+# Instagram source contract. Discovery reads direct topic/creator pages with
+# optional browser login enhancement. Personal initialization uses same-origin
 # reads; no Instagram Cookie or raw response body leaves the extension.
 
 schema_version = 1
@@ -24,10 +24,10 @@ route_aliases = []
 fallback_owner = "none"
 requires_overseas_network = true
 routed_by_network_mode = false
-network_policy = "The user's browser owns Instagram connectivity. Anonymous discovery and authenticated initialization both execute as bounded same-origin browser tasks; the backend never replays Instagram credentials."
+network_policy = "The user's browser owns connectivity. Discovery preserves anonymous responses and also accepts route-bound authenticated public-media grids. Initialization requires login. Tasks stay bounded; the backend never replays Instagram credentials."
 
 [transport.capability_routes]
-discover = "extension:browser-task:anonymous-direct-topic-and-public-profile"
+discover = "extension:browser-task:direct-topic-and-public-profile:optional-session"
 profile = "extension:browser-task:session-current-read-only"
 bootstrap = "extension:browser-task:session-current-read-only"
 cookie-sync = "extension:cookie-sync:boolean-login-readiness-only"
@@ -36,20 +36,20 @@ cookie-sync = "extension:cookie-sync:boolean-login-readiness-only"
 item_id = "Instagram media id is canonical storage identity; shortcode/code is retained for canonical /p/ or /reel/ URLs, and followed users use their numeric user id"
 url = "Canonical https://www.instagram.com/p/<code>/, https://www.instagram.com/reel/<code>/, or public https://www.instagram.com/<username>/ URL"
 dedupe = "Canonical source family plus numeric media id; personal event keys are additionally partitioned by the current-account key and interaction scope"
-account_scope = "A personal task must positively resolve the current numeric account id from the same-origin accounts/current_user response before any event is accepted"
+account_scope = "Before accepting events, match the same-session account form username to a fresh named PolarisViewer SSR module; require matching nonzero outer id and data.id"
 
 [auth]
 mode = "capability-specific"
 credential_kinds = ["login_state"]
 verify_action = "browser_heartbeat"
 write_path = "unified"
-account_resolution = "Fresh same-origin accounts/current_user numeric id; sessionid cookie presence is readiness only and is never identity evidence"
-identity_evidence = "Only a successful current-account response authorizes personal rows; DOM account labels and ds_user_id are non-authoritative hints"
+account_resolution = "GET accounts/edit/web_form_data plus fresh same-origin homepage SSR PolarisViewer; cookie presence is readiness only"
+identity_evidence = "Successful account-form username must equal PolarisViewer.data.username; outer id and data.id must agree. Missing, conflicting or anonymous viewer fails closed; DOM labels and ds_user_id are not evidence"
 login_cookie_names = ["sessionid"]
 login_state_path = "callback"
 
 [auth.capability_modes]
-discover = "anonymous"
+discover = "optional-credential"
 profile = "login-required"
 bootstrap = "login-required"
 cookie-sync = "optional-credential"
@@ -62,17 +62,20 @@ cookie-sync = false
 
 [upstream]
 success_content_types = ["application/json", "text/javascript", "text/html"]
-pagination = "Anonymous popular/topic responses use page_info.has_next_page plus end_cursor; personal liked/saved/following responses use next_max_id. Every lane has a backend-frozen item/page cap."
-terminal_evidence = "HTTP success plus a route-specific decoded envelope and explicit has_next_page=false, missing next_max_id, or recognized empty state; personal scopes additionally require a positive current-account id"
-terminal_policy = "Login walls, checkpoint/challenge pages, feedback_required, HTML returned to an API request, malformed envelopes, timeouts, 401/403/429, missing identity, and unobserved responses are failed or partial, never valid-empty"
-partial_policy = "Retain accepted rows but do not mark a scope complete, advance snapshot completeness, or infer removals when a page cap, item cap, schema error, auth failure, challenge, timeout, or rate limit interrupts pagination"
+pagination = "Topic/creator use page_info/end_cursor. Saved/following use next_max_id. Likes observes native activity Bloks with bounded scrolling; three unchanged nonempty observations stop with progress_stalled and preserve partial rows because a reliable terminal cursor is not proven. Every lane has frozen item/page caps."
+terminal_evidence = "HTTP success plus route-specific decoded envelope and explicit has_next_page=false, missing next_max_id, or recognized empty state; native Likes empty requires exact empty Text/TextSpan in the allowlisted Bloks tree without rejected/media rows. Personal scopes require verified current-account identity"
+terminal_policy = "Login walls, checkpoint/challenge pages, feedback_required, HTML returned to an API request, malformed envelopes, timeouts, 401/403/429, missing identity, and unobserved responses are failed or partial, never valid-empty. Final login/challenge routes and explicit error values/form/visible diagnostics are evidence; script/metadata keywords and nullable field names are not. Unexpected homepage HTML stays html_response. A dedicated unavailable-page title plus broken-link explanation is public_page_unavailable; only this page-local failure permits trying another seed."
+partial_policy = "Retain accepted rows but do not mark a scope complete, advance snapshot completeness, or infer removals when a page cap, item cap, schema error, auth failure, challenge, timeout, or rate limit interrupts pagination. Nonempty saved/following pages with no valid rows fail; mixed rows degrade. A bootstrap account identity change discards the mixed snapshot and terminalizes the same claim with instagram_account_changed."
 publication_time_policy = "Use an authoritative taken_at or media timestamp only, normalized to UTC; discovery/task time is never substituted"
 
 [discover]
 modes = ["topic", "creator"]
-search_generation = "Profile-derived terms may seed direct /popular/<topic>/ or hashtag-recent browser tasks, but Instagram is not registered as an arbitrary keyword-content search source and the task never submits Instagram Search or mutates Recent Searches"
+initial_readiness = "After the normal first-page delay, passively wait at most 20 seconds for a matching envelope, affirmative empty, or terminal risk. Replay waits neither paginate nor renew idle. No scroll after the last allowed page; still-unobserved responses fail closed."
+creator_public_proof = "Native data.user or data.xig_user_by_username, including only the observed ScheduledServerJS.handle -> __bbox.require -> RelayPrefetchedStreamCache.next -> __bbox.result.data.xig_user_by_username wrapper. Explicit is_private=false, current route username and canonical numeric author identity must agree. Prefer a positive integral pk; use id only when pk is absent. Native Relay pk and id may be different namespaces, not a conflict. Invalid pk cannot fall back to id; mismatched authors, viewer/suggestions and unknown/private evidence are rejected. Module instructions are never evaluated."
+creator_cache = "Only an absent profile proof may reuse same-page public evidence. Every matching profile in one payload must be explicitly public with valid, mutually consistent identity. Fresh invalid/unknown/private/conflicting evidence, or truncated scans, revoke cached proof. Consistent same-account proofs merge without losing a known pk; SSR scans cannot reenter and allow at most one follow-up pass to bind earlier media. Author matching uses the same strict user-key parser and same-field identity comparisons, never a media-ID parser or cross-namespace digit collision."
+search_generation = "Profile aliases map to bounded direct topic routes. Tasks never submit Search or reconstruct private requests. With user authorization on 2026-09-30, the native page's authenticated top-SERP MediaGrid units are accepted as optional-session public media, never labeled anonymous; account/header units are ignored and private/unknown media rejected. Page-owned mutations require independent audit; admission is unchanged."
 budget = "Independent daily per-mode budgets are charged only to globally deduplicated candidates retained after filtering and final limit"
-cursor = "Opaque page_info/end_cursor values remain task-local; topic and creator branches are bounded and do not claim a complete public snapshot"
+cursor = "Opaque page_info/end_cursor values remain task-local; topic and creator branches are bounded and do not claim a complete public snapshot. Creator rows require explicit public authors or matching numeric ID and username from the native public data.user profile; viewer/suggested accounts are not proof. Unknown/private rows cannot cross the bridge; creator_not_public and creator HTTP 401/403/429 terminalize normally."
 
 [profile]
 signals = true
@@ -112,8 +115,9 @@ share = "unavailable"
 danmaku = "unavailable"
 
 [media]
-image = "direct"
+image = "proxy"
 image_hosts = ["cdninstagram.com", "fbcdn.net"]
+address_policy = "Every redirect validates all DNS answers as public and pins numeric destination IPs, preserving original Host and verified TLS. Direct uses local DNS; proxied CDN requests use bounded TLS-verified Cloudflare 1.1.1.1 DoH via the same proxy, sending only the public hostname. No unchecked hostname CONNECT fallback."
 deep_link = "browser-fallback"
 native_save = false
 
@@ -128,9 +132,9 @@ read-public-page = "upstream-state-unchanged"
 read-public-profile = "upstream-state-unchanged"
 
 [e2e.safe_postconditions]
-read-identity = "Only the same-origin current-account endpoint is read; no raw credentials or upstream mutation cross the extension boundary."
-snapshot = "Liked, saved, and following endpoints are read with GET only; like, save, follow, comment, message, and search-history writes are absent."
-read-public-page = "The task opens a direct anonymous /popular/<topic>/ URL and reads bounded public media responses; it never submits Instagram Search."
+read-identity = "Only same-origin account-form and fresh homepage GETs are read; no raw credentials, form, HTML or upstream mutation cross the extension boundary."
+snapshot = "Saved/following use GET. Likes passively observes native liked_media_screen/liked_refresh/liked_next Bloks responses; the extension never reconstructs POSTs or executes embedded actions. No Select/Unlike or other engagement action is invoked. Page-owned upstream state changes require separate audit."
+read-public-page = "Direct /popular/<topic>/ navigation, anonymous or existing-session responses; only public media grids are read. No Search submit or engagement action. Page-owned mutations remain a separate audit boundary."
 read-public-profile = "Only bounded public creator media is read; follow and engagement mutations are absent."
 
 [events]
@@ -140,10 +144,11 @@ scope_caps = "The backend freezes allowed scopes and independent page/item caps 
 
 [task]
 lease = "Backend atomic leasing and the cross-source extension mutex prevent a second active Instagram task from being claimed; stale claims recover the first staged result"
-idle_deadline = "A durable idle deadline advances only on accepted page/item progress and survives MV3 service-worker restarts"
+idle_deadline = "A durable idle deadline advances only on accepted progress and survives worker restarts. Discovery uses 90 seconds; bootstrap allows max(90s, 4*request_interval + 3*20s + 5s), bounded to 185s. Request timeouts start after pacing waits; the absolute deadline is unchanged."
 absolute_deadline = "A durable absolute deadline bounds navigation, response observation, parsing, and all paginated reads across restarts"
-retry = "The exact canonical task-result payload is persisted before POST and retried with bounded backoff until a 2xx ACK; backend first-final-wins remains authoritative"
-buffer = "Only bounded normalized media/user rows, cursors, task identity, progress, and the pending result are stored; raw response bodies, Cookie, Authorization, CSRF values, and headers are never buffered or transmitted"
+retry = "The exact canonical task-result payload is persisted in extension storage.local before POST and retried with bounded backoff until a 2xx ACK or explicit terminal rejection; backend first-final-wins remains authoritative. Legacy session state migrates once; a missing task tab resolves the original claim as recovery_tab_gone, preserving accepted rows as partial."
+poll_contention = "Losing the cross-source mutex schedules a separate durable 30-second alarm; no claim is made until the mutex is acquired. This avoids permanent starvation when every source's minute alarms coincide."
+buffer = "Only bounded normalized media/user rows, cursors, task/claim/tab identity, deadlines, progress, and the pending result are stored locally until ACK or terminal rejection; raw response bodies, Cookie, Authorization, CSRF values, and headers are never buffered or transmitted"
 
 [smoke]
 storage_scope = "isolated-only"

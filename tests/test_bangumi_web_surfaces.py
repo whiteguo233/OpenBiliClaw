@@ -180,13 +180,13 @@ def test_popup_renders_the_backend_rejection_for_a_failed_init_start() -> None:
     assert "_setInitReason(describeInitStartError(error))" in popup
 
 
-def test_all_surfaces_name_the_extension_tier_in_the_rejection_copy() -> None:
-    """Deleting the guard is only half the fix: the 409 copy must be honest.
+def test_shared_profile_signal_rejection_fallback_is_platform_neutral() -> None:
+    """A shared reason cannot assume the selected source was Bangumi.
 
-    ``no_profile_signal_sources`` is rendered from each surface's own reason
-    map, so all three have to name the browser-extension tier — otherwise the
-    user is still told to type a username or token when logging into bgm.tv
-    would do.
+    Source-specific guidance, including Bangumi's three account tiers, now
+    comes from the backend detail. Actual rendering is covered by
+    test_web_guided_init_e2e.py and extension/tests/init-control.test.ts.
+    With no usable detail, every surface must retain a neutral recovery hint.
     """
     reason_maps = {
         "setup": ROOT / "src/openbiliclaw/web/setup/index.html",
@@ -197,10 +197,8 @@ def test_all_surfaces_name_the_extension_tier_in_the_rejection_copy() -> None:
         source = path.read_text(encoding="utf-8")
         marker = "no_profile_signal_sources:"
         assert marker in source, name
-        copy = source[source.index(marker) : source.index(marker) + 220]
-        assert "个人令牌" in copy, name
-        assert "公开用户名" in copy, name
-        assert "bgm.tv" in copy, name
+        copy = source.split(marker, 1)[1].lstrip().split('"', 2)[1]
+        assert copy == "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。", name
 
 
 def test_every_token_field_explains_the_three_ways_to_supply_an_account() -> None:

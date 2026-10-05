@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -124,6 +125,10 @@ class FakeHTTPX:
 def fake_httpx(monkeypatch: pytest.MonkeyPatch) -> FakeHTTPX:
     fake = FakeHTTPX()
     monkeypatch.setattr(httpx, "AsyncClient", fake.client_class())
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.image_cache.resolve_public_addresses",
+        AsyncMock(return_value=("1.1.1.1",)),
+    )
     return fake
 
 

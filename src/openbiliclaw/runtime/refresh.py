@@ -690,6 +690,9 @@ class ContinuousRefreshController:
             "recent_pool_topics": self._list_state_value(state, "recent_pool_topics"),
             "manual_refresh_state": self._manual_refresh_state,
             "manual_refresh_message": self._manual_refresh_message,
+            "discovery_failure_message": self._initial_discovery_failure_message(
+                pool_counts=pool_counts
+            ),
             "pending_delight_count": pending_delight_count,
             "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
         }
@@ -706,6 +709,44 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 payload.update(gate_status_payload())
         return payload
+
+    def _initial_discovery_failure_message(self, *, pool_counts: dict[str, int]) -> str:
+        """Project unresolved first-pool failure without exposing upstream details."""
+        latest_run = getattr(self.database, "get_latest_init_run", None)
+        if not callable(latest_run) or not self._is_initialized():
+            return ""
+        run = latest_run()
+        if not isinstance(run, dict) or run.get("status") != "completed":
+            return ""
+        if str(run.get("error_reason") or "") not in {"discovery_partial", "discovery_timeout"}:
+            return ""
+        run_id = str(run.get("run_id") or "")
+        load_resolution = getattr(self.memory_manager, "load_resolved_init_discovery_run", None)
+        if run_id and callable(load_resolution) and load_resolution() == run_id:
+            return ""
+        current_recommendations = getattr(self.database, "has_current_recommendation_supply", None)
+        has_recommendations = callable(current_recommendations) and current_recommendations()
+        if pool_counts.get("available", 0) > 0 or has_recommendations:
+            record_resolution = getattr(
+                self.memory_manager, "record_resolved_init_discovery_run", None
+            )
+            if callable(record_resolution):
+                try:
+                    if record_resolution(run_id):
+                        return ""
+                except OSError:
+                    logger.warning("Could not persist initial discovery recovery receipt")
+            else:
+                return ""
+        # Scheduling timestamps include keyword planning, which is not proof
+        # that content discovery completed. Only usable supply or a newer init
+        # result can settle the unresolved first-pool outcome.
+        if self._manual_refresh_state == "running":
+            return ""
+        return (
+            "首轮内容发现未完成，画像已保存。请检查来源登录、扩展连接和网络，"
+            "恢复后重试内容发现；无需重新初始化。"
+        )
 
     async def refresh_if_needed(self) -> dict[str, object]:
         """Refresh discovery candidates when thresholds are met.
@@ -768,6 +809,8 @@ class ContinuousRefreshController:
         *,
         fully_parallel: bool = True,
         progress_callback: Callable[[int, int, str], Awaitable[None] | None] | None = None,
+        sources: set[str] | None = None,
+        register_instagram_task: Callable[[str], None] | None = None,
     ) -> int:
         """Backfill the initial discovery pool for guided init.
 
@@ -804,7 +847,42 @@ class ContinuousRefreshController:
         discovered_count = 0
         async with self._refresh_lock:
             copy_error: BaseException | None = None
-            for strategies in _INIT_DISCOVERY_PLAN:
+            if sources is not None and "instagram" in sources:
+                current = self.database.count_pool_candidates()
+                self._update_llm_inventory_state(current)
+                if current < target and self.instagram_producer is not None:
+                    await _report(0, 4, "正在基于完整画像发现 Instagram 内容")
+                    request_limit = max(1, min(20, target - current))
+                    produce_kwargs: dict[str, Any] = {"limit": request_limit, "force": True}
+                    if register_instagram_task is not None:
+                        produce_kwargs["register_task"] = register_instagram_task
+                    result = await self.instagram_producer.produce_if_due(**produce_kwargs)
+                    discovered_count += int(result.get("discovered", 0) or 0)
+                    # Background coordinators pause during init. Its explicit
+                    # wave must own evaluation and copy through readiness.
+                    pipeline = self.discovery_candidate_pipeline
+                    if pipeline is not None:
+                        await _report(1, 4, "正在评估 Instagram 候选")
+                        await pipeline.drain_pending(
+                            profile=profile,
+                            flush=True,
+                            batch_size=min(
+                                request_limit, max(1, int(result.get("enqueued", 0) or 0))
+                            ),
+                        )
+                    await _report(2, 4, "正在生成 Instagram 首轮推荐文案")
+                    try:
+                        await self.recommendation_engine.drain_pending_expression_copy(
+                            profile=profile, limit=max(1, target)
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        copy_error = exc
+            # Explicit non-Bilibili init must never invoke the legacy Bilibili
+            # strategy bundle as an accidental fallback.
+            bili_plan = _INIT_DISCOVERY_PLAN if sources is None or "bilibili" in sources else []
+            for strategies in bili_plan:
                 current = self.database.count_pool_candidates()
                 self._update_llm_inventory_state(current)
                 if current >= target:
@@ -909,6 +987,8 @@ class ContinuousRefreshController:
     async def force_refresh(self) -> dict[str, object]:
         """Run a full refresh immediately, bypassing runtime thresholds.
 
+        Explicit replenishment also owns one bounded Instagram discovery,
+        evaluation and copy wave, even when background scheduling is off.
         Runs all 4 Bilibili strategies in a single discover() call so they
         execute concurrently via asyncio.gather, maximizing pool diversity. The pool
         target still applies as a hard cap — if the pool is already full, no
@@ -951,16 +1031,127 @@ class ContinuousRefreshController:
             return _result({"refreshed": False, "strategies": [], "reason": "pool_at_cap"})
 
         profile = await self.soul_engine.get_profile()
+        instagram_result = await self._manual_instagram_refresh(profile=profile)
+        # Instagram may already have filled the pool. Recompute the Bilibili
+        # plan after its wave, respecting the existing per-source quotas.
         plan = self._build_source_replenishment_plan()
         if not plan:
+            if instagram_result is not None:
+                return _result(instagram_result)
             return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
+        instagram_counts = (0, 0)
+        if instagram_result is not None:
+            state = self.memory_manager.load_discovery_runtime_state()
+            instagram_counts = (
+                self._int_state_value(state, "last_discovered_count"),
+                self._int_state_value(state, "last_replenished_count"),
+            )
         refresh_result = await self._run_refresh_plan(
             state=state,
             profile=profile,
             plan=plan,
             reason="manual",
         )
+        if instagram_result is not None:
+            state = self.memory_manager.load_discovery_runtime_state()
+            state["last_discovered_count"] = (
+                self._int_state_value(state, "last_discovered_count") + instagram_counts[0]
+            )
+            state["last_replenished_count"] = (
+                self._int_state_value(state, "last_replenished_count") + instagram_counts[1]
+            )
+            self.memory_manager.save_discovery_runtime_state(state)
+            refresh_result["refreshed"] = bool(
+                refresh_result.get("refreshed") or instagram_result.get("refreshed")
+            )
+            refresh_result["producer_results"] = instagram_result["producer_results"]
+            if instagram_result.get("manual_failure_message"):
+                refresh_result["manual_failure_message"] = instagram_result[
+                    "manual_failure_message"
+                ]
         return _result(refresh_result)
+
+    async def _manual_instagram_refresh(self, *, profile: Any) -> dict[str, object] | None:
+        """Run an explicit, bounded producer → eval → usable-copy wave.
+
+        Do not depend on the daemon eval loop: it deliberately pauses with the
+        scheduler. Producer/task/pipeline locks, budgets and source quotas
+        still apply. Upstream diagnostics stay in the result, not UI prose.
+        """
+        if self.instagram_producer is None or self._source_deficit("instagram") <= 0:
+            return None
+        before = self._pool_readiness_counts()["available"]
+        result = await self._tick_platform_producer(
+            source_family="instagram", producer=self.instagram_producer, force=True
+        )
+        discovered = max(0, self._int_state_value(result, "discovered"))
+        reason = str(result.get("reason", "") or "")
+        stage_failure = ""
+        idle_reasons = {"in_flight", "already_running", "quota_satisfied", "not_initialized"}
+        if reason not in idle_reasons:
+            pipeline = self.discovery_candidate_pipeline
+            if pipeline is not None:
+                drain_result = await pipeline.drain_pending(
+                    profile=profile,
+                    flush=True,
+                    batch_size=self._bounded_one_shot_inline_eval_limit(
+                        max(1, min(self.discovery_limit, self._source_deficit("instagram")))
+                    ),
+                )
+                if self._int_state_value(drain_result, "failed") > 0:
+                    stage_failure = "evaluation_failed"
+                receipt = getattr(drain_result, "post_admission_copy", None)
+                if getattr(receipt, "state", None) == "callback_failed":
+                    stage_failure = "copy_failed"
+                copy = getattr(self.recommendation_engine, "drain_pending_expression_copy", None)
+                if callable(copy) and not self._post_admission_copy_stage_is_owned(drain_result):
+                    await copy(profile=profile, limit=max(1, self.pool_target_count - before))
+        after = self._pool_readiness_counts()["available"]
+        state = self.memory_manager.load_discovery_runtime_state()
+        state["last_discovered_count"] = discovered
+        state["last_replenished_count"] = max(0, after - before)
+        self.memory_manager.save_discovery_runtime_state(state)
+        await self._publish_pool_status_if_changed()
+        payload: dict[str, object] = {
+            "refreshed": reason not in idle_reasons,
+            "strategies": ["instagram"],
+            "reason": reason,
+            "producer_results": {"instagram": result},
+        }
+        normal_reasons = {
+            "ok",
+            "empty",
+            "partial",
+            "no_progress",
+            "no_creator_seeds",
+            "limit_reached",
+            "pool_full",
+            "quota_satisfied",
+        }
+        modes = result.get("mode_results")
+        reasons = [reason] + (
+            [str(value) for value in modes.values()] if isinstance(modes, dict) else []
+        )
+        failure = stage_failure or next(
+            (value for value in reasons if value not in normal_reasons), ""
+        )
+        if failure:
+            guidance = {
+                "extension_absent": "请打开已连接的浏览器扩展后重试。",
+                "login_required": "请在浏览器中确认 Instagram 登录状态后重试。",
+                "challenge_required": "请在 Instagram 页面完成安全验证后重试。",
+                "rate_limited": "平台暂时限流，请稍后重试。",
+                "budget_exhausted": "今日发现额度已用完，请明日重试或调整来源预算。",
+                "throttled": "仍在发现冷却期，请稍后重试。",
+                "in_flight": "已有发现任务执行中，请等待它结束。",
+                "already_running": "已有发现任务执行中，请等待它结束。",
+                "evaluation_failed": "候选已保留，但模型评估未完成，请检查模型服务后重试。",
+                "copy_failed": "候选已保留，但推荐文案未完成，请检查模型服务后重试。",
+            }.get(failure, "请检查浏览器的海外网络连接，恢复后再点“换一批”重试。")
+            payload["manual_failure_message"] = (
+                "Instagram 内容发现未完成。" + guidance + " 画像和已获取的内容会保留。"
+            )
+        return payload
 
     def _enforce_pool_cap(self) -> bool:
         """Run pool maintenance and report whether frontend availability is at target.
@@ -2222,6 +2413,7 @@ class ContinuousRefreshController:
         source_family: str,
         producer: Any | None,
         require_initialized: bool = True,
+        force: bool = False,
     ) -> dict[str, object]:
         """Run one source producer without overlapping another tick for that source."""
 
@@ -2245,7 +2437,11 @@ class ContinuousRefreshController:
                 return {"source_family": source_family, "reason": "not_callable"}
             limit = max(1, min(deficit, self.discovery_limit))
             if _call_accepts_limit(produce_fn):
-                raw_result = await produce_fn(limit=limit)
+                raw_result = (
+                    await produce_fn(limit=limit, force=True)
+                    if force
+                    else await produce_fn(limit=limit)
+                )
             else:
                 raw_result = await produce_fn()
             result = dict(raw_result) if isinstance(raw_result, Mapping) else {}
@@ -2627,6 +2823,20 @@ class ContinuousRefreshController:
     async def _complete_manual_refresh(self) -> None:
         try:
             refresh_result = await self.force_refresh()
+            failure_message = str(refresh_result.get("manual_failure_message", "") or "")
+            if failure_message:
+                self._manual_refresh_state = "failed"
+                self._manual_refresh_message = failure_message
+                self._manual_refresh_finished_at = self._now().isoformat()
+                await self._publish_event(
+                    {
+                        "type": "refresh.failed",
+                        "phase": "failed",
+                        "message": failure_message,
+                        **self._pool_count_payload(self._pool_readiness_counts()),
+                    }
+                )
+                return
         except Exception as exc:
             self._manual_refresh_state = "failed"
             self._manual_refresh_message = f"这次补货没跑通：{exc}"
@@ -2658,11 +2868,13 @@ class ContinuousRefreshController:
             )
         )
         self._manual_refresh_finished_at = self._now().isoformat()
+        failure_message = str(self.get_runtime_status().get("discovery_failure_message", ""))
         await self._publish_event(
             {
                 "type": "refresh.pool_updated",
                 "phase": "done",
                 "message": self._manual_refresh_message,
+                "discovery_failure_message": failure_message,
                 **self._pool_count_payload(self._pool_readiness_counts()),
             }
         )

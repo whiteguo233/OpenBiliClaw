@@ -1,5 +1,9 @@
 # Runtime Module
 
+Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界 producer → `drain_pending(flush=True)` → 推荐文案波次。它复用来源锁、任务准入、配额和日预算，不依赖 scheduler；失败使用安全的 Instagram 提示进入 `refresh.failed`，已有部分结果保留。CLI `discover --source instagram --force` 仍可独立使用。
+
+Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。
+
 每个 **API daemon** runtime generation 只拥有一个 expression copy coordinator：8 条立即、尾批固定 3 秒、单轮最多 60，零进展退避 15 秒，60 秒仅作 safety wake。停止 generation 会取消 collector、gate waiter 与运行中的 provider callback；状态接口暴露 pending/state/deadline/last completed/error。OpenClaw direct composition 不启动 daemon loop，故不创建该 coordinator；它在 inline admission 后同步 drain 最多 4 条 durable copy，且不在同一交互请求内做 split retry：有效 subset 立即入 canonical pool，剩余行保持 pending 供下次请求处理，返回前没有遗留 provider/copy task。参数来自 2026-07-12 生产日志校准。
 
 > API runtime 启动时创建一套共享 LLM gate 并注入主服务、Soul 与 refresh；在任何 provider 工作可启动前用 canonical database available 初始化 `healthy/refill/empty`，后续 controller readiness、原子维护、推荐池状态与候选 snapshot 持续同步。runtime status 暴露 total/background 以及 refill/maintenance active、waiting 和 inventory state。
@@ -14,12 +18,19 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 概述
 
+`ContinuousRefreshController.get_runtime_status()` 从最新持久化 init run 投影 `discovery_failure_message`：仅首轮发现的未恢复终态失败会生成安全提示，未收到响应不被解释为正常空结果。可用库存/推荐及新 init owner 会淘汰旧提示；pending 行为信号和探索调度时间只代表上下文/计划，不代表后台正在执行或已取得可用内容。该读取不触发重试或上游请求。`refresh.pool_updated` 携带同一权威故障字段；锁占用或无需执行的 refresh 即使返回 success，也不能单凭这一标志清掉旧错误。Instagram 可通过普通换批或显式 `discover --source instagram --force` 恢复。
+
+恢复投影维护单 run 的持久凭据：初次看见真实可用库存或未退休推荐时，由 MemoryManager 在文件锁内重查 init owner 和当前供给后记下 run_id；不直接信任先前的库存快照。下一次读取先比对凭据，因此消费最后一条/重启不复活旧错误；新 run 的失败仍显示。这里只做一次有界本地 reconciliation，不覆盖原 init 诊断、不追加无限历史，也不把 `count_recommendations()` 的退休历史当作恢复。
+
 `src/openbiliclaw/runtime/` 负责后端 daemon 的长期运行能力：后台刷新、账号同步、扩展在线账号信号周期回拉、反馈批学习调度、运行时事件流、浏览器插件 presence gate、自动更新和任务生命周期管理。FastAPI 启动后会通过 `RuntimeContext` 持有这些 runtime 服务，配置热重载时重建可替换组件。
 
 ## 已实现功能
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
+| 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
+| Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
 | Windows 后台子进程不再弹控制台窗口 | ✅ | 新增 `openbiliclaw/proc.py::no_window_kwargs()`：Windows 下返回 `creationflags=CREATE_NO_WINDOW`，其它平台返回空 dict，可无条件 splat。后端自行发起的全部外部命令都已接入——Reddit 的 `rdt` / `opencli`（含状态探测与每个关键词一条的发现命令）、自动更新的 `git`、`agent-browser` 版本探测与命令、mcporter 灵感检索、SQLite 修复用的 `sqlite3` / `lsof`、托管 ollama 退出用的 `taskkill`。用户在终端主动敲的命令（`openbiliclaw` CLI、`codex login`、dev 用 optimizer）保持原样，它们本来就有自己的控制台且需要交互提示。`tests/test_proc_no_window.py` 用 AST 扫描 `src/` 全量守住这条约定：任何新的 `subprocess.run` / `Popen` / `create_subprocess_exec` 漏掉该 kwarg 即测试失败（`os.name == "nt"` 分支的 else 支路自动豁免）。第三方库自己起的孙进程不在该 flag 覆盖范围内，已知的一处是 rdt-cli 凭据超 TTL 时的 `uv run --with browser-cookie3`，靠 `_RDT_CREDENTIAL_TTL_SECONDS` 比 rdt 阈值提前 6 小时判过期来规避（见 `sources/reddit_tasks.py` 常量注释）。X 的 twitter-cli 与 YouTube 的 yt-dlp 均为进程内库调用，不起子进程。 |
 | 桌面应用统一品牌图标 | ✅ | Windows 安装包 / EXE 使用多尺寸 `packaging/icon.ico`，macOS `.app` 使用完整 iconset 生成的 `packaging/icon.icns`；系统托盘与 macOS 菜单栏从随包 Web 资源 `openbiliclaw/web/icon-192.png` 加载同一官方图标。Windows PyInstaller 启动页直接复用最新品牌源图，并以 560×280 深色渐变卡片展示启动状态、活动进度轨及从 `pyproject.toml` 读取的当前版本号；CJK 字体不可用时保持英文降级。桌面容器与托盘保留去白边后的透明外缘；浏览器标签使用独立 32px 满幅品牌粉 favicon 并以版本 URL 规避旧缓存，页面头图用品牌粉背景承接透明圆角。 |
 | 对话结算单队列生命周期（Wave 1–3） | ✅ | 每个 API runtime generation 只安装一个 `dialogue_settlement_queue`、一个 exhaustive typed dispatcher 与一个 actual worker。11 个 kind 的生产入口已全部 cutover：queued dialogue learning/settles、卡片 confirm/reject/discuss/defer、pending-open/anchor、GET reconcile、probe/confusion reply、confusion open/replay 与 legacy façade 都只 submit；guard 已装到 protected mutator façade，request task 与 inherited-context child 均 fail closed。`card.reconcile` 只在 worker 内补 applied receipt 的 stable audit/projection/exact-generation publication，或把无活锚 orphan discussion 恢复为 pending；没有 restart scanner。队列 self-owned、非 durable、不进入 `BackgroundTaskRegistry`，`create_app()` 注入真实 queued dialogue时采用同一实例。卡片 action 只 shield 等待 1 秒：本地完成返回 200，队头阻塞返回 202 而 job 继续；进程重启丢失未执行 job 后由 action retry/GET reconcile 重新 admission。热重载先保持 old queue 可受理并 drain，最迟等待 25 分钟；队列真正空闲后才无 await 原子切到 paused，再 exact revoke old permit → start/register new → publish new → shutdown old，避免等待期间丢弃用户点击。构造/注册失败只在 permit 单槽为空时用 fresh nonce 恢复 old。CLI/OpenClaw 不属于该 runtime，显式使用 `legacy_direct`，不享受 queue/receipt/guard 保证。上线只观察 queue depth/oldest age、action wait、202 比例与 retry；连续 7 天 `202 >1%` 或 p95 `>5s` 才另开分析，不预埋第二队列。 |
@@ -192,7 +203,7 @@ controller.candidate_eval_coordinator.notify("candidate_enqueued:bilibili")
 - `notify_expression_copy_pending(reason)`：向 runtime-owned `ExpressionCopyCoordinator` 发送同步、best-effort 唤醒；方法本身不调 LLM。coordinator 的 pending provider 读取 `RecommendationEngine.count_pending_expression_copy_demand()`，所以唤醒只会消费当前 copy-ready 水位缺口。
 - `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。后台 `refresh_if_needed()` 还会应用约 90% 的 replenishment low-watermark：略低于 target 时只维护状态，不触发 discovery；`force_refresh()` 是显式用户动作，仍按 source 缺口尝试补货。注入 `DiscoveryCandidatePipeline` 后，refresh 会优先调用 `ensure_pending_supply()`，按实际新增 `pending_eval` 数补足 Evo 供给，而不是只跑一次 discover；API daemon 已有 coordinator 时，pipeline 的一次 enqueue callback 立即唤醒唯一 owner，refresh 不会再同步 `drain_pending()`，从而保持 durable `evaluating <= 3×30`。没有 coordinator 的 composition 可选 `one_shot_inline_eval_limit`；OpenClaw bootstrap 将它固定为 4，使这次 refresh 的 source supply 与 inline drain 都不超过 4，fetch oversample=1、min eval batch=4、inline evaluator=1，后续 OpenClaw 请求再补下一批。该值是 integration 内部策略，不是 `config.toml` 字段；API runtime 不设置它，仍保持 4× supply oversample 与 coordinator worker 波次。完整 B 站四策略补货在小缺口阶段只给 `search + related_chain` 配额，`trending/explore` 到更深缺口再跑。当待评估水位已足够时不会再 claim B 站搜索关键词，避免空跑关键词被误标失败；当统一关键词 planner 已启用但 B 站关键词 store 暂空时，会从本轮策略组移除 `search`，而不是传 `queries=None` 触发旧 `discovery.search.queries`。池子低于 target 但 plan 为空时，首次、`pool_available` 指纹变化或距上次完整诊断至少 300 秒会打 INFO，包含 `pool_available/raw/pending/suppressed/source_available/source_raw/source_targets/raw_targets/requested_by_source`；窗口内重复调用只打带累计抑制数的 DEBUG，且不再执行三组重统计。
 - `drain_discovery_candidates_once(..., reason=...)`：runtime 已有 coordinator 时退化为耐久 `notify(reason)`，不再创建一次性 drain task；没有 coordinator 的 CLI / 兼容 runtime 仍通过相同 staged pipeline 执行一次 drain。
-- `run_init_backfill(profile, target_pool_count, *, fully_parallel=True, progress_callback=None)`：图形化引导初始化（gui-init）stage 4 的首轮可用推荐闭环。持 `_refresh_lock` 与连续 refresh 串行，绝不与之争 `content_cache`；发现后在同一锁窗口内同步 drain `RecommendationEngine` 的待生成表达候选，更新 gate 库存并校验 `count_pool_candidates()>0`，raw / evaluated 行本身不算成功。`progress_callback` 依次报告发现、表达、校验和 ready；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
+- `run_init_backfill(profile, target_pool_count, *, fully_parallel=True, progress_callback=None, sources=None, register_instagram_task=None)`：图形化引导初始化（gui-init）stage 4 的首轮可用推荐闭环。持 `_refresh_lock` 与连续 refresh 串行；Instagram opt-in 使用正式 producer，并在 kick 前通过回调登记新建及恢复任务，随后显式 flush 候选评估。仅选 Instagram 不调用 B 站策略，`sources=None` 保持旧行为。发现后在同一锁窗口内同步 drain `RecommendationEngine` 的待生成表达候选，更新 gate 库存并校验 `count_pool_candidates()>0`，raw / evaluated 行本身不算成功。`progress_callback` 依次报告发现、表达、校验和 ready；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
 - `_pool_count_payload()`：统一生成 runtime status / runtime stream 的池子字段，包含 pending eval 与 evaluated pending 拆分。
 - `_update_llm_inventory_state(available)`：把 canonical durable available 与 `pool_target_count` 同步到共享 gate；不接受 Task 6 的 projected/transient count。
 - `_enforce_pool_cap()` / `_enforce_pool_cap_async()`：两条路径把 target、跨表 raw ceiling、available/raw source quotas、topic/explore cap、stale age 与 XHS 本人昵称传给同一 bounded storage 入口。异步路径使用专属 maintenance worker + 独立连接，每批 `max_mutations=50`、最多 8 批并在批间让出事件循环；短 `busy_timeout` 冲突会读取独立 readiness 并把维护延后。成功返回最后一批 `result.at_target`，post-snapshot rollback 时记录 ERROR 并按事务前 availability 决策。storage 的恢复阶段先排除已满 topic，并把 suppressed 恢复严格限制在 raw headroom 内；raw 已满时先裁剪，protected/token-owned excess 无 victim 时直接以 `has_more=False` 收敛。排名窗口试探若没有形成 canonical available 净增长会在同一事务撤销，因此稳定指纹不会在每个 tick 内跑满 8 批。每批汇总日志包含恢复、stale/explore/topic/source/raw、写入、锁等待、总耗时、修改行数和 `has_more`。
@@ -352,6 +363,12 @@ embedding_progress.reset()
 
 ### Image Proxy API
 
+`runtime.image_network.resolve_public_addresses(host, *, proxy=None)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
+
+直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。仅发送公开 CDN 域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
+
+实现依据：[HTTPCore network backends](https://www.encode.io/httpcore/network-backends/) 与 [Cloudflare DNS JSON](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。`httpcore>=1.0,<2` 从 HTTPX 的传递依赖提升为显式依赖，`httpx[socks]>=0.28` 支持 `socks5h`；git、Docker、桌面打包通过现有 Python 依赖安装，不增加本机守护进程或手工安装步骤。
+
 `GET /api/image-proxy?url=<encoded_url>` 只代理明确白名单内的 HTTP(S) 图片 URL，用于移动 Web `/m/` 和浏览器插件 side panel 的推荐、惊喜推荐和消息封面图。白名单按域名边界匹配，当前包含 `hdslb.com`、`xhscdn.com`、`pstatp.com`、`douyinpic.com`、`douyinvod.com`、`ytimg.com`、`ggpht.com` 和微博图片 CDN `sinaimg.cn`，会拒绝非 HTTP(S)、缺 hostname、userinfo、非白名单域名及 `evilsinaimg.cn` 一类后缀伪装。真实 `wx*.sinaimg.cn` 在浏览器 UA 下要求微博 Referer；抓取器只对当前目标 host 为 `sinaimg.cn` 或其子域的请求附 `Referer: https://weibo.com/`，并在每一跳 redirect 后重新计算，因而不会把该头转发给其它白名单 CDN。
 
 代理不使用自动跳转；`301/302/303/307/308` 最多手动跟随 3 次，每一跳都会重新校验目标 URL。上游响应必须是 2xx 且 `Content-Type` 为 `image/*`。若 `Content-Length` 超过 10MB 会立即返回 413；缺失或伪造长度时，响应体会先流式写入 `SpooledTemporaryFile(max_size=1MB)`，实际读取超过 10MB 同样返回 413，避免在下游响应头已发送后才发现超限。
@@ -403,7 +420,7 @@ Windows 回归不是只 mock `winreg`：`tests/test_windows_autostart_e2e.py` �
 
 #### 发现即缓存（封面预取）
 
-白名单 / redirect / 大小 / 类型校验的抓取核心 `fetch_cover_bytes` 是唯一真源；失败抛 `CoverFetchError`（携带 400/403/413/502/504），proxy 路由再映射回对应 HTTP 状态。v0.3.153+：抓取按主机分流代理——国内 CDN（hdslb / xhscdn / pstatp / douyinpic / douyinvod / sinaimg）恒直连（`trust_env=False`，代理出口 IP 易被风控，与 B站 登录探测同因），境外 CDN（ytimg / ggpht）保持继承环境 / 系统代理，需要代理才能拉 YouTube 封面的用户不受影响。`get_or_fetch_cover_bytes` 是多模态 discovery evaluator 的兼容缓存优先入口；磁盘读写同样卸载到线程，因此小红书已缓存头图即使原 CDN token 过期，也能继续参与封面图评估。
+白名单 / redirect / 大小 / 类型校验的抓取核心 `fetch_cover_bytes` 是唯一真源；失败抛 `CoverFetchError`（携带 400/403/413/502/504），proxy 路由再映射回对应 HTTP 状态。国内 CDN（hdslb / xhscdn / pstatp / douyinpic / douyinvod / sinaimg）恒直连；境外 CDN（含 ytimg / ggpht / cdninstagram / fbcdn）按项目 `[network]` direct/system/custom 策略，在每 hop 冻结代理与安全解析结果，不让 HTTPX 的环境 mount 绕过地址固定。`get_or_fetch_cover_bytes` 是多模态 discovery evaluator 的兼容缓存优先入口；磁盘读写同样卸载到线程，因此小红书已缓存头图即使原 CDN token 过期，也能继续参与封面图评估。
 
 API daemon 中，proxy miss 与 refresh prefetch 进一步共用 app-owned `ImageFetchCoordinator`。Condition gate 保证总 upstream active≤4、background≤3；前台请求可占保留槽，任一前台排队时 background 不得抢刚释放的槽。按 `image_cache_key(url)` singleflight，所有 waiter `shield` shared task；一个 HTTP request 取消不会取消其它 waiter/owned upstream。前台加入尚未启动的 background 同 key 时会把它提升为 foreground，并用前台携带的更新签名 URL 抓取。cache hit 在 gate 外；同步 glob/read/write 用 `asyncio.to_thread`，落盘使用同目录临时文件 `flush+fsync+os.replace`，所以观察者只会看到旧文件或完整新文件。
 
@@ -557,6 +574,8 @@ result = await producer.produce_if_due(limit=20)
 V2EX producer 是公开只读 discovery 的正式 runtime / CLI 入口。它按 `[sources.v2ex].source_modes` 轮转 `search / node / tab / hot / latest`，使用统一关键词 planner、Node/Tab 配置、分支预算和持久化节流。`search` 优先复用已配置 Exa / You provider 发送 `site:v2ex.com/t` 查询并用官方 Topic 详情补全；provider 无结果或失败时回退官方 latest/hot 有界匹配。PAT 只增强 API 2.0 访问，401/403 会清除本轮 PAT、对应已验证身份并继续匿名；所有 Topic 通过共享 `DiscoveryCandidatePipeline` 入 `discovery_candidates(pending_eval)`，不在 producer 内联调用 evaluator。每日预算只按共享池全局去重 / 预筛后真正保留的候选扣费，HTTP 请求、详情增强和已知重复不扣。producer 会在共享评估前用 `detail_fetch_limit` 有界补齐不完整 Topic，并仅在 PAT 可用时用 `reply_enrichment_limit` 读取 Reply 第一页生成确定性讨论摘要；`max_topic_chars` / `max_reply_digest_chars` 在 normalizer 边界裁剪，Reply 不单独入池。浏览器 bootstrap 由 `V2EXTaskQueue` 负责领取和 staged 完成，事件入口聚合用户自己的 Reply；runtime 只读取 active profile identity 的 Node Affinity，不能被刚观察到的另一账号替换。`v2ex_incremental_hours` 排队增量任务，首次完整 guided 快照种下收藏基线，后续完整 scope 由 `V2EXFavoriteSnapshotStore` 执行连续两次缺失确认并通过 durable effect 生成 retraction / restore。
 
 ### InstagramDiscoveryProducer
+
+公开 topic seed 对已知兴趣别名做有界映射；只把带专用错误页证据的 `public_page_unavailable` 当作可跳过的单页失败。failed task 的具体错误从 staged canonical result 读取（不是不存在的队列 error 列），重启恢复沿用同一分类。已有 accepted rows 在后续安全/schema 错误时仍保留，但不继续创建任务；每个已执行关键词的 empty/不可用独立结算，未 retained 的暂态失败仍回队。
 
 `InstagramDiscoveryProducer` 不直接持有上游 client。它把后端冻结的 `topic` / `creator` task 写入 `instagram_tasks`，通过 runtime stream kick 在线扩展，并等待 durable final；扩展离线、任务 timeout 或 non-terminal result 不会被当作空候选。Producer 另以 owner token/lease 标记自己创建的 discover task：重启后只接管过期 owner，迟到结果可重放，多个 daemon/CLI 不会同时续建同一 logical cycle；单轮还有绝对时限，超时的 task 留给下一轮恢复而不会长期占住全局 refresh lock。候选管线瞬时失败时 owner 不翻 consumed，下一轮依靠全局 dedupe 重试未入池 rows。
 

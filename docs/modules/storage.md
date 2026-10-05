@@ -2,6 +2,8 @@
 
 ## 概述
 
+`Database.has_current_recommendation_supply()` 提供首轮发现恢复判断所需的有界 `EXISTS` 证据：仅接纳达到入池分数、带展示文案、仍关联 fresh/shown 内容的推荐。`purged_by_reinit` 等退休历史即使保留在 recommendations 表，也不算当前画像已恢复供给。该方法不修改任何行。
+
 `src/openbiliclaw/storage/` 负责本地 SQLite 数据库、schema 初始化、候选池计数和高频读写路径。它不理解 runtime state 或用户画像，只提供确定性的持久化 API。
 
 本模块当前承担以下边界：

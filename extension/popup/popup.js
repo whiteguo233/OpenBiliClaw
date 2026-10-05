@@ -33,6 +33,7 @@ import {
   platformDisplayName,
   probeMessageKey,
   reconcileRecommendationReplacement,
+  requestPermissionWithTimeout,
   resolveInitBangumiUsername,
   shouldDisplayProbeFromWebSocket,
   shouldHydrateProbe,
@@ -2545,6 +2546,8 @@ function renderPoolStatus(runtimeStatus) {
   elements.poolAvailable.textContent = summary.available;
   elements.poolReplenished.textContent = summary.replenished;
   elements.poolTopics.textContent = summary.topics;
+  const topicsLabel = document.getElementById("poolTopicsLabel");
+  if (topicsLabel) topicsLabel.textContent = summary.replenished === "内容发现未完成" ? "补货状态" : "现在在忙";
 }
 
 function runtimeEventCarriesPoolCounts(event) {
@@ -2852,12 +2855,31 @@ function connectRuntimeStream() {
   // doesn't leave a zombie WebSocket against the old origin.
   runtimeStreamClient?.disconnect?.();
   const client = createRuntimeStreamClient({
+    fetchStatus: fetchRuntimeStatus,
+    onStatusSnapshot(status) {
+      state.runtimeStatus = status;
+      renderPoolStatus(state.runtimeStatus);
+      if (state.recommendations.length === 0) {
+        renderRecommendationState(getPopupState({
+          online: state.online, items: [], runtimeStatus: state.runtimeStatus,
+        }));
+      } else {
+        renderReadyRecommendationHint();
+      }
+    },
     onEvent(event) {
       state.runtimeEvent = event;
       state.runtimeStatus = mergeRuntimeStatusEvent(state.runtimeStatus, event);
       renderPoolStatus(state.runtimeStatus);
       if (runtimeEventCarriesPoolCounts(event)) {
         renderReadyRecommendationHint();
+      }
+      if (state.recommendations.length === 0 && ["refresh.started", "refresh.strategy", "refresh.failed", "refresh.pool_updated"].includes(event.type)) {
+        // Empty-state feedback must follow the same live status as the pool
+        // header. Existing cards remain untouched by background refreshes.
+        renderRecommendationState(getPopupState({
+          online: state.online, items: [], runtimeStatus: state.runtimeStatus,
+        }));
       }
       if (event.type === "delight.candidate" && event.bvid) {
         mergeIncomingDelight(event);
@@ -7225,6 +7247,12 @@ function renderRecommendationState(stateShape) {
     return;
   }
 
+  if (stateShape.kind === "discovery_failed") {
+    showRecommendationEmptyState("内容发现未完成", stateShape.message);
+    setHint(stateShape.message, "error");
+    return;
+  }
+
   showRecommendationEmptyState("这会儿还没新东西", stateShape.message);
   setHint("先跑 init、discover 或 recommend，再回来瞅瞅。");
 }
@@ -10572,12 +10600,24 @@ function bindSettings() {
     try {
       const instagramEnabled = checked("cfgInstagramEnabled");
       const instagramOrigin = "https://*.instagram.com/*";
-      if (instagramEnabled && chrome.permissions?.request) {
-        const granted = await chrome.permissions.request({ origins: [instagramOrigin] });
-        if (!granted) {
+      if (instagramEnabled) {
+        saveBtn.textContent = "等待浏览器授权…";
+        showToast("请在浏览器的权限提示中确认 Instagram 站点访问；当前尚未保存。", "warning");
+        const permission = await requestPermissionWithTimeout(
+          chrome.permissions?.request
+            ? () => chrome.permissions.request({ origins: [instagramOrigin] })
+            : null,
+        );
+        if (permission === "timeout") {
+          showToast("等待 Instagram 授权超时，本次未保存。请先处理浏览器权限弹窗，再点击保存重试。", "warning");
+          return;
+        }
+        if (permission !== "granted") {
           showToast("启用 Instagram 需要授予 instagram.com 的站点访问权限。", "error");
           return;
         }
+        saveBtn.textContent = "保存中...";
+        toast.hidden = true;
       } else if (!instagramEnabled && chrome.permissions?.remove) {
         await chrome.permissions.remove({ origins: [instagramOrigin] }).catch(() => false);
       }

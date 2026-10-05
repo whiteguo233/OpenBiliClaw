@@ -46,7 +46,9 @@ def test_instagram_search_integration_is_excluded() -> None:
     executor = _read("extension/src/content/instagram/task-executor.ts")
     assert "/popular/" in executor
     assert "topsearch" not in executor
-    assert "fbsearch" not in executor
+    # Passive response provenance is allowed, active private search replay is not.
+    assert "fbsearch/" not in executor
+    assert "topic:xdt_fbsearch__top_serp_graphql" in executor
 
 
 def test_instagram_normalization_does_not_fabricate_engagement() -> None:
@@ -87,6 +89,20 @@ def test_instagram_mobile_uses_https_fallback() -> None:
     assert "instagram://" not in app_launch
 
 
+def test_instagram_cover_contract_matches_shared_proxy_delivery() -> None:
+    """Proxy delivery must not silently skip the audit's DNS/SSRF gate."""
+    from openbiliclaw.runtime.image_cache import ALLOWED_IMAGE_HOST_SUFFIXES
+
+    assert CONTRACT["media"]["image"] == "proxy"
+    assert set(CONTRACT["media"]["image_hosts"]) <= set(ALLOWED_IMAGE_HOST_SUFFIXES)
+    for path in (
+        "src/openbiliclaw/web/desktop/assets/js/app.js",
+        "src/openbiliclaw/web/js/view-models.js",
+        "extension/popup/popup-helpers.js",
+    ):
+        assert "/image-proxy?url=${encodeURIComponent(" in _read(path)
+
+
 def test_instagram_has_no_native_save_adapter() -> None:
     assert CONTRACT["media"]["native_save"] is False
     assert is_native_save_local_only("instagram") is True
@@ -98,7 +114,7 @@ def test_instagram_has_no_native_save_adapter() -> None:
 def test_instagram_auth_is_capability_specific_and_cookie_value_stays_browser_owned() -> None:
     assert CONTRACT["auth"]["mode"] == "capability-specific"
     assert CONTRACT["auth"]["capability_modes"] == {
-        "discover": "anonymous",
+        "discover": "optional-credential",
         "profile": "login-required",
         "bootstrap": "login-required",
         "cookie-sync": "optional-credential",

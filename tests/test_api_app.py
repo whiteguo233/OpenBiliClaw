@@ -6028,6 +6028,7 @@ class TestBackendAPI:
             "recommendation_count": 5,
             "pending_signal_events": 3,
             "last_refresh_at": "2026-03-10T12:00:00",
+            "discovery_failure_message": "",
             "last_notification_at": "2026-03-10T12:30:00",
             "unread_count": 2,
             "pool_available_count": 28,

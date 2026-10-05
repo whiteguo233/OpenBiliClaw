@@ -6,6 +6,7 @@
  */
 
 import type { InstagramObservedEnvelope } from "../content/instagram/response-buffer.ts";
+import { parseInstagramLikedBloks } from "./instagram-liked-bloks.ts";
 import { isInstagramTaskTabLocation } from "../content/instagram/task-mode.ts";
 import {
   instagramCanonicalUrl,
@@ -116,7 +117,101 @@ interface LocatedCollection {
   value: Record<string, unknown>;
 }
 
+interface UserIdentity {
+  id: string;
+  keys: { pk?: string; id?: string };
+}
+
+interface PublicCreator extends UserIdentity {
+  username: string;
+}
+
+function strictUserId(value: unknown): string {
+  const id = typeof value === "string" ? value.trim()
+    : typeof value === "number" && Number.isSafeInteger(value) ? String(value) : "";
+  return /^[1-9][0-9]*$/.test(id) ? id : "";
+}
+
+function userIdentity(user: Record<string, unknown> | null): UserIdentity | undefined {
+  if (!user) return undefined;
+  const pk = strictUserId(user.pk);
+  const id = strictUserId(user.id);
+  // A present invalid primary key must not borrow a valid alternate id.
+  if ((user.pk !== undefined && !pk) || (!pk && !id)) return undefined;
+  return { id: pk || id, keys: { ...(pk ? { pk } : {}), ...(id ? { id } : {}) } };
+}
+
+function sameUserIdentity(left: UserIdentity, right: UserIdentity): boolean {
+  if (left.keys.pk && right.keys.pk) return left.keys.pk === right.keys.pk;
+  return Boolean(left.keys.id && left.keys.id === right.keys.id);
+}
+
+// Only native profile results and the observed ScheduledServerJS -> Relay
+// result wrapper may supply privacy evidence. Never walk arbitrary viewer or
+// suggested-account objects, or execute the server module instructions.
+function creatorProfilesFromPayload(payload: unknown): {
+  profiles: Record<string, unknown>[]; truncated: boolean;
+} {
+  const data = record(record(payload)?.data);
+  const profiles = [record(data?.user), record(data?.xig_user_by_username)]
+    .filter((value): value is Record<string, unknown> => Boolean(value));
+  let remaining = 256;
+  let truncated = false;
+  const scan = (value: unknown, depth: number): void => {
+    const requires = record(value)?.require;
+    if (!Array.isArray(requires)) return;
+    if (depth > 4) { truncated ||= requires.length > 0; return; }
+    if (requires.length > 80) truncated = true;
+    for (const entry of requires.slice(0, 80)) {
+      if (--remaining < 0 || profiles.length >= 16) { truncated = true; return; }
+      if (!Array.isArray(entry) || !Array.isArray(entry[3])) continue;
+      const args = entry[3] as unknown[];
+      if (entry[0] === "ScheduledServerJS" && entry[1] === "handle") {
+        if (args.length > 4) truncated = true;
+        for (const arg of args.slice(0, 4)) scan(record(arg)?.__bbox, depth + 1);
+      } else if (entry[0] === "RelayPrefetchedStreamCache" && entry[1] === "next") {
+        const result = record(record(record(args[1])?.__bbox)?.result);
+        const user = record(record(result?.data)?.xig_user_by_username);
+        if (user) profiles.push(user);
+      }
+    }
+  };
+  scan(payload, 0);
+  return { profiles, truncated };
+}
+
+function isCreatorPathname(pathname: string): boolean {
+  return /^\/[A-Za-z0-9._]+\/?$/.test(pathname)
+    && !/^\/(accounts|api|direct|explore|p|popular|reel|reels|stories|your_activity)\/?$/i.test(pathname);
+}
+
+function matchesCreatorPath(user: Record<string, unknown>, pathname: string): boolean {
+  const username = stringValue(user.username, 128);
+  return Boolean(username)
+    && pathname.replace(/\/$/, "").toLowerCase() === `/${username.toLowerCase()}`;
+}
+
+function publicCreatorFromPayload(payload: unknown, pathname: string): PublicCreator | undefined {
+  const evidence = creatorProfilesFromPayload(payload);
+  if (evidence.truncated) return undefined;
+  const profiles = evidence.profiles.filter(user => matchesCreatorPath(user, pathname));
+  if (profiles.some(user => user.is_private !== false)) return undefined;
+  const verified = profiles.map(user => {
+    // Anonymous Relay profiles expose a numeric GraphQL id distinct from pk.
+    // The native profile and media agree on pk (and separately on id); comparing
+    // these two namespaces rejects valid public creators. Prefer pk, just as
+    // media normalization does. A present invalid pk must not fall back to id.
+    const identity = userIdentity(user);
+    return identity ? { ...identity, username: stringValue(user.username, 128) } : undefined;
+  });
+  const first = verified.find(user => user?.keys.pk) || verified[0];
+  return first && verified.every(user => user && sameUserIdentity(first, user)) ? first : undefined;
+}
+
+let observedPublicCreator: PublicCreator | undefined;
+
 const TOPIC_KEYS = new Set([
+  "xdt_fbsearch__top_serp_graphql",
   "xig_logged_out_popular_search_media_info",
   "edge_hashtag_to_media",
   "edge_hashtag_to_top_posts",
@@ -124,6 +219,7 @@ const TOPIC_KEYS = new Set([
 const CREATOR_KEYS = new Set([
   "edge_owner_to_timeline_media",
   "xdt_api__v1__feed__user_timeline_graphql_connection",
+  "polaris_ordered_timeline_connection",
 ]);
 
 function locateCollections(
@@ -153,7 +249,8 @@ function locateCollections(
   return output;
 }
 
-function envelopeFromCollection(collection: LocatedCollection): InstagramObservedEnvelope {
+function envelopeFromCollection(collection: LocatedCollection, publicCreator?: PublicCreator): InstagramObservedEnvelope {
+  if (collection.key === "xdt_fbsearch__top_serp_graphql") return envelopeFromAuthenticatedTopic(collection);
   const pageInfo = record(collection.value.page_info);
   const hasKnownRows = Array.isArray(collection.value.edges) || Array.isArray(collection.value.items);
   const rawItems = Array.isArray(collection.value.edges)
@@ -166,11 +263,27 @@ function envelopeFromCollection(collection: LocatedCollection): InstagramObserve
   const boundedRawItems = rawItems.slice(0, MAX_ITEMS);
   let rejectedCount = 0;
   for (const raw of boundedRawItems) {
+    let canonicalAuthorId: string | undefined;
+    if (collection.route === "creator") {
+      const edge = record(raw);
+      const media = record(edge?.node) || record(edge?.media) || edge;
+      const author = record(media?.user) || record(media?.owner);
+      const authorIdentity = userIdentity(author);
+      const matchingPublicProfile = publicCreator && authorIdentity
+        && sameUserIdentity(publicCreator, authorIdentity)
+        && stringValue(author?.username, 128).toLowerCase() === publicCreator.username.toLowerCase();
+      if (author?.is_private === true || (author?.is_private !== false && !matchingPublicProfile)) {
+        rejectedCount += 1;
+        continue;
+      }
+      if (matchingPublicProfile) canonicalAuthorId = publicCreator.keys.pk || authorIdentity.id;
+    }
     const item = normalizeMedia(raw);
     if (!item || seen.has(item.id)) {
       rejectedCount += 1;
       continue;
     }
+    if (canonicalAuthorId) item.author_id = canonicalAuthorId;
     seen.add(item.id);
     items.push(item);
   }
@@ -183,22 +296,68 @@ function envelopeFromCollection(collection: LocatedCollection): InstagramObserve
     pageInfo?.end_cursor || collection.value.next_max_id || collection.value.max_id,
     1024,
   );
+  const visibilityUnknown = collection.route === "creator" && !publicCreator && rawItems.length === 0;
+  const completeEvidence = rawItems.length <= MAX_ITEMS && rejectedCount === 0 && !visibilityUnknown;
   return {
     route: collection.route,
     collection_id: `${collection.route}:${collection.key}`,
     items,
     observed_count: boundedRawItems.length,
     rejected_count: rejectedCount,
-    shape_valid: hasKnownRows && (boundedRawItems.length === 0 || rejectedCount < boundedRawItems.length),
+    shape_valid: hasKnownRows && !visibilityUnknown && (boundedRawItems.length === 0 || rejectedCount < boundedRawItems.length),
     ...(cursor ? { cursor } : {}),
-    ...(typeof hasNext === "boolean" ? { has_next_page: hasNext } : {}),
-    ...(hasNext === false ? { affirmative_terminal: true } : {}),
+    ...(typeof hasNext === "boolean" && completeEvidence ? { has_next_page: hasNext } : {}),
+    ...(hasNext === false && completeEvidence ? { affirmative_terminal: true } : {}),
   };
 }
 
+function envelopeFromAuthenticatedTopic(collection: LocatedCollection): InstagramObservedEnvelope {
+  const rows: unknown[] = [];
+  let invalid = !Array.isArray(collection.value.edges);
+  let truncated = Array.isArray(collection.value.edges) && collection.value.edges.length > 80;
+  for (const edge of (Array.isArray(collection.value.edges) ? collection.value.edges : []).slice(0, 80)) {
+    const node = record(record(edge)?.node);
+    if (node?.__typename === "XDTTopSerpHeaderUnit" || node?.__typename === "XDTTopSerpAccountsHCMUnit") continue;
+    if (node?.__typename !== "XDTTopSerpMediaGridUnit" || !Array.isArray(node.items)) { invalid = true; continue; }
+    truncated ||= node.items.length > MAX_ITEMS;
+    for (const item of node.items.slice(0, MAX_ITEMS)) {
+      // This increment exposes public media, not private-account search results.
+      if (record(record(item)?.user)?.is_private !== false) { invalid = true; continue; }
+      if (rows.length < MAX_ITEMS) rows.push(item);
+      else truncated = true;
+    }
+  }
+  const envelope = envelopeFromCollection({ route: "topic", key: "authenticated_topic_media",
+    value: { items: rows, page_info: collection.value.page_info } });
+  envelope.collection_id = "topic:xdt_fbsearch__top_serp_graphql";
+  envelope.shape_valid = envelope.shape_valid && !invalid;
+  if (truncated) {
+    delete envelope.affirmative_terminal;
+    delete envelope.has_next_page;
+  }
+  if (invalid) {
+    envelope.affirmative_terminal = false;
+    envelope.rejected_count = (envelope.rejected_count || 0) + 1;
+    envelope.observed_count = (envelope.observed_count || 0) + 1;
+  }
+  return envelope;
+}
+
 /** Decode one upstream payload into bounded normalized envelopes for tests/tap. */
-export function parseInstagramObservedPayload(payload: unknown): InstagramObservedEnvelope[] {
-  return locateCollections(payload).map(envelopeFromCollection).slice(0, 12);
+export function parseInstagramObservedPayload(
+  payload: unknown, pathname = "", publicCreator?: PublicCreator,
+): InstagramObservedEnvelope[] {
+  const topicPage = /^\/(?:popular\/[^/]+|explore\/tags\/[^/]+)\/?$/.test(pathname);
+  const currentCreator = publicCreatorFromPayload(payload, pathname);
+  const evidence = creatorProfilesFromPayload(payload);
+  if (!currentCreator && ((evidence.truncated && isCreatorPathname(pathname))
+    || evidence.profiles.some(user => matchesCreatorPath(user, pathname)))) {
+    return [{ route: "creator", items: [], shape_valid: false, error: "creator_not_public" }];
+  }
+  const creator = currentCreator || publicCreator;
+  return locateCollections(payload)
+    .filter(collection => collection.key !== "xdt_fbsearch__top_serp_graphql" || topicPage)
+    .map(collection => envelopeFromCollection(collection, creator)).slice(0, 12);
 }
 
 function emit(envelope: InstagramObservedEnvelope): void {
@@ -211,21 +370,105 @@ function emit(envelope: InstagramObservedEnvelope): void {
 }
 
 function inspect(payload: unknown): void {
-  for (const envelope of parseInstagramObservedPayload(payload)) emit(envelope);
+  const path = window.location.pathname;
+  if (observedPublicCreator && path.replace(/\/$/, "").toLowerCase() !== `/${observedPublicCreator.username.toLowerCase()}`) {
+    observedPublicCreator = undefined;
+  }
+  let current = publicCreatorFromPayload(payload, path);
+  const evidence = creatorProfilesFromPayload(payload);
+  if (!current && ((evidence.truncated && isCreatorPathname(path))
+    || evidence.profiles.some(profile => matchesCreatorPath(profile, path)))) {
+    // A fresh matching profile that cannot prove public visibility invalidates
+    // old evidence. Only payloads without profile evidence may reuse the cache.
+    observedPublicCreator = undefined;
+    emit({ route: "creator", items: [], shape_valid: false, error: "creator_not_public" });
+    return;
+  }
+  if (current && observedPublicCreator && sameUserIdentity(current, observedPublicCreator)) {
+    // A later id-only profile must not discard a known canonical pk and cause
+    // strong/weak SSR profiles to oscillate through recursive DOM scans.
+    const keys = { ...observedPublicCreator.keys, ...current.keys };
+    current = { ...current, id: keys.pk || current.id, keys };
+  }
+  const newlyPublic = current && (current.id !== observedPublicCreator?.id
+    || current.username !== observedPublicCreator?.username
+    || current.keys.id !== observedPublicCreator?.keys.id
+    || current.keys.pk !== observedPublicCreator?.keys.pk);
+  if (current) observedPublicCreator = current;
+  for (const envelope of parseInstagramObservedPayload(payload, path, observedPublicCreator)) {
+    // SSR can precede the native profile response. Wait for positive evidence
+    // and re-read the existing DOM; never buffer raw/private responses.
+    if (envelope.route === "creator" && !observedPublicCreator && !envelope.items.length) continue;
+    emit(envelope);
+  }
+  if (newlyPublic) scanSsrJsonCollections();
 }
 
-function relevantUrl(input: string): boolean {
+function isLikedResponse(input: string): boolean {
   try {
-    const url = new URL(input, window.location.href);
+    const url = new URL(input, "https://www.instagram.com/");
+    return url.hostname === "www.instagram.com" && url.pathname === "/async/wbloks/fetch/"
+      && ["liked_media_screen", "liked_refresh", "liked_next"].some(name =>
+        url.searchParams.get("appid") === `com.instagram.privacy.activity_center.${name}`);
+  } catch { return false; }
+}
+
+function inspectTransport(payload: unknown, url: string): void {
+  const graph = record(payload);
+  if (!isLikedResponse(url) && Array.isArray(graph?.errors) && graph.errors.length
+    && record(graph?.data)?.xdt_fbsearch__top_serp_graphql) {
+    inspectHttpFailure(500, url);
+    return;
+  }
+  if (isLikedResponse(url)) {
+    if (window.location.pathname.replace(/\/$/, "") !== "/your_activity/interactions/likes") return;
+    const body = record(payload);
+    const message = String(body?.message || "");
+    if (body?.status === "fail" || body?.status === "error") {
+      const error = /challenge|checkpoint|feedback_required/.test(message) ? "challenge_required"
+        : /login_required/.test(message) ? "login_required" : /rate.limit|please.wait/.test(message) ? "rate_limited" : "http_error";
+      emit({ route: "liked", items: [], shape_valid: false, error });
+      return;
+    }
+    const envelope = parseInstagramLikedBloks(payload);
+    if (envelope) emit(envelope);
+    return;
+  }
+  inspect(payload);
+}
+
+function inspectHttpFailure(status: number, url: string): void {
+  const path = window.location.pathname.replace(/\/$/, "");
+  const profilePath = /^\/[A-Za-z0-9._]+$/.test(path)
+    && !/^\/(accounts|api|direct|explore|p|popular|reel|reels|stories|your_activity)$/i.test(path);
+  const route = isLikedResponse(url) && path === "/your_activity/interactions/likes" ? "liked"
+    : /^\/(popular\/[^/]+|explore\/tags\/[^/]+)$/.test(path) ? "topic"
+      : profilePath ? "creator" : null;
+  if (!route) return;
+  emit({ route, items: [], shape_valid: false,
+    error: status === 429 ? "rate_limited" : status === 401 || status === 403 ? "login_required" : "http_error" });
+}
+
+function decodeBody(body: string, url: string): unknown {
+  return JSON.parse(isLikedResponse(url) ? body.replace(/^for\s*\(;;\);/, "") : body) as unknown;
+}
+
+/** Web Relay uses both api/graphql and graphql/query. */
+export function isInstagramResponseUrl(input: string): boolean {
+  try {
+    const url = new URL(input, "https://www.instagram.com/");
     return (url.hostname === "instagram.com" || url.hostname.endsWith(".instagram.com"))
-      && (url.pathname === "/api/graphql" || url.pathname.startsWith("/api/v1/"));
+      && (isLikedResponse(input) || url.pathname.replace(/\/$/, "") === "/api/graphql"
+        || url.pathname.replace(/\/$/, "") === "/graphql/query"
+        || url.pathname.startsWith("/api/v1/"));
   } catch {
     return false;
   }
 }
 
 async function inspectResponse(response: Response): Promise<void> {
-  if (!relevantUrl(response.url)) return;
+  if (!isInstagramResponseUrl(response.url)) return;
+  if (!response.ok) { inspectHttpFailure(response.status, response.url); return; }
   const length = Number(response.headers.get("content-length") || 0);
   if (length > MAX_RESPONSE_BYTES) return;
   try {
@@ -246,24 +489,40 @@ async function inspectResponse(response: Response): Promise<void> {
       body += decoder.decode(value, { stream: true });
     }
     body += decoder.decode();
-    inspect(JSON.parse(body) as unknown);
+    inspectTransport(decodeBody(body, response.url), response.url);
   } catch {
     // Non-JSON/challenge responses are classified by the task executor.
   }
 }
 
+let scanningSsr = false;
+let ssrRescanRequested = false;
+
 function scanSsrJsonCollections(): void {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
-  for (const script of Array.from(
-    document.querySelectorAll('script[type="application/json"][data-sjs]'),
-  )) {
-    const text = script.textContent || "";
-    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) continue;
-    try {
-      inspect(JSON.parse(text) as unknown);
-    } catch {
-      // Non-JSON or oversized SSR payload; the XHR/fetch tap remains authoritative.
+  if (scanningSsr) { ssrRescanRequested = true; return; }
+  scanningSsr = true;
+  try {
+    // A proof after the media carrier needs one follow-up pass. Never recurse
+    // or continue indefinitely when multiple native profile shapes coexist.
+    for (let pass = 0; pass < 2; pass += 1) {
+      ssrRescanRequested = false;
+      for (const script of Array.from(
+        document.querySelectorAll('script[type="application/json"][data-sjs]'),
+      )) {
+        const text = script.textContent || "";
+        if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) continue;
+        try {
+          inspect(JSON.parse(text) as unknown);
+        } catch {
+          // Non-JSON or oversized SSR payload; the XHR/fetch tap remains authoritative.
+        }
+      }
+      if (!ssrRescanRequested) break;
     }
+  } finally {
+    scanningSsr = false;
+    ssrRescanRequested = false;
   }
 }
 
@@ -299,13 +558,14 @@ if (isInstagramTaskTabLocation()) {
   ): void {
     const target = String(url);
     this.addEventListener("load", () => {
-      if (!relevantUrl(target)) return;
+      if (!isInstagramResponseUrl(target)) return;
+      if (this.status < 200 || this.status >= 300) { inspectHttpFailure(this.status, target); return; }
       try {
-        if (this.responseType === "json") inspect(this.response);
+        if (this.responseType === "json") inspectTransport(this.response, target);
         else if (!this.responseType || this.responseType === "text") {
           const value = this.responseText;
           if (new TextEncoder().encode(value).byteLength <= MAX_RESPONSE_BYTES) {
-            inspect(JSON.parse(value) as unknown);
+            inspectTransport(decodeBody(value, target), target);
           }
         }
       } catch {

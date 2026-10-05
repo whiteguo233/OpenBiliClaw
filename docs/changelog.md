@@ -6,6 +6,43 @@
 
 ## 未发布
 
+- **补齐 Firefox 匿名 creator 的原生 SSR 公开证明**：真站页面有12条帖子且 `xig_user_by_username.is_private=false`，原解析器只识别 `data.user` 因而0响应。现支持已观察的 ScheduledServerJS/Relay 白名单包装；修复真实 Relay 的 `pk` 与 `id` 不同被误拒，优先正整数主键，非法主键不能回退放行。仍要求当前路径、用户名、媒体作者及非私密证明一致，未知/私密/建议账号不放行，新无效证明和截断扫描撤销旧缓存。实际 MAIN 扫描、拆分 SSR 与反例均有红绿回归，不执行模块指令或上传原始SSR；真站结论独立记录于台账。
+
+- **修复 Instagram 小页数首屏竞态**：首屏只等 1.5 秒可能在真实响应到达前用完单页预算；现独立、有界等候已有 MAIN 响应，保持原页数/隐私/empty/绝对期限规则，429/验证及时停止，最后一页不多滚动。迟到响应、无响应和迟到限流先红后绿；真实最后包结果见台账，不以普通页面有帖子替代任务成功。
+
+- **Instagram 真实收尾与有界执行**（2026-10-03）：新空库经真实 popup 取得 5 条账号事件，当前配置模型完成新画像、10 条候选及首批 2 条推荐；普通换批真实验证预算失败提示，并补齐余下 3 条文案。Likes 连续三次无新增提前 partial 停止；30 秒请求间隔不再提前耗尽 20 秒网络超时，bootstrap idle 根据间隔有界调整，绝对期限不变。Firefox 补测发现分钟轮询争锁可能反复错过领取，新增 30 秒 durable 重试，仍先恢复/持锁/权限检查。海外封面经所选代理查询固定 Cloudflare DoH，再逐跳固定公网 IP，修复本机 DNS 污染导致的真实封面失败；TLS、重定向和 SSRF 边界未放宽。完整证据及剩余外部门禁以[台账](platform-source-acceptance.instagram.md)最新日期为准，历史失败仍保留。
+
+- **补齐 Instagram 手动恢复与封面安全边界**：普通“换一批”调用 Instagram 正式 producer 并显式评估/生成推荐文案，后台调度关闭也可恢复；网络、限流、扩展离线失败给出实际失败态。共享封面抓取逐跳解析并拒绝非公网地址，HTTP/HTTPS 代理 CONNECT 与 SOCKS5 均固定数字目的 IP，保留原域名 Host/TLS 验证，按每个目标的国内直连/海外策略选路。显式声明已有传递依赖 HTTPCore；桌面滚动回归改为等待实际 wheel 结果而非固定 80ms，不修改滚动行为。完整验收与外部账号/许可边界见 Instagram 台账。
+
+- **修复首轮发现失败却仍显示“正在补货”**：运行状态从持久 init 结果投影安全的失败提示，popup、桌面和移动端显示“内容发现未完成／画像已保存”，实时失败事件同步刷新空态；待处理行为、关键词规划和未实际执行的刷新 success 不再冒充执行中或恢复。真实可用供给的恢复凭据按 init run 持久化，消费库存或重启不会复活旧错误，重初始化退休的历史推荐不算新一轮恢复。popup 首次实时连接后补读当前状态，弥合订阅前漏掉终态的窗口，并保留较新库存字段、防止迟到状态倒灌；不替换已有推荐卡。保留原始失败诊断；Instagram 恢复使用明确的发现入口，不承诺普通换批会重建任务。同一失败 CDN 资源在当前代理节点独立复现、已有备用节点两次实际下载成功，但共享代理分组切换仍需用户确认，未将备用路径探测标成真站全链路已恢复。
+
+- **记录 Instagram 最新真实请求阻塞，保留失败证据**：2026-10-02 10:58 UTC 新空库初始化真实取得 5 事件，当前模型两次调用成功并生成画像；话题页脚本/样式连接关闭导致 discovery 无有效响应、0 候选/推荐，一次有界诊断与普通页面复现。最新验收不沿用早先成功，详见台账；未修改代理或生产代码，另记录 popup 空态未直接显示该失败原因。
+
+- **修正 Instagram 小预算提示单位并补测本地后续流程**：配置提示按实际保留的候选条数描述日预算，不再误写成任务次数；不改变额度或扣减逻辑。既有真实推荐数据的隔离副本补验本地收藏/稍后再看、重复操作、移动端移除、重启持久化、来源开关热应用和跨进程 discovery 冷却，另验证 init-only 不入周期队列及离线 CLI 超时。该轮是实际本地 HTTP/SQLite/UI 验收，不冒充新的 Instagram/LLM 上游请求；此前暂缓门禁仍未升级为通过。
+
+- **加固 Instagram 私人任务的可观测账号连续性**：executor 现在 saved/following 每页和原生 Likes 观察的前后，以及未先命中终态风险时的正常结果提交前复核冻结账号；早到 Likes replay 必须绑定到已加载任务页的 `PolarisViewer` 与新鲜初始身份，证据缺失、不可解析或不一致均以 0 items 失败。检出切号时（包括 username 未变但数字 ID 已变）以 `instagram_account_changed` + 0 items 失败，由 durable dispatcher 隔离已持久中间 rows，不合并跨账号 partial。已观察的 429 / challenge / 登录墙仍在新增探针前停止，身份与私有数据 GET 共用冻结请求间隔并保留原页/条/deadline 上限。该修复只承诺检查点可观测的切号防护，不声称 Instagram 上游会话是原子快照；两次复核间完整的“切出再切回”仍无法观测。
+- **修复 Instagram 后端晚启动时的登录状态恢复**：配置不可达与来源禁用分开处理，前者保持不读 Cookie 并在 1 分钟后重试；恢复后纯布尔心跳成功即退回小时周期。48 项定向回归及最终安装态断线恢复通过。代理节点经用户批准调整后，全新隔离库的真实 UI 初始化取得 5 事件，使用当前模型完成画像、发现 10 候选并生成 4 推荐；采集上限仍保留 partial，未追加站内互动，未关闭或重启 Clash Verge。
+- **修复初始化失败提示串平台**：Instagram-only 真站预检返回登录 / 扩展连接提示时，popup 曾被共享错误码的旧 Bangumi 文案覆盖；popup、setup、桌面首次与重初始化入口现优先显示后端有界纯文本详情，无详情时使用平台中性兜底。保留 Bangumi 三档账号提示，补错误码、非法详情及真实浏览器 / 本地 HTTP 响应回归；不改变后端准入条件。
+
+- **修复移动推荐长列表浮层遮挡，补齐 Instagram 安装态边界测试**：回顶按钮有界避让卡片操作，无安全位置则暂时隐藏；375/390/768 宽度、resize/触底/回顶及既有 delight 共 24 项回归通过。另以合成上游、真实已安装扩展与 API 验证“提交后 ACK 被抑制→全浏览器重启→逐字节重放→清空 outbox”；Chrome ZIP 新 profile 的文字卡/原生侧栏，以及 Firefox ZIP 实装的 MAIN/跨 world/creator 执行均通过，不冒充真站或商店安装。当前代理路径的普通 HTTPS 同样中断，fresh 真站初始化仍阻塞，详见验收台账。
+
+- **修复 Instagram-only 引导初始化首轮推荐漏接**：真实全新设置流程发现第 4 阶段仍调用 B 站固定补货；现 API/CLI 复用 Instagram 正式 producer，扩展领取前登记 init-owned 新建/恢复任务，显式 flush 小批候选并同步生成文案。关闭后台 scheduler 仍可手动初始化，不放宽评分或解开旧任务隔离。新增先红后绿的来源路由、真实 API ownership、真实 pipeline 小批量及 CLI 装配回归；其它旧来源的初始化路由保持兼容。
+
+- **加固 Instagram 恢复、隐私和失败终态**：修复恢复后跨账号 rows 合并、saved/following 坏行被误报空集合、creator 限流未停止滚动及缺少正向公开证明的问题。补 MAIN→executor、durable dispatcher 和真实 API 回调回归，统一安全失败码以释放 lease。真实完整浏览器终止、受控网络故障下跨源互斥及原生 side panel 已验；当前真实模型的 topic/creator 发现复验通过。扩展全量 1459 项通过；另修复 saved-sync 测试在持久完成早于异步清理时的竞态，不改其生产逻辑。全部证据与剩余外部门禁见 Instagram 验收台账。
+
+- **修复真实非空 Instagram Likes 的 Bloks 解析**：复合媒体 ID、空白网格占位及界面引用曾造成 `response_schema_degraded`；现复用共享 ID 正规化并区分数据与界面引用，不执行表达式或放宽空状态判据。逐对象授权的真实样本已验证 2 点赞 + 2 收藏 + 1 关注准确导入，两轮事件数 0→5→5；当前真实模型基于这批事件生成新隔离画像，真实发现 4 条、过滤已看过 1 条、评估 3 条、入池 1 条，并生成 1 条推荐。媒体 cap=2 保持 partial，不冒充全历史分页。扩展全量 1448 项、Python 定向 78 项通过。
+
+- **补充 Instagram 合成初始化闭环并修复画像重建的跨平台登录门禁**：规范化合成任务通过正式 API/ingress 落 5 条事件，覆盖重复任务去重、partial、账号冲突和 smoke 隔离；辅助脚本拒绝既有数据库。`rebuild-profile` 只读本地事件，不再要求 B 站登录，配置检查保留。真实当前模型已基于合成事件完成偏好和画像生成；后续 4 条合成 discovery 候选因模型链限流留在 pending_eval，不冒充真站或推荐闭环通过。
+
+- **补齐可选登录 Instagram topic 发现**：经用户授权，仅在直接 topic 任务页被动读取自然返回的公开 MediaGrid，不提交 Search、不重放私有搜索请求。补齐路由、公开作者、未知单元、错误后停止滚动和截断保护，保存 authenticated-topic 布尔证据。真实正式 discovery 首轮取得 topic/creator 各 2 条，复验又取得 2 条；当前模型路由累计评估 6 条均低于准入阈值，无新增推荐。348 项 Python 定向测试、1447 项扩展测试通过；非空个人初始化与事件→画像收敛仍未验收。
+
+- **修复 Instagram 网页身份、点赞读取和 creator 漏收**：账户表单与新鲜 `PolarisViewer` 双 ID 验证替换 mobile current-user；监听补 `/graphql/query`；Likes 改为被动解析原生 activity Bloks，不伪装 UA、不执行表达式。实测三个个人 scope 均确认空集合、creator 队列返回 4 条 cap-partial 内容；非空 Likes 分页、topic 和完整画像链仍未通过，详见验收台账。
+
+- **修正 Instagram 正式 discovery 的假成功退出码**：2026-09-28 真站任务以 `response_envelope_unobserved` 失败，但 CLI 原来返回 0。现在失败和未知异常 reason 返回 1；明确空结果及节流、池满、预算耗尽等正常跳过保留 0，错误原因仍可见。新增真实 CLI → producer → 持久队列回归，仅模拟浏览器传输。初始化仍停在身份 HTML 响应，数字账号查询再次 429；topic/creator 均未获取候选，本轮没有进入 LLM 评估，不宣称完整 E2E 通过。
+- **纠正 Instagram 已登录仍提示 challenge 的误报**：真实诊断发现 current-user 路径重定向为首页 HTML，旧分类器误将应用脚本中的 challenge / captcha 路由名当作安全验证。现剔除非可见代码和 metadata，区分真实表单 / 明确文本 / 最终跳转路由，并修复 `checkpoint_url: null` 被字段名误判的问题；真实 429、登录墙和验证仍停止读取，未知 HTML 不伪装成空。网页会话已确认有效，但数字账号解析探针遇到 429，未改用未经真测的身份 fallback，完整初始化仍未验收。
+- **修复 Instagram 真站复验暴露的失败隔离与恢复问题**：已观察的兴趣别名映射为有界公开 topic seed；仅对同时具备专属标题与断链正文的软 404 返回 `public_page_unavailable` 并继续其他 seed。Producer 保留 failed task 的 canonical 错误，partial 已接收内容继续交接，但 challenge、限流、登录墙与 schema error 立即停止后续任务。扩展把有界 claim / progress / exact-result outbox 保存在 `storage.local`，浏览器重启丢失任务页时明确以同一 claim 结束，ACK 后清理；不保存 Cookie 或原始响应。设置保存的原生权限等待增加 30 秒超时、解锁与未保存提示。通用 OpenAI-compatible 实例只复用已经成功的有限格式兼容参数，不改用户模型路由。2026-09-26 再次真实请求确认个人初始化为 `challenge_required`，登录浏览器的公开页仍为 `response_envelope_unobserved`；完整账号 E2E 未通过，详见验收台账。
+- **补齐 Instagram 桌面设置并记录真实场景验收缺口**：桌面平台源页新增实际来源卡，补全启用、topic / creator 预算、节流、初始化上限、候选份额和份额建议的读写闭环；沿用既有卡片布局、字段标签与保存状态，明确扩展站点授权和登录步骤。新增来源注册表与实际卡片一致性回归，修正原 Linux.do / V2EX 相邻结构测试对“末尾只有两张卡”的过时假设。2026-09-26 隔离环境以真实 Instagram 公开内容和原有真实 LLM 路由验证候选评估、推荐展示与 local-only 反馈；发现兴趣词直接拼 topic 路由的失败及模型限流 / 空响应，真实登录初始化与授权后的 dispatcher 仍未验收，详见 Instagram 验收台账，不宣称完整 E2E 通过。
+- **按真实 Instagram 页面收紧 creator 与登录墙解析**：2026-08-31 的已安装 Chrome 只读预验收确认公开 creator SSR 已改用 `polaris_ordered_timeline_connection`，扩展 MAIN-world tap 现将其作为 creator timeline 规范化；HTML 分类器不再把登录表单普通 `required` 属性误报为 challenge，仍对明确 challenge/checkpoint/captcha fail closed。新增真实响应形状与登录表单回归，Chrome/Firefox 产物重新构建并校验。
 - **新增 Instagram 来源接入（实验性、默认关闭）**：公开内容发现通过扩展隔离任务读取有界 topic / creator 页面；首次画像可选只读导入本人近期点赞、收藏与关注，分别映射为 `like` / `favorite` / `follow`。Cookie、Authorization、原始响应和搜索历史写入都不离开或不发生在浏览器任务中；后端只接收布尔 `sessionid` readiness、正向 current-account 身份和字段白名单结果。实现参考固定 commit 的 instagrapi / Instaloader 等协议事实并保持 clean-room，GPL 代码未复制。该路径不是 Meta 官方 Consumer API，生产启用仍以 Meta 自动采集许可或明确产品风险决定为门禁。
 - **新增「重新初始化 / 重建画像」入口（gui-init §4 收口）**：已初始化后，桌面 Web 设置页「通用 → 初始化与画像」与扩展 popup 通用 tab 提供「重新初始化 / 重建画像」按钮（`window.confirm` 二次确认后调 `POST /api/init {force:true}`，成功后回推荐 tab 展示四阶段进度）；CLI `openbiliclaw init --force` 跳过已初始化二次确认并按重新初始化执行（交互终端默认检测到已初始化时先 y/N 确认，非交互保持直接重跑）。语义为 force 重建：重新拉取所选平台数据、重建完整画像并补足首轮发现池，现有事件 / 收藏 / 对话历史 / 手动编辑覆盖全部保留。**force 重初始化同时清空旧推荐池**（`pool_status='purged_by_reinit'`，按新画像重新发现并生成首轮推荐，避免旧画像推荐滞留并顶满 backfill 目标）；可选 `reset_cognition`（CLI `--reset-cognition` / API body / 设置页复选框）清空旧 awareness / insight 认知层，适合换账号或大改兴趣。**重初始化前自动创建快照备份**（`data/backups/reinit-<时间戳>/`：SQLite 冷备 + `data/memory/` 全部画像/认知层，CLI 可 `--no-backup` 跳过），重建覆盖的画像与删除的认知层均可恢复。后端 `POST /api/init` 的 `force:true` 绕过 `already_initialized` 守卫，其余前置复验与写者门控不变；移动 Web 无设置页，重新初始化入口按四表面契约声明排除。
 - **新增 Flutter 原生移动客户端（独立仓库）**：OpenBiliClaw-mobile 提供 Android / iOS / Web / Linux / macOS / Windows 全平台客户端，连接同一本地后端；推荐 / 对话 / 画像 / 收藏与 30 天历史 / 消息收件箱齐全，B 站封面 CDN 直连省两跳。首个安装包已随其 Latest Release 发布（Android 签名 APK / iOS 未签名 IPA）。README（中英）、项目主页与文档导航同步加入入口链接与下载入口。

@@ -1922,7 +1922,7 @@ export function onStreamEvent(payload) {
     // Merge pool status only. Do not replace recommendation cards here:
     // users may have appended older cards that /api/recommendations would not
     // return in its latest top window.
-    const poolEvent = payload.data || payload;
+    const poolEvent = { ...(payload.data || payload), type };
     patchState({ runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, poolEvent) });
     if (typeof poolEvent?.pool_available_count === "number") {
       runtimeStatusGeneration += 1;
@@ -1942,8 +1942,10 @@ export function onStreamEvent(payload) {
     ) {
       scheduleRecommendationRecovery();
     }
-  } else if (type === "refresh.started" || type === "refresh.strategy") {
-    patchState({ runtimeEvent: payload.data || payload });
+  } else if (type === "refresh.started" || type === "refresh.strategy" || type === "refresh.failed") {
+    const event = { ...(payload.data || payload), type };
+    runtimeStatusGeneration += 1;
+    patchState({ runtimeEvent: event, runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, event) });
     rerenderRuntimeDependentChrome();
   } else if (type === "activity.added") {
     // Prepend to activity feed

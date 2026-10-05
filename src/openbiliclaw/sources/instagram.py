@@ -226,9 +226,7 @@ def instagram_media_to_content(
 
     if not isinstance(row, Mapping):
         return None
-    content_id = _positive_id(row.get("pk")) or _positive_id(
-        row.get("id") or row.get("content_id")
-    )
+    content_id = _positive_id(row.get("pk")) or _positive_id(row.get("id") or row.get("content_id"))
     content_type = _content_type(row)
     if not content_id or content_type not in INSTAGRAM_MEDIA_CONTENT_TYPES:
         return None

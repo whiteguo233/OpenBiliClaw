@@ -802,6 +802,8 @@ V2EX 是匿名公开 discovery 源，支持官方匿名 JSON API / Feed，以及
 
 ### `[sources.instagram]`
 
+Instagram 上游任务沿用浏览器自己的网络，不受后端 `[network]` 直接控制。推荐封面的后端共享代理则受 `[network]` 的海外路由控制：选择代理时通过同一代理进行固定 Cloudflare DoH 公网解析并 pin IP；direct 使用本机 DNS。该行为不新增配置项，详见 [runtime 封面安全边界](runtime.md#image-proxy-api) 与[隐私说明](../privacy.md)。
+
 Instagram 是默认关闭的实验来源。公开 `topic` / `creator` 与个人 init 都由扩展隔离任务执行；后端不保存或重放 Instagram Cookie。完整安全、授权与终态边界见 [Instagram 来源文档](instagram.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -811,10 +813,12 @@ Instagram 是默认关闭的实验来源。公开 `topic` / `creator` 与个人 
 | `daily_topic_budget` | int | `60` | topic 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
 | `daily_creator_budget` | int | `30` | creator 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
 | `request_interval_seconds` | int | `3` | 同一任务内相邻只读请求的节流下限；不能绕过 task 的 absolute deadline |
-| `min_interval_minutes` | int | `10` | producer 成功运行间隔；显式 smoke 仍受扩展 presence、task cap 与限流终态约束 |
+| `min_interval_minutes` | int | `10` | producer 发现尝试的持久冷却间隔，跨 CLI 进程保留，空跑不反复派发；显式 smoke 仍受扩展 presence、task cap 与限流终态约束 |
 | `bootstrap_limit` | int | `300` | liked / saved / following 每 scope 的最大条数，保存范围 `1..300`；达到 cap 不代表历史完整 |
 
 Instagram 首版为 `init-only`，没有 `instagram_incremental_hours` 配置，也不进入周期账号回拉 roster。关闭来源时保存的 pool share 不参与有效配比。
+
+`daily_topic_budget` / `daily_creator_budget` 按最终保留的候选条数计费，不是 HTTP 请求数或任务数。加载配置时，小预算提示也使用候选条数单位；提示不会改写配置，`0` 仍表示不设日上限。
 
 状态语义如下：
 

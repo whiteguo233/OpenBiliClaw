@@ -1,10 +1,18 @@
 # 后端 API
 
+`POST /api/recommendations/refresh` 的显式补库现包含 Instagram：来源启用且有配额缺口时运行一次有界 producer → eval → copy，不受后台 scheduler 开关影响。来源失败投影 `manual_refresh_state=failed` 和 `refresh.failed`，不再变成“成功但无候选”；部分已入库内容不回滚。`GET /api/image-proxy` 对每个重定向执行 DNS/IP 拒绝与数字连接地址固定，非公网目的地址返回 403，非标准端口返回 400；证书验证、大小和媒体类型限制保持。
+
+`POST /api/init` 选择 Instagram 时，第 4 阶段复用正式 topic/creator producer，任务在通知扩展前登记到该 init run（含恢复采用的任务），因此 `next-task` 的 init-only ID 过滤继续生效。未选择 B 站的 Instagram 初始化不再调用旧的 B 站四策略；关闭后台 scheduler 仍可显式执行。小批候选即时评估并同步生成文案，不改评分阈值；其它旧来源的第 4 阶段路由本次保持兼容。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。
 
 ## 初始化期间的配置探测
+
+`GET /api/runtime-status` 的 `discovery_failure_message` 是安全的用户提示，默认空串。已保存画像但 guided init 首轮发现以 `discovery_partial/discovery_timeout` 结束、尚无可用候选/推荐时返回失败与恢复下一步；不透传上游异常、账号或 URL。较新的初始化及已恢复的可用候选/推荐优先，不能被历史失败遮盖。客户端不得把 `pending_signal_events > 0` 当作 worker 正在运行，也不能把只完成关键词规划或未执行的 success 当作内容发现已恢复。
+
+该端点有一项有界本地 reconciliation：首次观察到当前失败 init 已有可用供给时，在 `memory/init_discovery_resolution.json` 原子记录唯一 `run_id`。不改 init 原始结果，不写上游/业务内容；恢复后的自然消费、库存归零或进程重启不会让历史失败复活。新 init ID 不继承旧凭据。写入持有文件锁，并重查当前 owner 与实时供给，已被 force re-init 退休的推荐历史不算恢复。
 
 `POST /api/config/probe-service` 只在内存副本上应用设置页草稿并真实探测 LLM、默认链、embedding 或网络策略，不写 `config.toml`、不热重载 runtime。它因此不受 guided init 的 HTTP 写端 409 门控；初始化运行时仍可测试，LLM 请求继续经过进程级稳定 total gate。LLM 实例 / 链探测的 outer deadline 按草稿 `[llm].timeout` 取值并夹在 10–120 秒，超时以 `ok=false` 和稳定错误文案返回；图形客户端使用 125 秒预算，覆盖本地模型冷启动而不允许无界挂起。`PUT /api/config` 仍在初始化期间返回 `409 init_running`，避免替换本轮任务正在使用的组件。
 
@@ -45,6 +53,8 @@ Phase 2 cognition rollout 在配置 API 中也是 task-scoped：`soul` GET/PUT �
 | `GET /api/config/apply-status` | ✅ | 返回 `state`、最新请求修订、最后已应用修订、消息、非敏感错误分类和更新时间；不包含配置内容或凭据。`applied` 只确认本进程可应用部分，不取消 PUT 已返回的目录重启要求。 |
 
 guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST /api/init` 返回 `409 config_applying`；init 已开始时 `PUT /api/config` 仍返回既有 `409 init_running`。
+
+桌面 Web 已补齐 Instagram 来源卡：`sources.instagram` 的 enabled、source_modes、两类日预算、request_interval_seconds、min_interval_minutes、bootstrap_limit，以及 `scheduler.pool_source_shares.instagram` 均沿用此保存 / apply-status / 回读协议。来源启用、占比建议请求与建议回填也包含 Instagram。该补齐不新增 API 或配置字段，不接收 Cookie，也不能代替扩展的站点权限确认与浏览器登录。
 
 ## 本机数据迁移
 
@@ -174,11 +184,15 @@ Linux.do 站点访问全部发生在真实 `linux.do` task tab 内，且只允�
 | 端点 | 行为 |
 | --- | --- |
 | `POST /api/sources/instagram/login-state` | 只接受严格布尔 `logged_in`，保存 `sessionid` 存在性与更新时间；不接受 Cookie value |
-| `GET /api/sources/instagram/next-task` | 扩展通过 authenticated backend session 原子领取一个 `discover` / `bootstrap_events` 任务；无任务为 bodyless 204 |
+| `GET /api/sources/instagram/next-task` | 扩展通过 authenticated backend session 原子领取一个 `discover` / `bootstrap_events` 任务；无任务为 bodyless 204。init 活跃时只放行当前 run 登记的任务，包括阶段 4 新建与恢复的 discover，不放行其它旧后台任务 |
 | `POST /api/sources/instagram/task-result` | 接收 claim token、canonical rows、scope counts/completeness 与结构化错误；canonical payload 先 stage，投影完成后才 terminal |
 | `POST /api/sources/instagram/kick` | 只向 runtime stream 广播 `instagram_task_available`；不访问 Instagram |
 
 task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `creator`；bootstrap 只接受 liked/saved/following。个人结果没有正向数字 current-account ID 时一律拒绝投影；后端仅保存派生 account key。Cookie、header、raw JSON/HTML 和 challenge body 都不属于 API schema。只有 route-specific envelope 明确终止才能报告 `empty` / complete，已有 rows 的限流、challenge、cap 或 schema failure 使用 partial 并保留 staged rows。
+
+公开页专属不可用标题与断链正文共同确认的软 404 使用 `public_page_unavailable`，不是 empty。Producer 读取 completed 与 failed 两种终态的 staged canonical payload，保留原始 machine code；只有这个 page-local 错误允许继续下一个 seed，其余 auth / challenge / rate / schema 失败停止任务后缀。HTTP schema 和账号校验不变。
+
+`challenge_required` 必须来自明确上游诊断、验证表单或最终验证路由；Instagram 首页脚本中的路由名不是证据。API 意外返回首页 HTML 时保留 `html_response`，不能引导用户重复完成并不存在的验证。已有 task-result first-final 记录不会因分类器升级被改写，历史错误需按对应安装版本解读。
 
 ## B 站与抖音浏览器任务边界
 

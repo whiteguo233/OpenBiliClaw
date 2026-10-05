@@ -317,13 +317,26 @@ test("idle status is not terminal", () => {
 test("reason + start-error text mapping", () => {
   assert.ok(describeInitReason("bilibili_not_logged_in").includes("B 站"));
   assert.equal(describeInitReason("none"), "");
-  assert.ok(describeInitReason("no_profile_signal_sources").includes("Bangumi"));
+  assert.equal(
+    describeInitReason("no_profile_signal_sources"),
+    "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
+  );
   assert.equal(describeInitReason("totally_unknown"), "");
   const err = Object.assign(new Error("boom"), {
     status: 409,
     details: { error: "already_running" },
   });
   assert.ok(describeInitStartError(err).includes("进行中"));
+});
+
+test("an Instagram-only 409 keeps the backend's source-specific guidance", () => {
+  const detail =
+    "Instagram 公开 topic / creator 发现无需登录，但初始化点赞、收藏和关注记录需要当前浏览器已登录 Instagram 并连接扩展。";
+  const rejected = Object.assign(new Error("/api/init request failed: 409"), {
+    status: 409,
+    details: { error: "no_profile_signal_sources", detail },
+  });
+  assert.equal(describeInitStartError(rejected), detail);
 });
 
 test("a Bangumi-only 409 names all three account tiers", () => {
@@ -335,15 +348,34 @@ test("a Bangumi-only 409 names all three account tiers", () => {
     status: 409,
     details: {
       error: "no_profile_signal_sources",
-      detail: "只选择 Bangumi 初始化时，需提供个人令牌…",
+      detail:
+        "只选择 Bangumi 初始化时，需提供个人令牌（推荐，自动识别当前用户）、公开用户名，或先在浏览器登录 bgm.tv 让扩展自动识别。",
     },
   });
   const text = describeInitStartError(rejected);
+  assert.equal(text, rejected.details.detail);
   assert.ok(text.includes("个人令牌"));
   assert.ok(text.includes("公开用户名"));
   // The tier that needs no typing at all must be named, otherwise the copy
   // still tells a logged-in bgm.tv user to go fetch a token.
   assert.ok(text.includes("bgm.tv"));
+});
+
+test("start-error backend guidance accepts only bounded non-empty text", () => {
+  for (const detail of [undefined, null, "  ", {}, [], 42, false]) {
+    assert.equal(
+      describeInitStartError({ details: { error: "already_running", detail } }),
+      "初始化正在进行中。",
+    );
+  }
+  assert.equal(
+    describeInitStartError({ details: { error: "already_running", detail: "  请连接扩展。  " } }),
+    "请连接扩展。",
+  );
+  assert.equal(
+    describeInitStartError({ details: { detail: "x".repeat(5000) } }),
+    "x".repeat(2000),
+  );
 });
 
 test("failure text appends backend detail so internal_error is diagnosable", () => {

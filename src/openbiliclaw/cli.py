@@ -2822,6 +2822,7 @@ async def _run_init_discovery_backfill_async(
     target_pool_count: int = 100,
     label_suffix: str = "",
     progress_callback: Callable[[int, int, str], Awaitable[None] | None] | None = None,
+    selected_sources: set[str] | None = None,
 ) -> int:
     """Build the first serviceable discovery pool from the committed profile."""
     from openbiliclaw.discovery.pool_snapshot import build_cold_start_pool_snapshot
@@ -2841,6 +2842,48 @@ async def _run_init_discovery_backfill_async(
     if target == 0:
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
+
+    if selected_sources is not None and "instagram" in selected_sources:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+        from openbiliclaw.runtime.refresh import ContinuousRefreshController
+        from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+
+        config = load_config()
+        soul_engine = _build_soul_engine()
+        pipeline = _build_discovery_candidate_pipeline(
+            config=config, database=database, discovery_engine=discovery_engine
+        )
+        producer = build_instagram_discovery_producer(
+            config=config,
+            database=database,
+            soul_engine=soul_engine,
+            candidate_pipeline=pipeline,
+            keyword_fetch=KeywordFetchCoordinator(
+                database=database, discovery_config=config.discovery
+            ),
+            kick=lambda: _kick_task_dispatcher("instagram"),
+            manual=True,
+        )
+        if producer is not None:
+            producer.candidate_evaluation_owned_by_coordinator = True
+        controller = ContinuousRefreshController(
+            memory_manager=_build_memory_manager(),
+            database=database,
+            soul_engine=soul_engine,
+            discovery_engine=discovery_engine,
+            recommendation_engine=_build_recommendation_engine(),
+            discovery_candidate_pipeline=pipeline,
+            instagram_producer=producer,
+            scheduler_config=config.scheduler,
+            pool_target_count=target,
+            pool_source_shares=effective_pool_source_shares(config),
+            llm_concurrency_gate=gate,
+        )
+        return await controller.run_init_backfill(
+            profile, target, sources=selected_sources, progress_callback=progress_callback
+        )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -9309,17 +9352,38 @@ async def run_guided_init(
         "target_pool_count": target_pool_count,
         "label_suffix": "",
     }
+    accepts_selected_sources = False
     try:
         signature = inspect.signature(discover_backfill)
     except (TypeError, ValueError):
         accepts_progress_callback = True
     else:
+        accepts_selected_sources = "selected_sources" in signature.parameters
         accepts_progress_callback = "progress_callback" in signature.parameters or any(
             parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
     if accepts_progress_callback:
         backfill_kwargs["progress_callback"] = _stage4_progress
+    if accepts_selected_sources:
+        backfill_kwargs["selected_sources"] = {
+            source
+            for source, included in (
+                ("bilibili", include_bili),
+                ("xiaohongshu", include_xhs),
+                ("douyin", include_dy),
+                ("youtube", include_yt),
+                ("twitter", include_x),
+                ("zhihu", include_zhihu),
+                ("reddit", include_reddit),
+                ("bangumi", include_bangumi),
+                ("linuxdo", include_linuxdo),
+                ("v2ex", include_v2ex),
+                ("weibo", include_weibo),
+                ("instagram", include_instagram),
+            )
+            if included
+        }
 
     # Stage 4 is best-effort once the full profile exists: timeout/failure is
     # terminal *partial success*, and clients may enter the app while the
@@ -10471,7 +10535,7 @@ def rebuild_profile(
     source: str = typer.Option(
         "",
         "--source",
-        help="只用指定来源：bilibili / xiaohongshu / douyin / youtube，留空=全部。",
+        help="只用指定来源（例如 instagram / bilibili），留空=全部。",
     ),
     no_analyze: bool = typer.Option(
         False,
@@ -10491,7 +10555,8 @@ def rebuild_profile(
     """
     import json as _json
 
-    _prepare_init_runtime()
+    # Rebuilding consumes stored events only, even for Bilibili itself.
+    _prepare_init_runtime(require_bili_auth=False)
     memory = _build_memory_manager()
     soul_engine = _build_soul_engine()
 
@@ -14719,9 +14784,19 @@ def _run_instagram_discovery(*, limit: int, force: bool = False) -> None:
     }
     kind, title, body = messages.get(
         reason,
-        ("info", "Instagram discovery 未产出内容", reason or "无详细信息"),
+        ("warning", "Instagram discovery 未产出内容", reason or "无详细信息"),
     )
     _print_status_panel(kind, title, body)
+    if reason not in {
+        "throttled",
+        "pool_full",
+        "budget_exhausted",
+        "no_topics",
+        "no_creator_seeds",
+        "empty",
+        "no_progress",
+    }:
+        raise typer.Exit(code=1)
 
 
 @app.command("discover-douyin")

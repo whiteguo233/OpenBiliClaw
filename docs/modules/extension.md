@@ -19,10 +19,12 @@
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
+| Instagram 有界采集与竞争恢复 | ✅ | 非空 Likes 连续 3 次无新增返回 `progress_stalled` partial；限速等待后才启动 20 秒请求超时，bootstrap idle 根据间隔有界调整为 90–185 秒，12 分钟绝对期限不变。跨源锁竞争另建 30 秒 durable alarm，领取前仍须持锁与站点权限。 |
 | 统一品牌图标 | ✅ | Chrome / Edge / Brave / Firefox manifest 使用 16 / 32 / 48 / 128px 精确尺寸图标，side panel 顶部品牌标记、普通透明 PWA 图标、专用不透明 `maskable` / Apple 主屏幕图标、32px 根 favicon、首次设置页、桌面 Web、移动 Web 和 GitHub Pages 官网统一从 `assets/brand/openbiliclaw-icon.png` 派生。源图的半透明边缘已去除旧白底消光色；扩展图标、favicon 与 maskable 图标使用满幅品牌粉底，页面头图容器也用品牌粉承接透明圆角。旧字母 `B`、CSS 圆环和官网重复的内联 SVG favicon 已移除；社交分享图、Chrome Web Store 素材与 README / 官网截图通过 `build_social_preview_assets.py`、`capture_chrome_webstore_ui.py --refresh-docs` 和既有构建脚本确定性重建。 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 与 Linux.do 另有只读插件任务源；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / V2EX 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 通过插件任务源接入初始化 saved/upvoted/subscribed 信号和 discovery search/hot/subreddit/related；V2EX 普通页面只采集被动阅读行为，任务页由独立 dispatcher 执行四个只读 bootstrap scope；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
+| 初始化拒绝原因 | ✅ | popup 的首次 / 重新初始化通过 `describeInitStartError` 优先展示后端 `detail`；只接受非空字符串并截到 2000 字符，以纯文本呈现。无详情的 `no_profile_signal_sources` 使用平台中性提示，不把 Instagram / Linux.do / 微博误说成 Bangumi；账号准入仍由后端决定。 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 内容库 / 画像 / 对话四个一级 tab；内容库内用「稍后再看 / 收藏 / 历史记录」三个语义子 tab，兼容旧 `?tab=watchLater|favorites|history` 入口。历史按点开、出现未点和最近移除三组分页读取 30 天本地事实，使用 opaque cursor 续页；同一内容的多个移除 context 同卡显示，收藏和稍后再看可独立恢复，封面 lazy + low-priority 走既有代理缓存。历史读取有 12 秒截止时间；续页失败保留已有卡片并显示可访问的重试提示，坏封面显示 SVG fallback。顶部功能区提供「手机版」入口（v0.3.154 起为手机图形 + 「手机版」文字标签，与相邻图标同款白底样式），按当前插件后端地址和 HTTP/HTTPS scheme 生成 `/m/` 扫码链接；460px 以下窄宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会以同一 scheme 调用轻量端点 `GET /api/qr-info`（不触发 embedding readiness probe）并读取响应中的 `lan_ip` 字段，用局域网 IP 生成二维码，提示为 info 状态；后端优先返回 RFC1918 IPv4 并排除 `198.18.x.x` 等 VPN/TUN 地址，没有可用 IPv4 时回退 ULA / global IPv6，二维码生成器会把 IPv6 literal 包进 `[]`；移动 Web 推荐页首屏先渲染 `/api/recommendations`，再异步补 runtime status / activity / delight，慢请求不会让页面无限停在 loading；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；主聊天与移动/桌面 Web 共用 `session=popup&scope=chat`，聊天 Tab 可见且在线时约每 2.5 秒增量刷新历史，内容未变化不重绘，阅读旧消息时保留滚动位置；底部「最近发生的事」活动栏在四个一级 Tab 始终可见，聊天记录区在剩余空间内独立滚动，输入框固定在聊天区底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
 | Durable 对话失败展示 | ✅ | side panel 的主聊天在 `turn.status === "failed"` 时优先渲染后端持久化的安全 `turn.error`，不把历史遗留 `turn.reply` 误当成功；惊喜/探针内联 turn 只有 `completed` 才显示成功并移除已处理探针，`failed` 显示 `turn.error`、恢复 handled/按钮状态并保留卡片供重试。 |
 | Issue #147 聊聊口味 Markdown 渲染 | ✅ | 主聊天、惊喜推荐和兴趣/避雷探针内嵌聊天复用 `web/shared/dialogue-confirmation.js` 的安全 Markdown renderer；popup、桌面 Web、移动 Web 的 AI 回复支持加粗、斜体、标题、列表、代码块、引用和 `http(s)` 链接，原始 HTML / `javascript:` 等不安全内容不会进入 DOM，用户消息仍按纯文本展示。 |
@@ -111,6 +113,8 @@
 | 对话历史自动定位 | ✅ | `popup/popup.js` 的 `scrollChatMessagesToBottom()` 统一处理聊天历史滚动：历史 hydrate、追加用户/助手消息、thinking 占位替换，以及从其他 tab 切回「对话」时都会把 `.chat-messages` 滚到最新 turn；切 tab 场景额外用下一帧滚动覆盖 hidden 容器恢复布局后的高度变化 |
 
 ### 初始化防假卡死反馈
+
+初始化已结束但首轮 discovery 失败时，popup 消费 runtime-status 的 `discovery_failure_message`，显示「内容发现未完成」、画像已保存及检查来源连接后重试内容发现的下一步，不把初始化留下的行为信号计数当作「正在补货」。正常空池、真实运行中、失败、后续成功与已有推荐分别渲染；pool 进展与推荐空态保持同一语义，失败摘要标注「补货状态」而非「最近主题/现在在忙」。桌面和移动 Web 同样保留该字段，刷新流事件会立即切换运行/失败/恢复状态，而不是等待旧错误提示自然消失；未实际执行的刷新不得清除首轮失败。Instagram 手动恢复使用 `openbiliclaw discover --source instagram --force`；不承诺「换一批」会强制重跑 Instagram 任务。
 
 popup 对 init-status / start / cancel 分别使用 45s / 60s / 15s deadline，并在 run 活跃时显示取消按钮。`popup-init-control.js` 分开跟踪 `last_heartbeat_at` 与 `progress_sequence/last_progress_at`：后台 owner 在线但当前步骤尚无结果时明确说明仍在等待，heartbeat 也停止才提示可能断开。`mode=indeterminate` 使用流动条 + 已用时，不显示虚假百分比；轮询失败保留最后进度并展示连接异常。`running` 优先于 `initialized`，阶段 3 画像已保存、阶段 4 尚未结束时不会提前跳完成页。
 
@@ -494,21 +498,53 @@ CLI 入口：
 
 ### Instagram 任务桥
 
+匿名 creator 还接受已实际观察的 `ScheduledServerJS.handle → __bbox.require → RelayPrefetchedStreamCache.next → __bbox.result.data.xig_user_by_username` 原生 SSR。只读取这条白名单包装（不执行模块表达式），要求路径/username、数字账号/媒体作者一致、明确 `is_private=false`。身份优先用正整数 `pk`，仅缺失时回退 `id`；真实 Relay 的两字段可能是不同命名空间，不要求彼此相同。无效 `pk` 不得靠 `id` 放行；作者不匹配、未知/私密、viewer、建议账号或其他模块不能提供公开证明。已观察的同路径无效/未知/私密状态会撤销缓存证明。扫描有4层、256模块和16个profile上限，截断时拒绝复用旧证明；Cookie/原始SSR不跨桥。
+
+profile 与 media author 共用严格用户主键校验，不接受复合媒体 ID、小数或不安全数字；只比较同字段身份。两侧都有 `pk` 时必须一致，不能靠相同备用 `id` 掩盖冲突；已证明的 `id→pk` 对应可归一 canonical author。一个 payload 的所有 matching profile 都必须明确公开且身份一致；同账号的弱证明仅合并，不丢失已知 `pk`。SSR 扫描禁止重入，最多初扫加一次补扫，兼容媒体先到而不会因强弱证明交替无限递归。
+
+仅“本响应没有profile证明”允许复用同页缓存；新鲜匹配profile的未知/冲突/私密证据，以及扫描深度/模块/参数/profile超限截断，均撤销旧证明并以 `creator_not_public` 失败关闭。不能把截断前的公开记录或旧缓存覆盖后来的未知/私密状态；topic解析不继承creator专属的截断失败。
+
+公开 discovery 的首屏 hydration 不消耗分页预算：首次常规等待后，最多再被动等待 20 秒有效 envelope/明确空态/风险终态，每 500ms 请求已有 MAIN replay，不主动重放上游、不滚动或续 idle。无响应仍 failed；达到最后允许页数后不再触发多余滚动。Chrome 单页任务约 3 秒过早退出、普通页稍后出现内容的实机反例及迟到响应/429/无响应红绿测试见验收台账。
+
+2026-10-03：执行器导出 `INSTAGRAM_API_REQUEST_TIMEOUT_MS=20000` 供 dispatcher 共用。`pacedFetch.waitForTurn()` 在请求计时器启动前等待，正常 30 秒限速不再提前 abort；网络与响应体仍受原 20 秒上限保护。bootstrap idle 窗口为 `max(90s, 4*interval + 3*20s + 5s)`，只由接受的 durable progress 推进，绝对期限仍为 12 分钟。非空 Likes 连续 3 次无新增保留 rows/`complete=false` 并报 `progress_stalled`，出现新增则重置计数，不把停滞误报为空或完整末页。周期 poll 失去共享锁后另建 30 秒 alarm，以免所有来源的分钟 alarm 重合时反复饿死；重试仍经同一 recovery、权限、互斥与原子 claim。
+
+2026-09-28：bootstrap tab 改为原生 Likes activity 页。身份由账户表单用户名与新鲜首页 `PolarisViewer` 双 ID 验证；Likes 被动观察三个只读 Bloks appid，saved/following 继续 GET。新增纯数据解析 `parseInstagramViewer` / `parseInstagramLikedBloks`，不执行 Bloks 动作、不重放其 POST。MAIN tap 补 `/graphql/query`，仅输出白名单媒体和标准错误。非空 Likes 快照缺可靠末页证据，始终 cap/page-cap partial；严格原生空状态才 complete。
+
 Instagram 普通页面不启动通用 behavior collector。只有带稳定 task marker、由 dispatcher 创建并绑定的 tab 安装 executor；sender、tab ID 与 current task 任一不匹配时消息被拒绝。任务支持 `discover`（`topic` / `creator`）和 `bootstrap_events`（`instagram_liked` / `instagram_saved` / `instagram_following`）。
 
-dispatcher 采用 durable MV3 协议：service worker 启动先恢复 session state；确认扩展 capability 后先取得跨来源 mutex，再 GET `next-task`，避免已 claim row 因别的平台占用 runner 而滞留。task/tab/progress、idle/absolute deadline、accepted rows 与精确序列化的 pending result 保存在 `chrome.storage.session`；只有 `task-result` 返回 2xx 才清 outbox 和关闭自建 tab。alarm、runtime wake 和 worker restart 都复用同一 payload，不生成第二份 final。
+dispatcher 采用 durable 协议：service worker 启动先从 `chrome.storage.local` 恢复有界 task/tab/progress、deadline、accepted rows 与精确序列化的 pending result，兼容单向迁移旧 session 记录；确认 capability 后先取得跨来源 mutex，再 GET `next-task`。`task-result` 返回 2xx ACK 或明确终态拒绝才清 outbox 和关闭自建 tab。alarm、worker recycle、完整扩展/浏览器重启均复用同一 claim/payload；原任务页不存在时返回 `recovery_tab_gone`，有效已读内容保留为 partial，不等待后端 25 分钟 lease 才释放。存储中没有 Cookie、请求头或原始响应。
+
+2026-09-30 收尾修复：bootstrap 首个已验证账号冻结到同一 durable task；恢复后的 identity/progress/final 出现不同数字 ID 时立即以 `instagram_account_changed` 收尾，不合并或投影跨账号 rows。saved/following 非空坏行不再变成 empty/complete；全部拒绝为 failed，部分拒绝保留有效 rows 为 partial。公开 creator HTTP 429/401/403 走标准错误桥并停止滚动；媒体隐私未知时必须等待当前 profile 的正向公开证据（数字 ID + username 双匹配），私密 profile 返回 `creator_not_public`。这些错误码与后端终态白名单及下一任务 lease 回归同步验证。
+
+2026-10-01 账号连续性加固：executor 在 saved/following 每个可继续处理的私有页请求前后、原生 Likes 观察前后，以及未先命中终态风险时的正常结果提交前复核冻结账号。Likes 的早到 replay buffer 必须绑定到已加载任务页的 `PolarisViewer` 与新鲜初始身份；加载文档证据缺失、不可解析或不一致时，在接纳 progress 前以 0 items 失败。任一复核点观察到新数字账号时（即使 username 未变），返回 `instagram_account_changed` 和新账号 ID，由 dispatcher 终结并隔离本任务已持久 rows，不以混合 partial 收尾。
+
+身份加固沿用原有停止与节流语义：已观察的 429 / challenge / 登录墙先于新增身份 GET 终止，当前页请求返回这些错误后也不做页后复核；身份与私有数据请求共用冻结的 `request_interval_ms`，没有新增无界重试，现有页/条上限和 absolute deadline 仍是总上限。这只防护检查点可观测的切号，不声称获得了原子上游快照；完全发生在两次复核之间的“切出再切回”仍不可见。
+
+清理 tab 前重新读取当前 URL 并确认 HTTPS Instagram host 与 task marker；浏览器重启重用了 tab ID，或用户在等待 ACK 时导航离开任务页，均不得关闭普通页面。没有 ACK 的 pending result 与未收尾 claim 都受这一保护。
+
+Instagram API 错误分类使用 `classifyInstagramApiEnvelope(status, contentType, payload, responseUrl?)`：`fetchApi` 传入最终响应 URL，真实 `/challenge/`、`/checkpoint/`、`/accounts/login/` 重定向仍立即失败；普通 HTML 的 bundle / metadata 关键字不得误报验证或登录。HTML 只采用剔除非可见代码后的明确诊断 / 表单证据，JSON 只读错误字段值而非字段名。2026-09-26 真站账户接口重定向为首页 HTML 的反例已锁入 bootstrap 回归；HTTP 429、真实验证和未知 HTML 仍不允许变成 empty。
 
 需要读取页面自身 GraphQL/fetch 响应时，isolated receiver 在 MAIN-world tap 之前于 `document_start` 安装。tap 只允许 Instagram 同源白名单 endpoint，立即裁剪为有界 media/user rows、opaque cursor 与 terminal evidence；不会 `postMessage` raw body、Cookie、Authorization、CSRF 或请求头。有界 replay buffer 覆盖“响应早于 executor listener”，超限数据直接丢弃并让任务 degraded。
 
+公开 creator 页的 SSR timeline 兼容 `edge_owner_to_timeline_media`、`xdt_api__v1__feed__user_timeline_graphql_connection` 与 2026-08-31 真站观察到的 `polaris_ordered_timeline_connection`，三者都必须同时具备合法 rows 才能成为 observed envelope。HTML 错误分类只把明确的 challenge/checkpoint/captcha/feedback-required 证据视为 challenge；登录表单中的普通 `required` 属性不是 challenge 证据，含 `/accounts/login/` 的页面按 `login_required` 终止，不能伪造成空结果。
+
+公开页 HTTP 200 软 404 通过专用标题 + 损坏链接正文共同确认，返回 `public_page_unavailable`；普通页面的登录导航或 caption 文本不足以构成失败。已有 rows 遇到页面级失败仍为 partial、不宣称 complete。2026-09-30 授权后，直接 popular/hashtag 任务页可被动读取自然返回的 top-SERP MediaGrid；只接纳明确公开作者的媒体，持久化 `authenticated_topic_observed`，不冒充匿名 envelope、不构造搜索请求。未知单元拒绝，80 项截断撤销 terminal evidence。
+
+popup 保存 Instagram 设置时同步发起原生权限请求，保留浏览器 user gesture；等待超过 30 秒则解除保存锁、保留未保存编辑并提示重试，迟到授权不续写配置。授权成功、拒绝和超时与后端配置保存是独立状态，不把超时当作保存成功。
+
 `cookie-sync.ts` 只把 `sessionid` 是否存在上报为 `logged_in` 布尔值；startup、cookie change、runtime sync request 和小时 alarm 均复用同一路径。个人任务必须再从同源 current-account 响应确认数字账号 ID。首个 challenge/429/HTML/login wall 立即停止相应 lane，保留已接受 rows；任务不自动登录/2FA、不输入 Instagram Search、不调用 like/save/follow/comment/message 写端点。
 
-Chrome 与 Firefox manifest 只增加 `*://*.instagram.com/*`，不增加 `<all_urls>`。build/asset verifier 必须覆盖 isolated content script、可选 MAIN-world tap、service worker entry 和两套输出目录。真实验收必须记录加载的是本 worktree 新构建；单纯 reload 旧安装不能当 provenance。
+2026-10-01：Instagram 自动心跳区分来源禁用/未授予权限与后端配置暂不可用。配置不可用时不读 Cookie，保留 1 分钟重试；后端恢复后重新检查启用状态，上传纯布尔登录提示，成功后恢复每小时刷新。明确禁用或权限缺失不延续快速重试。真实安装态已验证“后端停机→扩展重新加载→1 分钟 alarm→后端恢复→自动 credential 200→60 分钟 alarm”，未手动 verify 或改 Cookie。
+
+2026-09-30 的真实非空 Likes 回归补齐 Bloks 网格兼容：复合媒体 ID 复用 `instagramMediaIdentity`，只跳过明确的全空末行占位，区分媒体定义与 visibility/template 对 ID 的引用；有未解析引用时仍不能声称空集合。解析器不执行动作、不恢复 Unlike/Select 能力。为测试而由用户逐对象授权的浏览器点赞/收藏/关注属于独立样本准备，不代表扩展新增任何站内写能力。
+
+Chrome 与 Firefox manifest 只增加 `https://*.instagram.com/*`，不增加 `<all_urls>`。build/asset verifier 必须覆盖 isolated content script、可选 MAIN-world tap、service worker entry 和两套输出目录。真实验收必须记录加载的是本 worktree 新构建；单纯 reload 旧安装不能当 provenance。
 
 ### `popup/`
 
 `popup/` 目录当前承载 side panel 页面，已具备：
 
-- guided init 来源选择新增 Bangumi 与 V2EX：Bangumi 不要求浏览器登录，选中后显示公开用户名输入，并通过 `source_options.bangumi.username` 发送；V2EX 可填写公开用户名，也可留空由真实 V2EX 页面导航栏观察账号，并通过 `source_options.v2ex.username` 发送。Bangumi-only 空用户名在客户端提示，后端仍会权威拒绝；V2EX 任务页只读采集四个 scope。混合来源空用户名允许继续。popup 把输入草稿保存在页面 state，前置检查失败或 idle 面板重渲染不会丢失；显式清空会原样送到后端，不会回退旧配置用户名。
+- guided init 来源选择新增 Bangumi 与 V2EX：Bangumi 不要求浏览器登录，选中后显示公开用户名输入，并通过 `source_options.bangumi.username` 发送；V2EX 可填写公开用户名，也可留空由真实 V2EX 页面导航栏观察账号，并通过 `source_options.v2ex.username` 发送。Bangumi-only 空用户名不在客户端拦截，由后端按令牌、公开用户名和扩展观察身份决定准入；V2EX 任务页只读采集四个 scope。混合来源空用户名允许继续。popup 把输入草稿保存在页面 state，前置检查失败或 idle 面板重渲染不会丢失；显式清空会原样送到后端，不会回退旧配置用户名。
 
 - 后端连接状态检查：离线判定以 `/api/ping` 为准，顶部徽标区分绿色「已连接」、琥珀色「重连中」和红色「未连接」。`runtime-stream` 断开时先进入「重连中」并立即复检 `/api/ping`：HTTP 仍通则保留 API 可用状态并等待 WebSocket 自行重连，只有 ping 返回失败或抛错才进入「未连接」并启动 `popup-connection-poller.js` 每 1 秒重探测；HTTP 恢复后先回到「重连中」，流重新打开后才显示「已连接」。协调器使用 revision guard 忽略连接恢复后才返回的旧失败探活，主动切换后端地址关闭旧流也不会触发故障断线提示
 - 设置页的协议（HTTP / HTTPS）、后端地址（默认 `127.0.0.1`）和端口（默认 `8420`）由 `popup-backend-config.js` 一起写入 `chrome.storage.local`。局域网 / 远程地址保存前通过 `optional_host_permissions` 请求精确 origin；公网主机名和公网 IP 不允许 HTTP。官方 Docker 公网入口使用 `docker-compose.https.yml`：协议选 HTTPS、主机填公开 DNS 名称、端口填 443，并用默认关闭的 `ext-key` 设备密钥配对。popup、service worker、任务派发、cookie 同步和调试中继都在调用时解析当前 endpoint；变更后清除旧短会话并重连。远程认证使用 `obc_extension_device_key` 换取结构化 `obc_auth_session`，普通 HTTP 发 Bearer Header，只有 runtime WebSocket 和图片代理 URL 携带短会话 query。设置页的配对状态只以服务端 `/api/auth/status` 返回的 `authenticated` 为准；本地短会话的 `expires_at` 仅用于决定复用或换票，不得覆盖服务端的撤销或 epoch 失效判决。
@@ -551,6 +587,7 @@ Chrome 与 Firefox manifest 只增加 `*://*.instagram.com/*`，不增加 `<all_
 - 桌面 Web 运行时看板的账号同步异常提示使用主题前景色与状态边界，深色主题下不再出现低对比度、难以辨认的错误文案
 - 桌面 Web 惊喜推荐的知乎、Reddit 等文字卡使用主题表面色和主题前景色，classic / 深色主题不再把文字压在相近色渐变上；普通无封面文字卡也复用同一套可读性规则
 - popup 打开期间现在会建立 `/api/runtime-stream` websocket 连接，底部提示条和池子状态会跟着后端事件实时变化
+- popup 每次 runtime-stream 连上（含首次订阅）会补读一次 `/api/runtime-status`，弥合启动 HTTP 快照与 WS 订阅之间漏掉终态的窗口。补读只更新池子、空态或已有卡片的提示，不重拉或替换推荐列表；迟到快照受连接归属和状态 generation 保护，后续 refresh 生命周期事件、明确的故障字段、断连或切换后端会使旧快照失效。仅含数量的 pool 事件使用固定字段覆盖层保留更新的计数，同时让补读填上缺失的终态；不缓存或重放整条活动事件。普通心跳、活动通知和来源 task wake-up 不会误丢弃唯一补读。补读失败保持现有界面，实时流继续工作。
 - popup 底部提示区已升级成可展开动态卡：默认两行显示“现在在忙什么 / 最近一次关键变化”，点 `更多` 可以展开最近历史
 - 新增 `/api/activity-feed` 聚合接口，popup 会把认知更新、反馈记下了、换一批和补货结果收成同一块动态面板
 - “换一批 / 继续追加”现在优先直接消费 discovery pool 里预生成好的 `expression / topic_label`；换批只有在后端返回非空新批次时才替换当前卡片，空批次会保留正在看的推荐、停止本轮自动续页并复读 runtime 库存，避免“明明有库存却被清成空页”
@@ -627,7 +664,7 @@ npm run build
 - popup 设置页字段与 `/api/config` schema 的基础对齐
 - popup API durable chat turn：`startChatTurn()`、`fetchChatTurn()`、`fetchChatTurns()` 会分别调用 `/api/chat/turns`、`/api/chat/turns/{turn_id}` 和列表接口
 - `renderDurableChatTurn(turn)`：`completed` 渲染 `turn.reply`，`failed` 渲染安全 `turn.error`，字段缺失时才使用本地固定兜底文案
-- popup 连接状态稳定性：`popup-connection-poller.js` 覆盖 HTTP / runtime-stream 三态投影、失败探活才离线、旧探活 revision guard、`/api/ping` 失败后持续重探测与恢复回调；`popup-stream.js` 另覆盖主动关闭不会误触发断线通知
+- popup 连接状态稳定性：`popup-connection-poller.js` 覆盖 HTTP / runtime-stream 三态投影、失败探活才离线、旧探活 revision guard、`/api/ping` 失败后持续重探测与恢复回调；`popup-stream.js` 另覆盖主动关闭不会误触发断线通知，以及首次订阅补读、迟到快照 / 旧连接隔离、控制帧保留补读和补读失败后的流可用性。`popup-stream-status-wiring.test.ts` 执行真实 popup 连接回调与 stream client，在网络 / 渲染边界验证空态终态和已有推荐 list / card identity 保留；安装版 DOM 与启动竞态仍需真实浏览器验收。
 - popup 聊天布局：历史 hydrate 与切回聊天 tab 都会触发滚到底部，避免 hidden view 恢复后停在旧消息
 - `dist/` 运行时脚本可被 Chrome 直接加载
 

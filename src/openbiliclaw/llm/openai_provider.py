@@ -100,6 +100,9 @@ class OpenAIProvider(LLMProvider):
         self._timeout = timeout
         self._embedding_output_dimensionality = max(0, int(embedding_output_dimensionality or 0))
         self._reasoning_effort = reasoning_effort.strip()
+        # Volatile, successful wire adaptations only. Provider replacement
+        # clears these; model and reasoning/JSON modes must never share hints.
+        self._compatibility_hints: dict[tuple[str, str, bool, bool], tuple[bool, bool]] = {}
         # Overseas routing policy: custom injects a proxy, direct injects a
         # proxy-env-immune client, and system leaves SDK construction untouched.
         self._proxy = proxy.strip()
@@ -143,13 +146,22 @@ class OpenAIProvider(LLMProvider):
             )
         effective_model = (model or "").strip() or self._model
         effective_reasoning_effort = self._effective_reasoning_effort(reasoning_effort)
+        hint_key = (
+            effective_model,
+            effective_reasoning_effort,
+            reasoning_effort is not None,
+            json_mode,
+        )
+        omit_format, disable_thinking = self._compatibility_hints.get(hint_key, (False, False))
+        learned_omit_format = False
+        learned_disable_thinking = False
         kwargs: dict[str, Any] = {
             "model": effective_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if json_mode:
+        if json_mode and not omit_format:
             fmt = self._json_response_format()
             if fmt is not None:
                 kwargs["response_format"] = fmt
@@ -163,12 +175,15 @@ class OpenAIProvider(LLMProvider):
         if openai_effort is not None:
             kwargs["reasoning_effort"] = openai_effort
         extra_body = self._extra_body(reasoning_effort=effective_reasoning_effort)
+        if disable_thinking:
+            extra_body = {**(extra_body or {}), "thinking": {"type": "disabled"}}
         if extra_body:
             kwargs["extra_body"] = extra_body
 
         try:
             response = await self._request_with_retry(**kwargs)
         except LLMProviderError as exc:
+            self._compatibility_hints.pop(hint_key, None)
             # Retry at most once: after replacement kwargs["response_format"]
             # is no longer json_object, so _uses_json_object returns False.
             if (
@@ -199,6 +214,7 @@ class OpenAIProvider(LLMProvider):
                     kwargs["response_format"].get("type", "?"),
                 )
                 kwargs.pop("response_format")
+                learned_omit_format = True
                 response = await self._request_with_retry(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
@@ -208,6 +224,7 @@ class OpenAIProvider(LLMProvider):
                 and reasoning_effort is not None
                 and not effective_reasoning_effort
                 and self._reasoning_like_content(getattr(choice, "message", None))
+                and kwargs.get("extra_body", {}).get("thinking") != {"type": "disabled"}
             ):
                 # Generic OpenAI-compatible gateways do not share one
                 # portable switch for disabling thinking. Omitting
@@ -223,11 +240,33 @@ class OpenAIProvider(LLMProvider):
                 retry_extra_body = dict(kwargs.get("extra_body") or {})
                 retry_extra_body["thinking"] = {"type": "disabled"}
                 kwargs["extra_body"] = retry_extra_body
+                learned_disable_thinking = True
                 response = await self._request_with_retry(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
             if not content.strip():
+                self._compatibility_hints.pop(hint_key, None)
                 raise self._empty_content_error(choice)
+
+        if self._provider_name == "openai_compatible" and (
+            learned_omit_format or learned_disable_thinking
+        ):
+            valid = True
+            if json_mode:
+                try:
+                    valid = isinstance(json.loads(content), (dict, list))
+                except (TypeError, ValueError):
+                    valid = False
+            if valid:
+                if (
+                    len(self._compatibility_hints) >= 32
+                    and hint_key not in self._compatibility_hints
+                ):
+                    self._compatibility_hints.pop(next(iter(self._compatibility_hints)))
+                self._compatibility_hints[hint_key] = (
+                    omit_format or learned_omit_format,
+                    disable_thinking or learned_disable_thinking,
+                )
 
         usage = None
         if response.usage:

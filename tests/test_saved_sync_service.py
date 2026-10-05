@@ -954,7 +954,9 @@ async def test_item_heartbeat_exception_detaches_with_retrying_lease_and_late_re
     release.set()
     for _ in range(100):
         result = service.get_sync_task(task.task_id)
-        if result.items and result.items[0].status == "synced":
+        # Persisting the terminal result precedes the watchdog's done callback.
+        # Wait for both observable completion and cleanup, not just the DB row.
+        if result.items and result.items[0].status == "synced" and not service._detached_attempts:
             break
         await asyncio.sleep(0.01)
     assert result.items[0].status == "synced"

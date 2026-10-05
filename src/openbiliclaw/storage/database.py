@@ -9410,6 +9410,27 @@ class Database:
         row = cursor.fetchone()
         return int(row["count"]) if row is not None else 0
 
+    def has_current_recommendation_supply(self) -> bool:
+        """Whether recommendation history still points at usable, unretired content."""
+        self._ensure_fresh_read()
+        admission_sql, admission_params = self._pool_admission_sql(
+            score_expr="COALESCE(r.confidence, 0.0)", source_expr="c.source"
+        )
+        row = self.conn.execute(
+            f"""
+            SELECT 1
+            FROM recommendations AS r
+            JOIN content_cache AS c ON c.item_key = r.item_key
+            WHERE COALESCE(c.pool_status, 'fresh') IN ('fresh', 'shown')
+              AND TRIM(COALESCE(c.title, '')) != ''
+              AND TRIM(COALESCE(r.expression, '')) != ''
+              AND {admission_sql}
+            LIMIT 1
+            """,
+            admission_params,
+        ).fetchone()
+        return row is not None
+
     def count_unread_recommendations(self) -> int:
         """Return the number of unpresented recommendations."""
         self._ensure_fresh_read()

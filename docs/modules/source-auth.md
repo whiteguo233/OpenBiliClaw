@@ -255,10 +255,10 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 
 Instagram 使用现有 capability-specific contract，不新增第二套鉴权模型：
 
-- `discover` 为 `anonymous`，因此没有登录心跳也可排队公开 topic / creator 任务；扩展在线属于 transport readiness，不会被伪装成持有账号凭据。
+- `discover` 为 `optional-credential`：没有登录心跳仍可排队匿名 topic / creator 任务；已有会话时允许被动读取直接 topic 页返回的公开媒体。扩展在线属于 transport readiness，不会被伪装成持有账号凭据。
 - `profile` / `bootstrap` 为 `login-required`，只在扩展最近观察到 `sessionid` 存在时进入可执行状态；心跳 payload 只有 `logged_in: bool`。
 - `cookie-sync` 为 optional readiness。`sessionid` value、`csrftoken` 和 `ds_user_id` 不进入 API、数据库或日志。
-- 个人任务仍必须由同源 `accounts/current_user` 响应正面给出数字账号 ID；心跳不是 identity evidence。账号 ID 只用于派生不可逆 account key 和隔离事件。
+- 个人任务要求同源账户表单用户名与新鲜 SSR `PolarisViewer.data.username` 一致，且外层 `id` 与 `data.id` 是同一非零数字串；匿名/冲突/缺失拒绝。心跳不是 identity evidence，账号 ID 仅用于 account key 和隔离事件。
 
 凭据表单使用 extension-only `login_state` 描述符。验证动作是 `browser_heartbeat`，只验证最近的本地观察证据，不现场请求 Instagram。登录墙、challenge 或任务失败更新任务/发现健康状态，不能反向把匿名 discover 标成需要登录。
 

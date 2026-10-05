@@ -18,6 +18,12 @@ Linux.do bootstrap 的三个 scope 有部分失败时以 `degraded` 回传：已
 
 ## 共享流水线 `cli.run_guided_init`
 
+### Instagram 初始化的来源边界
+
+仅选择 Instagram 时，阶段 1 将三个 scope 的有效原始事件传入同一画像流水线；部分采集保留有效事件并报告 `instagram_degraded`，零信号仍为 `empty_signals`。阶段 4 必须使用这次选择的来源：API 将 effective sources 传给 `ContinuousRefreshController.run_init_backfill`，CLI 将 `selected_sources` 传给 `_run_init_discovery_backfill_async`，两者都使用正式 Instagram topic/creator producer → 共享 candidate pipeline → 推荐表达与 canonical pool 检查，不执行 B 站默认发现策略。
+
+这一手动入口可在 scheduler 关闭时构造 Instagram producer，但不启用定时调度或增量拉取。API 运行期间新入队以及恢复认领的 discover task 都在浏览器领取前登记到当前 init run，旧后台任务仍受 init admission gate 阻挡。阶段 4 在同一个 refresh lock 内调用 `drain_pending(..., flush=True)`，只跳过小批次的聚合等待，不跳过评分阈值、来源配额、candidate claim 或调用方批次上限。无合格推荐仍不能宣称首轮内容池就绪。未选择 Instagram 的旧初始化路径保持原行为，本变更不代表其它来源已全部完成来源感知补池。
+
 | 项 | 说明 |
 |---|---|
 | 位置 | `src/openbiliclaw/cli.py` |
@@ -76,6 +82,10 @@ v0.3.157+：`/api/embedding/repair` 是有界的「诊断 → 修复 → 重新�
 `_init_wrapper`（`api/app.py`）是某次 API run 的**唯一**状态 / 事件写者：`mark_running` → `run_guided_init(coordinator=...)` → `complete(partial_success=discovery_partial or dy_degraded or linuxdo_degraded, reason=..., detail=...)`。只有抖音降级时 reason 为 `douyin_degraded`，只有 Linux.do 降级时为 `linuxdo_degraded`；若发现阶段也降级则保留 discovery reason，并把账号来源的不完整明细合入 detail；抖音和 Linux.do 同时降级且发现正常时维持 `douyin_degraded` 主 reason、同时在 detail 保留两源事实。`CancelledError` → shield `cancel`，`GuidedInitError` → `fail(reason, detail=exc.message)`，其它异常 → `fail("internal_error", detail=_init_crash_detail(exc))`（`类名: 首行消息`，截断 300 字——v0.3.156+ 失败原因可从 UI 报告，无需翻服务端日志）。v0.3.162+ 的自动拉取发生在启动端点把任务交给 wrapper 之前：自愈诊断、调度失败都会回落原 409 主路径，调度失败用 `mark_pull_done(False, error)` 回滚拉取态而不伪造 Ollama phase；因此 wrapper 的单写者契约不变。三个 path 都在 `auth.py` 公共集 + 降级白名单。v0.3.162+：wrapper 在 `mark_running` 后启动一个 30s 周期的 heartbeat task（`_run_init_heartbeat` → `coordinator.touch(run_id)`，touch 失败吞掉 log WARNING、绝不杀 init），`finally` 里取消——长请求等待期间 `last_activity` 保持 ≤30s 新鲜（前端 90s 停滞阈值 = 心跳周期 × 3，改周期须同步改阈值）；Issue #113 收口后心跳不再无限续命，阶段 2 按分片并发波次使用动态上限，阶段 3/4 分别在 360/600 秒进入失败或部分成功终态。
 
 wrapper 的任务句柄另有 done callback 审计终态；若任务已经退出而 DB 仍是 `starting/running`，协调器会补写 `interrupted` 并发布失败事件。30 秒 heartbeat 只刷新 owner lease，阶段 1/2 的 elapsed tick 同样标记为非实质更新；它们都不会伪造 `last_progress_at`。
+
+### 初始化启动失败的跨界面提示
+
+popup、setup 和桌面 Web 的 `POST /api/init` 失败反馈优先使用后端可操作的 `detail`；首次与重新初始化入口一致。只接受非空字符串，去掉首尾空白并限制为 2000 字符，以纯文本显示，不解释其中的 HTML。缺失或结构化详情回落到错误码文案；`no_profile_signal_sources` 是多来源共享错误码，兜底不再硬编码 Bangumi。Bangumi 的令牌 / 公开用户名 / 扩展观察身份提示仍由后端具体详情提供；此改动不改变账号解析、来源选择或准入条件。
 
 ## 重新初始化（force 重建）
 

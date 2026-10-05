@@ -6,6 +6,7 @@ import {
   requestInstagramResponseReplay,
 } from "./response-buffer.ts";
 import { isInstagramTaskTabLocation } from "./task-mode.ts";
+import { parseInstagramViewer } from "./viewer.ts";
 import {
   instagramCanonicalUrl,
   instagramMediaIdentity,
@@ -88,7 +89,9 @@ export interface InstagramTaskProgress {
   debug?: Record<string, unknown>;
 }
 
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type FetchLike = ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) & {
+  waitForTurn?: () => Promise<void>;
+};
 
 interface ApiEnvelope {
   kind:
@@ -109,6 +112,13 @@ interface LaneOutcome {
   complete: boolean;
   accepted: boolean;
   error?: string;
+  identity_failure?: IdentityVerificationFailure;
+}
+
+interface IdentityVerificationFailure {
+  error: string;
+  accountId?: string;
+  changed: boolean;
 }
 
 const PRIVATE_HEADERS = {
@@ -119,8 +129,12 @@ const PRIVATE_HEADERS = {
 const API_ROOT = "https://www.instagram.com";
 const MAX_WIRE_ITEMS = 10_000;
 const LIKED_RECENT_LIMIT = 300;
+// 2026-10-03 live cap=20 repeated the same two Likes for all 20 scroll
+// observations (43 identity reads). Three consecutive unchanged observations
+// after accepted data bound this best-effort lane; this is NOT terminal proof.
+const LIKED_STALLED_OBSERVATIONS = 3;
 const API_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
-const API_REQUEST_TIMEOUT_MS = 20_000;
+export const INSTAGRAM_API_REQUEST_TIMEOUT_MS = 20_000;
 const KNOWN_SCOPES: readonly InstagramBootstrapScope[] = [
   "instagram_liked",
   "instagram_saved",
@@ -141,6 +155,23 @@ function text(value: unknown, limit = 6000): string {
 function integer(value: unknown, fallback: number, maximum = MAX_WIRE_ITEMS): number {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(maximum, parsed) : fallback;
+}
+
+function pacedFetch(
+  fetcher: FetchLike,
+  intervalMs: number,
+  sleeper: (milliseconds: number) => Promise<void>,
+): FetchLike {
+  let lastStartedAt: number | null = null;
+  const paced: FetchLike = (input, init) => fetcher(input, init);
+  paced.waitForTurn = async () => {
+    if (lastStartedAt !== null) {
+      const remaining = intervalMs - (Date.now() - lastStartedAt);
+      if (remaining > 0) await sleeper(remaining);
+    }
+    lastStartedAt = Date.now();
+  };
+  return paced;
 }
 
 function imageUrl(media: Record<string, unknown>): string {
@@ -233,11 +264,10 @@ export function instagramPaginatedUrl(path: string, cursor?: string): string {
 function payloadFailureKind(payload: Record<string, unknown>): ApiEnvelope["kind"] | null {
   const status = text(payload.status, 64).toLowerCase();
   if (status !== "fail" && status !== "error") return null;
-  const diagnostic = JSON.stringify({
-    message: payload.message,
-    error_type: payload.error_type,
-    checkpoint_url: payload.checkpoint_url,
-  }).toLowerCase();
+  // Field names (notably a null checkpoint_url) are not failure evidence.
+  const diagnostic = [payload.message, payload.error_type, payload.checkpoint_url]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ").toLowerCase();
   if (/rate.limit|too.many|wait.a.few.minutes|please.wait/.test(diagnostic)) {
     return "rate_limited";
   }
@@ -252,17 +282,42 @@ export function classifyInstagramApiEnvelope(
   status: number,
   contentType: string,
   payload: unknown,
+  responseUrl = "",
 ): ApiEnvelope {
   if (status === 429) return { kind: "rate_limited", error: "rate_limited" };
+  // A SPA challenge/login shell may have no visible text. The final response
+  // route is stronger evidence than strings inside its application bundle.
+  try {
+    const url = new URL(responseUrl);
+    if (url.protocol === "https:" && isInstagramHost(url.hostname)) {
+      if (/^\/(?:challenge|checkpoint)(?:\/|$)/i.test(url.pathname)) {
+        return { kind: "challenge", error: "challenge_required" };
+      }
+      if (/^\/accounts\/login(?:\/|$)/i.test(url.pathname)) {
+        return { kind: "login_required", error: "login_required" };
+      }
+    }
+  } catch {
+    // Synthetic/legacy Response values can omit URL; classify their payload.
+  }
   if (/text\/html/i.test(contentType)) {
-    const html = typeof payload === "string" ? payload.toLowerCase().slice(0, 100_000) : "";
-    if (/rate.limit|too.many|wait.a.few.minutes|please.wait/.test(html)) {
+    // Homepage/login bundles contain challenge, captcha and login route names
+    // even when no such page is displayed. Only inspect visible markup here.
+    const html = typeof payload === "string" ? payload.toLowerCase()
+      .replace(/<!--[^]*?-->/g, " ")
+      .replace(/<(script|style|template|noscript)\b[^>]*>[^]*?<\/\1\s*>/g, " ")
+      .slice(0, 100_000) : "";
+    const visible = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const challengeForm = /<form\b[^>]*\baction\s*=\s*["'][^"']*\/(?:challenge|checkpoint)(?:[/?#"'])/.test(html);
+    const loginForm = /<form\b[^>]*\baction\s*=\s*["'][^"']*\/accounts\/login(?:[/?#"'])/.test(html)
+      || /<input\b[^>]*\btype\s*=\s*["']password["']/.test(html);
+    if (/rate.limit|too.many.requests|wait.a.few.minutes/.test(visible)) {
       return { kind: "rate_limited", error: "rate_limited" };
     }
-    if (/challenge|required|checkpoint|captcha/.test(html)) {
+    if (challengeForm || /challenge[_\s-]+required|checkpoint[_\s-]+required|captcha[_\s-]+required|feedback[_\s-]+required/.test(visible)) {
       return { kind: "challenge", error: "challenge_required" };
     }
-    if (status === 401 || status === 403 || /login|log in|accounts\/login|session expired/.test(html)) {
+    if (status === 401 || status === 403 || loginForm || /session expired/.test(visible)) {
       return { kind: "login_required", error: "login_required" };
     }
     return { kind: "html_response", error: "html_response" };
@@ -308,8 +363,9 @@ async function boundedResponseText(response: Response, maximumBytes: number): Pr
 }
 
 async function fetchApi(url: string, fetcher: FetchLike): Promise<ApiEnvelope> {
+  await fetcher.waitForTurn?.();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_API_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetcher(url, {
       method: "GET",
@@ -326,11 +382,11 @@ async function fetchApi(url: string, fetcher: FetchLike): Promise<ApiEnvelope> {
     const body = await boundedResponseText(response, API_RESPONSE_LIMIT_BYTES);
     if (body === null) return { kind: "invalid_json", error: "response_too_large" };
     if (/text\/html/i.test(contentType)) {
-      return classifyInstagramApiEnvelope(response.status, contentType, body);
+      return classifyInstagramApiEnvelope(response.status, contentType, body, response.url);
     }
     if (!/(?:application\/json|text\/javascript)/i.test(contentType)) {
       if ([401, 403, 429].includes(response.status)) {
-        return classifyInstagramApiEnvelope(response.status, contentType, {});
+        return classifyInstagramApiEnvelope(response.status, contentType, {}, response.url);
       }
       return { kind: "invalid_json", error: "unexpected_mime" };
     }
@@ -340,7 +396,7 @@ async function fetchApi(url: string, fetcher: FetchLike): Promise<ApiEnvelope> {
     } catch {
       return { kind: "invalid_json", error: "invalid_json" };
     }
-    return classifyInstagramApiEnvelope(response.status, contentType, payload);
+    return classifyInstagramApiEnvelope(response.status, contentType, payload, response.url);
   } catch {
     return controller.signal.aborted
       ? { kind: "network_error", error: "request_timeout" }
@@ -368,7 +424,6 @@ async function postProgress(progress: InstagramTaskProgress): Promise<boolean> {
 }
 
 function lanePath(scope: InstagramBootstrapScope, accountId: string): string {
-  if (scope === "instagram_liked") return "/api/v1/feed/liked/";
   if (scope === "instagram_saved") return "/api/v1/feed/saved/posts/";
   return `/api/v1/friendships/${encodeURIComponent(accountId)}/following/`;
 }
@@ -379,22 +434,42 @@ async function executeLane(
   accountId: string,
   fetcher: FetchLike,
   sleeper: (milliseconds: number) => Promise<void>,
+  verifyIdentity: () => Promise<IdentityVerificationFailure | null>,
 ): Promise<LaneOutcome> {
-  const requestedLimit = integer(task.max_items_per_scope, 300);
-  const limit = scope === "instagram_liked"
-    ? Math.min(LIKED_RECENT_LIMIT, requestedLimit)
-    : requestedLimit;
+  if (scope === "instagram_liked") {
+    return executeLikedLane(task, accountId, sleeper, verifyIdentity);
+  }
+  const limit = integer(task.max_items_per_scope, 300);
   const maxPages = integer(task.max_pages_per_scope, 20, 100);
-  const requestIntervalMs = integer(task.request_interval_ms, 3_000, 30_000);
   const items = new Map<string, InstagramWireItem>();
   const cursors = new Set<string>();
   let cursor = "";
   let accepted = false;
   for (let page = 1; page <= maxPages; page += 1) {
+    const beforeRequest = await verifyIdentity();
+    if (beforeRequest) {
+      return {
+        items: [...items.values()],
+        complete: false,
+        accepted,
+        error: beforeRequest.error,
+        identity_failure: beforeRequest,
+      };
+    }
     const envelope = await fetchApi(instagramPaginatedUrl(lanePath(scope, accountId), cursor), fetcher);
     if (envelope.kind !== "ok" || !envelope.payload) {
       const error = envelope.kind === "challenge" ? "challenge_required" : envelope.error || envelope.kind;
       return { items: [...items.values()], complete: false, accepted, error };
+    }
+    const afterRequest = await verifyIdentity();
+    if (afterRequest) {
+      return {
+        items: [...items.values()],
+        complete: false,
+        accepted,
+        error: afterRequest.error,
+        identity_failure: afterRequest,
+      };
     }
     const rawRows = scope === "instagram_following"
       ? envelope.payload.users
@@ -402,15 +477,17 @@ async function executeLane(
     if (!Array.isArray(rawRows)) {
       return { items: [...items.values()], complete: false, accepted, error: "items_envelope_missing" };
     }
-    accepted = true;
+    let rejected = 0;
     for (const row of rawRows) {
       const item = scope === "instagram_following"
         ? normalizeInstagramFollowingUser(row)
         : normalizeInstagramMedia(row, scope);
-      if (!item || items.has(item.id)) continue;
+      if (!item) { rejected += 1; continue; }
+      if (items.has(item.id)) continue;
       if (items.size >= limit) break;
       items.set(item.id, item);
     }
+    accepted ||= rawRows.length === 0 || items.size > 0;
     const next = text(envelope.payload.next_max_id || envelope.payload.max_id, 1024);
     const more = envelope.payload.more_available;
     const terminal = more === false || (!next && more !== true);
@@ -424,10 +501,10 @@ async function executeLane(
       item_count: items.size,
       items: [...items.values()],
       scope_counts: { [scope]: items.size },
-      scope_complete: { [scope]: terminal && !capped },
+      scope_complete: { [scope]: terminal && !capped && rejected === 0 },
       account_id: accountId,
       ...(next ? { cursor: next } : {}),
-      accepted: true,
+      accepted,
     });
     if (!progressPersisted) {
       return {
@@ -436,6 +513,10 @@ async function executeLane(
         accepted: true,
         error: "progress_persistence_unavailable",
       };
+    }
+    if (rejected) {
+      return { items: [...items.values()], complete: false, accepted,
+        error: items.size ? "response_schema_degraded" : "response_rows_rejected" };
     }
     if (capped) {
       return {
@@ -454,9 +535,116 @@ async function executeLane(
     }
     cursors.add(next);
     cursor = next;
-    await sleeper(Math.max(1_000, requestIntervalMs));
   }
   return { items: [...items.values()], complete: false, accepted, error: "page_cap_reached" };
+}
+
+async function executeLikedLane(
+  task: InstagramBootstrapTask,
+  accountId: string,
+  sleeper: (milliseconds: number) => Promise<void>,
+  verifyIdentity: () => Promise<IdentityVerificationFailure | null>,
+): Promise<LaneOutcome> {
+  if (typeof window === "undefined" || !isInstagramTaskTabLocation()
+    || window.location.pathname.replace(/\/$/, "") !== "/your_activity/interactions/likes") {
+    return { items: [], complete: false, accepted: false, error: "response_envelope_unobserved" };
+  }
+  const limit = Math.min(LIKED_RECENT_LIMIT, integer(task.max_items_per_scope, 300));
+  const items = new Map<string, InstagramWireItem>();
+  let accepted = false;
+  let stalledObservations = 0;
+  for (let page = 1; page <= integer(task.max_pages_per_scope, 20, 100); page++) {
+    const previousCount = items.size;
+    const knownFailure = readInstagramResponseBuffer()
+      .filter(entry => entry.route === "liked")
+      .find(entry => entry.error)?.error;
+    if (knownFailure) {
+      return { items: [...items.values()], complete: false, accepted, error: knownFailure };
+    }
+    const beforeObservation = await verifyIdentity();
+    if (beforeObservation) {
+      return {
+        items: [...items.values()],
+        complete: false,
+        accepted,
+        error: beforeObservation.error,
+        identity_failure: beforeObservation,
+      };
+    }
+    requestInstagramResponseReplay();
+    await sleeper(page === 1 ? 1500 : Math.max(1000, integer(task.request_interval_ms, 3000, 30000)));
+    requestInstagramResponseReplay();
+    const envelopes = readInstagramResponseBuffer().filter(entry => entry.route === "liked");
+    const upstreamFailure = envelopes.find(entry => entry.error)?.error;
+    if (upstreamFailure) {
+      return { items: [...items.values()], complete: false, accepted, error: upstreamFailure };
+    }
+    const afterObservation = await verifyIdentity();
+    if (afterObservation) {
+      return {
+        items: [...items.values()],
+        complete: false,
+        accepted,
+        error: afterObservation.error,
+        identity_failure: afterObservation,
+      };
+    }
+    const valid = envelopes.filter(entry => entry.shape_valid === true);
+    accepted ||= valid.length > 0;
+    for (const envelope of valid) for (const item of envelope.items) {
+      if (items.size < limit) items.set(item.id, { ...item, scope: "instagram_liked" });
+    }
+    const rejected = envelopes.some(entry => entry.shape_valid === false || (entry.rejected_count || 0) > 0);
+    const complete = valid.some(entry => entry.affirmative_terminal === true) && !items.size && !rejected;
+    if (accepted) {
+      const persisted = await postProgress({ task_id: task.id, claim_token: task.claim_token,
+        phase: "bootstrap", scope: "instagram_liked", page, item_count: items.size,
+        items: [...items.values()], scope_counts: { instagram_liked: items.size },
+        scope_complete: { instagram_liked: complete }, account_id: accountId, accepted: true });
+      if (!persisted) return { items: [...items.values()], complete: false, accepted, error: "progress_persistence_unavailable" };
+    }
+    if (complete) return { items: [], complete: true, accepted: true };
+    if (rejected) return { items: [...items.values()], complete: false, accepted, error: "response_schema_degraded" };
+    if (items.size >= limit) return { items: [...items.values()], complete: false, accepted, error: "item_cap_reached" };
+    const failure = classifyInstagramDiscoverPage(window.location.pathname, document.title, document.body?.innerText || "");
+    if (failure) return { items: [...items.values()], complete: false, accepted, error: failure };
+    stalledObservations = items.size > 0 && items.size === previousCount
+      ? stalledObservations + 1 : 0;
+    if (stalledObservations >= LIKED_STALLED_OBSERVATIONS) {
+      return { items: [...items.values()], complete: false, accepted, error: "progress_stalled" };
+    }
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+  return { items: [...items.values()], complete: false, accepted,
+    error: accepted ? "page_cap_reached" : "response_envelope_unobserved" };
+}
+
+async function resolveFreshViewer(
+  fetcher: FetchLike,
+  username: string,
+): Promise<{ accountId: string; error?: string }> {
+  await fetcher.waitForTurn?.();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTAGRAM_API_REQUEST_TIMEOUT_MS);
+  try {
+    // Fresh same-session SSR avoids trusting a stale tab after an account switch.
+    const response = await fetcher(`${API_ROOT}/`, {
+      method: "GET", credentials: "include", cache: "no-store",
+      headers: { accept: "text/html" }, signal: controller.signal,
+    });
+    const body = await boundedResponseText(response, 4 * 1024 * 1024);
+    if (body === null) return { accountId: "", error: "response_too_large" };
+    const classified = classifyInstagramApiEnvelope(response.status,
+      response.headers.get("content-type") || "", body, response.url);
+    if (classified.kind !== "html_response" || !response.ok) {
+      return { accountId: "", error: classified.error || classified.kind };
+    }
+    const accountId = parseInstagramViewer(body, username);
+    return accountId ? { accountId }
+      : { accountId: "", error: "account_identity_missing" };
+  } catch {
+    return { accountId: "", error: "network_error" };
+  } finally { clearTimeout(timer); }
 }
 
 async function resolveIdentity(fetcher: FetchLike): Promise<{
@@ -464,15 +652,103 @@ async function resolveIdentity(fetcher: FetchLike): Promise<{
   username: string;
   error?: string;
 }> {
-  const envelope = await fetchApi(`${API_ROOT}/api/v1/accounts/current_user/?edit=true`, fetcher);
+  const envelope = await fetchApi(`${API_ROOT}/api/v1/accounts/edit/web_form_data/`, fetcher);
   if (envelope.kind !== "ok" || !envelope.payload) {
     const error = envelope.kind === "challenge" ? "challenge_required" : envelope.error || envelope.kind;
     return { accountId: "", username: "", error };
   }
-  const user = record(envelope.payload.user);
-  const accountId = instagramMediaIdentity(user?.pk || user?.id);
-  if (!accountId) return { accountId: "", username: "", error: "account_identity_missing" };
-  return { accountId, username: text(user?.username, 128) };
+  const username = text(record(envelope.payload.form_data)?.username, 128);
+  if (envelope.payload.status !== "ok" || !username) {
+    return { accountId: "", username: "", error: "account_identity_missing" };
+  }
+  const viewer = await resolveFreshViewer(fetcher, username);
+  return viewer.accountId
+    ? { accountId: viewer.accountId, username }
+    : { accountId: "", username: "", error: viewer.error || "account_identity_missing" };
+}
+
+async function verifyFrozenIdentity(
+  fetcher: FetchLike,
+  expectedAccountId: string,
+  expectedUsername: string,
+): Promise<IdentityVerificationFailure | null> {
+  // The initial exact identity already paired the account endpoint username with
+  // a fresh PolarisViewer.  A normal recheck needs only another no-store viewer
+  // document.  If it no longer matches, resolve the full pair once to distinguish
+  // a real account switch from a transient/unavailable identity response.
+  const viewer = await resolveFreshViewer(fetcher, expectedUsername);
+  if (viewer.accountId === expectedAccountId) return null;
+  if (viewer.accountId) {
+    return {
+      error: "instagram_account_changed",
+      accountId: viewer.accountId,
+      changed: true,
+    };
+  }
+  if (viewer.error !== "account_identity_missing") {
+    return {
+      error: viewer.error || "account_identity_missing",
+      changed: false,
+    };
+  }
+  const current = await resolveIdentity(fetcher);
+  if (!current.accountId) {
+    return {
+      error: current.error || viewer.error || "account_identity_missing",
+      changed: false,
+    };
+  }
+  if (current.accountId !== expectedAccountId) {
+    return {
+      error: "instagram_account_changed",
+      accountId: current.accountId,
+      changed: true,
+    };
+  }
+  return null;
+}
+
+function loadedDocumentViewerId(username: string): string | null {
+  if (typeof document === "undefined" || !document.querySelectorAll) return null;
+  const maximumBytes = 4 * 1024 * 1024;
+  let totalBytes = 0;
+  let html = "";
+  for (const script of Array.from(document.querySelectorAll("script[data-sjs]"))) {
+    const body = script.textContent || "";
+    totalBytes += new TextEncoder().encode(body).byteLength;
+    if (totalBytes > maximumBytes) return "";
+    html += `<script data-sjs>${body}</script>`;
+  }
+  return parseInstagramViewer(html, username);
+}
+
+function identityFailureResult(
+  task: InstagramBootstrapTask,
+  error: string,
+  accountId?: string,
+): InstagramTaskResult {
+  return {
+    task_id: task.id,
+    claim_token: task.claim_token,
+    status: "failed",
+    items: [],
+    scope_counts: Object.fromEntries(task.scopes.map((scope) => [scope, 0])),
+    scope_complete: Object.fromEntries(task.scopes.map((scope) => [scope, false])),
+    ...(accountId ? { account_id: accountId } : {}),
+    error,
+    debug: {
+      identity_resolved: Boolean(accountId),
+      response_observed: false,
+      failures: [error],
+    },
+  };
+}
+
+function accountChangedResult(
+  task: InstagramBootstrapTask,
+  accountId: string,
+): InstagramTaskResult {
+  return identityFailureResult(task, "instagram_account_changed", accountId);
 }
 
 export async function executeInstagramBootstrap(
@@ -486,7 +762,9 @@ export async function executeInstagramBootstrap(
     phase: "identity",
     accepted: false,
   });
-  const identity = await resolveIdentity(fetcher);
+  const requestIntervalMs = integer(task.request_interval_ms, 3_000, 30_000);
+  const taskFetcher = pacedFetch(fetcher, requestIntervalMs, sleeper);
+  const identity = await resolveIdentity(taskFetcher);
   if (!identity.accountId) {
     return {
       task_id: task.id,
@@ -498,6 +776,12 @@ export async function executeInstagramBootstrap(
       error: identity.error || "account_identity_missing",
       debug: { identity_resolved: false, response_observed: false },
     };
+  }
+  if (task.scopes.includes("instagram_liked")) {
+    const loadedAccountId = loadedDocumentViewerId(identity.username);
+    if (loadedAccountId !== null && loadedAccountId !== identity.accountId) {
+      return identityFailureResult(task, "account_identity_missing", identity.accountId);
+    }
   }
   const identityPersisted = await postProgress({
     task_id: task.id,
@@ -526,16 +810,32 @@ export async function executeInstagramBootstrap(
   const failures: string[] = [];
   let acceptedScopes = 0;
   let haltedAt = -1;
+  const verifyIdentity = () => verifyFrozenIdentity(
+    taskFetcher,
+    identity.accountId,
+    identity.username,
+  );
   for (const [scopeIndex, scope] of task.scopes.entries()) {
-    const lane = await executeLane(task, scope, identity.accountId, fetcher, sleeper);
+    const lane = await executeLane(
+      task,
+      scope,
+      identity.accountId,
+      taskFetcher,
+      sleeper,
+      verifyIdentity,
+    );
+    if (lane.identity_failure?.changed && lane.identity_failure.accountId) {
+      return accountChangedResult(task, lane.identity_failure.accountId);
+    }
     allItems.push(...lane.items);
     scopeCounts[scope] = lane.items.length;
     scopeComplete[scope] = lane.complete;
     if (lane.accepted) acceptedScopes += 1;
-    const fatal = Boolean(
-      lane.error
-      && /^(?:challenge_required|rate_limited|login_required)$/.test(lane.error),
-    );
+    const fatal = Boolean(lane.identity_failure)
+      || Boolean(
+        lane.error
+        && /^(?:challenge_required|rate_limited|login_required)$/.test(lane.error),
+      );
     if (lane.error) failures.push(fatal ? lane.error : `${scope}:${lane.error}`);
     if (fatal) {
       haltedAt = scopeIndex;
@@ -543,6 +843,16 @@ export async function executeInstagramBootstrap(
     }
     if (scope !== task.scopes[task.scopes.length - 1]) {
       await sleeper(Math.max(1_000, integer(task.request_interval_ms, 3_000, 30_000)));
+    }
+  }
+  if (haltedAt < 0) {
+    const beforeFinal = await verifyIdentity();
+    if (beforeFinal?.changed && beforeFinal.accountId) {
+      return accountChangedResult(task, beforeFinal.accountId);
+    }
+    if (beforeFinal) {
+      failures.push(beforeFinal.error);
+      for (const scope of task.scopes) scopeComplete[scope] = false;
     }
   }
   if (haltedAt >= 0) {
@@ -603,11 +913,43 @@ function explicitDiscoverEmpty(): boolean {
   return explicitInstagramDiscoverEmpty(body);
 }
 
+type DiscoverPageFailure = "" | "public_page_unavailable" | "login_required"
+  | "challenge_required" | "rate_limited";
+
+/** Classify explicit page-level evidence, never caption text or missing data. */
+export function classifyInstagramDiscoverPage(
+  pathname: string,
+  title: string,
+  body: string,
+): DiscoverPageFailure {
+  if (/^\/(?:challenge|checkpoint)(?:\/|$)/i.test(pathname)) return "challenge_required";
+  if (/^\/accounts\/login(?:\/|$)/i.test(pathname)) return "login_required";
+  if (/(?:^|\n)\s*(?:please wait a few minutes before you try again\.?|请稍等几分钟再试。?)\s*(?:\n|$)/i.test(body)) {
+    return "rate_limited";
+  }
+  // A real 200 soft-404 has the dedicated title AND the broken-link message.
+  // A normal logged-out page has "登录" too; that alone is not a login wall.
+  if (/^(?:Page无法访问|页面无法访问|Page (?:not found|isn't available)|Sorry, this page isn't available)\s*[.!。]?(?:\s*[•|–-]\s*Instagram)?$/i.test(title.trim())
+    && /链接可能已损坏或主页被移除|the link you followed may be broken|the page may have been removed/i.test(body)) {
+    return "public_page_unavailable";
+  }
+  return "";
+}
+
+function currentDiscoverPageFailure(): DiscoverPageFailure {
+  return classifyInstagramDiscoverPage(
+    window.location.pathname,
+    document.title,
+    text(document.body?.innerText || document.body?.textContent, 20_000),
+  );
+}
+
 /** Build a terminal discovery callback only from observed normalized envelopes. */
 export function buildInstagramDiscoverResult(
   task: InstagramDiscoverTask,
   envelopes: readonly import("./response-buffer.ts").InstagramObservedEnvelope[],
   explicitEmpty = false,
+  pageFailure: DiscoverPageFailure = "",
 ): InstagramTaskResult {
   const maxItems = integer(task.max_items, 30, 300);
   const items = new Map<string, InstagramWireItem>();
@@ -619,9 +961,11 @@ export function buildInstagramDiscoverResult(
     terminal: boolean;
   }>();
   let relevantEnvelopeCount = 0;
+  let upstreamError = "";
   let cursor = "";
   for (const envelope of envelopes) {
     if (envelope.route !== task.mode && envelope.route !== "unknown") continue;
+    if (envelope.error && !upstreamError) upstreamError = envelope.error;
     relevantEnvelopeCount += 1;
     const collectionId = text(
       envelope.collection_id || `${envelope.route}:legacy`,
@@ -668,6 +1012,8 @@ export function buildInstagramDiscoverResult(
     && terminalCollections === summaries.length;
   const capped = rows.length >= maxItems;
   const complete = responseObserved
+    && !upstreamError
+    && !pageFailure
     && !schemaDegraded
     && !capped
     && (allCollectionsTerminal || explicitEmpty);
@@ -677,7 +1023,7 @@ export function buildInstagramDiscoverResult(
     : affirmativeEmpty
       ? "empty"
       : "failed";
-  const error = schemaDegraded
+  const error = upstreamError || pageFailure || (schemaDegraded
     ? (rows.length ? "response_schema_degraded" : "response_rows_rejected")
     : capped
       ? "item_cap_reached"
@@ -685,7 +1031,7 @@ export function buildInstagramDiscoverResult(
         ? "cursor_resume_not_observed"
         : rows.length
           ? "bounded_public_snapshot"
-          : "response_envelope_unobserved";
+          : "response_envelope_unobserved");
   return {
     task_id: task.id,
     claim_token: task.claim_token,
@@ -711,6 +1057,8 @@ export function buildInstagramDiscoverResult(
             : "response_unobserved",
       cursor_observed: Boolean(cursor),
       response_observed: responseObserved,
+      authenticated_topic_observed: envelopes.some(envelope =>
+        envelope.route === task.mode && envelope.collection_id === "topic:xdt_fbsearch__top_serp_graphql"),
       collection_count: summaries.length,
       terminal_collection_count: terminalCollections,
       observed_count: observedCount,
@@ -723,6 +1071,8 @@ export function buildInstagramDiscoverResult(
 export async function executeInstagramDiscover(
   task: InstagramDiscoverTask,
 ): Promise<InstagramTaskResult> {
+  const initialFailure = currentDiscoverPageFailure();
+  if (initialFailure) return executorFailure(task, initialFailure);
   if (!discoverRouteMatches(task)) {
     return {
       task_id: task.id,
@@ -741,10 +1091,34 @@ export async function executeInstagramDiscover(
   const requestIntervalMs = integer(task.request_interval_ms, 3_000, 30_000);
   for (let page = 1; page <= maxPages; page += 1) {
     await sleep(page === 1 ? 1_500 : Math.max(1_000, requestIntervalMs));
+    if (page === 1) {
+      // The page cap limits pagination, not first-render latency. Passive
+      // hydration may take longer than 1.5s even after document complete.
+      // Do not scroll/request another page or renew the durable idle deadline.
+      const readyDeadline = Date.now() + 20_000;
+      while (
+        Date.now() < readyDeadline
+        && discoverRouteMatches(task)
+        && !currentDiscoverPageFailure()
+        && !explicitDiscoverEmpty()
+        && !readInstagramResponseBuffer().some(envelope =>
+          envelope.route === task.mode || envelope.route === "unknown")
+      ) {
+        await sleep(500);
+        requestInstagramResponseReplay();
+      }
+      const readinessFailure = currentDiscoverPageFailure();
+      if (readinessFailure) {
+        return buildInstagramDiscoverResult(task, readInstagramResponseBuffer(), false, readinessFailure);
+      }
+      if (!discoverRouteMatches(task)) return executorFailure(task, "unexpected_discover_route");
+    }
     const envelopes = readInstagramResponseBuffer().filter(
       (envelope) => envelope.route === task.mode || envelope.route === "unknown",
     );
-    const snapshot = buildInstagramDiscoverResult(task, envelopes);
+    const pageFailure = currentDiscoverPageFailure();
+    const snapshot = buildInstagramDiscoverResult(task, envelopes, false, pageFailure);
+    if (pageFailure || envelopes.some(envelope => envelope.error)) return snapshot;
     const cursor = [...envelopes].reverse().find((envelope) => envelope.cursor)?.cursor || "";
     const progressPersisted = await postProgress({
       task_id: task.id,
@@ -761,6 +1135,7 @@ export async function executeInstagramDiscover(
     });
     if (!progressPersisted) break;
     if (snapshot.items.length >= maxItems || snapshot.scope_complete.discover === true) break;
+    if (page === maxPages || envelopes.length === 0) break;
     window.scrollTo({ top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight), behavior: "instant" });
     requestInstagramResponseReplay();
   }
@@ -768,6 +1143,7 @@ export async function executeInstagramDiscover(
     task,
     readInstagramResponseBuffer(),
     explicitDiscoverEmpty(),
+    currentDiscoverPageFailure(),
   );
 }
 

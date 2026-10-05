@@ -39,6 +39,13 @@ from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
+from openbiliclaw.runtime.image_network import (
+    ImageTransport,
+    UnsafeImageAddressError,
+    image_proxy_for_host,
+    resolve_public_addresses,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -376,6 +383,7 @@ def is_allowed_image_url(url: str) -> bool:
         parsed.scheme in {"http", "https"}
         and parsed.host
         and not parsed.userinfo
+        and parsed.port in {None, 443}
         and is_allowed_image_host(parsed.host)
     )
 
@@ -392,6 +400,8 @@ def _parse_image_url(raw_url: str) -> httpx.URL:
         raise CoverFetchError(400, "Invalid URL")
     if parsed.userinfo:
         raise CoverFetchError(400, "Invalid URL")
+    if parsed.port not in {None, 443}:
+        raise CoverFetchError(400, "Image destination port must be 443")
     if not is_allowed_image_host(parsed.host):
         raise CoverFetchError(403, "Domain not in whitelist")
     return parsed
@@ -426,11 +436,18 @@ async def _send_with_redirects(client: httpx.AsyncClient, url: httpx.URL) -> htt
         if current_key in seen:
             raise CoverFetchError(502, "Redirect loop")
         seen.add(current_key)
+        proxy = image_proxy_for_host(current.host, direct=_is_direct_fetch_host(current.host))
+        try:
+            addresses = await resolve_public_addresses(current.host, proxy=proxy)
+        except UnsafeImageAddressError as exc:
+            raise CoverFetchError(403, "Image destination is not public") from exc
         request = client.build_request(
             "GET",
             current_key,
             headers=_upstream_headers_for_host(str(current.host or "")),
         )
+        request.extensions["image_addresses"] = addresses
+        request.extensions["image_proxy"] = proxy
         response = await client.send(request, stream=True)
         if response.status_code in _REDIRECT_STATUSES:
             location = response.headers.get("location", "").strip()
@@ -496,7 +513,11 @@ async def fetch_cover_bytes(url: str) -> tuple[bytes, str]:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT_SECONDS,
             follow_redirects=False,
-            trust_env=not _is_direct_fetch_host(str(parsed.host or "")),
+            # The transport owns routing *per redirect*, with pinned numeric
+            # destinations even through a proxy. Client proxy mounts must not
+            # bypass it. CN-CDN direct routing remains unconditional.
+            trust_env=False,
+            transport=ImageTransport(_is_direct_fetch_host),
         ) as client:
             response = await _send_with_redirects(client, parsed)
             try:

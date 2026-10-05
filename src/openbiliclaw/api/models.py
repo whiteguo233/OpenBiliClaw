@@ -389,6 +389,7 @@ class RuntimeStatusResponse(BaseModel):
     recommendation_count: int
     pending_signal_events: int
     last_refresh_at: str = ""
+    discovery_failure_message: str = ""
     last_notification_at: str = ""
     unread_count: int
     pool_available_count: int = 0

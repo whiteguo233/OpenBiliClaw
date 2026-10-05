@@ -152,7 +152,14 @@ def test_many_dialogue_cards_keep_natural_height_and_scroll(
     assert before["scrollHeight"] > before["clientHeight"] * 4
     chromium_page.locator("#chatLog").hover()
     chromium_page.mouse.wheel(0, 700)
-    chromium_page.wait_for_timeout(80)
+    # wheel() queues compositor input; it does not wait for the scroll. A fixed
+    # 80ms sleep failed under full-suite load despite a scrollable container.
+    # Wait for the same observable assertion, never synthesize scrollTop.
+    chromium_page.wait_for_function(
+        "before => document.querySelector('#chatLog').scrollTop > before",
+        arg=before["scrollTop"],
+        timeout=2000,
+    )
     after = _scroll_report(chromium_page, "#chatLog")
     assert after["scrollTop"] > before["scrollTop"]
 
@@ -169,7 +176,11 @@ def test_pending_inbox_is_bounded_and_independently_scrollable(chromium_page: Pa
     assert panel["scrollHeight"] > panel["clientHeight"]
     chromium_page.locator("#desktopPendingConfirmations").hover()
     chromium_page.mouse.wheel(0, 500)
-    chromium_page.wait_for_timeout(80)
+    chromium_page.wait_for_function(
+        "before => document.querySelector('#desktopPendingConfirmations').scrollTop > before",
+        arg=panel["scrollTop"],
+        timeout=2000,
+    )
     after = _scroll_report(chromium_page, "#desktopPendingConfirmations")
     assert after["scrollTop"] > panel["scrollTop"]
 
