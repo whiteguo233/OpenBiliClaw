@@ -55,10 +55,38 @@ const projectLocation = resolve(
 const signIdentity =
   process.env.APPLE_SIGNING_IDENTITY || flagValue("sign-identity") || "-";
 const teamId = process.env.APPLE_TEAM_ID || flagValue("team-id") || "";
+const notaryProfile = process.env.APPLE_NOTARY_KEYCHAIN_PROFILE;
+const notaryKeychain = process.env.APPLE_NOTARY_KEYCHAIN;
 
 /** Versioned artifact name, exported for unit tests. */
 export function makeSafariArtifactName(version, artifactFormat) {
   return `openbiliclaw-extension-${normalizeReleaseVersion(version)}-safari.${artifactFormat}`;
+}
+
+function notarizeAndStaple(archivePath, staplePath) {
+  const auth = notaryProfile
+    ? ["--keychain-profile", notaryProfile,
+       ...(notaryKeychain ? ["--keychain", notaryKeychain] : [])]
+    : ["--apple-id", process.env.APPLE_NOTARY_USER,
+       "--password", process.env.APPLE_NOTARY_PASSWORD, "--team-id", teamId];
+  const result = JSON.parse(execFileSync("xcrun", [
+    "notarytool", "submit", archivePath, ...auth,
+    "--wait", "--timeout", "90m", "--output-format", "json",
+  ], { encoding: "utf8" }));
+  console.log(`Notarization ${result.id}: ${result.status}`);
+  if (result.status !== "Accepted") {
+    execFileSync("xcrun", ["notarytool", "log", result.id, ...auth], {
+      stdio: "inherit",
+    });
+    throw new Error(`Apple rejected Safari notarization: ${result.status}`);
+  }
+  console.log("\nStapling notarization ticket...");
+  execFileSync("xcrun", ["stapler", "staple", staplePath], {
+    stdio: "inherit",
+  });
+  execFileSync("xcrun", ["stapler", "validate", staplePath], {
+    stdio: "inherit",
+  });
 }
 
 async function packageSafari() {
@@ -70,6 +98,7 @@ async function packageSafari() {
   }
   if (
     notarize &&
+    !notaryProfile &&
     (!process.env.APPLE_NOTARY_USER || !process.env.APPLE_NOTARY_PASSWORD)
   ) {
     throw new Error(
@@ -141,6 +170,9 @@ async function packageSafari() {
     `CODE_SIGN_IDENTITY=${signIdentity}`,
     "CODE_SIGNING_REQUIRED=YES",
     "CODE_SIGNING_ALLOWED=YES",
+    // Xcode build (unlike archive/export) can otherwise inject debugging access.
+    "CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO",
+    "ENABLE_HARDENED_RUNTIME=YES",
   ];
   if (teamId) {
     xcodeArgs.push(`DEVELOPMENT_TEAM=${teamId}`);
@@ -177,29 +209,7 @@ async function packageSafari() {
       ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, notaryZip],
       { stdio: "inherit" },
     );
-    execFileSync(
-      "xcrun",
-      [
-        "notarytool",
-        "submit",
-        notaryZip,
-        "--apple-id",
-        process.env.APPLE_NOTARY_USER,
-        "--password",
-        process.env.APPLE_NOTARY_PASSWORD,
-        "--team-id",
-        teamId,
-        "--wait",
-      ],
-      { stdio: "inherit" },
-    );
-    console.log("\nStapling notarization ticket...");
-    execFileSync("xcrun", ["stapler", "staple", appPath], {
-      stdio: "inherit",
-    });
-    execFileSync("xcrun", ["stapler", "validate", appPath], {
-      stdio: "inherit",
-    });
+    notarizeAndStaple(notaryZip, appPath);
     await rm(notaryZip, { force: true });
   }
 
@@ -244,6 +254,13 @@ async function packageSafari() {
       ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, outPath],
       { stdio: "inherit" },
     );
+  }
+
+  if (notarize && format === "dmg") {
+    execFileSync("codesign", ["--sign", signIdentity, "--timestamp", outPath], {
+      stdio: "inherit",
+    });
+    notarizeAndStaple(outPath, outPath);
   }
 
   const stats = await stat(outPath);
