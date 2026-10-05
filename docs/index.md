@@ -97,3 +97,5 @@
 
 - [贡献指南](contributing.md) — 环境搭建、代码规范、文档更新要求
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
+
+- [桌面打包与 macOS 签名公证](modules/packaging.md) — 本机凭据、CI Secrets、正式与实验安装包及验收。

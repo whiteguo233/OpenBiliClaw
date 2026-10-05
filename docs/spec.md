@@ -815,3 +815,7 @@ localhost。两个入口互斥，默认 HTTP 不变。
 ---
 
 *文档版本: v0.3 | 日期: 2026-08-09 | 状态: 持续更新*
+
+## macOS 构建分发补充
+
+桌面打包 → Developer ID 内层/应用签名 → Apple 公证并附票据 → ZIP/DMG → DMG 签名、公证和 Gatekeeper 检查；正式 DMG 拖入 Applications 安装。此构建链不改变 §3 的运行时数据流。详见[架构分发链](architecture.md#macos-分发构建链)与[打包接口](modules/packaging.md)。

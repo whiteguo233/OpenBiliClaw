@@ -7,9 +7,8 @@ name: Build Desktop Installers
 #
 # For an actual published Release, push a `desktop-v*` tag → release-desktop.yml
 # auto-builds (arm64 + Windows) and publishes an experimental pre-release. This
-# manual workflow stays for ad-hoc builds — notably the Intel x64 .dmg, which
-# release-desktop.yml skips because the macos-13 runner queues too long to gate a
-# release on. Build it here on demand and attach it to the release if needed.
+# manual workflow builds signed/notarized arm64 and Intel x64 installers.
+# Release builds keep arm64 as their automatic macOS target; Intel is available here.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +16,11 @@ on:
         description: "Version label for artifact filenames (e.g. v0.3.101). Defaults to pyproject version."
         required: false
         default: ""
+      macos_only:
+        description: "Build/test only the signed macOS arm64 and Intel installers."
+        required: false
+        type: boolean
+        default: false
       windows_only:
         description: "Skip both macOS jobs and build/test only the Windows installer."
         required: false
@@ -39,10 +43,19 @@ jobs:
           # Native per-arch builds: each bundles its own ollama + wheels. A
           # universal2 build isn't viable because the bundled ollama binary
           # (and some wheels) ship per-architecture only.
-          - { runner: macos-14, arch: arm64 } # Apple Silicon
-          - { runner: macos-13, arch: x64 } # Intel
+          - { runner: macos-15, arch: arm64 } # Apple Silicon
+          - { runner: macos-15-intel, arch: x64 } # Intel
     steps:
       - uses: actions/checkout@v6
+
+      - name: Prepare Developer ID signing and notarization
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
+          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - uses: actions/setup-python@v6
         with:
@@ -90,6 +103,24 @@ jobs:
       - name: Build .app + .dmg (auto-bundles ollama)
         run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}-${{ matrix.arch }}"
 
+      - name: Verify frozen macOS startup after signing
+        shell: python
+        run: |
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          app = Path("dist/OpenBiliClaw.app").resolve()
+          with tempfile.TemporaryDirectory(prefix="obc-frozen-smoke-") as profile:
+              env = dict(os.environ, OPENBILICLAW_SELFTEST="1", OPENBILICLAW_PROJECT_ROOT=profile)
+              result = subprocess.run([str(app / "Contents/MacOS/OpenBiliClaw")], env=env, timeout=180)
+              log = Path(profile) / "logs/desktop.log"
+              text = log.read_text(encoding="utf-8") if log.exists() else ""
+              if result.returncode or "selftest OK" not in text:
+                  raise RuntimeError(f"Frozen startup failed ({result.returncode}): {text[-8000:]}")
+          subprocess.run([str(app / "Contents/Resources/openbiliclaw-tailnet-helper"), "--self-test"], check=True, timeout=30)
+
       - uses: actions/upload-artifact@v7
         with:
           name: openbiliclaw-macos-installer-${{ matrix.arch }}
@@ -98,7 +129,24 @@ jobs:
             dist/release/*.zip
           if-no-files-found: error
 
+      - name: Preserve Apple notarization diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-notary-logs-${{ matrix.arch }}
+          path: dist/notary-logs/
+          if-no-files-found: ignore
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${APPLE_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$APPLE_SIGNING_KEYCHAIN"
+          fi
+
   windows:
+    if: ${{ inputs.macos_only != true }}
     name: Windows installer (.exe)
     runs-on: windows-latest
     steps:
