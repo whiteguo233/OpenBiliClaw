@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from openbiliclaw.api.app import create_app
+from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
 from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
 from openbiliclaw.storage.database import Database
@@ -37,6 +38,16 @@ def test_runtime_status_reports_and_retires_failed_initial_discovery(
     # pool-event invalidation path. Test durable reconciliation independently
     # from main's one-second HTTP status snapshot cache.
     monkeypatch.setattr("openbiliclaw.api.app._RUNTIME_STATUS_TTL_SECONDS", 0.0)
+    # Exercise the real configured runtime, independent of developer credentials.
+    # Without a provider CI takes the config-recovery path with no controller.
+    config = Config(
+        data_dir=str(tmp_path / "memory"),
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="test-not-a-real-key", model="test-model"),
+        ),
+    )
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: config)
     db = Database(tmp_path / "test.db")
     db.initialize()
     memory = MemoryManager(tmp_path / "memory", database=db)
@@ -44,7 +55,9 @@ def test_runtime_status_reports_and_retires_failed_initial_discovery(
     memory.get_layer("soul").update("personality_portrait", "A test profile")
     runtime = ContinuousRefreshController(memory, db, None, None, None)
     app = create_app(database=db, memory_manager=memory, runtime_controller=runtime)
+    assert not app.state.runtime_context.degraded
     runtime = app.state.runtime_context.runtime_controller
+    assert runtime is not None and runtime.memory_manager is memory
     coord = app.state.runtime_context.init_coordinator
     assert coord.try_start("failed-discovery")
     asyncio.run(
