@@ -973,7 +973,7 @@ def notarize_macos_artifact(
             submission_id,
             *notary_credentials(profile, keychain),
             "--timeout",
-            "20m",
+            "90m",
             "--output-format",
             "json",
         ],

@@ -8,6 +8,8 @@
 
 ### 构建：macOS Developer ID 签名与 Apple 公证（2026-10-05）
 
+- GitHub Actions 桌面 macOS 构建强制正式签名、公证及校验，缺少凭据即失败；移除实验包回退和旧开关，Intel runner 更新为 `macos-15-intel`、arm64 为 `macos-15`，单次公证等待放宽到 90 分钟。
+
 - 公证凭据支持显式 `--macos-notary-keychain` / `APPLE_NOTARY_KEYCHAIN`；CI 将凭据保存到临时文件钥匙串，预检、上传、等待与诊断均使用同一路径，避免默认数据保护钥匙串保存后不可读。
 
 - Intel 本机应用与 DMG 均已通过 Apple 公证、票据附加和 Gatekeeper 验证；从最终 DMG 复制并添加隔离属性后的启动、Tailnet 与 llama-server 验收通过，已生成本地 x64 安装包；尚未上传 GitHub Release。见[验证记录](testing/2026-10-05-macos-signing.md)。

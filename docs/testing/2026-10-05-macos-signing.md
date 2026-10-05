@@ -51,3 +51,11 @@ Completed locally on 2026-10-05 around 04:57 Asia/Shanghai.
 - The Terminal-owned continuation resumed the original app submission without uploading it again, verified local app hashes against the uploaded archive, then completed app stapling, archive creation, DMG signing/notarization/stapling and installation acceptance.
 - Ignored operational evidence remains under `dist/notary-logs/`: app/DMG status and diagnostic JSON, `finish.log`, verification scripts and `COMPLETE.txt`. The continuation has finished; no waiting process is required.
 - Scope: local Intel x64 lean build. Apple Silicon and hosted CI still require their own builds. No public release, GitHub secrets, existing application installation or real user data were changed.
+
+## Hosted workflow enforcement follow-up
+
+- Both desktop workflows now require Developer ID signing and notarization, including manual builds; the former optional toggle cannot downgrade a job to ad-hoc signing. Credential validation runs immediately after checkout.
+- Updated runners to `macos-15` (arm64) and `macos-15-intel` (x64). The manual workflow supports `macos_only=true` for verification of both architectures.
+- Increased each Apple submission wait to 90 minutes; timeouts still fail closed and preserve submission IDs.
+- Packaging regression suite: 65 passed in 17.72s. Ruff, workflow YAML parsing, embedded Python compilation and signing setup shell syntax passed.
+- Hosted acceptance and repository credential provisioning are being verified separately; local success alone is not evidence of a hosted build.

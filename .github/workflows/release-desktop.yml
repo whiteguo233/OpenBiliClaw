@@ -8,10 +8,8 @@ name: Release Desktop Installers
 # Scope note: the backend SOURCE stays source-only (`backend-v*` tags are git
 # markers, no Release) — only the desktop installer BINARIES ship here.
 #
-# Arch note: only macOS arm64 + Windows x64 are auto-built. The macos-13 (Intel
-# x64) runner is scarce and routinely queues for a very long time; gating every
-# release on it would stall the whole publish. Build the Intel .dmg on demand via
-# the manual build-installers.yml and attach it to the release if needed.
+# Arch note: automatic releases build macOS arm64 + Windows x64.
+# Signed/notarized Intel x64 builds use the manual build-installers.yml workflow.
 on:
   workflow_dispatch:
   push:
@@ -25,7 +23,7 @@ permissions:
 jobs:
   macos:
     name: macOS installer (.dmg, arm64, ${{ matrix.variant }})
-    runs-on: macos-14 # Apple Silicon
+    runs-on: macos-15 # Apple Silicon
     strategy:
       # fail-fast off so a failing variant doesn't cancel the other.
       fail-fast: false
@@ -33,6 +31,15 @@ jobs:
         variant: [lean, with-embedding]
     steps:
       - uses: actions/checkout@v6
+
+      - name: Prepare Developer ID signing and notarization
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
+          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - uses: actions/setup-python@v6
         with:
@@ -83,16 +90,6 @@ jobs:
             --expect-digest sha256:0c4c9c2a325fb1cdafec606e6809cb745f1cb26a6d919994400d27372303e276 \
             --expect-digest sha256:daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c \
             --expect-digest sha256:a406579cd136771c705c521db86ca7d60a6f3de7c9b5460e6193a2df27861bde
-
-      - name: Prepare Developer ID signing and notarization
-        uses: ./.github/actions/macos-signing
-        with:
-          enabled: ${{ vars.MACOS_SIGNING_ENABLED }}
-          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
-          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-          team-id: ${{ secrets.APPLE_TEAM_ID }}
-          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
-          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - name: Build .app + .dmg (auto-bundles ollama)
         run: |
@@ -344,12 +341,10 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           cat > "$notes_file" <<'EOF'
-          **桌面预发布安装包**。配置 Apple 凭据后 macOS 为 Developer ID 签名并公证的 DMG，拖到 Applications 后启动；未配置时为实验包，提供一键安装并启动助手与首次打开说明。以 DMG 内说明为准；后端源码仍为 source-only，此处只发桌面应用二进制。
+          **桌面预发布安装包**。macOS 安装包均经过 Developer ID 签名和 Apple 公证；缺少凭据或公证失败时停止对应构建，不生成实验包。后端源码仍为 source-only，此处只发桌面应用二进制。
 
-          ### macOS 安全阻挡
-          - 以下仅适用于标注 ad-hoc signed、未 notarized 的历史或实验包；正式公证包无需解除隔离。打开 DMG 后推荐双击 `安装并启动 Install OpenBiliClaw.command`，它会校验新包、退出旧实例、原子替换 `/Applications/OpenBiliClaw.app` 并启动刚安装的版本；传统拖拽仍可用，但升级需手动退出和重开。
-          - 首次运行安装助手或应用被拦截时，右键 / Control-click 对应项目 →「打开」→ 在弹窗里再点「打开」；或到「System Settings → Privacy & Security」点「Open Anyway / 仍要打开」。
-          - 若提示“OpenBiliClaw.app 已损坏，无法打开”，通常是下载隔离属性导致。确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"`，然后再次打开应用。
+          ### 安装
+          - **macOS**：退出旧版，打开 DMG，将 OpenBiliClaw 拖到 Applications 后启动。无需解除隔离；首次打开可能显示正常的互联网下载确认。
           - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
 
           自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。

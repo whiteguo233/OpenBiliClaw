@@ -7,9 +7,8 @@ name: Build Desktop Installers
 #
 # For an actual published Release, push a `desktop-v*` tag → release-desktop.yml
 # auto-builds (arm64 + Windows) and publishes an experimental pre-release. This
-# manual workflow stays for ad-hoc builds — notably the Intel x64 .dmg, which
-# release-desktop.yml skips because the macos-13 runner queues too long to gate a
-# release on. Build it here on demand and attach it to the release if needed.
+# manual workflow builds signed/notarized arm64 and Intel x64 installers.
+# Release builds keep arm64 as their automatic macOS target; Intel is available here.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +16,11 @@ on:
         description: "Version label for artifact filenames (e.g. v0.3.101). Defaults to pyproject version."
         required: false
         default: ""
+      macos_only:
+        description: "Build/test only the signed macOS arm64 and Intel installers."
+        required: false
+        type: boolean
+        default: false
       windows_only:
         description: "Skip both macOS jobs and build/test only the Windows installer."
         required: false
@@ -39,10 +43,19 @@ jobs:
           # Native per-arch builds: each bundles its own ollama + wheels. A
           # universal2 build isn't viable because the bundled ollama binary
           # (and some wheels) ship per-architecture only.
-          - { runner: macos-14, arch: arm64 } # Apple Silicon
-          - { runner: macos-13, arch: x64 } # Intel
+          - { runner: macos-15, arch: arm64 } # Apple Silicon
+          - { runner: macos-15-intel, arch: x64 } # Intel
     steps:
       - uses: actions/checkout@v6
+
+      - name: Prepare Developer ID signing and notarization
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
+          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - uses: actions/setup-python@v6
         with:
@@ -86,16 +99,6 @@ jobs:
           # installed app / .dmg name shows exactly which code it contains.
           v="${v}.${GITHUB_SHA:0:7}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare Developer ID signing and notarization
-        uses: ./.github/actions/macos-signing
-        with:
-          enabled: ${{ vars.MACOS_SIGNING_ENABLED }}
-          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
-          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-          team-id: ${{ secrets.APPLE_TEAM_ID }}
-          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
-          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - name: Build .app + .dmg (auto-bundles ollama)
         run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}-${{ matrix.arch }}"
@@ -143,6 +146,7 @@ jobs:
           fi
 
   windows:
+    if: ${{ inputs.macos_only != true }}
     name: Windows installer (.exe)
     runs-on: windows-latest
     steps:

@@ -1,9 +1,6 @@
 name: Prepare macOS Developer ID signing
 description: Import a temporary signing keychain and validated notary profile
 inputs:
-  enabled:
-    description: true requires credentials, false disables, empty auto-detects
-    default: ''
   certificate:
     description: Base64 Developer ID Application P12
     required: false
@@ -24,7 +21,6 @@ runs:
   steps:
     - shell: bash
       env:
-        MACOS_SIGNING_ENABLED: ${{ inputs.enabled }}
         APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ inputs.certificate }}
         APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
         APPLE_TEAM_ID: ${{ inputs.team-id }}

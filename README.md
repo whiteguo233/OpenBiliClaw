@@ -322,7 +322,7 @@ macOS 12+。10.15 / 11 会只降级远程 Tailnet，本机应用功能仍照常�
 
 安装包自带本地 Ollama + `bge-m3` embedding，开箱即用；也内置默认内容源依赖，包括 X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及默认关闭的应用内 Tailnet helper。后者让电脑端应用自己加入用户的 tailnet，不安装系统 Tailscale。请在电脑本机的桌面 Web 或浏览器插件「设置 → 通用」中开启 Tailnet，选择网页登录、Auth Key 或 OAuth Client Secret 入网并完整重启；OAuth 方式还需填写该 OAuth Client 已获准使用的设备 tag。Reddit rdt 命令后端会优先使用已连接插件同步的 `reddit_session`，插件不可用时可手动运行 `rdt login`，未登录会 fallback 插件。启动后常驻 **macOS 菜单栏 / Windows 系统托盘**，右键可「打开 Web 界面 / 查看运行日志 / 退出」。数据与 AI / 脚本安装复用同一个目录：`~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级或卸载不会动它；旧安装包曾写入的 `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` 会在新版本首次启动时非覆盖拷贝回来。若 `config.toml` / `config.local.toml` 损坏导致启动失败，桌面包会把坏文件备份为 `*.invalid` 并重新生成默认配置，随后打开 `/setup/` 重新初始化；`data/` 不会被删除。
 
-> **正式签名构建**：打包流程现支持 Developer ID + Apple 公证。正式包按 DMG 内说明拖入 Applications 后启动，升级前退出旧版本；以下安全放行步骤仅用于历史或明确标注未公证的实验包。CI 需另外配置 Apple Secrets，详见 [macOS 签名公证](docs/modules/packaging.md)。
+> **正式签名构建**：GitHub Actions 的 macOS 桌面构建强制 Developer ID 签名和 Apple 公证，凭据缺失即失败。正式包按 DMG 内说明拖入 Applications 后启动，升级前退出旧版本；以下安全放行步骤仅用于历史或明确标注未公证的实验包。CI 需另外配置 Apple Secrets，详见 [macOS 签名公证](docs/modules/packaging.md)。
 
 > ⚠️ **macOS 安全阻挡（应用尚未签名 / 公证）**：
 > - 当前 Release 是 ad-hoc signed、未 notarized。首次打开安装助手或应用时如果提示“无法验证开发者”或“未经安全验证”，请右键 / Control-click 对应项目 →「打开」→ 在弹窗里再点「打开」；也可以到「系统设置 → 隐私与安全性」点击「仍要打开」。

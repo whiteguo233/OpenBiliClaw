@@ -509,12 +509,10 @@ def test_desktop_release_workflow_mentions_macos_installer_and_first_launch_guid
         Path(__file__).resolve().parent.parent / ".github" / "workflows" / "release-desktop.yml"
     ).read_text(encoding="utf-8")
 
-    assert "一键安装并启动助手与首次打开说明" in workflow
-    assert build_module.MACOS_INSTALLER_COMMAND_NAME in workflow
-    assert "macOS 安全阻挡" in workflow
-    assert "Control-click" in workflow
-    assert "Privacy & Security" in workflow
-    assert "xattr -dr com.apple.quarantine" in workflow
+    assert "Developer ID 签名和 Apple 公证" in workflow
+    assert "拖到 Applications 后启动" in workflow
+    assert build_module.MACOS_INSTALLER_COMMAND_NAME not in workflow
+    assert "xattr -dr" not in workflow
     assert "codesign --force" not in workflow
 
 
@@ -694,13 +692,15 @@ def test_notarized_dmg_uses_drag_install_without_gatekeeper_bypass(tmp_path, mon
 @pytest.mark.parametrize(
     "mode,present,success",
     [
-        ("", False, True),
+        ("", False, False),
         ("true", False, False),
-        ("false", True, True),
+        ("false", True, False),
         ("", True, False),
     ],
 )
-def test_ci_signing_never_silently_downgrades_partial_credentials(mode, present, success):
+def test_ci_signing_requires_credentials_even_if_old_toggle_disables_signing(
+    mode, present, success
+):
     import os
 
     env = os.environ.copy()

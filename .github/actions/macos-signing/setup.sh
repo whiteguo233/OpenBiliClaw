@@ -1,18 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${MACOS_SIGNING_ENABLED:-}" == false ]]; then
-  echo 'macOS signing explicitly disabled; building an ad-hoc experimental package.'
-  exit 0
-fi
+# Hosted desktop builds always require Developer ID signing and notarization.
 names=(APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_TEAM_ID APPLE_NOTARY_USER APPLE_NOTARY_PASSWORD)
-present=0
-for name in "${names[@]}"; do
-  if [[ -n "${!name:-}" ]]; then present=$((present + 1)); fi
-done
-if [[ "$present" == 0 && "${MACOS_SIGNING_ENABLED:-}" != true ]]; then
-  echo '::warning::No Apple credentials configured; building an ad-hoc experimental package.'
-  exit 0
-fi
 for name in "${names[@]}"; do
   if [[ -z "${!name:-}" ]]; then
     echo "::error::Missing required signing credential: $name"
