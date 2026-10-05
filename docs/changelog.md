@@ -2,7 +2,13 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
-## 未发布：Instagram 实验性来源（2026-10-05）
+## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
+
+- macOS 桌面包强制 Developer ID 签名、Apple 公证、票据和 Gatekeeper 校验，使用拖入 Applications 的安装流程；arm64 / Intel 云端流程已验收。
+- 后端与插件纳入 Instagram 实验性、默认关闭的只读发现和账号导入；来源仍为 incremental only，完整 Likes 终止、第二账号、Firefox 登录态及真机等限制以验收台账为准。
+- 初始化失败与恢复状态、跨浏览器任务恢复及封面网络边界修复随版交付。版本字段统一为 0.3.227，发布与商店审核回执见[发布记录](testing/2026-10-06-release-0.3.227.md)。
+
+### Instagram 集成历史与验收边界
 
 - **main 集成交付（2026-10-06）**：保留最新主线的 GitHub、时效、Safari 恢复与聊天改动；Instagram 接通统一发布日期配置/准入，README 中英与首页标明实验性、默认关闭、尚未发布。[合并检查与交付记录](testing/2026-10-06-instagram-delivery.md)；已打开页面的跨端保存状态更新限制仍保留。
 

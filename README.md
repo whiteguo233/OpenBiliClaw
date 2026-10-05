@@ -33,7 +33,7 @@
 
 ## 10 秒看懂 OpenBiliClaw
 
-> Instagram 已接入 main 源码，仍为**实验性、默认关闭、未随版本发布**。真实账号初始化 → 当前配置模型 → 发现推荐，以及 Web、插件和 iOS 模拟器消费已有验证；Likes 完整终止、双账号、Firefox 登录态与手机真机仍未完成验收，跨端保存状态需刷新。配置与海外网络要求见 [来源说明](docs/modules/instagram.md)，范围见 [验收台账](docs/platform-source-acceptance.instagram.md)。
+> Instagram 已纳入 v0.3.227，仍为**实验性、默认关闭**。真实账号初始化 → 当前配置模型 → 发现推荐，以及 Web、插件和 iOS 模拟器消费已有验证；Likes 完整终止、双账号、Firefox 登录态与手机真机仍未完成验收，跨端保存状态需刷新。配置与海外网络要求见 [来源说明](docs/modules/instagram.md)，范围见 [验收台账](docs/platform-source-acceptance.instagram.md)。
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web 找内容。
 
@@ -237,12 +237,11 @@
 
 ## 最近更新
 
-📌 最新版本：**v0.3.226（2026-10-04）**
+📌 最新版本：**v0.3.227（2026-10-06）**
 
-- **本地向量自动兜底**：Ollama 运行失败时自动回退 CPU，减少反复报错与重新下载。
-- **聊天会查网页、管理笔记**：支持公开网页搜索、链接阅读、笔记更正与审批删除。
-- **会话更顺手**：六种独立聊天风格，修复三端草稿串会话、流式回复和按钮遮挡。
-- **B 站搜索更稳**：跨进程共享风控冷却，半程探测恢复，视频信息复用缓存。
+- **Mac 安装更直接**：桌面包经过 Developer ID 签名和 Apple 公证，拖入应用程序即可启动。
+- **Instagram 实验性来源**：默认关闭，支持有界只读发现和账号导入，保留已知验收限制。
+- **初始化失败更清楚**：准确显示发现失败与恢复状态，减少把失败误显示为正在补货。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -316,7 +315,7 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 - 当前插件 release：`extension-v*`，并附 `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`（Firefox 临时调试）；启用 AMO signing 时还会附 `openbiliclaw-extension-v*-firefox.xpi`（Firefox 正式安装）
 - 当前桌面安装包 release：`desktop-v*`，同版本桌面 channel 完成后会附可用的 `.dmg` / `.exe`；缺失 channel 显示未发布，不回填上一版资产
 
-- **macOS**：从发布页下载与你的 Mac 匹配的 DMG：Apple 芯片用 `OpenBiliClaw-macos-v*-arm64.dmg`；Intel 用 `OpenBiliClaw-macos-v*-x64.dmg`（如发布页提供）。打开后推荐双击 `安装并启动 Install OpenBiliClaw.command`：它会校验新包、退出旧实例、原子替换「应用程序」中的 app，再启动刚安装的版本；传统拖拽仍可用，但升级时需先退出旧版并在替换后手动重开。
+- **macOS**：从发布页下载与你的 Mac 匹配的 DMG：Apple 芯片用 `OpenBiliClaw-macos-v*-arm64.dmg`；Intel 用 `OpenBiliClaw-macos-v*-x64.dmg`（如发布页提供）。退出旧版后打开 DMG，将 app 拖入「应用程序」，然后启动。新包经过 Developer ID 签名与 Apple 公证，无需解除隔离命令。
 - **Windows**：下载 `OpenBiliClaw-windows-*-Setup.exe`，双击安装。向导最后一页提供默认勾选的「Launch OpenBiliClaw」复选框，点「完成」才会启动刚安装的新版本（升级时安装器会先结束无互斥体的旧实例；若运行中的是已带 AppMutex 的新版应用，安装/卸载会先弹「OpenBiliClaw 正在运行」提示，退出应用后点 OK 自动重检，正常点「完成」即完成新旧交接，取消勾选则不启动）；`/SILENT` / `/VERYSILENT` 静默安装没有向导界面，安装成功后仍会自动启动新版本；但应用仍在运行时静默安装（配合 `/SUPPRESSMSGBOXES`）会按取消处理，需先退出应用。
 
 macOS 主应用继续以 10.15+ 为兼容目标；只有 Go 1.26.6 构建的可选 Tailnet helper 实测要求
@@ -324,21 +323,9 @@ macOS 12+。10.15 / 11 会只降级远程 Tailnet，本机应用功能仍照常�
 
 安装包自带本地 Ollama + `bge-m3` embedding，开箱即用；也内置默认内容源依赖，包括 X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及默认关闭的应用内 Tailnet helper。后者让电脑端应用自己加入用户的 tailnet，不安装系统 Tailscale。请在电脑本机的桌面 Web 或浏览器插件「设置 → 通用」中开启 Tailnet，选择网页登录、Auth Key 或 OAuth Client Secret 入网并完整重启；OAuth 方式还需填写该 OAuth Client 已获准使用的设备 tag。Reddit rdt 命令后端会优先使用已连接插件同步的 `reddit_session`，插件不可用时可手动运行 `rdt login`，未登录会 fallback 插件。启动后常驻 **macOS 菜单栏 / Windows 系统托盘**，右键可「打开 Web 界面 / 查看运行日志 / 退出」。数据与 AI / 脚本安装复用同一个目录：`~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级或卸载不会动它；旧安装包曾写入的 `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` 会在新版本首次启动时非覆盖拷贝回来。若 `config.toml` / `config.local.toml` 损坏导致启动失败，桌面包会把坏文件备份为 `*.invalid` 并重新生成默认配置，随后打开 `/setup/` 重新初始化；`data/` 不会被删除。
 
-> **正式签名构建**：GitHub Actions 的 macOS 桌面构建强制 Developer ID 签名和 Apple 公证，凭据缺失即失败。正式包按 DMG 内说明拖入 Applications 后启动，升级前退出旧版本；以下安全放行步骤仅用于历史或明确标注未公证的实验包。CI 需另外配置 Apple Secrets，详见 [macOS 签名公证](docs/modules/packaging.md)。
-
-> ⚠️ **macOS 安全阻挡（应用尚未签名 / 公证）**：
-> - 当前 Release 是 ad-hoc signed、未 notarized。首次打开安装助手或应用时如果提示“无法验证开发者”或“未经安全验证”，请右键 / Control-click 对应项目 →「打开」→ 在弹窗里再点「打开」；也可以到「系统设置 → 隐私与安全性」点击「仍要打开」。
-> - 如果提示“`OpenBiliClaw.app` 已损坏，无法打开。您应该将它移到废纸篓”，通常是下载隔离属性导致。确认包来自本项目 Releases 后运行：
+> **macOS 签名与公证**：GitHub Actions 强制执行 Developer ID 签名和 Apple 公证，验证失败不产出实验包。首次启动可能出现正常的互联网下载确认；升级前先退出旧版。详见 [签名公证说明](docs/modules/packaging.md)。
 >
->   ```bash
->   APP="/Applications/OpenBiliClaw.app"
->   xattr -dr com.apple.quarantine "$APP"
->   ```
->
->   然后再次打开应用。
-> - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
->
-> 这是**实验性预发布**：未签名、随后端版本滚动更新，适合只想最快试用、不碰命令行的人。要二次开发 / 改源码请用下面的方式 B。
+> **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。桌面应用仍为预发布版本；需要改源码请用下面的方式 B。
 
 #### 方式 B：AI 一句话部署（可定制 / 可改源码）
 
