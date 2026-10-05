@@ -134,6 +134,7 @@ const SOURCE_LABEL_MAP = {
   weibo: "微博",
   youtube: "YouTube",
   twitter: "X (Twitter)",
+  github: "GitHub",
   zhihu: "知乎",
   reddit: "Reddit",
   bangumi: "Bangumi",
@@ -158,6 +159,8 @@ const SOURCE_ALIAS_MAP = {
   youtube: "youtube",
   x: "twitter",
   twitter: "twitter",
+  gh: "github",
+  github: "github",
   zh: "zhihu",
   zhihu: "zhihu",
   rd: "reddit",
@@ -223,6 +226,12 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   "bangumi-search": "Bangumi 搜索",
   "bangumi-ranked": "Bangumi 排名",
   "bangumi-latest": "Bangumi 按日期浏览",
+  github_search: "GitHub 搜索",
+  github_ranked: "GitHub 排名",
+  github_latest: "GitHub 最新",
+  "github-search": "GitHub 搜索",
+  "github-ranked": "GitHub 排名",
+  "github-latest": "GitHub 最新",
   linuxdo_search: "Linux.do 搜索",
   linuxdo_hot: "Linux.do 热门",
   linuxdo_feed: "Linux.do 最新",
@@ -266,6 +275,7 @@ export function normalizeSourcePlatform(item) {
     if (urlHostMatches(url, ["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"])) return "weibo";
     if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
     if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+    if (urlHostMatches(url, ["github.com"])) return "github";
     if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
     if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
     if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
@@ -311,6 +321,7 @@ function formatRuntimeTopicLabel(value) {
   if (key.startsWith("yt-") || key.startsWith("youtube-")) return "YouTube";
   if (key.startsWith("reddit-")) return "Reddit";
   if (key.startsWith("bangumi-")) return "Bangumi";
+  if (key.startsWith("github-")) return "GitHub";
   if (key.startsWith("linuxdo-")) return "Linux.do";
   if (key.startsWith("v2ex-")) return "V2EX";
   if (key.startsWith("instagram-")) return "Instagram";
@@ -366,7 +377,9 @@ export function buildContentUrl(item) {
       ? `https://linux.do/t/${encodeURIComponent(topicId)}`
       : "";
   }
-  if (platform === "zhihu" || platform === "reddit") return "";
+  // GitHub repository ids are numeric and cannot reconstruct owner/name.
+  // Use the canonical HTTPS URL supplied by the adapter, or fail closed.
+  if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (
     platform === "zhihu"
@@ -508,6 +521,7 @@ export function recommendationStats(item) {
 const TEXT_CARD_CONTENT_TYPES = new Set([
   "tweet",
   "thread",
+  "repository",
   "answer",
   "article",
   "question",
@@ -1053,6 +1067,17 @@ export function getMobileChatSession(scope = "chat") {
     session: "popup",
     scope: normalizeText(scope) || "chat",
   };
+}
+
+/**
+ * Message-list state for the chat view's first paint. The empty-state copy
+ * must only appear after the first history fetch settles (total=0); before
+ * that a loading indicator stands in so a slow backend does not read as lost
+ * history.
+ */
+export function getChatHistoryViewState({ historyLoaded = false, turnCount = 0, sending = false } = {}) {
+  if (turnCount > 0 || sending) return "turns";
+  return historyLoaded ? "empty" : "loading";
 }
 
 // ── Cognition Updates ────────────────────────────────────────

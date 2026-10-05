@@ -7,6 +7,11 @@
  */
 
 import type { ActionHint, PageType, PlatformAdapter } from "../types.js";
+import {
+  actionClassTokens,
+  matchesWord,
+  shortActionLabel,
+} from "../behavior.ts";
 import { queryParam, searchPathSegment } from "./search-query.ts";
 
 const AWEME_ID_PATTERN = /\/video\/(\d{8,})/;
@@ -37,25 +42,37 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 export function inferDouyinActionType(hint: ActionHint): string | null {
-  const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)} ${hint.className}`
+  // Same guard as bilibili (#205): only short control labels are trusted;
+  // card copy / video titles must not turn a click into a like/dislike.
+  const text = `${shortActionLabel(hint.text)} ${shortActionLabel(hint.ariaLabel)}`
     .toLowerCase();
+  const classes = actionClassTokens(hint.className);
 
-  if (!text) return null;
+  if (!text.trim() && classes.length === 0) return null;
+  const hasToken = (keyword: string): boolean =>
+    classes.some((token) => token.includes(keyword));
   if (
     text.includes("不感兴趣") ||
     text.includes("不喜欢") ||
     text.includes("减少推荐") ||
-    text.includes("dislike")
+    text.includes("dislike") ||
+    hasToken("dislike")
   ) {
     return "dislike";
   }
-  if (text.includes("点赞") || text.includes("like")) return "like";
-  if (text.includes("收藏") || text.includes("favorite") || text.includes("collect")) {
+  if (text.includes("点赞") || text.includes("like") || hasToken("like")) return "like";
+  if (
+    text.includes("收藏") ||
+    text.includes("favorite") ||
+    text.includes("collect") ||
+    hasToken("favorite") ||
+    hasToken("collect")
+  ) {
     return "favorite";
   }
-  if (text.includes("评论") || text.includes("comment")) return "comment";
-  if (text.includes("分享") || text.includes("share")) return "share";
-  if (text.includes("关注") || text.includes("follow")) return "follow";
+  if (text.includes("评论") || text.includes("comment") || hasToken("comment")) return "comment";
+  if (text.includes("分享") || text.includes("share") || hasToken("share")) return "share";
+  if (text.includes("关注") || text.includes("follow") || hasToken("follow")) return "follow";
   return null;
 }
 

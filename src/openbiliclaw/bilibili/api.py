@@ -11,12 +11,20 @@ import hashlib
 import logging
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, cast
 from urllib.parse import quote, urlencode, urlparse
 from xml.etree import ElementTree
 
 import httpx
+
+from openbiliclaw.bilibili.search_backoff import (
+    mark_search_recovery_probe,
+    persist_shared_backoff,
+    read_shared_backoff,
+    snapshot_from_monotonic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +96,18 @@ def _json_list(value: Any) -> list[dict[str, Any]]:
     return cast("list[dict[str, Any]]", value)
 
 
+def _int_value(value: Any, default: int = 0) -> int:
+    """Parse a Bilibili numeric field that may be an int or a numeric string."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class VideoInfo:
     """Basic video information from Bilibili."""
@@ -112,6 +132,12 @@ class VideoInfo:
     # present in the /x/web-interface/view payload, so reading it costs
     # nothing extra.
     cid: int = 0
+    # Legacy / v2 zone ids from the same payload. NOTE: the payload's text
+    # labels (``tname`` / ``tname_v2``) come back as empty strings on the live
+    # endpoint, so the numeric ids are the only partition signal actually
+    # delivered; ``get_video_tags()`` is the supported way to get tag names.
+    tid: int = 0
+    tid_v2: int = 0
 
 
 @dataclass
@@ -175,6 +201,9 @@ class CommentInfo:
     uname: str
     message: str
     like_count: int = 0
+    ctime: int = 0
+    reply_count: int = 0
+    avatar: str = ""
 
 
 class BilibiliAPIClient:
@@ -185,6 +214,11 @@ class BilibiliAPIClient:
     """
 
     _BASE_URL = "https://api.bilibili.com"
+    DEFAULT_USER_AGENT: ClassVar[str] = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
     _SEARCH_WEB_LOCATION = 1430654
     # A v_voucher exhaustion is usually recoverable WBI-key churn / mild
     # rate limiting, so it gets a short, escalating back-off. A genuine
@@ -203,6 +237,21 @@ class BilibiliAPIClient:
     _search_cooldown_level: ClassVar[int] = 0
     _search_voucher_block_streak: ClassVar[int] = 0
     _search_dom_fallback_until: ClassVar[float] = 0.0
+    # Recovery-probe bookkeeping: a lifted block is discovered by one probe
+    # request halfway through the cooldown window instead of idling the full
+    # (up to 1800s) cooldown out. Wall/mono anchors for the active window and
+    # whether this process already spent the in-memory fallback probe.
+    _search_cooldown_activated_mono: ClassVar[float] = 0.0
+    _search_cooldown_activated_wall: ClassVar[float] = 0.0
+    _search_cooldown_probe_used: ClassVar[bool] = False
+    # Process-wide LRU for /view payloads: one discovery round resolves the
+    # same bvid through get_video_info() (scoring), _resolve_aid() (save
+    # writes), cid lookup (danmaku/subtitle/play) and the API layer, each of
+    # which used to re-issue the request. The key carries a SESSDATA
+    # fingerprint because anonymous and authenticated responses can differ.
+    _VIEW_DATA_CACHE_TTL_SECONDS: ClassVar[float] = 600.0
+    _VIEW_DATA_CACHE_MAX_ENTRIES: ClassVar[int] = 512
+    _view_data_cache: ClassVar[OrderedDict[str, tuple[float, dict[str, Any]]]] = OrderedDict()
     _WBI_MIXIN_KEY_ENC_TAB = [
         46,
         47,
@@ -288,11 +337,7 @@ class BilibiliAPIClient:
         self._favorite_folder_locks: dict[str, asyncio.Lock] = {}
         self._client = httpx.AsyncClient(
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
+                "User-Agent": self.DEFAULT_USER_AGENT,
                 "Referer": "https://www.bilibili.com",
             },
             timeout=30.0,
@@ -322,13 +367,115 @@ class BilibiliAPIClient:
         self._last_request_at = time.monotonic()
 
     @classmethod
+    def _merge_shared_backoff(cls) -> None:
+        """Adopt any stricter backoff another process persisted to disk.
+
+        The CLI runs API server + worker + discovery worker as separate
+        processes, each with its own copy of the ClassVars below; the shared
+        state file lets a 412 hard cooldown (or a v_voucher soft cooldown) in
+        one process back off all of them. On-disk deadlines are wall-clock
+        epochs (``time.monotonic()`` is not comparable across processes) and
+        merge with ``max`` so the most conservative process wins; the
+        escalation counters only merge while they still belong to a live
+        incident. Any I/O failure leaves the in-process state untouched.
+        """
+        shared = read_shared_backoff()
+        if shared is None:
+            return
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        cooldown_remaining = shared.cooldown_until - now_wall
+        if cooldown_remaining > cls._search_cooldown_until - now_monotonic:
+            cls._search_cooldown_until = now_monotonic + cooldown_remaining
+        fallback_remaining = shared.dom_fallback_until - now_wall
+        if fallback_remaining > cls._search_dom_fallback_until - now_monotonic:
+            cls._search_dom_fallback_until = now_monotonic + fallback_remaining
+        if shared.counters_fresh(now_wall):
+            cls._search_cooldown_level = max(cls._search_cooldown_level, shared.cooldown_level)
+            cls._search_voucher_block_streak = max(
+                cls._search_voucher_block_streak,
+                shared.voucher_block_streak,
+            )
+        cls._search_cooldown_activated_wall = max(
+            cls._search_cooldown_activated_wall,
+            shared.activated_at,
+        )
+
+    @classmethod
+    def _persist_search_backoff(cls, *, reset_counters: bool = False) -> None:
+        """Mirror the in-process backoff state to the shared state file."""
+        persist_shared_backoff(
+            snapshot_from_monotonic(
+                cooldown_until=cls._search_cooldown_until,
+                cooldown_level=cls._search_cooldown_level,
+                voucher_block_streak=cls._search_voucher_block_streak,
+                dom_fallback_until=cls._search_dom_fallback_until,
+                activated_at=cls._search_cooldown_activated_wall,
+            ),
+            reset_counters=reset_counters,
+        )
+
+    @classmethod
+    def _consume_search_recovery_probe(cls) -> bool:
+        """Allow exactly one probe request halfway through an active cooldown.
+
+        A 412 / v_voucher cooldown can outlast the actual block (up to the
+        1800s ceiling); probing once at the window's midpoint discovers a
+        lifted block in about half the time while costing at most one request
+        per window. The probe budget is shared across processes through the
+        state file; with persistence disabled it falls back to one probe per
+        process per window.
+        """
+        shared = read_shared_backoff()
+        if shared is not None:
+            due = shared.probe_due_at()
+            if due <= 0.0:
+                return False
+            now = time.time()
+            if now < due or shared.last_probe_at >= due:
+                return False
+            mark_search_recovery_probe(now)
+            return True
+        if cls._search_cooldown_probe_used or cls._search_cooldown_activated_mono <= 0.0:
+            return False
+        window = cls._search_cooldown_until - cls._search_cooldown_activated_mono
+        if window <= 0.0:
+            return False
+        if time.monotonic() < cls._search_cooldown_activated_mono + window / 2:
+            return False
+        cls._search_cooldown_probe_used = True
+        return True
+
+    @classmethod
+    def _clear_search_cooldown_after_probe(cls) -> None:
+        """Clear the whole cooldown once a recovery probe proved search healthy."""
+        cls._search_cooldown_until = 0.0
+        cls._search_dom_fallback_until = 0.0
+        cls._search_cooldown_level = 0
+        cls._search_voucher_block_streak = 0
+        cls._search_cooldown_activated_mono = 0.0
+        cls._search_cooldown_activated_wall = 0.0
+        cls._search_cooldown_probe_used = False
+        persist_shared_backoff(
+            snapshot_from_monotonic(
+                cooldown_until=0.0,
+                cooldown_level=0,
+                voucher_block_streak=0,
+                dom_fallback_until=0.0,
+            ),
+            clear=True,
+        )
+
+    @classmethod
     def search_cooldown_remaining(cls) -> float:
-        """Seconds remaining in the process-wide Bilibili search cooldown."""
+        """Seconds remaining in the shared Bilibili search cooldown."""
+        cls._merge_shared_backoff()
         return max(0.0, cls._search_cooldown_until - time.monotonic())
 
     @classmethod
     def search_dom_fallback_remaining(cls) -> float:
         """Seconds remaining while rendered-page search fallback is preferred."""
+        cls._merge_shared_backoff()
         return max(0.0, cls._search_dom_fallback_until - time.monotonic())
 
     @classmethod
@@ -339,11 +486,13 @@ class BilibiliAPIClient:
         search may keep probing, but the browser extension can backfill via a
         rendered search page while the API path looks degraded.
         """
+        cls._merge_shared_backoff()
         duration = cls._SEARCH_DOM_FALLBACK_SECONDS if seconds is None else seconds
         cls._search_dom_fallback_until = max(
             cls._search_dom_fallback_until,
             time.monotonic() + duration,
         )
+        cls._persist_search_backoff()
         return duration
 
     @classmethod
@@ -354,6 +503,7 @@ class BilibiliAPIClient:
         longer hard-cooldown base); the escalation multiplier and absolute
         ceiling are shared across both causes.
         """
+        cls._merge_shared_backoff()
         cls._search_cooldown_level = min(cls._search_cooldown_level + 1, 3)
         base = cls._SEARCH_COOLDOWN_BASE_SECONDS if base_seconds is None else base_seconds
         duration = min(
@@ -364,6 +514,11 @@ class BilibiliAPIClient:
             cls._search_cooldown_until,
             time.monotonic() + duration,
         )
+        cls._search_cooldown_activated_mono = time.monotonic()
+        cls._search_cooldown_activated_wall = time.time()
+        cls._search_cooldown_probe_used = False
+        # Persists the whole snapshot (cooldown deadline included) via the
+        # dom-fallback activation below.
         cls._activate_search_dom_fallback(seconds=duration)
         return duration
 
@@ -378,7 +533,9 @@ class BilibiliAPIClient:
         not an IP-level block, and must not strand the search round +
         explore for the full cooldown.
         """
+        cls._merge_shared_backoff()
         cls._search_voucher_block_streak += 1
+        cls._persist_search_backoff()
         if cls._search_voucher_block_streak >= cls._SEARCH_VOUCHER_BLOCK_THRESHOLD:
             return cls._activate_search_cooldown()
         return 0.0
@@ -388,6 +545,7 @@ class BilibiliAPIClient:
         """Reset escalation + the v_voucher streak once search succeeds again."""
         cls._search_cooldown_level = 0
         cls._search_voucher_block_streak = 0
+        cls._persist_search_backoff(reset_counters=True)
 
     @staticmethod
     def _sanitized_http_error(
@@ -509,7 +667,7 @@ class BilibiliAPIClient:
             resp = await self._client.get(f"{self._BASE_URL}/x/web-interface/nav")
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise BilibiliAPIError(str(exc)) from exc
+            raise self._sanitized_http_error("GET", "/x/web-interface/nav", exc) from exc
 
         payload = _json_object(resp.json())
         data = _json_object(payload.get("data", {}))
@@ -561,6 +719,67 @@ class BilibiliAPIClient:
             mid=int(data.get("mid", 0)),
         )
 
+    def _view_cache_key(self, bvid: str) -> str:
+        """Cache key scoped by login identity: anon and authed /view payloads differ."""
+        sessdata = _cookie_value(self._cookie, "SESSDATA")
+        identity = hashlib.sha256(sessdata.encode()).hexdigest()[:12] if sessdata else "anon"
+        return f"{identity}:{bvid}"
+
+    @classmethod
+    def _view_cache_get(cls, key: str) -> dict[str, Any] | None:
+        entry = cls._view_data_cache.get(key)
+        if entry is None:
+            return None
+        fetched_at, payload = entry
+        if time.monotonic() - fetched_at > cls._VIEW_DATA_CACHE_TTL_SECONDS:
+            cls._view_data_cache.pop(key, None)
+            return None
+        cls._view_data_cache.move_to_end(key)
+        return payload
+
+    @classmethod
+    def _view_cache_put(cls, key: str, payload: dict[str, Any]) -> None:
+        cls._view_data_cache[key] = (time.monotonic(), payload)
+        cls._view_data_cache.move_to_end(key)
+        while len(cls._view_data_cache) > cls._VIEW_DATA_CACHE_MAX_ENTRIES:
+            cls._view_data_cache.popitem(last=False)
+
+    async def get_video_view_data(self, bvid: str) -> dict[str, Any]:
+        """Fetch the /view data object, falling back to the WBI-signed endpoint.
+
+        Bilibili occasionally bans the plain ``/x/web-interface/view`` endpoint
+        for a given network/IP (HTTP 412). The WBI-signed sibling
+        ``/x/web-interface/wbi/view`` is still accepted by the web API and is
+        the standard web client path for this payload.
+
+        Successful payloads are cached process-wide for
+        ``_VIEW_DATA_CACHE_TTL_SECONDS`` (keyed by bvid + login identity) so a
+        discovery round that touches the same video through scoring, danmaku,
+        play info and save writes only issues one request; failures are never
+        cached.
+        """
+        key = self._view_cache_key(bvid)
+        cached = self._view_cache_get(key)
+        if cached is not None:
+            return cached
+        try:
+            data = await self._get_json("/x/web-interface/view", params={"bvid": bvid})
+        except BilibiliAPIError as exc:
+            if exc.code != -412:
+                raise
+            logger.warning(
+                "Bilibili plain /view blocked with 412; retrying via WBI view (bvid=%s)",
+                bvid,
+            )
+            img_key, sub_key = await self._get_wbi_keys()
+            signed = self._sign_wbi_params({"bvid": bvid}, img_key=img_key, sub_key=sub_key)
+            data = await self._get_json(
+                "/x/web-interface/wbi/view",
+                params=signed,
+            )
+        self._view_cache_put(key, data)
+        return data
+
     async def get_video_info(self, bvid: str) -> VideoInfo:
         """Get video information by BV ID.
 
@@ -568,15 +787,17 @@ class BilibiliAPIClient:
             bvid: Bilibili video BV ID.
 
         Returns:
-            VideoInfo dataclass.
+            VideoInfo dataclass. Everything is read from the single
+            ``/x/web-interface/view`` payload — including ``cid`` and the
+            ``tid`` / ``tid_v2`` zone ids, so no extra request is issued.
+
+        Note:
+            The live payload does **not** carry a ``tag`` array, and its text
+            zone labels (``tname`` / ``tname_v2``) are empty strings, so
+            ``VideoInfo.tags`` stays ``None`` here. Use
+            :meth:`get_video_tags` when tag names are needed.
         """
-        resp = await self._client.get(
-            f"{self._BASE_URL}/x/web-interface/view",
-            params={"bvid": bvid},
-        )
-        resp.raise_for_status()
-        payload = _json_object(resp.json())
-        data = _json_object(payload.get("data"))
+        data = await self.get_video_view_data(bvid)
         stat = _json_object(data.get("stat", {}))
         owner = _json_object(data.get("owner", {}))
 
@@ -597,7 +818,329 @@ class BilibiliAPIClient:
             danmaku_count=stat.get("danmaku", 0),
             pub_date=data.get("pubdate", ""),
             cid=int(data.get("cid", 0) or 0),
+            tid=int(data.get("tid", 0) or 0),
+            tid_v2=int(data.get("tid_v2", 0) or 0),
         )
+
+    async def get_video_tags(self, bvid: str, *, limit: int = 20) -> list[str]:
+        """Fetch the public tag names of a video, oldest-published first.
+
+        Uses ``/x/tag/archive/tags`` — the endpoint the web player reads for
+        the tag row under a video. It is anonymous-safe (verified without a
+        Cookie) and far lighter than ``/x/web-interface/view/detail``, which
+        would drag in Card / Related / Reply alongside ``Tags``.
+
+        The ``data`` payload is a bare array of tag objects, not an object, so
+        it is coerced with :func:`_json_list` instead of being indexed as a
+        dict.
+
+        Args:
+            bvid: Bilibili video BV ID.
+            limit: Maximum number of tag names to return. Non-positive values
+                return an empty list without issuing a request.
+
+        Returns:
+            Tag names in payload order; blank names are skipped. Returns an
+            empty list when the video has no tags — callers that need to
+            distinguish "no tags" from "fetch failed" must let the
+            :class:`BilibiliAPIError` propagate.
+        """
+        item_limit = max(0, int(limit))
+        if item_limit == 0:
+            return []
+        data = await self._get_json("/x/tag/archive/tags", params={"bvid": bvid})
+        tags: list[str] = []
+        for item in _json_list(data):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("tag_name", "") or "").strip()
+            if name:
+                tags.append(name)
+            if len(tags) >= item_limit:
+                break
+        return tags
+
+    async def get_play_info(
+        self,
+        bvid: str,
+        cid: int | None = None,
+        qn: int = 80,
+        preferred_codec: str = "avc",
+    ) -> dict[str, Any]:
+        """Fetch a flattened Bilibili playback payload for native players.
+
+        The backend owns Cookie/WBI concerns; the returned dict matches the
+        mobile client's ``/api/bilibili/player/play-url`` contract.
+        """
+        if cid is None:
+            cid = (await self.get_video_info(bvid)).cid
+        if not cid:
+            raise BilibiliAPIError("missing cid", code=-404)
+
+        img_key, sub_key = await self._get_wbi_keys()
+        params: dict[str, object] = {
+            "bvid": bvid,
+            "cid": cid,
+            "qn": qn,
+            "fnval": 4048,
+            "fnver": 0,
+            "fourk": 1,
+            "platform": "html5",
+            "high_quality": 1,
+            "gaia_source": "pre-load",
+            "web_location": 1315873,
+        }
+        data = await self._get_json(
+            "/x/player/wbi/playurl",
+            params=self._sign_wbi_params(
+                params,
+                img_key=img_key,
+                sub_key=sub_key,
+            ),
+        )
+
+        pages_data: list[dict[str, Any]] = []
+        try:
+            pages_raw = await self._get_json(
+                "/x/player/pagelist",
+                params={"bvid": bvid},
+            )
+            if isinstance(pages_raw, list):
+                pages_data = [dict(item) for item in pages_raw]
+        except BilibiliAPIError:
+            logger.debug("pagelist fetch failed for bvid=%s", bvid, exc_info=True)
+
+        qualities: list[dict[str, Any]] = []
+        for item in data.get("support_formats", []) or []:
+            if not isinstance(item, dict):
+                continue
+            qualities.append(
+                {
+                    "qn": int(item.get("quality", 0) or 0),
+                    "label": item.get("new_description")
+                    or item.get("display_desc")
+                    or item.get("quality", ""),
+                    "width": int(item.get("width", 0) or 0),
+                    "height": int(item.get("height", 0) or 0),
+                }
+            )
+
+        # Fallback: B 站 sometimes returns no video/audio objects when the
+        # request was made with an invalid fnval/quality combination.
+        if not qualities:
+            for item in data.get("support_formats", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                qualities.append(
+                    {
+                        "qn": int(item.get("quality", 0) or 0),
+                        "label": item.get("new_description")
+                        or item.get("display_desc")
+                        or str(item.get("quality", "")),
+                        "width": int(item.get("width", 0) or 0),
+                        "height": int(item.get("height", 0) or 0),
+                    }
+                )
+
+        video = None
+        audio = None
+        dash = data.get("dash")
+        if isinstance(dash, dict):
+            video_items = dash.get("video", []) or []
+            audio_items = dash.get("audio", []) or []
+            if isinstance(video_items, list) and video_items:
+                # DASH responses contain several qualities even when qn is
+                # explicit. Choose that quality first, then its preferred
+                # codec; the first AVC stream may be a different resolution.
+                candidates = [item for item in video_items if isinstance(item, dict)]
+                matching_quality = [
+                    item for item in candidates if int(item.get("id", 0) or 0) == qn
+                ]
+                candidates = matching_quality or candidates
+                preferred = []
+                for item in candidates:
+                    codec = str(item.get("codecs", "") or "")
+                    if codec.lower().startswith(preferred_codec.lower()):
+                        preferred.append(item)
+                chosen = (preferred or candidates)[0] if candidates else None
+                if isinstance(chosen, dict):
+                    video = {
+                        "qn": int(chosen.get("id", 0) or 0),
+                        "label": "",
+                        "codec": str(chosen.get("codecs", "") or ""),
+                        "url": str(chosen.get("baseUrl") or chosen.get("base_url") or ""),
+                        "backup_urls": list(
+                            chosen.get("backupUrl") or chosen.get("backup_url") or []
+                        ),
+                        "width": int(chosen.get("width", 0) or 0),
+                        "height": int(chosen.get("height", 0) or 0),
+                        "bandwidth": int(chosen.get("bandwidth", 0) or 0),
+                        "mime_type": str(chosen.get("mimeType") or chosen.get("mime_type") or ""),
+                    }
+            if isinstance(audio_items, list) and audio_items:
+                chosen_audio = audio_items[0]
+                if isinstance(chosen_audio, dict):
+                    audio = {
+                        "qn": int(chosen_audio.get("id", 0) or 0),
+                        "codec": str(chosen_audio.get("codecs", "") or ""),
+                        "url": str(
+                            chosen_audio.get("baseUrl") or chosen_audio.get("base_url") or ""
+                        ),
+                        "backup_urls": list(
+                            chosen_audio.get("backupUrl") or chosen_audio.get("backup_url") or []
+                        ),
+                        "width": 0,
+                        "height": 0,
+                        "bandwidth": int(chosen_audio.get("bandwidth", 0) or 0),
+                        "mime_type": str(
+                            chosen_audio.get("mimeType") or chosen_audio.get("mime_type") or ""
+                        ),
+                    }
+
+        durl = data.get("durl")
+        if video is None and isinstance(durl, list) and durl:
+            first = durl[0]
+            if isinstance(first, dict):
+                video = {
+                    "qn": int(data.get("quality", 0) or 0),
+                    "label": "",
+                    "codec": "mp4",
+                    "url": str(first.get("url", "") or ""),
+                    "backup_urls": list(first.get("backup_url", []) or []),
+                    "width": 0,
+                    "height": 0,
+                    "bandwidth": 0,
+                    "mime_type": "video/mp4",
+                }
+
+        subtitles: list[dict[str, Any]] = []
+        try:
+            player_data = await self._get_json(
+                "/x/player/wbi/v2",
+                params={"bvid": bvid, "cid": cid},
+            )
+            raw_subtitle = player_data.get("subtitle", {})
+            if isinstance(raw_subtitle, dict):
+                for item in raw_subtitle.get("subtitles", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    raw_url = str(item.get("subtitle_url", "") or "")
+                    if raw_url.startswith("//"):
+                        raw_url = f"https:{raw_url}"
+                    if raw_url:
+                        subtitles.append(
+                            {
+                                "lan": str(item.get("lan", "") or ""),
+                                "name": str(item.get("lan_doc", "") or item.get("lan", "")),
+                                "url": raw_url,
+                            }
+                        )
+        except BilibiliAPIError:
+            logger.debug("subtitle fetch failed for bvid=%s cid=%s", bvid, cid, exc_info=True)
+
+        duration = int(data.get("timelength", 0) or 0)
+        if duration and duration > 1000:
+            duration = duration // 1000
+
+        return {
+            "bvid": bvid,
+            "cid": cid,
+            "duration": duration,
+            "pages": [
+                {
+                    "cid": int(page.get("cid", 0) or 0),
+                    "page": int(page.get("page", 0) or 0),
+                    "part": str(page.get("part", "") or ""),
+                    "duration": int(page.get("duration", 0) or 0),
+                    "dimension": {
+                        "width": int(page.get("dimension", {}).get("width", 0) or 0)
+                        if isinstance(page.get("dimension"), dict)
+                        else 0,
+                        "height": int(page.get("dimension", {}).get("height", 0) or 0)
+                        if isinstance(page.get("dimension"), dict)
+                        else 0,
+                    },
+                }
+                for page in pages_data
+            ],
+            "qualities": qualities,
+            "video": video,
+            "audio": audio,
+            "subtitles": subtitles,
+            "danmaku": {
+                "url": f"https://api.bilibili.com/x/v1/dm/list.so?oid={cid}",
+                "headers": {
+                    "referer": "https://www.bilibili.com",
+                    "user-agent": str(self._client.headers.get("User-Agent", "")),
+                },
+            },
+            "headers": {
+                "referer": "https://www.bilibili.com",
+                "user-agent": str(self._client.headers.get("User-Agent", "")),
+                **({"cookie": self._cookie} if self._cookie else {}),
+            },
+            "expires_at": "",
+        }
+
+    async def generate_qrcode(self) -> dict[str, Any]:
+        """Generate a Bilibili web QR login link."""
+        await self._respect_rate_limit()
+        try:
+            resp = await self._client.get(
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._sanitized_http_error("GET", "passport/qrcode/generate", exc) from exc
+        payload = _json_object(resp.json())
+        if int(payload.get("code", 0) or 0) != 0:
+            raise BilibiliAPIError(
+                str(payload.get("message", "generate qrcode failed")),
+                code=int(payload.get("code", 0) or 0),
+            )
+        return cast("dict[str, Any]", payload.get("data", {}) or {})
+
+    async def poll_qrcode(self, qrcode_key: str) -> dict[str, Any]:
+        """Poll a Bilibili web QR login key and return a normalized status."""
+        await self._respect_rate_limit()
+        try:
+            resp = await self._client.get(
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
+                params={"qrcode_key": qrcode_key},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._sanitized_http_error("GET", "passport/qrcode/poll", exc) from exc
+        payload = _json_object(resp.json())
+        if int(payload.get("code", 0) or 0) != 0:
+            raise BilibiliAPIError(
+                str(payload.get("message", "poll qrcode failed")),
+                code=int(payload.get("code", 0) or 0),
+            )
+        data = _json_object(payload.get("data", {}))
+        inner_code = int(data.get("code", 86101) or 86101)
+        message = str(data.get("message", "") or "")
+        if inner_code in {0, 86101}:
+            status = "pending"
+            if inner_code == 0:
+                status = "confirmed"
+            elif data.get("url"):
+                # Some clients use 86101 as "not scanned yet"; the URL only
+                # appears once the scan is confirmed.
+                status = "confirmed"
+        elif inner_code == 86090:
+            status = "scanned"
+        elif inner_code == 86038:
+            status = "expired"
+        else:
+            status = "pending"
+        return {
+            "status": status,
+            "message": message,
+            "url": str(data.get("url", "") or ""),
+            "qrcode_key": qrcode_key,
+            "raw_code": inner_code,
+        }
 
     async def search(
         self,
@@ -605,6 +1148,9 @@ class BilibiliAPIClient:
         page: int = 1,
         page_size: int = 20,
         order: str = "totalrank",
+        *,
+        pubtime_begin: int | None = None,
+        pubtime_end: int | None = None,
     ) -> list[dict[str, Any]]:
         """Search for videos by keyword.
 
@@ -617,13 +1163,27 @@ class BilibiliAPIClient:
             List of search result dicts.
         """
         cooldown_remaining = self.search_cooldown_remaining()
+        probe = False
         if cooldown_remaining > 0:
-            logger.info(
-                "Bilibili search cooldown active (%.0fs left) — skipping query=%r",
-                cooldown_remaining,
-                keyword,
-            )
-            return []
+            if type(self)._consume_search_recovery_probe():
+                # Halfway through the cooldown: one single-attempt probe to
+                # discover a lifted block early instead of idling the full
+                # window out. A failed probe simply re-arms the cooldown via
+                # the normal 412 / v_voucher handlers below.
+                probe = True
+                logger.info(
+                    "Bilibili search recovery probe: cooldown has %.0fs left — "
+                    "testing recovery with a single request (query=%r)",
+                    cooldown_remaining,
+                    keyword,
+                )
+            else:
+                logger.info(
+                    "Bilibili search cooldown active (%.0fs left) — skipping query=%r",
+                    cooldown_remaining,
+                    keyword,
+                )
+                return []
 
         # v0.3.55+: 3 attempts with exponential backoff (was 2 with 1.5s
         # linear). Production logs (2026-05-05) showed 141 v_voucher
@@ -640,22 +1200,27 @@ class BilibiliAPIClient:
         # (streak>0) we drop to a single quick probe — confirming a real
         # storm in a few fast attempts instead of hammering B站 with doomed
         # ~21s retry chains per keyword (which would only deepen the block).
-        max_attempts = 1 if type(self)._search_voucher_block_streak > 0 else 3
+        max_attempts = 1 if probe or type(self)._search_voucher_block_streak > 0 else 3
         backoff_schedule = (1.5, 5.0, 15.0)
         for attempt in range(max_attempts):
             try:
                 img_key, sub_key = await self._get_wbi_keys()
+                search_params: dict[str, object] = {
+                    "keyword": keyword,
+                    "search_type": "video",
+                    "page": page,
+                    "page_size": page_size,
+                    "order": order,
+                    "web_location": self._SEARCH_WEB_LOCATION,
+                }
+                if pubtime_begin is not None:
+                    search_params["pubtime_begin"] = max(0, int(pubtime_begin))
+                if pubtime_end is not None:
+                    search_params["pubtime_end"] = max(0, int(pubtime_end))
                 data = await self._get_json(
                     "/x/web-interface/wbi/search/type",
                     params=self._sign_wbi_params(
-                        {
-                            "keyword": keyword,
-                            "search_type": "video",
-                            "page": page,
-                            "page_size": page_size,
-                            "order": order,
-                            "web_location": self._SEARCH_WEB_LOCATION,
-                        },
+                        search_params,
                         img_key=img_key,
                         sub_key=sub_key,
                     ),
@@ -725,7 +1290,14 @@ class BilibiliAPIClient:
                 return []
 
             results = _json_list(data.get("result", []))
-            self._reset_search_cooldown_backoff()
+            if probe:
+                self._clear_search_cooldown_after_probe()
+                logger.info(
+                    "Bilibili search recovery probe succeeded (query=%r) — cooldown cleared",
+                    keyword,
+                )
+            else:
+                self._reset_search_cooldown_backoff()
             if not results:
                 logger.debug("Search returned empty result for query=%r", keyword)
             return results
@@ -893,7 +1465,7 @@ class BilibiliAPIClient:
 
     async def _resolve_aid(self, bvid: str) -> int:
         """Resolve a BV ID through the application-code-aware view endpoint."""
-        data = await self._get_json("/x/web-interface/view", params={"bvid": bvid})
+        data = await self.get_video_view_data(bvid)
         aid = data.get("aid")
         if isinstance(aid, bool) or not isinstance(aid, int) or aid <= 0:
             raise BilibiliAPIError("Bilibili returned an invalid video aid")
@@ -962,6 +1534,104 @@ class BilibiliAPIClient:
             for user in users
         ]
 
+    async def get_user_card(self, mid: int) -> dict[str, Any]:
+        """Get an UP's public card plus the current user's follow state.
+
+        The mobile native player already knows the video owner from
+        ``/api/bilibili/video/info``; this endpoint enriches that owner with the
+        fan count and whether the logged-in account follows them. Bilibili's
+        ``/x/web-interface/card`` returns ``following`` next to the public card
+        for an authenticated Cookie, so one upstream request covers both fields.
+
+        Args:
+            mid: UP's numeric Bilibili user id. Must be positive.
+
+        Returns:
+            A flat dict: ``mid`` / ``name`` / ``face`` / ``sign`` / ``fans`` /
+            ``following``. ``face`` is normalized to https because Bilibili
+            sometimes returns a protocol-relative ``//i0.hdslb.com/...`` URL.
+
+        Raises:
+            BilibiliAPIError: ``mid`` is not positive or Bilibili returns an
+                application error (including ``-352`` risk control).
+        """
+        user_id = int(mid)
+        if user_id <= 0:
+            raise BilibiliAPIError("invalid mid", code=-400)
+        data = await self._get_json(
+            "/x/web-interface/card",
+            params={"mid": user_id, "photo": "false"},
+        )
+        card = _json_object(data.get("card", {}))
+        face = str(card.get("face", "") or "").strip()
+        if face.startswith("//"):
+            face = f"https:{face}"
+        return {
+            "mid": _int_value(card.get("mid"), user_id) or user_id,
+            "name": str(card.get("name", "") or "").strip(),
+            "face": face,
+            "sign": str(card.get("sign", "") or "").strip(),
+            "fans": max(0, _int_value(card.get("fans"))),
+            "following": bool(data.get("following", False)),
+        }
+
+    async def set_user_follow(self, mid: int, *, follow: bool) -> dict[str, Any]:
+        """Follow or unfollow an UP and return the refreshed card state.
+
+        ``/x/relation/modify`` is the web follow endpoint: ``act=1`` follows and
+        ``act=2`` unfollows. It requires the logged-in account's CSRF token
+        (``bili_jct``), which is why follow writes stay on the backend; the
+        mobile client never calls this endpoint directly. After a successful
+        modify the card is fetched again so callers render Bilibili's
+        authoritative ``following`` flag and fan count instead of a local guess.
+
+        ``re_src=11`` is the video-page follow source used by the web player.
+        When Bilibili applied the change but the follow-up card fetch fails
+        (for example transient risk control), the requested state is returned so
+        the UI does not roll back a successful action. Bilibili's ``22014``
+        ("已经关注用户，无法重复关注") is treated as success because it means the
+        account is already in the requested state, which can happen when the
+        client's card snapshot was stale.
+
+        Raises:
+            BilibiliAPIError: ``mid`` is not positive or Bilibili rejects the
+                relation change.
+        """
+        user_id = int(mid)
+        if user_id <= 0:
+            raise BilibiliAPIError("invalid mid", code=-400)
+        try:
+            await self._post_json(
+                "/x/relation/modify",
+                data={
+                    "fid": str(user_id),
+                    "act": "1" if follow else "2",
+                    "re_src": "11",
+                    "csrf": self._csrf_token(),
+                },
+            )
+        except BilibiliAPIError as exc:
+            if follow and exc.code == 22014:
+                logger.debug("follow is already active (mid=%s)", user_id)
+            else:
+                raise
+        try:
+            return await self.get_user_card(user_id)
+        except BilibiliAPIError:
+            logger.debug(
+                "refreshing user card after follow change failed (mid=%s)",
+                user_id,
+                exc_info=True,
+            )
+            return {
+                "mid": user_id,
+                "name": "",
+                "face": "",
+                "sign": "",
+                "fans": 0,
+                "following": follow,
+            }
+
     async def get_related_videos(self, bvid: str) -> list[dict[str, Any]]:
         """Get related/recommended videos for a given video.
 
@@ -1011,10 +1681,156 @@ class BilibiliAPIClient:
                 uname=str(_json_object(reply.get("member", {})).get("uname", "")),
                 message=str(_json_object(reply.get("content", {})).get("message", "")),
                 like_count=int(reply.get("like", 0)),
+                ctime=int(reply.get("ctime", 0)),
+                reply_count=int(reply.get("rcount", 0)),
+                avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
             )
             for reply in replies
         ]
         return comments[:limit]
+
+    async def get_video_relation_state(self, bvid: str) -> dict[str, Any]:
+        """Get the logged-in user's like/coin/favorite/watch-later state."""
+        aid = await self._resolve_aid(bvid)
+        data = await self._get_json(
+            "/x/web-interface/archive/relation",
+            params={"aid": aid, "bvid": bvid},
+        )
+        return {
+            "like": bool(data.get("like", False) or data.get("is_like", False)),
+            "coin": int(data.get("coin", 0) or 0),
+            "favorite": bool(data.get("favorite", False) or data.get("is_fav", False)),
+            "watch_later": bool(
+                data.get("watch_later", False) or data.get("is_watch_later", False)
+            ),
+        }
+
+    async def like_video(self, bvid: str, *, like: bool) -> None:
+        aid = await self._resolve_aid(bvid)
+        await self._post_json(
+            "/x/web-interface/archive/like",
+            data={
+                "aid": aid,
+                "like": "1" if like else "2",
+                "csrf": self._csrf_token(),
+            },
+        )
+
+    async def coin_video(
+        self,
+        bvid: str,
+        *,
+        multiply: int = 1,
+        select_like: bool = False,
+    ) -> None:
+        aid = await self._resolve_aid(bvid)
+        await self._post_json(
+            "/x/web-interface/coin/add",
+            data={
+                "aid": aid,
+                "multiply": str(max(1, min(2, int(multiply)))),
+                "select_like": "1" if select_like else "0",
+                "csrf": self._csrf_token(),
+            },
+        )
+
+    async def triple_video(self, bvid: str) -> None:
+        aid = await self._resolve_aid(bvid)
+        await self._post_json(
+            "/x/web-interface/archive/like/triple",
+            data={
+                "aid": aid,
+                "csrf": self._csrf_token(),
+            },
+        )
+
+    async def favorite_video(
+        self, bvid: str, *, media_id: int | None = None, favorite: bool
+    ) -> None:
+        if favorite:
+            if media_id is None:
+                folders = await self.get_favorite_folders()
+                if not folders:
+                    raise BilibiliAPIError("B站没有可用的收藏夹")
+                media_id = folders[0].media_id
+            await self.add_video_to_favorite(bvid, media_id)
+        else:
+            aid = await self._resolve_aid(bvid)
+            if media_id is None:
+                # The unfavorite endpoint needs the folder id of the folder
+                # holding the video. Users almost always save to the default
+                # folder, which is the first one returned by list-all.
+                folders = await self.get_favorite_folders()
+                if not folders:
+                    raise BilibiliAPIError("B站没有可用的收藏夹")
+                media_id = folders[0].media_id
+            await self._post_json(
+                "/x/v3/fav/resource/deal",
+                data={
+                    "rid": aid,
+                    "type": 2,
+                    "add_media_ids": "",
+                    "del_media_ids": str(media_id),
+                    "csrf": self._csrf_token(),
+                },
+            )
+
+    async def watch_later_video(self, bvid: str, *, add: bool) -> None:
+        if add:
+            await self.add_video_to_watch_later(bvid)
+        else:
+            aid = await self._resolve_aid(bvid)
+            await self._post_json(
+                "/x/v2/history/toview/del",
+                data={"aid": aid, "csrf": self._csrf_token()},
+            )
+
+    async def post_comment(
+        self,
+        bvid: str,
+        *,
+        message: str,
+        root: int | None = None,
+        parent: int | None = None,
+    ) -> dict[str, Any]:
+        """Publish a top-level comment, or a reply inside a thread.
+
+        ``root`` is the thread's root reply rpid and ``parent`` the reply
+        being answered (pass neither for a top-level comment). Uses the same
+        authenticated form POST + csrf pattern as the other interaction
+        endpoints (``/x/v2/reply/add``). Returns the API ``data`` object
+        (contains ``rpid`` etc.).
+        """
+        text = str(message).strip()
+        if not text:
+            raise BilibiliAPIError("评论内容不能为空")
+        if len(text) > 1000:
+            raise BilibiliAPIError("评论内容过长（最多 1000 字）")
+        aid = await self._resolve_aid(bvid)
+        data: dict[str, Any] = {
+            "oid": aid,
+            "type": 1,
+            "message": text,
+            "csrf": self._csrf_token(),
+        }
+        if root is not None and int(root) > 0:
+            data["root"] = str(int(root))
+        if parent is not None and int(parent) > 0:
+            data["parent"] = str(int(parent))
+        return await self._post_json("/x/v2/reply/add", data=data)
+
+    async def delete_comment(self, bvid: str, rpid: int) -> None:
+        """Delete one of the current user's comments (``/x/v2/reply/del``)."""
+        aid = await self._resolve_aid(bvid)
+        await self._post_json(
+            "/x/v2/reply/del",
+            data={
+                "oid": aid,
+                "type": 1,
+                "rpid": str(int(rpid)),
+                "csrf": self._csrf_token(),
+            },
+        )
 
     async def get_danmaku_texts(self, cid: int, *, limit: int = 3000) -> list[str]:
         """Fetch raw danmaku strings for one video part.

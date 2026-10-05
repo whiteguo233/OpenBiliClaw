@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -680,6 +682,32 @@ def test_main_uses_configured_api_host_when_env_host_unset(
     monkeypatch.delenv("OPENBILICLAW_HOST", raising=False)
     monkeypatch.delenv("OPENBILICLAW_PORT", raising=False)
     monkeypatch.delenv("OPENBILICLAW_SELFTEST", raising=False)
+    # These packaging unit tests do not exercise the default four-process
+    # backend children; keep them in legacy no-worker mode.
+    monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
+
+    class _DummyProc:
+        @property
+        def pid(self) -> int:
+            return 4242
+
+        def poll(self) -> int | None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        entry,
+        "_spawn_backend_child",
+        lambda *_args, **_kwargs: _DummyProc(),
+    )
     monkeypatch.setattr(entry.sys, "frozen", False, raising=False)
     monkeypatch.setattr(entry, "_redirect_output_to_logfile", lambda _root: None)
     monkeypatch.setattr(entry, "_notify_starting", lambda: None)
@@ -729,6 +757,49 @@ def test_main_uses_configured_api_host_when_env_host_unset(
     assert seen["sockets"] is fake_listeners
 
 
+def test_start_packaged_tailnet_uses_runtime_config_and_event_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.runtime import tailnet_supervisor
+
+    expected = object()
+    seen: dict[str, object] = {}
+
+    def _start(config: object, port: int, *, event_callback: object) -> object:
+        seen.update({"config": config, "port": port, "callback": event_callback})
+        return expected
+
+    monkeypatch.setattr(tailnet_supervisor, "start_tailnet_if_enabled", _start)
+    runtime_config = SimpleNamespace(
+        tailnet=SimpleNamespace(enabled=True),
+        api=SimpleNamespace(auth=SimpleNamespace(enabled=True)),
+    )
+
+    assert entry._start_packaged_tailnet(runtime_config, "127.0.0.1", 18420) is expected
+    assert seen == {
+        "config": runtime_config,
+        "port": 18420,
+        "callback": entry._packaged_tailnet_event_callback,
+    }
+
+
+def test_start_packaged_tailnet_failure_does_not_block_local_desktop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.runtime import tailnet_supervisor
+
+    def _fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("helper unavailable")
+
+    monkeypatch.setattr(tailnet_supervisor, "start_tailnet_if_enabled", _fail)
+    runtime_config = SimpleNamespace(
+        tailnet=SimpleNamespace(enabled=True),
+        api=SimpleNamespace(auth=SimpleNamespace(enabled=False)),
+    )
+
+    assert entry._start_packaged_tailnet(runtime_config, "0.0.0.0", 8420) is None
+
+
 def test_main_opens_setup_after_repairing_unloadable_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -739,6 +810,30 @@ def test_main_opens_setup_after_repairing_unloadable_config(
     monkeypatch.delenv("OPENBILICLAW_HOST", raising=False)
     monkeypatch.delenv("OPENBILICLAW_PORT", raising=False)
     monkeypatch.delenv("OPENBILICLAW_SELFTEST", raising=False)
+    monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
+
+    class _DummyProc:
+        @property
+        def pid(self) -> int:
+            return 4242
+
+        def poll(self) -> int | None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        entry,
+        "_spawn_backend_child",
+        lambda *_args, **_kwargs: _DummyProc(),
+    )
     monkeypatch.setattr(entry.sys, "frozen", False, raising=False)
     monkeypatch.setattr(entry, "_redirect_output_to_logfile", lambda _root: None)
     monkeypatch.setattr(entry, "_notify_starting", lambda: None)
@@ -761,9 +856,17 @@ def test_main_opens_setup_after_repairing_unloadable_config(
             self._target = target
             self._args = args
             self._kwargs = kwargs or {}
+            self._name = name
 
         def start(self) -> None:
+            # Run the landing-page thread inline, but never execute the child
+            # supervisor's watchdog loop (it would block the test forever).
+            if self._name == "obc-child-supervisor":
+                return
             self._target(*self._args, **self._kwargs)
+
+        def join(self, timeout: float | None = None) -> None:
+            pass
 
     monkeypatch.setattr(entry.threading, "Thread", _InlineThread)
 
@@ -817,6 +920,30 @@ def test_main_disables_uvicorn_access_log_in_tray_mode(
     monkeypatch.delenv("OPENBILICLAW_HOST", raising=False)
     monkeypatch.delenv("OPENBILICLAW_PORT", raising=False)
     monkeypatch.delenv("OPENBILICLAW_SELFTEST", raising=False)
+    monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
+
+    class _DummyProc:
+        @property
+        def pid(self) -> int:
+            return 4242
+
+        def poll(self) -> int | None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        entry,
+        "_spawn_backend_child",
+        lambda *_args, **_kwargs: _DummyProc(),
+    )
     monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
     monkeypatch.setattr(entry, "_redirect_output_to_logfile", lambda _root: None)
     monkeypatch.setattr(entry, "_notify_starting", lambda: None)
@@ -1144,6 +1271,54 @@ def test_open_landing_page_still_opens_web_on_health_timeout(
     # Timeout → best-effort open of /web without an init-status probe.
     assert opened == ["http://127.0.0.1:8420/web/"]
     assert probed == []
+
+
+# --------------------------------------------------------------------------- #
+# Installer-coordination mutex (Inno Setup AppMutex)
+# --------------------------------------------------------------------------- #
+
+
+def test_installer_mutex_name_matches_inno_appmutex() -> None:
+    """entry.py's mutex name and the .iss AppMutex= must stay in lockstep."""
+    project_root = Path(__file__).resolve().parent.parent
+    iss_text = (project_root / "packaging" / "openbiliclaw.iss").read_text(encoding="utf-8")
+    match = re.search(r"^AppMutex=(\S+)", iss_text, flags=re.MULTILINE)
+    assert match is not None, "packaging/openbiliclaw.iss must set AppMutex="
+    assert match.group(1) == entry._INSTALLER_MUTEX_NAME
+
+
+def test_acquire_installer_mutex_skips_dev_and_non_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Dev runs (not frozen) never take the mutex, even on Windows.
+    assert entry._acquire_installer_mutex() is None
+    # Frozen but non-Windows: still None.
+    monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(entry.os, "name", "posix")
+    assert entry._acquire_installer_mutex() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="named mutex is Windows-only")
+def test_acquire_installer_mutex_frozen_windows_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
+    assert entry._acquire_installer_mutex(), "CreateMutexW must return a handle"
+    # ERROR_ALREADY_EXISTS still yields a handle — parent + worker children
+    # share one mutex; existence is all that matters.
+    assert entry._acquire_installer_mutex()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="named mutex is Windows-only")
+def test_acquire_installer_mutex_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ctypes
+
+    def _boom(*_args: object, **_kwargs: object) -> int:
+        raise OSError("CreateMutexW unavailable")
+
+    monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ctypes.windll.kernel32, "CreateMutexW", _boom)
+    assert entry._acquire_installer_mutex() is None
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience

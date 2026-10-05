@@ -47,7 +47,7 @@ def test_desktop_reddit_source_status_and_credentials_are_rendered() -> None:
     # this page had two identical copies of it and the side panel a third.
     assert (
         'const SOURCE_KEYS = Object.freeze([\n    "bilibili", "xiaohongshu", '
-        '"douyin", "weibo", "youtube", "twitter", "zhihu", "reddit",\n'
+        '"douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",\n'
     ) in shared
     # New sources extend the one shared roster; they do not create another
     # platform list in either settings bundle.

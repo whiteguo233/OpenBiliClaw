@@ -39,6 +39,7 @@ import {
   handleDySearchTaskResult,
   handleDyHotTaskResult,
   handleDyFeedTaskResult,
+  ensureDyTaskRecovery,
   pollDyTaskNow,
   type DyFeedResult,
   type DyHotResult,
@@ -97,7 +98,10 @@ import {
   handleXTaskAlarm,
   pollXTaskNow,
 } from "./x-task-dispatcher.ts";
-import { ensureNativeSaveTaskRecovery } from "./native-save-task-runner.ts";
+import {
+  ensureNativeSaveTaskRecovery,
+  isNativeSaveTaskTabId,
+} from "./native-save-task-runner.ts";
 import {
   startBiliTaskPolling,
   handleBiliTaskAlarm,
@@ -137,6 +141,7 @@ import {
   clearSession,
   ensureSession,
 } from "../shared/auth.ts";
+import { isTaskTabUrl } from "../shared/task-tab.ts";
 import type { BehaviorEvent } from "../shared/types.js";
 
 // The event buffer + its chrome.storage.local persistence live in ./buffer.ts
@@ -600,6 +605,9 @@ async function flushEvents(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function ensureFlushAlarm(): void {
+  // Safari 18+ exposes chrome.alarms, but guard defensively so a browser
+  // without it degrades to WS-driven flushing instead of crashing the worker.
+  if (typeof chrome === "undefined" || !chrome.alarms?.create) return;
   chrome.alarms.create(FLUSH_ALARM_NAME, {
     periodInMinutes: BUFFER_FLUSH_INTERVAL / 60_000,
   });
@@ -631,6 +639,7 @@ async function startServiceWorkerAfterRecovery(): Promise<void> {
   await ensureNativeSaveTaskRecovery();
   await ensureV2EXTaskRecovery();
   await ensureInstagramTaskRecovery();
+  await ensureDyTaskRecovery();
   await runtimeStreamReady;
   startPlatformTaskPolling();
   startCookieSync();
@@ -694,6 +703,14 @@ async function postBangumiIdentity(payload: { uid: number; username: string }): 
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "NATIVE_SAVE_TASK_TAB_QUERY") {
+    void (async () => {
+      const nativeSaveTaskTab = await isNativeSaveTaskTabId(sender.tab?.id);
+      const taskTab = nativeSaveTaskTab || isTaskTabUrl(sender.tab?.url ?? "");
+      sendResponse({ native_save_task_tab: taskTab });
+    })();
+    return true;
+  }
   if (message.action === "BGM_IDENTITY_OBSERVED") {
     void postBangumiIdentity(message.data as { uid: number; username: string });
     return;
@@ -854,72 +871,91 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action !== "BEHAVIOR_EVENT") return;
 
-  const event = message.data as BehaviorEvent;
-  // Keep the message port (and therefore the MV3 worker turn) alive until the
-  // chrome.storage mirror commits. HTTP flush is only a wake after that durable
-  // ACK and is allowed to fail/retry independently.
-  return enqueueEventWithDurableAck(event, sendResponse, (length) => {
-    if (length >= BUFFER_MAX_SIZE || shouldFlushImmediately(event)) {
-      void flushEvents();
+  void (async () => {
+    let nativeTaskTab = false;
+    try {
+      nativeTaskTab = await isNativeSaveTaskTabId(sender.tab?.id);
+    } catch {
+      // If task-tab identification is unavailable, keep user events flowing.
+    }
+    if (nativeTaskTab || isTaskTabUrl(sender.tab?.url ?? "")) {
+      // Task tabs are not user browsing; drop their behavior events.
+      sendResponse({ ok: true, dropped: true });
+      return;
+    }
+    const event = message.data as BehaviorEvent;
+    return enqueueEventWithDurableAck(event, sendResponse, (length) => {
+      if (length >= BUFFER_MAX_SIZE || shouldFlushImmediately(event)) {
+        void flushEvents();
+      }
+    });
+  })();
+  return true;
+});
+
+if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    handleXhsTaskAlarm(alarm.name);
+    handleDyTaskAlarm(alarm.name);
+    handleYtTaskAlarm(alarm.name);
+    handleZhihuTaskAlarm(alarm.name);
+    handleWeiboTaskAlarm(alarm.name);
+    void handleRedditTaskAlarm(alarm.name);
+    void handleLinuxdoTaskAlarm(alarm.name);
+    handleV2EXTaskAlarm(alarm.name);
+    handleInstagramTaskAlarm(alarm.name);
+    void handleXTaskAlarm(alarm.name);
+    handleBiliTaskAlarm(alarm.name);
+    if (handleCookieSyncAlarm(alarm.name)) {
+      return;
+    }
+    if (alarm.name === FLUSH_ALARM_NAME) {
+      void (async () => {
+        await bufferReady();
+        if (getBufferLength() === 0 && !backendUninitialized) {
+          await recoverParkedEventsForFlush();
+        }
+        if (getBufferLength() > 0) {
+          await flushEvents();
+        } else {
+          await checkPendingNotification();
+        }
+      })();
     }
   });
-});
+}
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  handleXhsTaskAlarm(alarm.name);
-  handleDyTaskAlarm(alarm.name);
-  handleYtTaskAlarm(alarm.name);
-  handleZhihuTaskAlarm(alarm.name);
-  handleWeiboTaskAlarm(alarm.name);
-  void handleRedditTaskAlarm(alarm.name);
-  void handleLinuxdoTaskAlarm(alarm.name);
-  handleV2EXTaskAlarm(alarm.name);
-  handleInstagramTaskAlarm(alarm.name);
-  void handleXTaskAlarm(alarm.name);
-  handleBiliTaskAlarm(alarm.name);
-  if (handleCookieSyncAlarm(alarm.name)) {
-    return;
-  }
-  if (alarm.name === FLUSH_ALARM_NAME) {
-    void (async () => {
-      await bufferReady();
-      if (getBufferLength() === 0 && !backendUninitialized) {
-        await recoverParkedEventsForFlush();
-      }
-      if (getBufferLength() > 0) {
-        await flushEvents();
-      } else {
-        await checkPendingNotification();
-      }
-    })();
-  }
-});
-
-chrome.notifications.onClicked.addListener((notificationId) => {
-  if (notificationId.startsWith("openbiliclaw-probe:")) {
+// Safari does not implement chrome.notifications (its `notifications`
+// permission is ignored); the OS-toast surface is already disabled for
+// Chrome/Firefox, so this listener only routes the click → UI open when the
+// API exists. Guard it so the worker loads on Safari without throwing.
+if (typeof chrome !== "undefined" && chrome.notifications?.onClicked) {
+  chrome.notifications.onClicked.addListener((notificationId) => {
+    if (notificationId.startsWith("openbiliclaw-probe:")) {
+      void openExtensionUi(chrome, { tab: "profile" });
+      void chrome.notifications.clear(notificationId);
+      return;
+    }
+    const bvid = parseNotificationBvid(notificationId);
+    if (bvid) {
+      void openExtensionUi(chrome, { tab: "recommend" });
+      void chrome.notifications.clear(notificationId);
+      return;
+    }
+    const delightBvid = parseDelightBvid(notificationId);
+    if (delightBvid) {
+      void openExtensionUi(chrome, { tab: "recommend", delightBvid });
+      void chrome.notifications.clear(notificationId);
+      return;
+    }
+    const cognitionId = parseCognitionUpdateId(notificationId);
+    if (!cognitionId) {
+      return;
+    }
     void openExtensionUi(chrome, { tab: "profile" });
     void chrome.notifications.clear(notificationId);
-    return;
-  }
-  const bvid = parseNotificationBvid(notificationId);
-  if (bvid) {
-    void openExtensionUi(chrome, { tab: "recommend" });
-    void chrome.notifications.clear(notificationId);
-    return;
-  }
-  const delightBvid = parseDelightBvid(notificationId);
-  if (delightBvid) {
-    void openExtensionUi(chrome, { tab: "recommend", delightBvid });
-    void chrome.notifications.clear(notificationId);
-    return;
-  }
-  const cognitionId = parseCognitionUpdateId(notificationId);
-  if (!cognitionId) {
-    return;
-  }
-  void openExtensionUi(chrome, { tab: "profile" });
-  void chrome.notifications.clear(notificationId);
-});
+  });
+}
 
 // Kick off the restore gate at SW start so events persisted before a recycle
 // are back in the buffer for the next alarm flush, even without a fresh event.

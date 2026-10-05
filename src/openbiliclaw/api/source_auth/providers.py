@@ -232,6 +232,17 @@ _BANGUMI_TOKEN_DETAIL: dict[str, str] = {
 # Contract-side ``detail`` for Bangumi with no token — the anonymous default.
 _BANGUMI_ANONYMOUS_DETAIL = "公开源 · 无需登录；可选填个人令牌以识别账号或读取私密收藏。"
 
+_GITHUB_TOKEN_DETAIL: dict[str, str] = {
+    "verified": "GitHub PAT 有效，已通过 GET /user 确认账号；公开仓库来源已就绪。",
+    "failed": "GitHub PAT 已被拒绝（可能过期或无效）；公开仓库发现仍可匿名使用。",
+    "stale": "GitHub PAT 上次联网确认已过期，可点「测试连接」重新确认。",
+    "unverified": "已配置 GitHub PAT，尚未联网确认；公开仓库发现仍可使用。",
+}
+_GITHUB_ANONYMOUS_DETAIL = (
+    "GitHub 公开仓库发现无需登录；可填写公开用户名导入 Starred 仓库，"
+    "或配置可选 PAT 以确认身份并提高 API 限额。"
+)
+
 _V2EX_TOKEN_DETAIL: dict[str, str] = {
     "verified": "个人令牌有效，已识别 V2EX 账号，可使用 API 2.0 增强发现。",
     "failed": "V2EX 个人令牌被拒绝（可能过期或无效）；公开发现不受影响。",
@@ -1390,6 +1401,126 @@ def auth_bangumi(ctx: SourceAuthContext) -> SourceAuthContract:
     )
 
 
+# ── GitHub ───────────────────────────────────────────────────────────
+
+
+def _github_capabilities(
+    *,
+    has_account_scope: bool,
+    credential_rejected: bool = False,
+) -> dict[str, SourceCapabilityAuth]:
+    """Return the frozen optional-credential capability matrix for GitHub."""
+
+    if credential_rejected:
+        account_state: CapabilityReadinessState = "unavailable"
+        account_ready = False
+        account_detail = "GitHub PAT 已被拒绝；更新或清除 PAT 后才能导入公开 Starred 仓库。"
+    else:
+        account_state = "ready" if has_account_scope else "identity_required"
+        account_ready = has_account_scope
+        account_detail = (
+            "已提供公开用户名或 PAT，可只读加载公开 Starred 仓库。"
+            if has_account_scope
+            else "公开发现已就绪；画像 / 初始化还需要公开用户名或可选 PAT。"
+        )
+    return {
+        "discover": SourceCapabilityAuth(
+            mode="optional-credential",
+            required=True,
+            ready=True,
+            state="ready",
+            detail="公开仓库 Search API 可匿名使用；PAT 仅用于身份确认和提高限额。",
+        ),
+        "profile": SourceCapabilityAuth(
+            mode="optional-credential",
+            required=True,
+            ready=account_ready,
+            state=account_state,
+            detail=account_detail,
+        ),
+        "bootstrap": SourceCapabilityAuth(
+            mode="optional-credential",
+            required=True,
+            ready=account_ready,
+            state=account_state,
+            detail=account_detail,
+        ),
+    }
+
+
+def auth_github(ctx: SourceAuthContext) -> SourceAuthContract:
+    """GitHub: public repositories, optional config/env PAT, no private scope."""
+
+    from openbiliclaw.sources.github_client import resolve_github_access_token
+
+    cfg = ctx.source_cfg("github")
+    config_token = str(getattr(cfg, "access_token", "") or "").strip()
+    # Deliberately ignore cfg.token_env here. The only accepted variable is the
+    # product-specific one below; generic GITHUB_TOKEN / GH_TOKEN and renamed
+    # config values must never leak into this source.
+    token, origin = resolve_github_access_token(
+        config_token=config_token,
+        token_env="OPENBILICLAW_GITHUB_TOKEN",
+    )
+    username = str(getattr(cfg, "username", "") or "").strip()
+    if not token:
+        capabilities = _github_capabilities(has_account_scope=bool(username))
+        detail = _GITHUB_ANONYMOUS_DETAIL
+        if username:
+            detail += f" 当前公开账号范围：{username}（不代表所有权验证）。"
+        return SourceAuthContract(
+            auth_required=False,
+            credential="none",
+            credential_origin="none",
+            verification="unverified",
+            verify_method="none",
+            verify_ttl_seconds=None,
+            can_verify_now=False,
+            detail=detail,
+            capabilities=capabilities,
+            legacy_state="no_auth",
+            legacy_logged_in=True,
+        )
+
+    verification, verified_at = _probe_verdict(
+        ctx,
+        "github",
+        credential="present",
+        cookie=token,
+    )
+    # A formal discovery request is also authoritative credential evidence.
+    # Merge its fingerprint-scoped 401 marker so the polled source status and
+    # guided-init checklist cannot advertise profile/bootstrap readiness after
+    # the same PAT was rejected outside the explicit "test connection" path.
+    if ctx.has_conn():
+        from openbiliclaw.runtime.github_producer import github_token_rejected
+
+        if github_token_rejected(ctx.database, token):
+            verification = "failed"
+            verified_at = ""
+    capabilities = _github_capabilities(
+        has_account_scope=True,
+        credential_rejected=verification == "failed",
+    )
+    return SourceAuthContract(
+        auth_required=False,
+        credential="present",
+        credential_origin="env" if origin == "env" else "config",
+        verification=verification,
+        verify_method="live_probe",
+        verified_at=verified_at,
+        verify_ttl_seconds=_probe_ttl(verification),
+        can_verify_now=True,
+        detail=_GITHUB_TOKEN_DETAIL.get(
+            verification,
+            _GITHUB_TOKEN_DETAIL["unverified"],
+        ),
+        capabilities=capabilities,
+        legacy_state="no_auth",
+        legacy_logged_in=True,
+    )
+
+
 V2EX_CAPABILITY_AUTH_MODES: dict[str, tuple[str, bool]] = {
     "discover": ("optional-credential", True),
     "profile": ("login-required", True),
@@ -2041,6 +2172,7 @@ SOURCE_AUTH_PROVIDERS: dict[str, Callable[[SourceAuthContext], SourceAuthContrac
     "zhihu": auth_zhihu,
     "reddit": auth_reddit,
     "bangumi": auth_bangumi,
+    "github": auth_github,
     "linuxdo": auth_linuxdo,
     "v2ex": auth_v2ex,
     "weibo": auth_weibo,

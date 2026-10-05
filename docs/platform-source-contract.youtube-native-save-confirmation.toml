@@ -1,0 +1,172 @@
+schema_version = 1
+canonical_slug = "youtube"
+display_name = "YouTube native-save confirmation"
+integration_level = "capability-increment"
+aliases = ["yt"]
+hosts = ["youtube.com", "youtu.be"]
+content_types = ["video"]
+
+[transport]
+kind = "browser-task"
+owner = "extension"
+entrypoints = [
+  "extension/src/background/native-save-task-runner.ts",
+  "extension/src/background/yt-task-dispatcher.ts",
+  "extension/src/content/native-save/runtime.ts",
+  "extension/src/content/native-save/youtube.ts",
+]
+route_aliases = ["yt"]
+fallback_owner = "none"
+requires_overseas_network = true
+routed_by_network_mode = true
+network_policy = "The source family supports backend network-mode routing for public discovery; this native-save capability always uses the signed-in browser network stack instead."
+
+[transport.capability_routes]
+native-save = "extension:browser-task:login-required"
+
+[identity]
+item_id = "Exact 11-character YouTube video id; item key youtube:<video_id>."
+url = "Exact HTTPS watch, shorts, or one-segment youtu.be URL validated against the same video id."
+dedupe = "Canonical youtube family plus video id and requested action in the durable native-save ledger."
+account_scope = "The account currently signed in to the one verified installed extension browser."
+
+[auth]
+mode = "login-required"
+credential_kinds = []
+verify_action = "none"
+write_path = "none"
+account_resolution = "The content executor requires signed-in YouTube avatar/menu evidence in the task tab; the source-wide credential verifier remains none because public discovery needs no credential."
+identity_evidence = "The exact native-save task-result callback carries fresh DOM proof; the source-wide public-source auth status is not reused as native-save evidence."
+login_cookie_names = []
+login_state_path = "callback"
+
+[auth.capability_modes]
+native-save = "login-required"
+
+[auth.capability_required]
+native-save = true
+
+[upstream]
+success_content_types = ["text/html"]
+pagination = "N/A: one exact video and one exact target row are inspected per task."
+terminal_evidence = "A checked exact playlist row after mutation, or the same checked row in a different reloaded document instance."
+terminal_policy = "Only positive exact membership proves success; missing confirmation remains native_confirmation_not_observed."
+partial_policy = "N/A: the task is atomic for one video/action/target and never reports partial success."
+publication_time_policy = "N/A: native-save confirmation does not read or synthesize publication time."
+
+[discover]
+modes = []
+search_generation = "Outside this capability increment; existing YouTube discovery is unchanged."
+budget = "Outside this capability increment."
+cursor = "Outside this capability increment."
+
+[profile]
+signals = false
+incremental = false
+refresh_mode = "none"
+
+[extension]
+task = "browser-task"
+hosts = ["youtube.com"]
+task_marker = false
+background = true
+early_response = false
+cookie_sync = false
+
+[surfaces]
+cli = true
+setup = false
+desktop = true
+mobile = true
+extension_popup = true
+source_status = true
+credentials = true
+recommendation = true
+
+[engagement]
+view = "unavailable"
+like = "unavailable"
+favorite = "unavailable"
+comment = "unavailable"
+share = "unavailable"
+danmaku = "unavailable"
+
+[media]
+image = "none"
+image_hosts = []
+deep_link = "browser-fallback"
+native_save = true
+
+[e2e]
+safe_actions = ["navigate-public-item"]
+mutating_actions = ["platform-save-favorite", "platform-save-watch-later"]
+
+[e2e.safe_assertions]
+navigate-public-item = "upstream-state-unchanged"
+
+[e2e.safe_postconditions]
+navigate-public-item = "Opening the exact public video performs no account-state mutation."
+
+[events]
+strategy_prefixes = ["yt-", "yt_", "youtube"]
+mappings = "Native-save task tabs suppress the passive collector; executor clicks produce no behavior events."
+scope_caps = "One exact item/action/target per fresh authorization envelope."
+
+[task]
+lease = "Backend durable native-save lease; one runner-owned tab is recorded in chrome.storage.session."
+idle_deadline = "Readiness, document READY probes, mutation, and result callbacks are independently bounded."
+absolute_deadline = "One backend-owned task deadline plus a bounded three-attempt result ACK budget."
+retry = "Mutation executes once; only read-only verification may follow. Exact callback payload replays are idempotently acknowledged."
+buffer = "Runner opens about:blank, records tab ownership before navigation, and suppresses passive collection on initial load/reload."
+
+[smoke]
+storage_scope = "isolated-only"
+
+[smoke.sinks]
+task = "allowed"
+task_result = "allowed"
+seen = "forbidden"
+affinity = "forbidden"
+snapshot = "forbidden"
+schedule = "forbidden"
+event_ingress = "forbidden"
+memory = "forbidden"
+profile = "forbidden"
+
+[exclusions]
+"discover.formal" = "Existing YouTube discovery is outside this native-save confirmation increment."
+"search.integration" = "Existing YouTube keyword generation and search are unchanged by this increment."
+"profile.signals" = "Existing YouTube profile bootstrap is outside this increment."
+"profile.incremental" = "Existing YouTube incremental refresh is outside this increment."
+"profile.refresh-mode" = "This scoped contract claims only native-save confirmation, not profile refresh."
+"extension.task-marker" = "Runner-owned tab identity is established before navigation through a background tab-id handshake, not a URL marker."
+"extension.early-response" = "Native-save uses rendered DOM state and a document READY handshake, not early response capture."
+"extension.cookie-sync" = "Native-save uses the browser's signed-in session without reading or copying cookie values."
+"surface.setup" = "Guided setup remains the existing public-discovery flow and exposes no native-save confirmation control."
+"media.image" = "This increment neither fetches nor displays media images."
+"media.deep-link" = "This increment opens the canonical web URL and claims no mobile native-app scheme."
+"engagement.view" = "This scoped native-save path does not normalize engagement counters."
+"engagement.like" = "This scoped native-save path does not normalize engagement counters."
+"engagement.favorite" = "Persisted playlist membership is task proof, not a recommendation favorite_count metric."
+"engagement.comment" = "This scoped native-save path does not normalize engagement counters."
+"engagement.share" = "This scoped native-save path does not normalize engagement counters."
+"engagement.danmaku" = "This scoped native-save path does not normalize engagement counters."
+
+[exclusion_tests]
+"discover.formal" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_formal_discover"]
+"search.integration" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_search_integration"]
+"profile.signals" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_profile_signals"]
+"profile.incremental" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_profile_incremental"]
+"profile.refresh-mode" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_profile_refresh_mode"]
+"extension.task-marker" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_task_marker"]
+"extension.early-response" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_early_response"]
+"extension.cookie-sync" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_cookie_sync"]
+"surface.setup" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_setup_surface"]
+"media.image" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_media_image"]
+"media.deep-link" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_media_deep_link"]
+"engagement.view" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_view"]
+"engagement.like" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_like"]
+"engagement.favorite" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_favorite"]
+"engagement.comment" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_comment"]
+"engagement.share" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_share"]
+"engagement.danmaku" = ["tests/test_native_save_confirmation_contract.py::test_youtube_native_save_contract_excludes_engagement_danmaku"]

@@ -1,5 +1,10 @@
 """Canonical source-platform families shared across discovery and storage."""
 
+# [INPUT]: 平台别名、策略前缀与规范 URL
+# [OUTPUT]: 来源族 registry、URL 推断与 resolve_source_attribution()
+# [POS]: 跨 API、事件格式与 storage 共用的唯一来源归属口径
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +15,7 @@ PLATFORM_XIAOHONGSHU = "xiaohongshu"
 PLATFORM_DOUYIN = "douyin"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TWITTER = "twitter"
+PLATFORM_GITHUB = "github"
 PLATFORM_ZHIHU = "zhihu"
 PLATFORM_REDDIT = "reddit"
 PLATFORM_BANGUMI = "bangumi"
@@ -17,6 +23,49 @@ PLATFORM_LINUXDO = "linuxdo"
 PLATFORM_V2EX = "v2ex"
 PLATFORM_WEIBO = "weibo"
 PLATFORM_INSTAGRAM = "instagram"
+
+# Source attribution is deliberately small.  ``exact`` means the producer
+# supplied the platform, ``inferred`` means it came from a canonical URL, and
+# ``legacy_unknown`` preserves old rows without pretending that a fallback is
+# authoritative.
+SOURCE_CONFIDENCE_EXACT = "exact"
+SOURCE_CONFIDENCE_INFERRED = "inferred"
+SOURCE_CONFIDENCE_LEGACY_UNKNOWN = "legacy_unknown"
+SOURCE_CONFIDENCE_VALUES = frozenset(
+    {
+        SOURCE_CONFIDENCE_EXACT,
+        SOURCE_CONFIDENCE_INFERRED,
+        SOURCE_CONFIDENCE_LEGACY_UNKNOWN,
+    }
+)
+
+# Callers may ask for a confidence value, but the storage/event boundary must
+# never let a caller claim stronger evidence than the resolver actually had.
+# ``exact`` requires a canonical producer/platform field; URL-only inference is
+# at most ``inferred``; unknown slugs are at most ``legacy_unknown``.
+_SOURCE_CONFIDENCE_RANK = {
+    SOURCE_CONFIDENCE_LEGACY_UNKNOWN: 0,
+    SOURCE_CONFIDENCE_INFERRED: 1,
+    SOURCE_CONFIDENCE_EXACT: 2,
+}
+
+# 按优先级排列的候选字段；同一事件只取第一个有效字段，不能展开成多个内容身份。
+CONTENT_ID_METADATA_KEYS = (
+    "content_id",
+    "bvid",
+    "note_id",
+    "aweme_id",
+    "video_id",
+    "yt_video_id",
+    "post_id",
+    "tweet_id",
+    "status_id",
+    "repository_id",
+    "question_id",
+    "answer_id",
+    "topic_id",
+    "subject_id",
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +145,14 @@ SOURCE_FAMILY_RULES = (
         platform_aliases=frozenset({"twitter", "x"}),
         source_prefixes=("x-", "x_", "twitter"),
         url_hosts=("x.com", "twitter.com"),
+        requires_overseas_network=True,
+        routed_by_network_mode=True,
+    ),
+    SourceFamilyRule(
+        family=PLATFORM_GITHUB,
+        platform_aliases=frozenset({"github", "gh"}),
+        source_prefixes=("github-", "github_", "gh-"),
+        url_hosts=("github.com",),
         requires_overseas_network=True,
         routed_by_network_mode=True,
     ),
@@ -228,6 +285,74 @@ def infer_source_platform_from_url(url: object) -> str:
     for rule in SOURCE_FAMILY_RULES:
         if any(host == base or host.endswith(f".{base}") for base in rule.url_hosts):
             return rule.family
+    return ""
+
+
+def resolve_source_attribution(
+    *,
+    explicit_platform: object = "",
+    metadata_platform: object = "",
+    url: object = "",
+    legacy_platform: object = "",
+) -> tuple[str, str]:
+    """Resolve a platform and how confidently it was identified.
+
+    Explicit producer fields win over metadata, and metadata wins over URL
+    inference.  A legacy fallback is returned only when no stronger signal is
+    available; callers can therefore distinguish a real platform tag from a
+    compatibility default without breaking old databases.
+
+    Unknown platform slugs are preserved as the platform value, but they are
+    not authoritative evidence: the returned confidence is
+    ``legacy_unknown``. This keeps future platform names from being counted
+    as exact attribution until they are registered in
+    ``SOURCE_FAMILY_RULES``.
+    """
+    for value in (explicit_platform, metadata_platform):
+        normalized = normalize_source_platform(value)
+        if not normalized:
+            continue
+        if normalized in CANONICAL_SOURCE_FAMILIES:
+            return normalized, SOURCE_CONFIDENCE_EXACT
+        return normalized, SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+
+    inferred = infer_source_platform_from_url(url)
+    if inferred:
+        return inferred, SOURCE_CONFIDENCE_INFERRED
+
+    fallback = normalize_source_platform(legacy_platform)
+    if fallback:
+        return fallback, SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+    return "", SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+
+
+def constrain_source_confidence(requested: object, detected: str) -> str:
+    """Return the more conservative of *requested* and *detected* confidence.
+
+    Callers may suggest a confidence value, but cannot claim stronger
+    evidence than the source resolver observed. Passing an invalid or empty
+    value simply returns the detected confidence.
+    """
+    requested = str(requested or "").strip()
+    if requested not in SOURCE_CONFIDENCE_VALUES:
+        return detected
+    detected = str(detected or "").strip() or SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+    if _SOURCE_CONFIDENCE_RANK[requested] <= _SOURCE_CONFIDENCE_RANK[detected]:
+        return requested
+    return detected
+
+
+def extract_source_content_id(metadata: object) -> str:
+    """Return the first stable content identifier in source metadata."""
+    if not isinstance(metadata, dict):
+        return ""
+    for key in CONTENT_ID_METADATA_KEYS:
+        value = metadata.get(key)
+        if not isinstance(value, (str, int)) or isinstance(value, bool):
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
     return ""
 
 

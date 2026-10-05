@@ -120,7 +120,7 @@ export async function requestJson(path, options = {}) {
       err.details = details;
       throw err;
     }
-    return res.json();
+    return await res.json();
   } finally {
     timeout.cleanup();
   }
@@ -224,13 +224,16 @@ export async function fetchContentHistory(category, limit = 12, cursorOrOffset =
 export async function reshuffleRecommendations(excludedBvids = []) {
   const data = await requestJson(
     "/recommendations/reshuffle",
-    json({ excluded_bvids: excludedBvids }),
+    { ...json({ excluded_bvids: excludedBvids }), timeoutMs: DEFAULT_READ_TIMEOUT_MS },
   );
   return { ...data, items: Array.isArray(data.items) ? data.items : [] };
 }
 
 export async function appendRecommendations(excludedBvids = []) {
-  const data = await requestJson("/recommendations/append", json({ excluded_bvids: excludedBvids }));
+  const data = await requestJson(
+    "/recommendations/append",
+    { ...json({ excluded_bvids: excludedBvids }), timeoutMs: DEFAULT_READ_TIMEOUT_MS },
+  );
   return { ...data, items: Array.isArray(data.items) ? data.items : [] };
 }
 
@@ -354,6 +357,10 @@ export async function fetchActivityFeed({ limit, before } = {}) {
 }
 
 // ── Chat ────────────────────────────────────────────────────
+// Weak-network budget for creating the durable turn row before streaming
+// starts; without it a stalled POST left the composer locked forever.
+const CHAT_TURN_CREATE_TIMEOUT_MS = 30_000;
+
 export async function startChatTurn({
   turnId = "",
   session = "popup",
@@ -361,6 +368,9 @@ export async function startChatTurn({
   subjectId = "",
   subjectTitle = "",
   replyToTurnId = "",
+  sessionId = "",
+  skill = "",
+  streaming = false,
   message,
 }) {
   const payload = {
@@ -370,9 +380,12 @@ export async function startChatTurn({
     subject_id: subjectId,
     subject_title: subjectTitle,
     message,
+    streaming,
   };
   if (replyToTurnId) payload.reply_to_turn_id = replyToTurnId;
-  return requestJson("/chat/turns", json(payload));
+  if (sessionId) payload.session_id = sessionId;
+  if (skill) payload.skill = skill;
+  return requestJson("/chat/turns", { ...json(payload), timeoutMs: CHAT_TURN_CREATE_TIMEOUT_MS });
 }
 
 export async function fetchChatTurn(turnId, { signal, timeoutMs = 10_000 } = {}) {
@@ -413,6 +426,236 @@ export async function actOnChatCard(turnId, action, { signal } = {}) {
     signal,
     timeoutMs: 60_000,
   });
+}
+
+// ── Chat agent loop (M9) ──────────────────────────────────────
+// Shared SSE parser / process-flow reducer lives in
+// /shared/agent-chat.js (globalThis.OpenBiliClawAgentChat), loaded by
+// index.html before the module app.
+function agentChatShared() {
+  const shared = globalThis.OpenBiliClawAgentChat;
+  if (!shared) throw new Error("agent-chat shared helper did not load");
+  return shared;
+}
+
+async function readSseStream(response, onEvent, watchdog) {
+  const parser = agentChatShared().createAgentSseParser(onEvent);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      // Rearm on every read: any incoming byte (incl. server ``: ping``
+      // heartbeat comments) proves the connection is still alive.
+      watchdog?.reset();
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    watchdog?.cancel();
+  }
+  parser.end();
+}
+
+async function postSse(path, body, { signal } = {}) {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", [CSRF_HEADER]: "1" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!response.ok) {
+    let details = null;
+    try { details = await response.json(); } catch { details = null; }
+    if (response.status === 401) signalAuthRequired();
+    const err = new Error(`${path} failed: ${response.status}`);
+    err.status = response.status;
+    err.details = details;
+    throw err;
+  }
+  return response;
+}
+
+/**
+ * Stream one multi-hop agent turn (POST /api/chat/agent/stream).
+ * ``onEvent(eventName, data)`` receives every AgentEvent; resolves with the
+ * terminal ``done`` payload. EOF before ``done`` rejects so an interrupted
+ * response cannot be mistaken for a durably completed turn.
+ * Throws with ``err.status === 503`` when the loop is disabled so callers can
+ * fall back to the legacy single-hop stream.
+ */
+export async function streamAgentChatTurn({
+  turnId = "",
+  sessionId = "",
+  skill = "",
+  session = "popup",
+  message,
+  onEvent,
+  watchdogMs,
+} = {}) {
+  const body = { message };
+  if (turnId) body.turn_id = turnId;
+  if (sessionId) body.session_id = sessionId;
+  if (skill) body.skill = skill;
+  if (session) body.session = session;
+  let donePayload = null;
+  const watchdog = agentChatShared().createSseReadWatchdog(
+    watchdogMs > 0 ? { timeoutMs: watchdogMs } : undefined,
+  );
+  const response = await postSse("/chat/agent/stream", body, { signal: watchdog.signal });
+  await readSseStream(response, (name, data) => {
+    if (name === "done") donePayload = data;
+    if (name === "error") {
+      const err = new Error(String(data?.error || "对话失败了，请稍后重试。"));
+      err.agentStreamError = true;
+      onEvent?.(name, data);
+      throw err;
+    }
+    onEvent?.(name, data);
+  }, watchdog);
+  if (!donePayload) throw new Error("对话连接已中断，等待历史恢复。");
+  return donePayload;
+}
+
+/** Legacy single-hop streaming fallback (POST /api/chat/stream) for loop_enabled=false. */
+export async function streamChatTurnLegacy({
+  turnId = "",
+  session = "popup",
+  scope = "chat",
+  subjectId = "",
+  subjectTitle = "",
+  replyToTurnId = "",
+  message,
+  onContent,
+  onDone,
+  watchdogMs,
+} = {}) {
+  const body = {
+    turn_id: turnId,
+    session,
+    scope,
+    subject_id: subjectId,
+    subject_title: subjectTitle,
+    reply_to_turn_id: replyToTurnId,
+    message,
+  };
+  let donePayload = null;
+  const watchdog = agentChatShared().createSseReadWatchdog(
+    watchdogMs > 0 ? { timeoutMs: watchdogMs } : undefined,
+  );
+  const response = await postSse("/chat/stream", body, { signal: watchdog.signal });
+  await readSseStream(response, (name, data) => {
+    if (name === "content") onContent?.(String(data?.delta || ""));
+    else if (name === "tool_call") onContent?.(`\n\n🔧 调用工具：${String(data?.name || "工具")}\n`);
+    else if (name === "done") donePayload = data;
+  }, watchdog);
+  if (donePayload) onDone?.(donePayload);
+  return donePayload;
+}
+
+export async function fetchChatSkills() {
+  const data = await requestJson("/chat/skills", { timeoutMs: QUICK_READ_TIMEOUT_MS });
+  return agentChatShared().normalizeChatSkillList(data);
+}
+
+export async function fetchChatPersonas() {
+  const data = await requestJson("/chat/personas", { timeoutMs: QUICK_READ_TIMEOUT_MS });
+  if (!Array.isArray(data?.personas) || data.personas.length === 0) {
+    throw new Error("聊天风格暂不可用，请稍后重试。");
+  }
+  const personas = data.personas.filter((persona) => persona && typeof persona.id === "string"
+    && persona.id && typeof persona.title === "string" && persona.title);
+  if (!personas.length) throw new Error("聊天风格暂不可用，请稍后重试。");
+  return { personas, examplePrompt: typeof data.example_prompt === "string" ? data.example_prompt : "" };
+}
+
+export async function fetchChatSessions({ includeArchived = false, limit = 100 } = {}) {
+  const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(500, limit))) });
+  if (includeArchived) params.set("include_archived", "true");
+  const data = await requestJson(`/chat/sessions?${params.toString()}`, { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function createChatSession({ title = "", sessionId = "" } = {}) {
+  const body = {};
+  if (sessionId) body.session_id = sessionId;
+  if (title) body.title = title;
+  return requestJson("/chat/sessions", json(body));
+}
+
+export async function updateChatSession(sessionId, { title, archived, persona } = {}) {
+  const body = {};
+  if (typeof title === "string") body.title = title;
+  if (typeof archived === "boolean") body.archived = archived;
+  if (typeof persona === "string") body.persona = persona;
+  return requestJson(`/chat/sessions/${encodeURIComponent(String(sessionId || ""))}`, {
+    method: "PATCH",
+    timeoutMs: DEFAULT_READ_TIMEOUT_MS,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchChatSessionDetail(sessionId, { limit = 100, offset = 0, signal } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+    offset: String(Math.max(0, offset)),
+  });
+  return requestJson(
+    `/chat/sessions/${encodeURIComponent(String(sessionId || "default"))}?${params.toString()}`,
+    { signal, timeoutMs: DEFAULT_READ_TIMEOUT_MS },
+  );
+}
+
+export async function fetchChatApprovals({ status = "pending", limit = 50 } = {}) {
+  const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(200, limit))) });
+  if (status) params.set("status", status);
+  const data = await requestJson(`/chat/approvals?${params.toString()}`, { timeoutMs: QUICK_READ_TIMEOUT_MS });
+  return agentChatShared().normalizeApprovalList(data);
+}
+
+export async function approveChatApproval(approvalId) {
+  return requestJson(`/chat/approvals/${encodeURIComponent(String(approvalId || ""))}/approve`, json({}));
+}
+
+export async function rejectChatApproval(approvalId, reason = "") {
+  return requestJson(`/chat/approvals/${encodeURIComponent(String(approvalId || ""))}/reject`, json({ reason }));
+}
+
+export async function createAgentTask({ prompt, sessionId = "", title = "", skill = "" }) {
+  const body = { prompt: String(prompt || "") };
+  if (sessionId) body.session_id = sessionId;
+  if (title) body.title = title;
+  if (skill) body.skill = skill;
+  return requestJson("/chat/tasks", json(body));
+}
+
+export async function fetchAgentTasks({ status = "", sessionId = "", limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+    offset: String(Math.max(0, offset)),
+  });
+  if (status) params.set("status", status);
+  if (sessionId) params.set("session_id", sessionId);
+  const data = await requestJson(`/chat/tasks?${params.toString()}`, { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return {
+    items: items.map((item) => agentChatShared().normalizeAgentTask(item)).filter(Boolean),
+    total: Math.max(0, Number(data?.total) || 0),
+  };
+}
+
+export async function fetchAgentTask(taskId) {
+  const data = await requestJson(`/chat/tasks/${encodeURIComponent(String(taskId || ""))}`, {
+    timeoutMs: DEFAULT_READ_TIMEOUT_MS,
+  });
+  return agentChatShared().normalizeAgentTask(data);
+}
+
+export async function cancelAgentTask(taskId) {
+  const data = await requestJson(`/chat/tasks/${encodeURIComponent(String(taskId || ""))}/cancel`, json({}));
+  return agentChatShared().normalizeAgentTask(data);
 }
 
 // ── Feedback ───────────────────────────────────────────────

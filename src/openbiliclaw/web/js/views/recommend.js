@@ -68,6 +68,11 @@ const feedbackDone = new Map(); // recId -> "like" | "dislike" | "comment"
 const savedMutations = createSavedMutationRegistry();
 const COVER_PRELOAD_BATCH_SIZE = 12;
 const COVER_PRELOAD_WAIT_TIMEOUT_MS = 3000;
+// Only the first few cards in a freshly rendered list load their covers eagerly.
+// The rest use loading="lazy" and are preheated by observeScrollPreheat as they
+// approach the viewport. This keeps a page append from issuing 10 eager image
+// fetches at once (the main source of load-more scroll jank).
+const CARD_EAGER_COVER_COUNT = 4;
 const AUTO_APPEND_ROOT_MARGIN = "700px 0px 1400px 0px";
 const SCROLL_PREHEAT_LOOKAHEAD = 16;
 const SCROLL_PREHEAT_ROOT_MARGIN = "0px 0px 2400px 0px";
@@ -77,6 +82,9 @@ const warmingImages = new Map();
 let autoAppendObserver = null;
 let scrollPreheatObserver = null;
 let autoAppendExhausted = false;
+let autoAppendVisible = false;
+let autoAppendWaitingForRefill = false;
+let poolStatusVersion = 0;
 let autoAppendUserArmed = false;
 let autoAppendTouchY = null;
 let autoAppendIntentInitialized = false;
@@ -1107,22 +1115,24 @@ function disconnectAutoAppendObserver() {
   autoAppendObserver = null;
 }
 
+function maybeAutoAppend() {
+  if (!autoAppendVisible || !shouldAutoAppendRecommendations({
+    loading, autoAppendExhausted, activeTab: state.activeTab,
+    userArmed: autoAppendUserArmed,
+  })) return;
+  autoAppendUserArmed = false;
+  void handleAppend();
+}
+
 function observeAutoAppendSentinel() {
   disconnectAutoAppendObserver();
+  autoAppendVisible = false;
   if (!$root || typeof IntersectionObserver === "undefined") return;
   const loadMoreRow = $root.querySelector(".load-more-row");
   if (!loadMoreRow) return;
-
   autoAppendObserver = new IntersectionObserver((entries) => {
-    if (!entries.some((entry) => entry.isIntersecting)) return;
-    if (!shouldAutoAppendRecommendations({
-      loading,
-      autoAppendExhausted,
-      activeTab: state.activeTab,
-      userArmed: autoAppendUserArmed,
-    })) return;
-    autoAppendUserArmed = false;
-    handleAppend();
+    autoAppendVisible = entries.some((entry) => entry.isIntersecting);
+    maybeAutoAppend();
   }, {
     root: document.getElementById("app"),
     rootMargin: AUTO_APPEND_ROOT_MARGIN,
@@ -1139,6 +1149,7 @@ function resetAutoAppendIntent() {
 function armAutoAppendIntent() {
   if (state.activeTab !== "recommend") return;
   autoAppendUserArmed = true;
+  maybeAutoAppend();
 }
 
 function initAutoAppendIntent() {
@@ -1178,7 +1189,9 @@ function renderCard(rawItem, index = 0) {
   const url = buildContentUrl(item);
   const cardMedia = getRecommendationCardKind(item);
   if (cardMedia.kind === "text") card.classList.add("is-text-only");
-  const imageAttrs = getRecommendationImageLoadingAttrs(index);
+  const imageAttrs = getRecommendationImageLoadingAttrs(index, {
+    eagerCount: CARD_EAGER_COVER_COUNT,
+  });
   const publishedHtml = publishedTimeHtml(item);
 
   let coverHtml;
@@ -1501,6 +1514,25 @@ function renderFeedbackSheet() {
 }
 
 // ── Actions ──────────────────────────────────────────────────
+function applyCommittedPoolStatus(status) {
+  if (!status || typeof status.pool_available_count !== "number") return false;
+  const version = Number(status.pool_status_version) || 0;
+  if (version && version < poolStatusVersion) return true;
+  const previousAvailable = Number(state.runtimeStatus?.pool_available_count) || 0;
+  poolStatusVersion = Math.max(poolStatusVersion, version);
+  runtimeStatusGeneration += 1;
+  clearRuntimeStatusRecovery();
+  patchState({ runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, status) });
+  rerenderRuntimeDependentChrome();
+  if (status.pool_available_count > previousAvailable && autoAppendWaitingForRefill) {
+    autoAppendWaitingForRefill = false;
+    autoAppendExhausted = false;
+    autoAppendUserArmed = true;
+    maybeAutoAppend();
+  }
+  return true;
+}
+
 async function handleReshuffle() {
   if (loading) return;
   loading = true;
@@ -1509,6 +1541,7 @@ async function handleReshuffle() {
   try {
     const excludedBvids = state.recommendations.map((item) => item?.bvid).filter(Boolean);
     const result = await reshuffleRecommendations(excludedBvids);
+    const inventoryApplied = applyCommittedPoolStatus(result.pool_status);
     const replacement = reconcileRecommendationReplacement(
       state.recommendations,
       result.items || [],
@@ -1516,23 +1549,28 @@ async function handleReshuffle() {
     if (replacement.preserved) {
       recommendationActionMessage = "这次暂时没换出新内容，已保留当前推荐。";
       clearRecommendationRecovery("ready");
+      autoAppendExhausted = true;
+      autoAppendWaitingForRefill = true;
     } else {
       recommendationActionMessage = "";
       applyRecommendationSnapshot(replacement.items, { replace: true });
     }
     const requestGeneration = runtimeStatusGeneration;
-    void fetchRuntimeStatus()
+    if (!inventoryApplied) void fetchRuntimeStatus()
       .then((status) => applyRuntimeStatusSnapshot(status, requestGeneration))
       .catch(() => {});
-  } catch { /* ignore */ }
-  loading = false;
-  render();
+  } catch {
+    recommendationActionMessage = "换一批失败，请稍后重试。当前推荐已保留。";
+  } finally {
+    loading = false;
+    render();
+  }
 }
 
 async function handleAppend() {
   if (loading) return;
   loading = true;
-  let clearedActionMessage = false;
+  resetAutoAppendIntent();
 
   // Disable the button inline instead of full re-render.
   const loadMoreRow = $root.querySelector(".load-more-row");
@@ -1544,33 +1582,55 @@ async function handleAppend() {
     const existing = state.recommendations.map((i) => i.bvid).filter(Boolean);
     const result = await appendRecommendations(existing);
     const newItems = (result.items || []).map(normalizeRecommendation);
-    autoAppendExhausted = newItems.length === 0;
+    // Apply inventory before setting the empty-page latch so this response
+    // cannot count as its own refill notification.
+    const inventoryApplied = applyCommittedPoolStatus(result.pool_status);
+    if (!inventoryApplied) {
+      const requestGeneration = runtimeStatusGeneration;
+      void fetchRuntimeStatus()
+        .then((status) => applyRuntimeStatusSnapshot(status, requestGeneration))
+        .catch(() => {});
+    }
+    autoAppendExhausted = newItems.length === 0 || result.has_more === false;
+    autoAppendWaitingForRefill = autoAppendExhausted;
     if (newItems.length > 0 && recommendationActionMessage) {
       recommendationActionMessage = "";
-      clearedActionMessage = true;
     }
-    await warmRecommendationCovers(newItems, { limit: newItems.length, waitForDecode: true });
     patchState({ recommendations: [...state.recommendations, ...newItems] });
 
     // Append new cards before the load-more row without rebuilding existing ones.
-    if (loadMoreRow) {
+    // Do not wait for cover images to decode before inserting: that made both
+    // tap-to-load-more and scroll auto-append feel stuck for up to 3 extra
+    // seconds after the API returned.
+    const currentLoadMoreRow = $root.querySelector(".load-more-row");
+    if (currentLoadMoreRow) {
       for (const [offset, item] of newItems.entries()) {
         const card = renderCard(item, startIndex + offset);
-        $root.insertBefore(card, loadMoreRow);
+        $root.insertBefore(card, currentLoadMoreRow);
         if (scrollPreheatObserver) scrollPreheatObserver.observe(card);
       }
     }
+
+    // Warm only the first few new covers in the background; the tail is
+    // loading="lazy" and will be preheated as it approaches the viewport.
+    void warmRecommendationCovers(newItems, { limit: CARD_EAGER_COVER_COUNT });
   } catch {
-    autoAppendExhausted = true;
+    // Transient failures should not permanently disable auto-append. Show the
+    // error in the header and let the next scroll/click retry.
+    autoAppendExhausted = false;
+    recommendationActionMessage = "\u52A0\u8F7D\u66F4\u591A\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002";
   }
 
   loading = false;
-  if (clearedActionMessage) rerenderHeaderOnly();
+  // Inventory events can rebuild the header while loading is true. Always
+  // release its reshuffle button when append finishes.
+  rerenderHeaderOnly();
   // Restore button state.
-  if (appendBtnEl) {
-    appendBtnEl.disabled = false;
+  const currentAppendButton = $root.querySelector(".load-more-row button");
+  if (currentAppendButton) {
+    currentAppendButton.disabled = false;
     const headerState = getMobileRecommendationHeaderState();
-    appendBtnEl.textContent = headerState.secondaryActionLabel;
+    currentAppendButton.textContent = headerState.secondaryActionLabel;
   }
   observeAutoAppendSentinel();
 }
@@ -1721,6 +1781,7 @@ function applyRecommendationSnapshot(recs, { replace = false } = {}) {
   clearRecommendationRecovery(recommendationLoadState);
   if (!replace && state.recommendations.length > 0) return;
   autoAppendExhausted = false;
+  autoAppendWaitingForRefill = false;
   resetAutoAppendIntent();
   rememberRecommendationFeedback(normalizedRecs);
   patchState({ recommendations: normalizedRecs });
@@ -1923,6 +1984,9 @@ export function onStreamEvent(payload) {
     // users may have appended older cards that /api/recommendations would not
     // return in its latest top window.
     const poolEvent = { ...(payload.data || payload), type };
+    const version = Number(poolEvent.pool_status_version) || 0;
+    if (version && version < poolStatusVersion) return;
+    applyCommittedPoolStatus(poolEvent);
     patchState({ runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, poolEvent) });
     if (typeof poolEvent?.pool_available_count === "number") {
       runtimeStatusGeneration += 1;

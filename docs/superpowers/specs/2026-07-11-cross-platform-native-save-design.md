@@ -1,5 +1,9 @@
 # Cross-Platform Native Save Design
 
+> **Current-state correction (2026-08-31):** the implemented Zhihu adapter targets the
+> item-level global `知乎收藏` state. The earlier named-collection fallback below is superseded;
+> an initially `已收藏` control and all verification-only paths are zero-click.
+
 ## Goal
 
 把 issue #56 从单一的 B 站「全部稍后看」诉求收敛成一套可扩展的跨平台保存契约，同时保留其核心体验：用户在 OpenBiliClaw 中点击「收藏」或「稍后再看」后，内容一定先进入本地列表；用户明确允许时，再同步到来源平台账号，方便在平台 App / Web 中继续使用。
@@ -120,7 +124,7 @@ watch_later
 | Reddit | Saved；支持分类时使用 `OpenBiliClaw`，否则默认 Saved | Saved | authenticated API / extension task，按真实凭证能力选择 |
 | Xiaohongshu | `OpenBiliClaw` 收藏夹；不可用时默认收藏 | 同收藏 | extension logged-in task |
 | Douyin | `OpenBiliClaw` 收藏夹；不可用时默认收藏 | 同收藏 | direct cookie path 可稳定写入时使用，否则 extension logged-in task |
-| Zhihu | `OpenBiliClaw` 收藏夹；不可用时默认收藏 | 同收藏 | extension logged-in task |
+| Zhihu | 全局 `知乎收藏` | 同收藏 | extension logged-in task |
 
 适配器必须先验证当前内容类型是否允许目标动作。例如平台禁止某类视频进入播放列表时，只把该项标为 `unsupported`，同批其它项继续执行。
 

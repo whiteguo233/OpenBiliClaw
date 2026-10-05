@@ -33,6 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.llm.base import is_reasoning_budget_exhausted
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.llm.prompts import build_posture_gate_prompt
 
@@ -49,6 +50,10 @@ _VALID_VERDICTS = frozenset({ACCEPT, DOWNGRADE, REJECT})
 # Judged-change token budget. Deep-write diffs are small (a handful of traits /
 # values / a candidate line); 512 output tokens comfortably holds a verdict +
 # one-sentence reason. Revisit after a provider swap (pitfall #3).
+# ``LLMService.complete_structured_task()`` floors every structured call at
+# ``MIN_STRUCTURED_MAX_TOKENS`` (4096) for reasoning-first models, so the first
+# production attempt starts at the floor; this constant stays the *logical*
+# verdict budget and the retry threshold below still escalates to 8192.
 _POSTURE_GATE_MAX_TOKENS = 512
 # Reasoning-model fallback budget. Reasoning providers (e.g. sensenova
 # deepseek-v4-flash) burn the whole output budget on invisible thinking and
@@ -63,14 +68,6 @@ _GATE_CALLER = "soul.posture_gate"
 
 class _GateOutputError(RuntimeError):
     """The provider returned content but no valid gate judgement."""
-
-
-def _is_reasoning_budget_exhausted(exc: Exception) -> bool:
-    """Provider burned the output budget on reasoning with no final content."""
-    message = str(exc).lower()
-    return (
-        "returned reasoning but no final content" in message and "finish_reason=length" in message
-    )
 
 
 @dataclass
@@ -265,7 +262,7 @@ class PostureGate:
                     user_input=messages[1]["content"],
                     max_tokens=max_tokens,
                     caller=_GATE_CALLER,
-                    reasoning_effort="",
+                    reasoning_effort=None,
                     inject_core_memory=False,
                 )
                 break
@@ -275,7 +272,7 @@ class PostureGate:
                 # every time). Retry once with the raised fallback budget —
                 # same pattern as soul/preference_analyzer.py's chunk path.
                 if (
-                    _is_reasoning_budget_exhausted(exc)
+                    is_reasoning_budget_exhausted(exc)
                     and not reasoning_budget_retried
                     and max_tokens < _POSTURE_GATE_REASONING_FALLBACK_MAX_TOKENS
                 ):

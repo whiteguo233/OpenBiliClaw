@@ -58,7 +58,11 @@ function releaseDispatcherMutex(label: string): void {
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
 import { isNativeSaveTask, type NativeSaveResult, type NativeSaveTask } from "../shared/native-save.ts";
+import { withTaskTabMarker } from "../shared/task-tab.ts";
 import { ensureNativeSaveTaskRecovery, runNativeSaveTask } from "./native-save-task-runner.ts";
+import { createTaskTab } from "./task-tab.ts";
+
+const XHS_TASK_MARKER = "openbiliclaw_xhs_task";
 
 const DEFAULT_POLL_INTERVAL_MS = 45_000;
 const TASK_TIMEOUT_MS = 30_000;
@@ -82,6 +86,8 @@ export interface XhsLegacyTask {
   max_scroll_rounds?: number;
   scroll_wait_ms?: number;
   max_stagnant_scroll_rounds?: number;
+  /** Backend sets this when the xhs date preference is not "all". */
+  need_published_at?: boolean;
 }
 
 export type XhsTask = XhsLegacyTask | NativeSaveTask;
@@ -117,13 +123,16 @@ let taskNavigationFallbackId: ReturnType<typeof setTimeout> | null = null;
 export function buildTaskUrl(task: XhsTask): string | null {
   if (task.type === "native_save") return task.content_url;
   if (task.type === "search" && task.keyword) {
-    return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(task.keyword)}`;
+    return withTaskTabMarker(
+      `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(task.keyword)}`,
+      XHS_TASK_MARKER,
+    );
   }
   if (task.type === "creator" && task.creator_url) {
-    return task.creator_url;
+    return withTaskTabMarker(task.creator_url, XHS_TASK_MARKER);
   }
   if (task.type === "bootstrap_profile") {
-    return "https://www.xiaohongshu.com/explore";
+    return withTaskTabMarker("https://www.xiaohongshu.com/explore", XHS_TASK_MARKER);
   }
   return null;
 }
@@ -200,6 +209,9 @@ function buildExecuteMessageData(task: XhsLegacyTask): Record<string, unknown> {
   if (task.scroll_wait_ms !== undefined) data.scroll_wait_ms = task.scroll_wait_ms;
   if (task.max_stagnant_scroll_rounds !== undefined) {
     data.max_stagnant_scroll_rounds = task.max_stagnant_scroll_rounds;
+  }
+  if (task.need_published_at !== undefined) {
+    data.need_published_at = task.need_published_at;
   }
   return data;
 }
@@ -502,7 +514,7 @@ export async function executeTask(
 
   try {
     const foreground = shouldOpenTaskForeground(task);
-    const tab = await chrome.tabs.create({
+    const tab = await createTaskTab({
       url,
       active: foreground,
     });
@@ -556,7 +568,7 @@ export async function handleTaskResult(result: XhsTaskResult): Promise<void> {
       armClickedNavigationFallback(task, tabId);
       return;
     }
-    chrome.tabs.update(tabId, { url: result.next_url }).catch(() => {
+    chrome.tabs.update(tabId, { url: withTaskTabMarker(result.next_url, XHS_TASK_MARKER) }).catch(() => {
       if (currentTaskId !== task.id) return;
       void reportTaskResult({
         task_id: task.id,

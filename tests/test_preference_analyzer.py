@@ -201,7 +201,7 @@ async def test_chunked_preference_analysis_disables_core_memory_injection() -> N
         PREFERENCE_CHUNK_MAX_TOKENS,
         PREFERENCE_CHUNK_MAX_TOKENS,
     ]
-    assert [call["reasoning_effort"] for call in service.calls] == ["", ""]
+    assert [call["reasoning_effort"] for call in service.calls] == [None, None]
 
 
 @pytest.mark.asyncio
@@ -448,6 +448,36 @@ class RejectingContextStructuredService:
         )
 
 
+class ContentRiskChunkStructuredService:
+    """Raise a DeepSeek-style content-moderation error for prompts containing RISKY."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        if "RISKY" in user_input:
+            raise LLMServiceError(
+                "All providers failed (deepseek). Last error: deepseek request failed: "
+                'HTTP 400: {"code": "invalid_request_error", '
+                '"message": "Content Exists Risk", "param": null, '
+                '"type": "invalid_request_error"}'
+            )
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="deepseek",
+        )
+
+
 class ConcurrentChunkStructuredService:
     def __init__(self, *, delay_seconds: float = 0.01) -> None:
         self.delay_seconds = delay_seconds
@@ -568,6 +598,48 @@ def test_merge_preferences_applies_decay_and_deduplicates_tags() -> None:
     assert 0.7 <= history_tag["weight"] <= 1.0
     assert history_tag["first_seen"] == "2026-02-01T00:00:00"
     assert set(merged["favorite_up_users"]) == {"旧UP", "新UP"}
+
+
+def test_merge_preferences_decay_is_independent_of_processing_frequency() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    analyzer = PreferenceAnalyzer(FakeStructuredService())
+    start = datetime(2026, 9, 1, 0, 0, 0)
+    preference: dict[str, object] = {
+        "interests": [
+            {
+                "name": "滑雪",
+                "category": "体育",
+                "weight": 1.0,
+                "first_seen": start.isoformat(),
+                "last_seen": start.isoformat(),
+                "source": "old",
+            }
+        ]
+    }
+
+    once = analyzer.merge_preferences(
+        preference,
+        {"interests": []},
+        now=start + timedelta(days=7),
+    )
+    twice = analyzer.merge_preferences(
+        once,
+        {"interests": []},
+        now=start + timedelta(days=7),
+    )
+
+    assert once["interests"][0]["weight"] == pytest.approx(0.9)
+    assert twice["interests"][0]["weight"] == pytest.approx(0.9)
+
+    daily = preference
+    for day in range(1, 8):
+        daily = analyzer.merge_preferences(
+            daily,
+            {"interests": []},
+            now=start + timedelta(days=day),
+        )
+    assert daily["interests"][0]["weight"] == pytest.approx(0.9)
 
 
 def test_merge_preferences_reactivates_matching_archived_interest() -> None:
@@ -921,6 +993,59 @@ async def test_chunked_analysis_splits_and_skips_rejected_single_event() -> None
         "bilibili": 0.5,
         "douyin": 0.25,
         "xiaohongshu": 0.25,
+    }
+    assert len(service.calls) > 1
+
+
+@pytest.mark.asyncio
+async def test_chunked_analysis_skips_deepseek_content_risk_events() -> None:
+    """Provider-raised Content Exists Risk must split/skip, not abort the batch."""
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = ContentRiskChunkStructuredService()
+    preference = await PreferenceAnalyzer(service).analyze_events(
+        events=[
+            {"event_type": "view", "title": "GOOD 1", "metadata": {"source_platform": "bilibili"}},
+            {"event_type": "view", "title": "RISKY BAD", "metadata": {"source_platform": "douyin"}},
+            {
+                "event_type": "favorite",
+                "title": "GOOD 2",
+                "metadata": {"source_platform": "xiaohongshu"},
+            },
+            {"event_type": "like", "title": "GOOD 3", "metadata": {"source_platform": "bilibili"}},
+        ],
+        existing_preference={},
+        event_chunk_size=2,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert preference["source_platform_mix"] == {
+        "bilibili": 0.5,
+        "douyin": 0.25,
+        "xiaohongshu": 0.25,
+    }
+    assert len(service.calls) > 2
+
+
+@pytest.mark.asyncio
+async def test_single_batch_content_risk_falls_back_to_chunked_isolation() -> None:
+    """A moderation refusal on the unchunked path should split, not abort."""
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = ContentRiskChunkStructuredService()
+    preference = await PreferenceAnalyzer(service).analyze_events(
+        events=[
+            {"event_type": "view", "title": "GOOD 1", "metadata": {"source_platform": "bilibili"}},
+            {"event_type": "view", "title": "RISKY BAD", "metadata": {"source_platform": "douyin"}},
+            {"event_type": "like", "title": "GOOD 2", "metadata": {"source_platform": "bilibili"}},
+        ],
+        existing_preference={},
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert preference["source_platform_mix"] == {
+        "bilibili": 2 / 3,
+        "douyin": 1 / 3,
     }
     assert len(service.calls) > 1
 

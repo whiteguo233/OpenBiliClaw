@@ -6,9 +6,9 @@
 1. `refresh.pool_updated` 会经 refreshInitStatus 拽起一次 renderAll，而 renderVideos
    曾经是 `grid.replaceChildren(...)` —— 整表重建把用户正在看的卡片全部销毁，
    浏览器丢掉滚动锚点（跳动）、首屏之外的懒加载封面回落成占位。
-2. 切走标签页再切回来会触发再水合，而再水合曾经是 `{ replace: true }` ——
-   /api/recommendations 只返回最新 top 窗口，于是本地滚动加载出来的卡片被整表
-   覆盖并按后端最新排序重排。
+2. 切走标签页再切回来会触发再水合，而后台再水合曾经仍会读取 `/api/recommendations`；
+   这个 GET 在首屏库存较薄时可能顺手补池，且只返回最新 top 窗口。已有卡片时后台
+   必须改为状态-only，不能让候选池被无意消费，也不能覆盖本地列表。
 
 两条都用真实浏览器验证：卡片 DOM 节点必须原地存活，顺序、数量、滚动位置不变。
 """
@@ -38,9 +38,10 @@ APPEND_COUNT = 10
 
 
 def _recommendations(prefix: str, count: int) -> list[dict[str, Any]]:
+    base_id = 0 if prefix == "A" else 1000
     return [
         {
-            "id": f"{prefix}{index}",
+            "id": base_id + index,
             "bvid": f"BV1STABLE{prefix}{index}",
             "content_id": f"BV1STABLE{prefix}{index}",
             "content_url": f"https://www.bilibili.com/video/BV1STABLE{prefix}{index}",
@@ -306,15 +307,22 @@ def test_pool_refill_event_keeps_loaded_cards_and_scroll_position(
     before = _card_report(chromium_page)
     assert all(stamp is not None for stamp in before["stamps"])
 
-    # 后台补货：一轮 refresh 会连发多次 pool_updated。
-    for available in (52, 61, 70):
+    # 后台补货：一轮 refresh 会连发多次 pool_updated。真实后端的提交后库存事件
+    # 带 pool_status_version / platform_available_counts（见 api/app.py
+    # _broadcast_recommendation_pool_status）；头部库存只跟随带版本的已提交快照，
+    # 不再吃无版本事件的裸 pool_available_count（normalizeRuntimeStatus 优先
+    # state.platformAvailability），所以这里必须按真实线上格式注入。
+    for version, available in enumerate((52, 61, 70), start=1):
         chromium_page.evaluate(
-            """(available) => window.__obcPushRuntime({
-              type: 'refresh.pool_updated',
-              pool_available_count: available,
-              message: `候选池补充到 ${available} 条`,
-            })""",
-            available,
+            """(payload) => window.__obcPushRuntime(payload)""",
+            {
+                "type": "refresh.pool_updated",
+                "phase": "done",
+                "pool_available_count": available,
+                "platform_available_counts": {"bilibili": available},
+                "pool_status_version": version,
+                "message": f"候选池补充到 {available} 条",
+            },
         )
         chromium_page.wait_for_timeout(250)
     chromium_page.wait_for_timeout(600)
@@ -388,8 +396,8 @@ def test_tab_resume_hydration_preserves_locally_loaded_cards(
     before = _card_report(chromium_page)
     gets_before = stub.recommendation_gets
 
-    # 切走再切回来：再水合会重新读 /api/recommendations，而它只返回最新 top 窗口
-    # （这里还刻意反了序）。本地滚动加载出来的卡片不能被它顶掉重排。
+    # 切走再切回来：后台再水合会读取 runtime / 其它状态，但已有卡片时不应再读
+    # /api/recommendations；它只返回最新 top 窗口且可能触发首屏补池。
     chromium_page.evaluate("() => window.__obcSetHidden(true)")
     chromium_page.wait_for_timeout(400)
     chromium_page.evaluate("() => window.__obcSetHidden(false)")
@@ -398,7 +406,58 @@ def test_tab_resume_hydration_preserves_locally_loaded_cards(
     # 留足余量即可。
     chromium_page.wait_for_timeout(4000)
 
-    assert stub.recommendation_gets > gets_before, "切回标签页没有再水合，这个用例就没意义了"
+    assert stub.recommendation_gets == gets_before, "后台再水合不应重新读取推荐快照"
     after = _card_report(chromium_page)
     assert after["count"] == before["count"], "再水合把本地加载出来的卡片丢了"
     assert after["titles"] == before["titles"], "再水合按后端最新排序重排了列表"
+
+
+def test_disabled_autoload_does_not_consume_pool_during_background_hydration(
+    stability_server: tuple[str, StabilityStub],
+    chromium_page: Page,
+) -> None:
+    """关闭自动续页后，切回标签页和库存事件都不能触发推荐 GET。"""
+    base_url, stub = stability_server
+    chromium_page.add_init_script(
+        "window.localStorage.setItem('openbiliclaw.webui.autoLoadOnScroll', '0')"
+    )
+    chromium_page.goto(f"{base_url}/web/")
+    expect(chromium_page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
+        CARD_COUNT, timeout=8000
+    )
+    chromium_page.wait_for_timeout(1500)
+
+    _stamp_cards(chromium_page)
+    before = _card_report(chromium_page)
+    gets_before = stub.recommendation_gets
+
+    # 滚到底仍不能走 append；这是开关本身的边界，避免把后续库存变化
+    # 误判成用户主动加载。
+    chromium_page.evaluate(
+        "() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' })"
+    )
+    chromium_page.evaluate("() => window.dispatchEvent(new Event('scroll'))")
+    chromium_page.wait_for_timeout(500)
+    assert not stub.append_received.is_set(), "关闭自动加载后滚动仍触发了 append"
+
+    chromium_page.evaluate(
+        """() => window.__obcPushRuntime({
+          type: 'refresh.pool_updated',
+          pool_available_count: 17,
+          message: '候选池已同步到 17 条',
+        })"""
+    )
+    chromium_page.wait_for_timeout(700)
+
+    # 模拟切回桌面页：后台 session 仍会读取 runtime / 其它状态，但已有
+    # 卡片时必须跳过有副作用的 /api/recommendations。
+    chromium_page.evaluate("() => window.__obcSetHidden(true)")
+    chromium_page.wait_for_timeout(100)
+    chromium_page.evaluate("() => window.__obcSetHidden(false)")
+    chromium_page.wait_for_timeout(4000)
+
+    assert stub.recommendation_gets == gets_before, "后台水合重新读取推荐并消费了候选池"
+    after = _card_report(chromium_page)
+    assert after["count"] == before["count"]
+    assert after["titles"] == before["titles"]
+    assert after["stamps"] == before["stamps"]

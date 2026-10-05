@@ -1,5 +1,7 @@
 # Instagram 平台来源验收台账
 
+> **2026-10-06 交付补录**：本轮已获 commit / merge main / push 授权；整合最新 main 的结果见 [交付记录](testing/2026-10-06-instagram-delivery.md)。下文“未提交/未合并”仅表示各历史测试窗口的状态，不能推翻最新回执；合并也不会把此前缺失的真实账号/终止/手机验收自动变成 PASS。
+
 > Integration level：`full`（目标，**完整验收尚未通过**）。2026-10-03 新空库真实初始化完成 5 事件 → 当前模型画像 → 10 候选 → 首批 2 推荐，后续换批补齐其余 3 条。最新最终包已通过 Firefox 匿名 topic/creator 各3条；2026-10-04 Chrome 网络恢复后，同一最终包在重启前后均通过 topic/creator 各2条，账号采集另取得2点赞/2收藏/1关注。结论仍为 **incremental only**：当前 Chrome 有界门禁通过，不等于永久解决代理不稳定或完成全部外部门禁。以下最新验收与 Gate ledger 优先于历史记录。
 
 ## 2026-10-05 消费端真实请求复验（含独立 Flutter App）

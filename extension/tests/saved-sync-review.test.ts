@@ -232,6 +232,29 @@ test("desktop saved API uses bounded strict requests and propagates failures", a
     item_key: "bangumi:326",
     source_platform: "bangumi",
   });
+  assert.deepEqual(core.normalizeSavedItem({
+    source_platform: "gh",
+    content_id: "repository:101",
+    content_url: "https://github.com/alice/local-agent",
+    content_type: "repository",
+  }), {
+    source_platform: "github",
+    content_id: "repository:101",
+    content_url: "https://github.com/alice/local-agent",
+    content_type: "repository",
+    item_key: "github:repository:101",
+  });
+  assert.deepEqual(core.normalizeSavedItem({
+    content_id: "repository:102",
+    content_url: "https://github.com/alice/another-agent",
+    content_type: "repository",
+  }), {
+    content_id: "repository:102",
+    content_url: "https://github.com/alice/another-agent",
+    content_type: "repository",
+    item_key: "github:repository:102",
+    source_platform: "github",
+  });
   await api.save("favorite", xItem);
   await api.remove("favorite", xItem.item_key);
   await api.list("favorite");

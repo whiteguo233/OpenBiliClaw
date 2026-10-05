@@ -3,6 +3,7 @@
  */
 
 import type { ActionHint, PageType, PlatformAdapter } from "../types.js";
+import { actionClassTokens, matchesWord } from "../behavior.ts";
 import { queryParam } from "./search-query.ts";
 
 const COMMENT_POST_PATTERN = /(?:reddit\.com\/r\/[^/]+\/comments\/|redd\.it\/)([A-Za-z0-9_]+)/;
@@ -55,15 +56,30 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 export function inferRedditActionType(hint: ActionHint): string | null {
-  const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)} ${hint.className}`
+  // Reddit has no MAIN-world tap, so every action flows through this DOM path.
+  // Post titles ride into hint.text, so vote keywords must be anchored to real
+  // controls (#205, verified against live search pages): vote arrows/buttons
+  // carry the verb in their aria-label or class ("downvote"/"Upvote"), while
+  // titles merely containing the word are clicks. Comment/share counts use
+  // whole-word matches with plural tolerance ("32 comments").
+  const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)}`
     .toLowerCase();
-  if (!text) return null;
-  if (text.includes("downvote")) return "dislike";
-  if (text.includes("upvote")) return "like";
-  if (text.includes("save") || text.includes("bookmark")) return "favorite";
-  if (text.includes("comment") || text.includes("reply")) return "comment";
-  if (text.includes("share")) return "share";
-  if (text.includes("join") || text.includes("follow")) return "follow";
+  const aria = normalizeText(hint.ariaLabel).toLowerCase();
+  const classes = actionClassTokens(hint.className);
+  if (!text.trim() && classes.length === 0) return null;
+  const hasToken = (word: string): boolean =>
+    classes.some((token) => token.includes(word));
+  const voteAnchored = (word: string): boolean =>
+    aria.startsWith(word) || aria === word || hasToken(word);
+  if (voteAnchored("downvote")) return "dislike";
+  if (voteAnchored("upvote")) return "like";
+  const hit = (pattern: string): boolean =>
+    matchesWord(text, pattern) || matchesWord(classes.join(" "), pattern);
+  if (hit("save") || hit("bookmark")) return "favorite";
+  // Real count labels are plural ("32 comments") — tolerate the plural form.
+  if (hit("comments?") || hit("repl(?:y|ies)")) return "comment";
+  if (hit("shares?")) return "share";
+  if (hit("join") || hit("follow")) return "follow";
   return null;
 }
 

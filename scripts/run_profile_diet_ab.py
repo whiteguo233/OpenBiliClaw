@@ -161,6 +161,10 @@ _CACHE_USAGE_SEMANTICS_BY_PROVIDER = {
     "openai": "prompt_includes_cached",
     "openai_compatible": "prompt_includes_cached",
     "openrouter": "prompt_includes_cached",
+    "orcarouter": "prompt_includes_cached",
+    "requesty": "prompt_includes_cached",
+    "api_route": "prompt_includes_cached",
+    "cheaperinference": "prompt_includes_cached",
 }
 
 
@@ -1904,7 +1908,16 @@ class _ProviderAttemptUsageRecorder:
         names = available if isinstance(available, Sequence) else ()
         for name in names:
             adapter = str(provider_type(name) or "").strip().lower()
-            if adapter not in {"openai", "openai_compatible", "openrouter", "deepseek"}:
+            if adapter not in {
+                "openai",
+                "openai_compatible",
+                "openrouter",
+                "orcarouter",
+                "requesty",
+                "api_route",
+                "cheaperinference",
+                "deepseek",
+            }:
                 continue
             provider = get_provider(name)
             if id(provider) in self._instrumented_provider_ids:
@@ -2467,7 +2480,16 @@ def validate_json_minify_transport(
     for call in calls:
         arm = str(call.get("arm") or "")
         provider = str(call.get("provider") or "").strip().lower()
-        if provider in {"openai", "openai_compatible", "openrouter", "deepseek"}:
+        if provider in {
+            "openai",
+            "openai_compatible",
+            "openrouter",
+            "orcarouter",
+            "requesty",
+            "api_route",
+            "cheaperinference",
+            "deepseek",
+        }:
             if call.get("provider_attempt_accounting") != "raw_adapter_attempts":
                 blocking_reasons.append(
                     "OpenAI-protocol call lacks raw provider-attempt accounting"
@@ -2923,7 +2945,16 @@ def validate_candidate_transport_experiment(
             )
 
         provider = str(call.get("provider") or "").strip().lower()
-        if provider in {"openai", "openai_compatible", "openrouter", "deepseek"}:
+        if provider in {
+            "openai",
+            "openai_compatible",
+            "openrouter",
+            "orcarouter",
+            "requesty",
+            "api_route",
+            "cheaperinference",
+            "deepseek",
+        }:
             if call.get("provider_attempt_accounting") != "raw_adapter_attempts":
                 blocking_reasons.append(
                     f"{experiment} OpenAI-protocol call lacks raw provider-attempt accounting"

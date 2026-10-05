@@ -104,6 +104,8 @@ jobs:
           wait_for "desktop release"  "desktop-v${VERSION}"  ""                                                  || missing+=("desktop-v${VERSION} release")
           wait_for "extension chrome" "extension-v${VERSION}" "openbiliclaw-extension-v${VERSION}.zip"           || missing+=("extension-v${VERSION} chrome zip")
           wait_for "extension firefox" "extension-v${VERSION}" "openbiliclaw-extension-v${VERSION}-firefox.zip"  || missing+=("extension-v${VERSION} firefox zip")
+          wait_for "extension safari" "extension-v${VERSION}" "openbiliclaw-extension-v${VERSION}-safari.dmg"  || missing+=("extension-v${VERSION} safari dmg")
+          wait_for "aggregate safari dmg" "openbiliclaw-v${VERSION}" "openbiliclaw-extension-v${VERSION}-safari.dmg" || missing+=("aggregate openbiliclaw-v${VERSION} missing safari dmg")
           # The aggregate release must carry the extension zip (sync-aggregate-release pulls it in).
           wait_for "aggregate ext zip" "openbiliclaw-v${VERSION}" "openbiliclaw-extension-v${VERSION}.zip"       || missing+=("aggregate openbiliclaw-v${VERSION} missing extension zip")
 

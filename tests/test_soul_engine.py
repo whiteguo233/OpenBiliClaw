@@ -263,6 +263,56 @@ async def test_generic_owner_empty_recovery_skips_tick_maintenance(
 
 
 @pytest.mark.asyncio
+async def test_generic_owner_consumes_passive_rows_without_buffering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Context-only collector rows advance the durable cursor but never buffer."""
+    from openbiliclaw.soul.pipeline import OnionLayer
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    memory.get_layer("soul").data.update({"profile_ready": True})
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    await engine.prepare_profile_event_owner_cutover()
+
+    passive_types = ["hover", "scroll", "snapshot", "reshuffle", "pause", "seek"]
+    await memory.persist_events_with_receipts(
+        [
+            {
+                "event_type": event_type,
+                "title": f"{event_type} 事件",
+                "metadata": {"profile_update_owner": "generic"},
+                "ingest_key": f"test:passive:{event_type}",
+            }
+            for event_type in passive_types
+        ]
+        + [
+            {
+                "event_type": "view",
+                "title": "真实观看信号",
+                "metadata": {"profile_update_owner": "generic"},
+                "ingest_key": "test:passive:view",
+            }
+        ]
+    )
+
+    async def fake_tick() -> object:
+        return SimpleNamespace(layers_updated=[])
+
+    monkeypatch.setattr(engine._pipeline, "tick_if_buffered", fake_tick)
+
+    result = await engine.process_profile_events_if_needed()
+
+    expected_cursor = len(passive_types) + 1
+    assert result["scanned"] == expected_cursor
+    assert result["enqueued"] == 1
+    assert engine._pipeline.consumer_checkpoint("profile_events")["cursor"] == expected_cursor
+    signals = engine._pipeline._buffers[OnionLayer.INTEREST.value].signals
+    assert [str(signal["payload"].get("event_type")) for signal in signals] == ["view"]
+
+
+@pytest.mark.asyncio
 async def test_replay_held_updates_applies_and_is_idempotent(tmp_path: Path) -> None:
     from openbiliclaw.soul.confusion import ConfusionManager, HeldUpdate
     from openbiliclaw.storage.database import Database
@@ -411,8 +461,9 @@ async def test_init_cognition_context_leaves_preference_and_feeds_profile_build(
         existing_preference: dict[str, object],
         event_chunk_size: int = 0,
         progress_callback: object | None = None,
+        llm_concurrency: int | None = None,
     ) -> dict[str, object]:
-        del events, existing_preference, event_chunk_size, progress_callback
+        del events, existing_preference, event_chunk_size, progress_callback, llm_concurrency
         return {
             "interests": [{"name": "AI 工具链", "category": "科技", "weight": 0.81}],
             "style": {},

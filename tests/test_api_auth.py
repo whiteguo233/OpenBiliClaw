@@ -11,6 +11,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from openbiliclaw import auth_core as ac
 from openbiliclaw.api.app import create_app
+from openbiliclaw.api.auth import _CSRF_GET_EXACT
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
@@ -311,6 +312,38 @@ def test_cookie_unsafe_method_requires_csrf(tmp_path, monkeypatch) -> None:
     assert ok.status_code == 200
 
 
+def _claim_route_paths(app: object) -> list[str]:
+    """Registered claim GETs (``*/next-task``), derived from the app itself.
+
+    Reading the routes instead of hand-copying a list keeps this regression
+    honest when a source is added later: a new ``next-task`` route appears here
+    automatically and must already be covered by the CSRF set.
+    """
+    return sorted(
+        path
+        for path in (str(getattr(route, "path", "")) for route in getattr(app, "routes", []))
+        if path.endswith("/next-task")
+    )
+
+
+def test_csrf_get_set_covers_every_registered_claim_route(tmp_path, monkeypatch) -> None:
+    """Set equality between the exact CSRF paths and the live claim routes.
+
+    Every ``next-task`` endpoint claims (pending → in_progress) and is therefore
+    write-shaped; a source that registers one without listing it in
+    ``_CSRF_GET_EXACT`` would ship an uncovered state change, and a stale entry
+    for a removed route would keep a dead path protected. Both directions fail
+    here.
+    """
+    app, _ = _build_app(tmp_path, monkeypatch)
+
+    registered = set(_claim_route_paths(app))
+    declared = {path for path in _CSRF_GET_EXACT if path.endswith("/next-task")}
+
+    assert registered, "the app under test registers no claim route"
+    assert declared == registered
+
+
 def test_mutating_get_task_claim_requires_csrf(tmp_path, monkeypatch) -> None:
     # /api/sources/*/next-task are GETs that claim+lock a task, so they
     # must be CSRF-protected for cookie auth (review r2#2). The middleware rejects
@@ -319,14 +352,7 @@ def test_mutating_get_task_claim_requires_csrf(tmp_path, monkeypatch) -> None:
     client = _remote(app)
     client.post("/api/auth/login", json={"password": "hunter2"}, headers={"origin": _ORIGIN})
     for path in (
-        "/api/sources/xhs/next-task",
-        "/api/sources/dy/next-task",
-        "/api/sources/yt/next-task",
-        "/api/sources/x/next-task",
-        "/api/sources/zhihu/next-task",
-        "/api/sources/reddit/next-task",
-        "/api/sources/linuxdo/next-task",
-        "/api/sources/v2ex/next-task",
+        *_claim_route_paths(app),
         "/api/recommendations",  # serve() bootstrap-writes rows
         "/api/chat/turns/abc123",  # GET resumes a pending turn
     ):
@@ -699,6 +725,33 @@ def test_loopback_caddy_hop_preserves_external_https_auth_contract(tmp_path, mon
 
 
 # ── password fingerprint: no false revoke; real change revokes ──────────────
+
+
+def test_embedded_tailnet_proxy_never_inherits_loopback_auth_bypass(tmp_path, monkeypatch) -> None:
+    app, _ = _build_app(tmp_path, monkeypatch)
+    client = TestClient(
+        app,
+        client=("127.0.0.1", 5000),
+        base_url="http://openbiliclaw-host.example.ts.net:8420",
+    )
+    forwarded = {
+        "host": "openbiliclaw-host.example.ts.net:8420",
+        "origin": "http://openbiliclaw-host.example.ts.net:8420",
+        "x-forwarded-for": "100.100.100.25",
+        "x-forwarded-host": "openbiliclaw-host.example.ts.net:8420",
+        "x-forwarded-proto": "http",
+    }
+
+    unauthenticated = client.get("/api/favorites/BV1AUTH", headers=forwarded)
+    assert unauthenticated.status_code == 401
+
+    login = client.post(
+        "/api/auth/login",
+        json={"password": "hunter2"},
+        headers=forwarded,
+    )
+    assert login.status_code == 200
+    assert client.get("/api/favorites/BV1AUTH", headers=forwarded).status_code == 200
 
 
 def test_unchanged_env_password_across_restart_keeps_sessions(tmp_path, monkeypatch) -> None:

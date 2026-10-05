@@ -26,6 +26,207 @@ def _db(tmp_path: Path) -> Database:
     return db
 
 
+def test_event_source_schema_is_present_in_fresh_database(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+
+    columns = {
+        str(row["name"]): str(row["dflt_value"])
+        for row in db.conn.execute("PRAGMA table_info(events)").fetchall()
+    }
+
+    assert columns["source_platform"] == "''"
+    assert columns["content_id"] == "''"
+    assert columns["source_confidence"] == "'legacy_unknown'"
+    assert db.conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 8
+    indexes = {str(row["name"]) for row in db.conn.execute("PRAGMA index_list(events)").fetchall()}
+    assert "idx_events_source_content" in indexes
+
+
+def test_event_source_schema_migrates_legacy_rows_without_overclaiming(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-events.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            url TEXT,
+            title TEXT,
+            context TEXT,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events (event_type, url, title, metadata)
+        VALUES (
+            'view',
+            'https://www.xiaohongshu.com/explore/note-1',
+            '小红书旧事件',
+            '{"source_platform":"xiaohongshu","note_id":"note-1"}'
+        );
+        INSERT INTO events (event_type, url, title, metadata)
+        VALUES (
+            'view',
+            'https://www.bilibili.com/video/BVOLD',
+            'B站旧事件',
+            '{"source_platform":"bilibili","bvid":"BVOLD"}'
+        );
+        INSERT INTO events (event_type, url, title, metadata)
+        VALUES ('view', '', '只有兼容来源提示的旧事件', '{"source_platform":"bilibili"}');
+        INSERT INTO events (event_type, url, title, metadata)
+        VALUES ('view', '', '无法识别的旧事件', '{}');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    db.initialize()
+
+    rows = {
+        str(row["title"]): row
+        for row in db.conn.execute(
+            """
+            SELECT title, source_platform, content_id, source_confidence
+            FROM events
+            ORDER BY id
+            """
+        ).fetchall()
+    }
+    assert dict(rows["小红书旧事件"]) == {
+        "title": "小红书旧事件",
+        "source_platform": "xiaohongshu",
+        "content_id": "note-1",
+        "source_confidence": "exact",
+    }
+    assert dict(rows["B站旧事件"]) == {
+        "title": "B站旧事件",
+        "source_platform": "bilibili",
+        "content_id": "BVOLD",
+        "source_confidence": "inferred",
+    }
+    assert dict(rows["只有兼容来源提示的旧事件"]) == {
+        "title": "只有兼容来源提示的旧事件",
+        "source_platform": "bilibili",
+        "content_id": "",
+        "source_confidence": "legacy_unknown",
+    }
+    assert dict(rows["无法识别的旧事件"]) == {
+        "title": "无法识别的旧事件",
+        "source_platform": "",
+        "content_id": "",
+        "source_confidence": "legacy_unknown",
+    }
+
+    # Startup migrations are idempotent; a second open does not rewrite the
+    # attribution or fail because the columns/index already exist.
+    db.close()
+    reopened = Database(path)
+    reopened.initialize()
+    assert (
+        reopened.conn.execute(
+            "SELECT source_platform, content_id, source_confidence FROM events WHERE id = 1"
+        ).fetchone()["source_platform"]
+        == "xiaohongshu"
+    )
+
+
+def test_event_insert_persists_canonical_source_attribution(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+
+    event_id = db.insert_event(
+        "view",
+        url="https://x.com/example/status/123",
+        title="X 旧接口事件",
+        metadata={"tweet_id": "123"},
+    )
+    row = db.conn.execute(
+        """
+        SELECT source_platform, content_id, source_confidence, metadata
+        FROM events
+        WHERE id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+
+    assert row["source_platform"] == "twitter"
+    assert row["content_id"] == "123"
+    assert row["source_confidence"] == "inferred"
+    stored_metadata = json.loads(row["metadata"])
+    assert stored_metadata["source_platform"] == "twitter"
+    assert stored_metadata["content_id"] == "123"
+
+
+def test_event_insert_does_not_upgrade_url_inference_to_exact(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+
+    event_id = db.insert_event(
+        "view",
+        url="https://x.com/example/status/123",
+        title="只有 URL 证据的事件",
+        source_confidence="exact",
+    )
+    row = db.conn.execute(
+        "SELECT source_platform, source_confidence FROM events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+
+    assert row["source_platform"] == "twitter"
+    assert row["source_confidence"] == "inferred"
+
+
+def test_event_insert_keeps_unknown_slug_but_not_exact(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+
+    event_id = db.insert_event(
+        "view",
+        title="未来平台事件",
+        source_platform="threads",
+        source_confidence="exact",
+    )
+    row = db.conn.execute(
+        "SELECT source_platform, source_confidence FROM events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+
+    assert row["source_platform"] == "threads"
+    assert row["source_confidence"] == "legacy_unknown"
+
+
+def test_event_insert_downgrades_confidence_without_platform(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+
+    event_id = db.insert_event(
+        "view",
+        title="没有来源标签的事件",
+        source_confidence="exact",
+    )
+    row = db.conn.execute(
+        "SELECT source_platform, source_confidence FROM events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+
+    assert row["source_platform"] == ""
+    assert row["source_confidence"] == "legacy_unknown"
+
+
+def test_event_source_backfill_is_not_repeated_for_existing_columns(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.insert_event("follow", title="没有内容 ID 的关注事件")
+
+    statements: list[str] = []
+    db.conn.set_trace_callback(statements.append)
+    try:
+        db._ensure_event_source_columns()
+    finally:
+        db.conn.set_trace_callback(None)
+
+    assert not any(
+        "SELECT id, url, metadata, source_platform" in statement for statement in statements
+    )
+
+
 def test_chat_turn_payload_schema_is_present_in_fresh_database(tmp_path: Path) -> None:
     db = _db(tmp_path)
 
@@ -1342,6 +1543,39 @@ def test_visual_enrichment_provenance_requeues_old_namespace_and_sampling(
         embedding_dimension=3,
     )
     assert len(db.get_user_visual_clusters(embedding_fingerprint="new")) == 1
+    db.close()
+
+
+def test_visual_enrichment_filters_temporal_staleness_before_limit(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    common = {
+        "cover_url": "",
+        "source": "search",
+        "source_platform": "bilibili",
+        "pool_expression": "表达",
+        "pool_topic_label": "主题",
+        "topic_group": "组",
+        "style_key": "tutorial",
+    }
+    db.cache_content(
+        bvid="BVEXPIRED",
+        title="已经过期的突发视频",
+        relevance_score=0.99,
+        published_at="2000-01-01T00:00:00+00:00",
+        temporal_class="breaking",
+        temporal_confidence=0.95,
+        temporal_reason="价值依赖即时状态",
+        **common,
+    )
+    db.cache_content(
+        bvid="BVELIGIBLE",
+        title="仍可处理的视频",
+        relevance_score=0.70,
+        **common,
+    )
+
+    assert [row["bvid"] for row in db.get_candidates_needing_keyframes(limit=1)] == ["BVELIGIBLE"]
+    assert [row["bvid"] for row in db.get_candidates_needing_danmaku(limit=1)] == ["BVELIGIBLE"]
     db.close()
 
 

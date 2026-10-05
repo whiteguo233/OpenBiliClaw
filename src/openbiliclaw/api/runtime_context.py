@@ -2,9 +2,9 @@
 
 All FastAPI endpoint closures access runtime components through a single
 ``RuntimeContext`` instance.  When configuration changes at runtime (via
-``PUT /api/config``), the context atomically rebuilds every swappable
-component so the new settings take effect immediately — no server restart
-required.
+``PUT /api/config``), the context atomically rebuilds swappable components.
+Changes confined to the five explicitly supported chat knobs instead replace
+only the agent loop and configuration, leaving active learning owners intact.
 
 **Stable components** (never rebuilt):
   - ``database`` — owns the SQLite connection
@@ -28,10 +28,16 @@ import inspect
 import logging
 import os
 from contextlib import suppress
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from openbiliclaw.config import llm_concurrency_from_config as _llm_concurrency_from_config
+from openbiliclaw.config import (
+    llm_concurrency_from_config as _llm_concurrency_from_config,
+)
+from openbiliclaw.config import (
+    publication_date_preference_for_source,
+    source_date_preferences,
+)
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
@@ -39,8 +45,6 @@ from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-    from fastapi import FastAPI
 
     from openbiliclaw.config import Config
     from openbiliclaw.soul.dialogue_learn_queue import (
@@ -55,10 +59,37 @@ _BACKGROUND_TASK_CANCEL_TIMEOUT_SECONDS = 1.5
 # timeout in one worker job.  Give it the same 25-minute no-progress envelope
 # as guided preference analysis instead of rolling config.toml back after 30s.
 _DIALOGUE_SETTLEMENT_DRAIN_TIMEOUT_SECONDS = 25 * 60.0
+_LIVE_AGENT_CONFIG_FIELDS = frozenset(
+    {
+        "loop_enabled",
+        "loop_max_steps",
+        "tool_result_max_chars",
+        "session_title_enabled",
+        "task_max_steps",
+    }
+)
+
+
+class _BackgroundTaskHost(Protocol):
+    """Minimal host object exposing ``.state`` for background-task wiring.
+
+    ``FastAPI`` satisfies this; the headless full worker passes a
+    ``SimpleNamespace`` stand-in because ``restart_background_tasks`` only
+    reads and writes attributes on ``app.state``.
+    """
+
+    state: Any
 
 
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
     return effective_pool_source_shares(config)
+
+
+def _persist_agent_config(config: Any) -> str:
+    """Persist hook for the M7 ``update_config`` tool; returns the saved path."""
+    from openbiliclaw.config import save_config
+
+    return str(save_config(config))
 
 
 def build_youtube_discovery_strategies(
@@ -80,6 +111,7 @@ def build_youtube_discovery_strategies(
     )
 
     yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
+    yt_date_preference = publication_date_preference_for_source(yt_cfg)
     budgets = strategy_unit_budget or {}
     scheduler = getattr(config, "scheduler", None)
     default_run_budget = max(1, int(getattr(scheduler, "discovery_limit", 30)))
@@ -100,6 +132,7 @@ def build_youtube_discovery_strategies(
             concurrency=concurrency,
             database=database,
             queries_per_run=max(0, search_budget),
+            date_preference=yt_date_preference,
         ),
         YoutubeTrendingStrategy(
             client=client,
@@ -107,6 +140,7 @@ def build_youtube_discovery_strategies(
             concurrency=concurrency,
             database=database,
             fetch_limit=max(0, trending_budget),
+            date_preference=yt_date_preference,
         ),
         YoutubeChannelStrategy(
             client=client,
@@ -115,6 +149,7 @@ def build_youtube_discovery_strategies(
             concurrency=concurrency,
             database=database,
             max_channels=max(0, channel_budget),
+            date_preference=yt_date_preference,
         ),
     ]
 
@@ -440,11 +475,31 @@ class RuntimeContext:
     llm_service: Any = None
     bilibili_client: Any = None
     bangumi_client: Any = None
+    github_client: Any = None
     v2ex_client: Any = None
     weibo_client: Any = None
     saved_sync_service: Any = None
     soul_engine: Any = None
     dialogue: Any = None
+    # Multi-hop chat agent loop (「聊一聊」 M2); rebuilt alongside dialogue.
+    agent_loop: Any = None
+    # Full v1 agent tool registry (M3) the loop subsets per skill, and the
+    # chat skill catalog (M4: builtin skills + data/skills/ overrides).
+    agent_tool_registry: Any = None
+    skill_catalog: Any = None
+    # Durable background task runner (「聊一聊」 M6); lazily built by the API
+    # layer and resolves loop/registry/catalog from this context at run start,
+    # so one instance survives the hot-reload atomic swap.
+    agent_task_runner: Any = None
+    # M7: the AgentToolContext behind the registry (kept so the API layer can
+    # inspect/rewire hooks) and the durable hard-write approval store backing
+    # the loop's approval gate and the /api/chat/approvals endpoints.
+    agent_tool_context: Any = None
+    chat_approval_store: Any = None
+    # Stable app-owned delegate (set once by create_app) used by the
+    # update_config tool to hot-reload through the lane-handoff path. Not
+    # reassigned by _rebuild_components.
+    config_reload_delegate: Any = None
     # Wave 1: the one self-owned typed dialogue settlement queue. It is not in
     # cancel_all and uses pause/drain + exact permit handoff on hot reload.
     dialogue_settlement_queue: Any = None
@@ -498,6 +553,19 @@ class RuntimeContext:
         """Register a stable post-commit observer once for this context."""
         if callback not in self._pool_inventory_commit_subscribers:
             self._pool_inventory_commit_subscribers.append(callback)
+
+    def _request_config_reload(self, new_config: Any) -> Any:
+        """Reload hook for the M7 ``update_config`` tool.
+
+        Delegates to the app-layer lane-handoff rebuild when wired (returns
+        its awaitable so the tool handler can await it); returns ``None``
+        when no delegate is installed, letting the tool note that a restart
+        is required instead.
+        """
+        delegate = self.config_reload_delegate
+        if not callable(delegate):
+            return None
+        return delegate(new_config)
 
     async def _handle_pool_inventory_commit(
         self,
@@ -623,6 +691,113 @@ class RuntimeContext:
         scheduler = getattr(getattr(self, "config", None), "scheduler", None)
         return _gate(scheduler, self.presence)
 
+    @staticmethod
+    def full_worker_expected() -> bool:
+        """Whether this process delegates background loops to worker children."""
+        return (
+            os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1"
+            or os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
+        )
+
+    def worker_heartbeat_status(self) -> dict[str, Any]:
+        """Read the delegated full worker's heartbeat health, best effort."""
+        data_path = getattr(getattr(self, "config", None), "data_path", None)
+        if data_path is None:
+            return {}
+        try:
+            from openbiliclaw.runtime.worker_status import WorkerStatusStore
+
+            payload: dict[str, Any] = WorkerStatusStore(
+                data_path / "runtime" / "worker_status.json"
+            ).status_payload()
+            return payload
+        except Exception:
+            logger.debug("Unable to read full worker heartbeat", exc_info=True)
+            return {}
+
+    def warn_if_full_worker_heartbeat_stale(self) -> None:
+        """Warn when delegated background loops have no live worker behind them.
+
+        The API decides whether to run its own loops from environment flags
+        alone. A crashed ``worker`` used to stay invisible until every
+        background endpoint returned 503; this warning plus ``worker_running``
+        in ``/api/runtime-status`` makes the delegation outage diagnosable.
+        The desktop parent respawns crashed children, so a stale heartbeat
+        normally self-heals shortly after the warning.
+        """
+        if not self.full_worker_expected():
+            return
+        payload = self.worker_heartbeat_status()
+        age = float(payload.get("worker_heartbeat_age_seconds", -1.0))
+        if age < 0 or bool(payload.get("worker_running")):
+            # -1 means no heartbeat file yet: the worker may still be starting
+            # (config probe, cold imports). Only warn once a previously live
+            # worker's heartbeat has actually gone stale.
+            return
+        logger.warning(
+            "Full worker heartbeat is stale (age=%.0fs, pid=%s, mode=%s); background "
+            "loops remain delegated to it — /api/runtime-status reports "
+            "worker_running=false and the desktop parent respawns crashed children",
+            age,
+            payload.get("worker_pid"),
+            payload.get("worker_mode"),
+        )
+
+    def try_apply_agent_config(self, new_config: Config) -> bool:
+        """Publish only known chat knobs, preserving active owners and loops.
+
+        Called under the API's reload lock after validation and persistence.
+        Any difference outside the explicit whitelist requires a full rebuild.
+        Construction precedes a synchronous publication: existing turns retain
+        their loop and budget, while newly admitted turns use the replacement.
+        """
+        from openbiliclaw.agent.loop import AgentLoop
+        from openbiliclaw.config import Config
+
+        current = self.config
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or any(
+                component is None
+                for component in (
+                    self.llm_service,
+                    self.agent_loop,
+                    self.agent_tool_registry,
+                    self.agent_tool_context,
+                    self.chat_approval_store,
+                )
+            )
+        ):
+            return False
+        # The API pins data_dir to its canonical process-lifetime path. Alias
+        # normalization alone is not an unrelated configuration change.
+        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
+        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        if before == after:
+            # Repeating an already-applied value still completes its durable
+            # revision, without replacing a loop or waiting for learning.
+            return True
+        expected_agent = replace(
+            before.agent,
+            **{name: getattr(after.agent, name) for name in _LIVE_AGENT_CONFIG_FIELDS},
+        )
+        if replace(before, agent=expected_agent) != after:
+            return False
+        new_loop = AgentLoop.from_config(
+            self.llm_service,
+            self.agent_tool_registry,
+            new_config,
+            caller="agent.chat",
+            bypass_semaphore=True,
+            approval_gate=self.chat_approval_store,
+        )
+        self.config = new_config
+        self.agent_tool_context.config = new_config
+        self.agent_loop = new_loop
+        return True
+
     async def rebuild_from_config(self, new_config: Config) -> None:
         """Rebuild all swappable components from *new_config*.
 
@@ -668,8 +843,14 @@ class RuntimeContext:
         try:
             # Keep a running guided-init task alive across rebuild — config
             # writes are gated during init, but this exemption prevents an
-            # in-flight init from being silently cancelled.
-            cancelled = await self.task_registry.cancel_all(exclude=frozenset({"guided_init"}))
+            # in-flight init from being silently cancelled. Chat approval
+            # executions are excluded too: they are user-confirmed writes
+            # (and update_config executions are themselves the reload
+            # caller), so cancelling them mid-dispatch would leave the
+            # approval stuck in ``executing``.
+            cancelled = await self.task_registry.cancel_all(
+                exclude=frozenset({"guided_init", "chat_approval_execute"})
+            )
             if cancelled:
                 logger.info(
                     "Hot-reload: cancelled %d background task(s) before rebuild",
@@ -763,6 +944,10 @@ class RuntimeContext:
             module_overrides=new_module_overrides,
             concurrency=llm_concurrency,
             concurrency_gate=new_llm_gate,
+            reply_style=str(getattr(getattr(new_config, "soul", None), "reply_style", "") or ""),
+            dialogue_tone_prompt=str(
+                getattr(getattr(new_config, "soul", None), "dialogue_tone_prompt", "") or ""
+            ),
         )
 
         # 2. Bilibili client
@@ -782,6 +967,27 @@ class RuntimeContext:
                 access_token=str(getattr(bangumi_cfg, "access_token", "") or "") or None,
                 request_interval_seconds=float(
                     getattr(bangumi_cfg, "request_interval_seconds", 1.0)
+                ),
+            )
+        github_cfg = getattr(getattr(new_config, "sources", None), "github", None)
+        new_github_client: Any = None
+        github_access_token = ""
+        if bool(getattr(github_cfg, "enabled", False)):
+            from openbiliclaw.sources.github_client import (
+                GitHubClient,
+                resolve_github_access_token,
+            )
+
+            github_access_token, _token_origin = resolve_github_access_token(
+                config_token=str(getattr(github_cfg, "access_token", "") or ""),
+                # This is a fixed security boundary. Do not honor arbitrary
+                # renamed variables, GITHUB_TOKEN, or GH_TOKEN here.
+                token_env="OPENBILICLAW_GITHUB_TOKEN",
+            )
+            new_github_client = GitHubClient(
+                token=github_access_token or None,
+                request_interval_seconds=float(
+                    getattr(github_cfg, "request_interval_seconds", 6.0)
                 ),
             )
         v2ex_cfg = getattr(getattr(new_config, "sources", None), "v2ex", None)
@@ -846,8 +1052,13 @@ class RuntimeContext:
             preference_prompt_view=str(getattr(soul_cfg, "preference_prompt_view", "legacy")),
             awareness_prompt_view=str(getattr(soul_cfg, "awareness_prompt_view", "compact-v1")),
             insight_prompt_view=str(getattr(soul_cfg, "insight_prompt_view", "legacy")),
+            awareness_event_batch_size=int(getattr(soul_cfg, "awareness_event_batch_size", 300)),
+            insight_note_batch_size=int(getattr(soul_cfg, "insight_note_batch_size", 150)),
+            cognition_max_tokens=int(getattr(soul_cfg, "cognition_max_tokens", 32768)),
             posture_gate_mode=str(getattr(soul_cfg, "posture_gate_mode", "shadow")),
             posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
+            reply_style=str(getattr(soul_cfg, "reply_style", "")),
+            dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
             module_overrides=new_module_overrides,
             llm_concurrency=llm_concurrency,
             llm_concurrency_gate=new_llm_gate,
@@ -921,7 +1132,21 @@ class RuntimeContext:
         # 6. Recommendation engine
         from openbiliclaw.recommendation.curator import PoolCurator
 
-        new_curator = PoolCurator(self.database)
+        publication_preference = publication_date_preference_for_source(
+            getattr(getattr(new_config, "sources", None), "bilibili", None)
+        )
+        set_publication_preference = getattr(self.database, "set_publication_date_preference", None)
+        if callable(set_publication_preference):
+            set_publication_preference(publication_preference)
+        set_source_preferences = getattr(
+            self.database, "set_source_publication_date_preferences", None
+        )
+        if callable(set_source_preferences):
+            set_source_preferences(source_date_preferences(new_config))
+        new_curator = PoolCurator(
+            self.database,
+            publication_preference=publication_preference,
+        )
 
         def _xhs_self_info_provider() -> dict[str, object] | None:
             state = self.memory_manager.load_discovery_runtime_state()
@@ -936,6 +1161,9 @@ class RuntimeContext:
             configured_copy_target,
             max(0, int(getattr(new_config.scheduler, "pool_target_count", 0) or 0)),
         )
+        from openbiliclaw.runtime.serve_outbox import ServeOutbox
+        from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
+
         new_recommendation_engine = RecommendationEngine(
             llm=new_llm_service,
             database=self.database,
@@ -970,6 +1198,11 @@ class RuntimeContext:
                 getattr(getattr(new_config, "discovery", None), "danmaku_max_chars", 500)
             ),
             bilibili_client=new_bilibili_client,
+            serve_snapshot_store=ServeSnapshotStore(
+                new_config.data_path / "runtime" / "serve_snapshot.json"
+            ),
+            serve_outbox=ServeOutbox(new_config.data_path / "runtime" / "serve_outbox.jsonl"),
+            reply_style=str(getattr(soul_cfg, "reply_style", "")),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)
@@ -1010,6 +1243,7 @@ class RuntimeContext:
                 int(getattr(discovery_cfg, "multimodal_image_timeout_seconds", 6))
             ),
             eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
+            eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
         )
         search_strategy = SearchStrategy(
             llm_service=new_llm_service,
@@ -1017,6 +1251,7 @@ class RuntimeContext:
             concurrency=concurrency,
             database=self.database,
             embedding_service=new_embedding_service,
+            publication_preference=publication_preference,
             recent_lane_queries_per_run=RECENT_SUPPLY_LANE_QUERIES,
             recent_lane_page_size=RECENT_SUPPLY_LANE_PAGE_SIZE,
         )
@@ -1026,6 +1261,7 @@ class RuntimeContext:
             concurrency=concurrency,
             database=self.database,
             embedding_service=new_embedding_service,
+            date_preference=publication_preference,
         )
         related_strategy = RelatedChainStrategy(
             bilibili_client=new_bilibili_client,
@@ -1035,6 +1271,7 @@ class RuntimeContext:
             trending_strategy=trending_strategy,
             concurrency=concurrency,
             database=self.database,
+            date_preference=publication_preference,
         )
         explore_strategy = ExploreStrategy(
             llm_service=new_llm_service,
@@ -1043,6 +1280,7 @@ class RuntimeContext:
             embedding_service=new_embedding_service,
             database=cast("Any", self.database),
             keyword_fetch=new_keyword_fetch,
+            date_preference=publication_preference,
         )
         new_discovery_engine.register_strategy(search_strategy)
         new_discovery_engine.register_strategy(trending_strategy)
@@ -1130,6 +1368,7 @@ class RuntimeContext:
         new_zhihu_producer: Any = None
         new_reddit_producer: Any = None
         new_bangumi_producer: Any = None
+        new_github_producer: Any = None
         new_linuxdo_producer: Any = None
         new_v2ex_producer: Any = None
         new_weibo_producer: Any = None
@@ -1169,6 +1408,7 @@ class RuntimeContext:
                 page_size=int(getattr(bili_cfg, "page_size", 20)),
                 recent_lane_tasks_per_cycle=RECENT_SUPPLY_LANE_QUERIES,
                 recent_lane_page_size=RECENT_SUPPLY_LANE_PAGE_SIZE,
+                publication_preference=publication_preference,
                 presence_grace_seconds=int(
                     getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
                 ),
@@ -1315,6 +1555,26 @@ class RuntimeContext:
                     candidate_pipeline=new_candidate_pipeline,
                     keyword_fetch=new_keyword_fetch,
                 )
+            if new_github_client is not None:
+                from openbiliclaw.runtime.github_producer import GitHubDiscoveryProducer
+
+                new_github_producer = GitHubDiscoveryProducer(
+                    database=self.database,
+                    soul_engine=new_soul_engine,
+                    client=new_github_client,
+                    access_token=github_access_token,
+                    enabled=bool(getattr(github_cfg, "enabled", False))
+                    and bool(getattr(sched_cfg, "enabled", True)),
+                    source_modes=tuple(
+                        getattr(github_cfg, "source_modes", ("search", "ranked", "latest"))
+                    ),
+                    daily_search_budget=int(getattr(github_cfg, "daily_search_budget", 120)),
+                    daily_ranked_budget=int(getattr(github_cfg, "daily_ranked_budget", 60)),
+                    daily_latest_budget=int(getattr(github_cfg, "daily_latest_budget", 60)),
+                    min_interval_minutes=int(getattr(github_cfg, "min_interval_minutes", 10)),
+                    candidate_pipeline=new_candidate_pipeline,
+                    keyword_fetch=new_keyword_fetch,
+                )
             if new_v2ex_client is not None:
                 from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
                 from openbiliclaw.runtime.v2ex_producer import (
@@ -1402,11 +1662,16 @@ class RuntimeContext:
             inspiration_provider = build_inspiration_search_provider(
                 getattr(discovery_cfg, "inspiration_search_backends", None),
                 database=self.database,
+                exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
+                you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
+                serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
                 platform_backends=build_platform_source_backends(
                     new_config,
+                    database=self.database,
                     bilibili_client=new_bilibili_client,
                     x_client=new_x_client,
                     bangumi_client=new_bangumi_client,
+                    github_client=new_github_client,
                     v2ex_client=new_v2ex_client,
                     weibo_client=new_weibo_client,
                 ),
@@ -1492,6 +1757,7 @@ class RuntimeContext:
             zhihu_producer=new_zhihu_producer,
             reddit_producer=new_reddit_producer,
             bangumi_producer=new_bangumi_producer,
+            github_producer=new_github_producer,
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
             weibo_producer=new_weibo_producer,
@@ -1521,11 +1787,17 @@ class RuntimeContext:
             return CandidateEvalSnapshot(
                 available=int(readiness.get("available", 0)),
                 target=int(new_config.scheduler.pool_target_count),
-                pending_eval=int(status_counts.get("pending_eval", 0)),
+                pending_eval=int(
+                    status_counts.get(
+                        "pending_eval_ready",
+                        status_counts.get("pending_eval", 0),
+                    )
+                ),
                 evaluating=int(status_counts.get("evaluating", 0)),
-                evaluated_pending_admission=int(status_counts.get("evaluated", 0)),
+                evaluated_pending_admission=int(readiness.get("evaluated_pending", 0)),
                 admitted_pending_copy=int(readiness.get("admitted_pending_copy", 0)),
                 admitted_pending_available=int(readiness.get("admitted_pending_available", 0)),
+                evaluated_waiting_total=int(status_counts.get("evaluated", 0)),
             )
 
         async def _request_candidate_supply(reason: str) -> dict[str, object]:
@@ -1555,6 +1827,7 @@ class RuntimeContext:
             safety_wake_seconds=float(
                 getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
             ),
+            work_allowed=lambda: new_runtime_controller._llm_work_allowed(),  # noqa: SLF001
         )
         new_runtime_controller.expression_copy_coordinator = expression_coordinator
         set_copy_callback = getattr(new_recommendation_engine, "set_copy_pending_callback", None)
@@ -1584,11 +1857,39 @@ class RuntimeContext:
             # so without this the Phase 3/4 hooks are dead code in production.
             # Guarded for controllers/test doubles lacking the helper.
             pre_admit_hook=getattr(new_runtime_controller, "run_pool_share_maintenance", None),
+            # Dead-letter recovery: re-queue failed_eval rows on resume
+            # notifications (startup after a config rebuild, config_*/manual_*
+            # wakes). Guarded so test-double pipelines without the hook keep
+            # the previous no-revival behavior.
+            revive_failed_eval_callback=getattr(
+                new_candidate_pipeline, "revive_failed_eval_candidates", None
+            ),
             safety_wake_seconds=float(
                 getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
             ),
         )
         new_runtime_controller.candidate_eval_coordinator = new_candidate_eval_coordinator
+        # Delegated deployment (``openbiliclaw start``): the coordinators live
+        # in the discovery-worker process while this process's instances never
+        # start and would report a perpetual idle. Aggregate the worker's live
+        # payloads through the existing worker-status file channel; a missing
+        # or stale heartbeat keeps the local (single-process) values.
+        from openbiliclaw.runtime.worker_status import WorkerStatusStore
+
+        _discovery_status_store = WorkerStatusStore(
+            new_config.data_path / "runtime" / "discovery_worker_status.json"
+        )
+
+        def _read_delegated_coordinator_status() -> dict[str, Any] | None:
+            data = _discovery_status_store.read_if_fresh()
+            if data is None:
+                return None
+            coordinators = data.get("coordinators")
+            return coordinators if isinstance(coordinators, dict) else None
+
+        new_runtime_controller.delegated_coordinator_status_reader = (
+            _read_delegated_coordinator_status
+        )
         new_candidate_pipeline.on_candidates_enqueued = lambda _count: (
             new_candidate_eval_coordinator.notify("candidate_enqueued:pipeline")
         )
@@ -1607,6 +1908,7 @@ class RuntimeContext:
             new_youtube_producer,
             new_zhihu_producer,
             new_bangumi_producer,
+            new_github_producer,
             new_linuxdo_producer,
             new_v2ex_producer,
             new_weibo_producer,
@@ -1665,6 +1967,15 @@ class RuntimeContext:
         )
         if callable(bind_settlement_queue):
             bind_settlement_queue(new_settlement_queue)
+        # Chat link ingestion (issue #83): shared links are fetched for
+        # context and recorded as share events on the unified interest line.
+        from openbiliclaw.sources.link_ingest import LinkIngestor
+
+        propagate_event = getattr(self.memory_manager, "propagate_event", None)
+        new_link_ingestor = LinkIngestor(
+            bilibili_client=new_bilibili_client,
+            event_sink=propagate_event if callable(propagate_event) else None,
+        )
         new_dialogue = SocraticDialogue(
             llm=None,
             soul_engine=new_soul_engine,
@@ -1675,6 +1986,64 @@ class RuntimeContext:
             database=self.database,
             learning_mode=DialogueLearningMode.QUEUED,
             settlement_queue=new_settlement_queue,
+            link_ingestor=new_link_ingestor,
+        )
+
+        # Multi-hop chat agent loop (「聊一聊」 M2): same LLM service and
+        # database as the legacy single-hop path; the interactive chat lane
+        # bypasses the background LLM semaphore like ``_respond_with_tools``.
+        # M3/M4: the loop runs against the full v1 tool registry (built from
+        # an AgentToolContext over the freshly rebuilt components); the chat
+        # endpoint subsets it per skill via ``ToolRegistry.subset``.
+        from pathlib import Path
+
+        from openbiliclaw.agent.approvals import ApprovalStore
+        from openbiliclaw.agent.loop import AgentLoop
+        from openbiliclaw.agent.skill import load_skill_catalog
+        from openbiliclaw.agent.tools import AgentToolContext, build_agent_tool_registry
+
+        # M7: hard_write calls are parked in a durable approval store instead
+        # of executing in-loop; the approve endpoint re-dispatches them.
+        # The store instance is reused across rebuilds (same backing file):
+        # it is the single in-memory authority for the approval state
+        # machine, so a rebuild mid-execution can never resurrect stale
+        # states from a freshly reloaded copy (issue: approved/executing
+        # records regressing after a hot reload).
+        # Runtime pinning normalizes data_dir during reload. Compare canonical
+        # paths so relative paths and symlink aliases (e.g. /tmp on macOS) keep
+        # the live authority instead of invoking crash recovery mid-execution.
+        approval_store_path = new_config.data_path.expanduser().resolve() / "chat_approvals.json"
+        existing_approval_store = getattr(self, "chat_approval_store", None)
+        existing_approval_path = getattr(existing_approval_store, "path", None)
+        if (
+            existing_approval_store is not None
+            and existing_approval_path is not None
+            and Path(existing_approval_path).expanduser().resolve() == approval_store_path
+        ):
+            new_chat_approval_store = existing_approval_store
+        else:
+            new_chat_approval_store = ApprovalStore(approval_store_path)
+        new_agent_tool_context = AgentToolContext(
+            database=self.database,
+            soul_engine=new_soul_engine,
+            memory_manager=self.memory_manager,
+            recommendation_engine=new_recommendation_engine,
+            config=new_config,
+            saved_sync_service=new_saved_sync_service,
+            config_persist_hook=_persist_agent_config,
+            config_reload_hook=self._request_config_reload,
+        )
+        new_agent_tool_registry = build_agent_tool_registry(new_agent_tool_context)
+        new_agent_loop = AgentLoop.from_config(
+            new_llm_service,
+            new_agent_tool_registry,
+            new_config,
+            caller="agent.chat",
+            bypass_semaphore=True,
+            approval_gate=new_chat_approval_store,
+        )
+        new_skill_catalog = load_skill_catalog(
+            user_dir=Path(str(getattr(new_config, "data_dir", "data"))) / "skills"
         )
 
         # 11. Auto-update service
@@ -1712,14 +2081,21 @@ class RuntimeContext:
         self.llm_service = new_llm_service
         self.bilibili_client = new_bilibili_client
         old_bangumi_client = self.bangumi_client
+        old_github_client = self.github_client
         old_v2ex_client = self.v2ex_client
         old_weibo_client = self.weibo_client
         self.bangumi_client = new_bangumi_client
+        self.github_client = new_github_client
         self.v2ex_client = new_v2ex_client
         self.weibo_client = new_weibo_client
         self.saved_sync_service = new_saved_sync_service
         self.soul_engine = new_soul_engine
         self.dialogue = new_dialogue
+        self.agent_loop = new_agent_loop
+        self.agent_tool_registry = new_agent_tool_registry
+        self.agent_tool_context = new_agent_tool_context
+        self.chat_approval_store = new_chat_approval_store
+        self.skill_catalog = new_skill_catalog
         self.dialogue_settlement_queue = new_settlement_queue
         self.discovery_engine = new_discovery_engine
         self.recommendation_engine = new_recommendation_engine
@@ -1731,6 +2107,11 @@ class RuntimeContext:
             if callable(close):
                 with suppress(RuntimeError):
                     self.task_registry.track("close_old_bangumi_client", close())
+        if old_github_client is not None and old_github_client is not new_github_client:
+            close = getattr(old_github_client, "aclose", None)
+            if callable(close):
+                with suppress(RuntimeError):
+                    self.task_registry.track("close_old_github_client", close())
         if old_v2ex_client is not None and old_v2ex_client is not new_v2ex_client:
             close = getattr(old_v2ex_client, "aclose", None)
             if callable(close):
@@ -1756,12 +2137,12 @@ class RuntimeContext:
 
         logger.info(
             "Hot-reload complete — rebuilt %d swappable components",
-            12,
+            13,
         )
 
     async def restart_background_tasks(
         self,
-        app: FastAPI,
+        app: _BackgroundTaskHost,
         *,
         run_post_reload_llm_work: bool = True,
     ) -> None:
@@ -1816,6 +2197,13 @@ class RuntimeContext:
                         "Stale %s exited with an error during hot-reload", attr, exc_info=True
                     )
 
+        # A dedicated discovery worker process runs runtime_controller. The
+        # API process must not also start these loops or its event loop will be
+        # competing with every HTTP request (chat, status, recommendations).
+        full_worker_active = self.full_worker_expected()
+        if full_worker_active:
+            self.warn_if_full_worker_heartbeat_stale()
+
         # Start new tasks from the freshly-built components.
         # v0.3.63+: route through ``self.task_registry.track`` so the
         # next hot-reload's ``cancel_all`` cleanly stops them too.
@@ -1823,7 +2211,7 @@ class RuntimeContext:
         # controller here would start every discovery loop, not only the
         # extension-account scheduler. The normal post-init restart owns the
         # one replacement controller and its independent source loop.
-        if run_post_reload_llm_work:
+        if run_post_reload_llm_work and not full_worker_active:
             run_forever = getattr(self.runtime_controller, "run_forever", None)
             if "refresh_task" not in stuck_tasks:
                 app.state.refresh_task = (

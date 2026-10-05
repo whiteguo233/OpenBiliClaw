@@ -71,7 +71,10 @@ def _as_datetime(value: object, *, lower: datetime, upper: datetime) -> datetime
             return None
     if parsed.tzinfo is None:
         return None
-    return parsed.astimezone(UTC)
+    try:
+        return parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def normalize_published_time(

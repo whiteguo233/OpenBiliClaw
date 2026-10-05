@@ -286,6 +286,27 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
             "Bangumi 校验一次。填好后可点「测试连接」用 /v0/me 复验。"
         ),
     ),
+    "github": CredentialSpec(
+        slug="github",
+        # GitHub PATs are config-owned. The unified credential endpoint must
+        # not grow a second secret writer with different validation semantics.
+        kinds=(),
+        opaque_credential=True,
+        unverified_reason=(
+            "GitHub 公开仓库发现无需凭据；可选 PAT 仅在设置 / config.toml 的 "
+            "[sources.github] 或 OPENBILICLAW_GITHUB_TOKEN 中配置。"
+        ),
+        form_kind="none",
+        form_label="GitHub PAT（可选）",
+        env_var_path="sources.github.token_env",
+        env_var_default="OPENBILICLAW_GITHUB_TOKEN",
+        login_url="https://github.com/settings/tokens",
+        help_text=(
+            "GitHub 公开仓库可匿名发现。可选 PAT 只用于 GET /user 身份确认和提高公开 API "
+            "限额；请在设置 / config.toml 中填写，或使用 OPENBILICLAW_GITHUB_TOKEN。"
+            "OpenBiliClaw 永远不会读取 GITHUB_TOKEN / GH_TOKEN，也不会访问私有仓库。"
+        ),
+    ),
     "linuxdo": CredentialSpec(
         slug="linuxdo",
         kinds=("login_state",),

@@ -28,6 +28,7 @@ import {
   respondToAvoidanceProbe,
   startInit,
   startChatTurn,
+  streamChatTurn,
   updateConfig,
   __resetPopupHealthCacheForTests,
 } from "../popup/popup-api.js";
@@ -165,6 +166,44 @@ test("startInit sends both Bangumi username and access token when supplied", asy
   });
 });
 
+test("startInit merges GitHub and Bangumi write-only source options", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, async json() { return { run_id: "run-1" }; } };
+  };
+
+  await startInit({
+    sources: ["bangumi", "github"],
+    bangumiUsername: "sai",
+    githubUsername: " octocat ",
+    githubToken: " github-pat ",
+  });
+
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    force: false,
+    sources: ["bangumi", "github"],
+    source_options: {
+      bangumi: { username: "sai" },
+      github: { username: "octocat", access_token: "github-pat" },
+    },
+  });
+});
+
+test("startInit omits untouched GitHub credentials so stored values are kept", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, async json() { return { run_id: "run-1" }; } };
+  };
+
+  await startInit({ sources: ["github"] });
+  await startInit({ sources: ["github"], githubUsername: null, githubToken: null });
+
+  assert.deepEqual(JSON.parse(calls[0].options.body), { force: false, sources: ["github"] });
+  assert.deepEqual(JSON.parse(calls[1].options.body), { force: false, sources: ["github"] });
+});
+
 test("startInit omits the token when none is supplied (keep configured)", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
@@ -192,6 +231,30 @@ test("startInit force:true sends the re-init payload", async () => {
 
   assert.deepEqual(JSON.parse(calls[0].options.body), { force: true });
   assert.equal(calls[0].options.method, "POST");
+});
+
+test("startInit sends llm_concurrency when supplied", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, async json() { return { run_id: "run-1" }; } };
+  };
+
+  await startInit({ llmConcurrency: 2 });
+
+  assert.deepEqual(JSON.parse(calls[0].options.body), { force: false, llm_concurrency: 2 });
+});
+
+test("startInit omits llm_concurrency for legacy clients", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, async json() { return { run_id: "run-1" }; } };
+  };
+
+  await startInit({});
+
+  assert.deepEqual(JSON.parse(calls[0].options.body), { force: false });
 });
 
 test("popup settings re-init calls POST /api/init with force:true after confirm", () => {
@@ -222,6 +285,16 @@ test("popup resolves the Bangumi username omit-vs-clear before sending guided in
   assert.match(source, /resolveInitBangumiUsername\(\{/);
   assert.match(source, /bangumiUsername:\s*bangumiUsernameOption/);
   assert.match(source, /state\.initBangumiUsernamePrefilled = true/);
+});
+
+test("popup resolves GitHub username omit-vs-clear and keeps PAT write-only", () => {
+  const source = readFileSync(resolve("popup/popup.js"), "utf8");
+
+  assert.match(source, /resolveInitGitHubUsername\(\{/);
+  assert.match(source, /githubUsername:\s*githubUsernameOption/);
+  assert.match(source, /githubToken:\s*githubTokenOption/);
+  assert.match(source, /state\.initGitHubUsernamePrefilled = true/);
+  assert.doesNotMatch(source, /state\.initGitHubTokenPrefilled/);
 });
 
 test("popup surfaces guided-init 202 warnings via the hint banner", () => {
@@ -1232,6 +1305,7 @@ test("startChatTurn posts durable chat turn metadata", async () => {
     subject_id: "BV1DL",
     subject_title: "复杂系统入门",
     message: "我想聊聊这条",
+    streaming: false,
   });
   assert.equal(result.status, "pending");
 });
@@ -1414,5 +1488,104 @@ test("updateConfig uses the shared 60s config PUT timeout", async () => {
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("streamChatTurn read watchdog aborts a silently stalled SSE stream", async () => {
+  // The shared agent-chat helper (copied to popup/shared at build time)
+  // provides createSseReadWatchdog + the SSE parser.
+  await import("../../src/openbiliclaw/web/shared/agent-chat.js");
+  __resetBackendEndpointForTests();
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({});
+        },
+      },
+    },
+  };
+
+  let capturedSignal: AbortSignal | null = null;
+  globalThis.fetch = (async (_url: string, options: { signal?: AbortSignal }) => {
+    capturedSignal = options?.signal ?? null;
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: () =>
+            new Promise((_resolve, reject) => {
+              // 永不返回字节，只在请求被 abort 时 reject —— 模拟僵尸流。
+              capturedSignal?.addEventListener("abort", () =>
+                reject((capturedSignal as AbortSignal).reason),
+              );
+            }),
+        }),
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  try {
+    const startedAt = Date.now();
+    await assert.rejects(streamChatTurn({ turnId: "t-stall", message: "你好", watchdogMs: 30 }));
+    assert.ok(capturedSignal, "fetch should receive the watchdog abort signal");
+    assert.ok(Date.now() - startedAt < 5_000, "watchdog abort should settle the stream quickly");
+  } finally {
+    (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    __resetBackendEndpointForTests();
+  }
+});
+
+test("streamChatTurn completes when heartbeat comments keep the stream alive", async () => {
+  await import("../../src/openbiliclaw/web/shared/agent-chat.js");
+  __resetBackendEndpointForTests();
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({});
+        },
+      },
+    },
+  };
+
+  const chunks = [": ping\n\n", 'event: content\ndata: {"delta":"你"}\n\n', 'event: done\ndata: {"reply":"你好"}\n\n'];
+  globalThis.fetch = (async () => ({
+    ok: true,
+    body: {
+      getReader: () => {
+        let index = 0;
+        return {
+          read: async () => {
+            if (index >= chunks.length) return { done: true };
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            const value = new TextEncoder().encode(chunks[index]);
+            index += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    },
+  })) as unknown as typeof fetch;
+
+  try {
+    const deltas: string[] = [];
+    let doneReply = "";
+    await streamChatTurn({
+      turnId: "t-ok",
+      message: "你好",
+      watchdogMs: 200,
+      onContent: (delta: string) => deltas.push(delta),
+      onDone: (data: { reply?: string }) => {
+        doneReply = String(data?.reply || "");
+      },
+    });
+    assert.deepEqual(deltas, ["你"]);
+    assert.equal(doneReply, "你好");
+  } finally {
+    (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    __resetBackendEndpointForTests();
   }
 });

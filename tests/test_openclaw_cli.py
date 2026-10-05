@@ -353,7 +353,7 @@ def test_listen_parser_accepts_custom_flags() -> None:
 def test_workspace_skill_pack_exists_and_mentions_cli_bridge() -> None:
     content = _SKILL_PACK_PATH.read_text(encoding="utf-8")
 
-    assert "name: openbiliclaw_adapter" in content
+    assert "name: openbiliclaw-adapter" in content
     assert "uv run python -m openbiliclaw.integrations.openclaw.cli" in content
     assert "recommend --limit" in content
     assert "get-delight" in content

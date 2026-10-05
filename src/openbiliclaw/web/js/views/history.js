@@ -91,7 +91,7 @@ function esc(value) {
 function platformName(value) {
   const names = {
     bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书",
-    twitter: "X", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
+    twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
   };
   return names[String(value || "").toLowerCase()] || String(value || "内容");
 }

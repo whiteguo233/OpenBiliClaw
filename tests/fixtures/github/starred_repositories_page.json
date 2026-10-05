@@ -1,0 +1,18 @@
+[
+  {
+    "starred_at": "2026-07-09T22:59:29Z",
+    "repo": {
+      "id": 1083253848,
+      "node_id": "R_kgDOQJEkWA",
+      "full_name": "sindresorhus/parse-sse",
+      "html_url": "https://github.com/sindresorhus/parse-sse",
+      "private": false,
+      "owner": {
+        "id": 170270,
+        "login": "sindresorhus"
+      },
+      "created_at": "2025-10-25T16:42:52Z",
+      "stargazers_count": 92
+    }
+  }
+]

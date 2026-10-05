@@ -5,6 +5,7 @@ import { WEIBO_TASK_TAB_URL } from "../content/weibo/task-mode.ts";
 import { releaseDispatcherMutex, tryAcquireDispatcherMutex } from "./dispatcher-mutex.ts";
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
+import { createTaskTab } from "./task-tab.ts";
 
 const POLL_ALARM_NAME = "openbiliclaw-weibo-task-poll";
 const DEFAULT_POLL_INTERVAL_MINUTES = 1;
@@ -134,7 +135,7 @@ export async function executeWeiboTask(task: WeiboTask): Promise<void> {
   taskInFlight = true;
   currentTask = task;
   try {
-    const tab = await chrome.tabs.create({ url: WEIBO_TASK_TAB_URL, active: false });
+    const tab = await createTaskTab({ url: WEIBO_TASK_TAB_URL, active: false });
     taskTabId = tab.id ?? null;
   } catch {
     await postTaskResult({ task_id: task.id, claim_token: task.claim_token, status: "failed", items: [], scope_counts: {}, error: "tab_create_failed" });

@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     OpenBiliClaw one-command installer for native Windows (PowerShell).
@@ -220,13 +220,31 @@ function Test-UserDataOnlyRoot([string]$Path) {
     return $true
 }
 
+function Invoke-GitClone([string]$CloneRepoUrl, [string]$CloneBranch, [string]$Destination) {
+    $cloneStderrLog = [IO.Path]::GetTempFileName()
+    try {
+        # Windows PowerShell 5.1 treats native stderr as a terminating error
+        # when $ErrorActionPreference is Stop. Git writes normal clone progress
+        # to stderr, so capture it before inspecting LASTEXITCODE (issue #177).
+        git clone --branch $CloneBranch --depth 1 $CloneRepoUrl $Destination 2> $cloneStderrLog | Out-Host
+        $cloneExitCode = $LASTEXITCODE
+        if ($cloneExitCode -ne 0 -and (Test-Path -LiteralPath $cloneStderrLog)) {
+            Get-Content -LiteralPath $cloneStderrLog -ErrorAction SilentlyContinue |
+                ForEach-Object { if ($_) { Log-Err $_ } }
+        }
+        return [int]$cloneExitCode
+    } finally {
+        Remove-Item -LiteralPath $cloneStderrLog -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Clone-IntoUserDataRoot {
     $parent = Split-Path $InstallDir -Parent
     if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     $tmp = Join-Path $parent ("openbiliclaw-clone." + [Guid]::NewGuid().ToString('N'))
     Log-Info "Target contains existing user data only; cloning source into $InstallDir without touching config/data/logs."
-    git clone --branch $Branch --depth 1 $RepoUrl $tmp
-    if ($LASTEXITCODE -ne 0) {
+    $cloneExitCode = Invoke-GitClone $RepoUrl $Branch $tmp
+    if ($cloneExitCode -ne 0) {
         if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
         Log-Err 'git clone failed.'
         exit 1
@@ -235,7 +253,7 @@ function Clone-IntoUserDataRoot {
         $dest = Join-Path $InstallDir $entry.Name
         if (Test-Path $dest) {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-            Log-Err "Cannot merge checkout into $InstallDir: destination exists: $dest"
+            Log-Err "Cannot merge checkout into ${InstallDir}: destination exists: $dest"
             exit 1
         }
         Move-Item -LiteralPath $entry.FullName -Destination $InstallDir
@@ -348,8 +366,8 @@ function Ensure-Checkout {
     $parent = Split-Path $InstallDir -Parent
     if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
     Log-Info "Cloning $RepoUrl (branch $Branch) into $InstallDir"
-    git clone --branch $Branch --depth 1 $RepoUrl $InstallDir
-    if ($LASTEXITCODE -ne 0) { Log-Err 'git clone failed.'; exit 1 }
+    $cloneExitCode = Invoke-GitClone $RepoUrl $Branch $InstallDir
+    if ($cloneExitCode -ne 0) { Log-Err 'git clone failed.'; exit 1 }
 }
 
 # -----------------------------------------------------------------------------
@@ -369,23 +387,23 @@ function Invoke-Bootstrap([string]$PythonExe) {
         Log-Err "Your checkout may be stale — cd $InstallDir; git pull and retry."
         exit 1
     }
-    $args = @(
+    $bootstrapArgs = @(
         '--project-dir', $InstallDir
         '--mode',        $Mode
         '--host',        $ApiHost
         '--port',        "$Port"
     )
-    if ($ReuseFrom) { $args += '--reuse-from'; $args += $ReuseFrom }
-    if ($SkipStart) { $args += '--skip-start' }
+    if ($ReuseFrom) { $bootstrapArgs += '--reuse-from'; $bootstrapArgs += $ReuseFrom }
+    if ($SkipStart) { $bootstrapArgs += '--skip-start' }
     if (-not $env:OPENBILICLAW_NONINTERACTIVE -and -not $env:CI) {
-        $args += '--interactive-confirm'
-        $args += '--wait-for-extension-cookie'
+        $bootstrapArgs += '--interactive-confirm'
+        $bootstrapArgs += '--wait-for-extension-cookie'
     }
 
     $script:BootstrapLog = [IO.Path]::GetTempFileName()
-    Log-Info "Running bootstrap: $PythonExe $bootstrap $($args -join ' ')"
+    Log-Info "Running bootstrap: $PythonExe $bootstrap $($bootstrapArgs -join ' ')"
 
-    & $PythonExe $bootstrap @args 2>&1 | Tee-Object -FilePath $script:BootstrapLog
+    & $PythonExe $bootstrap @bootstrapArgs 2>&1 | Tee-Object -FilePath $script:BootstrapLog
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
         Log-Err "Bootstrap exited with code $rc."
@@ -624,7 +642,7 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
         Write-Host 'Next steps (credentials are missing):'
         Write-Host ''
         Write-Host '  1. Choose your LLM chat provider (default: deepseek):'
-        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | openai_compatible'
+        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible'
         Write-Host '     (Local Ollama is embedding-only here - not offered as a chat provider.)'
         Write-Host ''
         if ($missing -match 'api_key') {
@@ -634,6 +652,9 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
             Write-Host '         Gemini:     https://aistudio.google.com/apikey'
             Write-Host '         Claude:     https://console.anthropic.com/settings/keys'
             Write-Host '         OpenRouter: https://openrouter.ai/keys'
+            Write-Host '         Requesty:   https://app.requesty.ai/api-keys'
+            Write-Host '         API Route:  https://global.api-route.com/'
+            Write-Host '         Cheaper Inference: https://cheaperinference.com/signup'
             Write-Host ''
         }
         if ($missing -match 'bilibili.cookie') {

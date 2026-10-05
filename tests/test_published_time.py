@@ -44,6 +44,10 @@ def test_normalize_published_time_rejects_dates_before_unix_epoch() -> None:
     assert normalize_published_time("1969-12-31T23:59:59Z", now=NOW) == PublishedTime()
 
 
+def test_normalize_published_time_rejects_overflowing_timezone_conversion() -> None:
+    assert normalize_published_time("0001-01-01T00:00:00+14:00", now=NOW) == PublishedTime()
+
+
 def test_normalize_published_time_accepts_only_through_366_day_future_boundary() -> None:
     boundary = NOW + timedelta(days=366)
     assert normalize_published_time(boundary, now=NOW).published_at == boundary.isoformat().replace(

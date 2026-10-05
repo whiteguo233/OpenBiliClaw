@@ -1,4 +1,4 @@
 interface:
   display_name: "Add Platform Source"
-  short_description: "Add or harden a platform source with evidence gates"
-  default_prompt: "Use $add-platform-source to add or harden an OpenBiliClaw source with a frozen contract, audited wiring, and end-to-end evidence."
+  short_description: "Integrate platform sources using scoped, real evidence"
+  default_prompt: "Use $add-platform-source to integrate or repair an OpenBiliClaw source using current contracts, historical lessons, and scoped end-to-end evidence."

@@ -24,8 +24,9 @@ auto-sync consent, duplicate `already_synced`, and local cleanup while platform 
 
 ## Exact platform mapping
 
-`expected_target` is case-sensitive and must equal the selected row. `OpenBiliClaw` is the exact
-container title, not a prefix or locale-dependent alternative.
+`expected_target` is case-sensitive and must equal the platform capability target. `OpenBiliClaw`
+is YouTube's exact playlist title; `知乎收藏` is Zhihu's persisted item-level global favorite
+state, not a named collection.
 
 | Platform | Favorite target | Watch-later target |
 | --- | --- | --- |
@@ -33,12 +34,13 @@ container title, not a prefix or locale-dependent alternative.
 | Xiaohongshu | `小红书收藏` | `小红书收藏` |
 | Douyin | `抖音收藏` | `抖音收藏` |
 | X/Twitter | `X Bookmarks` | `X Bookmarks` |
-| Zhihu | `OpenBiliClaw` | `OpenBiliClaw` |
+| Zhihu | `知乎收藏` | `知乎收藏` |
 | Reddit | `Reddit Saved` | `Reddit Saved` |
 
 Watch later therefore uses a distinct native target only on YouTube. The other five platforms
-resolve it to their favorite/bookmark/Saved target. YouTube favorite and Zhihu favorite both use
-an exact-title `OpenBiliClaw` container.
+resolve it to their favorite/bookmark/Saved target. YouTube favorite uses the exact-title
+`OpenBiliClaw` playlist; Zhihu uses the current global `收藏 / 已收藏` toggle and does not claim
+named-collection support.
 
 ## Authorization envelope
 
@@ -162,7 +164,7 @@ original value on exit, including interruption and failure paths.
 5. **Duplicate:** after a successful platform save, remove only its local membership, re-add it
    with auto-sync off, then manually sync with fresh authorization. The executor must return
    `already_synced` without duplicating the container or membership.
-6. **Local cleanup:** remove only the OpenBiliClaw memberships created for the run. Confirm the
+6. **Local cleanup:** remove only the local OpenBiliClaw memberships created for the run. Confirm the
    platform saves remain. Never invoke an unfavorite, unbookmark, playlist removal, collection
    removal, or Saved removal as implicit cleanup.
 
@@ -202,12 +204,26 @@ the URL points to public content.
   `extension_unavailable`.
 - `failed`: only a fixed bounded code is accepted: `adapter_exception`, `adapter_timeout`,
   `extension_task_timeout`, `interrupted`, `invalid_adapter_result`, `item_heartbeat_failed`,
+  `native_confirmation_not_observed`, `native_content_not_ready`, `native_control_not_found`,
+  `native_dialog_not_opened`, `native_request_rejected`, `native_target_not_found`,
   `native_save_failed`, `native_save_timeout`, `not_saved_locally`, or
   `sync_already_in_progress`. Never copy a raw error message or response body; arbitrary
   snake-case text is rejected because it can still contain secret material.
 
 Local success is never rolled back by these terminal states. A failed or uncertain mutation is not
 automatically retried; any retry needs a new explicit authorization.
+
+The same in-flight task may perform one read-only persisted-state verification after an executor
+reports `native_confirmation_not_observed`. For Douyin, Xiaohongshu, YouTube, and Zhihu, the runner
+first aborts and awaits the mutation sender, reloads the exact content URL, and requires a fresh
+`NATIVE_SAVE_READY` response whose `document_instance_id` differs from the mutation document. It
+then sends `verification_only` with a new `execution_id`; a platform verifier may open a necessary
+read-only dialog, but it must not create a container or click a target row. Zhihu only reads the
+global favorite control and never clicks `已收藏`. Positive proof returns `already_synced`; every other verifier terminal or exception preserves
+the original failure. This is continuation of the already-authorized task, not a second mutation
+or a new retry. The task-result transport requires 2xx and may resend only the exact same payload
+within its bounded callback deadline; the backend idempotently ACKs only an identical canonical
+terminal replay.
 
 ## Evidence state
 
@@ -226,8 +242,8 @@ broker and the currently logged-in platform account. These are the only safe res
 | Douyin | watch_later | `7640353849837123526` | `抖音收藏` | `already_synced` | — |
 | X/Twitter | favorite | `2063895528816181253` | `X Bookmarks` | `already_synced` | — |
 | X/Twitter | watch_later | `2063895528816181253` | `X Bookmarks` | `already_synced` | — |
-| Zhihu | favorite | `answer:2053546899609740246` | `OpenBiliClaw` | `already_synced` | — |
-| Zhihu | watch_later | `answer:2053546899609740246` | `OpenBiliClaw` | `already_synced` | — |
+| Zhihu | favorite | `answer:2053546899609740246` | `知乎收藏` | `already_synced` | — |
+| Zhihu | watch_later | `answer:2053546899609740246` | `知乎收藏` | `already_synced` | — |
 | Reddit | favorite | `t3_x2eklf` | `Reddit Saved` | `already_synced` | — |
 | Reddit | watch_later | `t3_x2eklf` | `Reddit Saved` | `already_synced` | — |
 

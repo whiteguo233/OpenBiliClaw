@@ -6,7 +6,7 @@ function inferSavedPlatform(value, contentUrl) {
   const explicit = String(value || "").trim().toLowerCase();
   const aliases = {
     bili: "bilibili", xhs: "xiaohongshu", dy: "douyin", yt: "youtube",
-    x: "twitter", zh: "zhihu", rd: "reddit", bgm: "bangumi",
+    x: "twitter", gh: "github", zh: "zhihu", rd: "reddit", bgm: "bangumi",
     wb: "weibo", "微博": "weibo",
   };
   if (explicit) return aliases[explicit] || explicit;
@@ -14,6 +14,7 @@ function inferSavedPlatform(value, contentUrl) {
     const host = new URL(String(contentUrl || "").trim()).hostname.toLowerCase();
     if (host === "youtu.be" || host.endsWith(".youtube.com")) return "youtube";
     if (host === "x.com" || host.endsWith(".x.com") || host.endsWith(".twitter.com")) return "twitter";
+    if (host === "github.com" || host.endsWith(".github.com")) return "github";
     if (host.endsWith(".zhihu.com")) return "zhihu";
     if (["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"].some(
       (domain) => host === domain || host.endsWith(`.${domain}`),
@@ -101,6 +102,7 @@ const PLATFORM_LABELS = {
   bilibili: "B站",
   youtube: "YouTube",
   twitter: "X",
+  github: "GitHub",
   xiaohongshu: "小红书",
   douyin: "抖音",
   zhihu: "知乎",

@@ -1,0 +1,218 @@
+{
+  "before": {
+    "total_available": 227,
+    "pool_status_version": 1788791733021,
+    "by_platform": {
+      "bilibili": 178,
+      "twitter": 42,
+      "douyin": 1,
+      "github": 6
+    }
+  },
+  "after": {
+    "total_available": 122,
+    "pool_status_version": 1788791813462,
+    "by_platform": {
+      "bilibili": 109,
+      "twitter": 13
+    }
+  },
+  "samples": [
+    {
+      "index": 1,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 6097.4,
+      "items": 10,
+      "remaining": 218,
+      "sources": {
+        "bilibili": 172,
+        "twitter": 40,
+        "douyin": 1,
+        "github": 5
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 2,
+      "action": "append",
+      "source": "all",
+      "ms": 7781.7,
+      "items": 10,
+      "remaining": 208,
+      "sources": {
+        "bilibili": 167,
+        "twitter": 36,
+        "douyin": 1,
+        "github": 4
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 3,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 6979.1,
+      "items": 10,
+      "remaining": 199,
+      "sources": {
+        "bilibili": 162,
+        "twitter": 33,
+        "douyin": 1,
+        "github": 3
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 4,
+      "action": "append",
+      "source": "all",
+      "ms": 7073.9,
+      "items": 10,
+      "remaining": 189,
+      "sources": {
+        "bilibili": 154,
+        "twitter": 32,
+        "douyin": 1,
+        "github": 2
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 5,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 8421.4,
+      "items": 10,
+      "remaining": 179,
+      "sources": {
+        "bilibili": 147,
+        "twitter": 30,
+        "douyin": 1,
+        "github": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 6,
+      "action": "append",
+      "source": "all",
+      "ms": 5716.5,
+      "items": 10,
+      "remaining": 169,
+      "sources": {
+        "bilibili": 139,
+        "twitter": 29,
+        "douyin": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 7,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 6187.1,
+      "items": 10,
+      "remaining": 166,
+      "sources": {
+        "bilibili": 133,
+        "twitter": 32,
+        "douyin": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 8,
+      "action": "append",
+      "source": "all",
+      "ms": 3153.7,
+      "items": 10,
+      "remaining": 156,
+      "sources": {
+        "bilibili": 129,
+        "twitter": 26,
+        "douyin": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 9,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 4061.2,
+      "items": 10,
+      "remaining": 146,
+      "sources": {
+        "bilibili": 123,
+        "twitter": 22,
+        "douyin": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 10,
+      "action": "append",
+      "source": "all",
+      "ms": 6102.1,
+      "items": 10,
+      "remaining": 142,
+      "sources": {
+        "bilibili": 120,
+        "twitter": 21,
+        "douyin": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 11,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 4740.3,
+      "items": 10,
+      "remaining": 132,
+      "sources": {
+        "bilibili": 116,
+        "twitter": 16
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 12,
+      "action": "append",
+      "source": "all",
+      "ms": 6082.4,
+      "items": 10,
+      "remaining": 122,
+      "sources": {
+        "bilibili": 109,
+        "twitter": 13
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    }
+  ],
+  "unique_items": 120,
+  "latency_ms": {
+    "p50": 6097.4,
+    "p95": 8421.4,
+    "max": 8421.4
+  },
+  "health_ms": {
+    "samples": 351,
+    "p95": 71.9,
+    "max": 2191.0
+  },
+  "pool_events": 25,
+  "failures": []
+}

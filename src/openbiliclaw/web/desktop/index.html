@@ -285,18 +285,79 @@
             <h2>聊聊口味</h2>
             <p class="video-meta">告诉阿B你的偏好、边界和最近想看的方向。</p>
           </div>
+          <label class="reshuffle-toggle chat-pending-badge-toggle" title="开启后「聊聊口味」标签上显示待聊数量红点；关闭则始终隐藏。默认关闭。">
+            <input id="chatPendingBadgeToggle" type="checkbox">
+            <span class="reshuffle-switch" aria-hidden="true"></span>
+            <span id="chatPendingBadgeToggleText">标签红点</span>
+          </label>
         </div>
-        <div class="dialogue-pending">
-          <button id="desktopPendingToggle" type="button" aria-expanded="false" aria-controls="desktopPendingConfirmations">
-            <span class="dialogue-pending-toggle-title">待聊确认 <span class="dialogue-pending-toggle-count" id="desktopPendingCount">0</span></span>
-            <span class="dialogue-pending-toggle-chevron" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
-            </span>
-          </button>
-          <div class="profile-card-list" id="desktopPendingConfirmations" aria-label="待聊确认列表" hidden></div>
+        <div class="chat-main">
+          <aside class="chat-side" id="chatSide" aria-label="会话与任务" hidden>
+            <div class="chat-side-head">
+              <button class="pill-btn primary" id="chatNewSessionBtn" type="button">＋ 新会话</button>
+            </div>
+            <div class="chat-session-list" id="chatSessionList" role="list" aria-label="会话列表"></div>
+            <div class="chat-side-foot">
+              <button class="chat-side-entry" id="chatTasksToggle" type="button" aria-expanded="false" aria-controls="chatTaskCenter">
+                <span>任务中心</span><span class="chat-side-badge" id="chatTasksBadge" hidden></span>
+              </button>
+              <button class="chat-side-entry" id="chatApprovalsToggle" type="button" aria-expanded="false" aria-controls="chatApprovalsPanel">
+                <span>待审批</span><span class="chat-side-badge" id="chatApprovalsBadge" hidden></span>
+              </button>
+              <button class="chat-side-archived" id="chatArchivedToggle" type="button" aria-pressed="false">显示已归档</button>
+            </div>
+          </aside>
+          <div class="chat-conversation">
+            <div class="chat-session-bar" id="chatSessionBar" hidden>
+              <button class="chat-side-toggle" id="chatSideToggle" type="button" aria-label="会话列表" aria-expanded="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <button class="chat-skill-chip" id="chatSkillChip" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="chatSkillPicker" title="点击切换对话角色">
+                <span class="chat-skill-icon" id="chatSkillIcon" aria-hidden="true">🧭</span>
+                <span id="chatSkillName">口味伙伴</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <button class="chat-persona-chip" id="chatPersonaChip" type="button" aria-expanded="false" aria-controls="chatPersonaPicker" title="选择当前会话的聊天风格">
+                <span>风格 · <span id="chatPersonaName">自然朋友</span></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <span class="chat-session-name" id="chatSessionName"></span>
+            </div>
+            <section class="chat-persona-picker" id="chatPersonaPicker" aria-label="选择聊天风格" hidden>
+              <div class="chat-persona-heading"><h3>聊天风格</h3><button class="pill-btn" id="chatPersonaClose" type="button">收起</button></div>
+              <p class="chat-persona-help">选择阿B说话的方式，角色继续决定能帮你做什么。保存后用于当前会话的下一条消息。</p>
+              <div id="chatPersonaOptions"></div>
+              <div class="chat-persona-preview" id="chatPersonaPreview" aria-live="polite"></div>
+              <div class="chat-persona-footer"><p id="chatPersonaStatus" role="status" aria-live="polite"></p><button class="pill-btn primary" id="chatPersonaSave" type="button">应用到当前会话</button></div>
+            </section>
+            <div class="dialogue-pending">
+              <button id="desktopPendingToggle" type="button" aria-expanded="false" aria-controls="desktopPendingConfirmations">
+                <span class="dialogue-pending-toggle-title">待聊确认 <span class="dialogue-pending-toggle-count" id="desktopPendingCount">0</span></span>
+                <span class="dialogue-pending-toggle-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
+                </span>
+              </button>
+              <div class="profile-card-list" id="desktopPendingConfirmations" aria-label="待聊确认列表" hidden></div>
+            </div>
+            <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
+            <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+          </div>
         </div>
-        <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
-        <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+        <div class="chat-popover" id="chatSkillPicker" role="dialog" aria-label="选择对话角色" hidden></div>
+        <div class="chat-drawer" id="chatTaskCenter" role="dialog" aria-label="任务中心" hidden>
+          <div class="chat-drawer-head">
+            <h3>任务中心</h3>
+            <button class="pill-btn" id="chatTaskCenterClose" type="button">关闭</button>
+          </div>
+          <div class="chat-drawer-body" id="chatTaskCenterBody"></div>
+        </div>
+        <div class="chat-drawer" id="chatApprovalsPanel" role="dialog" aria-label="待审批改动" hidden>
+          <div class="chat-drawer-head">
+            <h3>待审批</h3>
+            <button class="pill-btn" id="chatApprovalsClose" type="button">关闭</button>
+          </div>
+          <div class="chat-drawer-body" id="chatApprovalsBody"></div>
+        </div>
       </section>
 
       <section class="settings-page content-page" id="settingsPage" aria-label="后端设置" hidden>
@@ -344,7 +405,7 @@
               <button class="pill-btn" id="probeLlmChain" type="button">测试整条链</button>
             </div>
             <div class="llm-runtime-tuning">
-              <label class="settings-field"><span>LLM 并发数</span><input id="llmConcurrency" type="number" min="1" max="16" inputmode="numeric" placeholder="4"></label>
+              <label class="settings-field"><span>LLM 并发数</span><input id="llmConcurrency" type="number" min="1" inputmode="numeric" placeholder="3"></label>
               <label class="settings-field"><span>单实例超时（秒）</span><input id="llmTimeout" type="number" min="10" max="1200" inputmode="numeric" placeholder="1200"></label>
             </div>
             <ol class="llm-chain-list" id="llmDefaultChain" aria-label="默认 LLM 调用链"></ol>
@@ -454,6 +515,32 @@
                   <label class="settings-field full"><span>B 站 Cookie</span><textarea id="biliCookie" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="保留空值表示不覆盖现有 cookie"></textarea></label>
                 </section>
                 <section class="source-seg">
+                  <h4>发布日期偏好</h4>
+                  <p class="seg-note">只影响 B 站推荐。范围外候选不会删除；严格模式只在当前推荐和有效库存中忽略它们。</p>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>日期范围</span><select id="biliDatePreset">
+                      <option value="all">全部日期</option>
+                      <option value="last_7_days">最近一周</option>
+                      <option value="last_30_days">最近一个月</option>
+                      <option value="last_6_months">最近半年</option>
+                      <option value="last_1_year">最近一年</option>
+                      <option value="custom">自定义</option>
+                    </select></label>
+                    <label class="settings-field"><span>偏好强度</span><select id="biliDateMode">
+                      <option value="soft">优先推荐该范围</option>
+                      <option value="strict">仅推荐该范围</option>
+                      <option value="custom">自定义权重</option>
+                    </select></label>
+                  </div>
+                  <div class="inline-row" id="biliDateCustomFields" hidden>
+                    <label class="settings-field"><span>开始日期</span><input id="biliDateStart" type="date"></label>
+                    <label class="settings-field"><span>结束日期</span><input id="biliDateEnd" type="date"></label>
+                  </div>
+                  <div class="inline-row" id="biliDateWeightField" hidden>
+                    <label class="settings-field"><span>高级权重（0 到 1）</span><input id="biliDateWeight" type="number" min="0" max="1" step="0.01" inputmode="decimal"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
                   <h4>发现分支与每日预算</h4>
                   <p class="seg-note">B 站的搜索 / 热门 / 探索 / 相关链四个策略由全局调度统一编排，目前没有独立的分支开关和每日预算。调度节奏见「调度」页。</p>
                 </section>
@@ -497,6 +584,11 @@
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-xiaohongshu">
+                <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="xhsIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
                 <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">由浏览器插件复用你已登录的 xiaohongshu.com 会话取数，后端不保存 Cookie，也没有手动粘贴入口。</p>
@@ -547,6 +639,11 @@
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-douyin">
+                <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="douyinIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
                 <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">在浏览器登录抖音后插件会自动同步 cookie；也可在下方手动粘贴，留空保存不会覆盖现有值。</p>
@@ -654,6 +751,11 @@
               </div>
               <div class="source-card-body" id="sourceCardBody-youtube">
                 <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="youtubeIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
+                <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">使用公开接口匿名调用，不需要 Cookie 或令牌。需要海外出网，代理设置见「通用」页。</p>
                   <div class="source-cred-box">
@@ -760,6 +862,11 @@
               </div>
               <div class="source-card-body" id="sourceCardBody-zhihu">
                 <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="zhihuIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
+                <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">discovery 由已登录的浏览器插件执行搜索 / 热榜 / 首页 / 作者 / 相关任务，后端只入队任务并接收结果，不保存 Cookie。</p>
                   <div class="source-cred-box">
@@ -812,6 +919,11 @@
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-reddit">
+                <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="redditIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
                 <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">日常 discovery 默认走 rdt-cli 登录态命令后端；rdt / opencli 不可用时自动 fallback 到 OpenBiliClaw 插件任务。初始化 saved / upvoted / subscribed 信号仍通过插件复用当前浏览器登录态。需要海外出网。</p>
@@ -926,6 +1038,64 @@
               </div>
             </article>
 
+            <article class="source-status-row source-card" data-source-status="github" data-source-credential="github" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-github">
+                <span class="source-card-logo" data-source-logo="github" aria-hidden="true">GH</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">GitHub</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareGitHub" value="1" inputmode="numeric" aria-label="GitHub 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 GitHub</span><select id="githubEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-github">
+                <section class="source-seg">
+                  <h4>接入方式</h4>
+                  <p class="seg-note">使用 GitHub 官方 REST API，只读取公开 repository。匿名即可发现；公开用户名用于导入该账号的 starred repositories。PAT 是可选项，只用于 <code>GET /user</code> 身份确认和提高 API 限额，不会开放私有仓库。留空保持已有 PAT，勾选清除则本次删除。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a>。需要海外出网。</p>
+                  <div class="source-cred-box">
+                    <div class="source-cred-line"><span class="source-credential-ro-tag">脱敏</span><span class="source-credential-summary">加载中…</span></div>
+                    <textarea class="source-credential-value" rows="2" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+                  </div>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>Personal Access Token（可选）</span><input id="githubAccessToken" type="password" maxlength="512" autocomplete="off" placeholder="可留空；不会回显已保存的 PAT"></label>
+                    <label class="settings-field"><span>公开用户名</span><input id="githubUsername" maxlength="39" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例如 octocat（可留空）"></label>
+                    <label class="settings-field"><span>清除已保存的 PAT</span><input id="githubClearToken" type="checkbox"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>发现分支与每日预算</h4>
+                  <p class="seg-note">三个分支都使用公开 repository search；排名是按 stars 排序的产品查询，不宣称 GitHub 官方 Trending。</p>
+                  <div class="branch-table" data-branch-toggles="on">
+                    <div class="branch-head"><span></span><span>分支</span><span>每日预算</span><span>说明</span></div>
+                    <div class="branch-row"><input id="githubModeSearch" type="checkbox" class="branch-toggle" aria-label="GitHub 搜索分支"><span class="branch-name">搜索</span><input id="githubDailySearchBudget" class="branch-budget" inputmode="numeric" placeholder="120" aria-label="GitHub 每日搜索条目"><span class="branch-hint">按画像关键词搜索</span></div>
+                    <div class="branch-row"><input id="githubModeRanked" type="checkbox" class="branch-toggle" aria-label="GitHub 排名分支"><span class="branch-name">排名</span><input id="githubDailyRankedBudget" class="branch-budget" inputmode="numeric" placeholder="60" aria-label="GitHub 每日排名条目"><span class="branch-hint">公开仓库按 stars 排序</span></div>
+                    <div class="branch-row"><input id="githubModeLatest" type="checkbox" class="branch-toggle" aria-label="GitHub 最新分支"><span class="branch-name">最新</span><input id="githubDailyLatestBudget" class="branch-budget" inputmode="numeric" placeholder="60" aria-label="GitHub 每日最新条目"><span class="branch-hint">近 30 天创建，按最近更新排序</span></div>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>节流与初始化</h4>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求间隔秒数</span><input id="githubRequestInterval" inputmode="numeric" min="0" max="60" placeholder="6"></label>
+                    <label class="settings-field"><span>最小调度间隔分钟</span><input id="githubMinInterval" inputmode="numeric" min="0" max="1440" placeholder="10"></label>
+                    <label class="settings-field"><span>初始化 star 上限</span><input id="githubBootstrapLimit" inputmode="numeric" min="1" max="1000" placeholder="300"></label>
+                    <label class="settings-field"><span>初始化最多页数</span><input id="githubBootstrapMaxPages" inputmode="numeric" min="1" max="100" placeholder="10"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>验证</h4>
+                  <div class="settings-probe-row source-verify-row">
+                    <button class="pill-btn source-verify-btn" type="button">测试连接</button>
+                    <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+                  </div>
+                </section>
+              </div>
+            </article>
+
             <article class="source-status-row source-card" data-source-status="linuxdo" data-source-credential="linuxdo" data-open="0">
               <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-linuxdo">
                 <span class="source-card-logo" data-source-logo="linuxdo" aria-hidden="true" style="background:#1f6f43">L</span>
@@ -942,6 +1112,11 @@
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-linuxdo">
+                <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="linuxdoIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
                 <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">公开发现无需登录；连接已登录 Linux.do 的浏览器插件后，可增强收藏、点赞和阅读记录等个人信号。登录态由插件同源读取，后端不接收或保存 Cookie。</p>
@@ -996,6 +1171,11 @@
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-v2ex">
+                <section class="source-seg">
+                  <h4>周期回拉</h4>
+                  <label class="settings-advanced-toggle"><input id="v2exIncremental" type="checkbox"><span>允许扩展周期回拉（可能打开前台标签页）</span></label>
+                  <p class="seg-note">默认关闭；需同时在「调度」页开启总开关。</p>
+                </section>
                 <section class="source-seg">
                   <h4>接入方式</h4>
                   <p class="seg-note">使用 V2EX 官方公开只读 API、JSON/RSS Feed；不登录也能发现内容。可选 PAT 仅用于识别账号和 API 2.0 增强读取，后端不会发帖、回复、收藏或关注 Node。浏览器任务可按需读取本人主题、回复、收藏主题和收藏 Node 的公开渲染字段。</p>
@@ -1116,6 +1296,8 @@
         <div id="settingsPanelScheduler" class="settings-panel" data-settings-panel="scheduler" role="tabpanel" aria-labelledby="settingsTabScheduler" hidden>
           <p class="settings-section-title">调度</p>
           <label class="settings-field"><span>后台 LLM 请求</span><select id="schedulerEnabled"><option value="on">开启</option><option value="off">暂停</option></select></label>
+          <label class="settings-advanced-toggle"><input id="sourceIncrementalEnabled" type="checkbox"><span>启用扩展来源周期回拉（总开关）</span></label>
+          <p class="settings-note-inline">默认关闭。开启后还需在「平台源」页为对应来源单独打开“允许扩展周期回拉”；这些任务可能打开前台标签页。</p>
           <label class="settings-field"><span>浏览器关闭后</span><select id="pauseDisconnect"><option value="pause">暂停后台</option><option value="keep">继续运行</option></select></label>
           <label class="settings-field"><span>断开宽限秒数</span><input id="extensionDisconnectGrace" inputmode="numeric" placeholder="90"></label>
           <label class="settings-field"><span>候选池目标数</span><input id="poolTarget" value="600" inputmode="numeric"></label>
@@ -1157,6 +1339,17 @@
         </div>
 
         <div id="settingsPanelAdvanced" class="settings-panel settings-advanced-panel" data-settings-panel="advanced" role="tabpanel" aria-labelledby="settingsTabAdvanced" hidden>
+          <section class="settings-advanced-section" aria-labelledby="advancedEvaluatorHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Candidate evaluation</p>
+              <h3 id="advancedEvaluatorHeading">候选评分模式</h3>
+            </div>
+            <div class="settings-advanced-fields">
+              <label class="settings-field full"><span>评分器模式</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
+            </div>
+            <p class="settings-note-inline" id="evalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+          </section>
+
           <section class="settings-advanced-section" aria-labelledby="advancedRecommendationHeading">
             <div class="settings-advanced-section-head">
               <p class="settings-section-kicker">Recommendation signals</p>
@@ -1202,6 +1395,33 @@
             </div>
             <p class="settings-note-inline">经典：仅用合并关键词生成器；混合：在经典基础上再叠加 search-backed 灵感轴链路（最丰富，但同时跑两套，混合最贵）；灵感：完全用灵感轴链路替代经典。</p>
           </section>
+
+          <section class="settings-advanced-section" aria-labelledby="advancedCognitionHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Cognition cycle budgets</p>
+              <h3 id="advancedCognitionHeading">认知循环预算</h3>
+            </div>
+            <p class="settings-note-inline">觉察 / 洞察每轮 LLM 调用的输入批量与输出 token 上限。默认按 256K 上下文模型设计；80-100K 上下文的本地模型（如 qwen3.8-27B）可调小，无需改源码。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-field"><span>觉察事件批量大小</span><input id="awarenessEventBatchSize" type="number" min="10" max="900" step="1" placeholder="300" inputmode="numeric"></label>
+              <label class="settings-field"><span>洞察笔记批量大小</span><input id="insightNoteBatchSize" type="number" min="10" max="450" step="1" placeholder="150" inputmode="numeric"></label>
+              <label class="settings-field"><span>认知输出 token 上限</span><input id="cognitionMaxTokens" type="number" min="1024" max="128000" step="1" placeholder="32768" inputmode="numeric"></label>
+            </div>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="advancedReplyStyleHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Reply style</p>
+              <h3 id="advancedReplyStyleHeading">回复语气</h3>
+            </div>
+            <div class="settings-advanced-fields">
+              <label class="settings-field full"><span>回复风格指令</span><input id="replyStyle" type="text" maxlength="200" autocomplete="off" placeholder="例如：说话简短直接，少用表情包语气"></label>
+              <label class="settings-field full"><span>聊天语气块（整体替换）</span><textarea id="dialogueTonePrompt" rows="4" maxlength="1000" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="留空使用内置默认语气"></textarea></label>
+            </div>
+            <p class="settings-note-inline">回复风格指令：追加一条语气要求，影响对话、推荐文案与画像，≤200 字，留空恢复默认。聊天语气块：整体替换聊天 prompt 的语气部分，只影响聊天，支持多行，≤1000 字，留空恢复默认；设置后回复风格指令对聊天不再生效。</p>
+            <div class="drawer-actions"><button class="pill-btn" id="testToneBtn" type="button">测试语气</button></div>
+            <p class="settings-note-inline" id="testToneResult" aria-live="polite"></p>
+          </section>
         </div>
 
         <div id="settingsPanelGeneral" class="settings-panel" data-settings-panel="general" role="tabpanel" aria-labelledby="settingsTabGeneral" hidden>
@@ -1227,6 +1447,22 @@
           <p class="settings-note-inline" id="authHint">本机与浏览器插件免登录；开启后局域网 / 远程设备访问需要密码。</p>
           <label class="settings-field"><span>开机自启动</span><input id="autostartEnabled" type="checkbox"></label>
           <p class="settings-note-inline" id="autostartHint">开启后下次登录系统会自动拉起后端（不影响当前进程）。</p>
+          <p class="settings-section-title">应用内 Tailnet 远程访问</p>
+          <label class="settings-field full settings-switch-field">
+            <span>允许手机通过私有 Tailnet 访问</span>
+            <span class="settings-switch-copy">电脑端只为 OpenBiliClaw 内嵌 Tailscale 节点，不会开启系统级 VPN。</span>
+            <span class="reshuffle-toggle settings-toggle-inline">
+              <input id="tailnetEnabled" type="checkbox">
+              <span class="reshuffle-switch" aria-hidden="true"></span>
+              <span id="tailnetEnabledText">关闭</span>
+            </span>
+          </label>
+          <label class="settings-field"><span>电脑节点名</span><input id="tailnetHostname" autocomplete="off" placeholder="openbiliclaw-host"></label>
+          <label class="settings-field"><span>首次入网凭据（可选）</span><input id="tailnetBootstrapCredential" type="password" autocomplete="new-password" placeholder="tskey-auth-… / tskey-client-…"></label>
+          <label class="settings-field full"><span>OAuth 设备标签</span><input id="tailnetAdvertiseTags" autocomplete="off" placeholder="tag:openbiliclaw"><small>使用 <code>tskey-client-…</code> OAuth Client Secret 时必填，且必须是该 OAuth Client 已授权的 tag；普通 Auth Key 或网页登录可留空。</small></label>
+          <label class="settings-field" id="tailnetClearCredentialField" hidden><span>待用凭据</span><span><input id="tailnetClearCredential" type="checkbox"> 清除已暂存的单次凭据</span></label>
+          <p class="settings-note-inline" id="tailnetStatus" aria-live="polite">读取 Tailnet 状态中…</p>
+          <p class="settings-note-inline">凭据仅在本机以私有文件暂存到下次完整重启（POSIX 权限 0600），交给 helper 后立即删除；留空会在首次启动时打开 Tailscale 网页登录。</p>
           <p class="settings-section-title">网络</p>
           <label class="settings-field"><span>海外网络模式</span><select id="networkProxyMode"><option value="direct">直连（忽略系统代理）</option><option value="system" selected>跟随系统代理</option><option value="custom">自定义代理</option></select></label>
           <label class="settings-field full"><span>自定义代理地址</span><input id="networkProxy" placeholder="socks5://127.0.0.1:1080"></label>
@@ -1250,6 +1486,14 @@
               <label class="settings-reinit-option" title="换账号或大改兴趣时建议勾选：会删除旧的 LLM 观察笔记与洞察，本轮重新生成">
                 <input id="reinitResetCognition" type="checkbox" data-settings-ignore-dirty>
                 <span>同时清空旧认知观察与洞察</span>
+              </label>
+              <label class="settings-reinit-option" title="本次重建画像时使用的 LLM 并发数，默认 3；限流严重时可降到 1-2">
+                <span>初始化 LLM 并发</span>
+                <input id="reinitLlmConcurrency" type="number" min="1" step="1" inputmode="numeric" value="3" data-settings-ignore-dirty>
+              </label>
+              <label class="settings-reinit-option" title="本次初始化所有阶段的总超时上限，默认 60 分钟；网络或模型很慢时可调大">
+                <span>初始化总超时（分钟）</span>
+                <input id="reinitTimeoutMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric" value="60" data-settings-ignore-dirty>
               </label>
               <span class="settings-probe-status" id="reinitStatus" aria-live="polite">读取初始化状态中…</span>
             </div>
@@ -1331,7 +1575,16 @@
               <span id="autoLoadOnScrollSettingText">开启</span>
             </span>
           </label>
-          <p class="settings-note-inline">后端地址、端口、外观主题、色彩引擎和自动加载偏好保存在当前浏览器；惊喜推荐加载数量会随保存配置写入后端，供桌面 Web、移动 Web 和插件共享。</p>
+          <label class="settings-field full settings-switch-field" title="开启：「聊聊口味」按钮旁显示待聊未读数字；关闭：始终隐藏。默认关闭。">
+            <span>显示待聊未读数</span>
+            <span class="settings-switch-copy">开启：「聊聊口味」按钮旁显示待聊未读数字；关闭：始终隐藏。默认关闭。</span>
+            <span class="reshuffle-toggle settings-toggle-inline">
+              <input id="showPendingChatCountSetting" type="checkbox">
+              <span class="reshuffle-switch" aria-hidden="true"></span>
+              <span id="showPendingChatCountSettingText">关闭</span>
+            </span>
+          </label>
+          <p class="settings-note-inline">后端地址、端口、外观主题、色彩引擎、自动加载和待聊未读数偏好保存在当前浏览器；惊喜推荐加载数量会随保存配置写入后端，供桌面 Web、移动 Web 和插件共享。</p>
         </div>
 
         <div id="settingsPanelLogging" class="settings-panel" data-settings-panel="logging" role="tabpanel" aria-labelledby="settingsTabLogging" hidden>
@@ -1346,6 +1599,15 @@
             <label class="settings-field"><span>非托管日志保留天数</span><input id="logUnmanagedMaxAge" inputmode="numeric" placeholder="30"></label>
           </div>
           <label class="settings-field"><span>非托管日志截断 MB</span><input id="logUnmanagedTruncate" inputmode="numeric" placeholder="200"></label>
+          <div class="diag-alerts" id="diagnosticsAlerts">
+            <div class="diag-alerts-head">
+              <span class="diag-alerts-title">异常报警</span>
+              <span class="diag-alerts-summary" id="diagnosticsAlertsSummary" aria-live="polite"></span>
+              <button type="button" class="pill-btn diag-alerts-refresh" id="refreshDiagnosticsAlertsBtn">刷新</button>
+            </div>
+            <p class="diag-alerts-empty" id="diagnosticsAlertsEmpty">暂无异常报警，LLM / Embedding 请求异常会显示在这里。</p>
+            <ul class="diag-alert-list" id="diagnosticsAlertList" hidden></ul>
+          </div>
         </div>
 
         <label class="settings-field full"><span>配置状态</span><textarea id="configStatus" rows="3" readonly="" aria-live="polite">可连接 FastAPI：/api/health、/api/config、/api/runtime-status。保存后调用 PUT /api/config，并热重载运行时。</textarea></label>
@@ -1372,7 +1634,7 @@
             <label class="settings-field"><span>实例名称</span><input id="llmInstanceName" autocomplete="off" placeholder="例如：DeepSeek 官方"></label>
             <label class="settings-field"><span>实例 ID</span><input id="llmInstanceId" autocomplete="off" spellcheck="false" placeholder="deepseek-main" aria-describedby="llmInstanceIdHint"></label>
             <p class="settings-note-inline llm-instance-id-hint" id="llmInstanceIdHint">保存后 ID 不可修改；调用链通过它稳定引用实例。</p>
-            <label class="settings-field"><span>Provider 类型</span><select id="llmInstanceProviderType" translate="no"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="ollama">Ollama</option><option value="openai_compatible">OpenAI-compatible</option></select></label>
+            <label class="settings-field"><span>Provider 类型</span><select id="llmInstanceProviderType" translate="no"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="orcarouter">OrcaRouter</option><option value="requesty">Requesty</option><option value="api_route">API Route</option><option value="cheaperinference">Cheaper Inference</option><option value="ollama">Ollama</option><option value="openai_compatible">OpenAI-compatible</option></select></label>
             <label class="settings-field"><span>状态</span><select id="llmInstanceEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field full">
               <span>模型</span>
@@ -1386,7 +1648,7 @@
             <label class="settings-field full"><span>Base URL</span><input id="llmInstanceBaseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="官方渠道可留空；兼容网关必须填写"></label>
             <label class="settings-field full"><span>API Key</span><input id="llmInstanceApiKey" type="password" autocomplete="new-password" placeholder="留空保留已配置的密钥"></label>
             <label class="settings-field full" id="llmInstanceClearApiKeyField" hidden><span>清除已保存的 API Key</span><input id="llmInstanceClearApiKey" type="checkbox"></label>
-            <label class="settings-field" data-instance-field="openai-auth"><span>OpenAI 认证方式</span><select id="llmInstanceAuthMode"><option value="api_key">API Key</option><option value="codex_oauth">Codex OAuth</option></select></label>
+            <label class="settings-field" data-instance-field="openai-auth"><span>OpenAI 认证方式</span><select id="llmInstanceAuthMode"><option value="api_key">API Key（OpenAI Platform）</option><option value="codex_oauth">Codex OAuth（实验性 · ChatGPT 订阅）</option></select><small class="llm-field-help">Codex OAuth 复用 Codex CLI / ChatGPT 登录态，走官方 Codex 传输通道，无需 Platform API Key；与 API Key 方式互斥。</small></label>
             <label class="settings-field" data-instance-field="openai-protocol"><span>API 协议</span><select id="llmInstanceApiFlavor"><option value="">chat/completions（默认）</option><option value="responses">responses</option></select></label>
             <label class="settings-field" data-instance-field="reasoning">
               <span>Reasoning effort</span>
@@ -1523,6 +1785,8 @@
        status, the setup wizard); served from /shared because /web is rooted at
        web/desktop. -->
   <script src="/shared/dialogue-confirmation.js" defer></script>
+  <script src="/shared/agent-chat.js" defer></script>
   <script src="/shared/source-status.js" defer></script>
+  <script src="/web/assets/js/chat-agent-core.js" defer></script>
   <script src="/web/assets/js/app.js" defer></script>
 </body></html>

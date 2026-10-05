@@ -11,6 +11,10 @@ const TARGETS = {
     manifestPath: "dist-firefox/manifest.json",
     assetRoot: "dist-firefox",
   },
+  safari: {
+    manifestPath: "dist-safari/manifest.json",
+    assetRoot: "dist-safari",
+  },
 };
 
 function addAsset(assets, value, source) {
@@ -125,6 +129,6 @@ const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
   const targetFlag = process.argv.indexOf("--target");
   const target = targetFlag === -1 ? "chrome" : process.argv[targetFlag + 1];
-  if (!target) throw new Error("--target requires chrome or firefox");
+  if (!target) throw new Error("--target requires chrome, firefox, or safari");
   await verifyBuildAssets({ target });
 }

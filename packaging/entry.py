@@ -41,6 +41,9 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from openbiliclaw.proc import ChildProcessSupervisor, ManagedChild
+from openbiliclaw.recommendation_runtime import ensure_recommendation_transport_env
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
@@ -774,6 +777,41 @@ def _try_single_instance_lock(project_root: Path) -> tuple[str, Any]:
     return "acquired", handle
 
 
+# Named mutex held by every packaged OpenBiliClaw process (the tray parent and
+# each --openbiliclaw-worker child — all are the frozen exe whose files
+# Setup/Uninstall overwrite or delete). packaging/openbiliclaw.iss lists this
+# name in [Setup] AppMutex so both Setup and Uninstall open with the standard
+# "application is running" dialog instead of proceeding into locked files:
+# Inno's CloseApplications/Restart Manager is install-only, and the
+# uninstaller treats locked-file delete errors as non-fatal — it used to
+# strand the locked files, delete itself, and leave the user no way to retry
+# the uninstall. Session-local on purpose (no Global\ prefix): the install is
+# per-user, and another user's running instance must not block this user's
+# Setup/Uninstall.
+_INSTALLER_MUTEX_NAME = "OpenBiliClaw-B4F3D2A1-7C6E-4A8B-9D1F-0E2A6C5B3D14"
+
+
+def _acquire_installer_mutex() -> Any:
+    """Create the named mutex Inno Setup's AppMutex check looks for.
+
+    Best-effort and fail-open: any problem (non-Windows, dev run, ctypes
+    failure) returns ``None`` and startup proceeds unaffected. The handle is
+    intentionally never closed — Windows releases it automatically when the
+    process exits (including crashes), which is exactly the lifetime the
+    installer/uninstaller coordination needs. Acquiring an already-existing
+    mutex is fine: parent and worker children share one name, and the mutex
+    merely needs to exist while any packaged process runs.
+    """
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return None
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32.CreateMutexW(None, False, _INSTALLER_MUTEX_NAME)
+    except Exception:  # noqa: BLE001 — coordination only, never block startup
+        return None
+
+
 def _tray_icon_image() -> Any:
     """Load the canonical app icon for the Windows tray / macOS menu bar."""
     from PIL import Image
@@ -965,6 +1003,96 @@ def _reconcile_packaged_autostart(runtime_config: Any) -> None:
         warning = f"开机自启动对账失败：{exc}"
     if warning:
         print(f"[OpenBiliClaw] {warning}")
+
+
+def _packaged_tailnet_event_callback(event: dict[str, object]) -> None:
+    """Surface the embedded tailnet helper lifecycle in desktop logs/browser."""
+
+    def _open_login(url: str) -> None:
+        with suppress(Exception):
+            webbrowser.open(url)
+
+    event_name = str(event.get("event", "")).strip()
+    if event_name == "needs_login":
+        login_url = str(event.get("auth_url", "")).strip()
+        if not login_url:
+            return
+        print("[OpenBiliClaw] Tailnet 需要登录，正在打开一次性登录页面。")
+        threading.Thread(
+            target=_open_login,
+            args=(login_url,),
+            name="obc-tailnet-login",
+            daemon=True,
+        ).start()
+        return
+    if event_name == "ready":
+        dns_name = str(event.get("dns_name", "")).strip()
+        raw_ips = event.get("ips", [])
+        ips = ",".join(str(value) for value in raw_ips) if isinstance(raw_ips, list) else ""
+        port = event.get("port", 8420)
+        print(f"[OpenBiliClaw] Tailnet 已就绪: dns={dns_name or '-'} ips={ips or '-'} port={port}")
+        return
+    if event_name == "error":
+        print(f"[OpenBiliClaw] Tailnet 远程入口不可用: {event.get('message', 'unknown')}")
+
+
+def _start_packaged_tailnet(runtime_config: Any, host: str, port: int) -> Any | None:
+    """Start the optional bundled helper; a failure must not break local use."""
+    if runtime_config is None or not bool(
+        getattr(getattr(runtime_config, "tailnet", None), "enabled", False)
+    ):
+        return None
+    if host.strip().lower() not in {"0.0.0.0", "127.0.0.1", "localhost"}:
+        print(
+            f"[OpenBiliClaw] Tailnet 未启动: API 绑定 {host}，"
+            "helper 只会连接 127.0.0.1；本机服务继续。"
+        )
+        return None
+    if not bool(getattr(getattr(runtime_config.api, "auth", None), "enabled", False)):
+        print(
+            "[OpenBiliClaw] 提醒: Tailnet 已开启但应用密码未开启;"
+            "建议在本机 Web 的设置页开启局域网访问密码。"
+        )
+    from openbiliclaw.runtime.tailnet_supervisor import start_tailnet_if_enabled
+
+    try:
+        return start_tailnet_if_enabled(
+            runtime_config,
+            port,
+            event_callback=_packaged_tailnet_event_callback,
+        )
+    except Exception as exc:  # noqa: BLE001 - local desktop startup must continue
+        print(f"[OpenBiliClaw] Tailnet 未启动（本机服务继续）: {exc}")
+        return None
+
+
+def _worker_mode_requested() -> bool:
+    """Return whether the four-process background-worker mode is enabled.
+
+    The packaged desktop app now defaults to the same four-process backend
+    layout as ``openbiliclaw start``: full worker, discovery worker,
+    recommendation server and image proxy.  ``OPENBILICLAW_WORKER=0`` (or
+    ``false`` / ``no`` / ``off``) disables the first three and keeps the image
+    proxy child for compatibility with the CLI fallback mode.
+    """
+    value = os.environ.get("OPENBILICLAW_WORKER", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _spawn_backend_child(module_name: str, *, env: dict[str, str] | None) -> subprocess.Popen:
+    """Spawn a Python backend child in source or frozen desktop mode."""
+    from openbiliclaw.proc import no_window_kwargs
+
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--openbiliclaw-worker", module_name]
+    else:
+        cmd = [sys.executable, "-m", module_name]
+    return subprocess.Popen(
+        cmd,
+        cwd=os.getcwd(),
+        env=env,
+        **no_window_kwargs(),
+    )
 
 
 def main() -> None:
@@ -1203,7 +1331,19 @@ def main() -> None:
         daemon=True,
     ).start()
 
-    # Start the server
+    # Start the server.  The desktop package now defaults to the four-process
+    # backend layout: full worker + discovery worker + recommendation server +
+    # image proxy, matching `openbiliclaw start` with OPENBILICLAW_WORKER=1.
+    # Set the flag before create_app() so the API process skips its own
+    # periodic/event-processing loops and delegates them to the children.
+    worker_requested = _worker_mode_requested()
+    if worker_requested:
+        os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
+        data_path = (
+            runtime_config.data_path if runtime_config is not None else project_root / "data"
+        )
+        ensure_recommendation_transport_env(data_path)
+
     import uvicorn
 
     app = create_app()
@@ -1217,8 +1357,59 @@ def main() -> None:
     )
 
     listener_sockets = create_wildcard_listener_sockets(host, port)
+    tailnet_supervisor = _start_packaged_tailnet(runtime_config, host, port)
+
+    children: list[ManagedChild] = []
+    if worker_requested:
+        children.extend(
+            [
+                ManagedChild(
+                    "full-worker",
+                    lambda: _spawn_backend_child(
+                        "openbiliclaw.worker",
+                        env={**os.environ, "OPENBILICLAW_FULL_WORKER": "1"},
+                    ),
+                ),
+                ManagedChild(
+                    "discovery-worker",
+                    lambda: _spawn_backend_child(
+                        "openbiliclaw.discovery_worker",
+                        env={
+                            **os.environ,
+                            "OPENBILICLAW_DISCOVERY_WORKER": "1",
+                            "OPENBILICLAW_FULL_WORKER": "1",
+                        },
+                    ),
+                ),
+                ManagedChild(
+                    "recommendation-server",
+                    lambda: _spawn_backend_child(
+                        "openbiliclaw.recommendation_server",
+                        env={
+                            **os.environ,
+                            "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
+                            "OPENBILICLAW_FULL_WORKER": "1",
+                        },
+                    ),
+                ),
+            ]
+        )
+
+    # The image proxy is always a dedicated child, even in the legacy
+    # single-API-process fallback, so image work cannot stall API serving.
+    children.append(
+        ManagedChild(
+            "image-service",
+            lambda: _spawn_backend_child("openbiliclaw.image_service", env={**os.environ}),
+        )
+    )
+    child_supervisor = ChildProcessSupervisor(children)
 
     try:
+        child_supervisor.start()
+        image_service_port = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_PORT", "8421")
+        os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = f"http://127.0.0.1:{image_service_port}"
+
         if use_tray:
             # Windowed build: uvicorn runs in the background and a tray icon owns the
             # foreground (Windows system tray / macOS menu bar). No console window
@@ -1234,11 +1425,57 @@ def main() -> None:
             else:
                 server.run()
     finally:
+        child_supervisor.stop()
+        if tailnet_supervisor is not None:
+            tailnet_supervisor.stop()
         close_listener_sockets(listener_sockets)
         migration_guard.release()
 
 
 if __name__ == "__main__":
+    # Installer coordination: hold the AppMutex for the whole process lifetime
+    # (parent and --openbiliclaw-worker children alike — both are the packaged
+    # exe whose files Setup/Uninstall overwrite/delete). Never closed; Windows
+    # releases it automatically on process exit. See _acquire_installer_mutex.
+    _installer_mutex = _acquire_installer_mutex()
+
+    # Frozen desktop child processes are re-executions of the same packaged
+    # executable.  Route them to the requested backend module before the normal
+    # desktop main() (tray/splash/migration) runs.
+    if (
+        getattr(sys, "frozen", False)
+        and len(sys.argv) >= 3
+        and sys.argv[1] == "--openbiliclaw-worker"
+    ):
+        import runpy
+
+        # Child re-executions of the same frozen EXE have no console too, so
+        # send their logs to the same desktop.log as the parent.  Also close
+        # the Windows boot splash as early as possible in each child.
+        child_root = Path(
+            os.environ.get("OPENBILICLAW_PROJECT_ROOT") or _resolve_runtime_paths()[0]
+        )
+        _redirect_output_to_logfile(child_root)
+        _close_splash()
+        try:
+            runpy.run_module(sys.argv[2], run_name="__main__")
+        except Exception:
+            # Windowed builds turn any uncaught exception in a child into a
+            # PyInstaller bootloader error dialog. Log the traceback to
+            # desktop.log and exit with a plain SystemExit (which the
+            # bootloader handles silently) so a crashed child stays
+            # diagnosable instead of blocking startup with error boxes; the
+            # parent-side supervisor respawns it with backoff.
+            import traceback
+
+            print(
+                f"[OpenBiliClaw] backend child {sys.argv[2]} crashed; see logs/desktop.log",
+                file=sys.stderr,
+            )
+            traceback.print_exc()
+            raise SystemExit(1) from None
+        raise SystemExit(0)
+
     try:
         main()
     except Exception:

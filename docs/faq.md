@@ -67,6 +67,86 @@ docker compose -f docker-compose.prebuilt.yml up -d
 2. 后端要绑定 `0.0.0.0`：桌面包默认如此；源码安装检查 `config.toml` 的 `[api].host`（`0.0.0.0` = 同时监听可用的 IPv4 / IPv6，`127.0.0.1` = 仅本机）。
 3. 用插件顶部手机图标的二维码打开最稳，它会优先展示电脑的 IPv4 局域网地址；没有可用 IPv4 时会回退到 IPv6，并自动生成 `http://[IPv6]:8420/m/` 格式的地址。
 
+### 手机和电脑不在同一局域网，Android / iOS 原生 App 怎么连接？电脑要全局开 Tailscale 吗？
+
+不需要。`OpenBiliClaw-mobile` 的 Android / iOS 原生 App 已内嵌 `tsnet`，电脑端也可以只让
+OpenBiliClaw 自己成为一个 tailnet 节点，不安装系统级 Tailscale、不创建全局 VPN。该能力
+不包括 `OpenBiliClaw-mobile` 的 Web / Linux / macOS / Windows Flutter 构建。
+
+桌面安装包已内置 helper，但托盘程序首版不提供 `tailnet` CLI。先完整退出应用，编辑
+`~/OpenBiliClaw/config.toml`（Windows 为 `%USERPROFILE%\OpenBiliClaw\config.toml`）：
+
+```toml
+[tailnet]
+enabled = true
+hostname = "openbiliclaw-host"
+```
+
+然后重新启动；首次会打开 Tailscale 登录页。建议同时在本机 Web 设置中开启「局域网访问
+密码」。源码 / 一句话安装使用 CLI：
+
+```bash
+# 需要 Go 1.26.6
+openbiliclaw tailnet build-helper
+openbiliclaw tailnet enable --hostname openbiliclaw-host
+openbiliclaw set-password  # 推荐的第二层访问控制
+# 完整退出并重启 OpenBiliClaw；首次启动会打开 Tailscale 登录页
+openbiliclaw tailnet status
+```
+
+让 Android / iOS App 和电脑 helper 登录同一个 tailnet，再在 App 中使用 status 显示的
+MagicDNS 名称或 Tailnet IP。默认端口是 `8420`；helper 实际跟随本次 server 的有效端口，通常
+为 `[api].port`，但 `start --port` / `serve-api --port` 或桌面包的 `OPENBILICLAW_PORT` 可覆盖。
+`tailnet status` 会分开显示“配置端口”和“最近监听端口”，MagicDNS URL 使用后者。默认链路为
+`App tsnet → tailnet → 电脑 helper → 127.0.0.1:8420`。它只在 tailnet 内可见，不开启 Funnel /
+Serve，也不生成公网地址。
+
+helper upstream 固定为 loopback，所以 `[api].host` 必须是 `127.0.0.1`、`localhost` 或
+`0.0.0.0`；推荐只需本机 + Tailnet 的用户设为 `127.0.0.1`。如果配置成某个特定网卡 IP，
+Tailnet 会降级但本地 API 仍继续运行。Docker 首版镜像不内置 helper，容器部署继续使用
+Caddy HTTPS / 自管 TLS。
+
+macOS 主应用仍兼容 10.15+，但 Go 1.26.6 helper 的实测 `minos` 是 12.0。macOS 10.15 / 11
+会在启动前只禁用 Tailnet helper，本机 Web、推荐和其它功能继续可用；无需因此把整个 App
+视为 macOS 12+。
+
+### Tailnet 未就绪或反复要求登录？
+
+1. 桌面安装包应能直接找到 helper；从菜单打开运行日志，并检查运行目录的
+   `data/tailnet/status.json`。源码安装先确认 `go version` 为 1.26.6，再运行
+   `openbiliclaw tailnet build-helper`，并用 `openbiliclaw tailnet status` 查看最近状态。
+2. 出现 `needs_login` 时，用电脑浏览器打开日志 / status 中显示的 Tailscale URL。启动窗口
+   关闭并不会替代登录。
+3. 确认两端属于同一 tailnet，ACL / grants 允许手机节点访问电脑节点的 API 端口。
+4. 确认 `[api].host` 是 loopback / localhost / wildcard，而不是单独的 LAN IP。
+5. 自动化环境可由启动父进程提供短期 `OPENBILICLAW_TAILNET_AUTH_KEY`。它只经 stdin 交给
+   helper，不写配置、argv、status 或日志；不要把 key 写进仓库。
+6. 若 `tailnet enable|disable` 提示配置被覆盖，按提示修改
+   `OPENBILICLAW_TAILNET_ENABLED` / `OPENBILICLAW_TAILNET_HOSTNAME` 或
+   `config.local.toml`；优先级是显式环境 > local > base，CLI 不会把会被遮蔽的 base 修改
+   伪装成成功。Auth Key 与 `OPENBILICLAW_TAILNET_HELPER` 只是 runtime-only 控制，不属于配置。
+
+源码 / 一句话安装的 `openbiliclaw tailnet disable` 会保留 `data/tailnet/` 节点身份；桌面包
+则完整退出、把 `[tailnet].enabled` 改为 `false` 后重新启动，同样保留身份，所以下次启用通常
+不需重新登录。确实要重置身份时，先完整退出 OpenBiliClaw，在 Tailscale 管理台移除旧节点，
+再安全删除本机 `data/tailnet/`；这会不可逆地丢失该节点身份。跨机器 `.obcbackup` 刻意不
+包含该目录，新电脑应作为新节点登录。
+
+### 浏览器扩展能直接填写 Tailnet 的 `http://100.x` 地址吗？
+
+首版不承诺。应用内 Tailnet 的受支持客户端是已内嵌 tsnet 的 Android / iOS 原生 App；浏览器扩展
+仍执行自己的 remote endpoint、host permission、HTTPS 与设备 key 安全规则。不要因为
+Tailnet 底层已加密就假设任意 MagicDNS / `100.x` 明文 HTTP 会被扩展接受。扩展跨网络访问
+继续使用文档中的 Caddy HTTPS / TLS 路径；局域网连接保持原有方式。
+
+### 应用内 Tailnet 会把诊断日志上传给 Tailscale 吗？
+
+helper 固定用 `ts_omit_logtail,ts_omit_webclient` 构建，自动诊断日志上传和未使用的管理 Web UI
+都从二进制移除，因此不会向 `log.tailscale.com` 上传 helper 诊断日志。相应代价是排障时不能
+依赖这部分 Tailscale 上游日志支持，应查看 OpenBiliClaw 本地运行日志和脱敏 status。节点登录、
+地址分配、连通性等控制面仍会联系用户选择的 Tailscale 协调服务，无法直连时也仍可能经 DERP；
+省略 logtail 不等于完全不与 Tailscale 基础设施通信。
+
 ## 更新与数据
 
 ### 后端设置里没有「立即应用」更新按钮？

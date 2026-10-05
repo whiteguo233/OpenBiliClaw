@@ -61,6 +61,7 @@ class _FlakyAwarenessAnalyzer:
         events: list[dict[str, object]],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        existing_confusions: list[dict[str, object]] | None = None,
         max_tokens: int = 0,
         source_event_ids: list[int] | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
@@ -313,6 +314,7 @@ class _RecordingAwarenessAnalyzer:
         events: list[dict[str, object]],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        existing_confusions: list[dict[str, object]] | None = None,
         max_tokens: int = 0,
         source_event_ids: list[int] | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:
@@ -411,6 +413,68 @@ async def test_awareness_cursor_covers_backlog_and_batches(tmp_path: Path) -> No
     assert rec.max_tokens_seen == [_COGNITION_MAX_TOKENS] * expected_batches
     # Watermark advanced to the newest event.
     assert cycle._load_state()["last_awareness_event_id"] == count  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_configured_awareness_batch_and_cognition_max_tokens(tmp_path: Path) -> None:
+    """CognitionCycle honors constructor overrides for issue #169 knobs."""
+    import math
+
+    batch_size = 10
+    max_tokens = 777
+    count = 25
+    expected_batches = math.ceil(count / batch_size)
+
+    memory = _seed_memory(tmp_path, event_count=0)
+    _add_events(memory, count)
+    rec = _RecordingAwarenessAnalyzer()
+    cycle = CognitionCycle(
+        memory=memory,
+        awareness_analyzer=rec,  # type: ignore[arg-type]
+        insight_analyzer=_NoopInsightAnalyzer(),  # type: ignore[arg-type]
+        min_interval_seconds=60,
+        awareness_event_batch_size=batch_size,
+        cognition_max_tokens=max_tokens,
+    )
+
+    result = await cycle.run_if_due(now=datetime(2026, 6, 15, 12, 0, 0))
+
+    assert result.ran is True
+    assert result.errors == []
+    assert len(rec.calls) == expected_batches
+    seen = set().union(*(_event_ids(c) for c in rec.calls))
+    assert seen == set(range(1, count + 1))
+    assert rec.max_tokens_seen == [max_tokens] * expected_batches
+    assert cycle._load_state()["last_awareness_event_id"] == count  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_configured_insight_note_batch_and_cognition_max_tokens(tmp_path: Path) -> None:
+    """Insight batching and output budget also honor issue #169 overrides."""
+    memory = _seed_memory(tmp_path, event_count=0)
+    _set_awareness_notes(memory, 5)
+    rec = _RecordingInsightAnalyzer()
+    cycle = CognitionCycle(
+        memory=memory,
+        awareness_analyzer=_FlakyAwarenessAnalyzer(fail_first_n=0, succeed_payload=[]),  # type: ignore[arg-type]
+        insight_analyzer=rec,  # type: ignore[arg-type]
+        min_interval_seconds=60,
+        insight_note_batch_size=2,
+        cognition_max_tokens=888,
+    )
+
+    state: dict[str, Any] = {}
+    added = await cycle._run_insight(state)  # noqa: SLF001
+
+    assert added == 3
+    assert len(rec.calls) == 3
+    assert [c["notes"] for c in rec.calls] == [
+        ["觉察0", "觉察1"],
+        ["觉察2", "觉察3"],
+        ["觉察4"],
+    ]
+    assert rec.max_tokens_seen == [888, 888, 888]
+    assert state["last_insight_awareness_index"] == 5
 
 
 @pytest.mark.asyncio
@@ -944,6 +1008,7 @@ class _GatedAwarenessAnalyzer:
         events: list[dict[str, object]],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        existing_confusions: list[dict[str, object]] | None = None,
         max_tokens: int = 0,
         source_event_ids: list[int] | None = None,
     ) -> tuple[list[Any], list[dict[str, Any]]]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,14 +15,19 @@ from openbiliclaw.llm.base import (
     LLMFallbackError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMRegistry,
     LLMResponse,
     LLMResponseError,
     LLMTimeoutError,
     classify_llm_failure_kind,
     classify_llm_unavailability,
     describe_llm_failure,
+    is_llm_moderation_error,
+    is_reasoning_budget_exhausted,
 )
+from openbiliclaw.llm.openai_provider import OpenAIProvider
 from openbiliclaw.llm.service import (
+    MIN_STRUCTURED_MAX_TOKENS,
     LLMProviderExecutionError,
     LLMResponseContentError,
     LLMService,
@@ -57,6 +63,7 @@ class FakeRegistry:
         self.provider_calls: list[dict[str, object]] = []
         self.json_modes: list[bool] = []
         self.reasoning_efforts: list[str | None] = []
+        self.max_tokens_seen: list[int] = []
 
     async def complete(
         self,
@@ -70,6 +77,7 @@ class FakeRegistry:
         self.calls.append(messages)
         self.json_modes.append(json_mode)
         self.reasoning_efforts.append(reasoning_effort)
+        self.max_tokens_seen.append(max_tokens)
         if self.error is not None:
             raise self.error
         return self.response or LLMResponse(content="", provider="openai")
@@ -94,6 +102,7 @@ class FakeRegistry:
                 "reasoning_effort": reasoning_effort,
             }
         )
+        self.max_tokens_seen.append(max_tokens)
         if self.provider_error is not None:
             raise self.provider_error
         return self.response or LLMResponse(content="ok", provider=provider_name)
@@ -366,6 +375,17 @@ def test_describe_llm_failure_content_moderation_500() -> None:
             raise LLMProviderError("openai_compatible request failed") from upstream
     except LLMProviderError as exc:
         reason = describe_llm_failure(exc)
+    assert reason is not None
+    assert "内容合规" in reason
+
+
+def test_describe_llm_failure_deepseek_content_exists_risk() -> None:
+    error = LLMProviderError(
+        "deepseek request failed: HTTP 400: "
+        '{"code": "invalid_request_error", "message": "Content Exists Risk"}'
+    )
+    assert is_llm_moderation_error(error)
+    reason = describe_llm_failure(error)
     assert reason is not None
     assert "内容合规" in reason
 
@@ -649,25 +669,25 @@ async def test_complete_with_core_memory_can_skip_core_memory_for_cacheable_eval
     assert "你是内容评估助手。" in system_content
     assert "## 用户画像" not in system_content
     assert registry.calls[0][1]["content"] == "请评估这个视频。"
-    assert registry.reasoning_efforts == [""]
+    assert registry.reasoning_efforts == [None]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("caller", "requested", "expected"),
     [
-        ("discovery.x.keyword_gen", None, ""),
-        ("recommendation.expression", None, ""),
-        ("sources.xhs.keyword_gen", None, ""),
-        ("yt_search.generate_queries", None, ""),
-        ("runtime.bilibili_extension_search.queries", None, ""),
-        ("eval.query_quality", None, ""),
+        ("discovery.x.keyword_gen", None, None),
+        ("recommendation.expression", None, None),
+        ("sources.xhs.keyword_gen", None, None),
+        ("yt_search.generate_queries", None, None),
+        ("runtime.bilibili_extension_search.queries", None, None),
+        ("eval.query_quality", None, None),
         ("eval.scenario_gen", None, None),
         ("soul.profile_build", None, None),
         ("discovery.evaluate_batch", "max", "max"),
     ],
 )
-async def test_channel_callers_default_to_no_reasoning(
+async def test_channel_callers_default_to_follow_model_reasoning(
     caller: str,
     requested: str | None,
     expected: str | None,
@@ -760,7 +780,7 @@ async def test_complete_multimodal_structured_task_sends_text_and_images() -> No
     )
 
     assert registry.json_modes == [True]
-    assert registry.reasoning_efforts == [""]
+    assert registry.reasoning_efforts == [None]
     assert registry.calls[0][0]["content"] == (
         "输出 json。\n\n以下是当前用户的 core memory，请作为理解背景：\n\n## 用户画像\nportrait"
     )
@@ -1038,7 +1058,7 @@ async def test_complete_with_core_memory_defaults_to_three_concurrent_calls() ->
             service.complete_with_core_memory(
                 system_instruction=str(index),
                 user_input=str(index),
-                caller="recommendation.write_expression",
+                caller="soul.dialogue",
             )
         )
         for index in range(4)
@@ -1054,3 +1074,181 @@ async def test_complete_with_core_memory_defaults_to_three_concurrent_calls() ->
 
     assert observed == 3
     assert peak == 3
+
+
+# -- Reasoning-budget classifier + structured max_tokens floor -------------
+
+
+def test_is_reasoning_budget_exhausted_matches_wrapped_provider_message() -> None:
+    message = (
+        "openai_compatible returned reasoning but no final content "
+        "(finish_reason=length); disable thinking/reasoning or increase max_tokens"
+    )
+    assert is_reasoning_budget_exhausted(RuntimeError(message))
+
+    try:
+        try:
+            raise LLMResponseError(message)
+        except LLMResponseError as err:
+            raise LLMProviderExecutionError(f"All providers failed. Last error: {err}") from err
+    except LLMProviderExecutionError as wrapped:
+        assert is_reasoning_budget_exhausted(wrapped)
+
+
+def test_is_reasoning_budget_exhausted_ignores_other_failures() -> None:
+    assert not is_reasoning_budget_exhausted(RuntimeError("429 rate limited"))
+    assert not is_reasoning_budget_exhausted(
+        RuntimeError("openai_compatible returned empty content")
+    )
+    # Both markers must land on the same link: a bare "reasoning but no final
+    # content" without the finish_reason marker is a different failure shape.
+    assert not is_reasoning_budget_exhausted(
+        RuntimeError("returned reasoning but no final content")
+    )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_budget_exhausted_from_responses_flavor_survives_service_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration: a responses-flavor instance that burns the whole output
+    budget on thinking raises an error the evaluation batch-halving self-heal
+    recognizes even after registry fallback + service-layer wrapping."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    registry = LLMRegistry()
+    registry.register(provider)
+    service = LLMService(registry=registry, memory=object())  # type: ignore[arg-type]
+    calls = {"count": 0}
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        return SimpleNamespace(
+            model="gpt-5-mini",
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="reasoning", summary=[])],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5, total_tokens=15),
+        )
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMProviderExecutionError) as exc_info:
+        await service.complete_with_core_memory(
+            system_instruction="sys",
+            user_input="hi",
+            caller="discovery.eval",
+            max_tokens=512,
+            inject_core_memory=False,
+        )
+
+    assert is_reasoning_budget_exhausted(exc_info.value)
+    # The doubled-budget retry fired before the error propagated.
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_structured_task_floors_small_max_tokens() -> None:
+    registry = FakeRegistry(response=LLMResponse(content='{"ok": true}', provider="openai"))
+    service = LLMService(registry=registry, memory=FakeMemoryManager("core"))  # type: ignore[arg-type]
+
+    await service.complete_structured_task(
+        system_instruction="return json",
+        user_input="hi",
+        max_tokens=256,
+        caller="eval.relevance",
+    )
+
+    assert registry.max_tokens_seen == [MIN_STRUCTURED_MAX_TOKENS]
+
+
+@pytest.mark.asyncio
+async def test_structured_task_keeps_budgets_above_the_floor() -> None:
+    registry = FakeRegistry(response=LLMResponse(content='{"ok": true}', provider="openai"))
+    service = LLMService(registry=registry, memory=FakeMemoryManager("core"))  # type: ignore[arg-type]
+
+    await service.complete_structured_task(
+        system_instruction="return json",
+        user_input="hi",
+        max_tokens=16384,
+        caller="discovery.evaluate_batch",
+    )
+
+    assert registry.max_tokens_seen == [16384]
+
+
+@pytest.mark.asyncio
+async def test_multimodal_structured_task_floors_small_max_tokens() -> None:
+    registry = FakeRegistry(response=LLMResponse(content='{"ok": true}', provider="openai"))
+    service = LLMService(registry=registry, memory=FakeMemoryManager("core"))  # type: ignore[arg-type]
+
+    await service.complete_multimodal_structured_task(
+        system_instruction="return json",
+        user_input="hi",
+        image_inputs=[{"content_id": "1", "data_url": "data:image/png;base64,AA=="}],
+        max_tokens=512,
+        caller="discovery.evaluate_batch",
+    )
+
+    assert registry.max_tokens_seen == [MIN_STRUCTURED_MAX_TOKENS]
+
+
+@pytest.mark.asyncio
+async def test_llm_service_forwards_reply_style_into_dialogue_prompt(tmp_path: Path) -> None:
+    """issue #255: soul.reply_style reaches the dialogue tone block via LLMService."""
+    memory = MemoryManager(tmp_path)
+    registry = FakeRegistry(LLMResponse(content="好。", provider="openai"))
+    service = LLMService(registry=registry, memory=memory, reply_style="像损友一样毒舌")
+
+    await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
+
+    system_prompt = registry.calls[0][0]["content"]
+    assert "- 回复风格: 像损友一样毒舌" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_llm_service_default_reply_style_leaves_dialogue_prompt_untouched(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    registry = FakeRegistry(LLMResponse(content="好。", provider="openai"))
+    service = LLMService(registry=registry, memory=memory)
+
+    await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
+
+    assert "- 回复风格:" not in registry.calls[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_llm_service_forwards_dialogue_tone_prompt_into_dialogue_prompt(
+    tmp_path: Path,
+) -> None:
+    """soul.dialogue_tone_prompt replaces the dialogue tone block via LLMService."""
+    memory = MemoryManager(tmp_path)
+    registry = FakeRegistry(LLMResponse(content="好。", provider="openai"))
+    service = LLMService(
+        registry=registry,
+        memory=memory,
+        reply_style="像损友一样毒舌",
+        dialogue_tone_prompt="像一个老朋友：\n- 多用短句",
+    )
+
+    await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
+
+    system_prompt = registry.calls[0][0]["content"]
+    assert "像一个老朋友：\n- 多用短句" in system_prompt
+    assert "- 信息密度" not in system_prompt
+    assert "- 回复风格:" not in system_prompt
+    assert "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_llm_service_default_dialogue_tone_prompt_leaves_prompt_untouched(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    registry = FakeRegistry(LLMResponse(content="好。", provider="openai"))
+    service = LLMService(registry=registry, memory=memory)
+
+    await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
+
+    assert "- 信息密度" in registry.calls[0][0]["content"]

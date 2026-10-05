@@ -94,14 +94,14 @@ def test_native_save_e2e_authorization_requires_exact_six_platform_mapping() -> 
             "platform": "zhihu",
             "action": "favorite",
             "content_id": "answer:123456789",
-            "expected_target": "OpenBiliClaw",
+            "expected_target": "知乎收藏",
         },
         {
             "allow_state_changing": True,
             "platform": "zhihu",
             "action": "watch_later",
             "content_id": "answer:123456789",
-            "expected_target": "OpenBiliClaw",
+            "expected_target": "知乎收藏",
         },
         {
             "allow_state_changing": True,
@@ -231,8 +231,8 @@ def test_backend_native_save_e2e_models_cover_six_platforms_and_both_actions() -
         ("douyin", "watch_later", "7234567890123456789", "抖音收藏"),
         ("twitter", "favorite", "1812345678901234567", "X Bookmarks"),
         ("twitter", "watch_later", "1812345678901234567", "X Bookmarks"),
-        ("zhihu", "favorite", "answer:123456789", "OpenBiliClaw"),
-        ("zhihu", "watch_later", "answer:123456789", "OpenBiliClaw"),
+        ("zhihu", "favorite", "answer:123456789", "知乎收藏"),
+        ("zhihu", "watch_later", "answer:123456789", "知乎收藏"),
         ("reddit", "favorite", "t3_public1", "Reddit Saved"),
         ("reddit", "watch_later", "t3_public1", "Reddit Saved"),
     ]

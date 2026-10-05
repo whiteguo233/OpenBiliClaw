@@ -7,23 +7,36 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Release](https://img.shields.io/github/v/release/whiteguo233/OpenBiliClaw?filter=openbiliclaw-v*&style=flat-square&label=Release&color=success)](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/whiteguo233/OpenBiliClaw/total?style=flat-square&label=downloads&logo=github)](https://github.com/whiteguo233/OpenBiliClaw/releases)
+[![Stars](https://img.shields.io/github/stars/whiteguo233/OpenBiliClaw?style=flat-square&label=stars&logo=github)](https://github.com/whiteguo233/OpenBiliClaw)
 [![CI](https://img.shields.io/github/actions/workflow/status/whiteguo233/OpenBiliClaw/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whiteguo233/OpenBiliClaw/actions/workflows/ci.yml)
-[![LINUX DO](https://img.shields.io/badge/LINUX_DO-Community-black?style=flat-square&logo=linux)](https://linux.do/)
 [![Discussion](https://img.shields.io/badge/LINUX_DO-Discussion-orange?style=flat-square&logo=discourse)](https://linux.do/t/topic/1978894)
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/cdfjfkdjjhdaccbldipkjhpibnfbiamg?style=flat-square&label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white&color=4285F4)](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)
 [![Gitee Mirror](https://img.shields.io/badge/Gitee-Mirror-C71D23?style=flat-square&logo=gitee&logoColor=white)](https://gitee.com/whiteguo233/OpenBiliClaw)
 
 [Homepage](https://whiteguo233.github.io/OpenBiliClaw/) | English | [中文](README.md)
 
+Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw) (automatically synced from GitHub).
+
 </div>
+
+> ### 🆕 Big update: OpenBiliClaw now runs inside DeepSeek Harness
+>
+> New **DSH client plugin** — install OpenBiliClaw into [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness): a persistent fourth column (Recommendations / Library / Chat / Profile / Settings) in the DSH web GUI, plus 22 Agent Bridge tools so agents can read recommendations, answer probes, and close the learning loop — browse cross-platform personalized content while you work in DSH. → [`github.com/whiteguo233/dsh-openbiliclaw`](https://github.com/whiteguo233/dsh-openbiliclaw)
+>
+> 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
+
+> 🇨🇳 **Mainland China source**: [Gitee v0.3.226 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.226) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.226) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
 
 ## OpenBiliClaw in 10 Seconds
 
-A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, Instagram, and the open web — without handing your profile to another platform.
+> Instagram is available in main source as **experimental, disabled by default, and not yet released**. Real-account initialization → configured models → recommendations, plus Web, extension, and iOS simulator consumption have been exercised. Complete Likes termination, two accounts, signed-in Firefox, and physical phones remain unverified; cross-device saved state needs a refresh. See [setup and network requirements](docs/modules/instagram.md) and the [acceptance ledger](docs/platform-source-acceptance.instagram.md).
+
+A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web — without handing your profile to another platform.
 
 | Cross-platform | Local-first | Trainable |
 |---|---|---|
-| Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / Instagram / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
+| Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg"><b>Install the browser extension</b></a>
@@ -44,18 +57,31 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **[Gitee v0.3.226 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.226) is synced; current domestic installer mirrors are pending, and 123 Cloud currently retains older versions.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
    ```
 
-3. **Connect a source** — log in to [Bilibili](https://www.bilibili.com) (the default init source), or choose Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX / Weibo / Instagram. Linux.do, Bangumi, V2EX, Weibo, and Instagram support public discovery, while signed-in browser tasks add only the personal signals each source explicitly supports. Instagram is experimental and disabled by default; production use still requires a decision on Meta's automated-collection permission boundary.
+3. **Connect a source** — log in to [Bilibili](https://www.bilibili.com) (the default init source), or choose Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX / Weibo / GitHub. Sources that need an account reuse the installed extension; GitHub uses the official REST API anonymously for public repositories. A public username can seed initialization from starred repositories, while a PAT is optional and only improves rate limits and identity verification. Instagram (experimental, disabled by default) uses isolated browser tasks for discovery and opt-in, signed-in likes/saved/following imports; production use requires review of Meta's automated-collection permissions.
 4. **Open the UI** — visit `http://127.0.0.1:8420/web`, or scan the extension QR code to open `http://<your-LAN-IP>:8420/m/` on your phone and save it to your home screen. For a native app experience, install the [Flutter client](https://github.com/whiteguo233/OpenBiliClaw-mobile) from its separate repo (Android / iOS / Web / desktop; installers on its [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)) and point it at the same backend in its settings.
+
+Away from your LAN, the **native Android / iOS apps** from `OpenBiliClaw-mobile` embed `tsnet`, and
+the computer can let OpenBiliClaw itself join the same tailnet. Its Web, Linux, macOS, and Windows
+Flutter builds are outside this feature's support scope. Desktop installers bundle the helper. On the
+computer, open either Desktop Web or the browser extension's **Settings → General → Embedded
+Tailnet access**. Enable it, then either leave the credential blank for browser login, enter a
+`tskey-auth-…` Auth Key, or enter a `tskey-client-…` OAuth Client Secret plus one of that client's
+authorized device tags; fully restart the app afterward. The credential is staged privately for the
+next start and is never written to `config.toml`, echoed by the API, or logged. Source / scripted installs first run `openbiliclaw tailnet build-helper` with Go
+1.26.6, then `openbiliclaw tailnet enable` and restart. The computer needs no system-wide Tailscale;
+this default-off edge is tailnet-private and enables no Funnel/Serve. Enable the app password in the
+local Web settings as defense in depth (source installs may also use `openbiliclaw set-password`). See
+[Embedded Tailnet](docs/modules/tailnet.md).
 
 ## Why OpenBiliClaw?
 
-> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / Instagram and the open web, with more platforms on the roadmap.
+> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) and the open web, with more platforms on the roadmap.
 
 Recommendation systems are essentially a **middleman** — the platform sits between millions of videos and millions of users, matching and distributing content at scale. Modern systems are far more sophisticated than "just optimizing CTR": they jointly weigh click-through rate, completion rate, like/coin probability, dwell time, user retention, creator ecosystem health, ad revenue, and a dozen other objectives, compressing them into a single weighted ranking score. Sounds scientific, but here's the catch: **the weights are set by the platform, and the optimization targets ultimately serve the platform** — user satisfaction is valued as a means to retention and monetization, not as an end in itself. You think you're choosing content, but really the middleman decides what you get to see. The result: recommendations look more and more like what you've already watched, and the occasional surprise is pure luck.
 
@@ -78,7 +104,7 @@ Core behavior, recommendation, and dialogue data lives in SQLite on your disk; c
 > | | Bilibili Official | Keyword Filter Plugins | OpenBiliClaw |
 > |---|---|---|---|
 > | Recommendation logic | Collaborative filtering | Tag matching | Psychological profiling + 5-layer memory |
-> | Content sources | Single platform | Single platform | Cross-platform: Bilibili · Xiaohongshu · Douyin · YouTube · X · Zhihu · Reddit · Linux.do · Bangumi · V2EX · Weibo · Instagram · more |
+> | Content sources | Single platform | Single platform | Cross-platform: Bilibili · Xiaohongshu · Douyin · YouTube · X · Zhihu · Reddit · Linux.do · Bangumi · V2EX · Weibo · GitHub · Instagram (experimental) · more |
 > | Filter bubble | Gets narrower | Doesn't address it | Speculative interests actively break it |
 > | Data ownership | Platform-owned | Usually cloud | 100% local |
 > | Explains why | "Guess you'll like" | None | Friend-like explanations |
@@ -86,7 +112,7 @@ Core behavior, recommendation, and dialogue data lives in SQLite on your disk; c
 
 ## 📸 Feature Preview
 
-Four core surfaces: the browser extension handles in-page interaction and login sessions, the Desktop Web (`/web`) gives you a big-screen recommendation home, the Mobile Web (`/m`) is built for phones, and a native Flutter client ([OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile), separate repo) covers Android / iOS / Web / desktop. Every non-extension surface only calls your local API — cookie sync and platform tasks still run through the extension.
+Five core surfaces: the browser extension handles in-page interaction and login sessions, the Desktop Web (`/web`) gives you a big-screen recommendation home, the Mobile Web (`/m`) is built for phones, a native Flutter client ([OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile), separate repo) covers Android / iOS / Web / desktop, and a [DSH client plugin](https://github.com/whiteguo233/dsh-openbiliclaw) brings the same panels into the DSH web GUI as a fourth column (plus 22 Agent Bridge tools). Every non-extension surface only calls your local API — cookie sync and platform tasks still run through the extension.
 
 <table>
   <tr>
@@ -191,11 +217,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.204 (2026-08-11)**
+📌 Latest: **v0.3.226 (2026-10-04)**
 
-- **Periodic account refresh is now opt-in** — upgrades no longer open platform tabs automatically; manual init, manual sync, and normal discovery are unchanged.
-- **Linux.do background discovery is more resilient** — transient content-script readiness races recover within the same task and tab instead of spawning repeated failures.
-- **V2EX Search works across all three keyword modes** — mixed, inspiration, and traditional keywords now reach formal search and the shared evaluation pipeline.
+- **Automatic CPU fallback**: local Ollama embedding failures retry on CPU, reducing repeated errors and unnecessary model downloads.
+- **Web tools and editable notes**: chat can search public webpages, read links, correct notes, and request approval before deleting them.
+- **Smoother conversations**: choose from six styles per conversation, with fixes for drafts, streaming replies, and obstructed buttons across all three clients.
+- **More reliable Bilibili search**: processes share cooldown state, probe recovery halfway through the cooldown, and reuse cached video details.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -223,12 +250,12 @@ For most users, setup is four steps: install the extension, ask an AI coding age
 
 The extension is the main interface. It shows the sidebar on supported sites, records feedback, and runs bounded read-only tasks for sources including Zhihu, Reddit, Linux.do, V2EX, and Weibo. Linux.do, V2EX, and Weibo task tabs are isolated from passive behavior collection; Weibo public discovery still runs independently in the backend.
 
-Built on Manifest V3, the extension works in any Chrome-compatible browser — **Chrome, Edge, Brave, Arc, Vivaldi, Opera**, and more.
+Built on Manifest V3, the extension works in any Chrome-compatible browser — **Chrome, Edge, Brave, Arc, Vivaldi, Opera**, and more; a **Safari (macOS)** build is also provided. Releases automatically attach `openbiliclaw-extension-v*-safari.dmg` (Developer ID-signed and notarized when Apple credentials are configured, otherwise an ad-hoc experimental build that requires Safari's "Allow Unsigned Extensions"), and you can also convert the local build to an Xcode project via Apple's `safari-web-extension-converter` (see the [Safari build guide](docs/safari-extension-build.md)).
 
 **Recommended · download the latest build from the Latest Release aggregate page** (gets the newest features and fixes — the Chrome Web Store listing usually lags by a few days to a couple of weeks due to review scheduling):
 
 1. Open [OpenBiliClaw Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest), the newest user-facing aggregate `openbiliclaw-v*` release
-2. Chrome / Edge / Brave users download `openbiliclaw-extension-v*.zip`; Firefox users install `openbiliclaw-extension-v*-firefox.xpi` when it is present, otherwise download `openbiliclaw-extension-v*-firefox.zip` and load it temporarily through `about:debugging`
+2. Chrome / Edge / Brave users download `openbiliclaw-extension-v*.zip`; Firefox users install `openbiliclaw-extension-v*-firefox.xpi` when it is present, otherwise download `openbiliclaw-extension-v*-firefox.zip` and load it temporarily through `about:debugging`; Safari (macOS) users download `openbiliclaw-extension-v*-safari.dmg`, launch the app once, then enable OpenBiliClaw in Safari Settings → Extensions
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Chrome / Edge / Brave users drag the downloaded `.zip` file into the page to install; Firefox `.xpi` files install directly, while the temporary zip must be unzipped before loading `manifest.json`
 
@@ -236,7 +263,7 @@ Built on Manifest V3, the extension works in any Chrome-compatible browser — *
 
 > 👉 **[Install OpenBiliClaw on the Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)** — click "Add to Chrome".
 
-Extension updates depend on the install channel: Chrome Web Store / Edge Add-ons and the Firefox AMO listed build after approval are updated by the browser; GitHub Release Chrome zips / Firefox signed XPIs / Firefox temporary zips, developer-mode loads, and Firefox temporary installs must download the new package and reload it manually. Firefox AMO `0.3.204` has been accepted for listed review but is still `unreviewed`; until it is publicly approved, use the `*-firefox.zip` temporary package from Releases. After approval, Firefox will update the listed install natively. The backend "auto update" switch only updates the local backend source checkout, not the browser extension.
+Extension updates depend on the install channel: Chrome Web Store / Edge Add-ons and the Firefox AMO listed build after approval are updated by the browser; GitHub Release Chrome zips / Firefox signed XPIs / Firefox temporary zips / Safari DMGs, developer-mode loads, and Firefox temporary installs must download the new package and reload it manually. Firefox AMO listed review is asynchronous; until the listed version is publicly approved, use the `*-firefox.zip` temporary package from Releases. After approval, Firefox will update the listed install natively. The backend "auto update" switch only updates the local backend source checkout, not the browser extension.
 
 <details>
 <summary>Firefox users: regular install and temporary debugging (Firefox 140+)</summary>
@@ -279,14 +306,20 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
+> 🇨🇳 **Mainland China source**: [Gitee v0.3.226 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.226) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.226) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
+
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
 - Current desktop installer release: `desktop-v*`, with available `.dmg` / `.exe` assets when the same-version desktop channel has shipped; missing channels are shown as unpublished instead of being backfilled from a previous release
 
 - **macOS**: download the DMG that matches your Mac: `OpenBiliClaw-macos-v*-arm64.dmg` for Apple silicon, or `OpenBiliClaw-macos-v*-x64.dmg` for Intel when the release provides it. The recommended path is to double-click `安装并启动 Install OpenBiliClaw.command`: it verifies the new bundle, quits the old instance, atomically replaces the app in Applications, and launches the version just installed. Traditional drag-and-drop remains available, but upgrades must quit the old version first and reopen the replacement manually.
-- **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install. After a successful install or upgrade, Setup stops the old instance and automatically launches the newly installed version from the installation directory (including silent installs).
+- **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install. The final wizard page offers a checked "Launch OpenBiliClaw" checkbox; the newly installed version starts only when you click Finish (upgrades stop mutex-less old instances first; when the running app is an AppMutex build, Setup/Uninstall first show the standard "OpenBiliClaw is currently running" prompt and re-check after you close it — clicking Finish hands off to the new version, and unchecking skips the launch). `/SILENT` / `/VERYSILENT` installs have no wizard pages and still launch the new version automatically once Setup succeeds; with the app still running, a silent install/uninstall paired with `/SUPPRESSMSGBOXES` is cancelled instead, so close the app first.
 
-It bundles local Ollama + `bge-m3` embedding (works out of the box) plus the default source dependencies, including X's `twitter-cli` and Reddit's `rdt-cli` (Reddit's rdt command backend prefers the connected extension's synced `reddit_session`; `rdt login` remains a manual fallback, and unauthenticated runs fall back to extension tasks). It lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files. If a broken `config.toml` / `config.local.toml` prevents startup, the desktop package backs the bad file up as `*.invalid`, regenerates the default config, then opens `/setup/` so initialization can run again; `data/` is left untouched.
+The macOS app still targets 10.15+. Only the optional Tailnet helper built with Go 1.26.6 has a
+measured minimum of macOS 12; on 10.15 / 11 the local app continues normally while this remote edge
+is unavailable.
+
+It bundles local Ollama + `bge-m3` embedding (works out of the box), the default source dependencies including X's `twitter-cli` and Reddit's `rdt-cli`, and the default-off embedded Tailnet helper. The latter lets the desktop app join your tailnet without installing system Tailscale. Enable it from Desktop Web or the browser extension's **Settings → General**, choose browser login, an Auth Key, or an OAuth Client Secret plus an authorized device tag, then fully restart the app. Reddit's rdt command backend prefers the connected extension's synced `reddit_session`; `rdt login` remains a manual fallback, and unauthenticated runs fall back to extension tasks. It lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files. If a broken `config.toml` / `config.local.toml` prevents startup, the desktop package backs the bad file up as `*.invalid`, regenerates the default config, then opens `/setup/` so initialization can run again; `data/` is left untouched.
 
 > ⚠️ **macOS security blocking (the app isn't signed / notarized yet)**:
 > - The current Release is ad-hoc signed but not notarized. On first launch, if macOS blocks either the install helper or the app, right-click / Control-click that item → "Open" → click "Open" again in the dialog; or allow it under "System Settings → Privacy & Security" with "Open Anyway".
@@ -310,8 +343,12 @@ Paste this whole prompt into Claude Code, Codex CLI, Cursor, Windsurf, or anothe
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-The agent will clone the repo, install dependencies, start the backend with the LAN-accessible default bind (`0.0.0.0:8420`), run a health check, and ask a few questions with defaults. Before auto-init, it verifies that the ordered global LLM instance chain and the independent embedding service answer real lightweight calls; if either fails, init is blocked until you fix the service. Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, V2EX, and Weibo signals enter the initial profile only when you opt in. Weibo personal signals require a signed-in Weibo browser session and the extension; public discovery remains anonymous.
-The agent will clone the repo, install dependencies, start the backend with the LAN-accessible default bind (`0.0.0.0:8420`), run a health check, and ask a few questions with defaults. Before auto-init, it verifies that the ordered global LLM instance chain and the independent embedding service answer real lightweight calls; if either fails, init is blocked until you fix the service. If unsure, pick the default. Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, V2EX, and Weibo signals are used in the initial profile only when you explicitly opt in. Bangumi discovery needs no login; public collections seed the profile only when you enter a public username. Weibo public discovery needs no login, while personal initialization requires a signed-in Weibo browser and extension.
+The agent will clone the repo, install dependencies, start the backend with the LAN-accessible default bind (`0.0.0.0:8420`), run a health check, and ask a few questions with defaults. Before auto-init, it verifies that the ordered global LLM instance chain and the independent embedding service answer real lightweight calls; if either fails, init is blocked until you fix the service. If unsure, pick the default. Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, and GitHub signals are used in the initial profile only when you explicitly opt in. Bangumi and GitHub public discovery need no login; public collections or starred repositories seed the profile only after a public identity is resolved. Weibo public discovery is also anonymous, while personal initialization requires a signed-in Weibo browser and extension.
+
+Source installs do not compile the Tailnet helper by default. Only when the user explicitly wants
+native Android / iOS app access away from the LAN, install Go 1.26.6 and run
+`openbiliclaw tailnet build-helper`, then `openbiliclaw tailnet enable`, and fully restart. The first
+Docker image does not bundle this helper.
 
 Chrome Web Store / AMO builds only declare local-backend permissions by default. When you select a protocol and enter another LAN or remote endpoint, the browser requests `scheme://host/*`; WebExtension host permissions cannot be port-scoped across browsers, while actual requests remain pinned to the configured port. Public hosts require HTTPS. Enable the default-off device flow first with `ext-key generate` and `ext-key enable`.
 
@@ -319,7 +356,7 @@ With a public DNS name, the shortest path is the [`docker-compose.https.yml`](do
 
 ### 3. Log in to content platforms in the same browser
 
-By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. Otherwise select another signed-in source such as Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, [Linux.do](https://linux.do), or [V2EX](https://www.v2ex.com), or choose Bangumi with a public username. Keep at least one source that can return profile signals. Signed-out Linux.do / V2EX and Bangumi without identity still support public discovery but cannot initialize a profile alone.
+By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. Otherwise select another signed-in source such as Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, [Linux.do](https://linux.do), or [V2EX](https://www.v2ex.com), or choose Bangumi / GitHub with a public username. Keep at least one source that can return profile signals. Bangumi / GitHub without identity still support public discovery but cannot initialize a profile alone; a GitHub PAT is optional.
 
 ### 4. Open Desktop or Mobile Web
 
@@ -331,7 +368,7 @@ openbiliclaw start
 
 - **Desktop**: open `http://127.0.0.1:8420/web` (or `http://127.0.0.1:8420/`, auto-redirects). Two-column editorial layout with recommendations, 30-day history, profile, chat, messages, and settings all on one page.
 - **Mobile**: click the phone icon in the extension header to scan the QR code, or type `http://<your-LAN-IP>:8420/m/` manually. Best for browsing recommendations, revisiting 30-day history, profile, and chat on your phone.
-- **Native Flutter client**: download the Android APK (`arm64-v8a` for modern devices, `armeabi-v7a` for older ones) or the unsigned iOS IPA (re-sign with your own Apple account) from the [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest), then enter the backend IP / port in the top-right settings (Web / iOS / macOS default to `127.0.0.1:8420`, the Android emulator to `10.0.2.2:8420`, real devices to your computer's LAN IP, and remote deployments to the server IP with the password gate enabled).
+- **Native Flutter client**: download the Android APK (`arm64-v8a` for modern devices, `armeabi-v7a` for older ones) or the unsigned iOS IPA (re-sign with your own Apple account) from the [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest). Use the computer's LAN IP nearby; away from the LAN, the native Android / iOS app's embedded tsnet can pair with the computer's default-off embedded Tailnet path. Join both nodes to the same tailnet, use its MagicDNS name / Tailnet IP, and enable the app password. This does not cover the repo's Web, Linux, macOS, or Windows Flutter builds.
 
 > During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable over available IPv4 and IPv6, `127.0.0.1` = local only). QR links prefer IPv4 and automatically use a bracketed IPv6 literal when IPv4 is unavailable.
 
@@ -354,7 +391,7 @@ Native Windows (PowerShell, no Docker or WSL2 required):
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.ps1 -UseBasicParsing | iex
 ```
 
-The script needs `git` and Python 3.11+. It clones the repo, then asks for the preferred LLM instance, embedding, Bilibili cookie, and Xiaohongshu / Douyin / YouTube opt-ins before installing dependencies or starting the backend. Once confirmed, it starts the backend, verifies the global LLM instance chain and embedding service, then runs init to build the first profile and discovery pool. X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, and Weibo can be enabled afterward in `/setup/` or settings. Public Linux.do, Bangumi, V2EX, and Weibo discovery needs no login; Weibo personal initialization needs a signed-in Weibo browser and extension, while Bangumi personal initialization needs a public username. If unsure, press Enter or choose the default.
+The script needs `git` and Python 3.11+. It clones the repo, then asks for the preferred LLM instance, embedding, Bilibili cookie, and Xiaohongshu / Douyin / YouTube opt-ins before installing dependencies or starting the backend. Once confirmed, it starts the backend, verifies the global LLM instance chain and embedding service, then runs init to build the first profile and discovery pool. X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, and GitHub can be enabled afterward in `/setup/` or settings. Public Linux.do, Bangumi, V2EX, Weibo, and GitHub discovery needs no login; Weibo personal initialization needs a signed-in Weibo browser and extension, while Bangumi / GitHub initialization can use a public username and GitHub's PAT remains optional. If unsure, press Enter or choose the default.
 
 </details>
 
@@ -397,8 +434,10 @@ OpenBiliClaw does not store your platform passwords or bypass login. Login-requi
 | **Linux.do** | Log in normally at https://linux.do in the same browser; public discovery does not require login | Signed out, `fetch-linuxdo` and `init --yes-linuxdo` cannot read bookmarks / likes / read history, while search / hot / feed / creator / related discovery remains available |
 | **Bangumi** | No login required; optionally enter a public username for public collections, or a personal token for private ones; the extension only does account identity recognition on bgm.tv / bangumi.tv (no cookies, no browsing capture) | Without a username, Bangumi cannot be the only profile-init source, but anonymous search/ranked/date discovery still works |
 | **V2EX** | No login required; optionally configure a PAT; guided init / incremental tasks use the extension to read public rendered fields for topics, replies, favorite topics, and favorite nodes | Anonymous search/node/tab/hot/latest discovery still works without the extension; favorite scopes require an actual logged-in browser session |
+| **GitHub** | No login required; optionally enter a public username for public starred repositories. A PAT only improves rate limits and verifies identity through `/user` | Anonymous search/ranked/latest discovery still works without identity, but GitHub cannot initialize a profile alone; browser cookies are never read |
+| **Instagram (experimental)** | Explicitly enable it and grant extension access to instagram.com; sign in within the same browser for personal imports | Public-page availability depends on the site; signed-out sessions cannot import likes/saves/follows. The browser needs working access to Instagram |
 
-Xiaohongshu, Douyin, YouTube, Zhihu, and Linux.do use Chrome extension tasks; Reddit defaults to backend-installed rdt-cli for steady-state discovery and keeps the extension for init signals; X discovery uses server-side cookie replay. None of these read paths needs an extra CDP debugging Chrome. Linux.do requests are same-origin GETs inside real site tabs; `_t` is reduced to a login boolean and neither cookie values nor raw responses are uploaded. Reddit/X, YouTube, Xiaohongshu, Douyin, and Zhihu native-save executors are wired 6/6 and fixture-tested; in the 2026-07-14 real-account regression, every platform's favorite and watch-later/favorite-fallback path finished `synced/already_synced`. Linux.do exposes no native write-back. `[sources.browser].cdp_url` remains available only for generic Web / custom webpage fetching.
+Xiaohongshu, Douyin, YouTube, Zhihu, and Linux.do use Chrome extension tasks; Reddit defaults to backend-installed rdt-cli for steady-state discovery and keeps the extension for init signals; X discovery uses server-side cookie replay. GitHub always uses the backend official REST client for public repositories and never enters an extension task. Linux.do requests are same-origin GETs inside real site tabs; `_t` is reduced to a login boolean and neither cookie values nor raw responses are uploaded. Reddit/X, YouTube, Xiaohongshu, Douyin, and Zhihu native-save executors are wired 6/6 and fixture-tested; in the 2026-07-14 real-account regression, every platform''s favorite and watch-later/favorite-fallback path finished `synced/already_synced`. YouTube uses named playlists; current Zhihu exposes a global `收藏 / 已收藏` toggle with the target label `知乎收藏`, and both an initially saved state and fresh-document verification are strictly read-only so the extension never blindly clicks Save again. Linux.do and GitHub expose no native write-back. `[sources.browser].cdp_url` remains available only for generic Web / custom webpage fetching.
 
 </details>
 
@@ -583,170 +622,40 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🧠 **Five-Layer Soul Profile** — Event → Preference → Awareness → Insight → Soul, inferring MBTI, cognitive style, and deep needs ([details](docs/modules/soul.md))
 - 🔮 **Interest Probes** — psychological bridging guesses domains you might love but have never explored; right guesses become real interests, wrong ones quietly retire
 - 🧭 **Avoidance Probes** — proactively confirms content forms and style boundaries you want to avoid; nothing is filtered until you confirm
-- 🌐 **Cross-Platform Sources** — Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / generic Web, so your interests stop being siloed ([details](docs/modules/discovery.md))
+- 🌐 **Cross-Platform Sources** — Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / generic Web, so your interests stop being siloed ([details](docs/modules/discovery.md))
 - 🎯 **Smart Diversity** — topic quotas + cross-platform interleaving + small-source protection; goodbye to "all AI all day"
 - ⚡ **Instant, deduplicated reshuffle** — ~0.6s; current cards, recommendation history, and the durable seen ledger are excluded by default
 - 💬 **Warm Recommendations** — friend-like explanations of why you'd enjoy something, not "because you watched similar videos"
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback; it understands you better over time
 - ⭐ **Local-First Favorites / Watch Later** — cards save to local SQLite first and auto-sync stays off by default; desktop Web hydrates the sidebar count badges on first load; the 2026-07-14 real-account regression completed both actions across all seven platforms as `synced/already_synced`
 - 🕘 **30-Day Content History** — extension, desktop, and mobile share opened, surfaced-but-unopened, and recently removed views; covers are paged and lazy-loaded, and removed local saves can be restored
-- 🧩 **Browser Extension** — Chrome / Edge / Brave / Arc / Firefox; side-panel recommendations + cross-site behavior collection, install and go
+- 🧩 **Browser Extension** — Chrome / Edge / Brave / Arc / Firefox / Safari; side-panel recommendations + cross-site behavior collection, install and go
 - 📱 **Flutter Native Client** — separate repo [OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile); Android / iOS / Web / Linux / macOS / Windows against the same local backend, with Bilibili covers hitting the CDN directly to skip two hops
+- 🛜 **App-Embedded Tailnet Access** — the native Android / iOS `OpenBiliClaw-mobile` app and computer each embed tsnet, so those mobile clients can reach your backend through your own tailnet without a system Tailscale install or a public Funnel; Web and desktop Flutter builds are not supported by this path
 - 🚀 **Guided Init in the UI** — the packaged `/setup/` wizard, Desktop Web, and the extension can all initialize with one click; no terminal required
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
 - 🔬 **Self-Optimizing Eval Loops** — five modules each carry an LLM-as-judge loop that improves prompt quality over rounds
 - 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls use your own key, and each instance is built for exactly one person
-- 🔌 **Local Embedding** — optional Ollama + bge-m3, CPU-only, no extra API key
+- 🔌 **Local Embedding** — optional Ollama + bge-m3, automatic acceleration with CPU fallback, no extra API key
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
 
-```text
-interactive (dialogue / config probe) ──────────────┐
-                                                    ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
-background ─ background admission (default 3) ──────┘
-             ├─ refill: expression > evaluation > supply
-             │  ├─ low-stock supply includes explore queries / source extraction
-             │  └─ while queued: guarantee 2, may borrow all 3
-             │     expression owner: 8 immediate / 3s fixed tail / 60 drain / 30×2 provider
-             └─ maintenance: at most 1 while refill waits;
-                parked when canonical available = 0
+Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.
 
-guided init: signals → preferences → full profile commit → discover → evaluate → copy → canonical ready
-             Instagram selected → init-owned topic/creator tasks → small-batch flush → copy
-                                (Instagram-only never falls back to Bilibili; scheduling may stay off)
-                                                              └→ optional probes after terminal state
+Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
-Agent hosts (OpenClaw / Hermes / WorkBuddy)
-        → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
-        → integrations.agent alias / integrations.openclaw compatibility adapter
-        → runtime / soul / recommendation / saved_sync owners
+Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
 
-config recovery draft (normal or degraded; business APIs remain gated)
-             ├→ /api/config/probe-service → temporary registry → total gate
-             └→ /api/config/discover-models → exact instance GET /models (no write)
-                                           → editable model list + local effort advisory
-Douyin supply: daemon presence gate (explicit manual calls bypass it) → one shared plugin-cycle budget
-              → terminal dy_task → pending_eval; absent means zero enqueue, failures back off
-local migration: export → config minus api.auth + online SQLite snapshot + portable files → plaintext .obcbackup
-                 import(request_id) → processing(upload/validate) → private stage ↔ status/cancel
-                                    ↘ General-open force reconcile; applied prefs once/browser/migration_id
-                                    → restart + project/canonical data-dir locks → replace | rollback
-durable reply: reply_to_turn_id + fixed time/payload → POST-time frozen binding → pending SQLite → rowid-serial reply worker → visible completion CAS (app-stable dialogue lease)
-post-reply learning/object settlement: independent 11-kind typed queue → actual worker + guard
-confirmation entry (pending list/cards) → one anchor(kind+ref+generation) → frozen admission / relation matrix
-                          ├→ pending≤3 · user no cooldown / system 12h+object 72h · confirmation-first attachment
-                          ├→ busy worker: dialogue_busy + Retry-After → waiting UI auto-retry
-                          ├→ active confusion: current holder only; hidden once this session has its turn
-                          ├→ frozen kind/ref/generation → worker-only apply → event/object/derived/marker → applied
-                          │                                                └→ publication-only retry → projection / exact release
-                          ├→ one context digest → prompt/history/event/learn/settlement provenance
-                          ├→ action local≤1s: completed 200 / blocked 202 → popup/mobile/desktop poll 1/2/5s, ≤30s
-                          └→ confusion FIFO≤5 / head fencing / 12h recovery
-config save: persist → HTTP 202 queued/apply_revision → latest-wins background apply queue → apply-status / final receipt; data_dir is persisted only and switches after a full restart
-config hot reload: accepting drain old worker → atomic pause/revoke → new worker; 25m safety window
-realtime: runtime-stream 20s idle heartbeat → transient close shows reconnecting and retries
-images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3, fg priority)
-                                            → cache-key singleflight → public DNS (proxied: fixed DoH)
-                                            → pinned IP/direct-or-proxy (original Host/TLS) → atomic cache
-Instagram manual replenish → quota/task locks → discovery → explicit eval/copy → supply or failure
-```
+Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
 
-```
-┌────────────────────────────────────────────────┐
-│       Browser Extension (Chrome / Firefox)     │
-│  Behavior capture · MAIN-world taps (comment/  │
-│  danmaku, xhs strong signal) · Cookie · Tasks  │
-│  Instagram: local outbox → recover → ACK/clear │
-│  topic: optional session → public media → eval │
-└──────────────────────┬─────────────────────────┘
-                       │ HTTP default: IPv4 0.0.0.0 + IPv6 [::] → REST / WebSocket
-                       │ Optional HTTPS: public Caddy :443 / LAN TLS Proxy :8443 → loopback HTTP → same API
-                       │ + Desktop Web (/web) · Mobile Web (/m) · QR LAN-IP
-                       │ + ping preflight → /web · /setup · /m → config + in-process recovery
-┌──────────────────────▼─────────────────────────┐
-│               Agent Orchestration               │
-│ Skills · Dialogue · Runtime · 10s undo barrier   │
-├─────────┬──────────┬───────────┬───────────────┤
-│  Soul   │  Memory  │ Discovery │ Recommendation │
-│ Engine  │  System  │Discovery +│     Engine     │
-│         │          │ Admission │                │
-├─────────┴──────────┴───────────┴───────────────┤
-│ Events/recommendation clicks → generic durable cursor ─┐ │
-│ Content feedback → content_feedback durable cursor ────┴→ atomic buffer+cursor checkpoint │
-│ 30-day history: click events + recommendations + saved_item_removals → paged/lazy UI │
-│ dislike: exact card hides synchronously; durable topic → final history/serve/push recheck │
-│ discovery may keep broad search; async semantic purge optimizes inventory, not correctness │
-│ cold start fence+task admission → listener; background recovery → tick_if_buffered │
-│ hot reload pause/drain/recover then rebind; periodic maintenance alone calls tick │
-│ Dialogue → typed settlement worker → learning       │
-│ Legacy batch only when rollback flag=false     │
-│ Init barrier: profile commit → discover/evaluate/copy → ready │
-│ Bilibili supply: relevance search + budgeted 1×5 pubdate recent lane → shared evaluation │
-│ Evaluation: time-neutral relevance + Agent temporal class → high-confidence publication bonus │
-│ Temporal shadow: bonus vs no-bonus Top10/50/100 aggregates → class/source/age audit (no serving change) │
-│ Images: proxy fg + refresh prefetch → app-stable 4/3 lane → singleflight/atomic cache │
-│ Soul cognition: dual pending cooldown · one anchor · worker-only settlement · winner receipt · confusion FIFO · ledger · deep gate │
-│   LLM adapters · Source adapters (SourceAdapter) │
-│ Module route → LLM instance chain → adapter · SourceAdapter │
-│ Optional visual prewarm: covers / profile centroids / keyframes + danmaku │
-│ provenance (provider/model/dim/sampling) → empty-success / retryable fail │
-│ Config recovery draft (normal/degraded) → temp probe / exact /models (no write) │
-│ Local migration: checksummed .obcbackup → request-id pending ↔ status/cancel → restart replace/rollback │
-│ Source-family registry: alias · strategy · URL host │
-│             → pool accounting · durable seen_items ledger │
-│ Bangumi public API → search/ranked/date producer → shared eval │
-│ V2EX public API/Feed → bounded Topic/Reply enrichment → five modes → shared eval │
-│ V2EX identity ladder: verified PAT > observed browser > accepted user; mismatch pauses only account projection │
-│ Instagram tasks → topic/creator; form+viewer identity → native Likes Bloks / saved+following GET; no raw-response egress │
-│ Eval clock: published_at + exact UTC evaluated_at → hourly cache invalidation │
-│ Evaluator prefilter stays shadow → privacy-safe decision/raw-score join → read-only gate (no auto-enforce) │
-│ Named cognition views → task gate: compact only for awareness_confusions; others legacy │
-│ Token diet: per-offset preference packing; weighted recent/judged/relevant/important insight≤40 → full merge │
-│ Keyword planner → safe 24h cross-digest pending reconcile → deficit/generate/claim (0=hard expiry) │
-│ Admitted backlog → copy watermark ∪ visible topic-slot gap → eligible-first copy (0=legacy drain-all) │
-│ API projected=available+eligible copy-pending+evaluated → 3×30 workers → serial admit → UI │
-│ API raw-empty → wake under-share sources now → real progress resets / duplicate-only waves back off │
-│ Delight gate: formal copy/topic ready + seen_items guard → score/snapshot → UI × writes seen ledger │
-│ Inventory API/OpenClaw startup hook → recover/maintain → expose LLM │
-│ Reshuffle: current-card exclusion → PoolServeSnapshot/seen_items → short rec+shown write → one batch event │
-│ Platform scope (PC Web tabs only): source_platform → scoped candidates, no cross-platform floor → same rank/copy/persist │
-│ Platform inventory: platform-availability → same canonical servable set → total == Σ by_platform │
-│ Background maintenance: isolated worker → ≤50 rows/batch; unchanged skip / 10m sweep │
-│ /api/saved/* · router · Bilibili native save      │
-│ Six adapters → ExtensionNativeSaveBroker → extension_native_save_jobs │
-│ seven-platform source task multiplex: xhs / dy / yt / x / zhihu / reddit / linuxdo │
-│ Extension-online periodic re-pull (off by default; explicit opt-in): Runtime → six bootstrap tasks (global serial) → installed extension │
-│ seven-source task multiplex: xhs / dy / yt / x / zhihu / reddit / v2ex │
-│ Extension-online periodic re-pull (off by default; explicit opt-in): Runtime → six bootstrap sources (global serial) → installed extension │
-│ task-result → staged durable ingress → atomic bounded seen keys (5,000/source) → terminal │
-│ V2EX complete favorite snapshots → two confirmed misses → durable retraction/restore outbox → account-scoped Node affinity │
-│ XHS auto tasks: source/scheduler gate → SQLite pacing/breaker → no new tab while off/limited │
-│ XHS search: inactive tab → MAIN response normalization → isolated replay / DOM fallback │
-│ Linux.do: isolated task tab → same-origin GET → five discovery / three bootstrap paths │
-│ extension_native_save_jobs -> /api/sources/<slug>/next-task -> installed extension │
-│ exact OpenBiliClaw / YouTube Watch Later targets → safe task-result    │
-│ trusted-local E2E exact auth → one saved-sync item → six-field callback │
-│ unsupported_adapter_missing retryable · unsupported_content_type local-only │
-│ Canonical ID · Local-first sync · Task poll · SQLite (events · seen ledger · pool · recs · saved/tasks · removal snapshots)│
-│ Six adapters → broker → shared MV3 recovery barrier → Reddit/X/YT/XHS/DY/Zhihu executors (6/6 fixture + real-account)│
-└────────────────────────────────────────────────┘
+The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 
-Web/API durable → rowid reply worker → app-stable dialogue lease(max active 1) → SocraticDialogue(queued) → visible CAS
-delight/legacy/interest-probe/avoidance chat ───────────────────────────────┘ (reply + required effects share the lease)
-post-reply 11-kind learning/settlement → independent typed settlement worker (not reply backlog)
-CLI/OpenClaw → SocraticDialogue(legacy_direct) → user+agent history → direct learning outside queue/guard
-learning → bypass background admission; keep total gate ── new dislike: shared purge → content_cache
-transient/provider/timeout/cancel → rollback provisional history → durable pending + head retry; explicit invalid/empty → failed CAS
-durable turn → fixed time/payload → confirmation entry (pending list/cards) → frozen anchor admission → relation matrix
-                                                  └→ card/anchor/chat/probe/confusion/replay/legacy all worker-only
-card action → synchronous 200 fast path | 202 processing → popup/mobile/desktop poll; CLI has no action
+Publication date preference: `[sources.<name>].recommendation_date_*` per source → out-of-window candidates are filtered before LLM evaluation → effective inventory → PoolCurator soft/strict serving semantics.
 
-Desktop startup: recommendation hydration │ runtime hydration │ secondary health/profile/activity/config hydration (independent)
+Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop Go tsnet helper → 127.0.0.1:<effective server port> → FastAPI`; enrollment follows `local settings UI → PUT /api/config (write-only credential) → private one-shot staging → stdin → helper`. The port normally comes from `[api].port` and follows startup / packaged `OPENBILICLAW_PORT` overrides. This path is default-off, needs no system Tailscale on the computer, exposes no Funnel/Serve, and migrates neither node identity nor staged credentials.
 
-Overseas traffic: `[network].mode` → system proxy (default) / direct / custom proxy → LLM, YouTube, X/Reddit CLIs, Bangumi, updater, GitHub project stats; CN clients including V2EX remain isolated and direct
-Manual Douyin discovery: CLI discover → daemon-equivalent producer → per-keyword outcomes → extension search/hot/feed → pending-eval pool
-```
+> 📖 [Architecture Overview](docs/architecture-overview.md)
 
 ### Optional visual and danmaku prewarming
 
@@ -792,12 +701,14 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Linux.do** | bookmark / like / read-history init · search · hot · latest feed · creator · related | Extension performs same-origin read-only GETs in a real `linux.do` task tab; public discovery needs no login, and cookies/raw responses are never uploaded |
 | **Bangumi** | public-collection init · search · ranked · date browse | Official anonymous read-only API; no cookie/token, and date results may include unreleased subjects |
 | **V2EX** | search · Node · Tab · hot · latest | Official anonymous API / JSON Feed; optional PAT for API 2.0 enrichment; Topic text cards |
+| **GitHub** | starred-repository init · search · ranked · latest | Official REST API; anonymous with an optional PAT, public repositories only, text cards |
+| **Instagram (experimental)** | topic / creator discovery · liked / saved / following init | Disabled by default; isolated read-only browser tasks, no cookie export or native save write-back; see the acceptance ledger |
 | **Generic Web** | browser + LLM extraction | Adapts to any webpage |
 
 What happens after discovery:
 
-- **Safe fetching** — the backend never logs in for you and never crawls content you can't see; every platform reuses the sessions already in your browser, and first-run profile signals are pulled only after you click "Start initialization." Periodic account re-pull is off by default. It runs only after explicitly setting `source_incremental_enabled=true`, while the extension is online, and does not affect manual initialization, manual fetches, or background discovery. Douyin remains separately default-off. Linux.do tasks permit GET only, and `_t` is used solely as a login boolean.
-- **Continuous unified evaluation** — raw candidates share one eval pool and are scored against your Soul profile, content text, and recent negative feedback. The default 3×30 workers refill immediately, scheduling counts only durable stock, and serial admission is capped by current headroom. Optional embedding prefiltering starts in shadow mode before enforce may skip clearly low-similarity items.
+- **Safe fetching** — the backend never logs in for you or crawls content you cannot see. Account-bound sources reuse existing browser sessions; public-API sources such as GitHub read public data only. First-run profile signals are pulled only after you click “Start initialization.” Periodic account re-pull is off by default, and GitHub is explicitly init-and-on-demand rather than an extension polling source. Linux.do tasks permit GET only, and `_t` is used solely as a login boolean.
+- **Continuous unified evaluation** — raw candidates share one eval pool and are scored against your Soul profile, content text, and recent negative feedback. The default 3×30 workers refill immediately, scheduling counts only durable stock, and serial admission is capped by current headroom. Optional embedding prefiltering starts in shadow mode before enforce may skip clearly low-similarity items; the learned scorer likewise records privacy-safe comparisons against the full LLM before a read-only gate can justify manually enabling hybrid relevance, which does not reduce LLM calls yet.
 - **Diversity selection** — platform quotas → topic dedup → style balancing → cross-platform interleaving → count caps; only Bilibili is enabled out of the box, other platforms are switched on in settings.
 
 > Per-platform task pipelines, pool accounting, and fallback strategies are documented in the [Discovery Engine docs](docs/modules/discovery.md).
@@ -821,7 +732,9 @@ OpenBiliClaw/
 │   ├── memory/                # Multi-layer memory system
 │   ├── discovery/             # Discovery engine (strategies · candidate pool · quota balancing · diversity)
 │   ├── recommendation/        # Recommendation & expression engine
-│   ├── sources/               # Source adapters, Bangumi/V2EX APIs, and XHS/Douyin/YouTube/Zhihu/Reddit/Linux.do/V2EX task bridges
+│   ├── sources/               # Source adapters, including GitHub's official REST API path
+│   │   ├── github_client      # GitHub public REST client + optional PAT identity probe
+│   │   ├── github             # Repository and public-star event normalization
 │   ├── youtube/               # Google Takeout import parser
 │   ├── api/                   # Local FastAPI (config rollback / degraded mode / popup API)
 │   ├── tls_proxy.py           # Default-off LAN/self-managed HTTPS edge
@@ -829,7 +742,7 @@ OpenBiliClaw/
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
 │   └── storage/               # Data storage layer
-├── extension/                 # Chrome/Firefox extension (including Linux.do/V2EX/Weibo read-only task bridges)
+├── extension/                 # Chrome/Firefox/Safari extension (including Linux.do/V2EX/Weibo read-only task bridges)
 ├── extension/                 # Chrome extension (Bilibili + XHS + Douyin + YouTube + X + Zhihu + Reddit + Weibo recovery/tasks)
 ├── skills/                    # Built-in Skill definitions
 ├── docs/                      # Documentation
@@ -844,7 +757,7 @@ OpenBiliClaw/
 |--------|-----------|
 | Backend | Python 3.11+ |
 | Browser Extension | TypeScript + Chrome Extension (Manifest V3) |
-| LLM | Multiple independent Base URL / token / model instances per provider type, with ordered global and per-module failover chains; first migration keeps a permanent legacy backup and `config-export-legacy` creates an old-version copy; built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works; OpenAI can experimentally reuse Codex CLI OAuth |
+| LLM | Multiple independent Base URL / token / model instances per provider type, with ordered global and per-module failover chains; first migration keeps a permanent legacy backup and `config-export-legacy` creates an old-version copy; built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Ollama; any OpenAI-compatible endpoint works; OpenAI can experimentally reuse Codex CLI ChatGPT OAuth via the official Codex transport |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; search/creator run in background tabs and search uses a MAIN-world page-response bridge when hidden virtual DOM is absent; only scrolling init opens `/explore` in the foreground and clicks the profile entry; no backend crawling |
 | Douyin | Extension DOM + MAIN-world passive fetch tap + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery starts from the Douyin home page and uses DOM interactions to trigger loading; search/feed passively collect page responses / rendered results, and hot can use a hot-board `group_id` seed as a logged-in related fallback; no backend login crawling |
@@ -855,6 +768,7 @@ OpenBiliClaw/
 | Linux.do | Regular pages use the shared behavior adapter; isolated task tabs make same-origin GETs for search / hot / feed / creator / related and bookmarks / likes / read history, returning only normalized fields or structured errors; cookies and raw responses are not uploaded |
 | Bangumi | Official anonymous read-only v0 API; search / ranked / date browsing feed the shared candidate pool, while an optional public username enables public-collection profile init; no cookie, token, or native write-back |
 | V2EX | Official anonymous API / Feed; search / node / tab / hot / latest feed the shared candidate pool, with optional PAT read-only enrichment; the extension runs four read-only bootstrap scopes and sends only a boolean login heartbeat; no site writes |
+| GitHub | Backend official REST API; anonymous search / ranked / latest feed the shared candidate pool, public starred repositories can seed `favorite` profile signals, and an optional PAT uses a fixed dedicated environment variable; no extension permission, cookie, media, or site write |
 | Optional HTTPS | Pinned Caddy Docker overlay with automatic certificates for public domains; Python TLS Proxy + `[tls]` extra and local CA/SAN for LAN/self-managed use; off by default and mutually exclusive |
 | Storage | SQLite + Embedding vector index |
 | Containerization | Docker Compose (backend) |
@@ -879,9 +793,9 @@ The current release is summarized in [Recent Updates](#recent-updates) above; fu
 
 ## 🗺️ Roadmap
 
-OpenBiliClaw aims to be your **personalized entry point to the entire web**. Started on Bilibili, it now covers Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, and the generic Web; next:
+OpenBiliClaw aims to be your **personalized entry point to the entire web**. Started on Bilibili, it now covers Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, and the generic Web; next:
 
-- **More content sources** — Weibo and other BBS / forums; each platform is a `SourceAdapter` and the architecture is proven extensible
+- **More content sources** — additional BBS, forums, and vertical communities; each platform follows the shared source contract and acceptance gates
 - **Cross-platform interest fusion** — your mechanical-keyboard interest from Bilibili + your coffee-gear interest from Xiaohongshu + your short-video taste from Douyin likes/favorites + your long-form watching and subscriptions from YouTube + the news you like/bookmark on X = one complete you. Profile fusion stops your interests from being fragmented across silos
 - **Smarter cross-source discovery** — "you started following coffee gear on Xiaohongshu, here's a hand-drip documentary on Bilibili you might love"
 - **Community ecosystem** — user-defined SourceAdapters, shared discovery strategies, contributed platform adapters
@@ -898,16 +812,19 @@ Contributions welcome! See the [Contributing Guide](docs/contributing.md) to get
 - Thanks to [@DongLanQwQ0](https://github.com/DongLanQwQ0) for polishing desktop web interactions — side-drawer collapse animation, a delight-card drag dead zone, and a stacked toast notification system — in [#102](https://github.com/whiteguo233/OpenBiliClaw/pull/102). Merged into main.
 - Thanks to [@DongLanQwQ0](https://github.com/DongLanQwQ0) for the desktop web theme-engine rework to oklch in [#110](https://github.com/whiteguo233/OpenBiliClaw/pull/110) — a single `--hue-primary` control point with a 12-hue tunable color picker, a five-step accent ramp, and unified interaction states. Merged into main.
 - Thanks to [@wuwafly3](https://github.com/wuwafly3) for continued work on multimodal recommendations: [#100](https://github.com/whiteguo233/OpenBiliClaw/pull/100) introduced the DashScope (Alibaba Model Studio) multimodal embedding provider and image-only cover vectors, while [#135](https://github.com/whiteguo233/OpenBiliClaw/pull/135) added the user visual profile (P1), Bilibili danmaku semantics (P2), video keyframes (P3), and cross-platform visual weighting pipeline. Mainline follow-up hardened the contracts and retry behavior, added configuration surfaces, and completed real-environment validation.
+- Thanks to [@LHMQ878](https://github.com/LHMQ878) for fixing the `agent_bootstrap` TOML instance-section matching in [#182](https://github.com/whiteguo233/OpenBiliClaw/pull/182): quoted section headers such as `[llm.instances."openai"]` are now treated as the same table as bare keys, preventing duplicate table declarations and `tomllib` failures when bootstrap is run again. Merged into main.
+- Thanks to [@Patrick5D](https://github.com/Patrick5D) for the event source-attribution persistence in [#179](https://github.com/whiteguo233/OpenBiliClaw/pull/179): top-level `events.source_platform` / `content_id` / `source_confidence` columns, the unified source-resolution priority, and the schema v6 incremental migration — the data foundation for platform-scoped data revocation and profile rebuild. Mainline added follow-up hardening for unknown platform slugs and confidence-evidence enforcement. Merged into main.
+- Thanks to [@OctoBored](https://github.com/OctoBored) for restoring the live Star History chart in the Chinese and English READMEs in [#196](https://github.com/whiteguo233/OpenBiliClaw/pull/196), replacing the dead badge and temporary notice; mainline also escaped the URL ampersands during merge. Merged into main.
 
 ## ⭐ Star History
 
 If OpenBiliClaw gave you back control of your feed, [a star](https://github.com/whiteguo233/OpenBiliClaw) is the most direct vote for "keep adding platforms".
 
-<a href="https://www.star-history.com/?type=date&repos=whiteguo233%2FOpenBiliClaw">
+<a href="https://star-history.dera.page/#whiteguo233/OpenBiliClaw&amp;type=date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=whiteguo233/OpenBiliClaw&type=date&theme=dark&legend=top-left&sealed_token=1fDGODQkTTYiiU6QJ7F0nashHo3tbMDGZnmqCKDGTGg2P9q1Ukkxv21R3vab-oDvKPMAb5ZCC-hqY_70gspsAqK_gdvCBooa5QSkgwcR-XN3JD1F6vQ03bmVMrjAcMwGn_nqgoZ5TX1OWcv_92lXeBQAfa2Je-bhkYGk8-S0M0R6kOuJuBsXaANiI-am" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=whiteguo233/OpenBiliClaw&type=date&legend=top-left&sealed_token=1fDGODQkTTYiiU6QJ7F0nashHo3tbMDGZnmqCKDGTGg2P9q1Ukkxv21R3vab-oDvKPMAb5ZCC-hqY_70gspsAqK_gdvCBooa5QSkgwcR-XN3JD1F6vQ03bmVMrjAcMwGn_nqgoZ5TX1OWcv_92lXeBQAfa2Je-bhkYGk8-S0M0R6kOuJuBsXaANiI-am" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=whiteguo233/OpenBiliClaw&type=date&legend=top-left&sealed_token=1fDGODQkTTYiiU6QJ7F0nashHo3tbMDGZnmqCKDGTGg2P9q1Ukkxv21R3vab-oDvKPMAb5ZCC-hqY_70gspsAqK_gdvCBooa5QSkgwcR-XN3JD1F6vQ03bmVMrjAcMwGn_nqgoZ5TX1OWcv_92lXeBQAfa2Je-bhkYGk8-S0M0R6kOuJuBsXaANiI-am" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=whiteguo233/OpenBiliClaw&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=whiteguo233/OpenBiliClaw&amp;type=date&amp;legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=whiteguo233/OpenBiliClaw&amp;type=date&amp;legend=top-left" />
  </picture>
 </a>
 
@@ -919,3 +836,12 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 ## 📄 License
 
 [MIT](LICENSE)
+
+## Friend Links
+
+<details>
+<summary>Friend Links</summary>
+
+[![LINUX DO](https://img.shields.io/badge/LINUX_DO-Friend%20Links-4D6BFE?style=flat-square&logo=discourse&logoColor=white)](https://linux.do/)
+
+</details>

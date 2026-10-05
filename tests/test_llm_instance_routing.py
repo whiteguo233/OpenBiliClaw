@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -178,6 +179,79 @@ def test_legacy_projection_omits_unused_remote_template_blocks() -> None:
     assert list(instances) == ["deepseek", "ollama", "openai_compatible"]
     assert all(instance.enabled for instance in instances.values())
     assert effective_llm_default_chain(config.llm) == ["openai_compatible"]
+
+
+def test_legacy_projection_omits_credentialed_provider_with_empty_model() -> None:
+    """A legacy provider with an api_key but no model is a template block.
+
+    Projecting it as an enabled v2 instance made otherwise valid legacy configs
+    impossible to save (blocking ``model`` error). The default provider remains
+    authoritative; the credentialed-but-empty provider is skipped with a hint.
+    """
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai_compatible",
+            openai=LLMProviderConfig(api_key="sk-openai", model=""),
+            claude=LLMProviderConfig(api_key="sk-claude", model=""),
+            gemini=LLMProviderConfig(model=""),
+            deepseek=LLMProviderConfig(
+                api_key="sk-deepseek",
+                model="deepseek-v4-flash",
+                base_url="https://api.deepseek.com",
+            ),
+            openai_compatible=LLMProviderConfig(
+                api_key="sk-relay",
+                model="deepseek-v4-flash",
+                base_url="https://relay.example/v1",
+            ),
+        )
+    )
+
+    instances = effective_llm_instances(config.llm)
+    blocking = {
+        issue.field: issue.message
+        for issue in _collect_config_issues(config)
+        if issue.severity == "blocking"
+    }
+
+    assert list(instances) == ["deepseek", "openai_compatible"]
+    assert all(instance.model for instance in instances.values())
+    assert "llm.instances.openai.model" not in blocking
+    assert "llm.instances.claude.model" not in blocking
+    assert "llm.instances.gemini.model" not in blocking
+
+
+def test_legacy_projection_keeps_referenced_empty_model_provider_for_validation() -> None:
+    """A referenced provider with empty model must still surface a blocking issue."""
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-openai", model=""),
+        )
+    )
+
+    instances = effective_llm_instances(config.llm)
+
+    assert list(instances) == ["openai"]
+    assert instances["openai"].model == ""
+
+    # The projected instance still lands in native v2 validation, so a
+    # desktop/API save that routes through instance_routing reports the
+    # missing model instead of silently dropping the provider.
+    native = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances=instances,
+            default_chain=list(instances),
+        )
+    )
+    blocking = {
+        issue.field: issue.message
+        for issue in _collect_config_issues(native)
+        if issue.severity == "blocking"
+    }
+    assert "llm.instances.openai.model" in blocking
+    assert blocking["llm.instances.openai.model"] == "启用的 LLM 实例必须明确填写模型。"
 
 
 def test_native_route_validation_reports_all_reference_failures() -> None:
@@ -555,3 +629,130 @@ async def test_broken_explicit_module_chain_never_spills_to_global() -> None:
     assert registry.chain_calls == [[]]
     assert registry.global_calls == 0
     assert service.supports_image_input("soul.preference") is False
+
+
+@pytest.mark.asyncio
+async def test_broken_module_route_warns_loudly_with_remediation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stale explicit route must be visible at WARNING level, not INFO.
+
+    Issue #213: a soul route referencing deleted/disabled instances parked
+    durable chat turns on ``no_provider`` forever while the only trace was an
+    INFO line operators never saw. The WARNING must name the bucket, the
+    unavailable instance, and the remediation.
+    """
+    config = _native_config()
+    config.llm.soul.chain = ["not-registered"]
+    registry = _RoutingRegistry()
+    service = LLMService(
+        registry=registry,
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(config),
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="openbiliclaw.llm.service"),
+        pytest.raises(LLMProviderExecutionError, match="No provider was available"),
+    ):
+        await service.complete_with_core_memory(
+            system_instruction="system",
+            user_input="profile",
+            caller="soul.preference",
+        )
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "LLM module route contains unavailable instance" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "bucket=soul" in message
+    assert "instance=not-registered" in message
+    assert "keep failing until" in message
+
+
+def test_supports_image_input_recognizes_orcarouter_vision_route() -> None:
+    """OrcaRouter routes OpenAI-protocol models, so the vision-capable
+    heuristic must cover it just like openai/openrouter/openai_compatible."""
+
+    class OrcaRegistry:
+        default_provider = "orca-main"
+
+        def provider_type(self, name: str | None = None) -> str:  # noqa: ARG002
+            return "orcarouter"
+
+        def get(self, name: str) -> object:  # noqa: ARG002
+            return _ModelStub("openai/gpt-4o")
+
+    service = LLMService(
+        registry=OrcaRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(_native_config()),
+    )
+
+    assert service.supports_image_input("discovery.evaluate_batch") is True
+
+
+def test_supports_image_input_recognizes_requesty_vision_route() -> None:
+    class RequestyRegistry:
+        default_provider = "requesty-main"
+
+        def provider_type(self, name: str | None = None) -> str:  # noqa: ARG002
+            return "requesty"
+
+        def get(self, name: str) -> object:  # noqa: ARG002
+            return _ModelStub("openai/gpt-4o-mini")
+
+    service = LLMService(
+        registry=RequestyRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(_native_config()),
+    )
+
+    assert service.supports_image_input("discovery.evaluate_batch") is True
+
+
+def test_supports_image_input_recognizes_api_route_vision_route() -> None:
+    class ApiRouteRegistry:
+        default_provider = "api-route-main"
+
+        def provider_type(self, name: str | None = None) -> str:  # noqa: ARG002
+            return "api_route"
+
+        def get(self, name: str) -> object:  # noqa: ARG002
+            return _ModelStub("openai/gpt-4o-mini")
+
+    service = LLMService(
+        registry=ApiRouteRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(_native_config()),
+    )
+
+    assert service.supports_image_input("discovery.evaluate_batch") is True
+
+
+def test_supports_image_input_recognizes_cheaperinference_vision_route() -> None:
+    class CheaperInferenceRegistry:
+        default_provider = "cheaperinference-main"
+
+        def provider_type(self, name: str | None = None) -> str:  # noqa: ARG002
+            return "cheaperinference"
+
+        def get(self, name: str) -> object:  # noqa: ARG002
+            return _ModelStub("gpt-5.4-mini")
+
+    service = LLMService(
+        registry=CheaperInferenceRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(_native_config()),
+    )
+
+    assert service.supports_image_input("discovery.evaluate_batch") is True
+
+
+class _ModelStub:
+    def __init__(self, model: str) -> None:
+        self._model = model

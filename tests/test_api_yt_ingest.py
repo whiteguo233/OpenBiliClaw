@@ -149,3 +149,35 @@ def test_yt_bootstrap_skips_items_already_seen_in_previous_task(
     assert [event["title"] for event in memory.events] == ["重复 YouTube 历史"]
     assert memory.profile_signals == []
     assert memory.load_source_bootstrap_state()["yt_seen_item_keys"] == ["yt_history:repeated-yt"]
+
+
+def test_yt_next_task_expires_stale_in_progress_claim(
+    yt_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+) -> None:
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    client, db, _memory = yt_task_client
+    task_id = _enqueue_yt_bootstrap_task(db)
+
+    first = client.get("/api/sources/yt/next-task")
+    assert first.status_code == 200
+    assert first.json()["id"] == task_id
+
+    stale_text = (datetime.now(UTC) - timedelta(seconds=900)).strftime("%Y-%m-%d %H:%M:%S")
+    db.conn.execute(
+        "UPDATE yt_tasks SET claimed_at = ? WHERE id = ?",
+        (stale_text, task_id),
+    )
+    db.conn.commit()
+
+    second = client.get("/api/sources/yt/next-task")
+    assert second.status_code == 204
+
+    row = db.conn.execute(
+        "SELECT status, result_json FROM yt_tasks WHERE id = ?",
+        (task_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "failed"
+    assert json.loads(str(row["result_json"]))["error"] == "stale_in_progress"

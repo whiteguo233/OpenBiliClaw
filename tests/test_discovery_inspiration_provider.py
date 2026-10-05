@@ -5,31 +5,44 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
+import httpx
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
 from openbiliclaw.discovery.inspiration_provider import (
     BangumiPlatformSearchBackend,
     BilibiliPlatformSearchBackend,
+    BingRssInspirationProvider,
     DouyinPlatformSearchBackend,
+    ExaInspirationProvider,
     FallbackInspirationSearchProvider,
+    GitHubPlatformSearchBackend,
     LocalInspirationProvider,
     McporterExaInspirationProvider,
     McporterYouInspirationProvider,
     PlatformSourceInspirationProvider,
     RedditPlatformSearchBackend,
+    SerplyInspirationProvider,
     V2EXPlatformSearchBackend,
     WeiboPlatformSearchBackend,
     XhsPlatformSearchBackend,
     XPlatformSearchBackend,
+    YouInspirationProvider,
     YoutubePlatformSearchBackend,
     ZhihuPlatformSearchBackend,
     build_inspiration_search_provider,
     build_platform_source_backends,
     parse_exa_search_payload,
+    parse_serply_search_payload,
     parse_you_search_payload,
 )
+from openbiliclaw.sources.github_client import GitHubAPIError
+from openbiliclaw.storage.database import Database
 
 
 def test_parse_exa_search_payload_accepts_result_objects() -> None:
@@ -206,6 +219,210 @@ async def test_build_provider_defaults_remote_timeout_below_planner_timeout() ->
     await provider.search("Switch repair", limit=1)
 
     assert seen_timeouts == [6.0]
+
+
+def test_build_provider_skips_serply_backend_when_key_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    provider = build_inspiration_search_provider(["serply"])
+
+    assert provider is None
+
+
+def test_build_provider_skips_mcporter_backends_when_cli_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    provider = build_inspiration_search_provider(["exa", "you"])
+
+    assert provider is None
+
+
+async def test_exa_direct_provider_calls_api_and_parses_results() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "test-exa-key"
+        assert request.url.host == "api.exa.ai"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "Direct Exa result",
+                        "url": "https://example.test/exa",
+                        "highlights": ["one", "two"],
+                    }
+                ]
+            },
+        )
+
+    provider = ExaInspirationProvider(
+        api_key="test-exa-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    items = await provider.search("test query", limit=3)
+
+    assert items == [
+        ExaPreviewItem(
+            title="Direct Exa result",
+            url="https://example.test/exa",
+            highlights=("one", "two"),
+        )
+    ]
+
+
+async def test_you_direct_provider_calls_api_and_parses_hits() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "test-you-key"
+        assert request.url.host == "api.ydc-index.io"
+        assert request.url.params["query"] == "test query"
+        return httpx.Response(
+            200,
+            json={
+                "hits": [
+                    {
+                        "title": "Direct You result",
+                        "url": "https://example.test/you",
+                        "snippets": ["snippet one", "snippet two"],
+                    }
+                ]
+            },
+        )
+
+    provider = YouInspirationProvider(
+        api_key="test-you-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    items = await provider.search("test query", limit=3)
+
+    assert items == [
+        ExaPreviewItem(
+            title="Direct You result",
+            url="https://example.test/you",
+            highlights=("snippet one", "snippet two"),
+        )
+    ]
+
+
+async def test_serply_direct_provider_calls_api_and_parses_results() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "test-serply-key"
+        assert request.url.host == "api.serply.io"
+        # Serply expects the standard query-string form
+        # GET /v1/search?q=...&num=..., not a path-encoded variant.
+        assert request.url.path == "/v1/search"
+        assert request.url.params["q"] == "test query"
+        assert request.url.params["num"] == "3"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "Direct Serply result",
+                        "link": "https://example.test/serply",
+                        "description": "a snippet",
+                    }
+                ]
+            },
+        )
+
+    provider = SerplyInspirationProvider(
+        api_key="test-serply-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    items = await provider.search("test query", limit=3)
+
+    assert items == [
+        ExaPreviewItem(
+            title="Direct Serply result",
+            url="https://example.test/serply",
+            highlights=("a snippet",),
+        )
+    ]
+
+
+def test_parse_serply_search_payload_accepts_structured_results() -> None:
+    payload = {
+        "results": [
+            {
+                "title": "Serply structured result",
+                "link": "https://example.test/structured",
+                "description": "Structured snippet.",
+            },
+            {"title": "", "link": "https://example.test/no-title"},
+            "not-a-dict",
+        ]
+    }
+
+    assert parse_serply_search_payload(payload) == [
+        ExaPreviewItem(
+            title="Serply structured result",
+            url="https://example.test/structured",
+            highlights=("Structured snippet.",),
+        )
+    ]
+
+
+def test_parse_serply_search_payload_accepts_json_text() -> None:
+    text = json.dumps(
+        {
+            "results": [
+                {
+                    "title": "Serply json result",
+                    "link": "https://example.test/json",
+                }
+            ]
+        }
+    )
+
+    assert parse_serply_search_payload(text) == [
+        ExaPreviewItem(title="Serply json result", url="https://example.test/json")
+    ]
+
+
+async def test_bing_rss_provider_parses_real_shaped_rss() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "www.bing.com"
+        assert request.url.params["format"] == "rss"
+        assert request.url.params["q"] == "test query"
+        return httpx.Response(
+            200,
+            content=(
+                b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<rss version="2.0"><channel><title>Bing: test query</title>'
+                b"<item><title>Result one</title>"
+                b"<link>https://example.test/one</link>"
+                b"<description><b>bold</b> snippet &amp; more</description></item>"
+                b"<item><title></title><link>https://example.test/bad</link>"
+                b"<description>x</description></item>"
+                b"<item><title>Result three</title>"
+                b"<link>https://example.test/three</link>"
+                b"<description>third snippet</description></item>"
+                b"</channel></rss>"
+            ),
+        )
+
+    provider = BingRssInspirationProvider(transport=httpx.MockTransport(handler))
+
+    items = await provider.search("test query", limit=3)
+
+    assert items == [
+        ExaPreviewItem(
+            title="Result one",
+            url="https://example.test/one",
+            highlights=("bold snippet & more",),
+        ),
+        ExaPreviewItem(
+            title="Result three",
+            url="https://example.test/three",
+            highlights=("third snippet",),
+        ),
+    ]
 
 
 def test_parse_you_search_payload_accepts_structured_results() -> None:
@@ -1148,6 +1365,197 @@ async def test_bangumi_platform_backend_maps_official_rows_to_previews() -> None
     ]
 
 
+async def test_github_platform_backend_maps_only_public_repositories_to_previews() -> None:
+    class Client:
+        async def search_repositories(self, query: str, **kwargs: object) -> SimpleNamespace:
+            assert query == "local agent in:name,description,readme is:public fork:false"
+            assert kwargs == {"page": 1, "per_page": 3}
+            return SimpleNamespace(
+                items=[
+                    {
+                        "id": 101,
+                        "node_id": "R_101",
+                        "name": "local-agent",
+                        "full_name": "alice/local-agent",
+                        "html_url": "https://github.com/alice/local-agent",
+                        "description": "Run an agent locally",
+                        "private": False,
+                        "visibility": "public",
+                        "created_at": "2026-08-01T00:00:00Z",
+                        "language": "Python",
+                        "topics": ["agent"],
+                        "stargazers_count": 42,
+                        "owner": {"id": 7, "node_id": "U_7", "login": "alice"},
+                    },
+                    {
+                        "full_name": "alice/private-agent",
+                        "html_url": "https://github.com/alice/private-agent",
+                        "private": True,
+                    },
+                    {
+                        "full_name": "alice/schema-drift",
+                        "html_url": "https://evil.example/internal",
+                        "description": "must fail closed without private/id/time evidence",
+                        "stargazers_count": 999,
+                        "owner": {"login": "alice"},
+                    },
+                ],
+                next_page=None,
+            )
+
+    backend = GitHubPlatformSearchBackend(Client())
+
+    assert await backend.search("local agent", limit=3) == [
+        ExaPreviewItem(
+            title="alice/local-agent",
+            url="https://github.com/alice/local-agent",
+            highlights=("Run an agent locally", "agent, Python", "stars: 42", "alice"),
+        )
+    ]
+
+
+def _github_inspiration_repository() -> dict[str, object]:
+    return {
+        "id": 101,
+        "node_id": "R_101",
+        "name": "local-agent",
+        "full_name": "alice/local-agent",
+        "html_url": "https://github.com/alice/local-agent",
+        "description": "Run an agent locally",
+        "private": False,
+        "visibility": "public",
+        "created_at": "2026-08-01T00:00:00Z",
+        "language": "Python",
+        "topics": ["agent"],
+        "stargazers_count": 42,
+        "owner": {"id": 7, "node_id": "U_7", "login": "alice"},
+    }
+
+
+async def test_github_rejected_only_terminal_is_degraded_not_affirmative_empty() -> None:
+    class Client:
+        async def search_repositories(self, query: str, **kwargs: object) -> SimpleNamespace:
+            del query, kwargs
+            private = _github_inspiration_repository()
+            private["private"] = True
+            private["visibility"] = "private"
+            return SimpleNamespace(
+                items=[private],
+                next_page=None,
+                incomplete_results=False,
+                search_capped=False,
+                scope_complete=True,
+            )
+
+    platform = PlatformSourceInspirationProvider(
+        [GitHubPlatformSearchBackend(Client())],
+        platforms_per_query=1,
+    )
+    provider = FallbackInspirationSearchProvider([platform], error_cooldown_seconds=0)
+
+    assert await provider.search("private agent", limit=2) == []
+    ledger = provider.grounding_ledger()
+    assert ledger["platform_degraded"] == {"github": 1}
+    assert ledger["platform_partial"] == {}
+    assert ledger["platform_complete"] == {}
+    assert ledger["platform_affirmative_empty"] == {}
+    assert ledger["platform_terminal_evidence"] == {"github": {"rejected_rows": 1}}
+    assert ledger["provider_degraded"] == {"PlatformSourceInspirationProvider": 1}
+    assert ledger["provider_empty"] == {}
+
+
+async def test_github_incomplete_search_keeps_accepted_preview_and_marks_partial() -> None:
+    class Client:
+        async def search_repositories(self, query: str, **kwargs: object) -> SimpleNamespace:
+            del query, kwargs
+            return SimpleNamespace(
+                items=[_github_inspiration_repository()],
+                next_page=None,
+                incomplete_results=True,
+                search_capped=False,
+                scope_complete=False,
+            )
+
+    platform = PlatformSourceInspirationProvider(
+        [GitHubPlatformSearchBackend(Client())],
+        platforms_per_query=1,
+    )
+    provider = FallbackInspirationSearchProvider([platform], error_cooldown_seconds=0)
+
+    results = await provider.search("local agent", limit=2)
+
+    assert [item.url for item in results] == ["https://github.com/alice/local-agent"]
+    ledger = provider.grounding_ledger()
+    assert ledger["platform_partial"] == {"github": 1}
+    assert ledger["platform_degraded"] == {"github": 1}
+    assert ledger["platform_complete"] == {}
+    assert ledger["platform_affirmative_empty"] == {}
+    assert ledger["platform_terminal_evidence"] == {"github": {"incomplete_results": 1}}
+    assert ledger["provider_successes"] == {"PlatformSourceInspirationProvider": 1}
+    assert ledger["provider_degraded"] == {"PlatformSourceInspirationProvider": 1}
+
+
+async def test_github_search_cap_is_degraded_not_affirmative_empty() -> None:
+    class Client:
+        async def search_repositories(self, query: str, **kwargs: object) -> SimpleNamespace:
+            del query, kwargs
+            return SimpleNamespace(
+                items=[],
+                next_page=None,
+                incomplete_results=False,
+                search_capped=True,
+                scope_complete=False,
+            )
+
+    platform = PlatformSourceInspirationProvider(
+        [GitHubPlatformSearchBackend(Client())],
+        platforms_per_query=1,
+    )
+    provider = FallbackInspirationSearchProvider([platform], error_cooldown_seconds=0)
+
+    assert await provider.search("popular agent", limit=2) == []
+    ledger = provider.grounding_ledger()
+    assert ledger["platform_degraded"] == {"github": 1}
+    assert ledger["platform_complete"] == {}
+    assert ledger["platform_affirmative_empty"] == {}
+    assert ledger["platform_terminal_evidence"] == {"github": {"search_capped": 1}}
+    assert ledger["provider_degraded"] == {"PlatformSourceInspirationProvider": 1}
+    assert ledger["provider_empty"] == {}
+
+
+async def test_github_platform_backend_persists_and_obeys_shared_rate_limit(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "github-inspiration.db")
+    database.initialize()
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def search_repositories(self, query: str, **kwargs: object) -> object:
+            del query, kwargs
+            self.calls += 1
+            raise GitHubAPIError(
+                "rate_limited",
+                "slow down",
+                status_code=429,
+                retry_after_seconds=120,
+            )
+
+    client = Client()
+    backend = GitHubPlatformSearchBackend(client, database=database)
+
+    with pytest.raises(GitHubAPIError, match="slow down"):
+        await backend.search("local agent", limit=1)
+
+    assert backend.cooldown_remaining() > 0
+    provider = PlatformSourceInspirationProvider([backend], platforms_per_query=1)
+    assert await provider.search("another query", limit=1) == []
+    assert client.calls == 1
+    assert provider.grounding_ledger()["skipped_cooldown"] == 1
+
+
 async def test_v2ex_platform_backend_maps_public_topics_to_previews() -> None:
     class Client:
         async def search_topics(self, query: str, *, limit: int) -> SimpleNamespace:
@@ -1211,6 +1619,7 @@ def test_build_platform_source_backends_uses_only_enabled_sources() -> None:
             douyin=SimpleNamespace(enabled=True),
             youtube=SimpleNamespace(enabled=True),
             twitter=SimpleNamespace(enabled=True),
+            github=SimpleNamespace(enabled=True),
             zhihu=SimpleNamespace(enabled=True),
             reddit=SimpleNamespace(enabled=False, backend="rdt"),
             bangumi=SimpleNamespace(enabled=True, subject_types=("anime", "book")),
@@ -1232,6 +1641,7 @@ def test_build_platform_source_backends_uses_only_enabled_sources() -> None:
         douyin_client=object(),
         youtube_client=youtube_client,
         x_client=object(),
+        github_client=object(),
         zhihu_search=zhihu_search,
         bangumi_client=object(),
         v2ex_client=object(),
@@ -1243,7 +1653,153 @@ def test_build_platform_source_backends_uses_only_enabled_sources() -> None:
         "douyin",
         "youtube",
         "twitter",
+        "github",
         "zhihu",
         "bangumi",
         "v2ex",
     ]
+
+
+def test_build_platform_source_backends_requires_enabled_github_and_client() -> None:
+    disabled = SimpleNamespace(
+        sources=SimpleNamespace(
+            bilibili=SimpleNamespace(enabled=False),
+            github=SimpleNamespace(enabled=False),
+        )
+    )
+    enabled = SimpleNamespace(
+        sources=SimpleNamespace(
+            bilibili=SimpleNamespace(enabled=False),
+            github=SimpleNamespace(enabled=True),
+        )
+    )
+
+    assert build_platform_source_backends(disabled, github_client=object()) == []
+    assert build_platform_source_backends(enabled, github_client=None) == []
+    backends = build_platform_source_backends(enabled, github_client=object())
+    assert [backend.platform for backend in backends] == ["github"]
+
+
+# ── Overseas search backends follow the [network] routing policy ─────────
+#
+# Regression: Exa / You.com / Serply hardwired trust_env=False, so under a
+# configured proxy ([network] mode="custom") they still dialed direct — and
+# api.exa.ai times out from CN networks without a proxy (same failure shape
+# as the ytimg cover bug). Bing stays CN-direct on purpose.
+
+
+_GUARD_PROXY = "socks5://127.0.0.1:9999"
+
+
+@pytest.fixture
+def _reset_outbound_network() -> Iterator[None]:
+    from openbiliclaw import network
+
+    try:
+        yield
+    finally:
+        network.reset_outbound_proxy_for_tests()
+
+
+def _capture_client_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    captured: list[dict[str, object]] = []
+    orig_init = httpx.AsyncClient.__init__
+
+    def _recording_init(self: httpx.AsyncClient, *args: object, **kwargs: object) -> None:
+        captured.append(dict(kwargs))
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", _recording_init)
+    return captured
+
+
+@pytest.mark.usefixtures("_reset_outbound_network")
+@pytest.mark.parametrize(
+    ("provider_name", "factory"),
+    [
+        pytest.param("exa", lambda: ExaInspirationProvider(api_key="k"), id="exa"),
+        pytest.param("you", lambda: YouInspirationProvider(api_key="k"), id="you"),
+        pytest.param("serply", lambda: SerplyInspirationProvider(api_key="k"), id="serply"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        pytest.param(
+            "custom",
+            {"proxy": _GUARD_PROXY, "trust_env": False},
+            id="custom-explicit-proxy",
+        ),
+        pytest.param("system", {"trust_env": True}, id="system-inherits-env"),
+        pytest.param("direct", {"trust_env": False}, id="direct-forces-off"),
+    ],
+)
+async def test_overseas_search_backends_follow_network_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_name: str,
+    factory: Callable[[], object],
+    mode: str,
+    expected: dict[str, object],
+) -> None:
+    from openbiliclaw import network
+
+    network.set_outbound_proxy(_GUARD_PROXY if mode == "custom" else "", mode=mode)
+    captured = _capture_client_kwargs(monkeypatch)
+    factory()
+
+    assert captured, f"{provider_name} did not construct an httpx client"
+    kwargs = captured[0]
+    for key, value in expected.items():
+        assert kwargs.get(key) == value, f"{provider_name}: {key} mismatch under {mode}"
+    if "proxy" not in expected:
+        assert "proxy" not in kwargs
+
+
+@pytest.mark.usefixtures("_reset_outbound_network")
+async def test_bing_rss_stays_direct_under_custom_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw import network
+
+    network.set_outbound_proxy(_GUARD_PROXY, mode="custom")
+    captured = _capture_client_kwargs(monkeypatch)
+    BingRssInspirationProvider()
+
+    assert captured[0].get("trust_env") is False
+    assert "proxy" not in captured[0]
+
+
+@pytest.mark.usefixtures("_reset_outbound_network")
+async def test_mcporter_subprocess_env_follows_network_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_run_command routes mcporter through the same [network] env as rdt-cli."""
+    import openbiliclaw.discovery.inspiration_provider as ip
+    from openbiliclaw import network
+
+    network.set_outbound_proxy(_GUARD_PROXY, mode="custom")
+
+    received: dict[str, object] = {}
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    def _fake_exec(*args: object, **kwargs: object) -> object:
+        received["env"] = kwargs.get("env")
+        future: asyncio.Future[_FakeProc] = asyncio.Future()
+        future.set_result(_FakeProc())
+        return future
+
+    monkeypatch.setattr(ip.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(ip, "no_window_kwargs", dict)
+
+    output = await ip._run_command(["mcporter", "call"], 5.0)
+
+    assert output == "ok"
+    env = received["env"]
+    assert isinstance(env, dict)
+    assert env.get("HTTPS_PROXY") == _GUARD_PROXY

@@ -31,7 +31,7 @@ def broker() -> AsyncMock:
         ("xiaohongshu", "watch_later", "favorite", "小红书收藏"),
         ("douyin", "watch_later", "favorite", "抖音收藏"),
         ("twitter", "watch_later", "favorite", "X Bookmarks"),
-        ("zhihu", "watch_later", "favorite", "OpenBiliClaw"),
+        ("zhihu", "watch_later", "favorite", "知乎收藏"),
         ("reddit", "favorite", "favorite", "Reddit Saved"),
     ],
 )
@@ -68,7 +68,7 @@ def test_extension_adapter_factory_is_ordered_and_immutable(broker: AsyncMock) -
         False,
         False,
         False,
-        True,
+        False,
         False,
     ]
 

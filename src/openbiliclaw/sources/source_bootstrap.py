@@ -699,12 +699,20 @@ def enqueue_yt_bootstrap(
     try:
         queue = YtTaskQueue(database)
         with _bootstrap_admission_transaction(database):
+            # Issue #178: a Chrome MV3 service worker can lose its setTimeout
+            # timeout while asleep, leaving a claimed YouTube task stuck in
+            # in_progress forever. Fail that stale lease before admission so it
+            # neither blocks the active-task scan nor gets reused by dedupe.
+            expire_stale = getattr(queue, "expire_stale_in_progress", None)
+            stale_recovered = (
+                int(expire_stale(("bootstrap_profile",)) or 0) if callable(expire_stale) else 0
+            )
             dedupe_hours = _dedupe_hours(
                 "OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS",
                 DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS,
             )
             find_recent = getattr(queue, "find_recent_task", None)
-            if not force and dedupe_hours > 0 and callable(find_recent):
+            if not force and dedupe_hours > 0 and callable(find_recent) and not stale_recovered:
                 recent = find_recent(
                     "bootstrap_profile",
                     recent_hours=dedupe_hours,

@@ -1,0 +1,72 @@
+{
+  "before": {
+    "total_available": 295,
+    "pool_status_version": 1788791280948,
+    "by_platform": {
+      "bilibili": 226,
+      "twitter": 51,
+      "douyin": 4,
+      "github": 14
+    }
+  },
+  "after": {
+    "total_available": 278,
+    "pool_status_version": 1788791304449,
+    "by_platform": {
+      "bilibili": 212,
+      "twitter": 48,
+      "douyin": 4,
+      "github": 14
+    }
+  },
+  "samples": [
+    {
+      "index": 1,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 1676.0,
+      "items": 10,
+      "remaining": 286,
+      "sources": {
+        "bilibili": 220,
+        "twitter": 48,
+        "douyin": 4,
+        "github": 14
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 2,
+      "action": "append",
+      "source": "all",
+      "ms": 3100.2,
+      "items": 10,
+      "remaining": 276,
+      "sources": {
+        "bilibili": 212,
+        "twitter": 46,
+        "douyin": 4,
+        "github": 14
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    }
+  ],
+  "unique_items": 20,
+  "latency_ms": {
+    "p50": 1676.0,
+    "p95": 3100.2,
+    "max": 3100.2
+  },
+  "health_ms": {
+    "samples": 12,
+    "p95": 3040.4,
+    "max": 3040.4
+  },
+  "pool_events": 4,
+  "failures": [
+    "health: ReadTimeout",
+    "reshuffle[3]: ReadTimeout: "
+  ]
+}

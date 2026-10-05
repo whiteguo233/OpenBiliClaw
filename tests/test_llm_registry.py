@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from openbiliclaw.config import Config, EmbeddingConfig, LLMConfig, LLMProviderConfig
+from openbiliclaw.config import (
+    Config,
+    EmbeddingConfig,
+    LLMConfig,
+    LLMInstanceConfig,
+    LLMProviderConfig,
+)
 from openbiliclaw.llm.base import (
     LLMFallbackError,
     LLMProvider,
@@ -121,7 +127,8 @@ def test_build_llm_registry_registers_openai_with_codex_oauth(
     assert registry.default_provider == "openai"
     assert registry.available_providers == ["openai"]
     provider = registry.get("openai")
-    assert provider._client.api_key == "access-token"
+    assert provider._access_token == "access-token"
+    assert provider.base_url == "https://chatgpt.com/backend-api/codex"
 
 
 def test_build_llm_registry_registers_openrouter() -> None:
@@ -140,6 +147,159 @@ def test_build_llm_registry_registers_openrouter() -> None:
 
     assert registry.default_provider == "openrouter"
     assert "openrouter" in registry.available_providers
+
+
+def test_build_llm_registry_registers_orcarouter() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="orcarouter",
+            orcarouter=LLMProviderConfig(
+                api_key="sk-orca-test",
+                model="openai/gpt-4o",
+            ),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "orcarouter"
+    assert "orcarouter" in registry.available_providers
+    provider = registry.get("orcarouter")
+    assert provider.name == "orcarouter"
+    assert provider.base_url == "https://api.orcarouter.ai/v1"
+
+
+def test_build_llm_registry_omits_orcarouter_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "orcarouter" not in registry.available_providers
+
+
+def test_build_llm_registry_registers_requesty() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="requesty",
+            requesty=LLMProviderConfig(
+                api_key="rqsty-test",
+                model="openai/gpt-4o-mini",
+            ),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "requesty"
+    assert "requesty" in registry.available_providers
+    provider = registry.get("requesty")
+    assert provider.name == "requesty"
+    assert provider.base_url == "https://router.requesty.ai/v1"
+
+
+def test_build_llm_registry_registers_api_route() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="api_route",
+            api_route=LLMProviderConfig(api_key="test-key"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "api_route"
+    assert registry.get("api_route").base_url == "https://global.api-route.com/v1"
+    assert registry.get("api_route")._model == "gpt-5.5"
+
+
+def test_build_llm_registry_registers_api_route_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "api-route-main": LLMInstanceConfig(
+                    name="API Route",
+                    provider_type="api_route",
+                    api_key="test-key",
+                    model="gpt-5.5",
+                )
+            },
+            default_chain=["api-route-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "api-route-main"
+    assert registry.get("api-route-main").name == "api_route"
+    assert registry.get("api-route-main").base_url == "https://global.api-route.com/v1"
+
+
+def test_build_llm_registry_registers_cheaperinference() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="cheaperinference",
+            cheaperinference=LLMProviderConfig(api_key="ci_live_test"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "cheaperinference"
+    assert registry.get("cheaperinference").base_url == "https://api.cheaperinference.com/v1"
+    assert registry.get("cheaperinference")._model == "gpt-5.4-mini"
+
+
+def test_build_llm_registry_registers_cheaperinference_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "cheaperinference-main": LLMInstanceConfig(
+                    name="Cheaper Inference",
+                    provider_type="cheaperinference",
+                    api_key="ci_live_test",
+                    model="gpt-5.4-mini",
+                )
+            },
+            default_chain=["cheaperinference-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "cheaperinference-main"
+    assert registry.get("cheaperinference-main").name == "cheaperinference"
+    assert registry.get("cheaperinference-main").base_url == "https://api.cheaperinference.com/v1"
+
+
+def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+            cheaperinference=LLMProviderConfig(model="gpt-5.4-mini"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "cheaperinference" not in registry.available_providers
+
+
+def test_build_llm_registry_omits_requesty_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "requesty" not in registry.available_providers
 
 
 def test_build_llm_registry_registers_openai_compatible() -> None:
@@ -265,6 +425,91 @@ def test_openai_compatible_can_serve_as_embedding_provider(tmp_path) -> None:
     # Built against the embedding-section base_url, not [llm.openai].
     assert str(service._provider._client.base_url).rstrip("/") == ("http://localhost:8000/v1")
     assert service._provider._client.api_key == "vllm-token"
+
+
+def test_openai_compatible_embedding_allows_no_auth_local_endpoint(tmp_path) -> None:
+    """Self-hosted OpenAI-compatible gateways frequently run without auth.
+
+    Only ``base_url`` is a hard requirement; an empty ``api_key`` must not
+    silently disable the embedding service. The SDK still needs a non-empty
+    credential, so the builder injects an internal placeholder.
+    """
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai_compatible",
+                model="bge-m3",
+                api_key="",
+                base_url="http://127.0.0.1:8000/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+
+    assert service is not None
+    assert service._provider.name == "openai_compatible"
+    assert str(service._provider._client.base_url).rstrip("/") == "http://127.0.0.1:8000/v1"
+    # A truthy placeholder keeps the OpenAI SDK happy; the local server
+    # ignores the Authorization header.
+    assert service._provider._client.api_key
+
+
+def test_openai_embedding_custom_base_url_allows_empty_key(tmp_path) -> None:
+    """`setup-embedding` option 4 (vLLM / OneAPI / self-hosted) writes
+    provider="openai" + a custom base_url and tells users a no-auth service
+    may leave the key blank. That combination must build a working endpoint
+    instead of returning None and silently disabling embedding."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="bge-m3",
+                api_key="",
+                base_url="http://localhost:9000/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+
+    assert service is not None
+    assert service._provider.name == "openai"
+    assert str(service._provider._client.base_url).rstrip("/") == "http://localhost:9000/v1"
+    assert service._provider._client.api_key
+
+
+def test_openai_embedding_without_key_or_base_url_stays_disabled(tmp_path) -> None:
+    """The no-auth relaxation must not make an empty key silently target
+    api.openai.com: without a custom base_url the provider is still refused."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="text-embedding-3-small",
+                api_key="",
+                base_url="",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+
+    assert build_embedding_service(config, registry) is None
 
 
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")

@@ -24,6 +24,7 @@ from openbiliclaw.config import (
     SchedulerConfig,
     SoulConfig,
     SoulPreferenceConfig,
+    TailnetConfig,
     _build_config,
     load_config,
     load_config_with_diagnostics,
@@ -195,16 +196,21 @@ class TestConfigDefaults:
         assert config.api.host == "0.0.0.0"
         assert config.api.port == 8420
         assert config.llm.default_provider == "deepseek"
-        assert config.llm.concurrency == 4
+        assert config.llm.concurrency == 3
         assert config.llm.timeout == 1200
         assert config.bilibili.auth_method == "cookie"
         assert config.bilibili.proxy == ""  # direct connection by default
         assert config.scheduler.enabled is True
+        assert config.scheduler.llm_budget_max_calls == 120
+        assert config.scheduler.llm_budget_window_seconds == 3600
         assert config.scheduler.discovery_cron == "0 */8 * * *"
         assert config.scheduler.pool_target_count == 300
         assert isinstance(config.autostart, AutostartConfig)
         assert config.autostart.enabled is False
         assert config.autostart.manage_ollama is True
+        assert isinstance(config.tailnet, TailnetConfig)
+        assert config.tailnet.enabled is False
+        assert config.tailnet.hostname == "openbiliclaw-host"
         assert config.api.auth.extension_access_enabled is False
         assert config.api.auth.extension_access_keys == []
         assert config.api.auth.extension_token_ttl_hours == 24
@@ -256,6 +262,28 @@ class TestConfigDefaults:
 
         assert load_config(config_path).saved_sync.auto_sync_enabled is True
 
+    def test_embedding_cache_capacity_defaults_unlimited(self) -> None:
+        config = Config()
+
+        # 0 = unlimited: the L2 cache keeps current behavior unless the user
+        # opts into a byte budget (issue #153).
+        assert config.llm.embedding.cache_max_bytes == 0
+        assert config.llm.embedding.cache_high_watermark == 0.9
+        assert config.llm.embedding.cache_low_watermark == 0.7
+
+    def test_embedding_cache_capacity_fields_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.llm.embedding.cache_max_bytes = 536870912
+        config.llm.embedding.cache_high_watermark = 0.85
+        config.llm.embedding.cache_low_watermark = 0.6
+        config_path = tmp_path / "config.toml"
+        save_config(config, config_path)
+
+        loaded = load_config(config_path)
+        assert loaded.llm.embedding.cache_max_bytes == 536870912
+        assert loaded.llm.embedding.cache_high_watermark == 0.85
+        assert loaded.llm.embedding.cache_low_watermark == 0.6
+
     def test_example_config_disables_saved_auto_sync(self) -> None:
         example_path = Path(__file__).parents[1] / "config.example.toml"
 
@@ -288,6 +316,7 @@ class TestConfigDefaults:
             "zhihu": 1,
             "reddit": 1,
             "bangumi": 1,
+            "github": 1,
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
@@ -298,6 +327,66 @@ class TestConfigDefaults:
         config = Config()
 
         assert config.sources.bilibili.enabled is True
+
+    def test_bilibili_publication_preference_defaults_to_legacy_behavior(self) -> None:
+        config = Config()
+
+        assert config.sources.bilibili.recommendation_date_preset == "all"
+        assert config.sources.bilibili.recommendation_date_start == ""
+        assert config.sources.bilibili.recommendation_date_end == ""
+        assert config.sources.bilibili.recommendation_date_weight == 0.5
+
+    def test_bilibili_publication_preference_round_trips(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.bilibili.recommendation_date_preset = "custom"
+        config.sources.bilibili.recommendation_date_start = "2023-01-01"
+        config.sources.bilibili.recommendation_date_end = "2023-12-31"
+        config.sources.bilibili.recommendation_date_weight = 0.5
+
+        config_path = tmp_path / "config.toml"
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.sources.bilibili.recommendation_date_preset == "custom"
+        assert loaded.sources.bilibili.recommendation_date_start == "2023-01-01"
+        assert loaded.sources.bilibili.recommendation_date_end == "2023-12-31"
+        assert loaded.sources.bilibili.recommendation_date_weight == 0.5
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            {"sources": {"bilibili": {"recommendation_date_preset": "invalid"}}},
+            {"sources": {"bilibili": {"recommendation_date_start": "2023-02-30"}}},
+            {
+                "sources": {
+                    "bilibili": {
+                        "recommendation_date_preset": "custom",
+                        "recommendation_date_start": "2023-01-01",
+                        "recommendation_date_end": "2022-01-01",
+                    }
+                }
+            },
+            {"sources": {"bilibili": {"recommendation_date_weight": 1.1}}},
+        ],
+    )
+    def test_invalid_bilibili_publication_preference_is_blocking(
+        self,
+        raw: dict[str, object],
+    ) -> None:
+        config = _build_config(raw)
+        issues = config_module._collect_config_issues(config)
+
+        assert any(
+            issue.field == "sources.bilibili.recommendation_date" and issue.severity == "blocking"
+            for issue in issues
+        )
+
+    def test_save_rejects_invalid_bilibili_publication_preference(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.bilibili.recommendation_date_weight = 1.1
+
+        with pytest.raises(ConfigError, match="sources.bilibili.recommendation_date"):
+            save_config(config, tmp_path / "config.toml")
 
     def test_scheduler_pause_on_extension_disconnect_defaults(self) -> None:
         config = Config()
@@ -329,13 +418,24 @@ class TestConfigDefaults:
         assert config.scheduler.youtube_incremental_hours is None
         assert config.scheduler.zhihu_incremental_hours is None
         assert config.scheduler.reddit_incremental_hours is None
+        for source in (
+            config.sources.xiaohongshu,
+            config.sources.douyin,
+            config.sources.youtube,
+            config.sources.zhihu,
+            config.sources.reddit,
+            config.sources.linuxdo,
+            config.sources.v2ex,
+        ):
+            assert source.incremental_enabled is False
 
     def test_example_config_disables_all_periodic_source_sync_by_default(self) -> None:
         example_path = Path(__file__).parents[1] / "config.example.toml"
 
         with example_path.open("rb") as handle:
-            scheduler = tomllib.load(handle)["scheduler"]
+            example = tomllib.load(handle)
 
+        scheduler = example["scheduler"]
         assert scheduler["source_incremental_enabled"] is False
         assert scheduler["source_incremental_hours"] == 24
         assert "xhs_incremental_hours" not in scheduler
@@ -343,6 +443,9 @@ class TestConfigDefaults:
         assert "youtube_incremental_hours" not in scheduler
         assert "zhihu_incremental_hours" not in scheduler
         assert "reddit_incremental_hours" not in scheduler
+        sources = example["sources"]
+        for slug in ("xiaohongshu", "douyin", "youtube", "zhihu", "reddit", "linuxdo", "v2ex"):
+            assert sources[slug]["incremental_enabled"] is False
 
     def test_default_config_persists_periodic_source_sync_disabled(self, tmp_path: Path) -> None:
         target = tmp_path / "config.toml"
@@ -381,6 +484,31 @@ class TestConfigDefaults:
         assert loaded.scheduler.reddit_incremental_hours == 42
         assert "xhs_incremental_hours = 0" in rendered
         assert "youtube_incremental_hours" not in rendered
+
+    def test_source_incremental_enabled_per_source_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.xiaohongshu.incremental_enabled = True
+        config.sources.douyin.incremental_enabled = True
+        config.sources.youtube.incremental_enabled = False
+        config.sources.zhihu.incremental_enabled = True
+        config.sources.reddit.incremental_enabled = False
+        config.sources.linuxdo.incremental_enabled = True
+        config.sources.v2ex.incremental_enabled = False
+
+        target = tmp_path / "config.toml"
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert loaded.sources.xiaohongshu.incremental_enabled is True
+        assert loaded.sources.douyin.incremental_enabled is True
+        assert loaded.sources.youtube.incremental_enabled is False
+        assert loaded.sources.zhihu.incremental_enabled is True
+        assert loaded.sources.reddit.incremental_enabled is False
+        assert loaded.sources.linuxdo.incremental_enabled is True
+        assert loaded.sources.v2ex.incremental_enabled is False
+        assert "incremental_enabled = true" in rendered
+        assert "incremental_enabled = false" in rendered
 
     def test_scheduler_source_incremental_env_fields_are_filtered_to_flat_keys(
         self,
@@ -444,6 +572,8 @@ class TestConfigDefaults:
         assert config.llm.default_provider == "deepseek"
         assert config.autostart.enabled is False
         assert config.autostart.manage_ollama is True
+        assert config.tailnet.enabled is False
+        assert config.tailnet.hostname == "openbiliclaw-host"
 
     def test_load_config_coerces_autostart_env_bool_false(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -493,6 +623,104 @@ manage_ollama = true
         assert "port = 19090" in rendered
         assert loaded.api.host == "127.0.0.1"
         assert loaded.api.port == 19090
+
+    def test_tailnet_config_round_trips_and_normalizes_hostname(self, tmp_path: Path) -> None:
+        config = Config()
+        config.tailnet.enabled = True
+        config.tailnet.hostname = "  OpenBiliClaw-Host-01  "
+
+        target = tmp_path / "config.toml"
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "[tailnet]" in rendered
+        assert "enabled = true" in rendered
+        assert 'hostname = "openbiliclaw-host-01"' in rendered
+        assert "auth_key" not in rendered
+        assert loaded.tailnet.enabled is True
+        assert loaded.tailnet.hostname == "openbiliclaw-host-01"
+
+    @pytest.mark.parametrize("hostname", ["a", "a" * 63, "NODE-01"])
+    def test_tailnet_hostname_accepts_dns_label_boundaries(self, hostname: str) -> None:
+        config = _build_config({"tailnet": {"hostname": hostname}})
+
+        assert config.tailnet.hostname == hostname.lower()
+
+    @pytest.mark.parametrize(
+        "hostname",
+        [
+            "",
+            "-openbiliclaw",
+            "openbiliclaw-",
+            "openbiliclaw.host",
+            "openbiliclaw_host",
+            "openbiliclaw host",
+            "a" * 64,
+            123,
+        ],
+    )
+    def test_tailnet_hostname_is_a_strict_dns_label(self, hostname: object) -> None:
+        with pytest.raises(ConfigError, match="tailnet.hostname"):
+            _build_config({"tailnet": {"hostname": hostname}})
+
+    def test_save_config_rejects_invalid_tailnet_hostname(self, tmp_path: Path) -> None:
+        config = Config()
+        config.tailnet.hostname = "not.a-label"
+
+        with pytest.raises(ConfigError, match="tailnet.hostname"):
+            save_config(config, tmp_path / "config.toml")
+
+    def test_tailnet_config_local_values_are_not_baked_into_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        base_path = tmp_path / "config.toml"
+        base_path.write_text(
+            '[tailnet]\nenabled = false\nhostname = "base-host"\n',
+            encoding="utf-8",
+        )
+        local_path = tmp_path / "config.local.toml"
+        local_path.write_text(
+            '[tailnet]\nenabled = true\nhostname = "local-host"\n',
+            encoding="utf-8",
+        )
+
+        merged = load_config()
+        assert merged.tailnet == TailnetConfig(enabled=True, hostname="local-host")
+        merged.language = "en"
+        save_config(merged)
+
+        assert tomllib.loads(base_path.read_text(encoding="utf-8"))["tailnet"] == {
+            "enabled": False,
+            "hostname": "base-host",
+        }
+        local_path.unlink()
+        assert load_config().tailnet == TailnetConfig(enabled=False, hostname="base-host")
+
+    def test_tailnet_env_values_are_not_baked_into_base(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "config.toml"
+        target.write_text(
+            '[tailnet]\nenabled = false\nhostname = "base-host"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OPENBILICLAW_TAILNET_ENABLED", "true")
+        monkeypatch.setenv("OPENBILICLAW_TAILNET_HOSTNAME", "ENV-HOST")
+
+        merged = load_config(target)
+        assert merged.tailnet == TailnetConfig(enabled=True, hostname="env-host")
+        merged.language = "en"
+        save_config(merged, target)
+
+        assert tomllib.loads(target.read_text(encoding="utf-8"))["tailnet"] == {
+            "enabled": False,
+            "hostname": "base-host",
+        }
+        monkeypatch.delenv("OPENBILICLAW_TAILNET_ENABLED")
+        monkeypatch.delenv("OPENBILICLAW_TAILNET_HOSTNAME")
+        assert load_config(target).tailnet == TailnetConfig(enabled=False, hostname="base-host")
 
     def test_bilibili_proxy_round_trips_through_toml(self, tmp_path: Path) -> None:
         config = Config()
@@ -551,6 +779,131 @@ manage_ollama = true
         assert cfg.soul.preference_prompt_view == "legacy"
         assert cfg.soul.awareness_prompt_view == "compact-v1"
         assert cfg.soul.insight_prompt_view == "legacy"
+
+    def test_cognition_budget_knobs_round_trip_through_toml(self, tmp_path: Path) -> None:
+        cfg = Config()
+        cfg.soul.awareness_event_batch_size = 80
+        cfg.soul.insight_note_batch_size = 40
+        cfg.soul.cognition_max_tokens = 8192
+        target = tmp_path / "config.toml"
+
+        save_config(cfg, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "awareness_event_batch_size = 80" in rendered
+        assert "insight_note_batch_size = 40" in rendered
+        assert "cognition_max_tokens = 8192" in rendered
+        assert loaded.soul.awareness_event_batch_size == 80
+        assert loaded.soul.insight_note_batch_size == 40
+        assert loaded.soul.cognition_max_tokens == 8192
+
+    def test_cognition_budget_knobs_default_to_module_constants(self) -> None:
+        cfg = Config()
+
+        assert cfg.soul.awareness_event_batch_size == 300
+        assert cfg.soul.insight_note_batch_size == 150
+        assert cfg.soul.cognition_max_tokens == 32768
+
+    def test_reply_style_defaults_to_empty(self) -> None:
+        cfg = Config()
+
+        assert cfg.soul.reply_style == ""
+
+    def test_reply_style_round_trip_through_toml(self, tmp_path: Path) -> None:
+        cfg = Config()
+        cfg.soul.reply_style = "语气温和一点，多给具体例子"
+        target = tmp_path / "config.toml"
+
+        save_config(cfg, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert 'reply_style = "语气温和一点，多给具体例子"' in rendered
+        assert loaded.soul.reply_style == "语气温和一点，多给具体例子"
+
+    def test_reply_style_parse_collapses_whitespace_into_one_line(self) -> None:
+        config = _build_config({"soul": {"reply_style": "  温和一点\n\n少用  梗\t "}})
+
+        assert config.soul.reply_style == "温和一点 少用 梗"
+
+    def test_reply_style_over_limit_is_a_blocking_issue(self) -> None:
+        from openbiliclaw.config import MAX_SOUL_REPLY_STYLE_CHARS, _collect_config_issues
+
+        cfg = Config()
+        cfg.soul.reply_style = "x" * MAX_SOUL_REPLY_STYLE_CHARS
+        assert not [
+            issue for issue in _collect_config_issues(cfg) if issue.field == "soul.reply_style"
+        ]
+
+        cfg.soul.reply_style = "x" * (MAX_SOUL_REPLY_STYLE_CHARS + 1)
+        issues = [
+            issue for issue in _collect_config_issues(cfg) if issue.field == "soul.reply_style"
+        ]
+
+        assert len(issues) == 1
+        assert issues[0].severity == "blocking"
+
+    def test_dialogue_tone_prompt_defaults_to_empty(self) -> None:
+        cfg = Config()
+
+        assert cfg.soul.dialogue_tone_prompt == ""
+
+    def test_dialogue_tone_prompt_round_trip_through_toml(self, tmp_path: Path) -> None:
+        cfg = Config()
+        cfg.soul.dialogue_tone_prompt = "像一个老朋友：\n- 多用短句\n- 先问动机"
+        target = tmp_path / "config.toml"
+
+        save_config(cfg, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        # Multi-line values render as one physical line with \n escapes.
+        assert 'dialogue_tone_prompt = "像一个老朋友：\\n- 多用短句\\n- 先问动机"' in rendered
+        assert loaded.soul.dialogue_tone_prompt == "像一个老朋友：\n- 多用短句\n- 先问动机"
+
+    def test_dialogue_tone_prompt_parse_strips_but_preserves_newlines(self) -> None:
+        config = _build_config({"soul": {"dialogue_tone_prompt": "  第一行\n\n  第二行  保留  \n"}})
+
+        assert config.soul.dialogue_tone_prompt == "第一行\n\n  第二行  保留"
+
+    def test_dialogue_tone_prompt_over_limit_is_a_blocking_issue(self) -> None:
+        from openbiliclaw.config import (
+            MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS,
+            _collect_config_issues,
+        )
+
+        cfg = Config()
+        cfg.soul.dialogue_tone_prompt = "x" * MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS
+        assert not [
+            issue
+            for issue in _collect_config_issues(cfg)
+            if issue.field == "soul.dialogue_tone_prompt"
+        ]
+
+        cfg.soul.dialogue_tone_prompt = "x" * (MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS + 1)
+        issues = [
+            issue
+            for issue in _collect_config_issues(cfg)
+            if issue.field == "soul.dialogue_tone_prompt"
+        ]
+
+        assert len(issues) == 1
+        assert issues[0].severity == "blocking"
+
+    def test_cognition_budget_knobs_reject_invalid_values(self) -> None:
+        from openbiliclaw.config import _collect_config_issues
+
+        cfg = Config()
+        cfg.soul.awareness_event_batch_size = 1
+        cfg.soul.insight_note_batch_size = 9999
+        cfg.soul.cognition_max_tokens = 99
+
+        fields = {issue.field for issue in _collect_config_issues(cfg)}
+
+        assert "soul.awareness_event_batch_size" in fields
+        assert "soul.insight_note_batch_size" in fields
+        assert "soul.cognition_max_tokens" in fields
 
     def test_token_diet_runtime_controls_reject_invalid_values(self) -> None:
         from openbiliclaw.config import _collect_config_issues
@@ -819,6 +1172,136 @@ def test_validate_runtime_config_requires_openrouter_api_key() -> None:
     )
 
     with pytest.raises(ConfigError, match="llm.openrouter.api_key"):
+        validate_runtime_config(config)
+
+
+def test_build_config_supports_orcarouter_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "orcarouter",
+                "orcarouter": {
+                    "api_key": "sk-orca-test",
+                    "model": "openai/gpt-4o",
+                    "base_url": "https://api.orcarouter.ai/v1",
+                    "reasoning_effort": "high",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "orcarouter"
+    assert config.llm.orcarouter.api_key == "sk-orca-test"
+    assert config.llm.orcarouter.model == "openai/gpt-4o"
+    assert config.llm.orcarouter.base_url == "https://api.orcarouter.ai/v1"
+    assert config.llm.orcarouter.reasoning_effort == "high"
+
+
+def test_validate_runtime_config_requires_orcarouter_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="orcarouter",
+            orcarouter=LLMProviderConfig(api_key="", model="openai/gpt-4o"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.orcarouter.api_key"):
+        validate_runtime_config(config)
+
+
+def test_build_config_supports_requesty_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "requesty",
+                "requesty": {
+                    "api_key": "rqsty-test",
+                    "model": "openai/gpt-4o-mini",
+                    "base_url": "https://router.eu.requesty.ai/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "requesty"
+    assert config.llm.requesty.api_key == "rqsty-test"
+    assert config.llm.requesty.model == "openai/gpt-4o-mini"
+    assert config.llm.requesty.base_url == "https://router.eu.requesty.ai/v1"
+
+
+def test_build_config_supports_api_route_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "api_route",
+                "api_route": {
+                    "api_key": "test-key",
+                    "model": "gpt-5.5",
+                    "base_url": "https://global.api-route.com/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "api_route"
+    assert config.llm.api_route.api_key == "test-key"
+    assert config.llm.api_route.model == "gpt-5.5"
+    assert config.llm.api_route.base_url == "https://global.api-route.com/v1"
+
+
+def test_validate_runtime_config_requires_api_route_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="api_route",
+            api_route=LLMProviderConfig(model="gpt-5.5"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.api_route.api_key"):
+        validate_runtime_config(config)
+
+
+def test_build_config_supports_cheaperinference_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "cheaperinference",
+                "cheaperinference": {
+                    "api_key": "ci_live_test",
+                    "model": "claude-sonnet-5",
+                    "base_url": "https://api.cheaperinference.com/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "cheaperinference"
+    assert config.llm.cheaperinference.api_key == "ci_live_test"
+    assert config.llm.cheaperinference.model == "claude-sonnet-5"
+    assert config.llm.cheaperinference.base_url == "https://api.cheaperinference.com/v1"
+
+
+def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="cheaperinference",
+            cheaperinference=LLMProviderConfig(model="gpt-5.4-mini"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.cheaperinference.api_key"):
+        validate_runtime_config(config)
+
+
+def test_validate_runtime_config_requires_requesty_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="requesty",
+            requesty=LLMProviderConfig(api_key="", model="openai/gpt-4o-mini"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.requesty.api_key"):
         validate_runtime_config(config)
 
 
@@ -1472,6 +1955,7 @@ youtube = 3
         "zhihu": 1,
         "reddit": 1,
         "bangumi": 1,
+        "github": 1,
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
@@ -1584,6 +2068,84 @@ def test_sources_bangumi_defaults() -> None:
     assert config.sources.bangumi.request_interval_seconds == 1
     assert config.sources.bangumi.min_interval_minutes == 3
     assert config.sources.bangumi.bootstrap_limit == 300
+
+
+def test_sources_github_defaults() -> None:
+    config = Config()
+
+    assert config.sources.github.enabled is False
+    assert config.sources.github.username == ""
+    assert config.sources.github.access_token == ""
+    assert config.sources.github.token_env == "OPENBILICLAW_GITHUB_TOKEN"
+    assert config.sources.github.source_modes == ("search", "ranked", "latest")
+    assert config.sources.github.daily_search_budget == 120
+    assert config.sources.github.daily_ranked_budget == 60
+    assert config.sources.github.daily_latest_budget == 60
+    assert config.sources.github.request_interval_seconds == 6
+    assert config.sources.github.min_interval_minutes == 10
+    assert config.sources.github.bootstrap_limit == 300
+    assert config.sources.github.bootstrap_max_pages == 10
+
+
+def test_save_config_round_trips_sources_github(tmp_path: Path) -> None:
+    config = Config()
+    config.sources.github.enabled = True
+    config.sources.github.username = "octocat"
+    config.sources.github.access_token = "github-pat-value"
+    config.sources.github.source_modes = ("search", "ranked")
+    config.sources.github.daily_search_budget = 42
+    config.sources.github.daily_ranked_budget = 21
+    config.sources.github.daily_latest_budget = 11
+    config.sources.github.request_interval_seconds = 7
+    config.sources.github.min_interval_minutes = 20
+    config.sources.github.bootstrap_limit = 123
+    config.sources.github.bootstrap_max_pages = 7
+    config.scheduler.pool_source_shares["github"] = 2
+
+    target = tmp_path / "config.toml"
+    save_config(config, target)
+    loaded = load_config(target)
+
+    assert loaded.sources.github == config.sources.github
+    assert loaded.scheduler.pool_source_shares["github"] == 2
+
+
+def test_save_config_rejects_unsafe_github_credentials_and_token_env(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    config = Config()
+    config.sources.github.username = "bad/name"
+    config.sources.github.access_token = "bad token\nwith newline"
+    config.sources.github.token_env = "GITHUB_TOKEN"
+    target = tmp_path / "config.toml"
+
+    issues = _collect_config_issues(config)
+    assert any(issue.field == "sources.github.username" for issue in issues)
+    assert any(issue.field == "sources.github.access_token" for issue in issues)
+    assert any(issue.field == "sources.github" for issue in issues)
+    with pytest.raises(ValueError):
+        save_config(config, target)
+    assert not target.exists()
+
+
+def test_legacy_github_config_is_bounded_and_pins_token_env() -> None:
+    from openbiliclaw.config import GitHubSourceConfig, normalize_github_source_config
+
+    source = GitHubSourceConfig(
+        token_env="GITHUB_TOKEN",
+        source_modes=("SEARCH", "unknown", "search"),
+        request_interval_seconds=999,
+        bootstrap_max_pages=0,
+    )
+
+    normalize_github_source_config(source, strict=False)
+
+    assert source.token_env == "OPENBILICLAW_GITHUB_TOKEN"
+    assert source.source_modes == ("search",)
+    assert source.request_interval_seconds == 60
+    assert source.bootstrap_max_pages == 1
 
 
 def test_load_config_clamps_linuxdo_browser_task_limits(tmp_path: Path) -> None:
@@ -1967,6 +2529,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "zhihu": 1,
         "reddit": 2,
         "bangumi": 1,
+        "github": 1,
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
@@ -1985,6 +2548,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "zhihu": 1,
         "reddit": 2,
         "bangumi": 1,
+        "github": 1,
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
@@ -1998,6 +2562,8 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     """Popup/API saves must not drop advanced fields that the UI may not edit."""
     config_path = tmp_path / "config.toml"
     config = Config()
+    config.scheduler.llm_budget_max_calls = 30
+    config.scheduler.llm_budget_window_seconds = 1800
     config.scheduler.speculation_interval_minutes = 22
     config.scheduler.speculation_ttl_days = 8
     config.scheduler.speculation_cooldown_days = 9
@@ -2020,6 +2586,8 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     save_config(config, config_path)
     loaded = load_config(config_path)
 
+    assert loaded.scheduler.llm_budget_max_calls == 30
+    assert loaded.scheduler.llm_budget_window_seconds == 1800
     assert loaded.scheduler.speculation_interval_minutes == 22
     assert loaded.scheduler.speculation_ttl_days == 8
     assert loaded.scheduler.speculation_cooldown_days == 9
@@ -2856,11 +3424,14 @@ class TestDiscoveryConfig:
         assert config.discovery.inspiration_search_backends == (
             "local_cache",
             "platform_sources",
+            "bing_rss",
             "exa",
             "you",
+            "serply",
         )
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "shadow"
+        assert config.discovery.eval_scorer == "llm"
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.visual_profile_enabled is False
         assert config.discovery.keyframe_enabled is False
@@ -2888,11 +3459,14 @@ class TestDiscoveryConfig:
         assert config.discovery.inspiration_search_backends == (
             "local_cache",
             "platform_sources",
+            "bing_rss",
             "exa",
             "you",
+            "serply",
         )
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "shadow"
+        assert config.discovery.eval_scorer == "llm"
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.visual_profile_enabled is False
         assert config.discovery.keyframe_enabled is False
@@ -2965,6 +3539,7 @@ inspiration_replace_merged_keywords = true
 inspiration_search_backends = ["platform_sources", "exa", "you"]
 inspiration_breadth = "high"
 eval_prefilter_mode = "enforce"
+eval_scorer = "shadow"
 multimodal_evaluation_enabled = true
 candidate_eval_concurrency = 3
 multimodal_batch_size = 4
@@ -2994,6 +3569,7 @@ multimodal_image_timeout_seconds = 10
         assert config.discovery.inspiration_search_backends == ("platform_sources", "exa", "you")
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "enforce"
+        assert config.discovery.eval_scorer == "shadow"
         assert config.discovery.multimodal_evaluation_enabled is True
         assert config.discovery.candidate_eval_concurrency == 3
         assert config.discovery.multimodal_batch_size == 4
@@ -3126,6 +3702,33 @@ eval_prefilter_mode = "  Shadow  "
         with pytest.raises(ConfigError, match="discovery\\.eval_prefilter_mode"):
             validate_runtime_config(config)
 
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("shadow", "shadow"), ("LEARNED", "learned"), ("unsafe", "llm")],
+    )
+    def test_discovery_eval_scorer_normalizes_from_toml(
+        self,
+        tmp_path: Path,
+        configured: str,
+        expected: str,
+    ) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            f'[discovery]\neval_scorer = "{configured}"\n',
+            encoding="utf-8",
+        )
+
+        assert load_config(toml_path).discovery.eval_scorer == expected
+
+    def test_validate_runtime_config_rejects_invalid_eval_scorer(self) -> None:
+        config = Config()
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "qwen2.5:7b"
+        config.discovery.eval_scorer = "unsafe"
+
+        with pytest.raises(ConfigError, match="discovery\\.eval_scorer"):
+            validate_runtime_config(config)
+
     def test_discovery_missing_table_uses_defaults(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "c.toml"
         toml_path.write_text("[scheduler]\nenabled = true\n", encoding="utf-8")
@@ -3197,6 +3800,7 @@ eval_prefilter_mode = "  Shadow  "
         config.discovery.inspiration_search_backends = ("you",)
         config.discovery.inspiration_breadth = "low"
         config.discovery.eval_prefilter_mode = "enforce"
+        config.discovery.eval_scorer = "shadow"
         config.discovery.multimodal_evaluation_enabled = True
         config.discovery.multimodal_batch_size = 4
         config.discovery.multimodal_image_max_px = 512
@@ -3223,6 +3827,7 @@ eval_prefilter_mode = "  Shadow  "
         assert loaded.discovery.inspiration_search_backends == ("you",)
         assert loaded.discovery.inspiration_breadth == "low"
         assert loaded.discovery.eval_prefilter_mode == "enforce"
+        assert loaded.discovery.eval_scorer == "shadow"
         assert loaded.discovery.multimodal_evaluation_enabled is True
         assert loaded.discovery.multimodal_batch_size == 4
         assert loaded.discovery.multimodal_image_max_px == 512
@@ -3243,11 +3848,12 @@ eval_prefilter_mode = "  Shadow  "
         assert "inspiration_search_enabled = true" in rendered
         assert "inspiration_replace_merged_keywords = false" in rendered
         assert (
-            'inspiration_search_backends = ["local_cache", "platform_sources", "exa", "you"]'
-            in rendered
+            'inspiration_search_backends = ["local_cache", "platform_sources", '
+            '"bing_rss", "exa", "you", "serply"]' in rendered
         )
         assert 'inspiration_breadth = "high"' in rendered
         assert 'eval_prefilter_mode = "shadow"' in rendered
+        assert 'eval_scorer = "llm"' in rendered
         assert "multimodal_evaluation_enabled = false" in rendered
         assert "multimodal_batch_size = 8" in rendered
         assert "multimodal_image_max_px = 384" in rendered
@@ -3933,3 +4539,55 @@ class TestUnifiedInterestLineFlag:
             example = tomllib.load(handle)
 
         assert example["scheduler"]["unified_interest_line"] is True
+
+
+class TestAgentConfig:
+    """``[agent]`` chat agent-loop budgets (M1)."""
+
+    def test_defaults(self) -> None:
+        config = Config()
+        assert config.agent.loop_enabled is True
+        assert config.agent.loop_max_steps == 64
+        assert config.agent.tool_result_max_chars == 4000
+
+    def test_loop_enabled_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.agent.loop_enabled = False
+        target = tmp_path / "config.toml"
+
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "loop_enabled = false" in rendered
+        assert loaded.agent.loop_enabled is False
+
+    def test_round_trip_through_toml(self, tmp_path: Path) -> None:
+        config = Config()
+        config.agent.loop_max_steps = 12
+        config.agent.tool_result_max_chars = 800
+        target = tmp_path / "config.toml"
+
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "[agent]" in rendered
+        assert "loop_max_steps = 12" in rendered
+        assert "tool_result_max_chars = 800" in rendered
+        assert loaded.agent.loop_max_steps == 12
+        assert loaded.agent.tool_result_max_chars == 800
+
+    def test_out_of_range_values_fall_back_to_defaults(self) -> None:
+        config = _build_config({"agent": {"loop_max_steps": 0, "tool_result_max_chars": 10}})
+        assert config.agent.loop_max_steps == 64
+        assert config.agent.tool_result_max_chars == 4000
+
+    def test_example_config_parses(self) -> None:
+        example_path = Path(__file__).parents[1] / "config.example.toml"
+
+        with example_path.open("rb") as handle:
+            example = tomllib.load(handle)
+
+        # The [agent] section ships with the defaults commented out.
+        assert "agent" in example

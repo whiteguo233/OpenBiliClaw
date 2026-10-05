@@ -8,7 +8,8 @@ import os
 import threading
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -48,6 +49,7 @@ class _ManagedDaemon:
     proc: subprocess.Popen[bytes] | None
     base_url: str
     models_dir: str | None
+    log_file: Any | None = None
 
 
 # The single managed daemon this process tracks (None when we never started or
@@ -55,6 +57,34 @@ class _ManagedDaemon:
 # exit, leaving an externally-managed Ollama (official app / user daemon)
 # untouched, and lets restart/watchdog routing reuse the recorded launch spec.
 _managed_daemon: _ManagedDaemon | None = None
+
+
+def _managed_ollama_log_file() -> Any | None:
+    """Open the managed Ollama log in the runtime project's ``logs/`` dir.
+
+    Packaged entry points set ``OPENBILICLAW_PROJECT_ROOT``; when absent (dev,
+    CLI, tests) we keep the old ``DEVNULL`` behaviour so no stray log files are
+    created under the user's home during normal operation. ``ollama serve``
+    writes both its own logs and the llama-server runner crash detail here —
+    previously both were discarded, which made ``0xc0000005`` field reports
+    impossible to diagnose beyond the HTTP 500 snippet.
+    """
+    root = os.environ.get("OPENBILICLAW_PROJECT_ROOT", "").strip()
+    if not root:
+        return None
+    log_dir = Path(root) / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return open(  # noqa: SIM115 — held open for the daemon's lifetime
+            log_dir / "ollama-managed.log",
+            "a",
+            buffering=1,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        logger.debug("Unable to open managed Ollama log under %s", log_dir, exc_info=True)
+        return None
 
 
 def _embedding_wants_ollama(config: Config) -> bool:
@@ -206,11 +236,14 @@ def _ollama_start_serve_background() -> bool:
         embedding_progress.report_ollama_phase("down")
         return False
 
+    log_file = _managed_ollama_log_file()
     try:
         env = os.environ.copy()
         env.setdefault("OLLAMA_KEEP_ALIVE", _DEFAULT_OLLAMA_KEEP_ALIVE)
         if models_dir := managed_models_dir():
             env.setdefault("OLLAMA_MODELS", models_dir)
+        stdout = log_file if log_file is not None else subprocess.DEVNULL
+        stderr = subprocess.STDOUT if log_file is not None else subprocess.DEVNULL
         if os.name == "nt":
             # CREATE_NO_WINDOW (not DETACHED_PROCESS): give `ollama serve` a
             # hidden console that its child `ollama runner` inherits, so neither
@@ -223,8 +256,8 @@ def _ollama_start_serve_background() -> bool:
             proc = subprocess.Popen(
                 [ollama, "serve"],
                 creationflags=creationflags,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
                 stdin=subprocess.DEVNULL,
                 env=env,
             )
@@ -232,12 +265,15 @@ def _ollama_start_serve_background() -> bool:
             proc = subprocess.Popen(
                 [ollama, "serve"],
                 start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
                 stdin=subprocess.DEVNULL,
                 env=env,
             )
     except Exception as exc:
+        if log_file is not None:
+            with suppress(Exception):
+                log_file.close()
         console.print(f"[red]启动 ollama serve 失败: {exc}[/red]")
         embedding_progress.report_ollama_phase("down")
         return False
@@ -246,7 +282,7 @@ def _ollama_start_serve_background() -> bool:
     # its model runner / llama-server child with it) instead of being orphaned.
     # Record the launch spec so restart routing reuses the default endpoint.
     global _managed_daemon
-    _managed_daemon = _ManagedDaemon(proc, _DEFAULT_OLLAMA_ENDPOINT, managed_models_dir())
+    _managed_daemon = _ManagedDaemon(proc, _DEFAULT_OLLAMA_ENDPOINT, managed_models_dir(), log_file)
 
     for _ in range(30):
         if _ollama_is_running():
@@ -303,6 +339,7 @@ def start_managed_ollama_at(models_dir: str, host: str) -> bool:
         embedding_progress.report_ollama_phase("down")
         return False
 
+    log_file = _managed_ollama_log_file()
     try:
         env = os.environ.copy()
         # Hard-set (not setdefault): the private daemon is fully owned, so a
@@ -310,6 +347,8 @@ def start_managed_ollama_at(models_dir: str, host: str) -> bool:
         env["OLLAMA_KEEP_ALIVE"] = _DEFAULT_OLLAMA_KEEP_ALIVE
         env["OLLAMA_HOST"] = hostport
         env["OLLAMA_MODELS"] = abs_models_dir
+        stdout = log_file if log_file is not None else subprocess.DEVNULL
+        stderr = subprocess.STDOUT if log_file is not None else subprocess.DEVNULL
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
@@ -317,8 +356,8 @@ def start_managed_ollama_at(models_dir: str, host: str) -> bool:
             proc = subprocess.Popen(
                 [ollama, "serve"],
                 creationflags=creationflags,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
                 stdin=subprocess.DEVNULL,
                 env=env,
             )
@@ -326,17 +365,20 @@ def start_managed_ollama_at(models_dir: str, host: str) -> bool:
             proc = subprocess.Popen(
                 [ollama, "serve"],
                 start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
                 stdin=subprocess.DEVNULL,
                 env=env,
             )
     except Exception as exc:
+        if log_file is not None:
+            with suppress(Exception):
+                log_file.close()
         console.print(f"[red]启动私有 ollama serve 失败: {exc}[/red]")
         embedding_progress.report_ollama_phase("down")
         return False
 
-    _managed_daemon = _ManagedDaemon(proc, base_url, abs_models_dir)
+    _managed_daemon = _ManagedDaemon(proc, base_url, abs_models_dir, log_file)
 
     for _ in range(30):
         if _ollama_is_running(base_url):
@@ -555,6 +597,11 @@ def stop_managed_ollama() -> bool:
     global _managed_daemon
     record = _managed_daemon
     _managed_daemon = None
+    if record is not None:
+        log_file = getattr(record, "log_file", None)
+        if log_file is not None:
+            with suppress(Exception):
+                log_file.close()
     proc = record.proc if record is not None else None
     if proc is None or proc.poll() is not None:
         return False

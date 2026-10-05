@@ -8,6 +8,7 @@ import logging
 import tempfile
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,12 +20,14 @@ from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.llm.base import LLMFallbackError, LLMProviderError, LLMRateLimitError, LLMResponse
 from openbiliclaw.llm.prompts import build_batch_expression_prompt
 from openbiliclaw.llm.service import LLMProviderExecutionError
+from openbiliclaw.recommendation.curator import PoolCurator
 from openbiliclaw.recommendation.engine import (
     ExpressionBatchMalformed,
     ExpressionCopyTransientError,
     RecommendationEngine,
     _recommendation_profile_summary,
 )
+from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
 from openbiliclaw.runtime.expression_copy import ExpressionCopyCoordinator
 from openbiliclaw.soul.profile import (
     AwarenessNote,
@@ -427,7 +430,7 @@ async def test_select_diversified_batch_async_matches_sync_output() -> None:
         for i in range(8)
     ]
     embeddings = {
-        item.bvid: [float(index % 3 == axis) for axis in range(3)]
+        item.scoring_key: [float(index % 3 == axis) for axis in range(3)]
         for index, item in enumerate(candidates)
     }
 
@@ -703,7 +706,7 @@ def test_curator_scoring_records_temporal_shadow_without_changing_scores() -> No
                 context: object,
             ) -> dict[str, float]:
                 del context
-                return {item.bvid: 0.73 for item in candidates}
+                return {item.scoring_key: 0.73 for item in candidates}
 
             def record_temporal_ranking_shadow_audit(
                 self,
@@ -723,7 +726,7 @@ def test_curator_scoring_records_temporal_shadow_without_changing_scores() -> No
 
         scores, amplification = engine._score_candidates_with_curator(candidates)
 
-        assert scores == {"BV1": 0.73}
+        assert scores == {candidates[0].scoring_key: 0.73}
         assert amplification == frozenset()
         assert len(curator.audit_calls) == 1
         assert curator.audit_calls[0][1] is scores
@@ -1265,6 +1268,37 @@ async def test_generate_expression_passes_body_text_for_text_items() -> None:
         assert '"body_text"' in user_input
         # body_text must never leak into the cached system prompt.
         assert "MIDDLE_BODY_MARKER" not in str(llm.calls[0]["system_instruction"])
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_grounds_copy_in_evaluation_clock() -> None:
+    """Realtime copy must see publication time plus the evaluation clock,
+    never the wall clock from when the expression was generated."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV1TIME",
+                title="2024 年的老片重映",
+                up_name="某UP",
+                published_at="2024-05-01T12:00:00Z",
+                published_label="2024-05-01",
+                temporal_evaluated_at="2026-01-02T03:04:05Z",
+                relevance_score=0.8,
+            ),
+            _build_profile(),
+        )
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert '"published_at": "2024-05-01T12:00:00Z"' in user_input
+        assert '"published_label": "2024-05-01"' in user_input
+        assert '"evaluated_at": "2026-01-02T03:04:05Z"' in user_input
+        # Per-call temporal data stays out of the cached static prefix.
+        assert "2026-01-02T03:04:05Z" not in str(llm.calls[0]["system_instruction"])
 
 
 @pytest.mark.asyncio
@@ -2435,6 +2469,262 @@ async def test_classify_pool_backlog_fills_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_classify_batch_split_retry_halves_on_reasoning_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reasoning-only + finish_reason=length is size-dependent: halve and retry."""
+    calls: list[int] = []
+
+    async def _fake_classify(batch: list[DiscoveredContent], _profile: SoulProfile) -> None:
+        calls.append(len(batch))
+        if len(batch) > 1:
+            raise LLMProviderExecutionError(
+                "openai_compatible returned reasoning but no final content "
+                "(finish_reason=length); disable thinking/reasoning or increase max_tokens"
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+        monkeypatch.setattr(engine, "_classify_batch", _fake_classify)
+        items = [
+            DiscoveredContent(bvid=f"BV_SPLIT_{index}", title=f"t{index}") for index in range(4)
+        ]
+
+        await engine._classify_batch_with_split_retry(items, _build_profile())
+
+    assert calls == [4, 2, 1, 1, 2, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_classify_batch_split_retry_propagates_non_budget_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    async def _fake_classify(batch: list[DiscoveredContent], _profile: SoulProfile) -> None:
+        calls.append(len(batch))
+        raise LLMProviderExecutionError("Provider returned 429 rate limit")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+        monkeypatch.setattr(engine, "_classify_batch", _fake_classify)
+
+        with pytest.raises(LLMProviderExecutionError):
+            await engine._classify_batch_with_split_retry(
+                [
+                    DiscoveredContent(bvid="BV_NOSPLIT_A", title="a"),
+                    DiscoveredContent(bvid="BV_NOSPLIT_B", title="b"),
+                ],
+                _build_profile(),
+            )
+
+    assert calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_classify_pool_backlog_retires_legacy_temporally_stale_rows() -> None:
+    class _TemporalClassifyLLM:
+        async def complete_structured_task(self, **_kwargs: Any) -> LLMResponse:
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "score": 0.95,
+                            "reason": "非常匹配用户兴趣",
+                            "topic_group": "即时事件",
+                            "style_key": "tutorial",
+                            "temporal_class": "breaking",
+                            "temporal_confidence": 0.96,
+                            "temporal_reason": "直播已经结束，核心信息失效",
+                            "temporal_validity_mode": "event_state",
+                            "temporal_valid_until": "",
+                            "temporal_scope": "core",
+                            "temporal_evidence": "直播已经结束",
+                            "temporal_state": "expired",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVLEGACYSTALE",
+            title="直播已经结束：旧库里尚未补分类的突发内容",
+            source="search",
+            style_key="",
+            topic_group="",
+            relevance_score=0.0,
+            published_at="2000-01-01T00:00:00Z",
+        )
+        engine = RecommendationEngine(llm=_TemporalClassifyLLM(), database=db)
+
+        classified = await engine.classify_pool_backlog(profile=_build_profile(), limit=10)
+
+        assert classified == 1
+        row = db.conn.execute(
+            """
+            SELECT pool_status, temporal_class, temporal_confidence, temporal_reason
+            FROM content_cache
+            WHERE bvid = 'BVLEGACYSTALE'
+            """
+        ).fetchone()
+        assert row["pool_status"] == "stale"
+        assert row["temporal_class"] == "breaking"
+        assert float(row["temporal_confidence"]) == pytest.approx(0.96)
+        assert row["temporal_reason"] == "直播已经结束，核心信息失效"
+        assert db.get_pool_candidates(limit=10) == []
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_classify_pool_backlog_temporal_grounding_uses_prompt_projection() -> None:
+    evidence = "赛事已经结束"
+
+    class _TemporalClassifyLLM:
+        def __init__(self) -> None:
+            self.user_input = ""
+
+        async def complete_structured_task(self, **kwargs: Any) -> LLMResponse:
+            self.user_input = str(kwargs.get("user_input", ""))
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "score": 0.95,
+                            "reason": "匹配用户兴趣",
+                            "topic_group": "赛事",
+                            "style_key": "deep_focus",
+                            "temporal_class": "current",
+                            "temporal_confidence": 0.96,
+                            "temporal_reason": "赛事终态会使核心信息失效",
+                            "temporal_validity_mode": "event_state",
+                            "temporal_valid_until": "",
+                            "temporal_scope": "core",
+                            "temporal_evidence": evidence,
+                            "temporal_state": "expired",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVPROMPTPROJECTION",
+            title="普通赛事介绍",
+            description=("甲" * 401) + evidence,
+            source="search",
+            style_key="",
+            topic_group="",
+            relevance_score=0.0,
+        )
+        llm = _TemporalClassifyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        classified = await engine.classify_pool_backlog(profile=_build_profile(), limit=10)
+
+        assert classified == 1
+        assert evidence not in llm.user_input
+        row = db.conn.execute(
+            "SELECT pool_status, temporal_validity_mode, temporal_state "
+            "FROM content_cache WHERE bvid = 'BVPROMPTPROJECTION'"
+        ).fetchone()
+        assert dict(row) == {
+            "pool_status": "fresh",
+            "temporal_validity_mode": "freshness_only",
+            "temporal_state": "unknown",
+        }
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_classify_pool_backlog_missing_temporal_fields_preserves_prior_evidence() -> None:
+    class _MissingTemporalClassifyLLM:
+        async def complete_structured_task(self, **_kwargs: Any) -> LLMResponse:
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "score": 0.95,
+                            "reason": "相关性仍然有效",
+                            "topic_group": "即时事件",
+                            "style_key": "daily_wander",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVLEGACYTEMPORAL",
+            title="旧池中的过期突发内容",
+            source="search",
+            style_key="",
+            topic_group="",
+            relevance_score=0.0,
+            published_at="2000-01-01T00:00:00Z",
+        )
+        # Simulate a pre-v2 row that still uses the old age-only evidence.
+        # The old 3-day window now schedules a review instead of claiming that
+        # the content is factually expired.
+        db._execute_write(
+            """
+            UPDATE content_cache
+            SET temporal_class = 'breaking',
+                temporal_confidence = 0.95,
+                temporal_reason = '核心价值依赖事件仍在发生',
+                pool_status = 'fresh'
+            WHERE bvid = 'BVLEGACYTEMPORAL'
+            """
+        )
+        engine = RecommendationEngine(llm=_MissingTemporalClassifyLLM(), database=db)
+
+        classified = await engine.classify_pool_backlog(profile=_build_profile(), limit=10)
+
+        assert classified == 1
+        row = db.conn.execute(
+            """
+            SELECT pool_status, temporal_class, temporal_confidence, temporal_reason,
+                   relevance_score, style_key
+            FROM content_cache
+            WHERE bvid = 'BVLEGACYTEMPORAL'
+            """
+        ).fetchone()
+        assert row["pool_status"] == "temporal_review_hold"
+        assert row["temporal_class"] == "breaking"
+        assert float(row["temporal_confidence"]) == pytest.approx(0.95)
+        assert row["temporal_reason"] == "核心价值依赖事件仍在发生"
+        assert float(row["relevance_score"]) == pytest.approx(0.95)
+        assert row["style_key"] == "daily_wander"
+        assert db.get_pool_candidates(limit=10) == []
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_classify_pool_backlog_default_batch_size_is_30_and_override_still_applies() -> None:
     class _BatchSizingClassifyLLM:
         def __init__(self) -> None:
@@ -3156,6 +3446,68 @@ async def test_precompute_batch_preserves_full_body_text() -> None:
         assert completed == 1
         batch = _content_batch_from_prompt(llm.user_inputs[0])
         assert batch[0]["body_text"] == body_text
+
+
+@pytest.mark.asyncio
+async def test_precompute_batch_grounds_copy_in_evaluation_clock() -> None:
+    """Recommendation copy must see the source publication time plus the
+    evaluation clock, never the copy-generation wall clock."""
+
+    class _TemporalRecordingBatchLLM:
+        def __init__(self) -> None:
+            self.user_inputs: list[str] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            self.user_inputs.append(user_input)
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV_EXPR_TIME",
+                            "expression": "这条老片的价值不靠发布时间撑场。",
+                            "topic_label": "旧片重看",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        item = DiscoveredContent(
+            bvid="BV_EXPR_TIME",
+            title="2024 年的老片重映",
+            up_name="某UP",
+            published_at="2024-05-01T12:00:00Z",
+            published_label="2024-05-01",
+            temporal_evaluated_at="2026-01-02T03:04:05Z",
+            relevance_score=0.82,
+        )
+        _seed_pool(db, [item], precomputed=False)
+        llm = _TemporalRecordingBatchLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._precompute_batch([item], _build_profile())
+
+        assert completed == 1
+        batch = _content_batch_from_prompt(llm.user_inputs[0])
+        assert batch[0]["published_at"] == "2024-05-01T12:00:00Z"
+        assert batch[0]["published_label"] == "2024-05-01"
+        assert batch[0]["evaluated_at"] == "2026-01-02T03:04:05Z"
 
 
 @pytest.mark.asyncio
@@ -4304,6 +4656,65 @@ async def test_precompute_batch_skips_single_fallback_during_provider_cooldown()
 
 
 @pytest.mark.asyncio
+async def test_precompute_batch_split_retry_halves_on_reasoning_budget() -> None:
+    """A JSON copy batch that dies on reasoning budget splits into singles."""
+
+    class _ReasoningBudgetExpressionLLM:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            bvids = [chunk.split('"', 1)[0] for chunk in user_input.split('"bvid": "')[1:]]
+            self.batch_sizes.append(len(bvids))
+            if len(bvids) > 1:
+                raise LLMProviderExecutionError(
+                    "openai_compatible returned reasoning but no final content "
+                    "(finish_reason=length); disable thinking/reasoning or increase max_tokens"
+                )
+            assert bvids
+            return LLMResponse(
+                content=json.dumps(
+                    [{"bvid": bvids[0], "expression": f"copy-{bvids[0]}", "topic_label": "t"}],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    items = [
+        DiscoveredContent(bvid="BV_REASON_A", title="A", relevance_score=0.8),
+        DiscoveredContent(bvid="BV_REASON_B", title="B", relevance_score=0.7),
+    ]
+    llm = _ReasoningBudgetExpressionLLM()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_pool(db, items, precomputed=False)
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._precompute_batch_with_split_retry(items, _build_profile())
+
+        rows = {row["bvid"]: dict(row) for row in db.get_cached_content(limit=10)}
+
+    assert completed == 2
+    assert llm.batch_sizes == [2, 1, 1]
+    assert rows["BV_REASON_A"]["pool_expression"] == "copy-BV_REASON_A"
+    assert rows["BV_REASON_B"]["pool_expression"] == "copy-BV_REASON_B"
+
+
+@pytest.mark.asyncio
 async def test_precompute_batch_matches_expressions_by_bvid_when_response_reorders() -> None:
     class _ReorderedExpressionLLM:
         async def complete_structured_task(
@@ -5072,7 +5483,9 @@ async def test_visual_bonus_map_empty_when_inactive() -> None:
             embedding_service=_CoverVisualEmb(key_map, active=False),  # type: ignore[arg-type]
         )
         try:
-            assert (await active._visual_bonus_map(cands, _build_profile())).get("BVX", 0.0) > 0.0
+            assert (await active._visual_bonus_map(cands, _build_profile())).get(
+                cands[0].scoring_key, 0.0
+            ) > 0.0
             assert await inactive._visual_bonus_map(cands, _build_profile()) == {}
         finally:
             db.close()
@@ -5628,6 +6041,43 @@ class _SnapshotSpyDB:
         return PoolServePersistResult(recommendation_ids=tuple(range(1, len(items) + 1)))
 
 
+class _PartialTemporalCommitDB(_SnapshotSpyDB):
+    """Simulate one selected row expiring between snapshot and final commit."""
+
+    async def persist_pool_serve_async(
+        self,
+        items: list[dict[str, Any]],
+        shown_bvids: list[str],
+    ) -> Any:
+        from openbiliclaw.storage.database import PoolServePersistResult
+
+        assert [str(item["bvid"]) for item in items] == shown_bvids
+        committed = [bvid for bvid in shown_bvids if bvid == "BVCOMMITTED"]
+        stale = [bvid for bvid in shown_bvids if bvid != "BVCOMMITTED"]
+        return PoolServePersistResult(
+            recommendation_ids=(101,) if committed else (),
+            committed_bvids=tuple(committed),
+            temporally_stale_bvids=tuple(stale),
+        )
+
+
+class _SkippedFinalCommitDB(_SnapshotSpyDB):
+    """Simulate another process consuming the selected row before commit."""
+
+    async def persist_pool_serve_async(
+        self,
+        items: list[dict[str, Any]],
+        shown_bvids: list[str],
+    ) -> Any:
+        from openbiliclaw.storage.database import PoolServePersistResult
+
+        return PoolServePersistResult(
+            recommendation_ids=(),
+            committed_bvids=(),
+            skipped_bvids=tuple(shown_bvids),
+        )
+
+
 def _snapshot_with(rows: list[dict[str, Any]]) -> Any:
     from openbiliclaw.storage.database import PoolServeSnapshot
 
@@ -5681,6 +6131,33 @@ async def test_serve_forwards_canonical_platform_to_snapshot_loader() -> None:
 
 
 @pytest.mark.asyncio
+async def test_serve_returns_only_rows_confirmed_by_final_temporal_commit() -> None:
+    rows = [_pool_row("BVEXPIRED", "bilibili"), _pool_row("BVCOMMITTED", "bilibili")]
+    stub = _PartialTemporalCommitDB(_snapshot_with(rows))
+    engine = RecommendationEngine(llm=_DummyLLM(), database=stub)  # type: ignore[arg-type]
+
+    result = await engine.serve_with_result(_build_profile(), limit=2)
+
+    assert [item.content.bvid for item in result.items] == ["BVCOMMITTED"]
+    assert result.items[0].recommendation_id == 101
+    assert engine._last_served_bvids == frozenset({"BVCOMMITTED"})
+    assert result.pool_counts_after["available"] == 0
+
+
+@pytest.mark.asyncio
+async def test_serve_inventory_accounts_for_rows_consumed_before_final_commit() -> None:
+    stub = _SkippedFinalCommitDB(_snapshot_with([_pool_row("BVCONSUMED", "bilibili")]))
+    engine = RecommendationEngine(llm=_DummyLLM(), database=stub)  # type: ignore[arg-type]
+
+    result = await engine.serve_with_result(_build_profile(), limit=1)
+
+    assert result.items == []
+    assert result.pool_counts_after["available"] == 0
+    assert result.pool_counts_after["raw"] == 0
+    assert engine._last_served_bvids == frozenset()
+
+
+@pytest.mark.asyncio
 async def test_serve_rejects_cross_platform_rows_leaked_by_the_snapshot(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -5698,6 +6175,55 @@ async def test_serve_rejects_cross_platform_rows_leaked_by_the_snapshot(
     assert "zhihu" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_snapshot_serving_applies_strict_publication_date_filter() -> None:
+    """The real snapshot path must enforce strict Bilibili date eligibility."""
+    in_range = _pool_row("BVINRANGE", "bilibili")
+    in_range["published_at"] = "2026-01-15T12:00:00+00:00"
+    out_of_range = _pool_row("BVOUTOFRANGE", "bilibili")
+    out_of_range["published_at"] = "2025-12-31T12:00:00+00:00"
+    stub = _SnapshotSpyDB(_snapshot_with([in_range, out_of_range]))
+    curator = PoolCurator(
+        object(),  # type: ignore[arg-type]
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+            weight=1.0,
+        ),
+    )
+    engine = RecommendationEngine(
+        llm=_DummyLLM(),
+        database=stub,  # type: ignore[arg-type]
+        curator=curator,
+    )
+
+    result = await engine.serve_with_result(_build_profile(), limit=2)
+
+    assert [item.content.bvid for item in result.items] == ["BVINRANGE"]
+    assert stub.snapshot_kwargs
+
+
+def test_pool_rows_derive_platform_from_source_when_platform_is_missing() -> None:
+    engine = RecommendationEngine(
+        llm=_DummyLLM(),
+        database=object(),  # type: ignore[arg-type]
+    )
+
+    [item] = engine._rows_to_discovered(
+        [
+            {
+                "bvid": "YT_LEGACY",
+                "source": "youtube-search",
+                "source_platform": "",
+            }
+        ]
+    )
+
+    assert item.source_platform == "youtube"
+    assert item.source_strategy == "youtube-search"
+
+
 class _LegacyCompatDB:
     """Adapter without isolated snapshots — exercises the compatibility path."""
 
@@ -5706,6 +6232,8 @@ class _LegacyCompatDB:
         self.platform_calls: list[str] = []
         self.plain_calls: list[int] = []
         self.inserted: list[dict[str, Any]] = []
+        self.insert_calls = 0
+        self.shown_calls: list[list[str]] = []
 
     def count_pool_readiness(self, **_kwargs: Any) -> dict[str, int]:
         return {"available": len(self._rows), "raw": len(self._rows), "pending": 0}
@@ -5728,11 +6256,12 @@ class _LegacyCompatDB:
         return set()
 
     def batch_insert_recommendations(self, rows: list[dict[str, Any]]) -> list[int]:
+        self.insert_calls += 1
         self.inserted.extend(rows)
         return list(range(1, len(rows) + 1))
 
     def mark_pool_items_shown(self, bvids: list[str]) -> None:
-        return None
+        self.shown_calls.append(list(bvids))
 
 
 @pytest.mark.asyncio
@@ -5757,6 +6286,51 @@ async def test_serve_compatibility_path_keeps_legacy_shape_without_scope() -> No
 
     assert stub.plain_calls  # the historical cross-platform window
     assert stub.platform_calls == []  # platform floor sees both platforms present
+
+
+@pytest.mark.asyncio
+async def test_realtime_legacy_serve_rechecks_temporal_gate_after_provider_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_check = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    row = _pool_row("BVEXPIRING", "bilibili")
+    row.update(
+        temporal_class="breaking",
+        temporal_confidence=0.95,
+        temporal_reason="核心价值依赖事件仍在发生",
+        temporal_policy_version="v1",
+        published_at=(first_check - timedelta(days=3) + timedelta(seconds=1)).isoformat(),
+    )
+    checks = iter((first_check, first_check + timedelta(seconds=2)))
+
+    class _SteppedDateTime:
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            assert tz is UTC
+            return next(checks)
+
+        @classmethod
+        def fromisoformat(cls, value: str) -> datetime:
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr("openbiliclaw.recommendation.engine.datetime", _SteppedDateTime)
+    llm = _DummyLLM()
+    stub = _LegacyCompatDB([row])
+    engine = RecommendationEngine(llm=llm, database=stub)  # type: ignore[arg-type]
+
+    result = await engine.serve_with_result(
+        _build_profile(),
+        limit=1,
+        expression_mode="realtime",
+    )
+    await asyncio.sleep(0)
+
+    assert len(llm.calls) == 1  # The row crossed its TTL during provider I/O.
+    assert result.items == []
+    assert stub.insert_calls == 0
+    assert stub.inserted == []
+    assert stub.shown_calls == []
+    assert engine._last_served_bvids == frozenset()
 
 
 @pytest.mark.asyncio
@@ -6275,3 +6849,191 @@ def test_evo_delight_reason_uses_only_formal_user_facing_copy() -> None:
         )
         == ""
     )
+
+
+async def test_worker_mode_serve_commits_before_return_and_ignores_stale_snapshot(tmp_path):
+    """Isolation must not bypass the final DB commit or reuse consumed candidates."""
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
+
+    db = Database(tmp_path / "serve.db")
+    db.initialize()
+    for index in range(6):
+        _seed_visible(
+            db,
+            f"BVatomic{index}",
+            title=f"Unique topic {index}",
+            source="search",
+            relevance_score=0.9,
+            topic_group=f"group{index}",
+            pool_expression="Prepared copy",
+            pool_topic_label=f"topic{index}",
+        )
+    store = ServeSnapshotStore(tmp_path / "snapshot.json")
+    store.save(await db.load_pool_serve_snapshot_async(limit=40))
+    outbox = ServeOutbox(tmp_path / "outbox.jsonl")
+    engine = RecommendationEngine(
+        llm=_DummyLLM(),
+        database=db,
+        serve_snapshot_store=store,
+        serve_outbox=outbox,
+    )
+    try:
+        batches = [await engine.serve_with_result(_build_profile(), limit=2) for _ in range(3)]
+        ids = [rec.content.bvid for batch in batches for rec in batch.items]
+        assert len(ids) == len(set(ids)) == 6
+        assert all(rec.recommendation_id > 0 for batch in batches for rec in batch.items)
+        assert db.count_pool_candidates() == 0
+        assert len(db.get_recommendations(limit=10)) == 6
+        assert outbox.count() == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_mmr_reuses_each_cosine_pair_only_within_one_batch(monkeypatch, partial) -> None:
+    from collections import Counter
+
+    import openbiliclaw.llm.embedding as embedding_module
+
+    candidates = [
+        DiscoveredContent(
+            bvid=f"BVCOS{i}",
+            title=f"Content {i}",
+            source_strategy="search",
+            topic_group=f"topic-{i % 7}",
+            style_key=["deep_focus", "hands_on", "quick_scan"][i % 3],
+            relevance_score=0.9 - i * 0.001,
+        )
+        for i in range(30)
+    ]
+    embeddings = {
+        item.scoring_key: [0.0 if i % 4 == 0 else float(j == i % 16) for j in range(16)]
+        for i, item in enumerate(candidates)
+        if not partial or i % 3 != 0
+    }
+    calls: Counter[tuple[int, int]] = Counter()
+    original = embedding_module.cosine_similarity
+
+    def counted(a, b):
+        calls[(id(a), id(b))] += 1
+        return original(a, b)
+
+    monkeypatch.setattr(embedding_module, "cosine_similarity", counted)
+    first = RecommendationEngine._select_diversified_batch(
+        candidates,
+        limit=10,
+        embeddings=embeddings,
+    )
+    assert len(first) == 10
+    assert calls
+    assert max(calls.values()) == 1, "including zero similarity, repeated pairs are reused"
+    calls.clear()
+    second = RecommendationEngine._select_diversified_batch(
+        candidates,
+        limit=10,
+        embeddings=embeddings,
+    )
+    assert [item.bvid for item in second] == [item.bvid for item in first]
+    assert calls, "a later batch must calculate against its own vectors"
+    assert max(calls.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_forwards_reply_style_into_tone_block() -> None:
+    """issue #255: RecommendationEngine.reply_style reaches the expression tone block."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db, reply_style="像损友一样毒舌")
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV1STYLE255",
+                title="讲透贸易逆差的底层逻辑",
+                up_name="经济观察",
+                description="从历史和制度角度解释问题。",
+                relevance_score=0.89,
+            ),
+            _build_profile(),
+        )
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert "- 回复风格: 像损友一样毒舌" in user_input
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_default_reply_style_leaves_prompt_untouched() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV1NODEFAULT255",
+                title="讲透贸易逆差的底层逻辑",
+                up_name="经济观察",
+                description="从历史和制度角度解释问题。",
+                relevance_score=0.89,
+            ),
+            _build_profile(),
+        )
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert "- 回复风格:" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_precompute_batch_forwards_reply_style_into_tone_block() -> None:
+    """issue #255: the batch expression path injects reply_style too."""
+
+    class _BatchLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            **_kwargs: object,
+        ) -> LLMResponse:
+            self.calls.append({"system_instruction": system_instruction, "user_input": user_input})
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV1BATCH255",
+                            "expression": "这条会接住你最近想把问题想透的状态。",
+                            "topic_label": "想透的状态",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _BatchLLM()
+        engine = RecommendationEngine(llm=llm, database=db, reply_style="多用短句")
+        batch = [
+            DiscoveredContent(
+                bvid="BV1BATCH255",
+                title="结构化工作流复盘",
+                up_name="效率实验室",
+                description="如何把复杂问题拆成稳定系统。",
+                relevance_score=0.9,
+            )
+        ]
+
+        await engine._precompute_batch(batch, _build_profile())
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert "- 回复风格: 多用短句" in user_input

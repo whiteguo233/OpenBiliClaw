@@ -1,5 +1,5 @@
 ---
-name: openbiliclaw_adapter
+name: openbiliclaw-adapter
 description: Use OpenBiliClaw's versioned Agent Bridge CLI to read multi-source recommendations, profile state, dialogue, probes, saved lists, and submit explicit feedback.
 user-invocable: true
 ---
@@ -66,7 +66,7 @@ Supported commands:
 - `capabilities` — negotiate `agent-bridge/v2` and the complete capability list before caching tools
 - `sync-account`
 - `get-profile`
-- `recommend --limit 5 [--source-platform <platform>] [--exclude-item-id <id>]`
+- `recommend --limit 5 [--source-platform <platform>] [--exclude-item-id <id>] [--realtime]`
 - `reshuffle` / `append` — replace or append precomputed recommendation pages
 - `get-delight` / `respond-delight` — view, like, dislike, dismiss or chat about a surprise
 - `activity-feed` / `platform-availability`
@@ -152,7 +152,7 @@ Use this order for routine work:
 1. `capabilities`
 2. `get-profile` / `runtime-status`
 3. `next-probe` and `next-avoidance-probe`; ask and respond with the matching four-state command
-4. `recommend --limit <n>` or `reshuffle`
+4. `reshuffle --limit <n>` / `append` (fast, precomputed) or `recommend --limit <n>`
 5. `submit-feedback` / `respond-delight`
 6. `get-delight` or `listen` for proactive surprise recommendations and probes
 7. `sync-account` when long-term signals need refreshing
@@ -162,7 +162,7 @@ Use this order for routine work:
 
 1. Parse the returned JSON instead of relying on prose.
 2. If the JSON payload is `{ "ok": false, ... }`, surface the error and stop.
-3. Prefer `recommend --limit <n>` for normal recommendation fetches. This is the fast path and does not trigger runtime refresh by default.
+3. Prefer `reshuffle --limit <n>` (or `append` for pagination) for fast precomputed pages. `recommend --limit <n>` now also serves precomputed pool copy by default; add `--realtime` only when you explicitly want fresh per-item LLM expressions (slow). Neither triggers a runtime refresh unless you pass `--refresh-if-needed`.
 4. Use `--refresh-if-needed` only when the user explicitly wants a heavier freshness check before recommendation fetch.
 5. For every feedback action, create one stable non-empty `--request-id` (maximum 400 characters) and reuse it for every retry of that same action. Never reuse it for a different recommendation/type/note.
 6. For `comment` feedback, always include `--note`.

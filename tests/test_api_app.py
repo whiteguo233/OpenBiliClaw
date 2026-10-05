@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbiliclaw import __version__
-from openbiliclaw.api.app import create_app
+from openbiliclaw.api.app import _recommendation_snapshot_rows_and_expiry, create_app
 from openbiliclaw.llm.service import LLMResponseContentError
 
 
@@ -174,7 +174,7 @@ def _dialogue_entry_source(symbol: str, branch_predicate: str = "") -> str:
             id="pending-open-anchor",
         ),
         pytest.param(
-            "SocraticDialogue.respond",
+            "SocraticDialogue._queue_dialogue_learning",
             "self._learning_mode is DialogueLearningMode.QUEUED",
             ("queue.submit(", "DialogueJobKind.LEARN"),
             ("learn_fn(", "_apply_dialogue_settlement("),
@@ -433,7 +433,7 @@ def test_injected_runtime_initializes_inventory_from_database_and_controller_tar
     assert gate.inventory_priority_state is InventoryPriorityState.EMPTY
     response = TestClient(app).post("/api/recommendations/append", json={"excluded_bvids": []})
     assert response.status_code == 200
-    assert response.json() == {"items": []}
+    assert response.json() == {"items": [], "has_more": False, "pool_status": None}
     assert gate.inventory_priority_state is InventoryPriorityState.EMPTY
 
 
@@ -558,6 +558,18 @@ def test_api_candidate_snapshot_uses_exact_durable_readiness_and_available_gate(
         "count_discovery_candidates_by_status",
         lambda: {"pending_eval": 500, "evaluating": 60, "evaluated": 3},
     )
+    real_readiness = ctx.runtime_controller._pool_readiness_counts  # noqa: SLF001
+
+    def readiness_with_evaluated() -> dict[str, int]:
+        counts = dict(real_readiness())
+        counts["evaluated_pending"] = 3
+        return counts
+
+    monkeypatch.setattr(
+        ctx.runtime_controller,
+        "_pool_readiness_counts",
+        readiness_with_evaluated,
+    )
 
     snapshot = ctx.runtime_controller.candidate_eval_coordinator._snapshot()
 
@@ -565,6 +577,7 @@ def test_api_candidate_snapshot_uses_exact_durable_readiness_and_available_gate(
     assert snapshot.pending_eval == 500
     assert snapshot.evaluating == 60
     assert snapshot.evaluated_pending_admission == 3
+    assert snapshot.evaluated_waiting_total == 3
     assert snapshot.admitted_pending_copy == 4
     assert snapshot.admitted_pending_available == 3
     assert ctx.recommendation_engine.pool_available_target_count == 10
@@ -658,6 +671,54 @@ async def test_copy_ready_target_clamps_and_rebinds_provider_on_rebuild(tmp_path
     assert new_engine.pool_available_target_count == 2
     assert getattr(new_provider, "__self__", None) is new_engine
     assert new_provider() == 2
+
+
+@pytest.mark.asyncio
+async def test_eval_scorer_rebuilds_active_engine_and_registered_strategies(tmp_path) -> None:
+    from openbiliclaw.api.runtime_context import build_runtime_context
+    from openbiliclaw.config import Config
+
+    initial = Config(data_dir=str(tmp_path / "data"))
+    initial.llm.default_provider = "ollama"
+    initial.llm.ollama.model = "llama3"
+    initial.discovery.eval_scorer = "llm"
+    ctx = build_runtime_context(initial)
+
+    agent_engine = ctx.discovery_engine
+    assert agent_engine._eval_scorer == "llm"  # noqa: SLF001
+    assert agent_engine._strategies  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is agent_engine
+        for strategy in agent_engine._strategies  # noqa: SLF001
+    )
+
+    shadow = Config(data_dir=str(tmp_path / "data"))
+    shadow.llm.default_provider = "ollama"
+    shadow.llm.ollama.model = "llama3"
+    shadow.discovery.eval_scorer = "shadow"
+    await ctx.rebuild_from_config(shadow)
+
+    shadow_engine = ctx.discovery_engine
+    assert shadow_engine is not agent_engine
+    assert shadow_engine._eval_scorer == "shadow"  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is shadow_engine
+        for strategy in shadow_engine._strategies  # noqa: SLF001
+    )
+
+    restored = Config(data_dir=str(tmp_path / "data"))
+    restored.llm.default_provider = "ollama"
+    restored.llm.ollama.model = "llama3"
+    restored.discovery.eval_scorer = "llm"
+    await ctx.rebuild_from_config(restored)
+
+    restored_engine = ctx.discovery_engine
+    assert restored_engine is not shadow_engine
+    assert restored_engine._eval_scorer == "llm"  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is restored_engine
+        for strategy in restored_engine._strategies  # noqa: SLF001
+    )
 
 
 @pytest.mark.asyncio
@@ -1587,6 +1648,8 @@ class TestBackendAPI:
         assert 'href="/web/assets/css/app.css?v=' in response.text
         assert 'href="/web/assets/css/classic.css?v=' in response.text
         assert 'src="/web/assets/js/app.js?v=' in response.text
+        assert 'src="/web/assets/js/chat-agent-core.js?v=' in response.text
+        assert 'src="/shared/agent-chat.js?v=' in response.text
 
     def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:
         from fastapi.testclient import TestClient
@@ -2444,6 +2507,8 @@ class TestBackendAPI:
                 module_overrides: object | None = None,
                 concurrency: int = 1,
                 concurrency_gate: object | None = None,
+                reply_style: str = "",
+                dialogue_tone_prompt: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2451,6 +2516,8 @@ class TestBackendAPI:
                 self.module_overrides = module_overrides
                 self.concurrency = concurrency
                 self.concurrency_gate = concurrency_gate
+                self.reply_style = reply_style
+                self.dialogue_tone_prompt = dialogue_tone_prompt
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:
@@ -2695,6 +2762,8 @@ class TestBackendAPI:
                 module_overrides: object | None = None,
                 concurrency: int = 1,
                 concurrency_gate: object | None = None,
+                reply_style: str = "",
+                dialogue_tone_prompt: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2702,6 +2771,8 @@ class TestBackendAPI:
                 self.module_overrides = module_overrides
                 self.concurrency = concurrency
                 self.concurrency_gate = concurrency_gate
+                self.reply_style = reply_style
+                self.dialogue_tone_prompt = dialogue_tone_prompt
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:
@@ -2804,6 +2875,7 @@ class TestBackendAPI:
                 database: object | None = None,
                 learning_mode: object,
                 settlement_queue: object | None = None,
+                link_ingestor: object | None = None,
             ) -> None:
                 self.llm = llm
                 self.soul_engine = soul_engine
@@ -2812,6 +2884,7 @@ class TestBackendAPI:
                 self.database = database
                 self.learning_mode = learning_mode
                 self.settlement_queue = settlement_queue
+                self.link_ingestor = link_ingestor
 
         fake_config = SimpleNamespace(
             data_path=Path("/tmp/openbiliclaw-test-data"),
@@ -2973,6 +3046,17 @@ class TestBackendAPI:
         assert runtime_context.llm_service.concurrency_gate is shared_gate
         assert captured["soul_engine_kwargs"]["llm_concurrency_gate"] is shared_gate
         assert shared_gate.status_payload()["llm_total_concurrency"] == 2
+        # Chat link ingestion (issue #83): the production dialogue carries a
+        # LinkIngestor bound to the runtime bilibili client and the durable
+        # memory event path.
+        from openbiliclaw.sources.link_ingest import LinkIngestor
+
+        dialogue = runtime_context.dialogue
+        assert isinstance(dialogue.link_ingestor, LinkIngestor)
+        assert dialogue.link_ingestor._bilibili_client is runtime_context.bilibili_client
+        # FakeMemoryManager 没有 propagate_event:装配必须防御性降级为 None,
+        # 而不是让上下文构建炸掉。生产 MemoryManager 一定带该方法。
+        assert dialogue.link_ingestor._event_sink is None
 
     def test_cap_by_franchise_keeps_at_most_n_per_franchise(self) -> None:
         """Regression for the 'one popup full of 原神' bug. The API
@@ -3135,6 +3219,7 @@ class TestBackendAPI:
             "zhihu",
             "reddit",
             "bangumi",
+            "github",
             "linuxdo",
             "weibo",
         ):
@@ -3258,6 +3343,59 @@ class TestBackendAPI:
         assert rejected["token_state"] == "rejected"
         assert "已被拒绝" in rejected["detail"]
 
+    def test_github_status_merges_discovery_health_and_current_pat_rejection(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config
+        from openbiliclaw.runtime.github_producer import (
+            GitHubDiscoveryProducer,
+            _persist_token_rejection,
+            _token_fingerprint,
+        )
+        from openbiliclaw.storage.database import Database
+
+        cfg = Config()
+        cfg.sources.github.enabled = True
+        cfg.sources.github.access_token = "old-token"
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+        database = Database(tmp_path / "github-source-status.db")
+        database.initialize()
+        producer = GitHubDiscoveryProducer(
+            database=database,
+            soul_engine=object(),
+            client=object(),
+        )
+        producer._ensure_tables()
+        _persist_token_rejection(database, _token_fingerprint("old-token"))
+        client = TestClient(
+            create_app(memory_manager=object(), database=database, soul_engine=object())
+        )
+
+        rejected = client.get("/api/sources/status").json()["github"]
+
+        assert rejected["state"] == "no_auth"
+        assert rejected["logged_in"] is True
+        assert rejected["discovery_state"] == "unverified"
+        assert rejected["token_state"] == "rejected"
+        assert rejected["auth"]["verification"] == "failed"
+        assert rejected["auth"]["capabilities"]["profile"]["ready"] is False
+        assert rejected["auth"]["capabilities"]["bootstrap"]["state"] == "unavailable"
+        assert "PAT 已被拒绝" in rejected["detail"]
+
+        producer._set_cooldown(120)
+        cooling = client.get("/api/sources/status").json()["github"]
+        assert cooling["discovery_state"] == "rate_limited"
+        assert cooling["feed_paused"] is True
+        assert cooling["token_state"] == "rejected"
+
+        cfg.sources.github.access_token = "rotated-token"
+        rotated = client.get("/api/sources/status").json()["github"]
+        assert rotated["token_state"] == "ok"
+        assert rotated["auth"]["verification"] == "unverified"
+        assert rotated["auth"]["capabilities"]["bootstrap"]["ready"] is True
+
     def test_bangumi_disabled_status_surfaces_a_saved_credential(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -3352,6 +3490,9 @@ class TestBackendAPI:
         assert body["zhihu"]["available"] is False
         assert body["bangumi"]["available"] is False
         assert body["bangumi"]["label"] == "可选个人令牌"
+        assert body["github"]["available"] is False
+        assert body["github"]["value"] == ""
+        assert body["github"]["label"] == "可选 PAT"
 
         masked = client.get("/api/sources/credentials").json()
         assert masked["bilibili"]["value"] == body["bilibili"]["value"]
@@ -4047,8 +4188,9 @@ class TestBackendAPI:
 
         assert service.calls == 1
 
+    @pytest.mark.parametrize("cpu_fallback", [False, True])
     def test_health_endpoint_treats_loopback_ollama_timeout_as_cold_load(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, cpu_fallback: bool
     ) -> None:
         import asyncio
 
@@ -4057,6 +4199,11 @@ class TestBackendAPI:
         import openbiliclaw.api.app as appmod
 
         monkeypatch.setattr(appmod, "_EMBEDDING_PROBE_TIMEOUT_SECONDS", 0.01)
+        from openbiliclaw.llm import ollama_embedding_runtime
+
+        monkeypatch.setattr(
+            ollama_embedding_runtime, "cpu_fallback_active", lambda *_: cpu_fallback
+        )
 
         class _SlowProbeService:
             async def probe(self) -> bool:
@@ -4080,7 +4227,7 @@ class TestBackendAPI:
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json()["embedding_ready"] is True
+        assert response.json()["embedding_ready"] is (not cpu_fallback)
 
     @pytest.mark.parametrize(
         ("provider", "base_url"),
@@ -4308,6 +4455,80 @@ class TestBackendAPI:
         # Side effect 2: config.toml [bilibili].cookie mirrors the cookie.
         config_text = (tmp_path / "config.toml").read_text()
         assert cookie_value in config_text
+
+    def test_bilibili_user_card_and_follow_endpoints_forward_up_state(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Mobile UP card / follow endpoints keep the documented wire contract."""
+        from fastapi.testclient import TestClient
+
+        import openbiliclaw.bilibili.api as bilibili_api_module
+        from openbiliclaw.config import Config
+
+        config = Config(data_dir=str(tmp_path))
+        config.bilibili.cookie = "SESSDATA=abc; bili_jct=csrf123"
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
+        monkeypatch.setattr(
+            "openbiliclaw.bilibili.auth.resolve_runtime_cookie",
+            lambda **_kw: "SESSDATA=abc; bili_jct=csrf123",
+        )
+
+        class _FakeBilibiliClient:
+            def __init__(self, *, cookie: str = "", proxy: str | None = None) -> None:
+                self.cookie = cookie
+                self.proxy = proxy
+
+            async def get_user_card(self, mid: int) -> dict[str, object]:
+                return {
+                    "mid": mid,
+                    "name": "测试UP",
+                    "face": "https://i0.hdslb.com/bfs/face/up.jpg",
+                    "sign": "签名",
+                    "fans": 123,
+                    "following": False,
+                }
+
+            async def set_user_follow(self, mid: int, *, follow: bool) -> dict[str, object]:
+                return {
+                    "mid": mid,
+                    "name": "测试UP",
+                    "face": "https://i0.hdslb.com/bfs/face/up.jpg",
+                    "sign": "签名",
+                    "fans": 124,
+                    "following": follow,
+                }
+
+            async def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(bilibili_api_module, "BilibiliAPIClient", _FakeBilibiliClient)
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        card = client.get("/api/bilibili/user/card", params={"mid": 42})
+        assert card.status_code == 200, card.text
+        assert card.json() == {
+            "ok": True,
+            "mid": 42,
+            "name": "测试UP",
+            "face": "https://i0.hdslb.com/bfs/face/up.jpg",
+            "sign": "签名",
+            "fans": 123,
+            "following": False,
+        }
+
+        follow = client.post("/api/bilibili/user/follow", json={"mid": 42, "follow": True})
+        assert follow.status_code == 200, follow.text
+        assert follow.json() == {
+            "ok": True,
+            "mid": 42,
+            "name": "测试UP",
+            "face": "https://i0.hdslb.com/bfs/face/up.jpg",
+            "sign": "签名",
+            "fans": 124,
+            "following": True,
+        }
 
     def test_bilibili_cookie_sync_restarts_background_tasks_after_rebuild(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -4579,9 +4800,12 @@ class TestBackendAPI:
         assert memory.events[0]["event_type"] == "click"
         assert memory.events[0]["url"] == "https://www.bilibili.com/video/BV1TEST"
         assert memory.events[0]["metadata"]["timestamp"] == 1710000000000
-        # Legacy payload without source_platform defaults to bilibili so the
-        # existing extension build keeps working across the upgrade.
+        # A legacy payload without source_platform can still be classified by
+        # its canonical URL, without treating the compatibility fallback as
+        # exact evidence.
         assert memory.events[0]["metadata"]["source_platform"] == "bilibili"
+        assert memory.events[0]["source_platform"] == "bilibili"
+        assert memory.events[0]["source_confidence"] == "inferred"
 
     def test_events_endpoint_ignores_pre_init_behavior_events(self) -> None:
         from fastapi.testclient import TestClient
@@ -4679,19 +4903,37 @@ class TestBackendAPI:
                         "context": {"pageType": "post"},
                         "metadata": {"content_id": "t3_abc123", "post_id": "abc123"},
                     },
+                    {
+                        "event_id": "events-source-legacy-fallback",
+                        "type": "search",
+                        "title": "没有来源和 URL 的旧事件",
+                        "timestamp": 1710000000003,
+                    },
                 ]
             },
         )
 
         assert response.status_code == 200
-        assert response.json()["accepted"] == 3
+        assert response.json()["accepted"] == 4
         assert memory.events[0]["metadata"]["source_platform"] == "xiaohongshu"
+        assert memory.events[0]["source_platform"] == "xiaohongshu"
+        assert memory.events[0]["content_id"] == "69dea966000000001a0280ad"
+        assert memory.events[0]["source_confidence"] == "exact"
         assert memory.events[0]["metadata"]["note_id"] == "69dea966000000001a0280ad"
-        # Blank source_platform (whitespace only) falls back to bilibili.
-        assert memory.events[1]["metadata"]["source_platform"] == "bilibili"
+        # Blank source_platform is inferred from the canonical URL before the
+        # compatibility B站 fallback.
+        assert memory.events[1]["metadata"]["source_platform"] == "xiaohongshu"
+        assert memory.events[1]["source_platform"] == "xiaohongshu"
+        assert memory.events[1]["source_confidence"] == "inferred"
         assert memory.events[2]["metadata"]["source_platform"] == "reddit"
+        assert memory.events[2]["source_platform"] == "reddit"
+        assert memory.events[2]["content_id"] == "t3_abc123"
+        assert memory.events[2]["source_confidence"] == "exact"
         assert memory.events[2]["metadata"]["content_id"] == "t3_abc123"
         assert memory.events[2]["metadata"]["post_id"] == "abc123"
+        assert memory.events[3]["metadata"]["source_platform"] == "bilibili"
+        assert memory.events[3]["source_platform"] == "bilibili"
+        assert memory.events[3]["source_confidence"] == "legacy_unknown"
 
     def test_events_endpoint_preserves_top_level_dwell_fields(self) -> None:
         """v0.3.x event-satisfaction: top-level watch_seconds /
@@ -5806,6 +6048,49 @@ class TestBackendAPI:
         assert data["items"][0]["up_mid"] == 112233
         assert_publication(data["items"][0])
 
+    def test_recommendations_endpoint_exposes_fail_closed_github_source_metadata(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def get_recommendations(
+                self, limit: int = 20, *, exclude_processed: bool = False
+            ) -> list[dict[str, object]]:
+                assert limit == 40
+                assert exclude_processed is True
+                return [
+                    {
+                        "id": 17,
+                        "bvid": "repository:1175278883",
+                        "item_key": "github:repository:1175278883",
+                        "content_id": "repository:1175278883",
+                        "content_url": "https://github.com/whiteguo233/OpenBiliClaw",
+                        "source_platform": "github",
+                        "content_type": "repository",
+                        "title": "whiteguo233/OpenBiliClaw",
+                        "expression": "值得看看",
+                        "topic": "开源项目",
+                        "franchise_key": "",
+                        "source_metadata": json.dumps(
+                            {
+                                "repository_node_id": "R_kgDORg1VIw",
+                                "language": "Python",
+                                "topics": ["ai-agent"],
+                            }
+                        ),
+                    }
+                ]
+
+        response = TestClient(create_app(database=FakeDatabase())).get("/api/recommendations")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["items"][0]["source_metadata"] == {
+            "repository_node_id": "R_kgDORg1VIw",
+            "language": "Python",
+            "topics": ["ai-agent"],
+        }
+
     def test_recommendations_endpoint_coalesces_immediate_duplicate_reads(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -5829,6 +6114,72 @@ class TestBackendAPI:
         assert client.get("/api/recommendations").status_code == 200
 
         assert database.reads == 1
+
+    def test_recommendation_snapshot_cache_expires_at_temporal_boundary(self) -> None:
+        now = datetime(2026, 8, 12, 12, 0, 0, tzinfo=UTC)
+        rows = [
+            {
+                "bvid": "BV-NEAR-EXPIRY",
+                "published_at": (now - timedelta(days=3) + timedelta(milliseconds=200)).isoformat(),
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.95,
+            }
+        ]
+
+        eligible, expires_at = _recommendation_snapshot_rows_and_expiry(
+            rows,
+            now=now,
+            monotonic_now=100.0,
+        )
+        stale, _ = _recommendation_snapshot_rows_and_expiry(
+            rows,
+            now=now + timedelta(milliseconds=200),
+            monotonic_now=100.2,
+        )
+
+        assert eligible == rows
+        assert expires_at == pytest.approx(100.2)
+        assert stale == []
+
+    def test_recommendation_snapshot_anchors_monotonic_before_wall_clock(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Clock-read latency must shorten, never extend, the final TTL window."""
+        import openbiliclaw.api.app as app_module
+
+        wall_now = datetime(2026, 8, 12, 12, 0, 0, tzinfo=UTC)
+        calls: list[str] = []
+
+        def _monotonic() -> float:
+            calls.append("monotonic")
+            return 100.0
+
+        class _WallClock:
+            @classmethod
+            def now(cls, tz: object) -> datetime:
+                assert calls == ["monotonic"]
+                calls.append("wall")
+                return wall_now
+
+        monkeypatch.setattr(app_module.time, "monotonic", _monotonic)
+        monkeypatch.setattr(app_module, "datetime", _WallClock)
+
+        rows = [
+            {
+                "bvid": "BV-CLOCK-ORDER",
+                "published_at": (
+                    wall_now - timedelta(days=3) + timedelta(milliseconds=200)
+                ).isoformat(),
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.95,
+            }
+        ]
+        eligible, expires_at = _recommendation_snapshot_rows_and_expiry(rows)
+
+        assert calls == ["monotonic", "wall"]
+        assert eligible == rows
+        assert expires_at == pytest.approx(100.2)
 
     def test_recommendations_cache_rechecks_latest_dislikes_immediately(self) -> None:
         """A preference write must invalidate visibility even inside the 1s TTL."""
@@ -6081,6 +6432,16 @@ class TestBackendAPI:
             "event_lane_paused": False,
             "event_lane_last_error": "",
             "event_lane_processed": 0,
+            "dialogue_settlement_depth": 0,
+            "dialogue_settlement_max_depth": 1000,
+            "dialogue_settlement_dropped": 0,
+            "worker_outbox_depth": 0,
+            "worker_running": False,
+            "worker_mode": "none",
+            "worker_pid": None,
+            "worker_started_at": "",
+            "worker_last_heartbeat_at": "",
+            "worker_heartbeat_age_seconds": -1.0,
             "chat_reply_depth": 0,
             "chat_reply_active": False,
             "chat_reply_last_error": "",
@@ -6102,6 +6463,7 @@ class TestBackendAPI:
             "last_update_error": "",
             "backend_update_state": "disabled",
             "backend_update_reason": "none",
+            "publication_date_filter": {},
         }
 
     def test_runtime_status_endpoint_surfaces_account_sync_error_kind(self) -> None:
@@ -6194,6 +6556,41 @@ class TestBackendAPI:
         assert body["last_update_error"] == ""
         assert body["backend_update_state"] == "update_available"
         assert body["backend_update_reason"] == "none"
+
+    def test_runtime_status_endpoint_includes_publication_date_filter_stats(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeRuntimeController:
+            def get_runtime_status(self) -> dict[str, object]:
+                return {
+                    "initialized": True,
+                    "recommendation_count": 1,
+                    "pending_signal_events": 0,
+                    "unread_count": 0,
+                    "publication_date_filter": {
+                        "youtube": {
+                            "input": 20,
+                            "filtered_by_publication_date": 20,
+                            "inserted": 0,
+                        }
+                    },
+                }
+
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_controller=FakeRuntimeController(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/runtime-status")
+
+        assert response.status_code == 200
+        stats = response.json()["publication_date_filter"]
+        assert stats["youtube"]["input"] == 20
+        assert stats["youtube"]["filtered_by_publication_date"] == 20
+        assert stats["youtube"]["inserted"] == 0
 
     def test_update_status_returns_backend_only_and_ignores_extension_metadata(self) -> None:
         from fastapi.testclient import TestClient
@@ -6993,6 +7390,7 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert [event["event_type"] for event in memory.events] == ["reshuffle"]
         assert response.json() == {
+            "pool_status": None,
             "items": [
                 {
                     "id": 11,
@@ -7010,6 +7408,7 @@ class TestBackendAPI:
                     "source_platform": "bilibili",
                     "content_type": "video",
                     "body_text": "",
+                    "source_metadata": {},
                     "duration": 3671,
                     "view_count": 12500,
                     "like_count": 3400,
@@ -7040,6 +7439,7 @@ class TestBackendAPI:
                     "source_platform": "bilibili",
                     "content_type": "video",
                     "body_text": "",
+                    "source_metadata": {},
                     "duration": 0,
                     "view_count": 0,
                     "like_count": 0,
@@ -7054,7 +7454,7 @@ class TestBackendAPI:
                     "published_at": "",
                     "published_label": "",
                 },
-            ]
+            ],
         }
         assert_publication(response.json()["items"][0])
         assert hub.events[-1]["type"] == "refresh.pool_updated"
@@ -7157,7 +7557,7 @@ class TestBackendAPI:
         response = client.post("/api/recommendations/reshuffle")
 
         assert response.status_code == 200
-        assert response.json() == {"items": []}
+        assert response.json() == {"items": [], "pool_status": None}
         assert database.count_calls == count_calls_after_construction
         assert any(
             event.get("pool_available_count") == 4
@@ -7240,8 +7640,14 @@ class TestBackendAPI:
         assert [item["bvid"] for item in response.json()["items"]] == ["BV-SQLITE"]
         assert memory.events[0]["metadata"]["returned_item_ids"] == ["BV-SQLITE"]
 
-    def test_append_recommendations_endpoint_excludes_existing_bvids(self) -> None:
-        from fastapi.testclient import TestClient
+    @pytest.mark.parametrize("status_delay", [0.0, 0.05])
+    async def test_append_recommendations_endpoint_excludes_existing_bvids(
+        self, status_delay: float
+    ) -> None:
+        import asyncio
+        import time
+
+        import httpx
 
         class FakeEventHub:
             def __init__(self) -> None:
@@ -7257,6 +7663,8 @@ class TestBackendAPI:
                 self.pool_available_count = 4
 
             def get_runtime_status(self) -> dict[str, object]:
+                # Force the background status read to outlive a fast HTTP response.
+                time.sleep(status_delay)
                 return {
                     "initialized": True,
                     "pool_available_count": self.pool_available_count,
@@ -7312,16 +7720,20 @@ class TestBackendAPI:
             recommendation_engine=recommendation_engine,
             runtime_controller=runtime,
         )
-        client = TestClient(app)
-
-        response = client.post(
-            "/api/recommendations/append",
-            json={"excluded_bvids": ["BV1A", "BV1B"]},
-        )
+        # Share pytest's running event loop with the fire-and-forget publisher;
+        # a request-scoped TestClient portal cancels it when the response ends.
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/recommendations/append",
+                json={"excluded_bvids": ["BV1A", "BV1B"]},
+            )
 
         assert response.status_code == 200
         assert recommendation_engine.calls == [({"profile": "ok"}, ["BV1A", "BV1B"], 10)]
         assert response.json() == {
+            "pool_status": None,
             "items": [
                 {
                     "id": 22,
@@ -7339,6 +7751,7 @@ class TestBackendAPI:
                     "source_platform": "bilibili",
                     "content_type": "video",
                     "body_text": "",
+                    "source_metadata": {},
                     "duration": 0,
                     "view_count": 0,
                     "like_count": 0,
@@ -7353,8 +7766,13 @@ class TestBackendAPI:
                     "published_at": "",
                     "published_label": "",
                 }
-            ]
+            ],
+            "has_more": False,
         }
+        deadline = time.monotonic() + 1.0
+        while not hub.events and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert hub.events
         assert hub.events[-1]["type"] == "refresh.pool_updated"
         assert hub.events[-1]["message"] == "推荐池已同步"
         assert hub.events[-1]["pool_available_count"] == 1
@@ -7440,9 +7858,9 @@ class TestBackendAPI:
         )
 
         assert reshuffle.status_code == 200
-        assert reshuffle.json() == {"items": []}
+        assert reshuffle.json() == {"items": [], "pool_status": None}
         assert append.status_code == 200
-        assert append.json() == {"items": []}
+        assert append.json() == {"items": [], "has_more": False, "pool_status": None}
         assert soul.profile_calls == 0
         assert rec.calls == 0
         assert runtime.requests == [("pool_empty", True)]
@@ -11791,12 +12209,14 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 self.calls.append(
                     {
                         "min_delight_score": min_delight_score,
                         "limit": limit,
                         "include_liked": include_liked,
+                        "include_delivered": bool(kwargs.get("include_delivered", False)),
                     }
                 )
                 return [
@@ -11832,6 +12252,7 @@ class TestBackendAPI:
             ("BV1FRESH", "pending"),
         ]
         assert database.calls and database.calls[0]["include_liked"] is True
+        assert database.calls[0]["include_delivered"] is True
 
     def test_delight_pending_surfaces_publication_fields(self) -> None:
         from fastapi.testclient import TestClient
@@ -11867,6 +12288,7 @@ class TestBackendAPI:
                 *,
                 min_delight_score: float,
                 limit: int,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 return [
                     {
@@ -11916,6 +12338,7 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 return [
                     {
@@ -11952,6 +12375,7 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 return [
                     {
@@ -11994,6 +12418,7 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 return [
                     {
@@ -12030,6 +12455,7 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 self.calls.append(
                     {
@@ -12069,6 +12495,7 @@ class TestBackendAPI:
                 min_delight_score: float,
                 limit: int,
                 include_liked: bool = False,
+                **kwargs: object,
             ) -> list[dict[str, object]]:
                 self.calls.append(limit)
                 return []
@@ -12367,6 +12794,60 @@ class TestBackendAPI:
         # Read path: surfaced in the response so the settings page can reload it.
         assert data["config"]["sources"]["twitter"]["enabled"] is True
         assert data["config"]["scheduler"]["pool_source_shares"]["twitter"] == 4
+
+    def test_put_config_persists_soul_tone_fields(self, monkeypatch, tmp_path) -> None:
+        """PUT /api/config must persist soul.reply_style / dialogue_tone_prompt
+        (issue #255) — previously the soul merge whitelisted only the prompt
+        views / posture gate / int fields, so both tone fields were silently
+        dropped from the hot-reload rebuild and the settings echo."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig, save_config
+
+        config_path = tmp_path / "config.toml"
+        cfg = Config(
+            llm=LLMConfig(
+                default_provider="ollama",
+                ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434"),
+            ),
+        )
+        save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+        monkeypatch.setattr(
+            "openbiliclaw.config.save_config",
+            lambda c, path=None: save_config(c, config_path),
+        )
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "soul": {
+                    "reply_style": "  请使用正式书面语，\n避免网络梗。 ",
+                    "dialogue_tone_prompt": "你是严谨的学习顾问。\n- 先给结论\n- 再分点",
+                }
+            },
+        )
+
+        assert response.status_code == 202, response.text
+        data = response.json()
+        assert data["ok"] is True
+        # Write path: same normalization as _build_config (reply_style is
+        # collapsed to one line; dialogue_tone_prompt keeps newlines).
+        assert cfg.soul.reply_style == "请使用正式书面语， 避免网络梗。"
+        assert cfg.soul.dialogue_tone_prompt == "你是严谨的学习顾问。\n- 先给结论\n- 再分点"
+        # Read path: surfaced in the response echo.
+        assert data["config"]["soul"]["reply_style"] == cfg.soul.reply_style
+        assert data["config"]["soul"]["dialogue_tone_prompt"] == cfg.soul.dialogue_tone_prompt
+        # Persisted to disk and reloadable.
+        from openbiliclaw.config import load_config
+
+        reloaded = load_config(config_path)
+        assert reloaded.soul.reply_style == cfg.soul.reply_style
+        assert reloaded.soul.dialogue_tone_prompt == cfg.soul.dialogue_tone_prompt
 
     def test_put_config_persists_reddit_modes_budgets_and_pool_share(
         self, monkeypatch, tmp_path
@@ -13081,7 +13562,10 @@ class TestDialogueConfirmationCards:
         assert len(events) == 1
         assert json.loads(events[0]["metadata"])["settlement_ref"] == ref
 
-    def test_defer_persists_cooldown_without_creating_settlement(self, tmp_path: Path) -> None:
+    def test_defer_persists_cooldown_and_hides_from_pending_list(
+        self,
+        tmp_path: Path,
+    ) -> None:
         client, memory, _engine, _dialogue = self._build(tmp_path)
         hypothesis = "用户也许偏爱长视频"
         ref = self._seed_hypothesis(memory, hypothesis)
@@ -13098,6 +13582,34 @@ class TestDialogueConfirmationCards:
         state_path = memory._data_dir / "memory" / "dialogue_confirmation_state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         assert state["objects"][ref]["deferred_until"]
+        pending_refs = {
+            item["ref"] for item in client.get("/api/chat/pending-confirmations").json()["items"]
+        }
+        assert ref not in pending_refs
+
+    def test_defer_expiry_returns_hypothesis_to_pending_list(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        hypothesis = "冷却结束后可以重新确认"
+        ref = self._seed_hypothesis(memory, hypothesis)
+        self._create_card(client, turn_id="card-defer-expiry", ref=ref, hypothesis=hypothesis)
+
+        deferred = client.post(
+            "/api/chat/cards/card-defer-expiry/action",
+            json={"action": "defer"},
+        )
+        assert deferred.status_code == 200
+        state_path = memory._data_dir / "memory" / "dialogue_confirmation_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["objects"][ref]["deferred_until"] = ""
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+        pending_refs = {
+            item["ref"] for item in client.get("/api/chat/pending-confirmations").json()["items"]
+        }
+        assert ref in pending_refs
 
     @pytest.mark.parametrize(
         ("settle_action", "terminal_state"),
@@ -13822,7 +14334,79 @@ class TestPendingDialogueConfirmations:
             },
         )
 
-    def test_pending_list_filters_high_priority_caps_three_and_has_count_only(
+    def test_pending_poll_reuses_dedup_without_caching_mutable_card_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        title = "用户可能通过机械键盘组装过程获得自主创作与掌控的满足感"
+        self._seed_hypothesis(memory, title, 0.9)
+        self._seed_hypothesis(memory, title + "并探索不同轴体", 0.8)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        first = client.get("/api/chat/pending-confirmations").json()
+        assert first["total"] == 1
+        assert calls
+        calls.clear()
+        insight = memory.get_layer("insight")
+        insight.data["hypotheses"][0]["confidence"] = 0.95
+        insight.save()
+        second = client.get("/api/chat/pending-confirmations").json()
+        assert second["items"][0]["confidence"] == 0.95
+        assert calls == [], "unchanged ordered titles must not repeat quadratic fuzzy matching"
+
+        self._seed_hypothesis(
+            memory, "用户对长距离徒步的兴趣可能来自身体挑战与自然环境的恢复感", 0.7
+        )
+        third = client.get("/api/chat/pending-confirmations").json()
+        assert third["total"] == 2, "a changed title snapshot must invalidate the cached selection"
+
+    def test_pending_dedup_skips_impossible_string_matches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, chr(0x4E00 + index) * 40, 0.9)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        body = client.get("/api/chat/pending-confirmations").json()
+        assert body["total"] == 30
+        assert calls == [], "disjoint titles cannot reach the similarity threshold"
+
+    def test_pending_session_filter_does_not_open_one_connection_per_hypothesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, f"独立短假设{index}", 0.9)
+        connections: list[None] = []
+        original_open = memory._database.open_connection
+
+        def counted_open():  # type: ignore[no-untyped-def]
+            connections.append(None)
+            return original_open()
+
+        monkeypatch.setattr(memory._database, "open_connection", counted_open)
+        body = client.get("/api/chat/pending-confirmations?session=popup").json()
+        assert body["total"] == 30
+        assert len(connections) <= 3, "session filtering must use one batch of active references"
+
+    def test_pending_list_filters_high_priority_caps_at_ten_and_has_count_only(
         self,
         tmp_path: Path,
     ) -> None:
@@ -13862,15 +14446,15 @@ class TestPendingDialogueConfirmations:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["count"] == 3
-        assert len(body["items"]) == 3
+        assert body["count"] == 5
+        assert len(body["items"]) == 5
         refs = {item["ref"] for item in body["items"]}
         assert str(confusion_id) in refs
         assert refs <= high_refs | {str(confusion_id)}
         assert low_ref not in refs
         assert validated_ref not in refs
         assert count.status_code == 200
-        assert count.json() == {"count": 3}
+        assert count.json() == {"count": 5, "total": 5}
 
     def test_confusion_keeps_a_seat_when_every_hypothesis_scores_higher(
         self,
@@ -13887,7 +14471,7 @@ class TestPendingDialogueConfirmations:
         confusions land around 0.3–0.5.
         """
         client, memory, _engine, _dialogue = self._build(tmp_path)
-        for index in range(6):
+        for index in range(12):
             self._seed_hypothesis(memory, f"高置信假设-{index}", 0.90 - index / 100)
         confusion_id = memory._database.insert_confusion(
             source="awareness",
@@ -13898,25 +14482,110 @@ class TestPendingDialogueConfirmations:
 
         body = client.get("/api/chat/pending-confirmations").json()
 
-        assert body["count"] == 3
+        assert body["count"] == 10
         refs = [item["ref"] for item in body["items"]]
         assert str(confusion_id) in refs, (
             "the confusion holds a reserved seat despite scoring lowest"
         )
         kinds = [item["kind"] for item in body["items"]]
         assert kinds.count("confusion") == 1, "exactly one seat is reserved, not more"
-        assert kinds.count("hypothesis") == 2, "the remaining seats still go to hypotheses"
+        assert kinds.count("hypothesis") == 9, "the remaining seats still go to hypotheses"
 
     def test_unused_confusion_seat_falls_back_to_hypotheses(self, tmp_path: Path) -> None:
         """With no confusion pending, the reserved seat must not be wasted."""
         client, memory, _engine, _dialogue = self._build(tmp_path)
-        for index in range(5):
+        for index in range(12):
             self._seed_hypothesis(memory, f"只有假设-{index}", 0.90 - index / 100)
 
         body = client.get("/api/chat/pending-confirmations").json()
 
-        assert body["count"] == 3
+        assert body["count"] == 10
         assert all(item["kind"] == "hypothesis" for item in body["items"])
+
+    def test_pending_dedup_collapses_near_duplicate_titles(self, tmp_path: Path) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        high_ref = self._seed_hypothesis(
+            memory,
+            "用户很可能将抖音作为习惯性界面操作而非内容消费渠道，用于消遣或等待状态",
+            0.90,
+        )
+        near_dup_ref = self._seed_hypothesis(
+            memory,
+            "用户很可能将抖音作为习惯性界面操作而非内容消费渠道，用于消遣、等待间隙或低能量状态",
+            0.89,
+        )
+
+        body = client.get("/api/chat/pending-confirmations").json()
+
+        assert body["total"] == 1
+        assert body["count"] == 1
+        assert [item["ref"] for item in body["items"]] == [high_ref]
+        assert near_dup_ref not in {item["ref"] for item in body["items"]}
+
+    def test_pending_excludes_same_session_open_turn(self, tmp_path: Path) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        ref = self._seed_hypothesis(memory, "用户对长内容可能追求完整因果链而非结论摘要", 0.75)
+
+        before = client.get(
+            "/api/chat/pending-confirmations",
+            params={"session": "popup"},
+        ).json()
+        assert ref in {item["ref"] for item in before["items"]}
+
+        opened = client.post(
+            f"/api/chat/pending-confirmations/{ref}/open",
+            json={"session": "popup"},
+        )
+        assert opened.status_code == 200
+
+        popup = client.get(
+            "/api/chat/pending-confirmations",
+            params={"session": "popup"},
+        ).json()
+        assert ref not in {item["ref"] for item in popup["items"]}
+        assert popup["total"] == 0
+
+        webui = client.get(
+            "/api/chat/pending-confirmations",
+            params={"session": "webui"},
+        ).json()
+        assert ref in {item["ref"] for item in webui["items"]}
+
+    def test_pending_excludes_recently_asked_within_object_cooldown(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        ref = self._seed_hypothesis(memory, "用户对AI工具可能更看重实测与边界而不是新闻概念", 0.80)
+        state_path = memory._data_dir / "memory" / "dialogue_confirmation_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "global_last_thrown_at": datetime.now(UTC).isoformat(),
+                    "objects": {
+                        ref: {
+                            "last_asked_at": datetime.now(UTC).isoformat(),
+                            "deferred_until": "",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        recent = client.get("/api/chat/pending-confirmations").json()
+        assert recent["total"] == 0
+        assert recent["items"] == []
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["objects"][ref]["last_asked_at"] = (
+            datetime.now(UTC) - timedelta(hours=73)
+        ).isoformat()
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+        expired = client.get("/api/chat/pending-confirmations").json()
+        assert expired["total"] == 1
+        assert [item["ref"] for item in expired["items"]] == [ref]
 
     def test_manual_open_three_items_ignores_both_cooldowns(self, tmp_path: Path) -> None:
         client, memory, _engine, _dialogue = self._build(tmp_path)
@@ -15030,7 +15699,7 @@ class TestEmbeddingAndCompatProviderE2E:
         data = response.json()
 
         assert data["data_dir"] == "runtime-data"
-        assert data["llm"]["concurrency"] == 4
+        assert data["llm"]["concurrency"] == 3
         assert data["llm"]["deepseek"]["reasoning_effort"] == "high"
         assert data["llm"]["openrouter"]["http_referer"] == "https://example.com"
         assert data["llm"]["openrouter"]["x_title"] == "Example App"
@@ -15061,6 +15730,10 @@ class TestEmbeddingAndCompatProviderE2E:
             "related",
         ]
         assert data["sources"]["bangumi"] == {
+            "recommendation_date_preset": "all",
+            "recommendation_date_start": "",
+            "recommendation_date_end": "",
+            "recommendation_date_weight": 0.5,
             "enabled": True,
             "username": "sai",
             "subject_types": ["anime", "book"],
@@ -15082,6 +15755,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "zhihu": 1,
             "reddit": 1,
             "bangumi": 4,
+            "github": 1,
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
@@ -15356,6 +16030,58 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.scheduler.douyin_incremental_hours == 0
         assert reset_douyin.json()["config"]["scheduler"]["douyin_incremental_hours"] == 0
 
+    def test_source_incremental_enabled_per_source_api_round_trip(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        cfg.sources.xiaohongshu.incremental_enabled = True
+        cfg.sources.douyin.incremental_enabled = True
+        cfg.sources.youtube.incremental_enabled = False
+        cfg.sources.zhihu.incremental_enabled = True
+        cfg.sources.reddit.incremental_enabled = False
+        cfg.sources.linuxdo.incremental_enabled = True
+        cfg.sources.v2ex.incremental_enabled = False
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        initial = client.get("/api/config")
+        assert initial.status_code == 200
+        sources = initial.json()["sources"]
+        assert sources["xiaohongshu"]["incremental_enabled"] is True
+        assert sources["douyin"]["incremental_enabled"] is True
+        assert sources["youtube"]["incremental_enabled"] is False
+        assert sources["zhihu"]["incremental_enabled"] is True
+        assert sources["reddit"]["incremental_enabled"] is False
+        assert sources["linuxdo"]["incremental_enabled"] is True
+        assert sources["v2ex"]["incremental_enabled"] is False
+
+        updated = client.put(
+            "/api/config",
+            json={
+                "sources": {
+                    "xiaohongshu": {"incremental_enabled": False},
+                    "douyin": {"incremental_enabled": False},
+                    "youtube": {"incremental_enabled": True},
+                    "zhihu": {"incremental_enabled": False},
+                    "reddit": {"incremental_enabled": True},
+                    "linuxdo": {"incremental_enabled": False},
+                    "v2ex": {"incremental_enabled": True},
+                },
+                "scheduler": {"source_incremental_enabled": True},
+            },
+        )
+
+        assert updated.status_code == 202
+        assert cfg.sources.xiaohongshu.incremental_enabled is False
+        assert cfg.sources.douyin.incremental_enabled is False
+        assert cfg.sources.youtube.incremental_enabled is True
+        assert cfg.sources.zhihu.incremental_enabled is False
+        assert cfg.sources.reddit.incremental_enabled is True
+        assert cfg.sources.linuxdo.incremental_enabled is False
+        assert cfg.sources.v2ex.incremental_enabled is True
+        assert cfg.scheduler.source_incremental_enabled is True
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -15436,6 +16162,46 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.soul.insight_prompt_view == "compact-v1"
         rendered = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert "cognition_prompt_view" not in rendered
+
+    def test_cognition_budget_knobs_round_trip_through_config_api(
+        self,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        initial = client.get("/api/config")
+        updated = client.put(
+            "/api/config",
+            json={
+                "soul": {
+                    "awareness_event_batch_size": 80,
+                    "insight_note_batch_size": 40,
+                    "cognition_max_tokens": 8192,
+                }
+            },
+        )
+
+        assert initial.status_code == 200
+        initial_soul = initial.json()["soul"]
+        assert initial_soul["awareness_event_batch_size"] == 300
+        assert initial_soul["insight_note_batch_size"] == 150
+        assert initial_soul["cognition_max_tokens"] == 32768
+        assert updated.status_code == 202
+        updated_soul = updated.json()["config"]["soul"]
+        assert updated_soul["awareness_event_batch_size"] == 80
+        assert updated_soul["insight_note_batch_size"] == 40
+        assert updated_soul["cognition_max_tokens"] == 8192
+        assert cfg.soul.awareness_event_batch_size == 80
+        assert cfg.soul.insight_note_batch_size == 40
+        assert cfg.soul.cognition_max_tokens == 8192
+        rendered = (tmp_path / "config.toml").read_text(encoding="utf-8")
+        assert "awareness_event_batch_size = 80" in rendered
+        assert "insight_note_batch_size = 40" in rendered
+        assert "cognition_max_tokens = 8192" in rendered
 
     @pytest.mark.parametrize(("raw_bool", "bad_grace"), [("true", -1), ("on", 0), ("true", "abc")])
     def test_put_config_updates_scheduler_pause_on_extension_disconnect(
@@ -15579,6 +16345,8 @@ class TestEmbeddingAndCompatProviderE2E:
                     "discovery_limit": 17,
                     "delight_queue_limit": 37,
                     "proactive_push_interval_seconds": 155,
+                    "llm_budget_max_calls": 45,
+                    "llm_budget_window_seconds": 1800,
                     "speculator_idle_interval_minutes": 11,
                     "speculation_interval_minutes": 21,
                     "speculation_ttl_days": 8,
@@ -15597,6 +16365,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 },
                 "discovery": {
                     "eval_prefilter_mode": "enforce",
+                    "eval_scorer": "shadow",
                     "admission_min_score": 0.72,
                 },
                 "storage": {"db_path": "runtime-data/openbiliclaw.db"},
@@ -15649,6 +16418,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "douyin": 2,
             "youtube": 1,
             "twitter": 1,
+            "github": 1,
             "zhihu": 1,
             "reddit": 1,
             "bangumi": 1,
@@ -15669,6 +16439,10 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.scheduler.delight_queue_limit == 37
         assert response.json()["config"]["scheduler"]["delight_queue_limit"] == 37
         assert cfg.scheduler.proactive_push_interval_seconds == 155
+        assert cfg.scheduler.llm_budget_max_calls == 45
+        assert cfg.scheduler.llm_budget_window_seconds == 1800
+        assert response.json()["config"]["scheduler"]["llm_budget_max_calls"] == 45
+        assert response.json()["config"]["scheduler"]["llm_budget_window_seconds"] == 1800
         assert cfg.scheduler.speculator_idle_interval_minutes == 11
         assert cfg.scheduler.speculation_interval_minutes == 21
         assert cfg.scheduler.auto_update_enabled is True
@@ -15679,14 +16453,30 @@ class TestEmbeddingAndCompatProviderE2E:
             "git@github.com:example/OpenBiliClaw.git",
         ]
         assert cfg.discovery.eval_prefilter_mode == "enforce"
+        assert cfg.discovery.eval_scorer == "shadow"
         assert cfg.discovery.admission_min_score == 0.72
         assert response.json()["config"]["discovery"]["eval_prefilter_mode"] == "enforce"
+        assert response.json()["config"]["discovery"]["eval_scorer"] == "shadow"
         assert cfg.storage.db_path == "runtime-data/openbiliclaw.db"
         assert cfg.logging.file_level == "WARNING"
         assert cfg.logging.max_file_size_mb == 123
         assert cfg.logging.aggregate_budget_mb == 456
         assert cfg.logging.unmanaged_truncate_mb == 78
         assert cfg.logging.unmanaged_max_age_days == 9
+
+    def test_put_config_rejects_invalid_eval_scorer(self, monkeypatch, tmp_path) -> None:
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={"discovery": {"eval_scorer": "unsafe"}},
+        )
+
+        assert response.status_code == 422
+        assert cfg.discovery.eval_scorer == "llm"
 
     def test_put_config_clears_deepseek_reasoning_effort(self, monkeypatch, tmp_path) -> None:
         """The settings UIs send an empty string when users disable DeepSeek thinking."""
@@ -15806,6 +16596,8 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": 0,
                 "linuxdo": 0,
                 "instagram": 0,
+                "github": 0,
+                "unknown": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -15817,6 +16609,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "reddit": False,
                 "bangumi": False,
                 "linuxdo": False,
+                "github": False,
                 "weibo": False,
                 "v2ex": False,
                 "instagram": False,
@@ -15828,6 +16621,66 @@ class TestEmbeddingAndCompatProviderE2E:
                 "youtube": 5,
             },
         }
+
+    def test_source_share_fallback_prefers_top_level_source_platform(self) -> None:
+        from openbiliclaw.api.app import _count_events_by_source_platform
+
+        class Cursor:
+            def fetchall(self) -> list[dict[str, str]]:
+                return [
+                    {
+                        "source_platform": "youtube",
+                        "metadata": '{"source_platform":"bilibili"}',
+                    },
+                    {
+                        "source_platform": "",
+                        "metadata": '{"source_platform":"twitter"}',
+                    },
+                ]
+
+        class Connection:
+            def execute(self, query: str) -> Cursor:
+                assert query == "SELECT source_platform, metadata FROM events"
+                return Cursor()
+
+        class DatabaseWithoutCountMethod:
+            conn = Connection()
+
+        counts = _count_events_by_source_platform(DatabaseWithoutCountMethod())
+
+        assert counts["youtube"] == 1
+        assert counts["twitter"] == 1
+        assert counts["bilibili"] == 0
+        assert counts["unknown"] == 0
+
+    def test_source_share_fallback_buckets_unknown_slugs(self) -> None:
+        from openbiliclaw.api.app import _count_events_by_source_platform
+
+        class Cursor:
+            def fetchall(self) -> list[dict[str, str]]:
+                return [
+                    {
+                        "source_platform": "threads",
+                        "metadata": "{}",
+                    },
+                    {
+                        "source_platform": "",
+                        "metadata": '{"source_platform":"future-platform"}',
+                    },
+                ]
+
+        class Connection:
+            def execute(self, query: str) -> Cursor:
+                assert query == "SELECT source_platform, metadata FROM events"
+                return Cursor()
+
+        class DatabaseWithoutCountMethod:
+            conn = Connection()
+
+        counts = _count_events_by_source_platform(DatabaseWithoutCountMethod())
+
+        assert counts["unknown"] == 2
+        assert counts["bilibili"] == 0
 
     def test_source_share_suggestion_post_uses_form_overrides(self, monkeypatch, tmp_path) -> None:
         """POST /api/config/source-share-suggestion should support the
@@ -15902,6 +16755,8 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": 0,
                 "linuxdo": 0,
                 "instagram": 0,
+                "github": 0,
+                "unknown": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -15913,6 +16768,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "reddit": True,
                 "bangumi": False,
                 "linuxdo": False,
+                "github": False,
                 "weibo": False,
                 "v2ex": False,
                 "instagram": False,
@@ -16108,8 +16964,8 @@ def test_probe_chat_sentiment_uses_plain_text_llm_call() -> None:
     method, kwargs = llm.calls[0]
     assert method == "core"
     assert kwargs["caller"] == "api.sentiment"
-    # 16 (was 8) so the longest label `neutral_deferred` can't truncate.
-    assert kwargs["max_tokens"] == 16
+    # 512 leaves room for reasoning + the longest label `neutral_deferred`.
+    assert kwargs["max_tokens"] == 512
     assert kwargs["json_mode"] is False
 
 
@@ -16457,6 +17313,71 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init", json={})
         assert resp.status_code == 403
         assert resp.json()["error"] == "local_only"
+
+    def test_init_rejects_invalid_llm_concurrency(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, db = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            for bad in (0, "not-an-int"):
+                resp = client.post(
+                    "/api/init",
+                    json={"sources": ["xiaohongshu"], "llm_concurrency": bad},
+                )
+                assert resp.status_code == 400
+                assert resp.json()["error"] == "invalid_llm_concurrency"
+        assert db.get_latest_init_run() is None
+
+    def test_init_passes_llm_concurrency_to_pipeline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["douyin"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/init",
+                json={"sources": ["douyin"], "llm_concurrency": 2},
+            )
+            assert resp.status_code == 202, resp.text
+            self._drive_until(client, captured, key="llm_concurrency")
+        assert captured["llm_concurrency"] == 2
+
+    def test_init_rejects_invalid_timeout(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, db = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            for bad in (0, 1500, "abc"):
+                resp = client.post(
+                    "/api/init",
+                    json={"sources": ["xiaohongshu"], "init_timeout_minutes": bad},
+                )
+                assert resp.status_code == 400
+                assert resp.json()["error"] == "invalid_init_timeout_minutes"
+        assert db.get_latest_init_run() is None
+
+    def test_init_passes_timeout_to_pipeline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["douyin"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/init",
+                json={"sources": ["douyin"], "init_timeout_minutes": 75},
+            )
+            assert resp.status_code == 202, resp.text
+            self._drive_until(client, captured, key="collection_timeout_seconds")
+        assert captured["collection_timeout_seconds"] == 75 * 60
+        assert captured["profile_analysis_timeout_seconds"] == 75 * 60
+        assert captured["profile_build_timeout_seconds"] == 75 * 60
+        assert captured["discovery_timeout_seconds"] == 75 * 60
 
     def test_init_rejects_docker_runtime(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -17739,6 +18660,214 @@ class TestGuidedInitEndpoints:
             assert resp.status_code == 202, resp.text
             self._drive_until(client, captured2, key="include_bangumi")
             assert captured2["bangumi_username"] == "typed-name"
+
+    def test_init_rejects_github_only_without_bootstrap_identity(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=[])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["github"]})
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "no_profile_signal_sources"
+        assert db.get_latest_init_run() is None
+
+    def test_init_accepts_scoped_github_username(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.sources.github_client import GitHubIdentity
+
+        async def _resolve(client, *, username=""):
+            assert username == "octocat"
+            assert client.has_access_token is False
+            return GitHubIdentity(login="Octocat", user_id=1, evidence="accepted")
+
+        monkeypatch.setattr(
+            "openbiliclaw.sources.github_client.resolve_github_bootstrap_identity",
+            _resolve,
+        )
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=[])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/init",
+                json={
+                    "sources": ["github"],
+                    "source_options": {"github": {"username": " octocat "}},
+                },
+            )
+            assert response.status_code == 202, response.text
+            self._drive_until(client, captured, key="include_github")
+
+        assert captured["include_github"] is True
+        assert captured["github_username"] == "Octocat"
+        assert captured["github_token"] == ""
+
+    def test_init_rejects_github_identity_mismatch_before_reservation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.sources.github_client import GitHubAPIError
+
+        async def _resolve(client, *, username=""):
+            assert client.has_access_token is True
+            assert username == "typed-user"
+            raise GitHubAPIError("identity_mismatch", "different numeric ids")
+
+        monkeypatch.setattr(
+            "openbiliclaw.sources.github_client.resolve_github_bootstrap_identity",
+            _resolve,
+        )
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=[])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/init",
+                json={
+                    "sources": ["github"],
+                    "source_options": {
+                        "github": {"username": "typed-user", "access_token": "github-pat"}
+                    },
+                },
+            )
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "github_identity_mismatch"
+        assert db.get_latest_init_run() is None
+
+    def test_init_rejects_invalid_github_pat_before_reservation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.sources.github_client import GitHubAPIError
+
+        async def _resolve(client, *, username=""):
+            raise GitHubAPIError("unauthorized", "denied", status_code=401)
+
+        monkeypatch.setattr(
+            "openbiliclaw.sources.github_client.resolve_github_bootstrap_identity",
+            _resolve,
+        )
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=[])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/init",
+                json={
+                    "sources": ["github"],
+                    "source_options": {"github": {"access_token": "expired-pat"}},
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_github_access_token"
+        assert db.get_latest_init_run() is None
+
+    def test_init_status_honors_discovery_rejection_for_current_github_pat(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config
+        from openbiliclaw.runtime.github_producer import (
+            GitHubDiscoveryProducer,
+            _persist_token_rejection,
+            _token_fingerprint,
+        )
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["github"])
+        app, db = self._make_app(
+            tmp_path,
+            profile_ready=True,
+            prereqs=prereqs,
+        )
+        cfg = Config()
+        cfg.sources.github.enabled = True
+        cfg.sources.github.access_token = "rejected-pat"
+        app.state.runtime_context.config = cfg
+        GitHubDiscoveryProducer(
+            database=db,
+            soul_engine=object(),
+            client=object(),
+        )._ensure_tables()
+        _persist_token_rejection(db, _token_fingerprint("rejected-pat"))
+
+        with TestClient(app) as client:
+            rejected = client.get("/api/init-status").json()["prerequisites"][
+                "source_capabilities"
+            ]["github"]
+            cfg.sources.github.access_token = "rotated-pat"
+            rotated = client.get("/api/init-status").json()["prerequisites"]["source_capabilities"][
+                "github"
+            ]
+
+        assert rejected["discover"]["ready"] is True
+        assert rejected["profile"]["ready"] is False
+        assert rejected["bootstrap"]["state"] == "unavailable"
+        assert rotated["profile"]["ready"] is True
+        assert rotated["bootstrap"]["state"] == "ready"
+
+    def test_init_mixed_sources_skip_identityless_github_profile_bootstrap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["reddit"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/init",
+                json={"sources": ["reddit", "github"]},
+            )
+            assert response.status_code == 202, response.text
+            assert any("GitHub" in warning for warning in response.json()["warnings"])
+            self._drive_until(client, captured, key="include_github")
+
+        assert captured["include_reddit"] is True
+        assert captured["include_github"] is False
+
+    def test_init_mixed_sources_isolates_invalid_github_pat_before_reservation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.sources.github_client import GitHubAPIError
+
+        async def _resolve(client, *, username=""):
+            assert client.has_access_token is True
+            raise GitHubAPIError("unauthorized", "denied", status_code=401)
+
+        monkeypatch.setattr(
+            "openbiliclaw.sources.github_client.resolve_github_bootstrap_identity",
+            _resolve,
+        )
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["reddit"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/init",
+                json={
+                    "sources": ["reddit", "github"],
+                    "source_options": {"github": {"access_token": "expired-request-scoped-pat"}},
+                },
+            )
+            assert response.status_code == 202, response.text
+            warnings = response.json()["warnings"]
+            assert any("invalid_github_access_token" in warning for warning in warnings)
+            self._drive_until(client, captured, key="include_github")
+
+        assert captured["include_reddit"] is True
+        assert captured["include_github"] is False
+        assert captured["github_username"] == ""
+        assert captured["github_token"] == ""
 
     def test_init_rejects_unknown_source_options(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
@@ -20736,7 +21865,7 @@ def test_scoped_short_batch_wakes_existing_replenishment_path() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"items": []}
+    assert response.json() == {"items": [], "has_more": False, "pool_status": None}
     # Pool-wide inventory is healthy, so only the scoped shortfall can explain
     # this; it must wake the existing forced replenishment path.
     assert runtime.requests and runtime.requests[0][1] is True
@@ -21329,3 +22458,156 @@ class TestSoulEngineFeedbackConfigPlumbing:
         assert ctx.soul_engine is not None
         assert ctx.soul_engine.unified_interest_line_enabled is True
         assert ctx.soul_engine._feedback_batch_threshold == 6
+
+
+@pytest.mark.parametrize("action", ["append", "reshuffle"])
+def test_recommendation_response_returns_exact_platform_inventory(action: str) -> None:
+    from fastapi.testclient import TestClient
+
+    database = _AvailabilityDatabase(
+        SimpleNamespace(total_available=37, by_platform={"bilibili": 30, "zhihu": 7})
+    )
+    client = TestClient(
+        _scoped_app(_ScopedResultEngine(), _ScopedFakeRuntimeController(), database)
+    )
+    response = client.post(f"/api/recommendations/{action}", json={"excluded_bvids": []})
+    assert response.status_code == 200
+    status = response.json()["pool_status"]
+    assert status["pool_available_count"] == sum(status["platform_available_counts"].values())
+    assert status["pool_available_count"] == 37
+    assert status["pool_status_version"] > 0
+
+
+async def test_recommendation_proxy_relays_inventory_to_main_event_hub(monkeypatch) -> None:
+    import httpx
+
+    monkeypatch.setenv("OPENBILICLAW_RECOMMENDATION_ONLY", "1")
+    upstream = _scoped_app(
+        _ScopedResultEngine(),
+        _ScopedFakeRuntimeController(),
+        _AvailabilityDatabase(
+            SimpleNamespace(total_available=37, by_platform={"bilibili": 30, "zhihu": 7})
+        ),
+    )
+    monkeypatch.delenv("OPENBILICLAW_RECOMMENDATION_ONLY")
+    monkeypatch.setenv("OPENBILICLAW_RECOMMENDATION_SOCK", "/unused-test.sock")
+    monkeypatch.setattr(
+        httpx, "AsyncHTTPTransport", lambda **kwargs: httpx.ASGITransport(app=upstream)
+    )
+    main = _scoped_app(_ScopedResultEngine(), _ScopedFakeRuntimeController())
+    queue = await main.state.runtime_context.event_hub.subscribe()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main),
+        base_url="http://127.0.0.1",
+    ) as client:
+        response = await client.post("/api/recommendations/append", json={"excluded_bvids": []})
+    assert response.status_code == 200
+    event = await asyncio.wait_for(queue.get(), timeout=1)
+    assert event["type"] == "refresh.pool_updated"
+    assert event["pool_available_count"] == 37
+    assert (
+        event["platform_available_counts"]
+        == response.json()["pool_status"]["platform_available_counts"]
+    )
+
+
+async def test_activity_feed_diagnostics_yield_http_loop_and_coalesce(monkeypatch) -> None:
+    import threading
+
+    import httpx
+
+    from openbiliclaw.runtime.activity_feed import ActivityFeedBuilder
+
+    loop_thread = threading.get_ident()
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def slow_runtime_status() -> dict[str, object]:
+        nonlocal calls
+        assert threading.get_ident() != loop_thread
+        calls += 1
+        started.set()
+        assert release.wait(3), "HTTP loop must remain free to release diagnostics"
+        return {"initialized": True}
+
+    monkeypatch.setattr(ActivityFeedBuilder, "build", lambda self, **kwargs: {"items": []})
+    app = create_app(
+        database=SimpleNamespace(),
+        memory_manager=SimpleNamespace(),
+        soul_engine=object(),
+        runtime_controller=SimpleNamespace(get_runtime_status=slow_runtime_status),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+    ) as client:
+        first = asyncio.create_task(client.get("/api/activity-feed"))
+        second = asyncio.create_task(client.get("/api/activity-feed"))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            health = await asyncio.wait_for(client.get("/api/health"), timeout=1)
+            assert health.status_code == 200
+        finally:
+            release.set()
+        responses = await asyncio.gather(first, second)
+    assert all(response.status_code == 200 for response in responses)
+    assert calls == 1
+
+
+@pytest.mark.parametrize("blocked_stage", ["threshold", "candidates"])
+async def test_delight_pending_batch_does_not_block_other_requests(blocked_stage) -> None:
+    import threading
+
+    import httpx
+
+    loop_thread = threading.get_ident()
+    started = threading.Event()
+    release = threading.Event()
+
+    def check_thread(stage: str) -> None:
+        assert threading.get_ident() != loop_thread
+        if blocked_stage == stage:
+            started.set()
+            assert release.wait(3), "HTTP loop must remain free during delight reads"
+
+    def threshold() -> float:
+        check_thread("threshold")
+        return 0.75
+
+    def candidates(**kwargs):
+        check_thread("candidates")
+        assert kwargs == {
+            "min_delight_score": 0.75,
+            "limit": 7,
+            "include_liked": True,
+            "include_delivered": True,
+        }
+        return [
+            {"bvid": "kept", "title": "Keep me", "feedback_type": "like"},
+            {"bvid": "filtered", "title": "blocked topic"},
+        ]
+
+    app = create_app(
+        database=SimpleNamespace(get_delight_candidates=candidates),
+        memory_manager=SimpleNamespace(),
+        soul_engine=object(),
+        runtime_controller=SimpleNamespace(
+            _dynamic_delight_threshold=threshold,
+            _load_disliked_topic_phrases=lambda: ["blocked"],
+        ),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+    ) as client:
+        pending = asyncio.create_task(client.get("/api/delight/pending-batch?limit=7"))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            ping = await asyncio.wait_for(client.get("/api/ping"), timeout=1)
+            assert ping.status_code == 200
+            assert not pending.done()
+        finally:
+            release.set()
+            response = await pending
+    assert response.status_code == 200
+    assert [item["bvid"] for item in response.json()["items"]] == ["kept"]
+    assert response.json()["items"][0]["state"] == "liked"

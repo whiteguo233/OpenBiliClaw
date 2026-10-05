@@ -14,6 +14,7 @@ import { ASSET_PREFIX } from "../shared/asset-prefix.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { releaseDispatcherMutex, tryAcquireDispatcherMutex } from "./dispatcher-mutex.ts";
+import { createTaskTab } from "./task-tab.ts";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const POLL_ALARM_NAME = "openbiliclaw-linuxdo-task-poll";
@@ -636,7 +637,7 @@ async function beginLinuxdoTask(task: LinuxdoTask, mutexAlreadyHeld: boolean): P
   }
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({
+    tab = await createTaskTab({
       url: LINUXDO_TASK_TAB_URL,
       active: shouldOpenLinuxdoTaskActive(task),
     });

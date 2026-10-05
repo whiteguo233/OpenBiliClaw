@@ -16,6 +16,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from openbiliclaw.discovery.temporal import (
+    TEMPORAL_CLASSES,
+    temporal_bonus_component,
+    trusted_publication_datetime,
+)
+from openbiliclaw.recommendation.publication_preference import (
+    PublicationDateDecision,
+    PublicationDatePreference,
+    evaluate_publication_preference,
+)
+from openbiliclaw.sources.platforms import source_family
+
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
@@ -171,25 +183,9 @@ class TemporalRankingShadowAudit:
 # Constants
 # ---------------------------------------------------------------------------
 
-# Conservative thresholds calibrated from the 2026-08 historical candidate-
-# and discovery-pool replay: only confident temporal judgements earn a bonus,
-# and medium-confidence judgements receive half strength.
-_TEMPORAL_CONFIDENCE_FULL: float = 0.80
-_TEMPORAL_CONFIDENCE_HALF: float = 0.60
-_TEMPORAL_CLASS_POLICIES: dict[str, tuple[float, float]] = {
-    # class: (half-life days, maximum unweighted class bonus)
-    "breaking": (1.0, 0.85),
-    "current": (14.0, 0.60),
-    "versioned": (120.0, 0.30),
-}
-# Source clocks occasionally differ by a few minutes.  Small negative ages are
-# clamped to zero, while a clearly future publication is treated as unknown.
-_PUBLICATION_CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
 _TEMPORAL_RANKING_SHADOW_POLICY_VERSION = "temporal-ranking-shadow-v1"
 _TEMPORAL_RANKING_SHADOW_TOP_K = (10, 50, 100)
-_TEMPORAL_AUDIT_CLASSES = frozenset(
-    {"breaking", "current", "versioned", "evergreen", "historical", "unknown"}
-)
+_TEMPORAL_AUDIT_CLASSES = TEMPORAL_CLASSES
 _FEEDBACK_DISLIKE_UP_PENALTY: float = 0.20
 _FEEDBACK_DISLIKE_TOPIC_PENALTY: float = 0.10
 # Softer than topic penalty — franchise propagation is a heuristic
@@ -199,6 +195,7 @@ _FEEDBACK_DISLIKE_TOPIC_PENALTY: float = 0.10
 # fresh content but doesn't outright suppress.
 _FEEDBACK_DISLIKE_FRANCHISE_PENALTY: float = 0.07
 _FEEDBACK_LIKE_TOPIC_BONUS: float = 0.05
+_AMPLIFICATION_OVER_BUDGET_PENALTY: float = 0.35
 _POOL_LOW_THRESHOLD: int = 50
 _DEFAULT_WEIGHTS = ScoringWeights()
 
@@ -252,10 +249,45 @@ class PoolCurator:
         *,
         weights: ScoringWeights = _DEFAULT_WEIGHTS,
         history_window: int = 30,
+        publication_preference: PublicationDatePreference | None = None,
     ) -> None:
         self._database = database
         self._weights = weights
         self._history_window = history_window
+        self._publication_preference = publication_preference or PublicationDatePreference()
+
+    def publication_date_decision(
+        self,
+        item: DiscoveredContent,
+        *,
+        now: datetime,
+    ) -> PublicationDateDecision:
+        """Evaluate the configured publication preference for one candidate."""
+
+        return evaluate_publication_preference(
+            source_platform=(
+                getattr(item, "source_platform", "")
+                or source_family(getattr(item, "source_strategy", ""), "")
+            ),
+            published_at=getattr(item, "published_at", ""),
+            preference=self._publication_preference,
+            now=now,
+        )
+
+    def filter_candidates_for_serving(
+        self,
+        candidates: list[DiscoveredContent],
+        *,
+        now: datetime | None = None,
+    ) -> list[DiscoveredContent]:
+        """Drop candidates that strict publication preference cannot serve."""
+
+        current = now or datetime.now(UTC)
+        return [
+            item
+            for item in candidates
+            if self.publication_date_decision(item, now=current).eligible
+        ]
 
     # ------------------------------------------------------------------
     # Public API
@@ -375,7 +407,7 @@ class PoolCurator:
         candidates: list[DiscoveredContent],
         context: ScoringContext,
     ) -> dict[str, float]:
-        """Return a bvid → rec_score mapping for the given candidates.
+        """Return a scoring_key → rec_score mapping for the given candidates.
 
         The returned dict can be passed as ``score_override`` to the
         engine's diversified batch selector.
@@ -400,9 +432,10 @@ class PoolCurator:
             # Feedback adjustments (additive, outside weight system)
             score += self._feedback_adjustment(item, context.feedback)
             if candidate_amplification_keys(item) & context.over_budget_amplification_keys:
-                score -= 0.35
+                score -= _AMPLIFICATION_OVER_BUDGET_PENALTY
 
-            scores[item.bvid] = max(0.0, score)
+            date_decision = self.publication_date_decision(item, now=context.now)
+            scores[item.scoring_key] = max(0.0, score * date_decision.score_multiplier)
         return scores
 
     def build_temporal_ranking_shadow_audit(
@@ -420,7 +453,7 @@ class PoolCurator:
 
         items_by_id: dict[str, DiscoveredContent] = {}
         for item in candidates:
-            identity = str(item.bvid or "").strip()
+            identity = item.scoring_key
             if identity:
                 items_by_id[identity] = item
         if not items_by_id:
@@ -564,54 +597,18 @@ class PoolCurator:
         ``last_scored_at`` are cache lifecycle clocks and must never stand in
         for the content's publication time.
         """
-        temporal_class = str(getattr(item, "temporal_class", "") or "").strip().lower()
-        policy = _TEMPORAL_CLASS_POLICIES.get(temporal_class)
-        if policy is None:
-            return 0.0
-
-        raw_confidence = getattr(item, "temporal_confidence", 0.0)
-        if isinstance(raw_confidence, bool):
-            return 0.0
-        try:
-            confidence = float(raw_confidence)
-        except (TypeError, ValueError):
-            return 0.0
-        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
-            return 0.0
-        if confidence >= _TEMPORAL_CONFIDENCE_FULL:
-            confidence_weight = 1.0
-        elif confidence >= _TEMPORAL_CONFIDENCE_HALF:
-            confidence_weight = 0.5
-        else:
-            return 0.0
-
-        published = PoolCurator._publication_datetime(item, now)
-        if published is None:
-            return 0.0
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=UTC)
-        age_days = max(0.0, (now - published).total_seconds() / 86400.0)
-        half_life_days, class_weight = policy
-        freshness = 2.0 ** (-age_days / half_life_days)
-        return float(class_weight * confidence_weight * freshness)
+        return temporal_bonus_component(
+            temporal_class=getattr(item, "temporal_class", "unknown"),
+            temporal_confidence=getattr(item, "temporal_confidence", 0.0),
+            published_at=getattr(item, "published_at", ""),
+            now=now,
+        )
 
     @staticmethod
     def _publication_datetime(item: DiscoveredContent, now: datetime) -> datetime | None:
         """Return a trustworthy publication clock, or ``None`` when unknown."""
 
-        published_at = getattr(item, "published_at", "")
-        if not isinstance(published_at, str) or not published_at.strip():
-            return None
-        try:
-            published = datetime.fromisoformat(published_at.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if published.tzinfo is None:
-            return None
-        effective_now = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-        if published - effective_now > _PUBLICATION_CLOCK_SKEW_TOLERANCE:
-            return None
-        return published
+        return trusted_publication_datetime(getattr(item, "published_at", ""), now=now)
 
     @staticmethod
     def _temporal_class_for_audit(item: DiscoveredContent) -> str:
@@ -861,5 +858,6 @@ class PoolCurator:
             else:
                 score += self._feedback_adjustment(item, context.feedback)
 
-            scores[item.bvid] = max(0.0, score)
+            date_decision = self.publication_date_decision(item, now=context.now)
+            scores[item.scoring_key] = max(0.0, score * date_decision.score_multiplier)
         return scores

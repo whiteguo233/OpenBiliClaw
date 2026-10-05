@@ -1,3 +1,5 @@
+import type { NativeSaveAction, NativeSavePlatform } from "./native-save.ts";
+
 export type E2EPlatform = "douyin" | "xiaohongshu" | "twitter" | "reddit";
 
 export type E2EAction =
@@ -67,6 +69,18 @@ export const E2E_STATE_CHANGING_ACTIONS = new Set<E2EAction>([
   "repost",
   "bookmark",
 ]);
+
+/** Canonical, non-secret target labels accepted by the real native-save E2E gate. */
+export const NATIVE_SAVE_E2E_TARGETS: Readonly<
+  Record<NativeSavePlatform, Readonly<Record<NativeSaveAction, string>>>
+> = {
+  "youtube": { favorite: "OpenBiliClaw", watch_later: "YouTube Watch Later" },
+  "xiaohongshu": { favorite: "小红书收藏", watch_later: "小红书收藏" },
+  "douyin": { favorite: "抖音收藏", watch_later: "抖音收藏" },
+  "twitter": { favorite: "X Bookmarks", watch_later: "X Bookmarks" },
+  "zhihu": { favorite: "知乎收藏", watch_later: "知乎收藏" },
+  "reddit": { favorite: "Reddit Saved", watch_later: "Reddit Saved" },
+};
 
 const E2E_PLATFORMS = new Set<E2EPlatform>(["douyin", "xiaohongshu", "twitter", "reddit"]);
 const E2E_ACTIONS = new Set<E2EAction>([

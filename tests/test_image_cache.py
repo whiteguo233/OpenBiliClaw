@@ -26,6 +26,7 @@ from openbiliclaw.runtime.image_cache import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 BILI = "https://i1.hdslb.com/bfs/archive/abc.jpg"
@@ -387,18 +388,55 @@ async def test_network_failure_log_never_contains_signed_url(
     assert f"cache={image_cache_key(XHS)[:12]}" in caplog.text
 
 
-async def test_fetch_routes_cn_cdn_direct_and_overseas_via_env_proxy(
+@pytest.fixture
+def _reset_outbound_network() -> Iterator[None]:
+    """Isolate openbiliclaw.network module state around a test."""
+    from openbiliclaw import network
+
+    try:
+        yield
+    finally:
+        network.reset_outbound_proxy_for_tests()
+
+
+_GUARD_PROXY = "socks5://127.0.0.1:9999"
+
+
+@pytest.mark.usefixtures("_reset_outbound_network")
+@pytest.mark.parametrize(
+    ("mode", "overseas_kwargs"),
+    [
+        pytest.param("system", {"trust_env": True}, id="system-inherits-env"),
+        pytest.param(
+            "custom",
+            {"proxy": _GUARD_PROXY, "trust_env": False},
+            id="custom-explicit-proxy",
+        ),
+        pytest.param("direct", {"trust_env": False}, id="direct-forces-off"),
+    ],
+)
+async def test_fetch_routes_cn_cdn_direct_and_overseas_by_network_mode(
     fake_httpx: _FakeHTTPX,
+    mode: str,
+    overseas_kwargs: dict[str, object],
 ) -> None:
-    """CN CDNs bypass env/system proxies (proxy exit IPs get risk-controlled,
-    same failure mode as the Bilibili login probe); overseas CDNs keep
-    trust_env so users who NEED the proxy to reach YouTube still fetch them."""
+    """CN CDNs bypass env/system proxies under every mode (proxy exit IPs get
+    risk-controlled, same failure mode as the Bilibili login probe); overseas
+    CDNs follow the process-wide ``[network]`` routing policy instead of raw
+    ``trust_env=True``. Regression: under custom mode the configured proxy
+    lives in openbiliclaw.network module state and is never written to
+    os.environ, so the old hardwired trust_env=True saw no HTTP(S)_PROXY and
+    i.ytimg.com was silently fetched direct — timing out from CN networks."""
+    from openbiliclaw import network
+
+    network.set_outbound_proxy(_GUARD_PROXY if mode == "custom" else "", mode=mode)
+
     yt = "https://i.ytimg.com/vi/abc/hqdefault.jpg"
     # Bangumi covers live on lain.bgm.tv, which is Cloudflare-fronted (cf-ray
     # …-SIN edge, IP resolves overseas). A 2026-07-18 curl showed direct fetch
-    # timing out while the env/system proxy returned 200 in ~0.5s — the ytimg
-    # overseas pattern, NOT the CN-CDN risk-control pattern — so it stays on
-    # trust_env (proxy) and out of _DIRECT_FETCH_HOST_SUFFIXES.
+    # timing out while the proxy returned 200 in ~0.5s — the ytimg overseas
+    # pattern, NOT the CN-CDN risk-control pattern — so it stays out of
+    # _DIRECT_FETCH_HOST_SUFFIXES and rides the [network] policy.
     bgm = "https://lain.bgm.tv/pic/cover/l/65/12/11_bsxG3.jpg"
     fake_httpx.add(XHS, status_code=200, headers={"content-type": "image/webp"}, chunks=[b"a"])
     fake_httpx.add(yt, status_code=200, headers={"content-type": "image/jpeg"}, chunks=[b"b"])

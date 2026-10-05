@@ -203,6 +203,113 @@ function startPolling(): void {
   tick();
 }
 
+// ── Exact note publish-time bridge (issue #260) ─────────────────────
+//
+// The isolated content script cannot read `__INITIAL_STATE__` set by the
+// page's MAIN world, so it asks this script to load a note URL in a hidden
+// same-origin iframe and read `note.noteDetailMap[noteId].note.time`.
+// Only the note id + epoch-ms time cross back; no note content is exposed.
+const NOTE_TIME_REQUEST_SOURCE = "obc-xhs-note-time-request";
+const NOTE_TIME_RESULT_SOURCE = "obc-xhs-note-time-result";
+const NOTE_TIME_MIN_MS = 1_000;
+const NOTE_TIME_MAX_MS = 10_000;
+const NOTE_ID_PATTERN = /^[0-9a-f]{24}$/i;
+
+interface NoteTimeRequest {
+  source?: string;
+  request_id?: string;
+  url?: string;
+  note_id?: string;
+  timeout_ms?: number;
+}
+
+function readNoteTimeFromWindow(target: Window, noteId: string): number | undefined {
+  try {
+    const state = (target as Window & { __INITIAL_STATE__?: unknown }).__INITIAL_STATE__;
+    if (!state || typeof state !== "object") return undefined;
+    const noteStore = (state as Record<string, unknown>).note;
+    if (!noteStore || typeof noteStore !== "object") return undefined;
+    const noteDetailMap = (noteStore as Record<string, unknown>).noteDetailMap;
+    if (!noteDetailMap || typeof noteDetailMap !== "object") return undefined;
+    const entry = (noteDetailMap as Record<string, unknown>)[noteId] as
+      | Record<string, unknown>
+      | undefined;
+    if (!entry || typeof entry !== "object") return undefined;
+    const note = (entry.note ?? entry.noteCard ?? entry) as Record<string, unknown>;
+    const value = note?.time ?? entry.time ?? note?.lastUpdateTime;
+    if (typeof value === "number" && value >= 1e12 && value < 1e14) return Math.floor(value);
+    if (typeof value === "string" && /^\d{13}$/.test(value)) return Number(value);
+  } catch {
+    // Cross-origin or mid-navigation — treat as "not ready yet".
+  }
+  return undefined;
+}
+
+function isAllowedNoteUrl(rawUrl: string): boolean {
+  try {
+    return new URL(rawUrl, location.origin).hostname.endsWith("xiaohongshu.com");
+  } catch {
+    return false;
+  }
+}
+
+function answerNoteTimeRequest(data: NoteTimeRequest): void {
+  const requestId = String(data.request_id ?? "");
+  const noteId = String(data.note_id ?? "");
+  const url = String(data.url ?? "");
+  const reply = (publishedAt: number | null): void => {
+    try {
+      window.postMessage(
+        {
+          source: NOTE_TIME_RESULT_SOURCE,
+          request_id: requestId,
+          note_id: noteId,
+          published_at: publishedAt,
+        },
+        "*",
+      );
+    } catch {
+      // postMessage is best effort.
+    }
+  };
+  if (!requestId || !NOTE_ID_PATTERN.test(noteId) || !isAllowedNoteUrl(url)) {
+    reply(null);
+    return;
+  }
+  const timeoutMs = Math.max(
+    NOTE_TIME_MIN_MS,
+    Math.min(NOTE_TIME_MAX_MS, Number(data.timeout_ms) || 6_000),
+  );
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "width:1px;height:1px;opacity:0;position:fixed;left:-9999px;top:-9999px";
+  let settled = false;
+  const finish = (publishedAt: number | null): void => {
+    if (settled) return;
+    settled = true;
+    clearInterval(pollTimer);
+    clearTimeout(timeoutTimer);
+    try {
+      frame.remove();
+    } catch {
+      // best effort
+    }
+    reply(publishedAt);
+  };
+  const timeoutTimer = window.setTimeout(() => finish(null), timeoutMs);
+  const pollTimer = window.setInterval(() => {
+    if (!frame.contentWindow) return;
+    const publishedAt = readNoteTimeFromWindow(frame.contentWindow, noteId);
+    if (publishedAt !== undefined) finish(publishedAt);
+  }, 250);
+  try {
+    frame.src = url;
+    (document.body ?? document.documentElement).appendChild(frame);
+  } catch {
+    finish(null);
+  }
+}
+
 if (typeof window !== "undefined") {
   startPolling();
   window.addEventListener("popstate", emitOnce);
@@ -213,6 +320,12 @@ if (typeof window !== "undefined") {
   // popstate (Vue Router push) still bring the snapshot up to date.
   // Throttled in emitOnce by lastSnapshotJson check.
   window.addEventListener("click", emitOnce, { passive: true });
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const data = event.data as NoteTimeRequest | null;
+    if (!data || data.source !== NOTE_TIME_REQUEST_SOURCE) return;
+    answerNoteTimeRequest(data);
+  });
 
   // eslint-disable-next-line no-console
   console.debug("[OpenBiliClaw] xhs state bridge installed (MAIN world)");

@@ -1,77 +1,27 @@
 import type { NativeSaveTask } from "../../shared/native-save.ts";
 import { waitForNativeSaveReadiness } from "./readiness.ts";
 
-export interface ZhihuCollectionRow {
-  isChecked(): boolean;
-  click(): void;
-}
+export type ZhihuFavoriteState = "saved" | "not_saved" | null;
 
 export interface ZhihuNativeSaveEnvironment {
   currentUrl: string;
   hasVisibleLoginOverlay(): boolean;
   isUnavailable(): boolean;
-  hasCollectionControl(): boolean;
+  favoriteState(): ZhihuFavoriteState;
+  clickFavorite(): void;
   rateLimitFingerprint(): string;
-  openCollectionDialog(): Promise<boolean>;
-  closeCollectionDialog(): Promise<void>;
-  findNamedCollections(title: string): ZhihuCollectionRow[];
-  createCollection(title: string): Promise<boolean>;
-  creationFailureCode?(): ZhihuCreationFailureCode;
   sleep(ms: number): Promise<void>;
 }
 
-type ZhihuCreationFailureCode =
-  | "native_control_not_found"
-  | "native_dialog_not_opened"
-  | "native_target_not_found"
-  | "native_request_rejected"
-  | "native_confirmation_not_observed";
-
-const EXACT_COLLECTION_TITLE = "OpenBiliClaw";
-const CREATE_COLLECTION_LABELS = new Set([
-  "新建收藏夹",
-  "创建收藏夹",
-  "添加收藏夹",
-  "新增收藏夹",
-  "创建新收藏夹",
-  "新建一个收藏夹",
-  "创建收藏",
-  "新增收藏",
-  "新建收藏",
-  "新建",
-  "Create collection",
-  "New collection",
-]);
-const CONFIRM_COLLECTION_LABELS = new Set([
-  "创建",
-  "确认",
-  "完成",
-  "确定",
-  "确认创建",
-  "创建收藏夹",
-]);
-const CREATE_COLLECTION_SELECTOR = [
-  "button",
-  "[role='button']",
-  "a",
-  "[aria-label]",
-  "[title]",
-  ".CollectionList-createButton",
-  ".FavlistDialog-createButton",
-  "[data-testid='create-collection']",
-  "[data-za-detail-view-element_name='CreateCollection']",
-].join(", ");
+const EXACT_TARGET = "知乎收藏";
 const TYPED_ID = /^(question|answer|article):([0-9]+)$/;
 const CONFIRM_ATTEMPTS = 20;
 const CONFIRM_INTERVAL_MS = 100;
-const DIALOG_ATTEMPTS = 20;
-const DIALOG_INTERVAL_MS = 100;
 const IDENTITY_SELECTOR = [
   "[data-question-id]", "[data-za-question-id]", "[data-zop-questionid]",
   "[data-answer-id]", "[data-za-answer-id]", "[data-zop-answerid]",
   "[data-article-id]", "[data-zop-articleid]", "[data-zop]",
 ].join(", ");
-const DIALOG_SELECTOR = "[role='dialog'], .Modal-wrapper, .FavlistDialog, .CollectionDialog";
 const RATE_SELECTOR = "[role='alert'], .Toast, .Modal-toast, .Notification";
 const RATE_PATTERN = /(?:操作频繁|请求频繁|稍后再试|风险|风控|rate limit|too many requests|risk control|429)/i;
 
@@ -173,47 +123,11 @@ function closestIdentity(element: HTMLElement): string | null {
   return null;
 }
 
-function closestDialog(element: HTMLElement): HTMLElement | null {
-  let current: HTMLElement | null = element;
-  while (current) {
-    if (
-      current.getAttribute?.("role") === "dialog" ||
-      /(?:^|\s)(?:Modal-wrapper|FavlistDialog|CollectionDialog)(?:\s|$)/.test(
-        current.getAttribute?.("class") ?? "",
-      )
-    ) return current;
-    current = current.parentElement;
-  }
-  return null;
-}
-
 function visibleText(element: HTMLElement): string {
   return (
     element.getAttribute?.("aria-label") || element.getAttribute?.("title") ||
     element.textContent || ""
-  ).trim();
-}
-
-function actionLabel(element: HTMLElement): string {
-  return visibleText(element).replace(/^[+＋]\s*/, "").replace(/\s*[+＋]$/, "");
-}
-
-function hasStableCreateMarker(element: HTMLElement): boolean {
-  return (
-    element.getAttribute("data-testid") === "create-collection" ||
-    element.getAttribute("data-za-detail-view-element_name") === "CreateCollection" ||
-    element.classList?.contains("CollectionList-createButton") === true ||
-    element.classList?.contains("FavlistDialog-createButton") === true
-  );
-}
-
-function isWithinDialog(element: HTMLElement, dialog: HTMLElement): boolean {
-  let current: HTMLElement | null = element;
-  while (current) {
-    if (current === dialog) return true;
-    current = current.parentElement;
-  }
-  return false;
+  ).replace(/\u200b/g, "").trim();
 }
 
 function isSupported(task: NativeSaveTask, currentUrl: string): boolean {
@@ -228,7 +142,7 @@ function isSupported(task: NativeSaveTask, currentUrl: string): boolean {
 }
 
 function hasTargetContract(task: NativeSaveTask): boolean {
-  return task.target_label === EXACT_COLLECTION_TITLE && task.resolved_action === "favorite" &&
+  return task.target_label === EXACT_TARGET && task.resolved_action === "favorite" &&
     (task.requested_action === "favorite" || task.requested_action === "watch_later");
 }
 
@@ -237,31 +151,15 @@ function hasNewRateLimit(before: string, after: string): boolean {
   return after.split("\n").filter(Boolean).some((event) => !baseline.has(event));
 }
 
-async function confirmChecked(env: ZhihuNativeSaveEnvironment): Promise<boolean> {
+async function waitForSaved(env: ZhihuNativeSaveEnvironment): Promise<boolean> {
   for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
-    const rows = env.findNamedCollections(EXACT_COLLECTION_TITLE);
-    if (rows.some((row) => row.isChecked())) return true;
+    if (env.favoriteState() === "saved") return true;
     if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
   }
   return false;
 }
 
-async function waitForExactCollection(
-  env: ZhihuNativeSaveEnvironment,
-): Promise<ZhihuCollectionRow | null | "ambiguous"> {
-  for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
-    const rows = env.findNamedCollections(EXACT_COLLECTION_TITLE);
-    if (rows.length > 1) {
-      const checked = rows.filter((row) => row.isChecked());
-      return checked.length === 1 ? checked[0] : rows[0];
-    }
-    if (rows.length === 1) return rows[0];
-    if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
-  }
-  return null;
-}
-
-/** Save one exact typed Zhihu item to the exact OpenBiliClaw collection. */
+/** Save one exact typed Zhihu item through the current global favorite toggle. */
 export async function saveZhihu(
   task: NativeSaveTask,
   env: ZhihuNativeSaveEnvironment = createZhihuBrowserEnvironment(),
@@ -272,66 +170,58 @@ export async function saveZhihu(
   if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
   const rateBefore = env.rateLimitFingerprint();
   await waitForNativeSaveReadiness(
-    () => env.hasVisibleLoginOverlay() || env.isUnavailable() || env.hasCollectionControl(),
+    () => env.hasVisibleLoginOverlay() || env.isUnavailable() || env.favoriteState() !== null,
     env.sleep,
   );
   if (env.hasVisibleLoginOverlay()) return { status: "login_required" };
   if (env.isUnavailable()) {
     return { status: "unsupported", error_code: "unsupported_content_type" };
   }
-  if (!env.hasCollectionControl()) {
+  const state = env.favoriteState();
+  if (state === "saved") return { status: "already_synced" };
+  if (state !== "not_saved") {
     return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
       ? { status: "rate_limited" }
       : { status: "failed", error_code: "native_control_not_found" };
   }
-  const dialogOpened = await env.openCollectionDialog();
-  if (!dialogOpened) {
-    return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
-      ? { status: "rate_limited" }
-      : { status: "failed", error_code: "native_dialog_not_opened" };
-  }
-  let created = false;
-  const existingRow = await waitForExactCollection(env);
-  if (existingRow === "ambiguous") {
-    return { status: "failed", error_code: "native_target_not_found" };
-  }
-  let rows = existingRow ? [existingRow] : [];
-  if (rows.length === 0) {
-    if (!(await env.createCollection(EXACT_COLLECTION_TITLE))) {
-      return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
-        ? { status: "rate_limited" }
-        : {
-            status: "failed",
-            error_code: env.creationFailureCode?.() ?? "native_request_rejected",
-          };
-    }
-    created = true;
-    let createdRow = await waitForExactCollection(env);
-    if (!createdRow) {
-      await env.closeCollectionDialog();
-      if (!(await env.openCollectionDialog())) {
-        return { status: "failed", error_code: "native_dialog_not_opened" };
-      }
-      createdRow = await waitForExactCollection(env);
-    }
-    if (!createdRow || createdRow === "ambiguous") {
-      return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
-        ? { status: "rate_limited" }
-        : { status: "failed", error_code: "native_target_not_found" };
-    }
-    rows = [createdRow];
-  }
-  const row = rows[0];
-  if (row.isChecked()) return { status: created ? "synced" : "already_synced" };
   try {
-    row.click();
+    env.clickFavorite();
   } catch {
     return { status: "failed", error_code: "native_request_rejected" };
   }
-  if (await confirmChecked(env)) return { status: "synced" };
+  if (await waitForSaved(env)) return { status: "synced" };
+  if (env.hasVisibleLoginOverlay()) return { status: "login_required" };
   return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
     ? { status: "rate_limited" }
     : { status: "failed", error_code: "native_confirmation_not_observed" };
+}
+
+/** Verify persisted global favorite state after reload without clicking any control. */
+export async function verifyZhihu(
+  task: NativeSaveTask,
+  env: ZhihuNativeSaveEnvironment = createZhihuBrowserEnvironment(),
+): Promise<unknown> {
+  if (!isSupported(task, env.currentUrl) || env.isUnavailable()) {
+    return { status: "unsupported", error_code: "unsupported_content_type" };
+  }
+  if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
+  const rateBefore = env.rateLimitFingerprint();
+  await waitForNativeSaveReadiness(
+    () => env.hasVisibleLoginOverlay() || env.isUnavailable() || env.favoriteState() !== null,
+    env.sleep,
+  );
+  if (env.hasVisibleLoginOverlay()) return { status: "login_required" };
+  if (env.isUnavailable()) {
+    return { status: "unsupported", error_code: "unsupported_content_type" };
+  }
+  const state = env.favoriteState();
+  if (state === "saved") return { status: "already_synced" };
+  if (state === "not_saved") {
+    return { status: "failed", error_code: "native_confirmation_not_observed" };
+  }
+  return hasNewRateLimit(rateBefore, env.rateLimitFingerprint())
+    ? { status: "rate_limited" }
+    : { status: "failed", error_code: "native_control_not_found" };
 }
 
 export function createZhihuBrowserEnvironment(
@@ -342,13 +232,6 @@ export function createZhihuBrowserEnvironment(
   const rateElementIds = new WeakMap<Element, number>();
   let nextRateElementId = 1;
   let activeContainer: HTMLElement | null = null;
-  let activeDialog: HTMLElement | null = null;
-  let lastCreationFailure: ZhihuCreationFailureCode = "native_request_rejected";
-
-  const failCreation = (code: ZhihuCreationFailureCode): false => {
-    lastCreationFailure = code;
-    return false;
-  };
 
   const targetContainer = (): HTMLElement | null => {
     if (!currentIdentity) return null;
@@ -360,76 +243,20 @@ export function createZhihuBrowserEnvironment(
     return matches[0];
   };
 
-  const visibleDialogs = (): HTMLElement[] => Array.from(
-    root.querySelectorAll<HTMLElement>(DIALOG_SELECTOR),
-  ).filter((dialog) => isEffectivelyVisible(dialog, root));
-
-  const dialogMatchesIdentity = (dialog: HTMLElement): boolean => {
-    const identity = closestIdentity(dialog);
-    return identity === null || identity === currentIdentity;
-  };
-
-  const findCollectionRows = (title: string): HTMLElement[] => {
-    if (!activeDialog || !isEffectivelyVisible(activeDialog, root)) return [];
-    const dialog = activeDialog;
-    const structured = Array.from(dialog.querySelectorAll<HTMLElement>(
-      "[data-collection-id], [data-favlist-id], [data-testid='collection-row'], .CollectionList-item, .FavlistItem, .Favlists-item",
-    ));
-    const candidates = structured.length > 0
-      ? structured
-      : Array.from(new Set([
-        ...Array.from(dialog.querySelectorAll<HTMLElement>(
-          "[role='listitem'], label, button, [role='button'], [role='checkbox']",
-        )),
-        ...Array.from(dialog.querySelectorAll<HTMLElement>("div, span")),
-      ]));
-    const matches = candidates.filter((row) => {
-      const identity = closestIdentity(row);
-      if (
-        !isEffectivelyVisible(row, root) || !isWithinDialog(row, dialog) ||
-        (identity !== null && identity !== currentIdentity)
-      ) return false;
-      const titleNode = row.querySelector<HTMLElement>(
-        "[data-collection-title], .Collection-title, .Favlist-title, .Favlists-itemName, .Favlists-itemNameText, .Modal-listItem-title",
-      );
-      return (titleNode?.textContent ?? row.textContent ?? "") === title;
-    });
-    return matches.filter((candidate) =>
-      !matches.some((other) => other !== candidate && candidate.contains?.(other)));
-  };
-
-  const rowChecked = (row: HTMLElement): boolean => {
-    const checkbox = row.querySelector<HTMLElement>(
-      "input[type='checkbox'], [role='checkbox'], [aria-checked]",
-    );
-    const state = checkbox ?? row;
-    if (state.getAttribute?.("aria-checked") === "true" ||
-      state.getAttribute?.("data-checked") === "true" || state.hasAttribute?.("checked") ||
-      (state as HTMLElement & { checked?: boolean }).checked === true) return true;
-    const action = row.querySelector<HTMLElement>(
-      "button.Favlists-updateButton, .Favlists-updateButton",
-    );
-    return action !== null && visibleText(action) === "已收藏";
-  };
-
-  const clickRow = (row: HTMLElement): void => {
-    const checkbox = row.querySelector<HTMLElement>(
-      "input[type='checkbox'], [role='checkbox'], [aria-checked]",
-    );
-    const action = row.querySelector<HTMLElement>(
-      "button.Favlists-updateButton, .Favlists-updateButton",
-    );
-    (checkbox ?? action ?? row).click();
-  };
-
-  const collectionControls = (): HTMLElement[] => {
+  const favoriteControls = (): HTMLElement[] => {
     const container = targetContainer();
     if (!container || !currentIdentity) return [];
     return Array.from(container.querySelectorAll<HTMLElement>(
       "button, [role='button']",
     )).filter((element) => isEffectivelyVisible(element, root) &&
       closestIdentity(element) === currentIdentity &&
-      ["收藏", "已收藏", "取消收藏"].includes(visibleText(element)));
+      ["收藏", "已收藏"].includes(visibleText(element)));
+  };
+
+  const favoriteState = (): ZhihuFavoriteState => {
+    const controls = favoriteControls();
+    if (controls.length !== 1) return null;
+    return visibleText(controls[0]) === "已收藏" ? "saved" : "not_saved";
   };
 
   return {
@@ -447,24 +274,25 @@ export function createZhihuBrowserEnvironment(
           element.textContent ?? "",
         ));
     },
-    hasCollectionControl() {
-      return collectionControls().length === 1;
+    favoriteState,
+    clickFavorite() {
+      const container = targetContainer();
+      const controls = favoriteControls();
+      if (!container || controls.length !== 1 || visibleText(controls[0]) !== "收藏") {
+        throw new Error("exact unsaved favorite control not found");
+      }
+      activeContainer = container;
+      controls[0].click();
     },
     rateLimitFingerprint() {
       const container = activeContainer ?? targetContainer();
-      const roots = [container, activeDialog].filter((value): value is HTMLElement => value !== null);
-      const events = new Set<HTMLElement>();
-      for (const scope of roots) {
-        for (const element of Array.from(scope.querySelectorAll<HTMLElement>(RATE_SELECTOR))) {
-          const inTargetIdentity = closestIdentity(element);
-          if (inTargetIdentity !== null && inTargetIdentity !== currentIdentity) continue;
-          const dialog = closestDialog(element);
-          if (dialog !== null && dialog !== activeDialog) continue;
-          if (!isEffectivelyVisible(element, root) || !RATE_PATTERN.test(element.textContent ?? "")) continue;
-          events.add(element);
-        }
-      }
-      return [...events].map((element) => {
+      if (!container) return "";
+      const events = Array.from(container.querySelectorAll<HTMLElement>(RATE_SELECTOR)).filter(
+        (element) => isEffectivelyVisible(element, root) &&
+          (closestIdentity(element) === null || closestIdentity(element) === currentIdentity) &&
+          RATE_PATTERN.test(element.textContent ?? ""),
+      );
+      return events.map((element) => {
         let id = rateElementIds.get(element);
         if (id === undefined) {
           id = nextRateElementId;
@@ -473,135 +301,6 @@ export function createZhihuBrowserEnvironment(
         }
         return `${id}:${(element.textContent ?? "").trim()}`;
       }).sort().join("\n");
-    },
-    async openCollectionDialog() {
-      const container = targetContainer();
-      if (!container || !currentIdentity) return false;
-      const controls = collectionControls();
-      if (controls.length !== 1) return false;
-      const before = new Set(visibleDialogs());
-      activeContainer = container;
-      controls[0].click();
-      for (let attempt = 0; attempt < DIALOG_ATTEMPTS; attempt += 1) {
-        const candidates = visibleDialogs().filter((dialog) =>
-          !before.has(dialog) && dialogMatchesIdentity(dialog));
-        if (candidates.length === 1) {
-          activeDialog = candidates[0];
-          return true;
-        }
-        if (candidates.length > 1) return false;
-        if (attempt + 1 < DIALOG_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, DIALOG_INTERVAL_MS));
-        }
-      }
-      return false;
-    },
-    async closeCollectionDialog() {
-      const dialog = activeDialog;
-      if (!dialog) return;
-      const closeControls = Array.from(dialog.querySelectorAll<HTMLElement>(
-        "button, [role='button']",
-      )).filter((element) => isEffectivelyVisible(element, root) &&
-        closestDialog(element) === dialog &&
-        (closestIdentity(element) === null || closestIdentity(element) === currentIdentity) &&
-        ["关闭", "取消", "Close", "Cancel"].includes(visibleText(element)));
-      if (closeControls.length === 1) {
-        closeControls[0].click();
-        await new Promise((resolve) => setTimeout(resolve, DIALOG_INTERVAL_MS));
-      }
-      activeDialog = null;
-    },
-    findNamedCollections(title) {
-      return findCollectionRows(title).map((row) => ({
-        isChecked: () => rowChecked(row),
-        click: () => clickRow(row),
-      }));
-    },
-    async createCollection(title) {
-      const dialog = activeDialog;
-      if (!dialog) return failCreation("native_dialog_not_opened");
-      lastCreationFailure = "native_request_rejected";
-      const findCreateControls = (): HTMLElement[] => {
-        const candidates = Array.from(new Set([
-          ...Array.from(dialog.querySelectorAll<HTMLElement>(CREATE_COLLECTION_SELECTOR)),
-          ...Array.from(dialog.querySelectorAll<HTMLElement>("div, span")),
-        ])).filter((element) => isEffectivelyVisible(element, root) && isWithinDialog(element, dialog) &&
-          (closestIdentity(element) === null || closestIdentity(element) === currentIdentity) &&
-          (hasStableCreateMarker(element) || CREATE_COLLECTION_LABELS.has(actionLabel(element))));
-        return candidates.filter((candidate) =>
-          !candidates.some((other) => other !== candidate && candidate.contains?.(other)));
-      };
-      let createControls: HTMLElement[] = [];
-      for (let attempt = 0; attempt < DIALOG_ATTEMPTS; attempt += 1) {
-        createControls = findCreateControls();
-        if (createControls.length !== 0) break;
-        if (attempt + 1 < DIALOG_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, DIALOG_INTERVAL_MS));
-        }
-      }
-      if (createControls.length !== 1) return failCreation("native_control_not_found");
-      const dialogsBeforeCreate = new Set(visibleDialogs());
-      createControls[0].click();
-
-      let input: HTMLInputElement | null = null;
-      let formDialog: HTMLElement | null = null;
-      for (let attempt = 0; attempt < DIALOG_ATTEMPTS; attempt += 1) {
-        const scopes = [
-          dialog,
-          ...visibleDialogs().filter((candidate) =>
-            !dialogsBeforeCreate.has(candidate) && dialogMatchesIdentity(candidate)),
-        ];
-        const matches = scopes.flatMap((scope) =>
-          Array.from(scope.querySelectorAll<HTMLInputElement>(
-            "input[name='title'], input[placeholder*='收藏标题'], input[placeholder*='收藏夹'], input[placeholder*='名称']",
-          )).filter((candidate) => isEffectivelyVisible(candidate, root) &&
-            closestDialog(candidate) === scope &&
-            (closestIdentity(candidate) === null || closestIdentity(candidate) === currentIdentity))
-            .map((candidate) => ({ input: candidate, scope })),
-        );
-        if (matches.length > 1) return failCreation("native_target_not_found");
-        if (matches.length === 1) {
-          input = matches[0].input;
-          formDialog = matches[0].scope;
-          break;
-        }
-        if (attempt + 1 < DIALOG_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, DIALOG_INTERVAL_MS));
-        }
-      }
-      if (!input || !formDialog) return failCreation("native_dialog_not_opened");
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      if (setter) setter.call(input, title);
-      else input.value = title;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      const confirms = Array.from(formDialog.querySelectorAll<HTMLElement>(
-        "button, [role='button']",
-      )).filter((element) => isEffectivelyVisible(element, root) && closestDialog(element) === formDialog &&
-        (closestIdentity(element) === null || closestIdentity(element) === currentIdentity) &&
-        CONFIRM_COLLECTION_LABELS.has(actionLabel(element)));
-      if (confirms.length !== 1) return failCreation("native_request_rejected");
-      confirms[0].click();
-
-      for (let attempt = 0; attempt < DIALOG_ATTEMPTS; attempt += 1) {
-        const exactRows = findCollectionRows(title);
-        if (exactRows.length > 1) return failCreation("native_target_not_found");
-        if (exactRows.length === 1) return true;
-        const remainingInputs = Array.from(formDialog.querySelectorAll<HTMLInputElement>(
-          "input[name='title'], input[placeholder*='收藏标题'], input[placeholder*='收藏夹'], input[placeholder*='名称']",
-        )).filter((candidate) => isEffectivelyVisible(candidate, root) &&
-          closestDialog(candidate) === formDialog &&
-          (closestIdentity(candidate) === null || closestIdentity(candidate) === currentIdentity));
-        if (remainingInputs.length === 0) return true;
-        if (remainingInputs.length > 1) return failCreation("native_target_not_found");
-        if (attempt + 1 < DIALOG_ATTEMPTS) {
-          await new Promise((resolve) => setTimeout(resolve, DIALOG_INTERVAL_MS));
-        }
-      }
-      return failCreation("native_confirmation_not_observed");
-    },
-    creationFailureCode() {
-      return lastCreationFailure;
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };

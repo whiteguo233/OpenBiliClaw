@@ -259,7 +259,7 @@ class InspirationKeywordPipeline:
             system_instruction=messages[0]["content"],
             user_input=messages[1]["content"],
             caller="discovery.keyword_inspiration",
-            reasoning_effort="",
+            reasoning_effort=None,
             max_tokens=max_tokens,
             **without_core_memory_kwargs(complete_structured),
         )
@@ -1672,6 +1672,11 @@ class InspirationKeywordPipeline:
         return {
             "searches": 0,
             "platforms": {},
+            "platform_complete": {},
+            "platform_affirmative_empty": {},
+            "platform_partial": {},
+            "platform_degraded": {},
+            "platform_terminal_evidence": {},
             "skipped_cooldown": 0,
             "skipped_budget": 0,
             "timeouts": 0,
@@ -1682,6 +1687,7 @@ class InspirationKeywordPipeline:
             "provider_successes": {},
             "provider_failures": {},
             "provider_empty": {},
+            "provider_degraded": {},
             "provider_augmentations": 0,
             "bilibili_search_cooldown_remaining": (
                 InspirationKeywordPipeline._provider_bilibili_cooldown(provider)
@@ -1700,6 +1706,28 @@ class InspirationKeywordPipeline:
             for platform, count in raw_platforms.items():
                 platforms[str(platform)] = _ledger_int(count or 0)
         ledger["platforms"] = platforms
+        for key in (
+            "platform_complete",
+            "platform_affirmative_empty",
+            "platform_partial",
+            "platform_degraded",
+        ):
+            counts: dict[str, int] = {}
+            raw_counts = provider_ledger.get(key, {})
+            if isinstance(raw_counts, dict):
+                for platform, count in raw_counts.items():
+                    counts[str(platform)] = _ledger_int(count or 0)
+            ledger[key] = counts
+        terminal_evidence: dict[str, dict[str, int]] = {}
+        raw_terminal_evidence = provider_ledger.get("platform_terminal_evidence", {})
+        if isinstance(raw_terminal_evidence, dict):
+            for platform, raw_reasons in raw_terminal_evidence.items():
+                if not isinstance(raw_reasons, dict):
+                    continue
+                terminal_evidence[str(platform)] = {
+                    str(reason): _ledger_int(count or 0) for reason, count in raw_reasons.items()
+                }
+        ledger["platform_terminal_evidence"] = terminal_evidence
         for key in ("skipped_cooldown", "skipped_budget", "timeouts"):
             ledger[key] = _ledger_int(ledger.get(key, 0) or 0) + _ledger_int(
                 provider_ledger.get(key, 0) or 0
@@ -1714,7 +1742,12 @@ class InspirationKeywordPipeline:
             for source, count in raw_local_sources.items():
                 local_sources[str(source)] = _ledger_int(count or 0)
         ledger["local_sources"] = local_sources
-        for key in ("provider_successes", "provider_failures", "provider_empty"):
+        for key in (
+            "provider_successes",
+            "provider_failures",
+            "provider_empty",
+            "provider_degraded",
+        ):
             counters: dict[str, int] = {}
             raw_counters = provider_ledger.get(key, {})
             if isinstance(raw_counters, dict):

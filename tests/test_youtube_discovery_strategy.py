@@ -15,6 +15,10 @@ from openbiliclaw.discovery.strategies.youtube import (
     YoutubeTrendingStrategy,
 )
 from openbiliclaw.llm.base import LLMResponse
+from openbiliclaw.recommendation.publication_preference import (
+    PRESET_LAST_7_DAYS,
+    PublicationDatePreference,
+)
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
 from openbiliclaw.youtube.client import (
@@ -600,6 +604,90 @@ async def test_youtube_search_injected_queries_skip_llm_generation() -> None:
     assert llm.calls == []  # injected queries skip keyword generation
     assert strategy.last_intermediates == {"queries": ["machine learning", "history documentary"]}
     assert [item.source_strategy for item in results] == ["yt_search", "yt_search"]
+
+
+@dataclass
+class _RssEnrichingYtClient:
+    """Fake client that records RSS enrichment and injects an exact date."""
+
+    calls: list[tuple[str, int]] = field(default_factory=list)
+    enriched_batches: list[int] = field(default_factory=list)
+
+    async def search_videos(self, query: str, limit: int = 15) -> list[dict[str, Any]]:
+        self.calls.append((query, limit))
+        return [
+            {
+                "videoId": f"video-{len(self.calls)}",
+                "title": {"simpleText": f"{query} result"},
+                "channel_id": "UCabc",
+            }
+        ]
+
+    async def enrich_missing_published_at(
+        self,
+        items: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> int:
+        self.enriched_batches.append(len(items))
+        for item in items:
+            item["publishedAt"] = "2026-09-14T07:01:45+00:00"
+        return len(items)
+
+    async def get_trending(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        self.calls.append(("trending", limit))
+        return [
+            {
+                "videoId": "trend-1",
+                "title": {"simpleText": "trending result"},
+                "channel_id": "UCabc",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_youtube_search_enriches_exact_dates_only_with_active_preference() -> None:
+    llm = _FakeLLMService('{"queries": ["unused"]}')
+    client = _RssEnrichingYtClient()
+    strategy = YoutubeSearchStrategy(
+        client=client,
+        llm_service=llm,
+        llm_evaluation=False,
+    )
+
+    # Default `all` preference must not pay an RSS request.
+    results = await strategy.discover(_profile(), limit=5, queries=["ai"])
+    assert client.enriched_batches == []
+    assert [item.published_at for item in results] == [""]
+
+    strategy.date_preference = PublicationDatePreference(
+        preset=PRESET_LAST_7_DAYS,
+        weight=0.5,
+    )
+    results = await strategy.discover(_profile(), limit=5, queries=["ai"])
+
+    assert client.enriched_batches == [1]
+    assert [item.published_at for item in results] == ["2026-09-14T07:01:45Z"]
+    assert [item.published_label for item in results] == [""]
+
+
+@pytest.mark.asyncio
+async def test_youtube_trending_enriches_exact_dates_only_with_active_preference() -> None:
+    llm = _FakeLLMService("{}")
+    client = _RssEnrichingYtClient()
+    strategy = YoutubeTrendingStrategy(client=client, llm_service=llm, llm_evaluation=False)
+
+    results = await strategy.discover(_profile(), limit=5)
+    assert client.enriched_batches == []
+    assert [item.published_at for item in results] == [""]
+
+    strategy.date_preference = PublicationDatePreference(
+        preset=PRESET_LAST_7_DAYS,
+        weight=1.0,
+    )
+    results = await strategy.discover(_profile(), limit=5)
+
+    assert client.enriched_batches == [1]
+    assert [item.published_at for item in results] == ["2026-09-14T07:01:45Z"]
 
 
 @pytest.mark.asyncio

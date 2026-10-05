@@ -168,7 +168,7 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
     receives raw DiscoveredContent items, calls a fake LLM that returns
     franchise_key, and the value must end up:
       * on each ``DiscoveredContent.franchise_key`` field
-          * in the ``_eval_cache`` v4 9-tuple (so subsequent calls hit cache
+          * in the ``_eval_cache`` v5 tuple (so subsequent calls hit cache
         with the value still attached)
       * persisted to ``content_cache.franchise_key`` after cache_content
     """
@@ -222,6 +222,11 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
                         "temporal_class": "evergreen",
                         "temporal_confidence": 0.9,
                         "temporal_reason": "核心价值不依赖发布日期",
+                        "temporal_validity_mode": "none",
+                        "temporal_valid_until": "",
+                        "temporal_scope": "none",
+                        "temporal_evidence": "",
+                        "temporal_state": "unknown",
                     }
                 )
 
@@ -262,8 +267,7 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
     assert contents[1].franchise_key == "原神"
     assert contents[2].franchise_key == ""
 
-    # Cache tuple is the v4 9-field shape and carries both franchise and
-    # temporal evaluation metadata.
+    # Cache tuple carries franchise and temporal metadata.
     cache_key = engine._batch_eval_cache_key(
         contents[0],
         profile_digest=engine._evaluation_profile_digest(profile),
@@ -271,7 +275,7 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
         source_context="test",
     )
     cached = engine._eval_cache[cache_key]
-    assert len(cached) == 9
+    assert len(cached) == 17
     assert cached[4] == "原神"
     assert cached[5:8] == ("evergreen", 0.9, "核心价值不依赖发布日期")
 

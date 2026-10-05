@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from openbiliclaw.discovery.engine import (
-    ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
@@ -26,6 +25,7 @@ from openbiliclaw.sources.douyin_plugin_search import DouyinBudgetExhausted
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
@@ -128,6 +128,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
     per_source_limit: int = 20
     llm_evaluation: bool = True
     score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -310,11 +311,8 @@ class DouyinDirectStrategy(DiscoveryStrategy):
         ):
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
         eval_candidates = trim_candidates_for_llm(
             candidates,
             limit=limit,

@@ -111,3 +111,18 @@ def test_background_rehydration_never_replaces_the_loaded_list() -> None:
     )
     assert "void hydrateFromBackend();" not in APP_JS
     assert "if (queued) void refreshConfigApplyStatus();" in APP_JS
+
+
+def test_background_rehydration_skips_side_effecting_recommendation_read_when_loaded() -> None:
+    """已有卡片时后台恢复只能同步状态，不能用推荐 GET 意外补池并消费库存。"""
+    gate = _function_body("shouldHydrateRecommendationList")
+    hydrate = _function_body("hydrateFromBackend", async_function=True)
+
+    assert "return replaceRecommendations || state.videos.length === 0;" in gate
+    assert (
+        "const shouldReadRecommendations = "
+        "shouldHydrateRecommendationList({ replaceRecommendations });" in hydrate
+    )
+    assert "? readRecommendationSnapshot()" in hydrate
+    assert ": Promise.resolve(null);" in hydrate
+    assert "if (items === null) return;" in hydrate

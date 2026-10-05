@@ -29,6 +29,15 @@ from openbiliclaw.llm.service import LLMService
 from .avoidance_speculator import AvoidanceSpeculator
 from .awareness_analyzer import AwarenessAnalyzer
 from .cognition_cycle import (
+    _AWARENESS_EVENT_BATCH_SIZE as _DEFAULT_AWARENESS_EVENT_BATCH_SIZE,
+)
+from .cognition_cycle import (
+    _COGNITION_MAX_TOKENS as _DEFAULT_COGNITION_MAX_TOKENS,
+)
+from .cognition_cycle import (
+    _INSIGHT_NOTE_BATCH_SIZE as _DEFAULT_INSIGHT_NOTE_BATCH_SIZE,
+)
+from .cognition_cycle import (
     DEFAULT_MIN_INTERVAL_SECONDS as _DEFAULT_COG_INTERVAL,
 )
 from .cognition_cycle import (
@@ -316,13 +325,16 @@ class SoulEngine:
         *,
         embedding_service: Any | None = None,
         cognition_cycle_interval_seconds: int | None = None,
+        awareness_event_batch_size: int = _DEFAULT_AWARENESS_EVENT_BATCH_SIZE,
+        insight_note_batch_size: int = _DEFAULT_INSIGHT_NOTE_BATCH_SIZE,
+        cognition_max_tokens: int = _DEFAULT_COGNITION_MAX_TOKENS,
         usage_recorder: Any | None = None,
         satisfaction_filter_enabled: bool = True,
         preference_prompt_view: str = "legacy",
         awareness_prompt_view: str = "compact-v1",
         insight_prompt_view: str = "legacy",
         module_overrides: Mapping[str, ModuleOverride] | None = None,
-        llm_concurrency: int = 4,
+        llm_concurrency: int = 3,
         llm_concurrency_gate: Any | None = None,
         speculation_interval_minutes: int = 10,
         speculation_ttl_days: int = 3,
@@ -346,11 +358,19 @@ class SoulEngine:
         unified_interest_line: bool = False,
         posture_gate_mode: str = "shadow",
         posture_gate_force_enforce: bool = False,
+        reply_style: str = "",
+        dialogue_tone_prompt: str = "",
         database: Any | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
+        # Free-text reply-style instruction (issue #255), forwarded into the
+        # dialogue service and the profile builder.
+        self._reply_style = " ".join(str(reply_style or "").split())
+        # Free-text full replacement for the dialogue prompt's tone block.
+        # Strip only the outer whitespace — interior newlines are meaningful.
+        self._dialogue_tone_prompt = str(dialogue_tone_prompt or "").strip()
         self._preference_prompt_view = normalize_cognition_input_view(preference_prompt_view)
         self._awareness_prompt_view = normalize_cognition_input_view(awareness_prompt_view)
         self._insight_prompt_view = normalize_cognition_input_view(insight_prompt_view)
@@ -391,6 +411,8 @@ class SoulEngine:
             module_overrides=self._module_overrides,
             concurrency=llm_concurrency,
             concurrency_gate=llm_concurrency_gate,
+            reply_style=self._reply_style,
+            dialogue_tone_prompt=self._dialogue_tone_prompt,
         )
         self._awareness_analyzer = AwarenessAnalyzer(
             self._llm_service,
@@ -408,7 +430,7 @@ class SoulEngine:
             embedding_service=embedding_service,
             cognition_prompt_view=self._preference_prompt_view,
         )
-        self._profile_builder = ProfileBuilder(self._llm_service)
+        self._profile_builder = ProfileBuilder(self._llm_service, reply_style=self._reply_style)
         data_dir = getattr(memory, "_data_dir", None)
         self._speculator = InterestSpeculator(
             llm_service=self._llm_service,
@@ -440,6 +462,9 @@ class SoulEngine:
                 if cognition_cycle_interval_seconds is not None
                 else _DEFAULT_COG_INTERVAL
             ),
+            awareness_event_batch_size=awareness_event_batch_size,
+            insight_note_batch_size=insight_note_batch_size,
+            cognition_max_tokens=cognition_max_tokens,
             # 12h-loop fallback trigger for the debounced confirmed-hypotheses
             # rebuild (spec invariant 4). Bound method; only invoked at run time.
             pending_rebuild_hook=self.run_pending_rebuild_if_due,
@@ -576,6 +601,7 @@ class SoulEngine:
         *,
         event_chunk_size: int = 0,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
+        llm_concurrency: int | None = None,
     ) -> None:
         """Analyze new behavioral events and update all memory layers.
 
@@ -604,6 +630,7 @@ class SoulEngine:
             existing_preference=preference_layer.data,
             event_chunk_size=event_chunk_size,
             progress_callback=progress_callback,
+            llm_concurrency=llm_concurrency,
         )
         init_cognition = updated_preference.pop(INIT_COGNITION_CONTEXT_KEY, None)
         self._init_cognition_context = init_cognition if isinstance(init_cognition, dict) else {}
@@ -1006,13 +1033,14 @@ class SoulEngine:
         """Overlay topic-lifecycle metadata onto a freshly analysed preference.
 
         Carries lifecycle fields forward from ``existing_preference`` and counts
-        this analysis as one unit of evidence per surviving/new topic (new →
-        trial; sustained → active; dormant → active). Best-effort: any failure
-        is logged at DEBUG and never breaks the analysis path. Each transition
-        is recorded to the ledger (write point ``topic_lifecycle``).
+        this analysis only for topics whose ``last_seen`` changed (new → trial;
+        sustained → active; dormant → active). Retained topics are not fresh
+        evidence. Best-effort: any failure is logged at DEBUG and never breaks
+        the analysis path. Each transition is recorded to the ledger (write
+        point ``topic_lifecycle``).
         """
         try:
-            from openbiliclaw.soul.topic_lifecycle import apply_evidence
+            from openbiliclaw.soul.topic_lifecycle import apply_evidence, changed_interest_keys
 
             existing_interests = [
                 item for item in existing_preference.get("interests", []) if isinstance(item, dict)
@@ -1020,7 +1048,12 @@ class SoulEngine:
             updated_interests = updated_preference.get("interests")
             if not isinstance(updated_interests, list):
                 return
-            merged, transitions = apply_evidence(existing_interests, updated_interests)
+            evidence_keys = changed_interest_keys(existing_interests, updated_interests)
+            merged, transitions = apply_evidence(
+                existing_interests,
+                updated_interests,
+                evidence_keys=evidence_keys,
+            )
             updated_preference["interests"] = merged
             for tr in transitions:
                 self._ledger.record(
@@ -3842,6 +3875,10 @@ class SoulEngine:
         return [insight_hypothesis_from_dict(item) for item in hypotheses if isinstance(item, dict)]
 
     def _save_insights(self, insights: list[InsightHypothesis]) -> None:
+        # Enforce production-stage deduplication at every persistence boundary.
+        # Exact same-state duplicates and same-state near-duplicates collapse;
+        # confirmed/rejected/unjudged variants remain separate.
+        insights = InsightAnalyzer.dedupe_hypotheses(insights)
         layer = self._memory.get_layer("insight")
         layer.data.clear()
         layer.data.update({"hypotheses": [insight_hypothesis_to_dict(item) for item in insights]})

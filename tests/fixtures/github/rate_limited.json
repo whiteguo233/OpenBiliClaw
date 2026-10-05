@@ -1,0 +1,4 @@
+{
+  "message": "API rate limit exceeded for 192.0.2.1. Authenticated requests get a higher rate limit.",
+  "documentation_url": "https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api"
+}

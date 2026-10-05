@@ -33,11 +33,29 @@ def test_desktop_web_settings_wires_multimodal_discovery_controls() -> None:
     assert 'setInput("multimodalBatchSize", discovery.multimodal_batch_size ?? 8)' in js
     assert "discovery: {" in js
     assert 'candidate_eval_concurrency: getIntInput("candidateEvalConcurrency", 3)' in js
-    assert 'setInput("llmConcurrency", llm.concurrency ?? 4)' in js
-    assert 'concurrency: getIntInput("llmConcurrency", 4)' in js
+    assert 'setInput("llmConcurrency", llm.concurrency ?? 3)' in js
+    assert 'concurrency: getIntInput("llmConcurrency", 3)' in js
     assert "multimodal_evaluation_enabled:" in js
     assert 'multimodal_batch_size: getIntInput("multimodalBatchSize", 8)' in js
     assert 'multimodal_image_max_px: getIntInput("multimodalImageMaxPx", 384)' in js
+
+
+def test_desktop_web_advanced_panel_round_trips_evaluator_mode() -> None:
+    html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    control = re.search(r'<select id="evalScorer"[\s\S]*?</select>', html)
+    assert control is not None
+    control_html = control.group(0)
+    assert 'aria-describedby="evalScorerHint"' in control_html
+    assert '<option value="llm" selected>Agent（默认）</option>' in control_html
+    assert '<option value="shadow">Shadow（校准观察）</option>' in control_html
+    assert '<option value="learned">Learned（仅相关性，实验性）</option>' in control_html
+    assert 'id="evalScorerHint"' in html
+    assert "人工运行质量门禁并确认通过" in html
+    assert "切换不会重算已有推荐" in html
+    assert 'setSelect("evalScorer", discovery.eval_scorer || "llm")' in js
+    assert 'eval_scorer: $("#evalScorer")?.value || "llm"' in js
 
 
 def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_fields() -> None:
@@ -56,6 +74,7 @@ def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_field
     ]
 
     for element_id in (
+        "evalScorer",
         "visualProfileEnabled",
         "keyframeEnabled",
         "keyframeMaxFrames",
@@ -71,6 +90,9 @@ def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_field
         "multimodalImageQuality",
         "multimodalImageTimeout",
         "keywordGenerationMode",
+        "awarenessEventBatchSize",
+        "insightNoteBatchSize",
+        "cognitionMaxTokens",
     ):
         assert advanced_html.count(f'id="{element_id}"') == 1
         assert html.count(f'id="{element_id}"') == 1
@@ -87,6 +109,7 @@ def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_field
 
     assert 'id="embeddingMultimodalEnabled"' not in models_html
     for element_id in (
+        "evalScorer",
         "keywordGenerationMode",
         "candidateEvalConcurrency",
         "multimodalEvaluationEnabled",
@@ -102,6 +125,9 @@ def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_field
         ("keyframeFetchLimit", "1", "200", "50"),
         ("danmakuFetchLimit", "1", "200", "50"),
         ("danmakuMaxChars", "100", "2000", "500"),
+        ("awarenessEventBatchSize", "10", "900", "300"),
+        ("insightNoteBatchSize", "10", "450", "150"),
+        ("cognitionMaxTokens", "1024", "128000", "32768"),
     ):
         control = re.search(rf'id="{element_id}"[^>]*>', advanced_html)
         assert control is not None
@@ -109,10 +135,13 @@ def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_field
         assert f'max="{maximum}"' in control.group(0)
         assert f'placeholder="{default}"' in control.group(0)
 
-    assert advanced_html.count("<section") == 3
+    assert advanced_html.count("<section") == 6
+    assert advanced_html.count("候选评分模式") >= 1
     assert advanced_html.count("推荐增强") >= 1
     assert advanced_html.count("多模态处理") >= 1
     assert advanced_html.count("搜索词生成") >= 1
+    assert advanced_html.count("认知循环预算") >= 1
+    assert advanced_html.count("回复语气") >= 1
 
 
 def test_desktop_settings_tabs_have_tabpanel_contract_and_advanced_registration() -> None:
@@ -152,6 +181,7 @@ def test_desktop_advanced_discovery_fields_load_and_save_after_snapshot_spread()
     spread_index = js.index(spread)
 
     for load_snippet in (
+        'setSelect("evalScorer", discovery.eval_scorer || "llm")',
         "visualProfile.checked = discovery.visual_profile_enabled === true",
         "keyframe.checked = discovery.keyframe_enabled === true",
         'setInput("keyframeMaxFrames", discovery.keyframe_max_frames ?? 4)',
@@ -163,6 +193,7 @@ def test_desktop_advanced_discovery_fields_load_and_save_after_snapshot_spread()
         assert load_snippet in js
 
     for save_snippet in (
+        'eval_scorer: $("#evalScorer")?.value || "llm"',
         'visual_profile_enabled: $("#visualProfileEnabled")?.checked === true',
         'keyframe_enabled: $("#keyframeEnabled")?.checked === true',
         'keyframe_max_frames: getIntInput("keyframeMaxFrames", 4)',

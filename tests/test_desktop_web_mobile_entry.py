@@ -64,7 +64,23 @@ def test_mobile_qr_preserves_https_public_origin() -> None:
     assert "pageHostIsReachable" in body
     assert 'window.location.protocol === "https:" ? "https" : "http"' in body
     assert "pageHostIsReachable ? def.host" in body
-    assert "pageHostIsReachable ? def.port" in body
+    assert "typedPort || def.port" in body
+
+
+def test_mobile_qr_manual_backend_override_wins_over_lan_ip_and_origin() -> None:
+    """A manually configured backend address must win for QR generation.
+
+    On campus networks the auto-detected LAN IP may be on a different
+    VLAN/subnet than the phone (or AP isolation may block peer-to-peer
+    traffic), so the QR code must use the explicit address the user saved in
+    desktop settings whenever one is present.
+    """
+    body = _APP_JS.split("async function openMobileQrDrawer", 1)[1].split(
+        'safeBind("#profileBtn"', 1
+    )[0]
+    host_line = "const host = typedHost || (pageHostIsReachable ? def.host : (lanIp || def.host));"
+    assert host_line in body
+    assert "const port = typedPort || def.port;" in body
 
 
 def test_mobile_qr_drawer_requeries_lan_ip_on_every_open() -> None:

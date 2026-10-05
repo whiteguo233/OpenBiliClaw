@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -8,6 +9,7 @@ from openbiliclaw.discovery.douyin import DouyinDiscoveryOptions, DouyinDiscover
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.runtime.douyin_producer import (
     DouyinDiscoveryProducer,
+    build_douyin_discovery_producer,
     douyin_runtime_hot_budget,
 )
 
@@ -766,3 +768,79 @@ async def test_douyin_flag_on_feed_only_run_does_not_claim(tmp_path: Any) -> Non
     assert "search" not in seen[0].sources
     assert seen[0].keywords == ()
     assert _dy_statuses(db) == {"kw-a": "pending"}
+
+
+async def test_build_douyin_producer_enables_direct_cookie_fallback(
+    monkeypatch: Any,
+) -> None:
+    """Runtime Douyin discovery must fall back to direct cookie when plugin tasks are empty."""
+    import openbiliclaw.discovery.douyin as discovery_douyin_module
+    import openbiliclaw.sources.douyin_auth as douyin_auth_module
+    import openbiliclaw.sources.douyin_direct as douyin_direct_module
+    import openbiliclaw.sources.douyin_plugin_search as dy_plugin_search_module
+
+    class FakeDirectClient:
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> FakeDirectClient:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, *, client: object, discovery_engine: object) -> None:
+            self.client = client
+
+        async def discover(
+            self, profile: object, options: DouyinDiscoveryOptions
+        ) -> DouyinDiscoveryResult:
+            return DouyinDiscoveryResult(
+                items=[],
+                cached=False,
+                source_counts={},
+                source_outcomes={"search": "used"},
+            )
+
+    captured: dict[str, object] = {}
+
+    class FakePluginClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(douyin_auth_module, "resolve_douyin_cookie", lambda **_: "cookie")
+    monkeypatch.setattr(douyin_direct_module, "DouyinDirectClient", FakeDirectClient)
+    monkeypatch.setattr(dy_plugin_search_module, "DouyinPluginSearchClient", FakePluginClient)
+    monkeypatch.setattr(discovery_douyin_module, "DouyinDiscoveryService", FakeService)
+
+    cfg = SimpleNamespace(
+        data_path=Path("unused"),
+        scheduler=SimpleNamespace(enabled=True),
+        sources=SimpleNamespace(
+            douyin=SimpleNamespace(
+                enabled=True,
+                mode="direct",
+                cookie_env="OPENBILICLAW_DOUYIN_COOKIE",
+                daily_search_budget=0,
+                daily_hot_budget=0,
+                daily_feed_budget=0,
+                min_interval_minutes=3,
+            )
+        ),
+    )
+    database = SimpleNamespace(conn=True)
+
+    producer = build_douyin_discovery_producer(
+        config=cfg,
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=object(),
+    )
+
+    assert producer is not None
+    await producer.discover(
+        {"profile": "ok"},
+        DouyinDiscoveryOptions(sources=("search",)),
+    )
+    assert captured.get("allow_direct_fallback") is True

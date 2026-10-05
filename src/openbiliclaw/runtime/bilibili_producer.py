@@ -17,6 +17,11 @@ from openbiliclaw.discovery.strategies.search import RECENT_SUPPLY_LANE_PAGE_SIZ
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.llm.prompts import build_search_queries_prompt
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.recommendation.publication_preference import (
+    PRESET_ALL,
+    PublicationDatePreference,
+    resolve_publication_window,
+)
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _PLATFORM_BILIBILI
 from openbiliclaw.runtime.pool_gate import candidate_pool_full_for_source
 
@@ -74,6 +79,7 @@ class BilibiliExtensionSearchProducer:
     page_size: int = 20
     recent_lane_tasks_per_cycle: int = 0
     recent_lane_page_size: int = RECENT_SUPPLY_LANE_PAGE_SIZE
+    publication_preference: PublicationDatePreference | None = None
     presence_grace_seconds: int = 90
     candidate_pipeline: Any | None = None
     keyword_fetch: Any | None = None
@@ -212,6 +218,14 @@ class BilibiliExtensionSearchProducer:
         if recent_lane:
             payload["order"] = "pubdate"
             payload["discovery_lane"] = "recent"
+        preference = self.publication_preference
+        if preference is not None and preference.preset != PRESET_ALL and preference.weight >= 1.0:
+            window = resolve_publication_window(preference)
+            if window is not None:
+                if window.start_utc is not None:
+                    payload["pubtime_begin"] = int(window.start_utc.timestamp())
+                if window.end_utc is not None:
+                    payload["pubtime_end"] = int(window.end_utc.timestamp())
         if source_keyword_id is not None:
             payload["source_keyword_id"] = int(source_keyword_id)
         return payload

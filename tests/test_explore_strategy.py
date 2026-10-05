@@ -283,7 +283,7 @@ async def test_explore_strategy_uses_short_domain_json_budget() -> None:
     assert domains[0]["queries"] == ["城市 建筑 纪录片", "废墟 探险 vlog"]
     assert llm_service.calls[0]["caller"] == "discovery.explore.queries"
     assert int(llm_service.calls[0]["max_tokens"]) <= 2048
-    assert llm_service.calls[0]["reasoning_effort"] == ""
+    assert llm_service.calls[0]["reasoning_effort"] is None
     assert llm_service.calls[0]["inject_core_memory"] is False
     assert "why_it_might_resonate" not in str(llm_service.calls[0]["system_instruction"])
 

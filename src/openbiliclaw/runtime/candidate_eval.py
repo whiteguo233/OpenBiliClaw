@@ -39,6 +39,7 @@ class CandidateEvalSnapshot:
     evaluated_pending_admission: int
     admitted_pending_copy: int
     admitted_pending_available: int | None = None
+    evaluated_waiting_total: int | None = None
 
 
 def effective_candidate_eval_workers(configured: int, llm_concurrency: int) -> int:
@@ -96,6 +97,7 @@ class CandidateEvalCoordinator:
         on_admitted: Callable[[int], None] | None = None,
         work_allowed: Any | None = None,
         pre_admit_hook: Callable[[], None] | None = None,
+        revive_failed_eval_callback: Callable[[], int] | None = None,
         safety_wake_seconds: float = 60.0,
         time_fn: Any = time.monotonic,
     ) -> None:
@@ -116,6 +118,12 @@ class CandidateEvalCoordinator:
         self.post_commit_callback = post_commit_callback
         self.on_admitted = on_admitted
         self.work_allowed = work_allowed
+        # Dead-letter recovery hook (defect: failed_eval rows had no way back).
+        # Fired on resume notifications — startup after a config rebuild and
+        # config_*/manual_* wakes — so candidates killed by a transient
+        # provider outage re-enter evaluation once the provider may work again.
+        # Storage bounds the blast radius via a persistent per-row revive cap.
+        self.revive_failed_eval_callback = revive_failed_eval_callback
         self.safety_wake_seconds = max(0.01, float(safety_wake_seconds))
         self.time_fn = time_fn
 
@@ -159,6 +167,9 @@ class CandidateEvalCoordinator:
         if self._paused and resume_notification:
             self._paused = False
             self._backoff_until = 0.0
+            logger.info("candidate evaluation resumed on %s", reason)
+        if resume_notification:
+            self._revive_failed_eval_candidates(reason)
         self._wake_event.set()
 
     async def run_forever(self) -> None:
@@ -167,6 +178,13 @@ class CandidateEvalCoordinator:
         if self._running:
             return
         self._running = True
+        # Self-heal a previous stop/error unwind. ``_running`` still guards
+        # concurrent entry, but a completed run's ``finally`` (and ``stop()``)
+        # leaves ``_stopping`` True; without this reset, re-entering
+        # ``run_forever()`` on the same coordinator would exit immediately at
+        # the first loop check and candidate evaluation would stay parked in
+        # the "stopping" state until the process restarts.
+        self._stopping = False
         self.notify("startup")
         try:
             while not self._stopping:
@@ -274,6 +292,11 @@ class CandidateEvalCoordinator:
                 if value.get("admitted_pending_available") is not None
                 else None
             ),
+            evaluated_waiting_total=(
+                int(value["evaluated_waiting_total"])
+                if value.get("evaluated_waiting_total") is not None
+                else None
+            ),
         )
 
     def _fill_open_slots(self) -> float | None:
@@ -320,7 +343,12 @@ class CandidateEvalCoordinator:
             logger.debug("candidate eval pre-admit hook failed", exc_info=True)
 
     def _admit_evaluated(self, snapshot: CandidateEvalSnapshot) -> None:
-        if snapshot.evaluated_pending_admission <= 0:
+        waiting_total = (
+            snapshot.evaluated_pending_admission
+            if snapshot.evaluated_waiting_total is None
+            else max(0, snapshot.evaluated_waiting_total)
+        )
+        if waiting_total <= 0:
             return
         admit = getattr(self.pipeline, "admit_evaluated", None)
         if not callable(admit):
@@ -329,7 +357,8 @@ class CandidateEvalCoordinator:
             0,
             snapshot.target - snapshot.available - self._eligible_pending_inventory(snapshot),
         )
-        if admission_headroom <= 0:
+        cleanup_needed = waiting_total > max(0, snapshot.evaluated_pending_admission)
+        if admission_headroom <= 0 and not cleanup_needed:
             return
         result = admit(limit=admission_headroom)
         self.last_cached = int(result.get("cached", 0))
@@ -365,6 +394,12 @@ class CandidateEvalCoordinator:
             self.last_batch_seconds = float(getattr(outcome, "elapsed_seconds", 0.0) or 0.0)
             self.last_cached = int(result.get("cached", 0))
             self.last_rejected = int(result.get("rejected", 0))
+            if self._rate_limit_streak > 0 or self._transient_streak > 0:
+                logger.info(
+                    "candidate evaluation recovered after backoff: cached=%d rejected=%d",
+                    self.last_cached,
+                    self.last_rejected,
+                )
             self._rate_limit_streak = 0
             self._transient_streak = 0
             if int(result.get("evaluated", 0)) > 0 and self.last_cached <= 0:
@@ -404,10 +439,23 @@ class CandidateEvalCoordinator:
                 min(self._rate_limit_streak, len(_RATE_LIMIT_BACKOFF_SECONDS) - 1)
             ]
             self._rate_limit_streak += 1
-            self._backoff_until = now + max(delay, self._retry_after_seconds(exc))
+            backoff = max(delay, self._retry_after_seconds(exc))
+            self._backoff_until = now + backoff
+            logger.warning(
+                "candidate evaluation rate limited; backing off %.0fs (streak=%d): %s",
+                backoff,
+                self._rate_limit_streak,
+                self.last_error,
+            )
             return
         if kind in {"no_provider", "auth_failed"}:
             self._paused = True
+            logger.warning(
+                "candidate evaluation paused on %s; waiting for a startup/config_*/manual_* "
+                "wake: %s",
+                kind,
+                self.last_error,
+            )
             return
         if kind not in {"timeout", "connection", "server_error"}:
             logger.warning("candidate evaluation worker failed: %s", exc)
@@ -494,6 +542,32 @@ class CandidateEvalCoordinator:
         self._supply_streak = 0
         self._supply_cooldown_until = 0.0
         self._supply_starvation_warned = False
+
+    def _revive_failed_eval_candidates(self, reason: str) -> None:
+        """Re-queue dead-lettered candidates when evaluation may work again.
+
+        A provider outage (auth/no_provider) pauses the coordinator while
+        per-candidate attempt budgets burn down to ``failed_eval``, a status
+        with no organic way back. Resume notifications (startup after a config
+        rebuild, ``config_*``/``manual_*`` wakes) are the recovery signal.
+        Never raises into the notify path; storage bounds how many rows one
+        call revives and how many times a row can be revived overall.
+        """
+
+        callback = self.revive_failed_eval_callback
+        if callback is None:
+            return
+        try:
+            revived = int(callback() or 0)
+        except Exception:
+            logger.warning("failed_eval candidate revival failed", exc_info=True)
+            return
+        if revived > 0:
+            logger.info(
+                "revived %s failed_eval candidate(s) for re-evaluation on %s",
+                revived,
+                reason,
+            )
 
     async def _cancel_supply_task(self) -> None:
         task = self._supply_task

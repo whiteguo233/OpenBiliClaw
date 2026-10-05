@@ -278,3 +278,10 @@ https://obc.example.com/m/
 不想手敲地址时有两个扫码入口：插件 popup / side panel 顶部的「手机版」胶囊按钮（品牌色带文字，点开二维码浮层），以及桌面 Web（`/web`）顶栏的「手机版」入口（点开抽屉，二维码由自包含的 `desktop/assets/js/mobile-qr.js` 生成）。当桌面页通过公网 / 局域网非 loopback 地址打开时，二维码保留当前页面的 scheme、host 和端口，因此 `https://obc.example.com/web` 会生成 `https://obc.example.com:443/m/`，不会替换为后端私网 IP 或退回 HTTP。只有页面仍是 loopback 时，桌面抽屉才调用轻量端点 `GET /api/qr-info` 并读取响应中的 `lan_ip` 字段；插件入口同样只在配置 host 为 loopback 时探测 LAN IP，并始终保留插件配置的 HTTP/HTTPS scheme。两个入口都在**每次打开时重新请求**该端点，端点自身也绕过 `/api/health` 的 30 秒 `lan_ip` TTL 实时探测：局域网地址会随换 Wi-Fi / 插拔网卡改变，任何一层缓存住都会让二维码继续编码手机已经打不开的旧地址。桌面侧仍保留首屏预取值，但只在这次请求失败时兜底使用，避免退化成 loopback 地址。
 
 公网部署和认证步骤见 [`docs/https-deployment.md`](https-deployment.md)。
+
+## 换批和底部续页恢复（2026-09-07）
+
+- 换批和追加直接应用响应 `pool_status`；旧后端缺失时换批保留有界 runtime-status 补读。卡片渲染不等待库存侧通道。
+- 请求超时覆盖响应正文，换批失败保留当前卡片、显示错误并解除 loading。
+- 用户下滑会主动重新检查已相交的底部哨兵；空批次暂停自动追加，后续库存增加事件解除暂停（重复的相同正数不会重试空页），并仅在底部仍可见且用户此前请求续页时恢复。加载结束重新绑定哨兵，追加使用当前 DOM 插入点。
+- 原生 Flutter 客户端实现位于独立 OpenBiliClaw-mobile 仓库，配套修复读取同一库存响应、保留手动重试和冷却到点复查。

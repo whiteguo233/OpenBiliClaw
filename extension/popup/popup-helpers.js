@@ -57,6 +57,8 @@ function normalizeSourcePlatform(value, url = "") {
     youtube: "youtube",
     x: "twitter",
     twitter: "twitter",
+    gh: "github",
+    github: "github",
     zh: "zhihu",
     zhihu: "zhihu",
     rd: "reddit",
@@ -79,6 +81,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (urlHostMatches(url, ["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"])) return "weibo";
   if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
   if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+  if (urlHostMatches(url, ["github.com"])) return "github";
   if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
   if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
   if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
@@ -191,6 +194,8 @@ const PLATFORM_DISPLAY_NAMES = {
   xhs: "小红书",
   twitter: "X",
   x: "X",
+  github: "GitHub",
+  gh: "GitHub",
   zhihu: "知乎",
   reddit: "Reddit",
   bgm: "Bangumi",
@@ -239,7 +244,7 @@ export function buildYouTubeUrl(videoId) {
 
 export function buildContentUrl(item) {
   if (item?.content_url) return item.content_url;
-  const platform = normalizeText(item?.source_platform);
+  const platform = normalizeSourcePlatform(item?.source_platform, item?.content_url);
   const vid = normalizeText(item?.content_id || item?.bvid);
   if (!vid) return "";
   if (platform === "youtube") return buildYouTubeUrl(vid);
@@ -250,7 +255,10 @@ export function buildContentUrl(item) {
       ? `https://linux.do/t/${encodeURIComponent(topicId)}`
       : "";
   }
-  if (platform === "zhihu" || platform === "reddit") return "";
+  // A GitHub numeric repository id cannot reconstruct owner/name. The backend
+  // always supplies the canonical https://github.com/<owner>/<repo> URL; if it
+  // is absent, fail closed instead of fabricating a Bilibili link.
+  if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (platform === "instagram") return "";
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
@@ -335,6 +343,15 @@ export function resolveInitBangumiUsername({ touched, prefilled, value } = {}) {
   return trimmed;
 }
 
+// GitHub uses the same write-only omit-vs-clear rule as Bangumi usernames:
+// an untouched field keeps the configured value, while deliberately clearing
+// a successfully prefilled username sends an empty string. Keep a named helper
+// so guided-init call sites cannot accidentally clear identity on a failed
+// config prefill.
+export function resolveInitGitHubUsername({ touched, prefilled, value } = {}) {
+  return resolveInitBangumiUsername({ touched, prefilled, value });
+}
+
 export function normalizeRecommendation(item) {
   const bvid = normalizeText(item?.bvid);
   const sourcePlatform = normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili";
@@ -411,6 +428,7 @@ export function formatPublishedTime(item, now = Date.now()) {
 const TEXT_CARD_CONTENT_TYPES = new Set([
   "tweet",
   "thread",
+  "repository",
   "answer",
   "article",
   "question",

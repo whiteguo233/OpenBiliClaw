@@ -13,6 +13,7 @@ name: Release Desktop Installers
 # release on it would stall the whole publish. Build the Intel .dmg on demand via
 # the manual build-installers.yml and attach it to the release if needed.
 on:
+  workflow_dispatch:
   push:
     tags:
       - "desktop-v*"
@@ -37,6 +38,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
+
       - name: Install project + PyInstaller
         run: |
           python -m pip install --upgrade pip
@@ -45,6 +51,9 @@ jobs:
 
       - name: Run macOS installer handoff E2E
         run: python -m pytest -q tests/test_macos_installer_e2e.py
+
+      - name: Prefetch embedded Tailnet modules for every target
+        run: python scripts/generate_tailnet_notices.py --prefetch
 
       - name: Download official Ollama.app runtime
         run: |
@@ -112,6 +121,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
+
       - name: Install project + PyInstaller
         run: |
           python -m pip install --upgrade pip
@@ -140,7 +154,7 @@ jobs:
         id: ollama
         shell: pwsh
         run: |
-          $ver = "0.30.6"
+          $ver = "0.32.13"
           Invoke-WebRequest "https://github.com/ollama/ollama/releases/download/v$ver/ollama-windows-amd64.zip" -OutFile ollama.zip
           Expand-Archive ollama.zip -DestinationPath ollama_win -Force
           $exe = Get-ChildItem ollama_win -Recurse -Filter ollama.exe | Select-Object -First 1
@@ -160,6 +174,9 @@ jobs:
             --expect-digest sha256:daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c `
             --expect-digest sha256:a406579cd136771c705c521db86ca7d60a6f3de7c9b5460e6193a2df27861bde
 
+      - name: Prefetch embedded Tailnet modules for every target
+        run: python scripts/generate_tailnet_notices.py --prefetch
+
       - name: PyInstaller onedir build (ollama staged separately below)
         shell: pwsh
         run: |
@@ -176,7 +193,7 @@ jobs:
           $env:OPENBILICLAW_FROZEN_EXE = (Resolve-Path "dist\OpenBiliClaw\OpenBiliClaw.exe").Path
           python -m pytest -q tests/test_windows_autostart_e2e.py -k real_frozen_bundle
 
-      - name: Stage bundled Ollama (CPU runner only — bge-m3 embedding is CPU)
+      - name: Stage bundled Ollama (Vulkan acceleration with CPU fallback)
         shell: pwsh
         run: |
           $exe = Get-Item "${{ steps.ollama.outputs.path }}"
@@ -184,7 +201,8 @@ jobs:
           $lib = Join-Path $exe.Directory.FullName "lib"
           if (Test-Path $lib) {
             Copy-Item $lib dist\OpenBiliClaw\lib -Recurse -Force
-            # Drop large GPU runners; keep the installer lean (embedding runs on CPU).
+            # Drop large CUDA/ROCm runners; retain Vulkan and CPU.
+            # Embedding requests retry native runner failures with num_gpu=0.
             Get-ChildItem dist\OpenBiliClaw\lib\ollama -Directory -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -match 'cuda|rocm' } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -215,10 +233,22 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP "OpenBiliClaw-installed"
           $env:OPENBILICLAW_PROJECT_ROOT = Join-Path $env:RUNNER_TEMP "OpenBiliClaw-installer-bootstrap"
           $env:OPENBILICLAW_SELFTEST = "1"
+          if (Test-Path $env:OPENBILICLAW_PROJECT_ROOT) { Remove-Item -Recurse -Force $env:OPENBILICLAW_PROJECT_ROOT }
           $process = Start-Process -FilePath $setup -ArgumentList @(
             "/SP-", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir"
           ) -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          # The silent install must hand off to the freshly written exe. The
+          # selftest instance exits as soon as the backend is assembled, so a
+          # plain Get-Process races with that exit; assert on the profile it
+          # creates instead (a Get-Process | Wait-Process with no process is a
+          # silent no-op), then wait out any instance still running.
+          $marker = Join-Path $env:OPENBILICLAW_PROJECT_ROOT "config.toml"
+          $deadline = (Get-Date).AddSeconds(90)
+          while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+          if (-not (Test-Path $marker)) {
+            throw "Silent install did not launch OpenBiliClaw (never wrote $marker)"
+          }
           Get-Process -Name OpenBiliClaw -ErrorAction SilentlyContinue |
             Wait-Process -Timeout 180 -ErrorAction Stop
           $env:OPENBILICLAW_FROZEN_EXE = (Resolve-Path "$installDir\OpenBiliClaw.exe").Path

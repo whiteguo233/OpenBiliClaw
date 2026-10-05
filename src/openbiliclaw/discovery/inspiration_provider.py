@@ -8,16 +8,48 @@ import html
 import json
 import logging
 import re
+import shutil
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol, cast
+from xml.etree import ElementTree
+
+import httpx
 
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
 from openbiliclaw.proc import no_window_kwargs
 
+
+def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict[str, Any]:
+    """Routing kwargs for an overseas search-API ``httpx.AsyncClient``.
+
+    Exa / You.com / Serply are overseas SaaS endpoints, so they follow the
+    process-wide ``[network]`` routing policy (``custom`` passes the explicit
+    proxy, ``system`` inherits environment proxies, ``direct`` forces off).
+    Hardwiring ``trust_env=False`` here left them direct-connected even when
+    the user configured a proxy — api.exa.ai times out from CN networks
+    without one, the same failure shape as the ytimg cover bug. Tests that
+    inject a transport keep full determinism: no global policy is merged on
+    that path.
+    """
+    if transport is not None:
+        return {"transport": transport}
+    from openbiliclaw.network import outbound_httpx_kwargs
+
+    return outbound_httpx_kwargs()
+
+
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SEARCH_BACKENDS: tuple[str, ...] = ("local_cache", "platform_sources", "exa", "you")
+_DEFAULT_SEARCH_BACKENDS: tuple[str, ...] = (
+    "local_cache",
+    "platform_sources",
+    "bing_rss",
+    "exa",
+    "you",
+    "serply",
+)
 
 
 def _ledger_int(value: object) -> int:
@@ -39,6 +71,11 @@ def _provider_alias(provider: object) -> str:
     return alias or provider.__class__.__name__
 
 
+def _provider_last_search_outcome(provider: object) -> PlatformSearchOutcome | None:
+    outcome = getattr(provider, "last_search_outcome", None)
+    return outcome if isinstance(outcome, PlatformSearchOutcome) else None
+
+
 class InspirationSearchProvider(Protocol):
     """Search backend used by the keyword planner's inspiration stage."""
 
@@ -54,6 +91,23 @@ class PlatformSearchBackend(Protocol):
     risk_controlled: bool
 
     async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]: ...
+
+
+@dataclass(frozen=True)
+class PlatformSearchOutcome:
+    """Typed completeness evidence from one platform inspiration probe.
+
+    Legacy backends still return a plain list and are represented with unknown
+    completeness. Backends that can observe authoritative terminal evidence
+    use this shape so accepted previews survive without turning partial or
+    schema-rejected responses into affirmative empty results.
+    """
+
+    items: tuple[ExaPreviewItem, ...] = ()
+    scope_complete: bool | None = None
+    affirmative_empty: bool = False
+    degraded: bool = False
+    terminal_evidence: str = ""
 
 
 PlatformSearchCallable = Callable[[str, int], Awaitable[list[dict[str, Any]]]]
@@ -205,6 +259,200 @@ class McporterYouInspirationProvider:
         return parse_you_search_payload(output)[:count]
 
 
+class ExaInspirationProvider:
+    """Exa provider implemented through Exa's direct HTTP search API."""
+
+    backend_alias = "exa"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = 8.0,
+        base_url: str = "https://api.exa.ai/search",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._base_url = str(base_url or "").strip() or "https://api.exa.ai/search"
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers={"x-api-key": self._api_key, "content-type": "application/json"},
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query or not self._api_key:
+            return []
+        payload = {
+            "query": clean_query,
+            "numResults": count,
+            "contents": {"text": {"maxCharacters": 400}},
+        }
+        response = await self._client.post(self._base_url, json=payload)
+        response.raise_for_status()
+        return parse_exa_search_payload(response.json())[:count]
+
+
+class YouInspirationProvider:
+    """You.com provider implemented through You.com's direct HTTP search API."""
+
+    backend_alias = "you"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = 8.0,
+        base_url: str = "https://api.ydc-index.io/search",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._base_url = str(base_url or "").strip() or "https://api.ydc-index.io/search"
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers={"x-api-key": self._api_key},
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query or not self._api_key:
+            return []
+        response = await self._client.get(
+            self._base_url,
+            params={"query": clean_query, "limit": count},
+        )
+        response.raise_for_status()
+        return parse_you_search_payload(response.json())[:count]
+
+
+class SerplyInspirationProvider:
+    """Serply provider implemented through Serply's direct HTTP search API."""
+
+    backend_alias = "serply"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = 8.0,
+        base_url: str = "https://api.serply.io/v1/search",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._base_url = str(base_url or "").strip() or "https://api.serply.io/v1/search"
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers={
+                "X-Api-Key": self._api_key,
+                "Accept": "application/json",
+                # Serply sits behind Cloudflare, which rejects the default
+                # httpx User-Agent, so send an explicit one.
+                "User-Agent": "OpenBiliClaw",
+            },
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query or not self._api_key:
+            return []
+        response = await self._client.get(
+            self._base_url,
+            params={"q": clean_query, "num": count},
+        )
+        response.raise_for_status()
+        return parse_serply_search_payload(response.json())[:count]
+
+
+def _rss_element_text(element: ElementTree.Element | None) -> str:
+    if element is None:
+        return ""
+    return "".join(element.itertext())
+
+
+class BingRssInspirationProvider:
+    """No-key web-search fallback backed by Bing's RSS endpoint."""
+
+    backend_alias = "bing_rss"
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 8.0,
+        base_url: str = "https://www.bing.com/search",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._base_url = str(base_url or "").strip() or "https://www.bing.com/search"
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            # Bing is reachable directly from CN networks (cn.bing.com edge);
+            # routing it through an overseas ladder would only add latency.
+            # Deliberately NOT wired to openbiliclaw.network — same split as
+            # the image cache's CN-CDN branch.
+            trust_env=False,
+            transport=transport,
+            headers={
+                "user-agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                )
+            },
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query:
+            return []
+        response = await self._client.get(
+            self._base_url,
+            params={"q": clean_query, "format": "rss", "count": count},
+        )
+        response.raise_for_status()
+        try:
+            root = ElementTree.fromstring(response.content)
+        except ElementTree.ParseError as exc:
+            raise RuntimeError("bing_rss returned invalid XML") from exc
+        previews: list[ExaPreviewItem] = []
+        for item in root.findall(".//item"):
+            title = _clean_title(_rss_element_text(item.find("title")))
+            url = str(_rss_element_text(item.find("link")) or "").strip()
+            if not title or not url:
+                continue
+            description = _clean_title(_rss_element_text(item.find("description")))
+            previews.append(
+                ExaPreviewItem(
+                    title=title,
+                    url=url,
+                    highlights=(description,) if description else (),
+                )
+            )
+            if len(previews) >= count:
+                break
+        return previews
+
+
 class FallbackInspirationSearchProvider:
     """Try inspiration search providers in order until one yields results."""
 
@@ -232,6 +480,7 @@ class FallbackInspirationSearchProvider:
             "provider_successes": {},
             "provider_failures": {},
             "provider_empty": {},
+            "provider_degraded": {},
             "provider_augmentations": 0,
         }
 
@@ -245,6 +494,11 @@ class FallbackInspirationSearchProvider:
 
     def grounding_ledger(self) -> dict[str, object]:
         combined_platforms: dict[str, int] = {}
+        combined_platform_complete: dict[str, int] = {}
+        combined_platform_affirmative_empty: dict[str, int] = {}
+        combined_platform_partial: dict[str, int] = {}
+        combined_platform_degraded: dict[str, int] = {}
+        combined_terminal_evidence: dict[str, dict[str, int]] = {}
         skipped_cooldown = 0
         skipped_budget = 0
         timeouts = 0
@@ -266,6 +520,27 @@ class FallbackInspirationSearchProvider:
                 combined_platforms[str(platform)] = combined_platforms.get(str(platform), 0) + int(
                     count or 0
                 )
+            for field, destination in (
+                ("platform_complete", combined_platform_complete),
+                ("platform_affirmative_empty", combined_platform_affirmative_empty),
+                ("platform_partial", combined_platform_partial),
+                ("platform_degraded", combined_platform_degraded),
+            ):
+                raw_counts = ledger.get(field, {})
+                if not isinstance(raw_counts, dict):
+                    continue
+                for platform, count in raw_counts.items():
+                    key = str(platform)
+                    destination[key] = destination.get(key, 0) + _ledger_int(count or 0)
+            raw_terminal_evidence = ledger.get("platform_terminal_evidence", {})
+            if isinstance(raw_terminal_evidence, dict):
+                for platform, raw_reasons in raw_terminal_evidence.items():
+                    if not isinstance(raw_reasons, dict):
+                        continue
+                    reasons = combined_terminal_evidence.setdefault(str(platform), {})
+                    for reason, count in raw_reasons.items():
+                        key = str(reason)
+                        reasons[key] = reasons.get(key, 0) + _ledger_int(count or 0)
             skipped_cooldown += _ledger_int(ledger.get("skipped_cooldown", 0) or 0)
             skipped_budget += _ledger_int(ledger.get("skipped_budget", 0) or 0)
             timeouts += _ledger_int(ledger.get("timeouts", 0) or 0)
@@ -279,6 +554,11 @@ class FallbackInspirationSearchProvider:
                     )
         return {
             "platforms": combined_platforms,
+            "platform_complete": combined_platform_complete,
+            "platform_affirmative_empty": combined_platform_affirmative_empty,
+            "platform_partial": combined_platform_partial,
+            "platform_degraded": combined_platform_degraded,
+            "platform_terminal_evidence": combined_terminal_evidence,
             "skipped_cooldown": skipped_cooldown,
             "skipped_budget": skipped_budget,
             "timeouts": timeouts,
@@ -292,6 +572,9 @@ class FallbackInspirationSearchProvider:
                 cast("dict[str, int]", self._ledger.get("provider_successes", {}))
             ),
             "provider_empty": dict(cast("dict[str, int]", self._ledger.get("provider_empty", {}))),
+            "provider_degraded": dict(
+                cast("dict[str, int]", self._ledger.get("provider_degraded", {}))
+            ),
             "provider_augmentations": _ledger_int(
                 self._ledger.get("provider_augmentations", 0) or 0
             ),
@@ -334,8 +617,11 @@ class FallbackInspirationSearchProvider:
                     exc_info=True,
                 )
                 continue
+            provider_outcome = _provider_last_search_outcome(provider)
             if results:
                 self._increment_provider_counter("provider_successes", provider)
+                if provider_outcome is not None and provider_outcome.degraded:
+                    self._increment_provider_counter("provider_degraded", provider)
                 self.last_search_provider = _provider_alias(provider)
                 for item in results:
                     key = _preview_key(item)
@@ -348,6 +634,11 @@ class FallbackInspirationSearchProvider:
                 self._ledger["provider_augmentations"] = (
                     _ledger_int(self._ledger.get("provider_augmentations", 0) or 0) + 1
                 )
+                continue
+            if provider_outcome is not None and provider_outcome.degraded:
+                self._increment_provider_counter("provider_degraded", provider)
+                if not self._fallback_on_empty:
+                    return []
                 continue
             self._increment_provider_counter("provider_empty", provider)
             if not self._fallback_on_empty:
@@ -388,6 +679,11 @@ class FallbackInspirationSearchProvider:
             _ledger_int(ledger.get(key, 0) or 0) > 0
             for key in ("timeouts", "skipped_cooldown", "skipped_budget")
         )
+        raw_platform_degraded = ledger.get("platform_degraded", {})
+        if isinstance(raw_platform_degraded, dict):
+            has_loss_signal = has_loss_signal or any(
+                _ledger_int(count or 0) > 0 for count in raw_platform_degraded.values()
+            )
         return result_count < max(1, int(limit)) or has_loss_signal
 
     def _increment_provider_counter(
@@ -422,11 +718,17 @@ class PlatformSourceInspirationProvider:
         self._cursor = 0
         self._riskcontrolled_used = 0
         self._ledger = self._new_ledger()
+        self.last_search_outcome: PlatformSearchOutcome | None = None
 
     @staticmethod
     def _new_ledger() -> dict[str, object]:
         return {
             "platforms": {},
+            "platform_complete": {},
+            "platform_affirmative_empty": {},
+            "platform_partial": {},
+            "platform_degraded": {},
+            "platform_terminal_evidence": {},
             "skipped_cooldown": 0,
             "skipped_budget": 0,
             "timeouts": 0,
@@ -435,11 +737,34 @@ class PlatformSourceInspirationProvider:
     def begin_stage(self) -> None:
         self._riskcontrolled_used = 0
         self._ledger = self._new_ledger()
+        self.last_search_outcome = None
 
     def grounding_ledger(self) -> dict[str, object]:
         platforms = dict(cast("dict[str, int]", self._ledger.get("platforms", {})))
         return {
             "platforms": platforms,
+            "platform_complete": dict(
+                cast("dict[str, int]", self._ledger.get("platform_complete", {}))
+            ),
+            "platform_affirmative_empty": dict(
+                cast(
+                    "dict[str, int]",
+                    self._ledger.get("platform_affirmative_empty", {}),
+                )
+            ),
+            "platform_partial": dict(
+                cast("dict[str, int]", self._ledger.get("platform_partial", {}))
+            ),
+            "platform_degraded": dict(
+                cast("dict[str, int]", self._ledger.get("platform_degraded", {}))
+            ),
+            "platform_terminal_evidence": {
+                str(platform): dict(evidence)
+                for platform, evidence in cast(
+                    "dict[str, dict[str, int]]",
+                    self._ledger.get("platform_terminal_evidence", {}),
+                ).items()
+            },
             "skipped_cooldown": _ledger_int(self._ledger.get("skipped_cooldown", 0) or 0),
             "skipped_budget": _ledger_int(self._ledger.get("skipped_budget", 0) or 0),
             "timeouts": _ledger_int(self._ledger.get("timeouts", 0) or 0),
@@ -454,6 +779,7 @@ class PlatformSourceInspirationProvider:
         return remaining
 
     async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        self.last_search_outcome = None
         clean_query = str(query or "").strip()
         if not clean_query or not self._backends:
             return []
@@ -463,10 +789,13 @@ class PlatformSourceInspirationProvider:
         count = max(1, int(limit))
         per_backend_total = max(1, (count + len(selected) - 1) // len(selected))
         previews: list[ExaPreviewItem] = []
+        outcomes: list[PlatformSearchOutcome] = []
+        terminal_evidence: list[str] = []
+        backend_failures = 0
         for backend in selected:
             try:
                 platform = str(getattr(backend, "platform", "unknown") or "unknown")
-                result = await asyncio.wait_for(
+                outcome = await asyncio.wait_for(
                     _call_platform_backend_search(
                         backend,
                         clean_query,
@@ -475,10 +804,16 @@ class PlatformSourceInspirationProvider:
                     ),
                     timeout=self._backend_timeout_seconds,
                 )
-                previews.extend(result)
+                outcomes.append(outcome)
+                previews.extend(outcome.items)
                 platforms = cast("dict[str, int]", self._ledger["platforms"])
                 platforms[platform] = int(platforms.get(platform, 0)) + 1
+                self._record_platform_outcome(platform, outcome)
+                if outcome.terminal_evidence:
+                    terminal_evidence.append(outcome.terminal_evidence)
             except TimeoutError:
+                backend_failures += 1
+                terminal_evidence.append("timeout")
                 self._ledger["timeouts"] = _ledger_int(self._ledger.get("timeouts", 0) or 0) + 1
                 logger.debug(
                     "platform inspiration source %s timed out",
@@ -486,12 +821,65 @@ class PlatformSourceInspirationProvider:
                     exc_info=True,
                 )
             except Exception:
+                backend_failures += 1
+                terminal_evidence.append("backend_error")
                 logger.debug(
                     "platform inspiration source %s failed",
                     getattr(backend, "platform", backend.__class__.__name__),
                     exc_info=True,
                 )
-        return previews[:count]
+        combined = previews[:count]
+        degraded = backend_failures > 0 or any(outcome.degraded for outcome in outcomes)
+        scope_values = [outcome.scope_complete for outcome in outcomes]
+        scope_complete: bool | None
+        if backend_failures:
+            scope_complete = False
+        elif scope_values and all(value is True for value in scope_values):
+            scope_complete = True
+        elif any(value is False for value in scope_values):
+            scope_complete = False
+        else:
+            scope_complete = None
+        affirmative_empty = bool(
+            outcomes
+            and not combined
+            and not degraded
+            and all(outcome.affirmative_empty for outcome in outcomes)
+        )
+        self.last_search_outcome = PlatformSearchOutcome(
+            items=tuple(combined),
+            scope_complete=scope_complete,
+            affirmative_empty=affirmative_empty,
+            degraded=degraded,
+            terminal_evidence="+".join(dict.fromkeys(terminal_evidence)),
+        )
+        return combined
+
+    def _record_platform_outcome(
+        self,
+        platform: str,
+        outcome: PlatformSearchOutcome,
+    ) -> None:
+        if outcome.scope_complete is True:
+            self._increment_platform_counter("platform_complete", platform)
+        if outcome.affirmative_empty:
+            self._increment_platform_counter("platform_affirmative_empty", platform)
+        if outcome.degraded:
+            self._increment_platform_counter("platform_degraded", platform)
+            if outcome.items:
+                self._increment_platform_counter("platform_partial", platform)
+        evidence = str(outcome.terminal_evidence or "").strip()
+        if evidence:
+            by_platform = cast(
+                "dict[str, dict[str, int]]",
+                self._ledger["platform_terminal_evidence"],
+            )
+            reasons = by_platform.setdefault(platform, {})
+            reasons[evidence] = int(reasons.get(evidence, 0)) + 1
+
+    def _increment_platform_counter(self, field: str, platform: str) -> None:
+        counters = cast("dict[str, int]", self._ledger[field])
+        counters[platform] = int(counters.get(platform, 0)) + 1
 
     def _select_backends(self) -> list[PlatformSearchBackend]:
         if not self._backends:
@@ -525,14 +913,19 @@ async def _call_platform_backend_search(
     *,
     limit: int,
     pages: int,
-) -> list[ExaPreviewItem]:
+) -> PlatformSearchOutcome:
+    search = getattr(backend, "search_outcome", None)
+    if not callable(search):
+        search = backend.search
     try:
-        result = await cast("Any", backend.search)(query, limit=limit, pages=pages)
+        result = await cast("Any", search)(query, limit=limit, pages=pages)
     except TypeError as exc:
         if "pages" not in str(exc):
             raise
-        result = await cast("Any", backend.search)(query, limit=limit)
-    return list(result or [])
+        result = await cast("Any", search)(query, limit=limit)
+    if isinstance(result, PlatformSearchOutcome):
+        return result
+    return PlatformSearchOutcome(items=tuple(result or ()))
 
 
 def _dedupe_previews(items: list[ExaPreviewItem], *, limit: int) -> list[ExaPreviewItem]:
@@ -888,6 +1281,191 @@ class WeiboPlatformSearchBackend:
         return _dedupe_previews(previews, limit=max(1, int(limit)))
 
 
+class GitHubPlatformSearchBackend:
+    """Use GitHub's public repository search as inspiration-only grounding."""
+
+    platform = "github"
+    # Anonymous repository search is deliberately tight (10 requests/minute),
+    # so share the planner's bounded probe budget with other fragile sources.
+    risk_controlled = True
+
+    def __init__(self, client: object, *, database: object | None = None) -> None:
+        self._client = client
+        self._database = database
+
+    def cooldown_remaining(self) -> float:
+        if self._database is None:
+            return 0.0
+        from openbiliclaw.runtime.github_producer import github_cooldown_remaining
+
+        return github_cooldown_remaining(self._database)
+
+    async def search(self, query: str, *, limit: int, pages: int = 1) -> list[ExaPreviewItem]:
+        """Return accepted previews while retaining compatibility with list callers."""
+
+        outcome = await self.search_outcome(query, limit=limit, pages=pages)
+        return list(outcome.items)
+
+    async def search_outcome(
+        self,
+        query: str,
+        *,
+        limit: int,
+        pages: int = 1,
+    ) -> PlatformSearchOutcome:
+        """Return previews plus authoritative GitHub completeness evidence."""
+
+        search = getattr(self._client, "search_repositories", None)
+        if not callable(search):
+            return PlatformSearchOutcome(
+                degraded=True,
+                scope_complete=False,
+                terminal_evidence="backend_unavailable",
+            )
+        total = max(1, int(limit))
+        page_count = max(1, min(5, int(pages)))
+        page_size = min(100, max(1, (total + page_count - 1) // page_count))
+        public_query = _github_public_query(query)
+        if not public_query:
+            return PlatformSearchOutcome(
+                degraded=True,
+                scope_complete=False,
+                terminal_evidence="invalid_query",
+            )
+        previews: list[ExaPreviewItem] = []
+        rows_seen = 0
+        accepted_seen = 0
+        rejected_seen = 0
+        upstream_scope_complete = False
+        stopped_for_limit = False
+        exhausted_probe_pages = False
+        degradation_reasons: list[str] = []
+        from openbiliclaw.sources.github import github_repository_to_content
+
+        for page_number in range(1, page_count + 1):
+            try:
+                page = await search(
+                    public_query,
+                    page=page_number,
+                    per_page=page_size,
+                )
+            except Exception as exc:
+                from openbiliclaw.sources.github_client import GitHubAPIError
+
+                if (
+                    isinstance(exc, GitHubAPIError)
+                    and exc.code == "rate_limited"
+                    and self._database is not None
+                ):
+                    from openbiliclaw.runtime.github_producer import persist_github_cooldown
+
+                    persist_github_cooldown(
+                        self._database,
+                        exc.retry_after_seconds or 300,
+                    )
+                raise
+            rows = getattr(page, "items", [])
+            if not isinstance(rows, list):
+                degradation_reasons.append("invalid_items_container")
+                break
+            page_rejections = 0
+            for row in rows:
+                rows_seen += 1
+                content = github_repository_to_content(
+                    row,
+                    strategy="github-inspiration",
+                )
+                if content is None:
+                    rejected_seen += 1
+                    page_rejections += 1
+                    continue
+                accepted_seen += 1
+                if len(previews) >= total:
+                    continue
+                tags = ", ".join(content.tags[:6])
+                stars_label = f"stars: {content.favorite_count}"
+                previews.append(
+                    ExaPreviewItem(
+                        title=_clean_title(content.title),
+                        url=content.content_url,
+                        highlights=tuple(
+                            _clean_highlights(
+                                [
+                                    content.body_text,
+                                    tags,
+                                    stars_label,
+                                    content.author_name,
+                                ]
+                            )
+                        ),
+                    )
+                )
+            incomplete_results = getattr(page, "incomplete_results", False) is True
+            search_capped = getattr(page, "search_capped", False) is True
+            if incomplete_results:
+                degradation_reasons.append("incomplete_results")
+            if search_capped:
+                degradation_reasons.append("search_capped")
+            if page_rejections:
+                degradation_reasons.append("rejected_rows")
+
+            next_page = getattr(page, "next_page", None)
+            explicit_scope_complete = getattr(page, "scope_complete", None)
+            page_scope_complete = (
+                explicit_scope_complete
+                if isinstance(explicit_scope_complete, bool)
+                else not incomplete_results and not search_capped and next_page is None
+            )
+            if len(previews) >= total:
+                stopped_for_limit = accepted_seen > len(previews) or next_page is not None
+                upstream_scope_complete = page_scope_complete
+                break
+            if next_page is None:
+                upstream_scope_complete = page_scope_complete
+                break
+        else:
+            exhausted_probe_pages = True
+
+        deduped = _dedupe_previews(previews, limit=total)
+        if len(deduped) < len(previews):
+            stopped_for_limit = True
+        scope_complete = bool(
+            upstream_scope_complete
+            and not degradation_reasons
+            and not stopped_for_limit
+            and not exhausted_probe_pages
+        )
+        degraded = bool(rejected_seen or degradation_reasons or not scope_complete)
+        affirmative_empty = bool(scope_complete and rows_seen == 0 and accepted_seen == 0)
+        if degradation_reasons:
+            terminal_evidence = "+".join(dict.fromkeys(degradation_reasons))
+        elif affirmative_empty:
+            terminal_evidence = "affirmative_empty"
+        elif scope_complete:
+            terminal_evidence = "scope_complete"
+        elif stopped_for_limit:
+            terminal_evidence = "limit_reached"
+        elif exhausted_probe_pages:
+            terminal_evidence = "probe_page_cap"
+        else:
+            terminal_evidence = "scope_incomplete"
+        return PlatformSearchOutcome(
+            items=tuple(deduped),
+            scope_complete=scope_complete,
+            affirmative_empty=affirmative_empty,
+            degraded=degraded,
+            terminal_evidence=terminal_evidence,
+        )
+
+
+def _github_public_query(value: object) -> str:
+    """Return a bounded repository query whose visibility scope is server-owned."""
+
+    from openbiliclaw.sources.github import github_public_repository_query
+
+    return github_public_repository_query(value)
+
+
 def _douyin_preview(row: dict[str, Any]) -> ExaPreviewItem | None:
     aweme_id = _first_text(row.get("aweme_id"), row.get("id"), row.get("item_id"))
     title = _first_text(
@@ -1062,9 +1640,11 @@ def _statistics_highlight(value: object) -> str:
 def build_platform_source_backends(
     config: object,
     *,
+    database: object | None = None,
     bilibili_client: object | None = None,
     youtube_client: object | None = None,
     x_client: object | None = None,
+    github_client: object | None = None,
     reddit_runner: object | None = None,
     douyin_client: object | None = None,
     xhs_search: PlatformSearchCallable | None = None,
@@ -1106,6 +1686,10 @@ def build_platform_source_backends(
     twitter_cfg = getattr(sources, "twitter", None)
     if bool(getattr(twitter_cfg, "enabled", False)) and x_client is not None:
         backends.append(XPlatformSearchBackend(x_client))
+
+    github_cfg = getattr(sources, "github", None)
+    if bool(getattr(github_cfg, "enabled", False)) and github_client is not None:
+        backends.append(GitHubPlatformSearchBackend(github_client, database=database))
 
     reddit_cfg = getattr(sources, "reddit", None)
     reddit_backend = str(getattr(reddit_cfg, "backend", "rdt") or "rdt").strip().lower()
@@ -1155,6 +1739,9 @@ def build_inspiration_search_provider(
     platforms_per_probe: int = 2,
     riskcontrolled_probe_budget: int = 4,
     pages_per_probe: int = 1,
+    exa_api_key: str = "",
+    you_api_key: str = "",
+    serply_api_key: str = "",
 ) -> InspirationSearchProvider | None:
     """Build the configured inspiration search provider chain."""
 
@@ -1173,17 +1760,50 @@ def build_inspiration_search_provider(
                         pages_per_probe=pages_per_probe,
                     )
                 )
-        elif backend == "exa":
+        elif backend == "bing_rss":
             providers.append(
-                McporterExaInspirationProvider(
-                    runner=runner,
+                BingRssInspirationProvider(
                     timeout_seconds=timeout_seconds,
                 )
             )
+        elif backend == "exa":
+            if str(exa_api_key or "").strip():
+                providers.append(
+                    ExaInspirationProvider(
+                        api_key=exa_api_key,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            elif runner is not None or not _mcporter_cli_missing():
+                providers.append(
+                    McporterExaInspirationProvider(
+                        runner=runner,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            else:
+                _warn_mcporter_missing_once("exa")
         elif backend == "you":
+            if str(you_api_key or "").strip():
+                providers.append(
+                    YouInspirationProvider(
+                        api_key=you_api_key,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            elif runner is not None or not _mcporter_cli_missing():
+                providers.append(
+                    McporterYouInspirationProvider(
+                        runner=runner,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            else:
+                _warn_mcporter_missing_once("you")
+        elif backend == "serply" and str(serply_api_key or "").strip():
             providers.append(
-                McporterYouInspirationProvider(
-                    runner=runner,
+                SerplyInspirationProvider(
+                    api_key=serply_api_key,
                     timeout_seconds=timeout_seconds,
                 )
             )
@@ -1206,6 +1826,9 @@ def _normalize_search_backends(value: object) -> tuple[str, ...]:
         raw_values = []
 
     aliases = {
+        "bing": "bing_rss",
+        "bing_rss": "bing_rss",
+        "bing-rss": "bing_rss",
         "exa": "exa",
         "local": "local_cache",
         "cache": "local_cache",
@@ -1219,6 +1842,8 @@ def _normalize_search_backends(value: object) -> tuple[str, ...]:
         "youcom": "you",
         "you-search": "you",
         "you_search": "you",
+        "serply": "serply",
+        "serply.io": "serply",
     }
     normalized: list[str] = []
     seen: set[str] = set()
@@ -1229,6 +1854,26 @@ def _normalize_search_backends(value: object) -> tuple[str, ...]:
         normalized.append(backend)
         seen.add(backend)
     return tuple(normalized or _DEFAULT_SEARCH_BACKENDS)
+
+
+def _mcporter_cli_missing() -> bool:
+    """Whether the local ``mcporter`` command cannot be found on PATH."""
+    return shutil.which("mcporter") is None
+
+
+_MCPORTER_MISSING_WARNED: set[str] = set()
+
+
+def _warn_mcporter_missing_once(backend: str) -> None:
+    """Log one actionable warning per backend per process."""
+    if backend in _MCPORTER_MISSING_WARNED:
+        return
+    _MCPORTER_MISSING_WARNED.add(backend)
+    logger.warning(
+        "inspiration backend '%s' skipped: mcporter CLI not found on PATH; "
+        "install mcporter or remove it from `discovery.inspiration_search_backends`",
+        backend,
+    )
 
 
 def _backend_cooldown_remaining(backend: object) -> float:
@@ -1313,6 +1958,35 @@ def parse_you_search_payload(payload: object) -> list[ExaPreviewItem]:
     return _parse_you_data_results(data)
 
 
+def parse_serply_search_payload(payload: object) -> list[ExaPreviewItem]:
+    """Parse Serply search JSON output into preview items."""
+
+    if isinstance(payload, str):
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError):
+            return []
+    else:
+        data = payload
+    raw_results: object = data.get("results", []) if isinstance(data, dict) else data
+    if not isinstance(raw_results, list):
+        return []
+
+    previews: list[ExaPreviewItem] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("link") or "").strip()
+        if not title or not url:
+            continue
+        description = str(item.get("description") or "").strip()
+        previews.append(
+            ExaPreviewItem(title=title, url=url, highlights=(description,) if description else ())
+        )
+    return previews
+
+
 def _parse_you_text_results(text: str) -> list[ExaPreviewItem]:
     clean_text = str(text or "").strip()
     if not clean_text:
@@ -1383,6 +2057,7 @@ def _collect_you_result_dicts(data: object) -> list[dict[str, object]]:
     results = []
     for key in (
         "results",
+        "hits",
         "web",
         "news",
         "search_results",
@@ -1544,10 +2219,17 @@ def _clean_highlights(value: object) -> list[str]:
 
 
 async def _run_command(args: list[str], timeout_seconds: float) -> str:
+    # mcporter dials the same overseas APIs as the direct providers above;
+    # route the subprocess through the [network] policy exactly like reddit's
+    # rdt-cli / OpenCLI backends (custom injects the proxy vars, system
+    # preserves the caller env, direct strips them).
+    from openbiliclaw.network import outbound_cli_environment
+
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=outbound_cli_environment(),
         **no_window_kwargs(),
     )
     try:

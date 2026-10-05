@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Protocol
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
@@ -22,6 +24,11 @@ from openbiliclaw.soul.event_prompt_views import normalize_cognition_input_view
 from .profile import AwarenessNote, InsightHypothesis
 
 logger = logging.getLogger(__name__)
+
+# Default production dedup similarity. Calibrated to collapse obvious wording
+# variants without merging distinct directions; can be tuned if users want
+# even tighter integration.
+_INSIGHT_DEDUP_SIMILARITY_THRESHOLD = 0.65
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -110,21 +117,105 @@ class InsightAnalyzer:
             return round(max(current.confidence, incoming.confidence), 4)
         return round(incoming.confidence, 4)
 
+    @staticmethod
+    def _dedupe_norm_title(value: str) -> str:
+        return re.sub(r"[\W_]+", "", value).lower()
+
+    @staticmethod
+    def _same_semantic_state(current: InsightHypothesis, incoming: InsightHypothesis) -> bool:
+        return (
+            current.validated == incoming.validated
+            and current.user_verdict == incoming.user_verdict
+        )
+
+    @classmethod
+    def _is_near_duplicate(
+        cls,
+        existing: InsightHypothesis,
+        incoming: InsightHypothesis,
+    ) -> bool:
+        left = cls._dedupe_norm_title(existing.hypothesis)
+        right = cls._dedupe_norm_title(incoming.hypothesis)
+        if left == right:
+            return True
+        # Keep short labels apart; they are usually deliberate distinct topics.
+        if len(left) < 20 or len(right) < 20:
+            return False
+        return SequenceMatcher(None, left, right).ratio() >= _INSIGHT_DEDUP_SIMILARITY_THRESHOLD
+
+    @classmethod
+    def dedupe_hypotheses(
+        cls,
+        insights: list[InsightHypothesis],
+    ) -> list[InsightHypothesis]:
+        """Deduplicate one stored insight list in-place style.
+
+        This is used at persistence boundaries so the production backlog does
+        not keep growing with near-copies.  Conflicting user states are kept
+        separate because they represent different semantic information.
+        """
+        kept: list[InsightHypothesis] = []
+        for item in insights:
+            match_index = None
+            for index, current in enumerate(kept):
+                if not cls._is_near_duplicate(current, item):
+                    continue
+                if cls._dedupe_norm_title(current.hypothesis) != cls._dedupe_norm_title(
+                    item.hypothesis
+                ) and not cls._same_semantic_state(current, item):
+                    continue
+                match_index = index
+                break
+            if match_index is None:
+                kept.append(item)
+                continue
+            current = kept[match_index]
+            verdict = current.user_verdict or item.user_verdict
+            kept[match_index] = InsightHypothesis(
+                hypothesis=current.hypothesis or item.hypothesis,
+                evidence=sorted({*current.evidence, *item.evidence}),
+                confidence=cls._merge_confidence(current, item, verdict),
+                validated=current.validated or item.validated,
+                created_at=current.created_at or item.created_at,
+                user_verdict=verdict,
+            )
+        return kept
+
     def merge_insights(
         self,
         existing: list[InsightHypothesis],
         incoming: list[InsightHypothesis],
     ) -> list[InsightHypothesis]:
-        """Merge hypotheses by normalized hypothesis text."""
-        merged = {self._normalize_text(item.hypothesis): item for item in existing}
+        """Merge hypotheses by normalized text and near-duplicate wording.
+
+        Production-stage deduplication happens here, before new hypotheses are
+        persisted, so the insight layer does not accumulate a dozen copies of
+        the same observation with slightly different wording.  Conflicting user
+        states (confirmed vs rejected vs unjudged) are kept separate because
+        they carry different semantic signal.
+        """
+        merged: list[InsightHypothesis] = list(existing)
         for item in incoming:
-            key = self._normalize_text(item.hypothesis)
-            current = merged.get(key)
-            if current is None:
-                merged[key] = item
+            match_index = None
+            for index, current in enumerate(merged):
+                if not self._is_near_duplicate(current, item):
+                    continue
+                # Exact matches keep the existing merge semantics even across
+                # states.  Near-duplicate matches are only folded when both
+                # sides are in the same semantic state, otherwise we would
+                # collapse a reject into a confirm and lose the user verdict.
+                if self._dedupe_norm_title(current.hypothesis) != self._dedupe_norm_title(
+                    item.hypothesis
+                ) and not self._same_semantic_state(current, item):
+                    continue
+                match_index = index
+                break
+            if match_index is None:
+                merged.append(item)
                 continue
+            current = merged[match_index]
             verdict = current.user_verdict or item.user_verdict
-            merged[key] = InsightHypothesis(
+            merged[match_index] = InsightHypothesis(
                 hypothesis=current.hypothesis or item.hypothesis,
                 evidence=sorted({*current.evidence, *item.evidence}),
                 confidence=self._merge_confidence(current, item, verdict),
@@ -132,7 +223,7 @@ class InsightAnalyzer:
                 created_at=current.created_at or item.created_at,
                 user_verdict=verdict,
             )
-        return list(merged.values())
+        return merged
 
     def _parse_response(self, content: str) -> list[object]:
         if not content.strip():
@@ -199,6 +290,7 @@ class InsightAnalyzer:
             "hypothesis": item.hypothesis,
             "confidence": round(float(item.confidence), 4),
             "validated": bool(item.validated),
+            "user_verdict": str(item.user_verdict or "").strip(),
         }
 
     @staticmethod

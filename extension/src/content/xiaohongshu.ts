@@ -33,13 +33,18 @@ import { attachCoverData } from "./xhs/cover-harvest.js";
 import { registerTaskExecutor } from "./xhs/task-executor.js";
 import { NOTE_ANCHOR_SELECTOR } from "./xhs/selectors.ts";
 import { installNativeSaveExecutor } from "./native-save/runtime.ts";
+import { shouldStartPassiveCollector } from "./native-save/task-mode.ts";
 import { saveXiaohongshu, verifyXiaohongshu } from "./native-save/xiaohongshu.ts";
 import { buildEventFromXhsAction, isXhsAction } from "./xhs/action-event.ts";
 import type { BehaviorEvent } from "../shared/types.js";
 import type { XhsSearchResponseNote } from "../shared/xhs-search-response.js";
+import type { XhsPublishedTime } from "../shared/xhs-published-at.js";
 import { recordXhsSearchResponseNotes } from "./xhs/search-response-buffer.js";
+import { recordXhsPublishedTimes } from "./xhs/published-time-buffer.js";
 
-startCollector(xiaohongshuAdapter);
+void shouldStartPassiveCollector().then((shouldStart) => {
+  if (shouldStart) startCollector(xiaohongshuAdapter);
+});
 registerTaskExecutor();
 registerE2EExecutor("xiaohongshu");
 installNativeSaveExecutor("xiaohongshu", saveXiaohongshu, verifyXiaohongshu);
@@ -94,10 +99,14 @@ window.addEventListener("message", (event) => {
     source?: string;
     pairs?: TokenPair[];
     search_notes?: XhsSearchResponseNote[];
+    published_notes?: XhsPublishedTime[];
   } | null;
   if (!data || data.source !== "obc-xhs-sniffer") return;
   if (Array.isArray(data.search_notes)) {
     recordXhsSearchResponseNotes(data.search_notes);
+  }
+  if (Array.isArray(data.published_notes) && data.published_notes.length > 0) {
+    recordXhsPublishedTimes(data.published_notes);
   }
   if (Array.isArray(data.pairs) && data.pairs.length > 0) {
     for (const pair of data.pairs) {

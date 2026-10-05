@@ -190,3 +190,24 @@ def test_platform_empty_state_distinguishes_stock_from_starvation() -> None:
     assert "加载更多推荐" in body
     assert "暂时没有新候选" in body
     assert "后台会继续补货" in body
+
+
+def test_reshuffle_invalidates_inflight_append_responses() -> None:
+    """A slow 加载更多 must not append an old batch below a fresh reshuffle.
+
+    Regression: auto-append can be in flight when the user clicks 换一批.
+    If the append response lands after the reshuffle has replaced the list,
+    the old implementation appended its stale batch to the new list, so the
+    page showed 第三批 on top and the old 第二批 again below.
+    """
+    app_js = _read(APP_JS)
+    assert "let recommendationListVersion = 0;" in app_js
+
+    reshuffle = _reshuffle_body(app_js)
+    append = _function_body(app_js, "appendMore")
+    snapshot = _function_body(app_js, "applyDesktopRecommendationSnapshot")
+
+    assert "recommendationListVersion += 1;" in reshuffle
+    assert "const listVersionAtRequest = recommendationListVersion;" in append
+    assert "if (listVersionAtRequest !== recommendationListVersion) return;" in append
+    assert "recommendationListVersion += 1;" in snapshot

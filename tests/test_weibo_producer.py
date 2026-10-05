@@ -235,6 +235,54 @@ async def test_hot_topics_are_seeds_and_never_synthetic_candidates(db: Database)
 
 
 @pytest.mark.asyncio
+async def test_hot_upstream_rejected_skips_branch_without_marking_run_error(
+    db: Database,
+) -> None:
+    class _HotRejectedClient(_Client):
+        async def hot_topics(self, *, limit: int = 10) -> object:
+            raise _ClientError("upstream_rejected")
+
+    producer = WeiboDiscoveryProducer(
+        database=db,
+        soul_engine=_Soul(),
+        client=_HotRejectedClient(),
+        enabled=True,
+        source_modes=("hot",),
+        min_interval_minutes=0,
+        candidate_pipeline=_Pipeline(),
+    )
+
+    result = await producer.produce_if_due(limit=2)
+
+    assert result["reason"] == "empty"
+    assert result["mode_results"] == {"hot": "upstream_rejected"}
+    assert result["ran"] is True
+
+
+@pytest.mark.asyncio
+async def test_hot_seed_search_upstream_rejected_skips_branch(db: Database) -> None:
+    client = _Client(
+        hot_result={"data": {"realtime": [{"word": "真实热词", "realpos": 1}]}},
+        search_errors={"真实热词": _ClientError("upstream_rejected")},
+    )
+    producer = WeiboDiscoveryProducer(
+        database=db,
+        soul_engine=_Soul(),
+        client=client,
+        enabled=True,
+        source_modes=("hot",),
+        min_interval_minutes=0,
+        candidate_pipeline=_Pipeline(),
+    )
+
+    result = await producer.produce_if_due(limit=2)
+
+    assert result["reason"] == "empty"
+    assert result["mode_results"] == {"hot": "upstream_rejected"}
+    assert result["ran"] is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error_code", ["timeout", "network_error", "upstream_error"])
 async def test_search_partial_error_keeps_posts_and_rolls_back_unretained_leases(
     db: Database,

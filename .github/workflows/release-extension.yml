@@ -1,6 +1,7 @@
 name: Release Extension Package
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "extension-v*"
@@ -10,6 +11,7 @@ permissions:
 
 env:
   FIREFOX_SIGNING_ENABLED: ${{ vars.FIREFOX_SIGNING_ENABLED != 'false' }}
+  SAFARI_SIGNING_ENABLED: ${{ vars.SAFARI_SIGNING_ENABLED != 'false' }}
 
 jobs:
   build:
@@ -123,10 +125,131 @@ jobs:
             extension/openbiliclaw-extension-v*.xpi
           if-no-files-found: error
 
+  safari:
+    name: Build Safari extension package
+    runs-on: macos-14
+    outputs:
+      safari_packaged: ${{ steps.safari-detect.outputs.packaged }}
+      safari_signed: ${{ steps.safari-detect.outputs.signed }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Verify extension version matches release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          expected="${RELEASE_TAG#extension-v}"
+          manifest_version=$(jq -r .version extension/manifest.json)
+          pkg_version=$(jq -r .version extension/package.json)
+          if [ "$manifest_version" != "$expected" ] || [ "$pkg_version" != "$expected" ]; then
+            echo "extension release tag $RELEASE_TAG does not match manifest $manifest_version / package $pkg_version"
+            exit 1
+          fi
+
+      - name: Decide Safari signing mode
+        id: safari-detect
+        env:
+          SAFARI_SIGNING_ENABLED: ${{ vars.SAFARI_SIGNING_ENABLED != 'false' }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          signed=false
+          if [ "$SAFARI_SIGNING_ENABLED" != "true" ]; then
+            echo "Safari signing disabled by SAFARI_SIGNING_ENABLED; building unsigned ad-hoc Safari DMG."
+          else
+            missing=""
+            [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" ] && missing="$missing APPLE_DEVELOPER_ID_CERTIFICATE_BASE64"
+            [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" ] && missing="$missing APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD"
+            [ -z "$APPLE_TEAM_ID" ] && missing="$missing APPLE_TEAM_ID"
+            [ -z "$APPLE_NOTARY_USER" ] && missing="$missing APPLE_NOTARY_USER"
+            [ -z "$APPLE_NOTARY_PASSWORD" ] && missing="$missing APPLE_NOTARY_PASSWORD"
+            if [ -n "$missing" ]; then
+              echo "::warning::Apple signing credentials missing:$missing — falling back to unsigned ad-hoc Safari DMG."
+            else
+              signed=true
+              echo "Apple signing credentials detected; building signed and notarized Safari DMG."
+            fi
+          fi
+          echo "packaged=true" >> "$GITHUB_OUTPUT"
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+
+      - name: Install extension dependencies
+        if: steps.safari-detect.outputs.packaged == 'true'
+        run: npm ci
+        working-directory: extension
+
+      - name: Import Apple Developer ID certificate
+        if: steps.safari-detect.outputs.signed == 'true'
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/openbiliclaw-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          CERT_PATH="$RUNNER_TEMP/openbiliclaw-developer-id.p12"
+          echo "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -P "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Using signing identity: $IDENTITY"
+
+      - name: Build and package Safari extension
+        if: steps.safari-detect.outputs.packaged == 'true'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SAFARI_SIGNED: ${{ steps.safari-detect.outputs.signed }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          if [ "$SAFARI_SIGNED" = "true" ]; then
+            npm run package:safari -- --notarize
+          else
+            npm run package:safari
+          fi
+          expected="${RELEASE_TAG#extension-v}"
+          safari_dmg="openbiliclaw-extension-v${expected}-safari.dmg"
+          if [ ! -f "$safari_dmg" ]; then
+            echo "missing Safari extension DMG: $safari_dmg"
+            exit 1
+          fi
+          echo "verified Safari extension DMG: $safari_dmg"
+        working-directory: extension
+
+      - name: Upload Safari extension artifact
+        if: steps.safari-detect.outputs.packaged == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-safari-package
+          path: extension/openbiliclaw-extension-v*-safari.dmg
+          if-no-files-found: error
+
   publish-release:
     name: Publish extension release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, safari]
 
     steps:
       - name: Check out repository
@@ -140,16 +263,25 @@ jobs:
           name: extension-package
           path: release-artifacts
 
+      - name: Download Safari extension artifact
+        if: needs.safari.outputs.safari_packaged == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: extension-safari-package
+          path: release-artifacts
+
       - name: Verify downloaded extension artifacts
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
+          SAFARI_PACKAGED: ${{ needs.safari.outputs.safari_packaged }}
         run: |
           expected="${RELEASE_TAG#extension-v}"
           chrome_archive="release-artifacts/openbiliclaw-extension-v${expected}.zip"
           firefox_archive="release-artifacts/openbiliclaw-extension-v${expected}-firefox.zip"
           firefox_xpi="release-artifacts/openbiliclaw-extension-v${expected}-firefox.xpi"
+          safari_dmg="release-artifacts/openbiliclaw-extension-v${expected}-safari.dmg"
           if [ ! -f "$chrome_archive" ]; then
             echo "missing Chrome-compatible extension archive: $chrome_archive"
             exit 1
@@ -162,10 +294,17 @@ jobs:
             echo "missing signed Firefox XPI: $firefox_xpi"
             exit 1
           fi
+          if [ "$SAFARI_PACKAGED" = "true" ] && [ ! -f "$safari_dmg" ]; then
+            echo "missing signed Safari extension DMG: $safari_dmg"
+            exit 1
+          fi
           echo "Chrome-compatible release artifact ready: $chrome_archive"
           echo "Firefox release artifact ready: $firefox_archive"
           if [ -f "$firefox_xpi" ]; then
             echo "Signed Firefox XPI ready: $firefox_xpi"
+          fi
+          if [ -f "$safari_dmg" ]; then
+            echo "Signed Safari DMG ready: $safari_dmg"
           fi
 
       - name: Create GitHub Release and upload extension package
@@ -174,6 +313,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
+          SAFARI_PACKAGED: ${{ needs.safari.outputs.safari_packaged }}
         run: |
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
@@ -187,6 +327,9 @@ jobs:
           )
           if [ "$FIREFOX_SIGNING_ACTIVE" = "true" ]; then
             assets+=("release-artifacts/openbiliclaw-extension-v${expected}-firefox.xpi")
+          fi
+          if [ "$SAFARI_PACKAGED" = "true" ]; then
+            assets+=("release-artifacts/openbiliclaw-extension-v${expected}-safari.dmg")
           fi
           for asset in "${assets[@]}"; do
             for attempt in 1 2 3; do
@@ -206,5 +349,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           CHANNEL: extension
-          ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip release-artifacts/openbiliclaw-extension-v*.xpi
+          ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip release-artifacts/openbiliclaw-extension-v*.xpi release-artifacts/openbiliclaw-extension-v*-safari.dmg
         run: bash .github/scripts/sync-aggregate-release.sh

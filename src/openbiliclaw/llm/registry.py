@@ -10,13 +10,17 @@ from typing import TYPE_CHECKING, Any
 
 from openbiliclaw import network
 
+from .api_route_provider import ApiRouteProvider
 from .base import LLMProvider, LLMProviderError, LLMRegistry
+from .cheaperinference_provider import CheaperInferenceProvider
 from .claude_provider import ClaudeProvider
 from .dashscope_provider import DashScopeEmbeddingProvider
 from .gemini_provider import GeminiProvider, gemini_sdk_available
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
+from .orcarouter_provider import OrcaRouterProvider
+from .requesty_provider import RequestyProvider
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
@@ -63,7 +67,11 @@ def build_llm_registry(
         ("deepseek", _maybe_deepseek_provider(config, overrides)),
         ("ollama", _maybe_ollama_provider(config, overrides)),
         ("openrouter", _maybe_openrouter_provider(config, overrides)),
+        ("orcarouter", _maybe_orcarouter_provider(config, overrides)),
         ("openai_compatible", _maybe_openai_compatible_provider(config, overrides)),
+        ("requesty", _maybe_requesty_provider(config, overrides)),
+        ("api_route", _maybe_api_route_provider(config, overrides)),
+        ("cheaperinference", _maybe_cheaperinference_provider(config, overrides)),
     ]
 
     for _name, provider in provider_specs:
@@ -218,6 +226,10 @@ def _build_instance_provider(
         "deepseek": _maybe_deepseek_provider,
         "ollama": _maybe_ollama_provider,
         "openrouter": _maybe_openrouter_provider,
+        "orcarouter": _maybe_orcarouter_provider,
+        "requesty": _maybe_requesty_provider,
+        "api_route": _maybe_api_route_provider,
+        "cheaperinference": _maybe_cheaperinference_provider,
         "openai_compatible": _maybe_openai_compatible_provider,
     }
     factory = factories.get(provider_type)
@@ -261,6 +273,13 @@ _DEFAULT_EMBEDDING_MODEL_BY_PROVIDER: dict[str, str] = {
     "openai_compatible": "text-embedding-3-small",
     "dashscope": "qwen3-vl-embedding",
 }
+# The OpenAI SDK refuses to construct a client without a non-empty api_key,
+# but self-hosted / local OpenAI-compatible endpoints (vLLM, LM Studio, a
+# user's own embedding bridge) usually don't check Authorization at all. Use
+# this placeholder so a no-auth endpoint can be configured without inventing
+# a real-looking key; it is never sent to api.openai.com because an empty key
+# is only accepted when the caller supplied an explicit custom base_url.
+_NO_AUTH_OPENAI_API_KEY = "not-needed"
 # Module-level set so the back-compat WARNING fires once per provider per
 # process (not once per build_embedding_service call — runtime_context
 # rebuilds embedding on every PUT /api/config and we don't want to spam).
@@ -342,11 +361,18 @@ def build_embedding_service(
                 chosen_name,
             )
 
-        # Persistent L2 cache: store embeddings in SQLite alongside main DB
+        # Persistent L2 cache: store embeddings in SQLite alongside main DB.
+        # Vectors are stored as compact float32 blobs; the byte budget
+        # (0 = unlimited) bounds disk growth once configured.
         l2_cache: EmbeddingCache | None = None
         try:
             cache_path = config.data_path / "embedding_cache.db"
-            l2_cache = EmbeddingCache(cache_path)
+            l2_cache = EmbeddingCache(
+                cache_path,
+                max_bytes=max(0, int(getattr(emb_cfg, "cache_max_bytes", 0) or 0)),
+                high_watermark=float(getattr(emb_cfg, "cache_high_watermark", 0.9) or 0.9),
+                low_watermark=float(getattr(emb_cfg, "cache_low_watermark", 0.7) or 0.7),
+            )
             l2_cache.initialize()
         except Exception:
             logger.debug("Failed to init embedding L2 cache", exc_info=True)
@@ -382,6 +408,9 @@ def build_embedding_service(
             persistent_cache=l2_cache,
             multimodal_enabled=bool(getattr(emb_cfg, "multimodal_enabled", False)),
             provenance=provenance,
+            cache_max_bytes=max(0, int(getattr(emb_cfg, "cache_max_bytes", 0) or 0)),
+            cache_high_watermark=float(getattr(emb_cfg, "cache_high_watermark", 0.9) or 0.9),
+            cache_low_watermark=float(getattr(emb_cfg, "cache_low_watermark", 0.7) or 0.7),
         )
     except Exception:
         return None
@@ -501,11 +530,15 @@ def _build_dedicated_embedding_provider(
         )
 
     if candidate == "openai":
-        if not api_key:
+        # api.openai.com requires a key, but an explicit custom base_url may
+        # point at a no-auth self-hosted gateway (vLLM / LM Studio / a local
+        # bridge). Only relax the gate when the caller supplied that base_url
+        # so an empty key can never silently target api.openai.com.
+        if not api_key and not base_url:
             return None
         return (
             OpenAIProvider(
-                api_key=api_key,
+                api_key=api_key or _NO_AUTH_OPENAI_API_KEY,
                 model=effective_model,
                 base_url=base_url,
                 embedding_output_dimensionality=output_dimensionality,
@@ -533,14 +566,14 @@ def _build_dedicated_embedding_provider(
         )
 
     if candidate == "openai_compatible":
-        # Strict — no api_key OR no base_url means we can't construct it.
-        # Unlike "openai", there's no api.openai.com fallback because
-        # this provider's whole reason to exist is the custom base_url.
-        if not api_key or not base_url:
+        # base_url is the whole point of this provider. A key stays optional:
+        # self-hosted / local OpenAI-compatible endpoints frequently don't
+        # authenticate, and the SDK is satisfied by the placeholder above.
+        if not base_url:
             return None
         return (
             OpenAIProvider(
-                api_key=api_key,
+                api_key=api_key or _NO_AUTH_OPENAI_API_KEY,
                 model=effective_model,
                 base_url=base_url,
                 provider_name="openai_compatible",
@@ -760,6 +793,7 @@ def _maybe_openai_provider(config: Config, overrides: dict[str, LLMProvider]) ->
     auth_mode = config.llm.openai.auth_mode.strip().lower()
     if auth_mode == "codex_oauth":
         from openbiliclaw.llm.codex_auth import get_valid_codex_token, load_codex_credentials
+        from openbiliclaw.llm.codex_chatgpt_provider import CodexChatGPTProvider
 
         credentials = load_codex_credentials()
         if credentials is None:
@@ -769,15 +803,13 @@ def _maybe_openai_provider(config: Config, overrides: dict[str, LLMProvider]) ->
         async def _codex_token_provider(force_refresh: bool = False) -> str:
             return await get_valid_codex_token(force_refresh=force_refresh)
 
-        return OpenAIProvider(
-            api_key=credentials.access_token,
-            model=config.llm.openai.model or "gpt-4o",
+        return CodexChatGPTProvider(
+            access_token=credentials.access_token,
+            account_id=credentials.account_id,
+            model=config.llm.openai.model or "gpt-5.4",
             base_url=config.llm.openai.base_url,
             token_provider=_codex_token_provider,
             timeout=float(config.llm.timeout),
-            api_flavor=config.llm.openai.api_flavor,
-            proxy=_outbound_proxy(config.llm.openai.base_url),
-            trust_env=_outbound_trust_env(config.llm.openai.base_url),
             reasoning_effort=config.llm.openai.reasoning_effort,
         )
     if not config.llm.openai.api_key.strip():
@@ -921,6 +953,84 @@ def _maybe_openrouter_provider(
             config.llm.openrouter.base_url or "https://openrouter.ai/api/v1"
         ),
         reasoning_effort=config.llm.openrouter.reasoning_effort,
+    )
+
+
+def _maybe_orcarouter_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "orcarouter" in overrides:
+        return overrides["orcarouter"]
+    if not config.llm.orcarouter.api_key.strip():
+        return None
+    base_url = config.llm.orcarouter.base_url or "https://api.orcarouter.ai/v1"
+    return OrcaRouterProvider(
+        api_key=config.llm.orcarouter.api_key,
+        model=config.llm.orcarouter.model or "openai/gpt-4o",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=config.llm.orcarouter.reasoning_effort,
+    )
+
+
+def _maybe_requesty_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "requesty" in overrides:
+        return overrides["requesty"]
+    if not config.llm.requesty.api_key.strip():
+        return None
+    base_url = config.llm.requesty.base_url or "https://router.requesty.ai/v1"
+    return RequestyProvider(
+        api_key=config.llm.requesty.api_key,
+        model=config.llm.requesty.model or "openai/gpt-4o-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=config.llm.requesty.reasoning_effort,
+    )
+
+
+def _maybe_api_route_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "api_route" in overrides:
+        return overrides["api_route"]
+    cfg = config.llm.api_route
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://global.api-route.com/v1"
+    return ApiRouteProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "gpt-5.5",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
+    )
+
+
+def _maybe_cheaperinference_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "cheaperinference" in overrides:
+        return overrides["cheaperinference"]
+    cfg = config.llm.cheaperinference
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://api.cheaperinference.com/v1"
+    return CheaperInferenceProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "gpt-5.4-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
     )
 
 

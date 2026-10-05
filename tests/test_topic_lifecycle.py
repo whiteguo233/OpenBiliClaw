@@ -345,6 +345,98 @@ def test_evidence_overlay_records_ledger_transitions(tmp_path: Path) -> None:
     assert rows, "a lifecycle transition should be recorded to the ledger"
 
 
+def test_evidence_overlay_does_not_count_untouched_retained_topics(tmp_path: Path) -> None:
+    """A full merged preference is not evidence for every retained topic."""
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.soul.engine import SoulEngine
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=_FakeRegistry(), memory=memory)
+    old_seen = "2026-09-01T12:00:00"
+    new_seen = "2026-09-02T12:00:00"
+    existing = {
+        "interests": [
+            _interest(
+                "滑雪",
+                category="体育",
+                state=TRIAL,
+                evidence_count=1,
+                last_seen=old_seen,
+                last_evidence_at=old_seen,
+            )
+        ]
+    }
+    updated = {
+        "interests": [
+            _interest("滑雪", category="体育", last_seen=old_seen),
+            _interest("Python", category="科技", last_seen=new_seen),
+        ]
+    }
+
+    engine._apply_topic_lifecycle_evidence(existing, updated)
+
+    by_name = {item["name"]: item for item in updated["interests"]}
+    assert by_name["滑雪"]["state"] == TRIAL
+    assert by_name["滑雪"]["evidence_count"] == 1
+    assert by_name["滑雪"]["last_evidence_at"] == old_seen
+    assert by_name["Python"]["state"] == TRIAL
+    assert by_name["Python"]["evidence_count"] == 1
+
+
+def test_evidence_overlay_still_counts_a_touched_retained_topic(tmp_path: Path) -> None:
+    """A retained topic whose last_seen advanced is still fresh evidence.
+
+    Guards the false-negative direction of ``changed_interest_keys``: if the
+    merge-snapshot filter ever stopped recognising touched topics, evidence
+    would silently stop accumulating while the untouched-topic test stayed
+    green.
+    """
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.soul.engine import SoulEngine
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=_FakeRegistry(), memory=memory)
+    old_seen = "2026-09-01T12:00:00"
+    new_seen = "2026-09-02T12:00:00"
+    existing = {
+        "interests": [
+            _interest(
+                "滑雪",
+                category="体育",
+                state=TRIAL,
+                evidence_count=1,
+                last_seen=old_seen,
+                last_evidence_at=old_seen,
+            ),
+            _interest(
+                "露营",
+                category="户外",
+                state=DECAYING,
+                evidence_count=3,
+                last_seen=old_seen,
+                last_evidence_at=old_seen,
+            ),
+        ]
+    }
+    updated = {
+        "interests": [
+            _interest("滑雪", category="体育", last_seen=old_seen),
+            _interest("露营", category="户外", last_seen=new_seen),
+        ]
+    }
+
+    engine._apply_topic_lifecycle_evidence(existing, updated)
+
+    by_name = {item["name"]: item for item in updated["interests"]}
+    assert by_name["滑雪"]["state"] == TRIAL
+    assert by_name["滑雪"]["evidence_count"] == 1
+    assert by_name["露营"]["state"] == ACTIVE
+    assert by_name["露营"]["evidence_count"] == 4
+    assert by_name["露营"]["last_evidence_at"] != old_seen
+
+
 def test_flat_preference_round_trips_lifecycle_state() -> None:
     layer = preference_layer_from_dict(
         {"interests": [{"name": "航海", "category": "航海", "weight": 0.6, "state": "archived"}]}

@@ -3,6 +3,10 @@
  */
 
 import type { ActionHint, PageType, PlatformAdapter } from "../types.js";
+import {
+  actionClassTokens,
+  shortActionLabel,
+} from "../behavior.ts";
 import { queryParam } from "./search-query.ts";
 
 const ANSWER_PATTERN = /zhihu\.com\/question\/(\d+)\/answer\/(\d+)/;
@@ -51,8 +55,12 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 export function inferZhihuActionType(hint: ActionHint): string | null {
-  const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)} ${hint.className}`;
-  if (!text) return null;
+  // Same guard as bilibili (#205): only short control labels are trusted.
+  // Zhihu answers/cards carry long copy where 喜欢 / 不感兴趣 mentions must not
+  // become like/dislike signals; real controls are 赞同 / 反对 / 收藏 (≤ 2 chars).
+  const text = `${shortActionLabel(hint.text)} ${shortActionLabel(hint.ariaLabel)}`.toLowerCase();
+  const classes = actionClassTokens(hint.className);
+  if (!text.trim() && classes.length === 0) return null;
   if (text.includes("反对") || text.includes("不感兴趣")) return "dislike";
   if (text.includes("赞同") || text.includes("喜欢")) return "like";
   if (text.includes("收藏")) return "favorite";

@@ -36,7 +36,7 @@ const PRESENTATION = {
   failed: ["同步失败", "error", true],
 };
 const PLATFORM_NAMES = {
-  bilibili: "B站", youtube: "YouTube", twitter: "X", xiaohongshu: "小红书",
+  bilibili: "B站", youtube: "YouTube", twitter: "X", github: "GitHub", xiaohongshu: "小红书",
   douyin: "抖音", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
   linuxdo: "Linux.do", weibo: "微博", v2ex: "V2EX", instagram: "Instagram",
 };

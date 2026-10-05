@@ -46,6 +46,7 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # paths. See review r2#2 / r3#2.
 _CSRF_GET_EXACT = frozenset(
     {
+        "/api/sources/bili/next-task",
         "/api/sources/xhs/next-task",
         "/api/sources/dy/next-task",
         "/api/sources/yt/next-task",

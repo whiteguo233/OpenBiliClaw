@@ -158,6 +158,47 @@ _COGNITION_SOUL_DUPLICATE_FIELDS = frozenset(
         "recent_awareness",
     }
 )
+# Record-level bookkeeping that must never reach a prompt. ``last_decay_at``
+# is the incremental weight-decay cursor written by the preference analyzer:
+# it changes on every merge, describes storage behaviour rather than user
+# behaviour, and would otherwise spend prompt budget and shift the analyzer's
+# ``max_prompt_chars`` chunking decision. The lifecycle evidence fields
+# (``state`` / ``evidence_count`` / ``last_evidence_at`` / ``parent_topic``)
+# stay model-visible on purpose; this one is a storage cursor.
+_COGNITION_INTERNAL_RECORD_FIELDS = frozenset({"last_decay_at"})
+
+
+def preference_prompt_payload(preference: Mapping[str, object]) -> dict[str, object]:
+    """Return the LLM-facing projection of a persisted preference payload.
+
+    Drops record-level bookkeeping (currently the ``last_decay_at`` decay
+    cursor) from ``interests``. Every other field passes through unchanged, so
+    a payload without the cursor renders byte-identically. Callers that
+    serialize a preference payload outside
+    :func:`build_cognition_profile_view_v1` — notably the legacy JSON dumps in
+    ``llm.prompts`` — must run it through this helper first.
+    """
+    interests = preference.get("interests")
+    if not isinstance(interests, list | tuple):
+        return dict(preference)
+    cleaned: list[object] = []
+    changed = False
+    for item in interests:
+        if isinstance(item, Mapping) and any(
+            key in item for key in _COGNITION_INTERNAL_RECORD_FIELDS
+        ):
+            item = {
+                key: value
+                for key, value in item.items()
+                if key not in _COGNITION_INTERNAL_RECORD_FIELDS
+            }
+            changed = True
+        cleaned.append(item)
+    if not changed:
+        return dict(preference)
+    projected = dict(preference)
+    projected["interests"] = cleaned
+    return projected
 
 
 def _cognition_value_is_empty(value: object) -> bool:
@@ -170,7 +211,7 @@ def _cognition_value_is_empty(value: object) -> bool:
 
 def _cognition_profile_value(value: object) -> object:
     if isinstance(value, Mapping):
-        return _cognition_profile_mapping(value)
+        return _cognition_profile_mapping(value, omit=_COGNITION_INTERNAL_RECORD_FIELDS)
     if isinstance(value, list | tuple):
         projected: list[object] = []
         for item in value:

@@ -21,7 +21,7 @@
 仓库已拆成两条发布通道：
 
 - 后端源码版本用 `backend-vX.Y.Z` tag 标记，`.github/workflows/release-backend.yml` 目前只校验 tag 与 `pyproject.toml` 版本一致，不发布后端桌面包。
-- 浏览器插件用 `extension-vX.Y.Z` tag 发布 GitHub Release，`.github/workflows/release-extension.yml` 会上传 `openbiliclaw-extension-vX.Y.Z.zip` 和 `openbiliclaw-extension-vX.Y.Z-firefox.zip`。
+- 浏览器插件用 `extension-vX.Y.Z` tag 发布 GitHub Release，`.github/workflows/release-extension.yml` 会上传 `openbiliclaw-extension-vX.Y.Z.zip`、`openbiliclaw-extension-vX.Y.Z-firefox.zip`，并始终上传 `openbiliclaw-extension-vX.Y.Z-safari.dmg`（Apple 凭据齐全时签名+公证，否则为 ad-hoc 实验包）。
 - Chrome Web Store 上传已独立为手动 workflow：`.github/workflows/publish-chrome-webstore.yml`。它可以用 GitHub Secrets 上传 Chrome-compatible zip，并在显式 `publish=true` 时提交审核。
 - 后端已有 `src/openbiliclaw/runtime/updater.py`：周期性查询 GitHub `/tags`，过滤 `backend-v*`，忽略 `extension-v*`，REST API 限流时通过 GitHub tags Atom feed 兜底，发现新版本后执行 `git pull --ff-only`、依赖同步和进程重启。
 - 配置已有 `scheduler.auto_update_enabled=false` 和 `scheduler.auto_update_check_interval_hours=6`，默认关闭。
@@ -29,7 +29,7 @@
 插件更新不再由后端查询 `extension-v*` release 或由 side panel 维护更新横幅：
 
 - Chrome Web Store / Edge Add-ons / AMO 安装的扩展由浏览器原生机制自动检查和安装更新。
-- GitHub zip、开发者模式加载、Firefox 临时加载等 sideload 场景没有可靠的静默自替换语义，继续按 README / release 文档手动下载和重新加载。
+- GitHub zip、开发者模式加载、Firefox 临时加载、Safari dmg 等 sideload 场景没有可靠的静默自替换语义，继续按 README / release 文档手动下载和重新加载。
 - 后端自动更新 API 不需要返回插件 latest、插件下载资产、插件 dismiss 状态，也不提供 `target="extension"` 的 apply 流程。
 - 为兼容未来或旧客户端，后端更新 API 必须忽略任何扩展版本 / 浏览器族 headers 或 query params；这些 metadata 不参与响应形状、状态机或更新判断。
 

@@ -28,7 +28,7 @@ def test_background_concurrency_reserves_one_total_slot() -> None:
     assert background_llm_concurrency(4) == 3
     assert background_llm_concurrency(3) == 2
     assert background_llm_concurrency(1) == 1
-    assert background_llm_concurrency("invalid") == 3
+    assert background_llm_concurrency("invalid") == 2
 
 
 def test_two_services_share_exact_gate_object() -> None:
@@ -492,10 +492,24 @@ def test_current_background_callers_are_classified(caller: str) -> None:
         "soul.dialogue.tools",
         "soul.dialogue.tool_followup",
         "api.sentiment",
+        "agent.chat",
+        "agent.task",
     ],
 )
 def test_confirmed_interactive_callers(caller: str) -> None:
     assert LLMConcurrencyGate(4).classify(caller) is LLMTrafficClass.INTERACTIVE
+
+
+@pytest.mark.parametrize("caller", ["agent.chat", "agent.task"])
+async def test_agent_loop_callers_are_not_parked_by_empty_inventory(caller: str) -> None:
+    """M10: user-initiated agent lanes must not park behind an empty pool."""
+    gate = LLMConcurrencyGate(1)
+    gate.update_inventory(available=0, target=20)
+
+    async with asyncio.timeout(1):
+        await _acquire_once(gate, caller)
+
+    assert gate.status_payload()["llm_background_active"] == 0
 
 
 @pytest.mark.parametrize(
@@ -636,3 +650,32 @@ async def test_starvation_relief_does_not_fire_when_refill_makes_progress(
     gate.update_inventory(available=20, target=20)
     await asyncio.wait_for(parked.wait(), timeout=1)
     await parked_task
+
+
+async def test_background_call_budget_counts_only_background_llm_requests() -> None:
+    gate = LLMConcurrencyGate(4)
+
+    async with gate.slot(caller="soul.dialogue"):
+        pass  # interactive; not counted
+    async with gate.slot(caller="soul.preference"):
+        pass  # background; counted
+    async with gate.slot(caller="discovery.keyword_planner"):
+        pass  # background; counted
+
+    assert gate.background_call_count(3600) == 2
+    assert gate.background_call_count(0) == 2
+
+
+async def test_background_call_budget_reset_starts_fresh_window() -> None:
+    gate = LLMConcurrencyGate(4)
+
+    async with gate.slot(caller="soul.preference"):
+        pass
+    assert gate.background_call_count(3600) == 1
+
+    gate.reset_background_budget()
+    assert gate.background_call_count(3600) == 0
+
+    async with gate.slot(caller="soul.preference"):
+        pass
+    assert gate.background_call_count(3600) == 1

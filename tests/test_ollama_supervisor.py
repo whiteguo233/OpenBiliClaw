@@ -143,6 +143,36 @@ def test_stop_managed_ollama_skips_already_exited(
     assert sup._managed_daemon is None  # record cleared
 
 
+def test_stop_managed_ollama_closes_log_file_even_when_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.runtime import ollama_supervisor as sup
+
+    class _Dead:
+        pid = 1
+
+        def poll(self) -> int:
+            return 0  # already exited
+
+    class _Log:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    log_file = _Log()
+    monkeypatch.setattr(
+        sup,
+        "_managed_daemon",
+        sup._ManagedDaemon(_Dead(), "http://localhost:11434", None, log_file),
+    )
+
+    assert sup.stop_managed_ollama() is False
+    assert log_file.closed is True
+    assert sup._managed_daemon is None
+
+
 def test_stop_managed_ollama_signals_process_group_unix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -561,6 +591,52 @@ def test_start_managed_at_hard_sets_keep_alive(monkeypatch: pytest.MonkeyPatch) 
 
     assert sup.start_managed_ollama_at("/tmp/m", "127.0.0.1:11435") is True
     assert calls[0]["env"]["OLLAMA_KEEP_ALIVE"] == "24h"
+
+
+def test_managed_ollama_log_capture_requires_project_root(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Packaged starts log ollama serve + llama-server stderr instead of DEVNULL."""
+    import subprocess
+
+    from openbiliclaw.runtime import ollama_supervisor as sup
+
+    monkeypatch.setattr(sup, "_managed_daemon", None)
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    health = iter([False, True])
+    monkeypatch.setattr(sup, "_ollama_is_running", lambda *a, **k: next(health))
+    calls = _patch_ollama_binary(monkeypatch)
+
+    assert sup.start_managed_ollama_at("/tmp/priv-models", "127.0.0.1:11435") is True
+    kwargs = calls[0]
+    assert kwargs["stdout"] is not None
+    assert kwargs["stdout"] is not subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.STDOUT
+    assert sup._managed_daemon is not None
+    assert sup._managed_daemon.log_file is not None
+    assert (tmp_path / "logs" / "ollama-managed.log").exists()
+
+
+def test_managed_ollama_keeps_devnull_without_project_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without OPENBILICLAW_PROJECT_ROOT (dev/CLI/tests) behaviour stays DEVNULL."""
+    import subprocess
+
+    from openbiliclaw.runtime import ollama_supervisor as sup
+
+    monkeypatch.setattr(sup, "_managed_daemon", None)
+    monkeypatch.delenv("OPENBILICLAW_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    health = iter([False, True])
+    monkeypatch.setattr(sup, "_ollama_is_running", lambda *a, **k: next(health))
+    calls = _patch_ollama_binary(monkeypatch)
+
+    assert sup.start_managed_ollama_at("/tmp/priv-models", "127.0.0.1:11435") is True
+    kwargs = calls[0]
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
 
 
 def test_default_path_keep_alive_respects_user_setting(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -194,7 +194,7 @@ def test_v2ex_incremental_four_table_registry_is_complete() -> None:
 async def test_v2ex_incremental_requires_private_capability_and_passes_resolved_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    v2ex_config = SimpleNamespace(bootstrap_topics_limit=17)
+    v2ex_config = SimpleNamespace(bootstrap_topics_limit=17, incremental_enabled=True)
     runtime_config = SimpleNamespace(sources=SimpleNamespace(v2ex=v2ex_config))
     scheduler, _database, _memory, _presence, _clock, _kicks = _harness(
         monkeypatch,
@@ -255,6 +255,97 @@ async def test_due_tick_creates_one_task_and_not_due_reconciles_after_completion
     clock.advance(hours=24)
     third = await scheduler.tick()
     assert third.source == "xhs"
+
+
+@pytest.mark.asyncio
+async def test_per_source_incremental_enabled_gates_due_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_config = SimpleNamespace(
+        sources=SimpleNamespace(
+            xiaohongshu=SimpleNamespace(incremental_enabled=True),
+            douyin=SimpleNamespace(incremental_enabled=False),
+            youtube=SimpleNamespace(incremental_enabled=False),
+            zhihu=SimpleNamespace(incremental_enabled=False),
+            reddit=SimpleNamespace(incremental_enabled=False),
+            linuxdo=SimpleNamespace(incremental_enabled=False),
+            v2ex=SimpleNamespace(incremental_enabled=False),
+        )
+    )
+    scheduler, _database, _memory, _presence, _clock, _kicks = _harness(
+        monkeypatch,
+        runtime_config=runtime_config,
+    )
+
+    result = await scheduler.tick()
+
+    assert result.reason == "created"
+    assert result.source == "xhs"
+    assert scheduler._test_enqueue_calls == ["xhs"]  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_all_per_source_incremental_disabled_returns_not_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_config = SimpleNamespace(
+        sources=SimpleNamespace(
+            xiaohongshu=SimpleNamespace(incremental_enabled=False),
+            douyin=SimpleNamespace(incremental_enabled=False),
+            youtube=SimpleNamespace(incremental_enabled=False),
+            zhihu=SimpleNamespace(incremental_enabled=False),
+            reddit=SimpleNamespace(incremental_enabled=False),
+            linuxdo=SimpleNamespace(incremental_enabled=False),
+            v2ex=SimpleNamespace(incremental_enabled=False),
+        )
+    )
+    scheduler, _database, _memory, _presence, _clock, _kicks = _harness(
+        monkeypatch,
+        runtime_config=runtime_config,
+    )
+
+    result = await scheduler.tick()
+
+    assert result.reason == "not_due"
+    assert scheduler._test_enqueue_calls == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_disabled_per_source_cancels_pending_scheduler_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_config = SimpleNamespace(
+        sources=SimpleNamespace(
+            xiaohongshu=SimpleNamespace(incremental_enabled=False),
+            douyin=SimpleNamespace(incremental_enabled=False),
+            youtube=SimpleNamespace(incremental_enabled=False),
+            zhihu=SimpleNamespace(incremental_enabled=False),
+            reddit=SimpleNamespace(incremental_enabled=False),
+            linuxdo=SimpleNamespace(incremental_enabled=False),
+            v2ex=SimpleNamespace(incremental_enabled=False),
+        )
+    )
+    scheduler, database, _memory, _presence, _clock, _kicks = _harness(
+        monkeypatch,
+        runtime_config=runtime_config,
+    )
+    database.conn.execute(
+        "INSERT INTO xhs_tasks "
+        "(id, type, payload_json, status, created_at) "
+        "VALUES ('scheduled-xhs', 'bootstrap_profile', "
+        '\'{"incremental": true, "incremental_owner": "scheduler"}\', '
+        "'pending', '2026-08-10T00:00:00+00:00')"
+    )
+    database.conn.commit()
+
+    result = await scheduler.tick()
+
+    assert result.reason == "not_due"
+    row = database.conn.execute(
+        "SELECT status, result_json FROM xhs_tasks WHERE id = 'scheduled-xhs'"
+    ).fetchone()
+    assert row["status"] == "failed"
+    assert "source_incremental_disabled" in row["result_json"]
 
 
 @pytest.mark.asyncio
@@ -768,6 +859,56 @@ async def test_one_pending_bootstrap_in_any_source_table_blocks_new_enqueue(
         assert result.source == source
         assert memory.state["source_incremental"]["active_task"] is None  # type: ignore[index]
         assert kicks == []
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_pending_task_does_not_block_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, database, memory, _presence, _clock, kicks = _harness(
+        monkeypatch,
+        enabled={source: source == "xhs" for source in SOURCE_ORDER},
+    )
+    database.conn.execute(
+        "INSERT INTO zhihu_tasks (id, type, payload_json, status, created_at) "
+        "VALUES ('disabled-zhihu', 'bootstrap_events', '{}', 'pending', '2026-08-03')"
+    )
+    database.conn.commit()
+
+    result = await scheduler.tick()
+
+    assert (result.reason, result.source) == ("created", "xhs")
+    assert memory.state["source_incremental"]["active_task"]["source"] == "xhs"  # type: ignore[index]
+    assert kicks == ["xhs"]
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_recorded_active_task_is_cleared_before_next_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = default_source_bootstrap_state()
+    state["source_incremental"] = {
+        "cursor": "",
+        "last_attempt_at": {},
+        "active_task": {"source": "zhihu", "task_id": "stale-zhihu"},
+    }
+    scheduler, database, memory, _presence, _clock, kicks = _harness(
+        monkeypatch,
+        state=state,
+        enabled={source: source == "xhs" for source in SOURCE_ORDER},
+    )
+    database.conn.execute(
+        "INSERT INTO zhihu_tasks (id, type, payload_json, status, created_at) "
+        "VALUES ('stale-zhihu', 'bootstrap_events', "
+        "'{\"incremental\": true}', 'in_progress', '2026-08-03')"
+    )
+    database.conn.commit()
+
+    result = await scheduler.tick()
+
+    assert (result.reason, result.source) == ("created", "xhs")
+    assert memory.state["source_incremental"]["active_task"]["source"] == "xhs"  # type: ignore[index]
+    assert kicks == ["xhs"]
 
 
 @pytest.mark.asyncio

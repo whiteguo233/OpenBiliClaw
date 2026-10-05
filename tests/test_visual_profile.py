@@ -253,7 +253,7 @@ async def test_bonus_map_positive_nudge_for_liked_style() -> None:
         engine._visual_profile_cache = None  # force reload
         cand = DiscoveredContent(bvid="BVCAND", cover_url=cand_url, relevance_score=0.80)
         bonus = await engine._visual_profile_bonus_map([cand])
-        assert bonus.get("BVCAND", 0.0) > 0.0
+        assert bonus.get(cand.scoring_key, 0.0) > 0.0
         db.close()
 
 
@@ -296,7 +296,7 @@ async def test_bonus_map_contested_pair_grays_out() -> None:
         cand = DiscoveredContent(bvid="BVCAND", cover_url=cand_url, relevance_score=0.80)
         bonus = await engine._visual_profile_bonus_map([cand])
         # Contested → gray: no entry (the candidate is in the love-hate band).
-        assert bonus.get("BVCAND", 0.0) == 0.0
+        assert bonus.get(cand.scoring_key, 0.0) == 0.0
         db.close()
 
 
@@ -339,8 +339,8 @@ async def test_bonus_map_clear_pos_boosts_clear_neg_suppresses() -> None:
         pos_cand = DiscoveredContent(bvid="BVPOS", cover_url=pos_cand_url, relevance_score=0.80)
         neg_cand = DiscoveredContent(bvid="BVNEG", cover_url=neg_cand_url, relevance_score=0.80)
         bonus = await engine._visual_profile_bonus_map([pos_cand, neg_cand])
-        assert bonus.get("BVPOS", 0.0) > 0.0  # clearly leans liked → boost
-        assert bonus.get("BVNEG", 0.0) < 0.0  # clearly leans disliked → suppress
+        assert bonus.get(pos_cand.scoring_key, 0.0) > 0.0  # clearly leans liked → boost
+        assert bonus.get(neg_cand.scoring_key, 0.0) < 0.0  # clearly leans disliked → suppress
         db.close()
 
 
@@ -644,100 +644,83 @@ async def test_concurrent_profile_dispatches_coalesce_in_registry(
 
 def test_platform_bonus_normalization_preserves_zero_and_sign() -> None:
     """Positive and negative sides align around zero without inventing size."""
-    candidates = [
-        DiscoveredContent(bvid="BP", source_platform="bilibili"),
-        DiscoveredContent(bvid="BN", source_platform="bilibili"),
-        DiscoveredContent(bvid="BZ", source_platform="bilibili"),
-        DiscoveredContent(bvid="XP", source_platform="xiaohongshu"),
-        DiscoveredContent(bvid="XZ", source_platform="xiaohongshu"),
-    ]
-    normalized = RecommendationEngine._normalize_bonus_per_platform(
-        candidates,
+
+    def normalize(
+        specs: list[tuple[str, str]],
+        values: dict[str, float],
+    ) -> tuple[dict[str, float], dict[str, str]]:
+        candidates = [
+            DiscoveredContent(content_id=content_id, source_platform=platform)
+            for content_id, platform in specs
+        ]
+        keys = {candidate.content_id: candidate.scoring_key for candidate in candidates}
+        bonuses = {keys[content_id]: value for content_id, value in values.items()}
+        return RecommendationEngine._normalize_bonus_per_platform(candidates, bonuses), keys
+
+    normalized, keys = normalize(
+        [
+            ("BP", "bilibili"),
+            ("BN", "bilibili"),
+            ("BZ", "bilibili"),
+            ("XP", "xiaohongshu"),
+            ("XZ", "xiaohongshu"),
+        ],
         {"BP": 0.01, "BN": -0.08, "BZ": 0.0, "XP": 0.2},
     )
-    assert normalized["BP"] > 0.0
-    assert normalized["BN"] < 0.0
-    assert normalized["BZ"] == 0.0
-    assert normalized["XP"] > 0.0
-    assert normalized["XZ"] == 0.0
+    assert normalized[keys["BP"]] > 0.0
+    assert normalized[keys["BN"]] < 0.0
+    assert normalized[keys["BZ"]] == 0.0
+    assert normalized[keys["XP"]] > 0.0
+    assert normalized[keys["XZ"]] == 0.0
 
-    positive_only = RecommendationEngine._normalize_bonus_per_platform(
-        [
-            DiscoveredContent(bvid="PO1", source_platform="bilibili"),
-            DiscoveredContent(bvid="PO2", source_platform="bilibili"),
-            DiscoveredContent(bvid="PO0", source_platform="bilibili"),
-        ],
+    positive_only, keys = normalize(
+        [("PO1", "bilibili"), ("PO2", "bilibili"), ("PO0", "bilibili")],
         {"PO1": 0.01, "PO2": 0.02, "PO0": 0.0},
     )
-    assert 0.0 < positive_only["PO1"] < positive_only["PO2"]
-    assert positive_only["PO1"] == pytest.approx(0.01)
-    assert positive_only["PO2"] == pytest.approx(0.02)
-    assert positive_only["PO0"] == 0.0
+    assert 0.0 < positive_only[keys["PO1"]] < positive_only[keys["PO2"]]
+    assert positive_only[keys["PO1"]] == pytest.approx(0.01)
+    assert positive_only[keys["PO2"]] == pytest.approx(0.02)
+    assert positive_only[keys["PO0"]] == 0.0
 
-    negative_only = RecommendationEngine._normalize_bonus_per_platform(
-        [
-            DiscoveredContent(bvid="NO1", source_platform="bilibili"),
-            DiscoveredContent(bvid="NO2", source_platform="bilibili"),
-            DiscoveredContent(bvid="NO0", source_platform="bilibili"),
-        ],
+    negative_only, keys = normalize(
+        [("NO1", "bilibili"), ("NO2", "bilibili"), ("NO0", "bilibili")],
         {"NO1": -0.01, "NO2": -0.02, "NO0": 0.0},
     )
-    assert negative_only["NO1"] < 0.0
-    assert negative_only["NO2"] < negative_only["NO1"]
-    assert negative_only["NO1"] == pytest.approx(-0.01)
-    assert negative_only["NO2"] == pytest.approx(-0.02)
-    assert negative_only["NO0"] == 0.0
+    assert negative_only[keys["NO1"]] < 0.0
+    assert negative_only[keys["NO2"]] < negative_only[keys["NO1"]]
+    assert negative_only[keys["NO1"]] == pytest.approx(-0.01)
+    assert negative_only[keys["NO2"]] == pytest.approx(-0.02)
+    assert negative_only[keys["NO0"]] == 0.0
 
-    multi_platform = RecommendationEngine._normalize_bonus_per_platform(
-        [
-            DiscoveredContent(bvid="A1", source_platform="a"),
-            DiscoveredContent(bvid="A2", source_platform="a"),
-            DiscoveredContent(bvid="B1", source_platform="b"),
-            DiscoveredContent(bvid="B2", source_platform="b"),
-            DiscoveredContent(bvid="Z", source_platform="b"),
-        ],
+    multi_platform, keys = normalize(
+        [("A1", "a"), ("A2", "a"), ("B1", "b"), ("B2", "b"), ("Z", "b")],
         {"A1": 0.01, "A2": 0.02, "B1": 0.05, "B2": 0.025, "Z": 0.0},
     )
     # The shorter platform is aligned to the strongest observed positive
     # side; the global cap is not a made-up target for the single platform.
-    assert multi_platform["A1"] == pytest.approx(0.025)
-    assert multi_platform["A2"] == pytest.approx(0.05)
-    assert multi_platform["B1"] == pytest.approx(0.05)
-    assert multi_platform["B2"] == pytest.approx(0.025)
-    assert multi_platform["Z"] == 0.0
+    assert multi_platform[keys["A1"]] == pytest.approx(0.025)
+    assert multi_platform[keys["A2"]] == pytest.approx(0.05)
+    assert multi_platform[keys["B1"]] == pytest.approx(0.05)
+    assert multi_platform[keys["B2"]] == pytest.approx(0.025)
+    assert multi_platform[keys["Z"]] == 0.0
 
-    multi_negative = RecommendationEngine._normalize_bonus_per_platform(
-        [
-            DiscoveredContent(bvid="NA1", source_platform="a"),
-            DiscoveredContent(bvid="NA2", source_platform="a"),
-            DiscoveredContent(bvid="NB1", source_platform="b"),
-            DiscoveredContent(bvid="NB2", source_platform="b"),
-            DiscoveredContent(bvid="NZ", source_platform="b"),
-        ],
+    multi_negative, keys = normalize(
+        [("NA1", "a"), ("NA2", "a"), ("NB1", "b"), ("NB2", "b"), ("NZ", "b")],
         {"NA1": -0.02, "NA2": -0.04, "NB1": -0.08, "NB2": -0.04, "NZ": 0.0},
     )
-    assert multi_negative["NA1"] == pytest.approx(-0.04)
-    assert multi_negative["NA2"] == pytest.approx(-0.08)
-    assert multi_negative["NB1"] == pytest.approx(-0.08)
-    assert multi_negative["NB2"] == pytest.approx(-0.04)
-    assert multi_negative["NZ"] == 0.0
+    assert multi_negative[keys["NA1"]] == pytest.approx(-0.04)
+    assert multi_negative[keys["NA2"]] == pytest.approx(-0.08)
+    assert multi_negative[keys["NB1"]] == pytest.approx(-0.08)
+    assert multi_negative[keys["NB2"]] == pytest.approx(-0.04)
+    assert multi_negative[keys["NZ"]] == 0.0
 
-    all_zero = RecommendationEngine._normalize_bonus_per_platform(
-        [DiscoveredContent(bvid="AZ", source_platform="bangumi")],
-        {"AZ": 0.0},
-    )
-    assert all_zero == {"AZ": 0.0}
+    all_zero, keys = normalize([("AZ", "bangumi")], {"AZ": 0.0})
+    assert all_zero == {keys["AZ"]: 0.0}
 
-    single_positive = RecommendationEngine._normalize_bonus_per_platform(
-        [DiscoveredContent(bvid="ONE", source_platform="bangumi")],
-        {"ONE": 0.001},
-    )
-    single_negative = RecommendationEngine._normalize_bonus_per_platform(
-        [DiscoveredContent(bvid="NEG", source_platform="bangumi")],
-        {"NEG": -0.001},
-    )
-    assert single_positive["ONE"] == pytest.approx(0.001)
-    assert single_negative["NEG"] == pytest.approx(-0.001)
+    single_positive, positive_keys = normalize([("ONE", "bangumi")], {"ONE": 0.001})
+    single_negative, negative_keys = normalize([("NEG", "bangumi")], {"NEG": -0.001})
+    assert single_positive[positive_keys["ONE"]] == pytest.approx(0.001)
+    assert single_negative[negative_keys["NEG"]] == pytest.approx(-0.001)
 
 
 @pytest.mark.asyncio

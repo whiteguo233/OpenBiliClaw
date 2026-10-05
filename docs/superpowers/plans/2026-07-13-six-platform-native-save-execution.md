@@ -1,5 +1,10 @@
 # Six-Platform Native Save Execution Implementation Plan
 
+> **Current-state correction (2026-08-31):** real Chrome verification found that Zhihu now exposes
+> an item-level global `收藏 / 已收藏` toggle instead of the named-collection dialog assumed by this
+> plan. Production target is now `知乎收藏`, `supports_named_collection=false`, and an initially
+> `已收藏` control plus every verification-only path must remain zero-click.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make favorite and watch-later sync write to the real logged-in YouTube, Xiaohongshu, Douyin, X/Twitter, Zhihu, and Reddit accounts through the installed extension, while preserving OpenBiliClaw's local-first, default-off, manually retryable contract.
@@ -13,7 +18,7 @@
 - Local membership is committed before any platform mutation; a platform failure never rolls it back.
 - `[saved_sync].auto_sync_enabled` stays default `false`; manual sync remains explicit and ignores that switch.
 - Favorite always targets the platform-native favorite/save/bookmark. Watch later uses the native watch-later target only on YouTube and falls back to favorite everywhere else in this scope.
-- Exact named targets are `OpenBiliClaw` for YouTube favorite and Zhihu favorite/watch-later fallback. Never silently use a similarly named or unrelated container.
+- The exact named target is `OpenBiliClaw` for YouTube favorite. Zhihu favorite/watch-later fallback targets the global `知乎收藏` state and does not claim a named container.
 - The native-save backend path never receives or persists a Cookie, OAuth token, CSRF token, raw HTML, raw response body, or tokenized URL. Extension errors are reduced to allow-listed codes and control-character-free messages before POST and again before persistence.
 - Every extension backend call uses `authenticatedFetch`; endpoint paths remain exactly `/api/sources/<slug>/{next-task,task-result,kick}`, where slugs are `yt`, `xhs`, `dy`, `x`, `zhihu`, and `reddit`.
 - Existing discovery/bootstrap task types and result schemas remain backward compatible. A native-save result is accepted only when both `task_id` and `item_key` match the durable job.
@@ -302,7 +307,7 @@ Expected: all PASS; Bilibili routes remain unchanged.
 | `xiaohongshu` | `xhs` | `小红书收藏` | no; favorite fallback | no |
 | `douyin` | `dy` | `抖音收藏` | no; favorite fallback | no |
 | `twitter` | `x` | `X Bookmarks` | no; favorite fallback | no |
-| `zhihu` | `zhihu` | `OpenBiliClaw` | no; favorite fallback | yes |
+| `zhihu` | `zhihu` | `知乎收藏` | no; favorite fallback | no |
 | `reddit` | `reddit` | `Reddit Saved` | no; favorite fallback | no |
 
 - [ ] **Step 1: Write RED matrix, broker delegation, and migration tests**
@@ -312,7 +317,7 @@ Expected: all PASS; Bilibili routes remain unchanged.
     ("youtube", "favorite", "favorite", "OpenBiliClaw"),
     ("youtube", "watch_later", "watch_later", "YouTube Watch Later"),
     ("twitter", "watch_later", "favorite", "X Bookmarks"),
-    ("zhihu", "watch_later", "favorite", "OpenBiliClaw"),
+    ("zhihu", "watch_later", "favorite", "知乎收藏"),
     ("reddit", "favorite", "favorite", "Reddit Saved"),
 ])
 def test_extension_adapter_route_matrix(platform, intent, resolved, target, broker) -> None:

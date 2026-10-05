@@ -10,9 +10,12 @@ import inspect
 import json
 import os
 import re
+import signal
+import subprocess
 import sys
 import threading
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +31,7 @@ from rich.text import Text
 from openbiliclaw.llm.base import safe_llm_failure_message
 from openbiliclaw.llm.service import _background_admission_bypass
 from openbiliclaw.published_time import format_published_time
+from openbiliclaw.recommendation_runtime import ensure_recommendation_transport_env
 from openbiliclaw.runtime.ollama_supervisor import (
     _is_default_ollama_endpoint,
     _ollama_is_running,
@@ -336,12 +340,14 @@ browser_app = typer.Typer(help="agent-browser 浏览器命令")
 autostart_app = typer.Typer(help="开机自启动命令")
 ext_key_app = typer.Typer(help="浏览器扩展密钥管理命令")
 tls_proxy_app = typer.Typer(help="TLS 反代管理命令（远程设备 HTTPS 访问）")
+tailnet_app = typer.Typer(help="应用内 Tailnet 远程访问命令")
 app.add_typer(auth_app, name="auth")
 app.add_typer(login_app, name="login")
 app.add_typer(browser_app, name="browser")
 app.add_typer(autostart_app, name="autostart")
 app.add_typer(ext_key_app, name="ext-key")
 app.add_typer(tls_proxy_app, name="tls-proxy")
+app.add_typer(tailnet_app, name="tailnet")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
 _DISCOVER_STRATEGIES_OPTION = typer.Option(
@@ -403,7 +409,7 @@ _KEYWORD_INSPIRATION_PLATFORMS_OPTION = typer.Option(
     "-p",
     help=(
         "目标平台，可重复传或逗号分隔。默认 bilibili；可选 bilibili/xiaohongshu/"
-        "douyin/youtube/twitter/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
+        "douyin/youtube/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
     ),
 )
 _KEYWORD_INSPIRATION_KIND_OPTION = typer.Option(
@@ -449,6 +455,11 @@ _CODEX_LOGIN_LOGOUT_OPTION = typer.Option(
     False,
     "--logout",
     help="删除 OpenBiliClaw 本地 Codex 凭据。",
+)
+_CODEX_LOGIN_PROBE_OPTION = typer.Option(
+    False,
+    "--probe",
+    help="导入/查看时执行一次真实 LLM 能力探测，验证令牌是否可用于模型调用。",
 )
 _CONFIG_EXPORT_LEGACY_OUTPUT_OPTION = typer.Option(
     None,
@@ -883,8 +894,13 @@ def _build_soul_engine() -> Any:
         preference_prompt_view=str(getattr(cfg.soul, "preference_prompt_view", "legacy")),
         awareness_prompt_view=str(getattr(cfg.soul, "awareness_prompt_view", "compact-v1")),
         insight_prompt_view=str(getattr(cfg.soul, "insight_prompt_view", "legacy")),
+        awareness_event_batch_size=int(getattr(cfg.soul, "awareness_event_batch_size", 300)),
+        insight_note_batch_size=int(getattr(cfg.soul, "insight_note_batch_size", 150)),
+        cognition_max_tokens=int(getattr(cfg.soul, "cognition_max_tokens", 32768)),
         posture_gate_mode=cfg.soul.posture_gate_mode,
         posture_gate_force_enforce=cfg.soul.posture_gate_force_enforce,
+        reply_style=str(getattr(cfg.soul, "reply_style", "")),
+        dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
         llm_concurrency_gate=_build_llm_concurrency_gate(),
@@ -931,6 +947,8 @@ def _build_recommendation_engine() -> Any:
         RecommendationEngine,
         SupportsEmbeddingService,
     )
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 
     memory = _build_memory_manager()
     database = _get_runtime_database()
@@ -951,6 +969,8 @@ def _build_recommendation_engine() -> Any:
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
         concurrency_gate=_build_llm_concurrency_gate(),
+        reply_style=str(getattr(cfg.soul, "reply_style", "")),
+        dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
     )
     from openbiliclaw.llm.registry import build_embedding_service
 
@@ -990,19 +1010,211 @@ def _build_recommendation_engine() -> Any:
         ),
         danmaku_max_chars=int(getattr(getattr(cfg, "discovery", None), "danmaku_max_chars", 500)),
         bilibili_client=_build_bilibili_client() if _danmaku_on else None,
+        serve_snapshot_store=ServeSnapshotStore(cfg.data_path / "runtime" / "serve_snapshot.json"),
+        serve_outbox=ServeOutbox(cfg.data_path / "runtime" / "serve_outbox.jsonl"),
+        reply_style=str(getattr(cfg.soul, "reply_style", "")),
     )
 
 
 def _build_dialogue(soul_engine: Any) -> Any:
     """Build the Socratic dialogue helper for interactive chat."""
     from openbiliclaw.soul.dialogue import DialogueLearningMode, SocraticDialogue
+    from openbiliclaw.sources.link_ingest import LinkIngestor
 
+    # Chat link ingestion (issue #83): same LinkIngestor as the Web chat lane —
+    # B站链接走 /view 元数据,其余平台抓 og 元数据,抓取成功的链接经
+    # propagate_event 记入统一兴趣线(share 显式正向信号)。
+    propagate_event = getattr(getattr(soul_engine, "_memory", None), "propagate_event", None)
+    link_ingestor = LinkIngestor(
+        bilibili_client=_build_bilibili_client(),
+        event_sink=propagate_event if callable(propagate_event) else None,
+    )
     return SocraticDialogue(
         llm=_build_registry(),
         soul_engine=soul_engine,
         session="cli",
         learning_mode=DialogueLearningMode.LEGACY_DIRECT,
+        link_ingestor=link_ingestor,
     )
+
+
+def _build_tailnet_event_callback() -> Callable[[dict[str, object]], None]:
+    """Render helper lifecycle events and open each interactive login URL once."""
+    opened_login_urls: set[str] = set()
+    opened_lock = threading.Lock()
+
+    def _open_login_url(url: str) -> None:
+        import webbrowser
+
+        with suppress(Exception):
+            webbrowser.open(url)
+
+    def _on_event(event: dict[str, object]) -> None:
+        event_name = str(event.get("event", "")).strip()
+        if event_name == "needs_login":
+            login_url = str(event.get("auth_url", "")).strip()
+            if not login_url:
+                return
+            _print_status_panel(
+                "info",
+                "Tailnet 需要登录",
+                f"浏览器即将打开这个一次性地址：\n{login_url}\n"
+                "登录成功后节点身份会保存在本机，之后无需重复登录。",
+            )
+            with opened_lock:
+                should_open = login_url not in opened_login_urls
+                opened_login_urls.add(login_url)
+            if should_open:
+                threading.Thread(
+                    target=_open_login_url,
+                    args=(login_url,),
+                    name="openbiliclaw-tailnet-login",
+                    daemon=True,
+                ).start()
+            return
+
+        if event_name == "ready":
+            dns_name = str(event.get("dns_name", "")).strip()
+            raw_ips = event.get("ips", [])
+            ips = [str(value) for value in raw_ips] if isinstance(raw_ips, list) else []
+            raw_port = event.get("port", 8420)
+            try:
+                port = int(raw_port) if isinstance(raw_port, (int, str)) else 8420
+            except (TypeError, ValueError):
+                port = 8420
+            endpoint = f"http://{dns_name}:{port}" if dns_name else ""
+            details = ["应用已加入 tailnet，可从移动端连接。"]
+            if endpoint:
+                details.append(f"MagicDNS 地址: {endpoint}")
+            if ips:
+                details.append(f"Tailnet IP: {', '.join(ips)}")
+            _print_status_panel("success", "Tailnet 已就绪", "\n".join(details))
+            return
+
+        if event_name == "error":
+            message = str(event.get("message", "Tailnet helper 运行失败"))
+            _print_status_panel("warning", "Tailnet 远程入口不可用", message)
+
+    return _on_event
+
+
+def _start_tailnet_runtime_best_effort(
+    config: Any,
+    api_port: int,
+    *,
+    api_host: str,
+) -> Any | None:
+    """Start the optional app-scoped tailnet host without blocking local use."""
+    if not bool(getattr(getattr(config, "tailnet", None), "enabled", False)):
+        return None
+
+    if api_host.strip().lower() not in {"0.0.0.0", "127.0.0.1", "localhost"}:
+        _print_status_panel(
+            "warning",
+            "Tailnet 未启动",
+            f"应用内 helper 只会反代到 127.0.0.1，但 API 当前绑定 {api_host}。\n"
+            "请将 [api].host 设为 127.0.0.1 或 0.0.0.0；本机 API 会继续启动。",
+        )
+        return None
+
+    if not bool(getattr(getattr(config.api, "auth", None), "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Tailnet 访问控制",
+            "当前未启用 OpenBiliClaw 访问密码；Tailnet ACL 仍会限制节点访问，"
+            "但建议再执行 `openbiliclaw set-password`。",
+        )
+
+    from openbiliclaw.runtime.tailnet_supervisor import start_tailnet_if_enabled
+
+    try:
+        return start_tailnet_if_enabled(
+            config,
+            api_port,
+            event_callback=_build_tailnet_event_callback(),
+        )
+    except Exception as exc:
+        _print_status_panel(
+            "warning",
+            "Tailnet 未启动",
+            f"{exc}\n本机 API 会继续启动。源码安装可先执行 `openbiliclaw tailnet build-helper`。",
+        )
+        return None
+
+
+def _worker_mode_requested() -> bool:
+    """Return whether the four-process background-worker mode is enabled.
+
+    This mode is now the default.  Set ``OPENBILICLAW_WORKER=0`` (or ``false`` /
+    ``no`` / ``off``) to opt back into the legacy single-API-process mode.
+    """
+    value = os.environ.get("OPENBILICLAW_WORKER", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _spawn_background_child(name: str, module: str, env: dict[str, str]) -> subprocess.Popen[bytes]:
+    """拉起一个后台子进程,并把它的 stdout/stderr 落盘到 logs/child-<name>.log。
+
+    Windows 桌面包用 ``pythonw.exe``(无控制台)跑 ``cli start``:Windows 上
+    Python 默认 ``close_fds=True``,不显式传 stdout/stderr 时子进程拿不到
+    任何标准句柄,子 ``pythonw`` 的 ``sys.stdout`` / ``sys.stderr`` 为
+    ``None``——recommendation_server / image_service 一写标准流就抛异常
+    静默退出(stderr 也是 None,连堆栈都留不下)。所以这里必须显式把两个
+    标准流重定向到日志文件。
+
+    Popen 返回时句柄已经 fork/CreateProcess 传给子进程,父进程保留自己的
+    副本到进程退出由 OS 回收,不做额外生命周期管理。``child-*.log`` 属于
+    logging_setup 的 unmanaged 清理策略(超 200MB 截断、超 30 天删除、
+    logs/ 总预算 500MB),无需单独轮转。
+    """
+    from openbiliclaw.config import load_config
+
+    log_dir = load_config().logging.directory_path
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"child-{name}.log", "a", encoding="utf-8")  # noqa: SIM115 - 句柄须交给子进程,进程生命周期内保持打开
+    try:
+        return subprocess.Popen(
+            [sys.executable, "-m", module],
+            cwd=os.getcwd(),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    except Exception:
+        log_file.close()
+        raise
+
+
+def _raise_systemexit_on_signal(signum: int, frame: Any) -> None:
+    """信号处理器:把信号转成 ``SystemExit(128 + signum)``,让 finally 能执行。"""
+    raise SystemExit(128 + signum)
+
+
+def _install_sigterm_cleanup_hook() -> Callable[[], None]:
+    """安装 SIGTERM → SystemExit 钩子,返回恢复原处理器的回调。
+
+    uvicorn(``Server.capture_signals``)优雅退出时会恢复它启动时保存的
+    "原始"信号处理器,然后 ``signal.raise_signal`` 重发捕获的信号:
+    SIGINT 重发后变成 KeyboardInterrupt 异常,能穿过 ``_run_api_server``
+    的 finally;SIGTERM 重发后落到 SIG_DFL 默认处置,进程被直接杀死,
+    finally 里的子进程 terminate 逻辑被跳过,4 个后台子进程变成
+    PPID=1 的孤儿(docker stop / pkill / launchd / systemd 都是 SIGTERM)。
+    在 uvicorn 启动前把 SIGTERM 处理器换成抛 ``SystemExit(143)`` 的钩子,
+    uvicorn 保存/恢复的"原始处理器"就是这个钩子,重发时异常穿过
+    finally,子进程得以清理。SIGINT 现有行为已正确,不动。
+
+    仅在主线程安装(``signal.signal`` 只允许主线程调用);非主线程返回
+    no-op 回调。
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    previous = signal.signal(signal.SIGTERM, _raise_systemexit_on_signal)
+
+    def _restore() -> None:
+        signal.signal(signal.SIGTERM, previous)
+
+    return _restore
 
 
 def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
@@ -1010,6 +1222,15 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     import uvicorn
 
     from openbiliclaw.api.app import create_app
+    from openbiliclaw.config import load_config
+
+    worker_requested = _worker_mode_requested()
+    if worker_requested:
+        # The API process must also know that a full background worker is
+        # running; the child worker gets the same flag through the inherited
+        # environment below.
+        os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
+        recommendation_transport = ensure_recommendation_transport_env(load_config().data_path)
 
     api_app = create_app()
     state = getattr(api_app, "state", None)
@@ -1032,17 +1253,119 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         create_wildcard_listener_sockets,
     )
 
-    listeners = create_wildcard_listener_sockets(host, port)
-    if listeners is None:
-        uvicorn.run(api_app, host=host, port=port, log_level="info")
-        return
-
-    config = uvicorn.Config(api_app, host=host, port=port, log_level="info")
-    server = uvicorn.Server(config)
+    tailnet_supervisor = _start_tailnet_runtime_best_effort(
+        load_config(),
+        port,
+        api_host=host,
+    )
+    worker_process: Any | None = None
+    discovery_worker_process: Any | None = None
+    recommendation_process: Any | None = None
+    image_service_process: Any | None = None
+    # 必须在 uvicorn 启动前装上,uvicorn 保存/恢复的"原始处理器"才是钩子;
+    # 两条 uvicorn 启动路径(uvicorn.run / server.run)都被外层 finally 覆盖。
+    restore_sigterm_handler = _install_sigterm_cleanup_hook()
     try:
-        server.run(sockets=listeners)
+        if worker_requested:
+            worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}
+            worker_process = _spawn_background_child("worker", "openbiliclaw.worker", worker_env)
+            _print_status_panel(
+                "info",
+                "Worker 进程",
+                f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
+            )
+
+            # Dedicated discovery runtime worker: runs the same
+            # ContinuousRefreshController as the API used to, but in a separate
+            # process so HTTP endpoints never compete with discovery/eval.
+            discovery_env = {
+                **os.environ,
+                "OPENBILICLAW_DISCOVERY_WORKER": "1",
+                "OPENBILICLAW_FULL_WORKER": "1",
+            }
+            discovery_worker_process = _spawn_background_child(
+                "discovery-worker", "openbiliclaw.discovery_worker", discovery_env
+            )
+            _print_status_panel(
+                "info",
+                "Discovery Worker 进程",
+                f"已启动独立 discovery worker pid={discovery_worker_process.pid}",
+            )
+
+            # Dedicated recommendation API process on a Unix socket. The main
+            # API proxies /api/recommendations/* here so full recommendation
+            # ranking runs on its own process/CPU without extra TCP ports.
+            recommendation_env = {
+                **os.environ,
+                "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
+                "OPENBILICLAW_FULL_WORKER": "1",
+            }
+            recommendation_process = _spawn_background_child(
+                "recommendation", "openbiliclaw.recommendation_server", recommendation_env
+            )
+            _print_status_panel(
+                "info",
+                "Recommendation API 进程",
+                f"已启动独立推荐 API pid={recommendation_process.pid}"
+                f"（{recommendation_transport}）",
+            )
+
+        # Dedicated image proxy process: image fetching/compression lives here,
+        # so it cannot squeeze recommendation serving / reshuffle / chat APIs.
+        image_service_process = _spawn_background_child(
+            "image-service", "openbiliclaw.image_service", {**os.environ}
+        )
+        _print_status_panel(
+            "info",
+            "Image Proxy 进程",
+            f"已启动独立 image-proxy pid={image_service_process.pid}（端口 8421）",
+        )
+        # Main API forwards image requests to this local service.
+        image_service_port = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_PORT", "8421")
+        os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = f"http://127.0.0.1:{image_service_port}"
+
+        listeners = create_wildcard_listener_sockets(host, port)
+        if listeners is None:
+            uvicorn.run(api_app, host=host, port=port, log_level="info")
+            return
+
+        config = uvicorn.Config(api_app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+        try:
+            server.run(sockets=listeners)
+        finally:
+            close_listener_sockets(listeners)
     finally:
-        close_listener_sockets(listeners)
+        # 先恢复原 SIGTERM 处理器再清理:清理最长 ~20s,期间再次收到
+        # SIGTERM 应走默认处置立即退出,而不是在 finally 里再抛异常
+        # 打断剩余子进程的 terminate。
+        restore_sigterm_handler()
+        if recommendation_process is not None:
+            recommendation_process.terminate()
+            try:
+                recommendation_process.wait(timeout=5)
+            except Exception:
+                recommendation_process.kill()
+        if discovery_worker_process is not None:
+            discovery_worker_process.terminate()
+            try:
+                discovery_worker_process.wait(timeout=5)
+            except Exception:
+                discovery_worker_process.kill()
+        if image_service_process is not None:
+            image_service_process.terminate()
+            try:
+                image_service_process.wait(timeout=5)
+            except Exception:
+                image_service_process.kill()
+        if worker_process is not None:
+            worker_process.terminate()
+            try:
+                worker_process.wait(timeout=5)
+            except Exception:
+                worker_process.kill()
+        if tailnet_supervisor is not None:
+            tailnet_supervisor.stop()
 
 
 def _build_memory_manager() -> Any:
@@ -1096,9 +1419,22 @@ def _build_discovery_engine() -> Any:
     memory = _build_memory_manager()
     database = _get_runtime_database()
     bilibili_client = _build_bilibili_client()
-    from openbiliclaw.config import load_config
+    from openbiliclaw.config import (
+        load_config,
+        publication_date_preference_for_source,
+        source_date_preferences,
+    )
 
     cfg = load_config()
+    publication_preference = publication_date_preference_for_source(
+        getattr(getattr(cfg, "sources", None), "bilibili", None)
+    )
+    set_publication_preference = getattr(database, "set_publication_date_preference", None)
+    if callable(set_publication_preference):
+        set_publication_preference(publication_preference)
+    set_source_preferences = getattr(database, "set_source_publication_date_preferences", None)
+    if callable(set_source_preferences):
+        set_source_preferences(source_date_preferences(cfg))
     # Topic-lifecycle serialization switch (spec Phase 4); default off.
     from openbiliclaw.discovery.strategies._utils import set_topic_lifecycle_serialization
 
@@ -1143,6 +1479,7 @@ def _build_discovery_engine() -> Any:
             getattr(discovery_cfg, "multimodal_image_timeout_seconds", 6)
         ),
         eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
+        eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,
@@ -1150,6 +1487,7 @@ def _build_discovery_engine() -> Any:
         concurrency=concurrency,
         database=database,
         embedding_service=embedding_service,
+        publication_preference=publication_preference,
         recent_lane_queries_per_run=RECENT_SUPPLY_LANE_QUERIES,
         recent_lane_page_size=RECENT_SUPPLY_LANE_PAGE_SIZE,
     )
@@ -1159,6 +1497,7 @@ def _build_discovery_engine() -> Any:
         concurrency=concurrency,
         database=database,
         embedding_service=embedding_service,
+        date_preference=publication_preference,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,
@@ -1168,6 +1507,7 @@ def _build_discovery_engine() -> Any:
         trending_strategy=trending_strategy,
         concurrency=concurrency,
         database=database,
+        date_preference=publication_preference,
     )
     explore_strategy = ExploreStrategy(
         llm_service=llm_service,
@@ -1175,6 +1515,7 @@ def _build_discovery_engine() -> Any:
         concurrency=concurrency,
         embedding_service=embedding_service,
         database=database,
+        date_preference=publication_preference,
     )
 
     engine.register_strategy(search_strategy)
@@ -1190,12 +1531,15 @@ def _get_runtime_database() -> Any:
     if cached is not None:
         return cached
 
-    from openbiliclaw.config import load_config
+    from openbiliclaw.config import load_config, source_date_preferences
     from openbiliclaw.storage.database import Database
 
     config = load_config()
     database = Database(config.data_path / "openbiliclaw.db")
     database.initialize()
+    set_source_preferences = getattr(database, "set_source_publication_date_preferences", None)
+    if callable(set_source_preferences):
+        set_source_preferences(source_date_preferences(config))
     _RUNTIME_COMPONENTS["database"] = database
     return database
 
@@ -1606,6 +1950,16 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "ollama": {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b"},
     # OpenRouter: route to OpenAI's cheapest current-gen by default.
     "openrouter": {"base_url": "https://openrouter.ai/api/v1", "model": "openai/gpt-5-nano"},
+    # OrcaRouter: OpenAI-compatible model routing gateway (sk-orca- key).
+    "orcarouter": {"base_url": "https://api.orcarouter.ai/v1", "model": "openai/gpt-4o"},
+    # Requesty: OpenAI-compatible LLM gateway.
+    "requesty": {"base_url": "https://router.requesty.ai/v1", "model": "openai/gpt-4o-mini"},
+    "api_route": {"base_url": "https://global.api-route.com/v1", "model": "gpt-5.5"},
+    # Cheaper Inference: OpenAI-compatible LLM gateway (ci_live_ key).
+    "cheaperinference": {
+        "base_url": "https://api.cheaperinference.com/v1",
+        "model": "gpt-5.4-mini",
+    },
 }
 
 
@@ -1616,6 +1970,10 @@ _PROVIDER_HINTS: dict[str, str] = {
     "deepseek": "DeepSeek 官方（OpenAI 兼容协议）",
     "ollama": "本地 Ollama（无需 Key）",
     "openrouter": "OpenRouter 聚合",
+    "orcarouter": "OrcaRouter 聚合（OpenAI 兼容协议）",
+    "requesty": "Requesty 聚合（OpenAI 兼容协议）",
+    "api_route": "API Route 聚合（OpenAI 兼容协议）",
+    "cheaperinference": "Cheaper Inference 聚合（OpenAI 兼容协议）",
 }
 
 
@@ -1647,6 +2005,19 @@ _PROVIDER_MODEL_HINT: dict[str, str] = {
     "openrouter": (
         "默认 openai/gpt-5-nano。OpenRouter 模型名格式: <vendor>/<model>,"
         "如 anthropic/claude-sonnet-4-6 / google/gemini-2.5-flash"
+    ),
+    "orcarouter": (
+        "默认 openai/gpt-4o。OrcaRouter 模型名格式: <vendor>/<model>,"
+        "如 anthropic/claude-opus-4.8 / z-ai/glm-5.2"
+    ),
+    "requesty": (
+        "默认 openai/gpt-4o-mini。Requesty 模型名格式: <vendor>/<model>,"
+        "如 anthropic/claude-sonnet-4-5 / google/gemini-2.5-flash"
+    ),
+    "api_route": "默认 gpt-5.5。也可填写 API Route 支持的其他模型 ID。",
+    "cheaperinference": (
+        "默认 gpt-5.4-mini。Cheaper Inference 模型名不带厂商前缀,"
+        "如 gpt-5.4 / claude-sonnet-5 / gemini-3.1-pro"
     ),
     "ollama": (
         "常见模型: qwen2.5:7b (默认 / 中文好) / llama3.2 (Meta 新版) / "
@@ -1794,6 +2165,31 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
                 "glm-4.6。注意: base_url 是 /api/paas/v4 不是 /v1"
             ),
             "embedding_alt": "智谱也有 embedding-3 (Phase 3 高级选项里可选)",
+        },
+    ),
+    (
+        "sensenova",
+        {
+            "label": "商汤日日新 (SenseNova) 官方",
+            "description": (
+                "商汤日日新开放平台,新用户有免费额度,可以零成本体验本项目"
+                "(issue #193)。token 推理端点已按 OpenAI 协议实测连通"
+                "(deepseek-v4-flash 真实请求验证)"
+            ),
+            "signup_url": (
+                "https://console.sensecore.cn （日日新开放平台控制台申请 API Key,"
+                "免费额度以官方页面为准）"
+            ),
+            "supports_embedding": "false",
+            "base_url": "https://token.sensenova.cn/v1",
+            "default_model": "deepseek-v4-flash",
+            "hint": (
+                "deepseek-v4-flash (默认 / 已实测) / 其它可用模型以控制台模型清单为准。"
+                "免费额度适合试用与轻度使用;重度使用建议充值或换 DeepSeek 官方"
+            ),
+            "embedding_alt": (
+                "token 推理端点未验证 /v1/embeddings,Phase 3 默认推荐独立 Ollama bge-m3"
+            ),
         },
     ),
     (
@@ -2122,6 +2518,10 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
     "deepseek",
     "ollama",
     "openrouter",
+    "orcarouter",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 )
 
 
@@ -2169,6 +2569,26 @@ _LLM_MENU: tuple[tuple[str, str, str], ...] = (
         "openrouter",
         "OpenRouter 聚合",
         "默认 openai/gpt-5-nano。一个 Key 跑多家模型,按调用计费",
+    ),
+    (
+        "orcarouter",
+        "OrcaRouter 聚合",
+        "默认 openai/gpt-4o。一个 Key 跑 150+ 模型,网关级零信任安全",
+    ),
+    (
+        "requesty",
+        "Requesty 聚合",
+        "默认 openai/gpt-4o-mini。一个 Key 跑多家模型,按调用计费",
+    ),
+    (
+        "api_route",
+        "API Route 聚合",
+        "默认 gpt-5.5。一个 Key 跑多家模型,按调用计费",
+    ),
+    (
+        "cheaperinference",
+        "Cheaper Inference 聚合",
+        "默认 gpt-5.4-mini。一个 Key 跑多家模型,按调用计费",
     ),
 )
 
@@ -2567,6 +2987,12 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         base_url = typer.prompt(
             "Embedding Base URL(OpenAI 兼容,例如 http://localhost:8000/v1)"
         ).strip()
+        if not base_url:
+            console.print(
+                "[yellow]Base URL 为空,未启用自定义 embedding 服务。"
+                "如需官方 OpenAI,请改选 5 指定 provider。[/yellow]"
+            )
+            return
         api_key = typer.prompt(
             "Embedding API Key(如服务无鉴权可留空)",
             hide_input=True,
@@ -2574,6 +3000,9 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
             show_default=False,
         ).strip()
         model = typer.prompt("Embedding 模型名称", default="bge-m3").strip()
+        # provider="openai" + an explicit base_url keeps the per-model
+        # ``dimensions`` handling for text-embedding-3-* relays; the registry
+        # accepts the empty api_key because a custom base_url is present.
         _save_embedding_config(
             provider="openai",
             model=model,
@@ -2595,8 +3024,13 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
             .strip()
             .lower()
         )
-        if target not in _SUPPORTED_PROVIDERS:
-            console.print("[red]未知 provider,跳过 embedding 配置。[/red]")
+        if target not in _SUPPORTED_PROVIDERS or target in {
+            "orcarouter",
+            "requesty",
+            "api_route",
+            "cheaperinference",
+        }:
+            console.print("[red]未知或没有 embedding 接口的 provider,跳过 embedding 配置。[/red]")
             return
         defaults = _PROVIDER_DEFAULTS.get(target, {})
         base_url = typer.prompt(
@@ -5207,6 +5641,28 @@ def _bangumi_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[
     return [row for row in rows if row.get("title") or row.get("url")]
 
 
+def _github_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert GitHub public-star events into profile history rows."""
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(event.get("author", "") or metadata.get("author_name", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "github",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
 def _v2ex_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert V2EX topic/node bootstrap events into profile rows."""
     rows: list[dict[str, Any]] = []
@@ -5284,6 +5740,313 @@ def setup_embedding() -> None:
 
     config, _ = load_config_with_diagnostics()
     _interactive_embedding_setup(config.llm.default_provider)
+
+
+def _build_embedding_service_or_none(config: Any) -> Any:
+    """Build the runtime ``EmbeddingService`` without chat providers.
+
+    Uses the same registry path the daemon uses, so the CLI protects exactly
+    the namespace production would protect. Returns ``None`` when embedding
+    is disabled or the service cannot be built.
+    """
+    emb = getattr(config, "llm", None)
+    provider = str(getattr(getattr(emb, "embedding", None), "provider", "") or "").strip()
+    if not provider:
+        return None
+    try:
+        from openbiliclaw.llm.base import LLMRegistry
+        from openbiliclaw.llm.registry import build_embedding_service
+
+        return build_embedding_service(config, LLMRegistry())
+    except Exception:
+        return None
+
+
+def _human_bytes(size: int) -> str:
+    value = float(max(0, int(size)))
+    if value < 1024:
+        return f"{int(value)} B"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        value /= 1024
+        if value < 1024 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+    return f"{value:.1f} TiB"
+
+
+def _embedding_cache_runtime(config: Any) -> tuple[Any, set[str]]:
+    """Return ``(cache, active_models)`` for the runtime L2 cache.
+
+    Active models come from the daemon's own service (its provenance
+    namespace) plus any models the cache has seen this process.
+    """
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cache_path = config.data_path / "embedding_cache.db"
+    service = _build_embedding_service_or_none(config)
+    if service is not None and service.l2_cache is not None:
+        cache = service.l2_cache
+        active_models = cache.active_models()
+        namespace = str(getattr(service, "cache_model_namespace", "") or "")
+        if namespace:
+            active_models.add(namespace)
+        return cache, active_models
+    cache = EmbeddingCache(cache_path)
+    cache.initialize()
+    return cache, set()
+
+
+@app.command("embedding-cache-stats")
+def embedding_cache_stats() -> None:
+    """查看 embedding L2 持久化缓存 (data/embedding_cache.db) 诊断信息。
+
+    显示行数、逻辑载荷、SQLite 主文件 / WAL / SHM 大小、legacy /
+    namespaced / active / inactive 分布、容量预算水位与最近维护记录，以及
+    每个 namespace 的行数与载荷。用于确认 provenance 隔离是否生效、旧
+    JSON 行是否已迁移为二进制、磁盘占用是否在预算内。命令会顺带执行与
+    daemon 相同的一次性运行时准备（legacy JSON → 二进制迁移，幂等）。
+    """
+    _print_page_title("Embedding L2 缓存诊断", "data/embedding_cache.db")
+    from openbiliclaw.config import load_config_with_diagnostics
+
+    config, _ = load_config_with_diagnostics()
+    cache_path = config.data_path / "embedding_cache.db"
+    if not cache_path.exists():
+        _print_status_panel(
+            "info",
+            "缓存不存在",
+            f"{cache_path} 尚未创建：embedding 未启用，或还没有任何向量写入。",
+        )
+        return
+
+    cache, _active = _embedding_cache_runtime(config)
+    stats = cache.stats(active_models=_active)
+    cap = stats["capacity"]
+    max_bytes = cap["max_bytes"]
+    cap_text = (
+        f"{_human_bytes(max_bytes)}（high={cap['high_watermark']:.0%} / "
+        f"low={cap['low_watermark']:.0%}，当前"
+        + ("已超高位" if cap["over_high_watermark"] else "未超高位")
+        + "）"
+        if max_bytes > 0
+        else "不设上限"
+    )
+    last_report = stats["last_maintenance_report"]
+    if last_report:
+        maint_text = (
+            f"已删除 {last_report.get('deleted_rows', 0):,} 行 / "
+            f"{_human_bytes(last_report.get('freed_bytes', 0))}"
+        )
+    else:
+        maint_text = "无记录"
+
+    overview = Table(show_header=False, box=None, title="缓存概况")
+    overview.add_column("指标", style="bold cyan", no_wrap=True)
+    overview.add_column("值")
+    for label, value in [
+        ("数据库文件", str(cache_path)),
+        ("总行数", f"{stats['total_rows']:,}"),
+        ("逻辑载荷", _human_bytes(stats["stored_bytes"])),
+        ("SQLite 主文件", _human_bytes(stats["file_bytes"])),
+        ("WAL / SHM", f"{_human_bytes(stats['wal_bytes'])} / {_human_bytes(stats['shm_bytes'])}"),
+        (
+            "legacy 行（无 namespace）",
+            f"{stats['legacy_rows']:,} 行 / {_human_bytes(stats['legacy_bytes'])}",
+        ),
+        (
+            "namespaced 行",
+            f"{stats['namespaced_rows']:,} 行 / {_human_bytes(stats['namespaced_bytes'])}",
+        ),
+        ("active 行", f"{stats['active_rows']:,} 行 / {_human_bytes(stats['active_bytes'])}"),
+        ("inactive 行", f"{stats['inactive_rows']:,} 行 / {_human_bytes(stats['inactive_bytes'])}"),
+        ("容量预算", cap_text),
+        ("最近维护", maint_text),
+    ]:
+        overview.add_row(label, value)
+    console.print(overview)
+    console.print()
+
+    if stats["namespaces"]:
+        ns_table = Table(show_header=True, header_style="bold cyan", title="Namespace 分布")
+        ns_table.add_column("model", no_wrap=True)
+        ns_table.add_column("namespace", no_wrap=True)
+        ns_table.add_column("行数", justify="right")
+        ns_table.add_column("载荷", justify="right")
+        ns_table.add_column("状态", justify="center")
+        for entry in stats["namespaces"]:
+            status = (
+                "active"
+                if entry["active"]
+                else "legacy"
+                if entry["namespace"] is None
+                else "inactive"
+            )
+            ns_table.add_row(
+                entry["model"],
+                entry["namespace"] or "-",
+                f"{entry['rows']:,}",
+                _human_bytes(entry["bytes"]),
+                status,
+            )
+        console.print(ns_table)
+        console.print()
+    if stats["legacy_rows"]:
+        _print_status_panel(
+            "warning",
+            "存在 legacy 行",
+            f"还有 {stats['legacy_rows']:,} 行旧 JSON 向量未迁移为二进制。"
+            "运行 `openbiliclaw embedding-cache-clean --apply` 可迁移并回收失效 namespace。",
+        )
+
+
+@app.command("embedding-cache-clean")
+def embedding_cache_clean(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="实际执行清理；默认 dry-run 只报告将删除的行数与字节",
+    ),
+    no_compact: bool = typer.Option(
+        False,
+        "--no-compact",
+        help="清理后跳过物理回收（WAL checkpoint + VACUUM INTO + 原子替换）",
+    ),
+    keep_legacy: bool = typer.Option(
+        False,
+        "--keep-legacy",
+        help="保留无 namespace 的 legacy 行（默认一并删除）",
+    ),
+    keep_model: str = typer.Option(
+        "",
+        "--keep-model",
+        help="额外保护一个 L2 model key（逗号分隔可传多个；"
+        "当前配置的 active namespace 默认受保护）",
+    ),
+    batch_size: int = typer.Option(
+        500,
+        "--batch-size",
+        min=1,
+        max=10000,
+        help="JSON→二进制迁移的每批行数（小批量提交，中断可续跑）",
+    ),
+) -> None:
+    """清理 embedding L2 缓存：迁移旧 JSON + 回收失效 namespace + 物理回收空间。
+
+    三个阶段（默认 dry-run 只报告；加 ``--apply`` 才执行）：
+    1. 把 legacy JSON 向量迁移为紧凑 float32 二进制（幂等、小批量、可中断续跑）；
+    2. 删除不在当前 active namespace 的行（默认含 legacy 行，``--keep-legacy`` 可保留）；
+    3. 执行 WAL checkpoint + VACUUM INTO 新文件 + integrity_check + 原子替换，
+       让磁盘占用实际下降（仅 DELETE 只进 freelist，主文件不会缩小）。
+    清理前请先停止 daemon，避免并发写入导致物理替换失败。
+    """
+    _print_page_title("Embedding L2 缓存清理", "data/embedding_cache.db")
+    from openbiliclaw.config import load_config_with_diagnostics
+
+    config, _ = load_config_with_diagnostics()
+    cache_path = config.data_path / "embedding_cache.db"
+    if not cache_path.exists():
+        _print_status_panel("info", "缓存不存在", f"{cache_path} 尚未创建，无需清理。")
+        return
+
+    cache, active_models = _embedding_cache_runtime(config)
+    extra_models = {part.strip() for part in keep_model.split(",") if part.strip()}
+    active_models = active_models | extra_models
+    pending = cache.pending_migration_rows()
+    preview = cache.delete_inactive(
+        active_models,
+        keep_legacy=keep_legacy,
+        dry_run=True,
+    )
+
+    if not apply:
+        migration_mb = pending * 92 / 1024 if pending else 0.0
+        _print_status_panel(
+            "info",
+            "dry-run 预览",
+            "未执行任何修改；加 --apply 才会真正清理。",
+        )
+        plan = Table(show_header=False, box=None, title="清理计划")
+        plan.add_column("阶段", style="bold cyan", no_wrap=True)
+        plan.add_column("将处理")
+        plan.add_row(
+            "1. JSON→二进制迁移",
+            f"{pending:,} 行 legacy JSON（约 {migration_mb:.0f} MiB 逻辑载荷；仅 --apply 时执行）",
+        )
+        plan.add_row(
+            "2. 删除失效行",
+            f"{preview['deleted_rows']:,} 行 / {_human_bytes(preview['freed_bytes'])}"
+            + ("" if active_models else "（未提供 active namespace，将删除全部非 keep-model 行）"),
+        )
+        plan.add_row(
+            "3. 物理回收",
+            "WAL checkpoint + VACUUM INTO + integrity_check + 原子替换"
+            if not no_compact
+            else "已跳过（--no-compact）",
+        )
+        console.print(plan)
+        console.print()
+        if active_models:
+            console.print(
+                "[dim]受保护的 active namespace:[/dim] "
+                + " ".join(f"[bold]{m}[/bold]" for m in sorted(active_models))
+            )
+        else:
+            console.print(
+                "[yellow]未识别到 active namespace（embedding 未启用或服务构建失败）；"
+                "请用 --keep-model 显式保护仍要使用的 model key。[/yellow]"
+            )
+        console.print()
+        _print_status_panel(
+            "warning",
+            "执行前请停止 daemon",
+            "物理替换需要独占文件；daemon 运行中执行可能失败或产生旧句柄。"
+            "缓存可重建，删除的行只是丢失冷数据，不影响推荐正确性。",
+        )
+        return
+
+    migration = cache.migrate_encoding(batch_size=batch_size)
+    deleted = cache.delete_inactive(active_models, keep_legacy=keep_legacy)
+    compact_report: dict[str, object] = {}
+    if not no_compact:
+        compact_report = cache.compact()
+
+    result = Table(show_header=False, box=None, title="清理结果")
+    result.add_column("阶段", style="bold cyan", no_wrap=True)
+    result.add_column("结果")
+    result.add_row(
+        "1. JSON→二进制迁移",
+        f"迁移 {migration.get('migrated', 0):,} 行，"
+        f"损坏跳过 {migration.get('skipped_corrupt', 0):,} 行"
+        f"，剩余 {migration.get('remaining', 0):,} 行",
+    )
+    result.add_row(
+        "2. 删除失效行",
+        f"删除 {deleted['deleted_rows']:,} 行 / 释放 {_human_bytes(deleted['freed_bytes'])}",
+    )
+    if compact_report:
+        if compact_report.get("ok"):
+            before_bytes = cast("int", compact_report.get("before_bytes") or 0)
+            after_bytes = cast("int", compact_report.get("after_bytes") or 0)
+            result.add_row(
+                "3. 物理回收",
+                f"主文件 {_human_bytes(before_bytes)} → "
+                f"{_human_bytes(after_bytes)}，integrity_check 通过",
+            )
+        else:
+            result.add_row(
+                "3. 物理回收",
+                f"失败：{compact_report.get('error') or 'unknown'}（原文件未改动）",
+            )
+    else:
+        result.add_row("3. 物理回收", "已跳过（--no-compact）")
+    console.print(result)
+    console.print()
+    if compact_report and not compact_report.get("ok"):
+        _print_status_panel(
+            "warning",
+            "物理回收失败",
+            "删除已完成但文件未缩小。请停止 daemon 后重试，或手工删除"
+            f" {cache_path}（缓存可重建）后再运行 `openbiliclaw embedding-cache-clean --apply`。",
+        )
 
 
 @app.command()
@@ -5990,6 +6753,25 @@ def _format_autostart_config_status(cfg: Any) -> str:
     return f"{enabled}（{registered}，{state.mechanism}）"
 
 
+def _format_source_date_preference(config: Any) -> str:
+    """Render a source publication-date range for ``config-show``."""
+
+    preset = str(getattr(config, "recommendation_date_preset", "all") or "all")
+    labels = {
+        "all": "全部日期",
+        "last_7_days": "最近一周",
+        "last_30_days": "最近一个月",
+        "last_6_months": "最近半年",
+        "last_1_year": "最近一年",
+    }
+    if preset != "custom":
+        return labels.get(preset, preset)
+
+    start = str(getattr(config, "recommendation_date_start", "") or "") or "不限"
+    end = str(getattr(config, "recommendation_date_end", "") or "") or "不限"
+    return f"自定义：{start} 至 {end}"
+
+
 def _autostart_manager_or_exit() -> Any:
     from openbiliclaw.runtime import autostart
 
@@ -6422,6 +7204,160 @@ def ext_key_revoke(
         "success",
         "设备密钥已撤销",
         f"Key ID {key_id} 已删除；所有 Web 与扩展会话已立即失效。重启后端以重载密钥列表。",
+    )
+
+
+# ── tailnet ────────────────────────────────────────────────────────────────
+
+
+@tailnet_app.command("enable")
+def tailnet_enable(
+    hostname: str | None = typer.Option(
+        None,
+        "--hostname",
+        help="Tailnet 中的节点名（单个 DNS label）",
+    ),
+) -> None:
+    """开启应用内 Tailnet 远程入口。"""
+    from openbiliclaw.config import (
+        load_config,
+        normalize_tailnet_hostname,
+        save_config,
+        tailnet_override_source,
+    )
+
+    enabled_override = tailnet_override_source("enabled")
+    hostname_override = tailnet_override_source("hostname") if hostname is not None else None
+    if enabled_override or hostname_override:
+        sources = ", ".join(value for value in (enabled_override, hostname_override) if value)
+        _print_status_panel(
+            "error",
+            "无法保存 Tailnet 配置",
+            f"当前值由 {sources} 覆盖，请直接修改该文件。",
+        )
+        raise typer.Exit(code=1)
+
+    cfg = load_config()
+    try:
+        if hostname is not None:
+            cfg.tailnet.hostname = normalize_tailnet_hostname(hostname)
+        cfg.tailnet.enabled = True
+        save_config(cfg)
+    except Exception as exc:
+        _print_status_panel("error", "开启 Tailnet 失败", str(exc))
+        raise typer.Exit(code=1) from exc
+
+    _print_status_panel(
+        "success",
+        "Tailnet 已开启",
+        f"节点名: {cfg.tailnet.hostname}\n"
+        "重启 OpenBiliClaw 后生效；首次启动会打开 Tailscale 登录页。\n"
+        "电脑不需要安装或全局启用 Tailscale。",
+    )
+
+
+@tailnet_app.command("disable")
+def tailnet_disable() -> None:
+    """关闭应用内 Tailnet，保留本机节点身份便于下次启用。"""
+    from openbiliclaw.config import load_config, save_config, tailnet_override_source
+
+    override = tailnet_override_source("enabled")
+    if override is not None:
+        _print_status_panel(
+            "error",
+            "无法保存 Tailnet 关闭状态",
+            f"当前开关由 {override} 覆盖，请直接修改该文件。",
+        )
+        raise typer.Exit(code=1)
+
+    cfg = load_config()
+    if not cfg.tailnet.enabled:
+        _print_status_panel("info", "已关闭", "应用内 Tailnet 已是关闭状态。")
+        return
+    cfg.tailnet.enabled = False
+    try:
+        save_config(cfg)
+    except Exception as exc:
+        _print_status_panel("error", "关闭 Tailnet 失败", str(exc))
+        raise typer.Exit(code=1) from exc
+    _print_status_panel(
+        "success",
+        "Tailnet 已关闭",
+        "重启 OpenBiliClaw 后生效；本机节点身份已保留。",
+    )
+
+
+@tailnet_app.command("status")
+def tailnet_status() -> None:
+    """查看应用内 Tailnet 配置、helper 与最近运行状态。"""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.tailnet_supervisor import find_tailnet_helper
+
+    cfg = load_config()
+    try:
+        helper = str(find_tailnet_helper(cfg))
+    except Exception as exc:
+        helper = f"未找到（{exc}）"
+
+    status_path = cfg.data_path / "tailnet" / "status.json"
+    runtime: dict[str, object] = {}
+    if status_path.is_file():
+        try:
+            decoded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(decoded, dict):
+                runtime = decoded
+        except (OSError, json.JSONDecodeError):
+            runtime = {"event": "invalid", "message": "最近状态文件无法读取"}
+
+    rows = [
+        ("配置", "开启" if cfg.tailnet.enabled else "关闭"),
+        ("节点名", cfg.tailnet.hostname),
+        ("配置端口", str(cfg.api.port)),
+        ("Helper", helper),
+        ("身份目录", str(cfg.data_path / "tailnet")),
+        ("最近状态", str(runtime.get("event", "暂无"))),
+    ]
+    runtime_port = cfg.api.port
+    raw_runtime_port = runtime.get("port")
+    if isinstance(raw_runtime_port, (int, str)) and not isinstance(raw_runtime_port, bool):
+        try:
+            candidate_port = int(raw_runtime_port)
+        except (TypeError, ValueError):
+            candidate_port = cfg.api.port
+        if 1 <= candidate_port <= 65_535:
+            runtime_port = candidate_port
+            rows.append(("最近监听端口", str(runtime_port)))
+    dns_name = str(runtime.get("dns_name", "")).strip()
+    if dns_name:
+        rows.append(("MagicDNS 地址", f"http://{dns_name}:{runtime_port}"))
+    raw_ips = runtime.get("ips", [])
+    if isinstance(raw_ips, list) and raw_ips:
+        rows.append(("Tailnet IP", ", ".join(str(value) for value in raw_ips)))
+    message = str(runtime.get("message", "")).strip()
+    if message:
+        rows.append(("最近信息", message))
+    _print_key_value_table("应用内 Tailnet", rows)
+
+
+@tailnet_app.command("build-helper")
+def tailnet_build_helper() -> None:
+    """从源码构建并安装当前平台的 Tailnet helper。"""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.tailnet_supervisor import (
+        TailnetSupervisorError,
+        build_tailnet_helper,
+    )
+
+    cfg = load_config()
+    try:
+        destination = build_tailnet_helper(cfg)
+    except (OSError, TailnetSupervisorError) as exc:
+        _print_status_panel("error", "Tailnet helper 构建失败", str(exc))
+        raise typer.Exit(code=1) from exc
+    _print_status_panel(
+        "success",
+        "Tailnet helper 已安装",
+        f"{destination}\n现在可执行 `openbiliclaw tailnet enable`，然后重启服务。",
     )
 
 
@@ -7127,6 +8063,31 @@ def _ask_bangumi_inclusion() -> bool:
     return True
 
 
+def _ask_github_inclusion() -> bool:
+    """Decide whether to enable GitHub public-repository discovery/bootstrap."""
+
+    if os.environ.get("OPENBILICLAW_NO_GITHUB", "").strip() == "1":
+        console.print("[dim]  跳过 GitHub 来源(OPENBILICLAW_NO_GITHUB=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+    console.print()
+    console.print("[bold]GitHub 数据接入(可选)[/bold]")
+    console.print(
+        "匿名启用公开仓库的 search / ranked / latest 内容发现；"
+        "填写公开用户名或专用 PAT 后，还会把你的[bold cyan]公开 Star 仓库[/bold cyan]"
+        "混入首轮画像。"
+    )
+    console.print(
+        "[dim]只调用 GitHub 官方只读 API，服务端强制 public-only；"
+        "不会读取私有仓库，也不会 Star、Fork、关注或写入 GitHub。[/dim]"
+    )
+    if not typer.confirm("启用 GitHub 数据接入?", default=False):
+        console.print("[dim]  已选择跳过，本次 init 不会启用 GitHub。[/dim]")
+        return False
+    return True
+
+
 def _ask_network_binding() -> bool:
     """Ask whether the backend should listen on all interfaces (0.0.0.0).
 
@@ -7215,12 +8176,15 @@ def _persist_init_source_enabled_flags(
     include_zhihu: bool = False,
     include_reddit: bool = False,
     include_bangumi: bool = False,
+    include_github: bool = False,
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
     include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
+    github_username: str = "",
+    github_token: str = "",
     v2ex_username: str = "",
 ) -> None:
     """Persist init source choices so background discovery obeys them."""
@@ -7285,6 +8249,24 @@ def _persist_init_source_enabled_flags(
             and str(getattr(bangumi_cfg, "access_token", "")) != bangumi_token
         ):
             bangumi_cfg.access_token = bangumi_token
+            changed = True
+        github_cfg = getattr(cfg.sources, "github", None)
+        if github_cfg is not None and bool(getattr(github_cfg, "enabled", False)) != include_github:
+            github_cfg.enabled = include_github
+            changed = True
+        if (
+            github_cfg is not None
+            and github_username
+            and str(getattr(github_cfg, "username", "")) != github_username
+        ):
+            github_cfg.username = github_username
+            changed = True
+        if (
+            github_cfg is not None
+            and github_token
+            and str(getattr(github_cfg, "access_token", "")) != github_token
+        ):
+            github_cfg.access_token = github_token
             changed = True
         v2ex_cfg = getattr(cfg.sources, "v2ex", None)
         if v2ex_cfg is not None and bool(getattr(v2ex_cfg, "enabled", False)) != include_v2ex:
@@ -7551,6 +8533,9 @@ class InitResult:
     bangumi_events: list[dict[str, Any]] = field(default_factory=list)
     bangumi_scope_counts: dict[str, Any] = field(default_factory=dict)
     bangumi_status: str = "skipped"
+    github_events: list[dict[str, Any]] = field(default_factory=list)
+    github_scope_counts: dict[str, Any] = field(default_factory=dict)
+    github_status: str = "skipped"
     linuxdo_events: list[dict[str, Any]] = field(default_factory=list)
     linuxdo_scope_counts: dict[str, Any] = field(default_factory=dict)
     linuxdo_status: str = "skipped"
@@ -7974,6 +8959,99 @@ async def _fetch_bangumi_init_data(
     return events, counts, status
 
 
+async def _fetch_github_init_data(
+    *,
+    username: str,
+    token: str = "",
+    timeout_seconds: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    """Fetch a bounded, public-only GitHub starred-repository bootstrap.
+
+    A PAT is optional and only proves identity / raises the public API rate
+    limit. The shared identity resolver compares durable numeric ids whenever
+    both PAT and username are present, so an account mismatch cannot silently
+    mix profile evidence. Successful terminal statuses are ``complete`` and
+    ``partial``; an affirmative empty collection is still complete.
+    """
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.github import fetch_github_public_starred_events
+    from openbiliclaw.sources.github_client import (
+        GitHubAPIError,
+        GitHubClient,
+        resolve_github_access_token,
+        resolve_github_bootstrap_identity,
+        validate_github_access_token,
+        validate_github_username,
+    )
+
+    config = load_config()
+    github_cfg = config.sources.github
+    explicit_token = validate_github_access_token(token)
+    effective_token = explicit_token
+    if not effective_token:
+        effective_token, _origin = resolve_github_access_token(github_cfg.access_token)
+    selected_username = validate_github_username(username or github_cfg.username)
+    if not effective_token and not selected_username:
+        return [], {}, "skipped"
+
+    deadline = (
+        asyncio.get_running_loop().time() + max(0.001, float(timeout_seconds))
+        if timeout_seconds is not None
+        else None
+    )
+    async with GitHubClient(
+        token=effective_token or None,
+        request_interval_seconds=float(github_cfg.request_interval_seconds),
+    ) as github_client:
+        if deadline is None:
+            identity = await resolve_github_bootstrap_identity(
+                github_client,
+                username=selected_username,
+            )
+        else:
+            identity_remaining = deadline - asyncio.get_running_loop().time()
+            if identity_remaining <= 0:
+                raise GitHubAPIError("timeout", "GitHub identity check timed out")
+            try:
+                identity = await asyncio.wait_for(
+                    resolve_github_bootstrap_identity(
+                        github_client,
+                        username=selected_username,
+                    ),
+                    timeout=identity_remaining,
+                )
+            except TimeoutError as exc:
+                raise GitHubAPIError("timeout", "GitHub identity check timed out") from exc
+        fetch_remaining = (
+            max(0.001, deadline - asyncio.get_running_loop().time())
+            if deadline is not None
+            else None
+        )
+        result = await fetch_github_public_starred_events(
+            github_client,
+            username=identity.login,
+            limit=int(github_cfg.bootstrap_limit),
+            max_pages=int(github_cfg.bootstrap_max_pages),
+            timeout_seconds=fetch_remaining,
+        )
+    counts: dict[str, Any] = {
+        "repositories": len(result.events),
+        "pages_fetched": result.pages_fetched,
+        "rows_seen": result.rows_seen,
+        "duplicates": result.duplicates,
+        "rejected_private": result.rejected_private,
+        "rejected_malformed": result.rejected_malformed,
+        "scope_complete": result.scope_complete,
+        "affirmative_empty": result.affirmative_empty,
+        "terminal_evidence": result.terminal_evidence,
+        "identity_login": identity.login,
+        "identity_id": identity.user_id,
+        "identity_evidence": identity.evidence,
+    }
+    return result.events, counts, "complete" if result.scope_complete else "partial"
+
+
 async def run_guided_init(
     *,
     client: Any,
@@ -7990,12 +9068,15 @@ async def run_guided_init(
     include_zhihu: bool = False,
     include_reddit: bool = False,
     include_bangumi: bool = False,
+    include_github: bool = False,
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
     include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
+    github_username: str = "",
+    github_token: str = "",
     v2ex_username: str = "",
     target_pool_count: int,
     discover_backfill: Callable[..., Coroutine[Any, Any, int]],
@@ -8007,6 +9088,7 @@ async def run_guided_init(
     collection_timeout_seconds: float = _INIT_COLLECTION_TIMEOUT_SECONDS,
     purge_pool_callback: Callable[[], int] | None = None,
     reset_cognition: bool = False,
+    llm_concurrency: int | None = None,
 ) -> InitResult:
     """Shared async init pipeline (gui-init spec §1).
 
@@ -8046,6 +9128,11 @@ async def run_guided_init(
     the long-term awareness / insight layers before stage 2 so old LLM
     observations (e.g. from a previous account) do not leak into the new
     profile build.
+
+    ``llm_concurrency`` is the per-run override for the preference-analysis
+    fan-out (init page field). ``None`` keeps the configured
+    ``llm.concurrency``; the CLI option and the GUI init pages always send an
+    explicit validated value or omit it entirely.
     """
 
     import logging
@@ -8122,6 +9209,7 @@ async def run_guided_init(
             include_zhihu,
             include_reddit,
             include_bangumi,
+            include_github,
             include_linuxdo,
             include_v2ex,
             include_weibo,
@@ -8397,6 +9485,136 @@ async def run_guided_init(
             console.print("  [yellow]Bangumi 用户存在，但没有读到公开收藏。[/yellow]")
         elif bangumi_status == "timeout":
             console.print("  [yellow]Bangumi 公开收藏读取超时，已跳过并继续初始化。[/yellow]")
+
+    github_events: list[dict[str, Any]] = []
+    github_scope_counts: dict[str, Any] = {}
+    github_status = "skipped"
+    if include_github:
+        from openbiliclaw.sources.github_client import GitHubAPIError
+
+        can_isolate_github_failure = any(
+            (
+                include_bili,
+                include_xhs,
+                include_dy,
+                include_yt,
+                include_x,
+                include_zhihu,
+                include_reddit,
+                include_bangumi,
+                include_linuxdo,
+                include_v2ex,
+                include_weibo,
+            )
+        )
+        await _stage1_begin_source("GitHub", wait_hint="只读拉取公开 Star 仓库")
+        github_wait_seconds = min(
+            _INIT_BILIBILI_COLLECTION_TIMEOUT_SECONDS,
+            _stage1_remaining_seconds(),
+        )
+        try:
+            github_result, github_timed_out = await _await_stage1_operation(
+                lambda: _fetch_github_init_data(
+                    username=github_username,
+                    token=github_token,
+                    # Return one beat before the outer source deadline so the
+                    # page collector can report accepted rows as partial
+                    # instead of being cancelled with its accumulator lost.
+                    timeout_seconds=max(0.001, github_wait_seconds - 1.0),
+                ),
+                label="GitHub",
+                max_wait_seconds=github_wait_seconds,
+            )
+            if github_timed_out or github_result is None:
+                raise GuidedInitError(
+                    "github_bootstrap_timeout",
+                    "GitHub 公开 Star 仓库读取超时，且未取得可保留的完整页面；请稍后重试。",
+                )
+            github_events, github_scope_counts, github_status = cast(
+                "tuple[list[dict[str, Any]], dict[str, Any], str]",
+                github_result,
+            )
+        except GuidedInitError as exc:
+            if not can_isolate_github_failure:
+                raise
+            github_status = "partial"
+            github_scope_counts = {
+                "scope_complete": False,
+                "terminal_evidence": "isolated_source_failure",
+                "error_code": exc.reason,
+            }
+            console.print(f"  [yellow]{exc.message} 已隔离 GitHub，本次继续处理其他来源。[/yellow]")
+        except GitHubAPIError as exc:
+            reason_messages = {
+                "identity_mismatch": (
+                    "github_identity_mismatch",
+                    "GitHub PAT 与配置用户名对应的 numeric user id 不一致，"
+                    "已停止初始化以避免混合账号证据。",
+                ),
+                "unauthorized": (
+                    "github_token_rejected",
+                    "GitHub PAT 被官方 API 拒绝；请更新专用令牌后重试。",
+                ),
+                "identity_required": (
+                    "github_identity_required",
+                    "GitHub 画像初始化需要公开用户名或专用 PAT。",
+                ),
+                "not_found": (
+                    "github_identity_not_found",
+                    "GitHub 用户不存在或无法通过公开 API 读取。",
+                ),
+            }
+            reason, message = reason_messages.get(
+                exc.code,
+                (
+                    "github_bootstrap_failed",
+                    f"GitHub 公开 Star 仓库读取失败（{exc.code}）；请稍后重试。",
+                ),
+            )
+            guided_error = GuidedInitError(reason, message)
+            if not can_isolate_github_failure:
+                raise guided_error from exc
+            github_status = "partial"
+            github_scope_counts = {
+                "scope_complete": False,
+                "terminal_evidence": "isolated_source_failure",
+                "error_code": reason,
+            }
+            console.print(f"  [yellow]{message} 已隔离 GitHub，本次继续处理其他来源。[/yellow]")
+        except (TypeError, ValueError) as exc:
+            guided_error = GuidedInitError(
+                "github_bootstrap_failed",
+                f"GitHub 初始化配置无效：{exc}",
+            )
+            if not can_isolate_github_failure:
+                raise guided_error from exc
+            github_status = "partial"
+            github_scope_counts = {
+                "scope_complete": False,
+                "terminal_evidence": "isolated_source_failure",
+                "error_code": guided_error.reason,
+            }
+            console.print(
+                f"  [yellow]{guided_error.message} 已隔离 GitHub，本次继续处理其他来源。[/yellow]"
+            )
+        finally:
+            _stage1_finish_source()
+
+        if github_status == "complete":
+            console.print(
+                f"  GitHub 公开 Star 仓库 [green]{len(github_events)}[/green] 条（完整范围）"
+            )
+        elif github_status == "partial":
+            console.print(
+                "  [yellow]GitHub 公开 Star 仓库部分完成："
+                f"已保留 {len(github_events)} 条；"
+                f"终止证据={github_scope_counts.get('terminal_evidence', 'unknown')}。[/yellow]"
+            )
+        else:
+            console.print(
+                "  [dim]GitHub 未配置公开用户名或专用 PAT；"
+                "本次仅启用后续公开仓库发现，不导入画像信号。[/dim]"
+            )
 
     # Bootstrap collectors poll a DB task queue with a blocking sleep —
     # run them in a worker thread (Database is check_same_thread=False) so
@@ -8919,6 +10137,7 @@ async def run_guided_init(
     events_to_persist.extend(zhihu_events)
     events_to_persist.extend(reddit_events)
     events_to_persist.extend(bangumi_events)
+    events_to_persist.extend(github_events)
     events_to_persist.extend(linuxdo_events)
     events_to_persist.extend(v2ex_events)
     events_to_persist.extend(weibo_events)
@@ -8929,6 +10148,7 @@ async def run_guided_init(
     events.extend(zhihu_events)
     events.extend(reddit_events)
     events.extend(bangumi_events)
+    events.extend(github_events)
     events.extend(linuxdo_events)
     events.extend(v2ex_events)
     events.extend(weibo_events)
@@ -8969,6 +10189,7 @@ async def run_guided_init(
                 "zhihu": len(zhihu_events),
                 "reddit": len(reddit_events),
                 "bangumi": len(bangumi_events),
+                "github": len(github_events),
                 "linuxdo": len(linuxdo_events),
                 "v2ex": len(v2ex_events),
                 "weibo": len(weibo_events),
@@ -8997,6 +10218,7 @@ async def run_guided_init(
         or linuxdo_status == "degraded"
         or instagram_status
         in {"partial", "login_required", "challenge", "rate_limited", "failed", "timeout"}
+        or github_status == "partial"
     )
     await _stage_done(
         1,
@@ -9006,6 +10228,8 @@ async def run_guided_init(
             if dy_status == "degraded"
             else "linuxdo_degraded"
             if linuxdo_status == "degraded"
+            else "github_partial"
+            if github_status == "partial"
             else "v2ex_partial"
             if v2ex_status == "partial"
             else "instagram_partial"
@@ -9017,7 +10241,7 @@ async def run_guided_init(
     # ── Stage 2: analyze preferences ──
     await _stage_started(2)
     _print_section_title("2/4 分析偏好")
-    console.print(f"  总信号量: [green]{len(events)}[/green] 条事件")
+    console.print(f"  全平台共 [green]{len(events)}[/green] 条事件")
     # Re-init with reset_cognition: retire the long-term awareness / insight
     # layers BEFORE this run's analysis so old LLM observations (e.g. from a
     # previous account) do not leak into the new profile build. This run's
@@ -9033,7 +10257,10 @@ async def run_guided_init(
             )
         except Exception:
             logger.warning("reset_cognition layer clear failed", exc_info=True)
-    profile_analysis_concurrency = _profile_analysis_concurrency(soul_engine)
+    if llm_concurrency is None:
+        profile_analysis_concurrency = _profile_analysis_concurrency(soul_engine)
+    else:
+        profile_analysis_concurrency = max(1, int(llm_concurrency))
     # Progress-aware deadline: the idle limit is what actually catches a wedged
     # gateway, so the absolute ceiling can stay generous for slow-but-healthy
     # ones. ``profile_analysis_budget`` remains the number published to the GUI
@@ -9104,6 +10331,7 @@ async def run_guided_init(
         done=0,
         total=expected_chunk_total,
         note=(
+            f"全平台共 {len(events)} 条事件 · "
             f"已完成 0/{expected_chunk_total} 批 · "
             f"AI 开始处理（并发上限 {profile_analysis_concurrency}）"
         ),
@@ -9118,6 +10346,7 @@ async def run_guided_init(
                         events,
                         event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
                         progress_callback=_stage2_progress,
+                        llm_concurrency=llm_concurrency,
                     ),
                     label="分析偏好（分片批处理）",
                     eta_seconds=180,
@@ -9219,6 +10448,8 @@ async def run_guided_init(
         combined_history.extend(_reddit_events_to_history_items(reddit_events))
     if bangumi_events:
         combined_history.extend(_bangumi_events_to_history_items(bangumi_events))
+    if github_events:
+        combined_history.extend(_github_events_to_history_items(github_events))
     if linuxdo_events:
         combined_history.extend(_linuxdo_events_to_history_items(linuxdo_events))
     if v2ex_events:
@@ -9462,6 +10693,9 @@ async def run_guided_init(
         bangumi_events=bangumi_events,
         bangumi_scope_counts=bangumi_scope_counts,
         bangumi_status=bangumi_status,
+        github_events=github_events,
+        github_scope_counts=github_scope_counts,
+        github_status=github_status,
         v2ex_events=v2ex_events,
         v2ex_scope_counts=v2ex_scope_counts,
         v2ex_status=v2ex_status,
@@ -9610,6 +10844,29 @@ def init(
             "https://next.bgm.tv/demo/access-token"
         ),
     ),
+    no_github: bool = typer.Option(
+        False,
+        "--no-github",
+        help="跳过 GitHub 数据接入（默认非交互模式下就是跳过）。",
+    ),
+    skip_github_prompt: bool = typer.Option(
+        False,
+        "--yes-github",
+        help="跳过 GitHub 的 y/n 提问，直接启用公开仓库来源。",
+    ),
+    github_username: str = typer.Option(
+        "",
+        "--github-username",
+        help="用于公开 Star 初始化的 GitHub 用户名；留空则读配置或由 PAT 识别。",
+    ),
+    github_token: str = typer.Option(
+        "",
+        "--github-token",
+        help=(
+            "GitHub 专用 PAT（只用于身份校验、公开 Star 与提高公开 API 限额）；"
+            "留空则只读取 OPENBILICLAW_GITHUB_TOKEN 或 [sources.github].access_token。"
+        ),
+    ),
     bilibili_history_limit: int | None = typer.Option(
         None,
         "--bilibili-history-limit",
@@ -9643,6 +10900,16 @@ def init(
         help=(
             "重新初始化时同时清空旧认知观察与洞察层（换账号或大改兴趣时建议）。"
             "仅配合 --force 有意义。"
+        ),
+    ),
+    llm_concurrency: int | None = typer.Option(
+        None,
+        "--init-llm-concurrency",
+        min=1,
+        max=16,
+        help=(
+            "本次初始化使用的 LLM 并发数（默认读取配置的 llm.concurrency，"
+            "未配置时默认 4）。降低可减少限流，提高可加速但更容易触发限流。"
         ),
     ),
     no_backup: bool = typer.Option(
@@ -9983,12 +11250,146 @@ def init(
             except ValueError as exc:
                 raise typer.BadParameter(str(exc), param_hint="--bangumi-username") from exc
 
+    if no_github:
+        include_github = False
+        console.print("[dim]  跳过 GitHub 数据接入（命令行 --no-github）。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_GITHUB", "").strip() == "1":
+        include_github = False
+        console.print("[dim]  跳过 GitHub 数据接入（OPENBILICLAW_NO_GITHUB=1）。[/dim]")
+    elif skip_github_prompt:
+        include_github = True
+    else:
+        include_github = _ask_github_inclusion()
+
+    selected_github_username = ""
+    selected_github_token = ""
+    github_token_to_persist = ""
+    # Source enablement and profile bootstrap are separate axes.  GitHub can
+    # remain enabled for anonymous public-repository discovery even when its
+    # optional identity preflight fails during a mixed-source init.
+    github_bootstrap_enabled = False
+    if include_github:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.sources.github_client import (
+            GitHubAPIError,
+            GitHubClient,
+            resolve_github_access_token,
+            resolve_github_bootstrap_identity,
+            validate_github_access_token,
+            validate_github_username,
+        )
+
+        github_cfg = load_config().sources.github
+        configured_username = str(github_cfg.username or "").strip()
+        try:
+            github_token_to_persist = validate_github_access_token(github_token)
+            if github_token_to_persist:
+                selected_github_token = github_token_to_persist
+            else:
+                selected_github_token, _credential_origin = resolve_github_access_token(
+                    github_cfg.access_token
+                )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--github-token") from exc
+        raw_github_username = str(github_username or configured_username).strip()
+        if not selected_github_token and not raw_github_username and _is_interactive_terminal():
+            raw_github_username = str(
+                typer.prompt(
+                    "公开 GitHub 用户名（留空则只启用仓库发现）",
+                    default="",
+                    show_default=False,
+                )
+                or ""
+            ).strip()
+        try:
+            validated_github_username = validate_github_username(raw_github_username)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--github-username") from exc
+
+        if selected_github_token or validated_github_username:
+
+            async def _resolve_github_identity() -> Any:
+                async with GitHubClient(
+                    token=selected_github_token or None,
+                    request_interval_seconds=float(github_cfg.request_interval_seconds),
+                ) as github_client:
+                    return await resolve_github_bootstrap_identity(
+                        github_client,
+                        username=validated_github_username,
+                    )
+
+            try:
+                github_identity = asyncio.run(_resolve_github_identity())
+            except GitHubAPIError as exc:
+                if exc.code == "identity_mismatch":
+                    title = "GitHub 身份不一致"
+                    body = (
+                        "PAT 所属账号与 --github-username / 配置用户名的 numeric user id 不一致；"
+                        "为避免混合账号画像，本次未保存也未开始初始化。"
+                    )
+                elif exc.code == "unauthorized":
+                    title = "GitHub PAT 无效"
+                    body = (
+                        "GitHub 官方 API 拒绝了专用 PAT。请更新 --github-token、"
+                        "OPENBILICLAW_GITHUB_TOKEN 或配置中的令牌后重试。"
+                    )
+                elif exc.code == "not_found":
+                    title = "GitHub 用户不存在"
+                    body = "公开用户名无法通过 GitHub 官方 API 确认，请检查拼写。"
+                else:
+                    title = "GitHub 身份校验失败"
+                    body = f"GitHub 官方 API 返回 {exc.code}；未保存来源选择，请稍后重试。"
+                has_other_init_source = any(
+                    (
+                        include_bili,
+                        include_xhs,
+                        include_dy,
+                        include_yt,
+                        include_x,
+                        include_zhihu,
+                        include_reddit,
+                        include_bangumi,
+                        include_linuxdo,
+                        include_v2ex,
+                        include_weibo,
+                    )
+                )
+                if not has_other_init_source:
+                    _print_status_panel("error", title, body)
+                    raise typer.Exit(code=1) from exc
+                console.print(
+                    f"[yellow]  {title}：{body} 已隔离 GitHub 画像导入，"
+                    "其他来源继续初始化；公开仓库发现保持启用。[/yellow]"
+                )
+                # A request-scoped or configured credential which failed its
+                # official read-only preflight must not reach persistence or
+                # the shared bootstrap pipeline.
+                selected_github_username = ""
+                selected_github_token = ""
+                github_token_to_persist = ""
+            else:
+                selected_github_username = github_identity.login
+                github_bootstrap_enabled = True
+                evidence_label = (
+                    "PAT 已验证" if github_identity.evidence == "verified" else "公开范围已确认"
+                )
+                console.print(
+                    f"[dim]  GitHub 初始化账号：{selected_github_username} "
+                    f"(numeric id {github_identity.user_id}，{evidence_label})。[/dim]"
+                )
+        else:
+            console.print(
+                "[yellow]  GitHub 未填公开用户名或专用 PAT：本次仅启用公开仓库发现，"
+                "画像由其他已选来源提供。[/yellow]"
+            )
+
     selected_sources = (
         include_bili,
         include_xhs,
         include_dy,
         include_yt,
         include_x,
+        include_github,
         include_zhihu,
         include_reddit,
         include_v2ex,
@@ -10003,10 +11404,9 @@ def init(
             "没有可用的数据来源",
             "已跳过 B 站且未启用任何其他平台——init 至少需要一个数据来源。"
             "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / "
-            "--yes-youtube / --yes-x / --yes-zhihu "
-            "/ --yes-reddit / --yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi "
-            "/ --yes-instagram "
-            "启用其他来源。",
+            "--yes-youtube / --yes-x / --yes-github / --yes-zhihu / --yes-reddit / "
+            "--yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi / "
+            "--yes-instagram 启用其他来源。",
         )
         raise typer.Exit(code=1)
 
@@ -10019,10 +11419,16 @@ def init(
         include_zhihu,
         include_reddit,
         include_linuxdo,
+        include_v2ex,
         include_weibo,
         include_instagram,
     )
-    if include_bangumi and not selected_bangumi_username and not any(profile_signal_sources):
+    if (
+        include_bangumi
+        and not selected_bangumi_username
+        and not selected_github_username
+        and not any(profile_signal_sources)
+    ):
         _print_status_panel(
             "error",
             "Bangumi 缺少令牌或用户名",
@@ -10036,6 +11442,20 @@ def init(
             "[yellow]  Bangumi 未填公开用户名：本次仅启用条目发现，"
             "画像由其他已选来源提供。[/yellow]"
         )
+    if (
+        include_github
+        and not selected_github_username
+        and not selected_bangumi_username
+        and not any(profile_signal_sources)
+    ):
+        _print_status_panel(
+            "error",
+            "GitHub 缺少 PAT 或用户名",
+            "只选择 GitHub 初始化时，需提供 --github-token / "
+            "OPENBILICLAW_GITHUB_TOKEN，或 --github-username（公开用户名）。"
+            "如果只想启用匿名仓库发现，请先保存来源配置而不是运行 init。",
+        )
+        raise typer.Exit(code=1)
 
     _persist_init_source_enabled_flags(
         include_bili=include_bili,
@@ -10045,11 +11465,14 @@ def init(
         include_x=include_x,
         include_zhihu=include_zhihu,
         include_reddit=include_reddit,
+        include_github=include_github,
         include_v2ex=include_v2ex,
         include_bangumi=include_bangumi,
         include_linuxdo=include_linuxdo,
         bangumi_username=selected_bangumi_username,
         bangumi_token=selected_bangumi_token,
+        github_username=selected_github_username,
+        github_token=github_token_to_persist,
         v2ex_username=selected_v2ex_username,
         include_weibo=include_weibo,
         include_instagram=include_instagram,
@@ -10086,11 +11509,14 @@ def init(
                 include_x=include_x,
                 include_zhihu=include_zhihu,
                 include_reddit=include_reddit,
+                include_github=github_bootstrap_enabled,
                 include_v2ex=include_v2ex,
                 include_bangumi=include_bangumi,
                 include_linuxdo=include_linuxdo,
                 bangumi_username=selected_bangumi_username,
                 bangumi_token=selected_bangumi_token,
+                github_username=selected_github_username,
+                github_token=selected_github_token,
                 v2ex_username=selected_v2ex_username,
                 include_weibo=include_weibo,
                 include_instagram=include_instagram,
@@ -10102,6 +11528,7 @@ def init(
                     else None
                 ),
                 reset_cognition=reset_cognition,
+                llm_concurrency=llm_concurrency,
             )
         )
     except GuidedInitError as exc:
@@ -10135,6 +11562,9 @@ def init(
     bangumi_events = list(getattr(result, "bangumi_events", []))
     bangumi_scope_counts = dict(getattr(result, "bangumi_scope_counts", {}))
     bangumi_status = str(getattr(result, "bangumi_status", "skipped"))
+    github_events = list(getattr(result, "github_events", []))
+    github_scope_counts = dict(getattr(result, "github_scope_counts", {}))
+    github_status = str(getattr(result, "github_status", "skipped"))
     linuxdo_events = list(getattr(result, "linuxdo_events", []))
     linuxdo_scope_counts = dict(getattr(result, "linuxdo_scope_counts", {}))
     linuxdo_status = str(getattr(result, "linuxdo_status", "skipped"))
@@ -10155,6 +11585,7 @@ def init(
         discovery_error
         or dy_degraded
         or linuxdo_degraded
+        or github_status == "partial"
         or v2ex_status == "partial"
         or weibo_status in {"failed", "timeout", "login_required"}
         or instagram_status
@@ -10187,6 +11618,13 @@ def init(
             "Linux.do 采集部分完成",
             "已采到的 Linux.do 个人信号仍已用于画像建模，"
             "但至少一个范围未完成；请检查扩展日志后重试补齐。",
+        )
+    if github_status == "partial":
+        _print_status_panel(
+            "warning",
+            "GitHub 采集部分完成",
+            "已采到的公开 Star 仓库仍已用于画像建模，但分页、条目上限或上游响应"
+            "未能证明完整；可稍后用 `openbiliclaw fetch-github` 只读复核。",
         )
     if v2ex_status == "partial":
         _print_status_panel(
@@ -10258,6 +11696,8 @@ def init(
     bangumi_wish_count = int(bangumi_scope_counts.get("wish", 0))
     bangumi_done_count = int(bangumi_scope_counts.get("done", 0))
     bangumi_doing_count = int(bangumi_scope_counts.get("doing", 0))
+    github_repository_count = int(github_scope_counts.get("repositories", 0))
+    github_pages_fetched = int(github_scope_counts.get("pages_fetched", 0))
     linuxdo_bookmark_count = int(linuxdo_scope_counts.get("linuxdo_bookmarks", 0))
     linuxdo_like_count = int(linuxdo_scope_counts.get("linuxdo_likes", 0))
     linuxdo_read_count = int(linuxdo_scope_counts.get("linuxdo_read_history", 0))
@@ -10305,6 +11745,9 @@ def init(
         ("Bangumi 看过/读过/玩过", f"{bangumi_done_count} 条"),
         ("Bangumi 在看/在读/在玩", f"{bangumi_doing_count} 条"),
         ("🌐 Bangumi 入库事件", f"{len(bangumi_events)} 条"),
+        ("GitHub 公开 Star 仓库", f"{github_repository_count} 条"),
+        ("GitHub 读取页数 / 状态", f"{github_pages_fetched} / {github_status}"),
+        ("🌐 GitHub 入库事件", f"{len(github_events)} 条"),
         ("Linux.do 书签", f"{linuxdo_bookmark_count} 条"),
         ("Linux.do 点赞", f"{linuxdo_like_count} 条"),
         ("Linux.do 阅读", f"{linuxdo_read_count} 条"),
@@ -10366,6 +11809,11 @@ def init(
             "[dim]ℹ️  Bangumi 0 条信号入库。请确认用户名存在，且收藏已设为公开。"
             "可用 [cyan]openbiliclaw fetch-bangumi --username <name>[/cyan] 只读验证。[/dim]"
         )
+    if not github_events and github_status == "complete":
+        console.print(
+            "[dim]ℹ️  GitHub 公开 Star 列表已完整读取但为 0 条。"
+            "可用 [cyan]openbiliclaw fetch-github --username <name>[/cyan] 只读复核。[/dim]"
+        )
     if (
         linuxdo_bookmark_count + linuxdo_like_count + linuxdo_read_count
     ) == 0 and linuxdo_status != "skipped":
@@ -10414,6 +11862,8 @@ def init(
         source_parts.append(f"[green]{len(reddit_events)}[/green] 条 Reddit 信号")
     if len(bangumi_events) > 0:
         source_parts.append(f"[green]{len(bangumi_events)}[/green] 条 Bangumi 信号")
+    if len(github_events) > 0:
+        source_parts.append(f"[green]{len(github_events)}[/green] 条 GitHub 信号")
     if len(linuxdo_events) > 0:
         source_parts.append(f"[green]{len(linuxdo_events)}[/green] 条 Linux.do 信号")
     if len(v2ex_events) > 0:
@@ -10426,7 +11876,8 @@ def init(
         console.print(
             "[dim]ℹ️  本次画像综合了 "
             + " + ".join(source_parts)
-            + "。Instagram 个人信号为 init-only；其余支持的来源按各自策略刷新。[/dim]"
+            + "。支持增量刷新的来源会由 daemon 继续补充；"
+            "Instagram 个人信号与 GitHub 公开 Star 为 init / 按需刷新。[/dim]"
         )
 
     # Phase E (v0.3.28+): print cost breakdown for THIS init only,
@@ -11596,6 +13047,176 @@ def fetch_bangumi(
             )
         )
         _print_status_panel("success", "完成", "Bangumi 事件已写入并完成画像重建")
+
+
+@app.command("fetch-github")
+def fetch_github(
+    username: str = typer.Option(
+        "",
+        "--username",
+        "-u",
+        help="公开 GitHub 用户名；不提供时读取 [sources.github].username 或由 PAT 识别。",
+    ),
+    token: str = typer.Option(
+        "",
+        "--token",
+        help=(
+            "GitHub 专用 PAT；不提供时只读取 OPENBILICLAW_GITHUB_TOKEN 或 "
+            "[sources.github].access_token。"
+        ),
+    ),
+    limit: int = typer.Option(
+        0,
+        "--limit",
+        "-n",
+        min=0,
+        help="最多读取的公开 Star 仓库数；0 使用配置的 bootstrap_limit。",
+    ),
+    write_memory: bool = typer.Option(
+        False,
+        "--write-memory",
+        help="将转换后的公开 Star 事件写入 memory；默认只读预览。",
+    ),
+    rebuild_profile: bool = typer.Option(
+        False,
+        "--rebuild-profile",
+        help="写入 memory 后用本次 GitHub 事件重建画像（会触发真实 LLM 调用）。",
+    ),
+) -> None:
+    """只读拉取 GitHub 公开 Star 仓库；默认不写本地数据或调用 LLM。"""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.github import fetch_github_public_starred_events
+    from openbiliclaw.sources.github_client import (
+        GitHubAPIError,
+        GitHubClient,
+        resolve_github_access_token,
+        resolve_github_bootstrap_identity,
+        validate_github_access_token,
+        validate_github_username,
+    )
+
+    config = load_config()
+    github_cfg = config.sources.github
+    try:
+        explicit_token = validate_github_access_token(token)
+        selected_token = explicit_token
+        credential_origin: str
+        if not selected_token:
+            selected_token, credential_origin = resolve_github_access_token(github_cfg.access_token)
+        else:
+            credential_origin = "flag"
+        selected_username = validate_github_username(username or github_cfg.username)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if not selected_token and not selected_username:
+        raise typer.BadParameter(
+            "请通过 --username / [sources.github].username，或 --token / "
+            "OPENBILICLAW_GITHUB_TOKEN / [sources.github].access_token 提供公开账号范围。",
+            param_hint="--username",
+        )
+    selected_limit = limit or int(github_cfg.bootstrap_limit)
+    write_memory = write_memory or rebuild_profile
+
+    async def _fetch() -> tuple[Any, Any]:
+        async with GitHubClient(
+            token=selected_token or None,
+            request_interval_seconds=float(github_cfg.request_interval_seconds),
+        ) as client:
+            identity = await resolve_github_bootstrap_identity(
+                client,
+                username=selected_username,
+            )
+            result = await fetch_github_public_starred_events(
+                client,
+                username=identity.login,
+                limit=selected_limit,
+                max_pages=int(github_cfg.bootstrap_max_pages),
+            )
+            return identity, result
+
+    _print_page_title("GitHub 公开 Star 仓库", "官方只读 REST API · public-only")
+    try:
+        identity, fetch_result = asyncio.run(_fetch())
+    except GitHubAPIError as exc:
+        messages = {
+            "identity_mismatch": "PAT 与配置用户名的 numeric user id 不一致，已拒绝混合账号证据。",
+            "unauthorized": "专用 PAT 被 GitHub 拒绝；请更新或移除令牌后重试。",
+            "not_found": "GitHub 用户不存在或无法通过公开 API 读取。",
+            "rate_limited": "GitHub API 正在限流，请在冷却后重试。",
+        }
+        _print_status_panel(
+            "warning",
+            "GitHub 读取失败",
+            messages.get(exc.code, f"GitHub 官方 API 返回 {exc.code}。"),
+        )
+        raise typer.Exit(code=1) from exc
+
+    status = "complete" if fetch_result.scope_complete else "partial"
+    _print_key_value_table(
+        "抓取摘要",
+        [
+            ("用户名", identity.login),
+            ("numeric user id", str(identity.user_id)),
+            ("身份证据", identity.evidence),
+            ("凭据来源", str(credential_origin)),
+            ("公开 Star 事件", str(len(fetch_result.events))),
+            ("读取页数", str(fetch_result.pages_fetched)),
+            ("完整性", status),
+            ("终止证据", fetch_result.terminal_evidence),
+            (
+                "拒绝私有 / 异常行",
+                f"{fetch_result.rejected_private} / {fetch_result.rejected_malformed}",
+            ),
+            ("本地写入", "将写入" if write_memory else "0（只读预览）"),
+            ("画像生成", "将重建" if rebuild_profile else "0"),
+            ("上游状态", "upstream-state-unchanged"),
+        ],
+    )
+    for index, event in enumerate(fetch_result.events[:5], start=1):
+        console.print(
+            f"  {index}. [{event.get('event_type', '')}] {event.get('title') or '（无标题）'}"
+        )
+        console.print(f"     [dim]{event.get('url', '')}[/dim]")
+
+    if write_memory:
+        written, skipped = _write_events_to_memory(fetch_result.events, source="github")
+        console.print(
+            f"  [green]已写入 memory: {written} 条 GitHub 事件[/green]"
+            f"{f'，跳过重复 {skipped} 条。' if skipped else '。'}"
+        )
+    if rebuild_profile:
+        if not fetch_result.events:
+            _print_status_panel("warning", "没有可建模信号", "公开 Star 列表为空，未调用 LLM。")
+            raise typer.Exit(code=1)
+        _prepare_init_runtime(require_bili_auth=False)
+        soul_engine = _build_soul_engine()
+        _print_section_title("1/2 分析 GitHub 偏好")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.analyze_events(fetch_result.events, event_chunk_size=200),
+                label="分析 GitHub 偏好",
+                eta_seconds=180,
+            )
+        )
+        _print_section_title("2/2 生成画像")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.build_initial_profile(
+                    _github_events_to_history_items(fetch_result.events)
+                ),
+                label="生成灵魂画像",
+                eta_seconds=70,
+            )
+        )
+        _print_status_panel("success", "完成", "GitHub 事件已写入并完成画像重建")
+    if status == "partial":
+        _print_status_panel(
+            "warning",
+            "GitHub 公开 Star 读取部分完成",
+            "已保留可验证的公开仓库行，但分页或上游响应未能证明完整。",
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command("fetch-reddit")
@@ -12959,6 +14580,7 @@ def keyword_inspiration_dry_run(
         "douyin",
         "youtube",
         "twitter",
+        "github",
         "zhihu",
         "reddit",
         "bangumi",
@@ -13041,6 +14663,23 @@ def keyword_inspiration_dry_run(
             v2ex_client = V2EXClient(
                 request_interval_seconds=float(getattr(v2ex_cfg, "request_interval_seconds", 2.0))
             )
+        github_client: object | None = None
+        github_cfg = getattr(getattr(config, "sources", None), "github", None)
+        if bool(getattr(github_cfg, "enabled", False)):
+            from openbiliclaw.sources.github_client import (
+                GitHubClient,
+                resolve_github_access_token,
+            )
+
+            github_token, _github_token_origin = resolve_github_access_token(
+                config_token=str(getattr(github_cfg, "access_token", "") or ""),
+            )
+            github_client = GitHubClient(
+                token=github_token or None,
+                request_interval_seconds=float(
+                    getattr(github_cfg, "request_interval_seconds", 6.0)
+                ),
+            )
         try:
             planner = KeywordPlanner(
                 llm_service=llm_service,
@@ -13052,8 +14691,12 @@ def keyword_inspiration_dry_run(
                 inspiration_provider=build_inspiration_search_provider(
                     getattr(config.discovery, "inspiration_search_backends", None),
                     database=database,
+                    exa_api_key=str(getattr(config.discovery, "exa_api_key", "") or ""),
+                    you_api_key=str(getattr(config.discovery, "you_api_key", "") or ""),
+                    serply_api_key=str(getattr(config.discovery, "serply_api_key", "") or ""),
                     platform_backends=build_platform_source_backends(
                         config,
+                        database=database,
                         bilibili_client=(
                             _build_bilibili_client()
                             if bool(
@@ -13066,6 +14709,7 @@ def keyword_inspiration_dry_run(
                             else None
                         ),
                         x_client=x_client,
+                        github_client=github_client,
                         v2ex_client=v2ex_client,
                     ),
                     platforms_per_probe=int(inspiration_params.platforms_per_probe),
@@ -13081,9 +14725,10 @@ def keyword_inspiration_dry_run(
                 persist_axes=persist_axes,
             )
         finally:
-            close = getattr(v2ex_client, "aclose", None)
-            if callable(close):
-                await close()
+            for client in (github_client, v2ex_client):
+                close = getattr(client, "aclose", None)
+                if callable(close):
+                    await close()
 
     report = asyncio.run(_preview())
     sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2))
@@ -13388,6 +15033,7 @@ def _run_douyin_discovery(
                     cache=cache,
                     evaluate=evaluate,
                     per_source_limit=max(1, min(limit, 30)),
+                    date_preference=config_module.publication_date_preference_for_source(dy_cfg),
                 ),
             )
 
@@ -14008,6 +15654,104 @@ def _run_reddit_discovery(*, limit: int) -> None:
     _print_status_panel(kind, title, body)
 
 
+def _run_github_discovery_smoke(*, mode: str, keyword: str = "", limit: int) -> None:
+    """Run one read-only GitHub repository branch without local or LLM writes."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.github import (
+        github_public_repository_query,
+        github_repository_to_content,
+    )
+    from openbiliclaw.sources.github_client import (
+        GitHubAPIError,
+        GitHubClient,
+        resolve_github_access_token,
+    )
+
+    config = load_config()
+    github_cfg = config.sources.github
+    selected_token, _origin = resolve_github_access_token(github_cfg.access_token)
+    if mode == "search":
+        query = github_public_repository_query(keyword)
+        sort = ""
+    elif mode == "ranked":
+        query = "stars:>=1 is:public fork:false"
+        sort = "stars"
+    else:
+        cutoff = (datetime.now(UTC) - timedelta(days=30)).date().isoformat()
+        query = f"created:>={cutoff} is:public fork:false"
+        sort = "updated"
+
+    async def _fetch() -> tuple[list[Any], Any, int]:
+        async with GitHubClient(
+            token=selected_token or None,
+            request_interval_seconds=float(github_cfg.request_interval_seconds),
+        ) as client:
+            page = await client.search_repositories(
+                query,
+                sort=sort,
+                order="desc",
+                page=1,
+                per_page=limit,
+            )
+        items: list[Any] = []
+        rejected_rows = 0
+        for row in page.items:
+            item = github_repository_to_content(
+                row,
+                strategy=f"github-{mode}",
+            )
+            if item is None:
+                rejected_rows += 1
+            else:
+                items.append(item)
+        return items, page, rejected_rows
+
+    subtitle = {
+        "search": f"关键词搜索 · {keyword}",
+        "ranked": "公开仓库 Star 排名",
+        "latest": "最近创建的公开仓库",
+    }[mode]
+    _print_page_title("GitHub 仓库发现 smoke", subtitle)
+    try:
+        items, page, rejected_rows = asyncio.run(_fetch())
+    except (GitHubAPIError, ValueError) as exc:
+        _print_status_panel("warning", "GitHub API 读取失败", str(exc))
+        raise typer.Exit(code=1) from exc
+    completeness = (
+        "partial"
+        if (
+            page.incomplete_results
+            or page.search_capped
+            or page.next_page is not None
+            or rejected_rows > 0
+        )
+        else "complete"
+    )
+    _print_key_value_table(
+        "只读召回摘要",
+        [
+            ("模式", mode),
+            ("仓库数", str(len(items))),
+            ("拒绝私有 / 异常行", str(rejected_rows)),
+            ("完整性", completeness),
+            ("本地写入", "0"),
+            ("LLM 调用", "0"),
+            ("上游写操作", "0"),
+            ("上游状态", "upstream-state-unchanged"),
+        ],
+    )
+    for index, item in enumerate(items[:5], start=1):
+        _print_discovered_content_preview(item, index)
+    if completeness == "partial":
+        console.print(
+            "[dim]本命令只预览一页；next/incomplete/1000-result cap 均按 partial 报告，"
+            "不会伪装成完整空集合。[/dim]"
+        )
+
+
 def _run_bangumi_discovery_smoke(*, mode: str, keyword: str = "", limit: int) -> None:
     """Run one read-only Bangumi API branch without cache, memory, or LLM writes."""
     from openbiliclaw.config import load_config
@@ -14315,6 +16059,137 @@ def discover_bangumi_latest(
 ) -> None:
     """只读验证 Bangumi 按日期浏览（可能含未播条目）。"""
     _run_bangumi_discovery_smoke(mode="latest", limit=limit)
+
+
+@app.command("discover-github")
+def discover_github(
+    keyword: str = typer.Argument(..., help="GitHub 公开仓库搜索关键词。"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+) -> None:
+    """只读验证 GitHub 公开仓库关键词搜索。"""
+
+    if not keyword.strip():
+        raise typer.BadParameter("搜索关键词不能为空。", param_hint="keyword")
+    _run_github_discovery_smoke(mode="search", keyword=keyword.strip(), limit=limit)
+
+
+@app.command("discover-github-ranked")
+def discover_github_ranked(
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+) -> None:
+    """只读验证 GitHub 公开仓库 Star 排名。"""
+
+    _run_github_discovery_smoke(mode="ranked", limit=limit)
+
+
+@app.command("discover-github-latest")
+def discover_github_latest(
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+) -> None:
+    """只读验证 GitHub 最近创建的公开仓库。"""
+
+    _run_github_discovery_smoke(mode="latest", limit=limit)
+
+
+def _run_github_discovery(*, limit: int, force: bool = False) -> None:
+    """Run one formal GitHub cycle through the shared candidate pipeline."""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.github_producer import GitHubDiscoveryProducer
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+    from openbiliclaw.sources.github_client import (
+        GitHubClient,
+        resolve_github_access_token,
+    )
+
+    _require_runtime_config()
+    config = load_config()
+    github_cfg = config.sources.github
+    if not github_cfg.enabled:
+        _print_status_panel(
+            "warning",
+            "GitHub discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.github].enabled。",
+        )
+        raise typer.Exit(code=1)
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。")
+        raise typer.Exit(code=1) from exc
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    selected_token, _credential_origin = resolve_github_access_token(github_cfg.access_token)
+
+    async def _produce() -> dict[str, object]:
+        async with GitHubClient(
+            token=selected_token or None,
+            request_interval_seconds=float(github_cfg.request_interval_seconds),
+        ) as client:
+            producer = GitHubDiscoveryProducer(
+                database=database,
+                soul_engine=soul_engine,
+                client=client,
+                access_token=selected_token,
+                enabled=bool(github_cfg.enabled),
+                source_modes=tuple(github_cfg.source_modes),
+                daily_search_budget=int(github_cfg.daily_search_budget),
+                daily_ranked_budget=int(github_cfg.daily_ranked_budget),
+                daily_latest_budget=int(github_cfg.daily_latest_budget),
+                min_interval_minutes=int(github_cfg.min_interval_minutes),
+                candidate_pipeline=candidate_pipeline,
+                keyword_fetch=keyword_fetch,
+            )
+            return await producer.produce_if_due(limit=limit, force=force)
+
+    result = asyncio.run(_produce())
+    reason = str(result.get("reason") or "")
+    discovered = int(cast("Any", result.get("discovered") or 0))
+    enqueued = int(cast("Any", result.get("enqueued") or 0))
+    modes = ", ".join(github_cfg.source_modes)
+    _print_page_title("GitHub 内容发现", f"正式 discover · {modes}")
+    if reason in {"ok", "partial"}:
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "github"),
+                ("内容类型", "repository"),
+                ("分支", modes),
+                ("状态", reason),
+            ],
+        )
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+    messages = {
+        "disabled": ("warning", "GitHub discovery 已禁用", "请启用 GitHub 来源后重试。"),
+        "no_profile": ("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。"),
+        "throttled": ("info", "GitHub discovery 尚未到期", "可使用 --force 手动验证。"),
+        "rate_limited": ("warning", "GitHub API 正在冷却", "到期后会自动重试。"),
+        "pool_full": ("info", "候选池已满", "当前无需补充 GitHub 候选。"),
+        "budget_exhausted": ("info", "GitHub 今日预算已用完", "可调整各分支每日预算。"),
+        "mode_disabled": ("info", "GitHub 分支均已关闭", "请配置 source_modes。"),
+        "empty": ("info", "GitHub discovery 返回为空", "官方 API 可达，但本轮无可转换公开仓库。"),
+        "error": ("warning", "GitHub discovery 执行失败", str(result.get("mode_results") or "")),
+    }
+    kind, title, body = messages.get(
+        reason,
+        ("info", "GitHub discovery 未产出内容", reason or "无详细信息"),
+    )
+    _print_status_panel(kind, title, body)
 
 
 def _run_bangumi_discovery(*, limit: int, force: bool = False) -> None:
@@ -14840,7 +16715,7 @@ def discover(
         "-s",
         help=(
             "触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu、reddit、"
-            "bangumi、linuxdo、v2ex、weibo 或 instagram。"
+            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 instagram。"
         ),
         case_sensitive=False,
     ),
@@ -14849,7 +16724,10 @@ def discover(
     force: bool = typer.Option(
         False,
         "--force",
-        help=("xiaohongshu / bangumi / v2ex / weibo / instagram：忽略最小调度间隔强制执行一次。"),
+        help=(
+            "xiaohongshu / bangumi / github / v2ex / weibo / instagram："
+            "忽略最小调度间隔强制执行一次。"
+        ),
     ),
 ) -> None:
     """手动触发内容发现（按来源选择渠道）."""
@@ -14907,6 +16785,16 @@ def discover(
         _run_bangumi_discovery(limit=limit, force=force)
         return
 
+    if source_normalized in {"github", "gh"}:
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "github 渠道走 source_modes 配置的官方公开仓库 API 分支，已忽略策略过滤。",
+            )
+        _run_github_discovery(limit=limit, force=force)
+        return
+
     if source_normalized == "linuxdo":
         if strategies:
             _print_status_panel(
@@ -14950,8 +16838,8 @@ def discover(
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
-            "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、linuxdo、v2ex、"
-            "weibo、instagram。"
+            "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、github（gh）、"
+            "linuxdo、v2ex、weibo、instagram。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)
@@ -14998,6 +16886,31 @@ def discover(
         _print_discovered_content_preview(item, index)
 
 
+async def _stream_dialogue_reply(dialogue: Any, user_message: str) -> str:
+    """Print one chat reply token by token and return the full text.
+
+    Deltas print without markup/highlight parsing and without newlines so
+    the reply types out inline after a single ``阿花：`` prefix. Dialogue
+    doubles without ``respond_stream`` fall back to the one-shot print.
+    """
+    stream_fn = getattr(dialogue, "respond_stream", None)
+    if not callable(stream_fn):
+        reply = str(await dialogue.respond(user_message))
+        console.print(f"阿花：{reply}")
+        return reply
+    parts: list[str] = []
+    printed_prefix = False
+    async for delta in stream_fn(user_message):
+        if not printed_prefix:
+            console.print("阿花：", end="")
+            printed_prefix = True
+        console.print(str(delta), end="", markup=False, highlight=False)
+        parts.append(str(delta))
+    if printed_prefix:
+        console.print()
+    return "".join(parts)
+
+
 @app.command()
 def chat() -> None:
     """与 Agent 对话（苏格拉底式深度交流）."""
@@ -15016,26 +16929,41 @@ def chat() -> None:
         raise typer.Exit(code=1) from exc
 
     dialogue = _build_dialogue(soul_engine)
-    _print_page_title("苏格拉底式对话", "输入 exit / quit / 空行结束")
+    from openbiliclaw.cli_input import (
+        MULTILINE_HINT,
+        build_multiline_session,
+        is_chat_exit_command,
+        supports_multiline_prompt,
+    )
+
+    multiline_session = (
+        build_multiline_session() if supports_multiline_prompt(sys.stdin, sys.stdout) else None
+    )
+    subtitle = "输入 exit / quit / 空行结束"
+    if multiline_session is not None:
+        subtitle += f"；{MULTILINE_HINT}"
+    _print_page_title("苏格拉底式对话", subtitle)
 
     try:
         while True:
             try:
-                user_message = typer.prompt("你", prompt_suffix="： ").strip()
+                if multiline_session is not None:
+                    user_message = multiline_session.prompt("你： ").strip()
+                else:
+                    user_message = typer.prompt("你", prompt_suffix="： ").strip()
             except (click.Abort, EOFError, KeyboardInterrupt):
                 console.print("阿花：对话结束。")
                 return
 
-            if user_message.lower() in {"", "exit", "quit"}:
+            if is_chat_exit_command(user_message):
                 console.print("阿花：对话结束。")
                 return
 
             try:
-                reply = asyncio.run(dialogue.respond(user_message))
+                asyncio.run(_stream_dialogue_reply(dialogue, user_message))
             except Exception as exc:
                 console.print(f"阿花：{safe_llm_failure_message(exc)}")
                 continue
-            console.print(f"阿花：{reply}")
     except KeyboardInterrupt:
         console.print("阿花：对话结束。")
 
@@ -15234,6 +17162,11 @@ def config_show() -> None:
         (llm_label, llm_value or "未配置"),
         ("LLM 并发", str(cfg.llm.concurrency)),
         ("B站认证", cfg.bilibili.auth_method),
+        (
+            "B站发布日期范围",
+            _format_source_date_preference(cfg.sources.bilibili),
+        ),
+        ("B站发布日期权重", str(cfg.sources.bilibili.recommendation_date_weight)),
         ("定时任务", "开启" if cfg.scheduler.enabled else "关闭"),
         ("停止后台 LLM 请求", "否" if cfg.scheduler.enabled else "是"),
         (
@@ -15252,6 +17185,8 @@ def config_show() -> None:
         ),
         ("海外自定义代理", cfg.network.proxy or "未设置"),
         ("收藏自动同步", "开启" if cfg.saved_sync.auto_sync_enabled else "关闭"),
+        ("应用内 Tailnet", "开启" if cfg.tailnet.enabled else "关闭"),
+        ("Tailnet 节点名", cfg.tailnet.hostname),
         ("数据目录", str(cfg.data_path)),
     ]
     if diagnostics.config_path:
@@ -15409,6 +17344,7 @@ def login_codex(
     source: Path | None = _CODEX_LOGIN_SOURCE_OPTION,
     status: bool = _CODEX_LOGIN_STATUS_OPTION,
     logout: bool = _CODEX_LOGIN_LOGOUT_OPTION,
+    probe: bool = _CODEX_LOGIN_PROBE_OPTION,
 ) -> None:
     """导入或管理 Codex CLI 的 ChatGPT OAuth 凭据."""
     from datetime import datetime
@@ -15425,14 +17361,68 @@ def login_codex(
     def _print_codex_credentials(credentials: CodexCredentials) -> None:
         expires = datetime.fromtimestamp(credentials.expires_at).strftime("%Y-%m-%d %H:%M:%S")
         state = "临期/需刷新" if credentials.is_expired() else "有效"
-        _print_key_value_table(
-            "Codex OAuth",
-            [
-                ("状态", f"已登录（{state}）"),
-                ("账号", credentials.account_id or "（未知）"),
-                ("过期时间", expires),
-            ],
-        )
+        rows = [
+            ("状态", f"已登录（{state}）"),
+            ("账号", credentials.account_id or "（未知）"),
+            ("过期时间", expires),
+        ]
+        if credentials.last_probe is not None:
+            probe_state = credentials.last_probe
+            checked = datetime.fromtimestamp(probe_state.checked_at).strftime("%Y-%m-%d %H:%M:%S")
+            if probe_state.ok:
+                rows.append(
+                    ("LLM 通道", f"可用（{probe_state.model or '未记录模型'}，{checked} 探测）")
+                )
+            else:
+                rows.append(("LLM 通道", f"不可用（{checked} 探测）"))
+                if probe_state.message:
+                    rows.append(("失败原因", probe_state.message))
+        else:
+            rows.append(("LLM 通道", "未探测"))
+        _print_key_value_table("Codex OAuth", rows)
+
+    def _probe_model_from_config() -> tuple[str, str]:
+        try:
+            from openbiliclaw.config import load_config
+
+            cfg = load_config()
+            openai_cfg = cfg.llm.openai
+            if openai_cfg.auth_mode.strip().lower() == "codex_oauth":
+                # 空模型 → 让探测端自动发现账号可用的 Codex 后端模型。
+                return openai_cfg.model.strip(), openai_cfg.base_url.strip()
+        except Exception:
+            pass
+        return "", ""
+
+    def _run_codex_probe(credentials: CodexCredentials) -> None:
+        from openbiliclaw.llm.codex_chatgpt_provider import probe_codex_llm
+
+        model, base_url = _probe_model_from_config()
+        model_label = model or "自动发现账号可用模型"
+        console.print(f"[dim]正在探测 Codex LLM 通道（模型: {model_label}）...[/dim]")
+        result = asyncio.run(probe_codex_llm(model=model, base_url=base_url))
+        if result.ok:
+            _print_status_panel(
+                "success",
+                "Codex LLM 探测",
+                f"令牌可用于 LLM 调用（模型: {result.model or model}，"
+                f"耗时 {result.latency_ms}ms）。",
+            )
+        else:
+            _print_status_panel(
+                "warning",
+                "Codex LLM 探测失败",
+                "令牌已导入，但当前令牌无法调用 Codex LLM 通道。"
+                f"（原因: {result.message}）"
+                '请改用 OpenAI Platform API Key（`auth_mode = "api_key"`），'
+                "或重新登录 Codex CLI 后重试。",
+            )
+        # Reload so the persisted probe state is shown in the table below.
+        refreshed = load_codex_credentials()
+        if refreshed is not None:
+            _print_codex_credentials(refreshed)
+        else:
+            _print_codex_credentials(credentials)
 
     if status:
         credentials = load_codex_credentials()
@@ -15445,6 +17435,13 @@ def login_codex(
             )
             return
         _print_codex_credentials(credentials)
+        if probe:
+            _run_codex_probe(credentials)
+        elif credentials.last_probe is None:
+            console.print(
+                "[dim]尚未进行 LLM 能力探测；运行 `openbiliclaw login codex --status --probe` "
+                "可验证令牌是否真正可调用。[/dim]"
+            )
         return
 
     if logout:
@@ -15469,6 +17466,10 @@ def login_codex(
 
     _print_status_panel("success", "Codex OAuth", "登录凭据已导入。")
     _print_codex_credentials(credentials)
+    # Issue #170: importing a Codex CLI login is only useful when the token
+    # can actually call the Codex ChatGPT LLM transport. Probe immediately so
+    # the user never reaches init before discovering a scope-less token.
+    _run_codex_probe(credentials)
 
 
 @app.command("health-check")

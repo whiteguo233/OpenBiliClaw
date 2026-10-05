@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from openbiliclaw.agent.persona import validate_chat_persona
 from openbiliclaw.api.source_auth.contract import SourceAuthContract, SourceCapabilityAuth
 from openbiliclaw.saved_sync.identity import canonical_source_platform, make_item_key
 from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES, normalize_source_platform
@@ -39,6 +40,8 @@ NativeSaveActionOut = Literal["favorite", "watch_later"]
 _SAVED_PLATFORM_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _URL_FALLBACK_ID_RE = re.compile(r"[0-9a-f]{24}")
 _ZHIHU_TYPED_CONTENT_ID_RE = re.compile(r"(?:question|answer|article):[0-9]+")
+_GITHUB_TYPED_CONTENT_ID_RE = re.compile(r"repository:[1-9][0-9]*")
+_LINUXDO_TYPED_CONTENT_ID_RE = re.compile(r"topic:[1-9][0-9]*")
 IdempotencyKey = Annotated[
     StrictStr,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=400),
@@ -99,7 +102,9 @@ class BehaviorEventIn(BaseModel):
     url: str = ""
     title: str = ""
     timestamp: int
-    source_platform: str = "bilibili"
+    # Empty means the client omitted the field.  The endpoint preserves the
+    # legacy B站 fallback but records that it was not an authoritative tag.
+    source_platform: str = ""
     context: dict[str, object] = Field(default_factory=dict)
     metadata: dict[str, object] = Field(default_factory=dict)
     event_id: IdempotencyKey
@@ -129,6 +134,13 @@ class HealthResponse(BaseModel):
     # may repeat near-identical content under different ids) — the popup
     # turns this into a one-click "enable local Ollama" banner.
     embedding_ready: bool | None = None
+    # issue #170: distinguish "provider registered" from "default model chain
+    # actually callable". ``llm_registered`` mirrors the startup registry
+    # build; ``llm_callable`` is the latest real capability signal where one
+    # exists (currently persisted by ``login codex --import`` for Codex
+    # OAuth). ``None`` means "no live signal yet", not "broken".
+    llm_registered: bool | None = None
+    llm_callable: bool | None = None
 
 
 class ProjectStatsResponse(BaseModel):
@@ -253,6 +265,9 @@ class RecommendationOut(BaseModel):
     # cover_url is empty.
     content_type: str = "video"
     body_text: str = ""
+    # Bounded, source-normalizer-owned provenance/card metadata. Clients must
+    # treat unknown keys as optional; raw upstream responses are never exposed.
+    source_metadata: dict[str, object] = Field(default_factory=dict)
     # Desktop card metadata (additive for issue #75; extension popup ignores unknown keys).
     duration: int = 0
     view_count: int = 0
@@ -318,10 +333,25 @@ class ContentHistoryResponse(BaseModel):
     has_more: bool = False
 
 
+class RecommendationPoolStatus(BaseModel):
+    """Post-commit inventory shared by cards, badges and runtime events."""
+
+    pool_available_count: int = Field(ge=0)
+    platform_available_counts: dict[str, int] = Field(default_factory=dict)
+    pool_status_version: int = Field(ge=0)
+
+
 class RecommendationReshuffleResponse(BaseModel):
     """Immediate recommendation reshuffle result."""
 
     items: list[RecommendationOut]
+    pool_status: RecommendationPoolStatus | None = None
+
+
+class RecommendationAppendResponse(RecommendationReshuffleResponse):
+    """Immediate append result with a ``has_more`` pagination hint."""
+
+    has_more: bool = True
 
 
 class _PlatformScopedRecommendationIn(BaseModel):
@@ -370,6 +400,7 @@ class PlatformAvailabilityResponse(BaseModel):
     """
 
     total_available: int = 0
+    pool_status_version: int = 0
     by_platform: dict[str, int] = Field(default_factory=dict)
 
 
@@ -440,6 +471,16 @@ class RuntimeStatusResponse(BaseModel):
     event_lane_paused: bool = False
     event_lane_last_error: str = ""
     event_lane_processed: int = 0
+    dialogue_settlement_depth: int = 0
+    dialogue_settlement_max_depth: int = 0
+    dialogue_settlement_dropped: int = 0
+    worker_outbox_depth: int = 0
+    worker_running: bool = False
+    worker_mode: str = "none"
+    worker_pid: int | None = None
+    worker_started_at: str = ""
+    worker_last_heartbeat_at: str = ""
+    worker_heartbeat_age_seconds: float = -1.0
     chat_reply_depth: int = 0
     chat_reply_active: bool = False
     chat_reply_last_error: str = ""
@@ -459,6 +500,10 @@ class RuntimeStatusResponse(BaseModel):
     last_update_error: str = ""
     backend_update_state: str = "unknown"
     backend_update_reason: str = "none"
+    # Per-source raw-candidate publication-date gate diagnostics (issue #257):
+    # {source: {input, filtered_by_publication_date, inserted, last_input_at,
+    # last_filtered_at}}. Process-local counters, never admission inputs.
+    publication_date_filter: dict[str, dict[str, object]] = Field(default_factory=dict)
 
 
 class ActivityFeedItemOut(BaseModel):
@@ -509,6 +554,12 @@ class PendingCognitionUpdateResponse(BaseModel):
     """Wrapper for a pending cognition update."""
 
     item: PendingCognitionUpdateOut | None = None
+
+
+class PendingCognitionUpdateListResponse(BaseModel):
+    """All pending (un-notified) cognition updates, oldest first."""
+
+    items: list[PendingCognitionUpdateOut] = Field(default_factory=list)
 
 
 class PendingDelightOut(BaseModel):
@@ -851,9 +902,10 @@ class SourceStatusItem(BaseModel):
     # ``| None`` is kept for the three surfaces' older-backend fallback path, not
     # because any provider emits it today.
     auth: SourceAuthContract | None = None
-    # Optional personal-token dimension (currently Bangumi only): ``"ok"`` when a
-    # token is configured and not rejected, ``"rejected"`` when Bangumi denied it
-    # and discovery degraded to anonymous, ``""`` when no token is configured.
+    # Optional personal-token dimension (Bangumi / GitHub): ``"ok"`` when a
+    # token is configured and not rejected, ``"rejected"`` when the source
+    # denied it and discovery degraded to anonymous, ``""`` when no token is
+    # configured.
     token_state: str = ""
     # Overseas-egress advisory, authored entirely by the backend so no settings
     # surface has to keep its own platform list or re-read ``[network].mode``
@@ -883,6 +935,7 @@ class SourcesStatusResponse(BaseModel):
     zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     reddit: SourceStatusItem = Field(default_factory=SourceStatusItem)
     bangumi: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    github: SourceStatusItem = Field(default_factory=SourceStatusItem)
     linuxdo: SourceStatusItem = Field(default_factory=SourceStatusItem)
     v2ex: SourceStatusItem = Field(default_factory=SourceStatusItem)
     weibo: SourceStatusItem = Field(default_factory=SourceStatusItem)
@@ -1057,6 +1110,7 @@ class SourcesCredentialsResponse(BaseModel):
     zhihu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     reddit: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     bangumi: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    github: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     linuxdo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     v2ex: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     weibo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
@@ -1222,6 +1276,9 @@ class ProfileSummaryResponse(BaseModel):
     likes: list[InterestDomainOut] = Field(default_factory=list)
     dislikes: list[InterestDomainOut] = Field(default_factory=list)
     favorite_up_users: list[str] = Field(default_factory=list)
+    total_likes: int = 0
+    total_dislikes: int = 0
+    total_favorite_up_users: int = 0
     # Role layer
     life_stage: str = ""
     current_phase: str = ""
@@ -1298,7 +1355,7 @@ _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = 
     "xiaohongshu": {"favorite": "小红书收藏", "watch_later": "小红书收藏"},
     "douyin": {"favorite": "抖音收藏", "watch_later": "抖音收藏"},
     "twitter": {"favorite": "X Bookmarks", "watch_later": "X Bookmarks"},
-    "zhihu": {"favorite": "OpenBiliClaw", "watch_later": "OpenBiliClaw"},
+    "zhihu": {"favorite": "知乎收藏", "watch_later": "知乎收藏"},
     "reddit": {"favorite": "Reddit Saved", "watch_later": "Reddit Saved"},
 }
 _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
@@ -1499,6 +1556,8 @@ class FeedbackIn(BaseModel):
     feedback_type: str
     note: str = ""
     request_id: IdempotencyKey
+    bvid: str = ""
+    item_key: str = ""
 
 
 class FeedbackResponse(BaseModel):
@@ -1668,6 +1727,16 @@ def validate_saved_item_key(value: str) -> str:
         and platform == "zhihu"
         and _ZHIHU_TYPED_CONTENT_ID_RE.fullmatch(":".join(parts[1:])) is not None
     )
+    github_typed_key = (
+        len(parts) == 3
+        and platform == "github"
+        and _GITHUB_TYPED_CONTENT_ID_RE.fullmatch(":".join(parts[1:])) is not None
+    )
+    linuxdo_typed_key = (
+        len(parts) == 3
+        and platform == "linuxdo"
+        and _LINUXDO_TYPED_CONTENT_ID_RE.fullmatch(":".join(parts[1:])) is not None
+    )
     url_fallback_key = (
         len(parts) == 3
         and parts[1] == "url"
@@ -1675,7 +1744,13 @@ def validate_saved_item_key(value: str) -> str:
     )
     if (
         not platform
-        or not (stable_key or zhihu_typed_key or url_fallback_key)
+        or not (
+            stable_key
+            or zhihu_typed_key
+            or github_typed_key
+            or linuxdo_typed_key
+            or url_fallback_key
+        )
         or canonical_source_platform(platform) != platform
         or _SAVED_PLATFORM_RE.fullmatch(platform) is None
     ):
@@ -1747,6 +1822,12 @@ class SavedItemIn(BaseModel):
     def _validate_optional_http_url(cls, value: str) -> str:
         if not value:
             return value
+        # Upstream platforms (Bilibili, Xiaohongshu, ...) commonly return
+        # protocol-relative URLs such as "//i2.hdslb.com/bfs/archive/x.png".
+        # Absorb that API-boundary difference here instead of asking every
+        # client to prepend a scheme; the normalized value is what gets stored.
+        if value.startswith("//"):
+            value = f"https:{value}"
         return _validate_http_url(value)
 
     @field_validator("content_id")
@@ -1756,8 +1837,14 @@ class SavedItemIn(BaseModel):
         typed_zhihu_id = (
             platform == "zhihu" and _ZHIHU_TYPED_CONTENT_ID_RE.fullmatch(value) is not None
         )
+        typed_github_id = (
+            platform == "github" and _GITHUB_TYPED_CONTENT_ID_RE.fullmatch(value) is not None
+        )
+        typed_linuxdo_id = (
+            platform == "linuxdo" and _LINUXDO_TYPED_CONTENT_ID_RE.fullmatch(value) is not None
+        )
         if (
-            (":" in value and not typed_zhihu_id)
+            (":" in value and not (typed_zhihu_id or typed_github_id or typed_linuxdo_id))
             or _has_identity_whitespace(value)
             or _has_unicode_control(value)
         ):
@@ -1933,14 +2020,22 @@ class ChatTurnIn(BaseModel):
     scope: str = "chat"
     subject_id: str = ""
     subject_title: str = ""
+    # Owning multi-session conversation (M5).  Empty resolves to the default
+    # chat session server-side at POST time.
+    session_id: str = ""
+    # Chat skill binding (M4): empty means the default skill (口味伙伴).
+    skill: str = ""
     # The only client-declared relation.  Canonical kind/ref/generation/title
     # are resolved from this durable target by the server at POST time.
     reply_to_turn_id: str = ""
     payload: dict[str, object] = Field(default_factory=dict)
+    # When true, the client will consume /api/chat/stream for the reply and the
+    # background scheduler must not also generate a duplicate reply.
+    streaming: bool = False
 
     @model_validator(mode="after")
     def reject_reserved_binding_payload(self) -> Self:
-        """Do not accept client-supplied canonical binding facts."""
+        """Do not accept client-supplied canonical binding facts or replay data."""
         reserved = {
             "dialogue_binding",
             "source_type",
@@ -1955,6 +2050,20 @@ class ChatTurnIn(BaseModel):
             "context",
             "mode",
             "inventory_settles_allowed",
+            # Server-owned agent-loop replay log (written on stream completion).
+            "agent_events",
+            # Server-owned streaming markers (written at POST /api/chat/turns):
+            # the durable fallback worker uses them to re-run the agent loop
+            # for streaming turns instead of the legacy single-hop reply.
+            "agent_stream",
+            "agent_skill",
+            "agent_persona",
+            # Server-owned background-task summary card (M6): written only by
+            # AgentTaskManager when a task terminates; clients must not forge
+            # a summary card for an arbitrary task.
+            "agent_task_summary",
+            "task_id",
+            "task_status",
         }
         # Card creation legitimately accepts ``evidence_refs`` as input. Once
         # a request declares a reply relation, however, even evidence is
@@ -1964,6 +2073,10 @@ class ChatTurnIn(BaseModel):
         forbidden = sorted(set(self.payload).intersection(reserved))
         if forbidden:
             raise ValueError(f"reserved_payload_key: {', '.join(forbidden)} is server-owned")
+        # The summary card is keyed on the payload ``type`` value, so blocking
+        # the keys alone is not enough — reject the value directly.
+        if str(self.payload.get("type") or "").strip() == "agent_task_summary":
+            raise ValueError("reserved_payload_key: agent_task_summary is server-owned")
         return self
 
 
@@ -1981,6 +2094,8 @@ class ChatTurnOut(BaseModel):
     status: str = "pending"
     error: str = ""
     payload: dict[str, object] = Field(default_factory=dict)
+    # Owning multi-session conversation (M5); '' marks pre-M5 legacy rows.
+    session_id: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -2002,6 +2117,125 @@ class ChatTurnListResponse(BaseModel):
     """Durable popup chat history."""
 
     items: list[ChatTurnOut]
+
+
+# --- Multi-session chat models (「聊一聊」 M5) ---
+
+
+class ChatSessionCreateIn(BaseModel):
+    """Create one chat conversation. Empty ``session_id`` auto-generates one."""
+
+    session_id: str = ""
+    title: str = ""
+    # Additive metadata bag; persona is a validated expression-style id.
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_persona_metadata(cls, value: dict[str, object]) -> dict[str, object]:
+        if "persona" in value:
+            validate_chat_persona(value["persona"])
+        return value
+
+
+class ChatSessionPatchIn(BaseModel):
+    """Rename, archive or choose the expression style of one conversation."""
+
+    title: str | None = None
+    archived: bool | None = None
+    persona: str | None = None
+
+    @field_validator("persona", mode="before")
+    @classmethod
+    def validate_persona(cls, value: object) -> str:
+        return validate_chat_persona(value)
+
+
+class ChatSessionOut(BaseModel):
+    """One chat conversation with list-preview fields."""
+
+    session_id: str
+    title: str = ""
+    archived: bool = False
+    metadata: dict[str, object] = Field(default_factory=dict)
+    turn_count: int = 0
+    # Pending (in-flight) replies — the "active" indicator for the list UI.
+    active_turns: int = 0
+    last_message_preview: str = ""
+    last_activity: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    last_message_at: str = ""
+
+
+class ChatSessionListResponse(BaseModel):
+    """Chat conversation list ordered by latest activity."""
+
+    items: list[ChatSessionOut]
+
+
+class ChatSessionDetailResponse(BaseModel):
+    """One chat conversation plus a page of its turns."""
+
+    session: ChatSessionOut
+    items: list[ChatTurnOut]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Durable agent task center models (「聊一聊」 M6) ---
+
+
+class AgentTaskCreateIn(BaseModel):
+    """Start one durable background task.
+
+    ``prompt`` is the complete instruction the unattended background agent
+    sees. ``session_id`` (default session when empty) is the originating
+    conversation that receives the completion summary message; ``skill``
+    optionally binds a chat skill's persona and tool whitelist (intersected
+    with the read-only permission ceiling).
+    """
+
+    prompt: str
+    session_id: str = ""
+    title: str = ""
+    skill: str = ""
+
+
+class AgentTaskOut(BaseModel):
+    """One durable background task.
+
+    ``suggestions`` is the structured write-proposal list
+    (``{action, summary, payload}``) the user confirms back in the
+    conversation. ``steps`` (the execution log) is only populated by the
+    detail endpoint; list responses leave it empty.
+    """
+
+    task_id: str
+    session_id: str = ""
+    title: str = ""
+    prompt: str = ""
+    status: str = "pending"
+    skill: str = ""
+    progress: str = ""
+    report: str = ""
+    suggestions: list[dict[str, object]] = Field(default_factory=list)
+    steps: list[dict[str, object]] = Field(default_factory=list)
+    error: str = ""
+    created_at: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    updated_at: str = ""
+
+
+class AgentTaskListResponse(BaseModel):
+    """Agent task list page (newest first), without step logs."""
+
+    items: list[AgentTaskOut]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Configuration API models ---
@@ -2057,7 +2291,7 @@ class LLMConfigOut(BaseModel):
     default_chain: list[str] = Field(default_factory=list)
     routes: dict[str, ModuleLLMConfigOut] = Field(default_factory=dict)
     default_provider: str = "deepseek"
-    concurrency: int = 4
+    concurrency: int = 3
     timeout: int = 1200
     # Non-empty fallback_provider = chat fallback on (the legacy
     # fallback_enabled bool was never consulted and is no longer echoed;
@@ -2071,6 +2305,14 @@ class LLMConfigOut(BaseModel):
     openrouter: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     # v0.3.32+ — generic OpenAI-protocol-compatible provider.
     openai_compatible: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    # OrcaRouter model-routing gateway (OpenAI-compatible).
+    orcarouter: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    # Requesty LLM gateway (OpenAI-compatible).
+    requesty: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    # API Route multi-model gateway (OpenAI-compatible).
+    api_route: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    # Cheaper Inference LLM gateway (OpenAI-compatible).
+    cheaperinference: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     embedding: EmbeddingConfigOut = Field(default_factory=EmbeddingConfigOut)
     soul: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
     discovery: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
@@ -2097,21 +2339,30 @@ class SourcesBrowserConfigOut(BaseModel):
     headed: bool = False
 
 
-class BilibiliSourceConfigOut(BaseModel):
+class SourceDatePreferenceOut(BaseModel):
+    recommendation_date_preset: str = "all"
+    recommendation_date_start: str = ""
+    recommendation_date_end: str = ""
+    recommendation_date_weight: float = 0.5
+
+
+class BilibiliSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = True
     min_interval_minutes: int = 3
 
 
-class XiaohongshuSourceConfigOut(BaseModel):
+class XiaohongshuSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     daily_search_budget: int = 20
     daily_creator_budget: int = 0
     task_interval_seconds: int = 1200
     min_interval_minutes: int = 20
 
 
-class DouyinSourceConfigOut(BaseModel):
+class DouyinSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     mode: str = "direct"
     # Resolved Cookie header (env override, else data/douyin_cookie.json).
     # Read-only mirror for settings pages — always masked on API reads.
@@ -2125,8 +2376,9 @@ class DouyinSourceConfigOut(BaseModel):
     min_interval_minutes: int = 3
 
 
-class YoutubeSourceConfigOut(BaseModel):
+class YoutubeSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     daily_search_budget: int = 0
     daily_trending_budget: int = 0
     daily_channel_budget: int = 0
@@ -2134,7 +2386,7 @@ class YoutubeSourceConfigOut(BaseModel):
     min_interval_minutes: int = 3
 
 
-class TwitterSourceConfigOut(BaseModel):
+class TwitterSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     mode: str = "cookie"
     # Resolved Cookie header (env override, else data/x_cookie.json).
@@ -2149,8 +2401,9 @@ class TwitterSourceConfigOut(BaseModel):
     min_interval_minutes: int = 3
 
 
-class ZhihuSourceConfigOut(BaseModel):
+class ZhihuSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     source_modes: list[str] = Field(
         default_factory=lambda: ["search", "hot", "feed", "creator", "related"]
     )
@@ -2163,8 +2416,9 @@ class ZhihuSourceConfigOut(BaseModel):
     min_interval_minutes: int = 3
 
 
-class RedditSourceConfigOut(BaseModel):
+class RedditSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     backend: str = "rdt"
     source_modes: list[str] = Field(
         default_factory=lambda: ["search", "hot", "subreddit", "related"]
@@ -2177,7 +2431,7 @@ class RedditSourceConfigOut(BaseModel):
     min_interval_minutes: int = 3
 
 
-class BangumiSourceConfigOut(BaseModel):
+class BangumiSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     username: str = ""
     # The personal access token itself is a secret and is NEVER echoed back;
@@ -2194,8 +2448,26 @@ class BangumiSourceConfigOut(BaseModel):
     bootstrap_limit: int = 300
 
 
-class LinuxdoSourceConfigOut(BaseModel):
+class GitHubSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    username: str = ""
+    # Secrets are write-only. This flag covers either the fixed env credential
+    # or config.toml without revealing even a masked token fragment.
+    access_token_set: bool = False
+    token_env: str = "OPENBILICLAW_GITHUB_TOKEN"
+    source_modes: list[str] = Field(default_factory=lambda: ["search", "ranked", "latest"])
+    daily_search_budget: int = 120
+    daily_ranked_budget: int = 60
+    daily_latest_budget: int = 60
+    request_interval_seconds: int = 6
+    min_interval_minutes: int = 10
+    bootstrap_limit: int = 300
+    bootstrap_max_pages: int = 10
+
+
+class LinuxdoSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    incremental_enabled: bool = False
     source_modes: list[str] = Field(
         default_factory=lambda: ["search", "hot", "feed", "creator", "related"]
     )
@@ -2209,8 +2481,9 @@ class LinuxdoSourceConfigOut(BaseModel):
     bootstrap_limit: int = Field(default=300, ge=1, le=300)
 
 
-class V2EXSourceConfigOut(BaseModel):
+class V2EXSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     username: str = ""
     access_token_set: bool = False
     token_env: str = "OPENBILICLAW_V2EX_TOKEN"
@@ -2239,7 +2512,7 @@ class V2EXSourceConfigOut(BaseModel):
     bootstrap_max_pages_per_scope: int = 20
 
 
-class WeiboSourceConfigOut(BaseModel):
+class WeiboSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     source_modes: list[str] = Field(default_factory=lambda: ["search", "hot", "creator"])
     daily_search_budget: int = 60
@@ -2249,7 +2522,7 @@ class WeiboSourceConfigOut(BaseModel):
     min_interval_minutes: int = 10
 
 
-class InstagramSourceConfigOut(BaseModel):
+class InstagramSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     source_modes: list[str] = Field(default_factory=lambda: ["topic", "creator"])
     daily_topic_budget: int = Field(default=60, ge=0)
@@ -2269,6 +2542,7 @@ class SourcesConfigOut(BaseModel):
     zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
     reddit: RedditSourceConfigOut = Field(default_factory=RedditSourceConfigOut)
     bangumi: BangumiSourceConfigOut = Field(default_factory=BangumiSourceConfigOut)
+    github: GitHubSourceConfigOut = Field(default_factory=GitHubSourceConfigOut)
     linuxdo: LinuxdoSourceConfigOut = Field(default_factory=LinuxdoSourceConfigOut)
     v2ex: V2EXSourceConfigOut = Field(default_factory=V2EXSourceConfigOut)
     weibo: WeiboSourceConfigOut = Field(default_factory=WeiboSourceConfigOut)
@@ -2277,6 +2551,8 @@ class SourcesConfigOut(BaseModel):
 
 class SchedulerConfigOut(BaseModel):
     enabled: bool = True
+    llm_budget_max_calls: int = 120
+    llm_budget_window_seconds: int = 3600
     pause_on_extension_disconnect: bool = False
     extension_disconnect_grace_seconds: int = 90
     discovery_cron: str = "0 */8 * * *"
@@ -2329,6 +2605,11 @@ class SoulConfigOut(BaseModel):
     posture_gate_mode: Literal["shadow", "enforce", "off"] = "shadow"
     posture_gate_force_enforce: bool = False
     topic_lifecycle_serialization: Literal["off", "on"] = "off"
+    awareness_event_batch_size: int = Field(default=300, ge=10, le=900)
+    insight_note_batch_size: int = Field(default=150, ge=10, le=450)
+    cognition_max_tokens: int = Field(default=32768, ge=1024, le=128000)
+    reply_style: str = ""
+    dialogue_tone_prompt: str = ""
 
 
 class DiscoveryConfigOut(BaseModel):
@@ -2345,6 +2626,7 @@ class DiscoveryConfigOut(BaseModel):
     keyword_digest_grace_hours: int = Field(default=24, ge=0, le=168)
     admission_min_score: float = 0.60
     eval_prefilter_mode: Literal["off", "shadow", "enforce"] = "shadow"
+    eval_scorer: Literal["llm", "shadow", "learned"] = "llm"
     candidate_eval_concurrency: int = Field(default=3, ge=1, le=3)
     multimodal_evaluation_enabled: bool = False
     visual_profile_enabled: bool = False
@@ -2399,6 +2681,28 @@ class UpdateApplyResponse(BaseModel):
 
 class StorageConfigOut(BaseModel):
     db_path: str = "data/openbiliclaw.db"
+
+
+class TailnetConfigOut(BaseModel):
+    """Application-scoped Tailnet configuration plus safe bootstrap status."""
+
+    enabled: bool = False
+    hostname: str = "openbiliclaw-host"
+    bootstrap_credential_staged: bool = False
+    state: str = "disabled"
+    dns_name: str = ""
+    ips: list[str] = Field(default_factory=list)
+    port: int = 0
+
+
+class TailnetConfigUpdateIn(BaseModel):
+    """Partial Tailnet update; bootstrap credentials are write-only."""
+
+    enabled: StrictBool | None = None
+    hostname: str | None = None
+    bootstrap_credential: str | None = None
+    advertise_tags: list[str] | None = None
+    clear_bootstrap_credential: StrictBool | None = None
 
 
 class LoggingConfigOut(BaseModel):
@@ -2472,6 +2776,7 @@ class ConfigResponse(BaseModel):
     discovery: DiscoveryConfigOut = Field(default_factory=DiscoveryConfigOut)
     autostart: AutostartConfigOut = Field(default_factory=AutostartConfigOut)
     saved_sync: SavedSyncConfigOut = Field(default_factory=SavedSyncConfigOut)
+    tailnet: TailnetConfigOut = Field(default_factory=TailnetConfigOut)
     storage: StorageConfigOut = Field(default_factory=StorageConfigOut)
     logging: LoggingConfigOut = Field(default_factory=LoggingConfigOut)
     soul: SoulConfigOut = Field(default_factory=SoulConfigOut)
@@ -2492,6 +2797,7 @@ class ConfigUpdateIn(BaseModel):
     scheduler: dict[str, object] | None = None
     discovery: dict[str, object] | None = None
     saved_sync: SavedSyncConfigUpdateIn | None = None
+    tailnet: TailnetConfigUpdateIn | None = None
     storage: dict[str, object] | None = None
     logging: dict[str, object] | None = None
     soul: dict[str, object] | None = None

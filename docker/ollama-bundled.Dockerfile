@@ -2,7 +2,7 @@
 # Bundled bge-m3 Ollama image — the embedding model is baked at build time so
 # containers reach embedding-ready with ZERO network pull (offline-friendly,
 # China-network-friendly). See docs/plans/2026-07-07-bundled-embedding-model-*.
-ARG OLLAMA_VERSION=0.30.6
+ARG OLLAMA_VERSION=0.32.13
 FROM ollama/ollama:${OLLAMA_VERSION}
 
 # Task 0 allowlist — the gguf model-layer digest. Build fails if the pulled

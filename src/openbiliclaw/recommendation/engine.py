@@ -14,17 +14,24 @@ import re
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from openbiliclaw.discovery.strategies._utils import (
     build_profile_summary,
     compact_content_prompt_profile_summary,
 )
 from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
-from openbiliclaw.discovery.temporal import TEMPORAL_POLICY_VERSION
-from openbiliclaw.llm.base import classify_llm_failure_kind
+from openbiliclaw.discovery.temporal import (
+    TEMPORAL_POLICY_VERSION,
+    evaluate_temporal_eligibility,
+    ground_temporal_evaluation,
+    is_complete_temporal_evidence_marker,
+    parse_temporal_evaluation,
+    schedule_temporal_evaluation,
+)
+from openbiliclaw.llm.base import classify_llm_failure_kind, is_reasoning_budget_exhausted
 from openbiliclaw.llm.json_utils import (
     extract_llm_json_list,
     extract_llm_json_object,
@@ -42,6 +49,8 @@ if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
     from openbiliclaw.soul.profile import InterestTag, SoulProfile
     from openbiliclaw.storage.database import Database
@@ -477,6 +486,9 @@ class RecommendationEngine:
         danmaku_fetch_limit: int = 50,
         danmaku_max_chars: int = 500,
         bilibili_client: Any | None = None,
+        serve_snapshot_store: ServeSnapshotStore | None = None,
+        serve_outbox: ServeOutbox | None = None,
+        reply_style: str = "",
     ) -> None:
         self._llm = llm
         self._database = database
@@ -492,6 +504,11 @@ class RecommendationEngine:
         # Optional Bilibili client for the danmaku prewarm. None = the danmaku
         # prewarm no-ops (the bonus path still works off already-stored text).
         self._bilibili_client = bilibili_client
+        self._serve_snapshot_store = serve_snapshot_store
+        self._serve_outbox = serve_outbox
+        # Constructor arguments above remain compatible with existing runtime
+        # builders. Serving uses current DB snapshots and atomic commits;
+        # the old outbox is inspected only for upgrade recovery diagnostics.
         # In-memory cache of the user's visual-profile centroids (pos/neg),
         # rebuilt in the background by rebuild_visual_profile(). serve() reads
         # this only — never triggers a rebuild or a cover fetch on the hot path.
@@ -502,6 +519,9 @@ class RecommendationEngine:
         self._visual_profile_rebuild_inflight = False
         self._xhs_self_info_provider = xhs_self_info_provider
         self._pool_inventory_commit_callback = pool_inventory_commit_callback
+        # Free-text reply-style instruction (issue #255) for the expression
+        # tone blocks; empty (default) keeps prompts byte-identical.
+        self._reply_style = " ".join(str(reply_style or "").split())
         self._copy_pending_callback: Callable[[str], None] | None = None
         self._expression_batch_concurrency = max(1, min(16, int(expression_batch_concurrency)))
         # ``0`` is the compatibility/rollback contract: drain the durable
@@ -771,8 +791,11 @@ class RecommendationEngine:
         multiplier = 4 if excluded_bvids else 3
         candidate_limit = max(limit * multiplier, 40) + len(excluded_bvids)
         pool_snapshot_started = time.perf_counter()
-        snapshot_loader = getattr(self._database, "load_pool_serve_snapshot_async", None)
+        snapshot: Any | None = None
         curator_snapshot: tuple[list[dict[str, object]], list[dict[str, object]]] | None = None
+        # Read current inventory on the dedicated SQLite worker. Worker JSON
+        # snapshots cannot fence consumption or apply concurrent feedback.
+        snapshot_loader = getattr(self._database, "load_pool_serve_snapshot_async", None)
         if callable(snapshot_loader):
             history_limit = max(1, int(getattr(self._curator, "_history_window", 30)))
             # Only pass the new keyword when a scope was actually requested:
@@ -805,6 +828,7 @@ class RecommendationEngine:
             if snapshot.seen_bvids:
                 candidates = [item for item in candidates if item.bvid not in snapshot.seen_bvids]
             after_viewed_count = len(candidates)
+            candidates = self._filter_candidates_for_publication_serving(candidates)
             curator_snapshot = (
                 list(snapshot.curator_signals),
                 list(snapshot.feedback_signals),
@@ -837,6 +861,17 @@ class RecommendationEngine:
                 after_exclude_count = 0
                 after_disliked_count = 0
                 after_viewed_count = 0
+        before_temporal_count = len(candidates)
+        candidates = self._exclude_temporally_stale_candidates_for_serve(candidates)
+        after_temporal_count = len(candidates)
+        after_viewed_count = after_temporal_count
+        if after_temporal_count < before_temporal_count:
+            logger.info(
+                "serve(/%s) filtered %d temporally stale candidate(s) at the final "
+                "in-memory read boundary",
+                label,
+                before_temporal_count - after_temporal_count,
+            )
         pool_snapshot_ms = (time.perf_counter() - pool_snapshot_started) * 1000.0
         servable_pool_count = pool_readiness["available"]
         raw_pool_count = pool_readiness["raw"]
@@ -884,11 +919,8 @@ class RecommendationEngine:
                 timings=ServeTimings(pool_snapshot_ms=pool_snapshot_ms),
             )
 
-        # Online supergroup merging — collapses semantically-equivalent
-        # topic_groups within this batch (e.g. 动漫/动漫产业/动漫文化) so
-        # the diversifier sees them as a single bucket. Adds 50–200ms of
-        # embedding I/O to the hot path, traded for batch-level richness
-        # that no offline precompute can guarantee at serve time.
+        # Apply the prewarmed canonical map without provider I/O. Cold caches
+        # keep their original groups until the background warmer catches up.
         await self._merge_topic_supergroups(candidates)
 
         prev_bvids = self._last_served_bvids
@@ -919,6 +951,10 @@ class RecommendationEngine:
                     ensure_ascii=False,
                 ),
             )
+        # Bound the MMR/diversity selector even for compatibility loaders that
+        # return more rows than the requested candidate limit.
+        if len(candidates) > candidate_limit:
+            candidates = candidates[:candidate_limit]
 
         score_override, amplification_guard = await asyncio.to_thread(
             self._score_candidates_with_curator,
@@ -963,8 +999,8 @@ class RecommendationEngine:
         danmaku_bonus = await self._danmaku_bonus_map(candidates, profile)
         combined_bonus: dict[str, float] = dict(visual_bonus)
         for extra in (visual_profile_bonus, keyframe_bonus, danmaku_bonus):
-            for bvid, bonus in extra.items():
-                combined_bonus[bvid] = combined_bonus.get(bvid, 0.0) + bonus
+            for scoring_key, bonus in extra.items():
+                combined_bonus[scoring_key] = combined_bonus.get(scoring_key, 0.0) + bonus
 
         # Cross-platform fairness: align the stacked bonus within each
         # platform's own pool around semantic zero. Without this, a
@@ -1000,11 +1036,6 @@ class RecommendationEngine:
                     ensure_ascii=False,
                 ),
             )
-        # Snapshot for the next call. Use bvid only — title might
-        # legitimately repeat across different bvids and we want the
-        # carryover signal to be at the canonical-id level.
-        self._last_served_bvids = frozenset(item.bvid for item in ranked if item.bvid)
-
         recommendations: list[Recommendation] = []
         for item in ranked:
             rec = Recommendation(
@@ -1032,6 +1063,38 @@ class RecommendationEngine:
                     rec.topic_label = self._fallback_topic_label(profile)
             recommendations.append(rec)
 
+        # Realtime copy is provider I/O and may take seconds. Generate it
+        # before the final SQLite eligibility transaction so that transaction
+        # remains the last authoritative TTL check before response assembly.
+        if expression_mode == "realtime":
+            for rec, item in zip(recommendations, ranked, strict=True):
+                rec.expression, rec.topic_label = await self.generate_expression(
+                    item,
+                    profile,
+                )
+
+        isolated_persist = getattr(self._database, "persist_pool_serve_async", None)
+        if not callable(isolated_persist):
+            # Legacy and third-party adapters have no writer-locked temporal
+            # check. Re-evaluate after all provider awaits and immediately
+            # before their history write so a row that expired while realtime
+            # copy was generated is neither recorded nor returned. The native
+            # SQLite path deliberately keeps its stronger in-transaction check
+            # below, which remains authoritative for the final race window.
+            before_fallback_temporal_count = len(ranked)
+            ranked = self._exclude_temporally_stale_candidates_for_serve(ranked)
+            eligible_item_ids = {id(item) for item in ranked}
+            recommendations = [
+                rec for rec in recommendations if id(rec.content) in eligible_item_ids
+            ]
+            if len(ranked) < before_fallback_temporal_count:
+                logger.info(
+                    "serve(/%s) filtered %d temporally stale candidate(s) at the "
+                    "legacy persistence boundary",
+                    label,
+                    before_fallback_temporal_count - len(ranked),
+                )
+
         # Critical-path write: one short transaction on the dedicated serve
         # worker inserts history and marks the selected pool rows shown. This
         # removes the old cross-thread shared-connection access and closes the
@@ -1049,42 +1112,77 @@ class RecommendationEngine:
         ]
         ranked_bvids = [item.bvid for item in ranked]
         persist_started = time.perf_counter()
-        isolated_persist = getattr(self._database, "persist_pool_serve_async", None)
         if callable(isolated_persist):
             persisted = await isolated_persist(recommendation_rows, ranked_bvids)
             ids = list(persisted.recommendation_ids)
+            # Third-party/legacy storage adapters may still return the older
+            # result shape with recommendation_ids only. Treat that shape as
+            # "all rows committed" until the adapter adopts exact commit
+            # reporting.
+            committed_bvids = getattr(persisted, "committed_bvids", None)
+            temporally_stale_bvids = tuple(getattr(persisted, "temporally_stale_bvids", ()))
+            skipped_bvids = tuple(getattr(persisted, "skipped_bvids", ()))
             shown_committed = True
         else:
-            ids = await asyncio.to_thread(
-                self._database.batch_insert_recommendations,
-                recommendation_rows,
-            )
+            committed_bvids = None
+            temporally_stale_bvids = ()
+            skipped_bvids = ()
             shown_committed = False
+            if not recommendation_rows:
+                ids = []
+            else:
+                ids = await asyncio.to_thread(
+                    self._database.batch_insert_recommendations,
+                    recommendation_rows,
+                )
         persist_ms = (time.perf_counter() - persist_started) * 1000.0
-        for rec, rec_id in zip(recommendations, ids, strict=True):
-            rec.recommendation_id = rec_id
+        if committed_bvids is None:
+            for rec, rec_id in zip(recommendations, ids, strict=True):
+                rec.recommendation_id = rec_id
+        else:
+            rec_by_bvid = {rec.content.bvid: rec for rec in recommendations}
+            item_by_bvid = {item.bvid: item for item in ranked}
+            committed_recommendations: list[Recommendation] = []
+            committed_ranked: list[DiscoveredContent] = []
+            for bvid, rec_id in zip(committed_bvids, ids, strict=True):
+                committed_rec = rec_by_bvid.get(bvid)
+                committed_item = item_by_bvid.get(bvid)
+                if committed_rec is None or committed_item is None:
+                    logger.error(
+                        "pool serve commit returned unknown bvid=%s; omitting it from response",
+                        bvid,
+                    )
+                    continue
+                committed_rec.recommendation_id = rec_id
+                committed_recommendations.append(committed_rec)
+                committed_ranked.append(committed_item)
+            if len(committed_recommendations) != len(recommendations):
+                logger.info(
+                    "pool serve commit retained %d/%d selected recommendation(s); "
+                    "temporally_stale=%d skipped=%d",
+                    len(committed_recommendations),
+                    len(recommendations),
+                    len(temporally_stale_bvids),
+                    len(skipped_bvids),
+                )
+            recommendations = committed_recommendations
+            ranked = committed_ranked
 
-        if expression_mode == "realtime":
-            for rec, item in zip(recommendations, ranked, strict=True):
-                rec.expression, rec.topic_label = await self.generate_expression(
-                    item,
-                    profile,
-                )
-                self._database.update_recommendation_content(
-                    rec.recommendation_id,
-                    expression=rec.expression,
-                    topic=rec.topic_label,
-                )
+        # Snapshot for the next call only after the atomic write confirms what
+        # was actually committed. A candidate rejected at the final temporal
+        # boundary must never masquerade as served carryover.
+        self._last_served_bvids = frozenset(item.bvid for item in ranked if item.bvid)
 
         consumed = len(ids)
+        removed_from_pool = consumed + len(set(temporally_stale_bvids) | set(skipped_bvids))
         pool_counts_after = {key: max(0, int(value)) for key, value in pool_readiness.items()}
         for key in ("available", "copy_ready", "raw"):
             if key in pool_counts_after:
-                pool_counts_after[key] = max(0, pool_counts_after[key] - consumed)
+                pool_counts_after[key] = max(0, pool_counts_after[key] - removed_from_pool)
 
         if shown_committed:
             self._schedule_pool_inventory_commit(pool_counts_after)
-        else:
+        elif ranked_bvids:
             # Compatibility path for adapters without isolated writes.
             try:
                 loop = asyncio.get_running_loop()
@@ -1125,6 +1223,15 @@ class RecommendationEngine:
     def set_pool_inventory_commit_callback(self, callback: Callable[..., object] | None) -> None:
         """Set the hook run only after the shown-state write commits."""
         self._pool_inventory_commit_callback = callback
+
+    def serve_outbox_depth(self) -> int:
+        """Return the current number of buffered serve-write batches."""
+        if self._serve_outbox is None:
+            return 0
+        try:
+            return int(self._serve_outbox.count() or 0)
+        except Exception:
+            return 0
 
     def _schedule_pool_inventory_commit(self, counts: dict[str, int]) -> None:
         """Notify inventory observers after the response-critical DB commit."""
@@ -1883,7 +1990,7 @@ class RecommendationEngine:
         for batch_start in range(0, len(items), batch_size):
             batch = items[batch_start : batch_start + batch_size]
             try:
-                await self._classify_batch(batch, profile)
+                await self._classify_batch_with_split_retry(batch, profile)
             except Exception:
                 logger.exception(
                     "classify_pool_backlog: batch failed (%d items)",
@@ -1908,11 +2015,44 @@ class RecommendationEngine:
                         **item.to_cache_kwargs(),
                     )
                     classified += 1
-                    persisted.append(item)
+                    temporal = evaluate_temporal_eligibility(
+                        temporal_class=item.temporal_class,
+                        temporal_confidence=item.temporal_confidence,
+                        published_at=item.published_at,
+                        temporal_validity_mode=item.temporal_validity_mode,
+                        temporal_valid_until=item.temporal_valid_until,
+                        temporal_scope=item.temporal_scope,
+                        temporal_evidence=item.temporal_evidence,
+                        temporal_state=item.temporal_state,
+                        temporal_next_review_at=item.temporal_next_review_at,
+                        temporal_evaluated_at=item.temporal_evaluated_at,
+                        temporal_policy_version=item.temporal_policy_version,
+                        evidence_complete=item.temporal_evidence_complete,
+                    )
+                    if temporal.eligible:
+                        persisted.append(item)
                 except Exception:
                     logger.exception(
                         "classify_pool_backlog: failed to persist %s",
                         item.bvid,
+                    )
+
+            # Legacy/recovery rows already live in content_cache, so the
+            # normal discovery admission gate cannot reject them. Persist the
+            # Agent classification first for auditability, then immediately
+            # retire any row that the same shared policy deems expired.
+            retire_temporal = getattr(
+                self._database,
+                "retire_temporally_stale_pool_items",
+                None,
+            )
+            if callable(retire_temporal):
+                try:
+                    retire_temporal()
+                except Exception:
+                    logger.warning(
+                        "classify_pool_backlog: temporal retirement deferred",
+                        exc_info=True,
                     )
 
             # Pre-warm the MMR embedding cache so the next reshuffle is an
@@ -1931,6 +2071,51 @@ class RecommendationEngine:
         )
         return classified
 
+    async def _classify_batch_with_split_retry(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+        *,
+        max_split_depth: int = 3,
+        max_extra_requests: int = 6,
+    ) -> None:
+        """Classify a batch, halving it when reasoning exhausts the budget.
+
+        ``recommendation.evaluate_batch`` is bounded JSON scoring, but a
+        reasoning-first instance can still spend the whole ``max_tokens`` on
+        invisible thinking and return no final content
+        (``finish_reason=length``). That failure is size-dependent — a smaller
+        batch needs less output — so retry the batch in halves, bounded by
+        depth and an extra-request budget, before letting it fail. Rate
+        limits / auth / transport failures propagate unchanged.
+        """
+        budget = {"remaining": max(0, int(max_extra_requests))}
+
+        async def run(items: list[DiscoveredContent], depth: int) -> None:
+            try:
+                await self._classify_batch(items, profile)
+                return
+            except Exception as exc:
+                if (
+                    not is_reasoning_budget_exhausted(exc)
+                    or len(items) <= 1
+                    or depth >= max_split_depth
+                    or budget["remaining"] <= 0
+                ):
+                    raise
+                logger.warning(
+                    "classify_pool_backlog: batch of %d exhausted the reasoning budget; splitting",
+                    len(items),
+                )
+            midpoint = max(1, len(items) // 2)
+            for subset in (items[:midpoint], items[midpoint:]):
+                if not subset or budget["remaining"] <= 0:
+                    break
+                budget["remaining"] -= 1
+                await run(subset, depth + 1)
+
+        await run(batch, 0)
+
     async def _classify_batch(
         self,
         batch: list[DiscoveredContent],
@@ -1938,8 +2123,8 @@ class RecommendationEngine:
     ) -> None:
         """Run batched LLM evaluation on a group of un-classified items.
 
-        Mutates each item in-place: sets ``relevance_score``,
-        ``relevance_reason``, ``topic_group``, and ``style_key``.
+        Mutates each item in-place: sets relevance/classification fields,
+        including the temporal evaluation used by the shared eligibility gate.
         """
         from openbiliclaw.llm.prompts import (
             build_batch_content_evaluation_prompt,
@@ -1994,10 +2179,15 @@ class RecommendationEngine:
         response = await complete_structured(
             system_instruction=messages[0]["content"],
             user_input=messages[1]["content"],
-            max_tokens=8192,
+            max_tokens=16384,
             # v0.3.51+: structured XHS classification — pure score +
-            # categorical fields, doesn't benefit from reasoning chain.
-            reasoning_effort="",
+            # categorical fields, doesn't need deep reasoning; send low
+            # portable effort because some models reject empty reasoning.
+            # v0.3.x: 16384 matches discovery evaluate_batch so a
+            # reasoning-first instance can finish thinking and still emit the
+            # full batch JSON; the caller also splits the batch on
+            # reasoning-budget exhaustion (see _classify_batch_with_split_retry).
+            reasoning_effort=None,
             caller="recommendation.evaluate_batch",
             **without_core_memory_kwargs(complete_structured),
         )
@@ -2072,6 +2262,36 @@ class RecommendationEngine:
                 content.topic_group = topic_group
             if style_key in VALID_STYLE_KEYS:
                 content.style_key = style_key
+            temporal = parse_temporal_evaluation(result)
+            temporal = ground_temporal_evaluation(
+                temporal,
+                content_text="\n".join(
+                    value
+                    for field_name in ("title", "description", "body_text", "published_label")
+                    if isinstance((value := content_items[i].get(field_name)), str) and value
+                ),
+            )
+            temporal = schedule_temporal_evaluation(
+                temporal,
+                evaluated_at=evaluated_at,
+            )
+            content.temporal_class = temporal.temporal_class
+            content.temporal_confidence = temporal.temporal_confidence
+            content.temporal_reason = temporal.temporal_reason
+            content.temporal_policy_version = temporal.temporal_policy_version
+            content.temporal_validity_mode = temporal.temporal_validity_mode
+            content.temporal_valid_until = temporal.temporal_valid_until
+            content.temporal_scope = temporal.temporal_scope
+            content.temporal_evidence = temporal.temporal_evidence
+            content.temporal_state = temporal.temporal_state
+            content.temporal_next_review_at = temporal.temporal_next_review_at
+            content.temporal_evaluated_at = temporal.temporal_evaluated_at
+            content.temporal_evidence_complete = temporal.evidence_complete
+            # A neutral fail-open answer cannot supersede stronger temporal
+            # evidence already stored on a legacy pool row.
+            content.temporal_evaluated = (
+                temporal.evidence_complete and temporal.temporal_class != "unknown"
+            )
 
     async def precompute_delight_scores(
         self,
@@ -2455,7 +2675,7 @@ class RecommendationEngine:
             warmed += 1
             bonus = self._cover_bonus_from_vec(cover_vec, anchor_vecs)
             if bonus > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         # Fairness guard: withhold the bonus for the whole batch until enough
         # cover-bearing candidates are warmed, so a half-backfilled pool doesn't
         # tilt the ranking toward freshly-discovered items over older ones.
@@ -2976,7 +3196,7 @@ class RecommendationEngine:
             # Signed: keep both boosts (>0) and suppressions (<0). A zero means
             # the candidate is in the contested/gray band — no entry, no nudge.
             if abs(bonus) > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         # Fairness guard (same rationale as _visual_bonus_map): withhold the
         # bonus for the whole batch until enough cover-bearing candidates are
         # warmed, so a half-backfilled pool doesn't tilt toward fresh items.
@@ -3022,16 +3242,16 @@ class RecommendationEngine:
         """
         if not combined_bonus:
             return combined_bonus
-        # bvid -> platform, defaulting bilibili (the historical single-platform
-        # behavior) so a missing/blank platform never forms its own singleton
-        # group and change the ranking for pre-existing rows.
+        # scoring_key -> platform, defaulting bilibili (the historical
+        # single-platform behavior) so a missing/blank platform never forms
+        # its own singleton group and change the ranking for pre-existing rows.
         platform_of: dict[str, str] = {}
         for cand in candidates:
-            bvid = str(getattr(cand, "bvid", "") or "")
-            if not bvid:
+            scoring_key = cand.scoring_key
+            if not scoring_key:
                 continue
             platform = str(getattr(cand, "source_platform", "") or "").strip() or "bilibili"
-            platform_of[bvid] = platform
+            platform_of[scoring_key] = platform
 
         # Group every current candidate, including missing bonus entries (which
         # are semantic zeroes), so a platform with only one signal still gets a
@@ -3039,19 +3259,21 @@ class RecommendationEngine:
         # missing rows. Unknown keys remain supported for legacy callers.
         groups: dict[str, list[tuple[str, float]]] = {}
         seen: set[str] = set()
-        for bvid, platform in platform_of.items():
-            seen.add(bvid)
-            groups.setdefault(platform, []).append((bvid, float(combined_bonus.get(bvid, 0.0))))
-        for bvid, bonus in combined_bonus.items():
-            if bvid not in seen:
-                groups.setdefault("bilibili", []).append((bvid, float(bonus)))
+        for scoring_key, platform in platform_of.items():
+            seen.add(scoring_key)
+            groups.setdefault(platform, []).append(
+                (scoring_key, float(combined_bonus.get(scoring_key, 0.0)))
+            )
+        for scoring_key, bonus in combined_bonus.items():
+            if scoring_key not in seen:
+                groups.setdefault("bilibili", []).append((scoring_key, float(bonus)))
 
         if not groups:
             return combined_bonus
 
         cap = _COMBINED_BONUS_CAP
-        normalized = {bvid: 0.0 for bvid in platform_of}
-        normalized.update({bvid: 0.0 for bvid in combined_bonus})
+        normalized = {scoring_key: 0.0 for scoring_key in platform_of}
+        normalized.update({scoring_key: 0.0 for scoring_key in combined_bonus})
         # A one-platform batch must preserve absolute semantics. With several
         # platforms, only the structurally shorter groups are stretched toward
         # the strongest currently observed group; no signal is inflated to the
@@ -3074,19 +3296,19 @@ class RecommendationEngine:
         for items in groups.values():
             positive_max = max((value for _, value in items if value > 0.0), default=0.0)
             negative_magnitude = max((-value for _, value in items if value < 0.0), default=0.0)
-            for bvid, bonus in items:
+            for scoring_key, bonus in items:
                 if bonus > 0.0 and positive_max > 0.0:
                     target = global_positive_max if multi_platform else min(cap, positive_max)
-                    normalized[bvid] = min(cap, target * bonus / positive_max)
+                    normalized[scoring_key] = min(cap, target * bonus / positive_max)
                 elif bonus < 0.0 and negative_magnitude > 0.0:
                     target = (
                         global_negative_magnitude
                         if multi_platform
                         else min(cap, negative_magnitude)
                     )
-                    normalized[bvid] = -min(cap, target * (-bonus) / negative_magnitude)
+                    normalized[scoring_key] = -min(cap, target * (-bonus) / negative_magnitude)
                 else:
-                    normalized[bvid] = 0.0
+                    normalized[scoring_key] = 0.0
         return normalized
 
     def _keyframe_bonus_from_vecs(
@@ -3242,7 +3464,7 @@ class RecommendationEngine:
                 frame_vecs, pos_centroids, neg_centroids, contested
             )
             if abs(bonus) > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         return bonuses
 
     async def prewarm_pool_keyframes(self, *, limit: int = 50) -> int:
@@ -3488,7 +3710,7 @@ class RecommendationEngine:
             norm = max(0.0, min(1.0, (max_sim - _DANMAKU_SIM_FLOOR) / span))
             bonus = _DANMAKU_BONUS_MAX * norm
             if bonus > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         return bonuses
 
     async def _danmaku_anchor_vectors(self, profile: SoulProfile) -> list[list[float]]:
@@ -3827,6 +4049,13 @@ class RecommendationEngine:
                 "title": item.title,
                 "up_name": item.up_name,
                 "description": (item.description or "")[:400],
+                # Temporal grounding for copy writing. ``evaluated_at`` is the
+                # exact clock from when this row was evaluated (never the copy
+                # generation time), so a freshly generated reason cannot call
+                # old content "latest" from model-knowledge guesses.
+                "published_at": item.published_at,
+                "published_label": item.published_label,
+                "evaluated_at": item.temporal_evaluated_at,
                 "source_strategy": item.source_strategy,
                 "style_key": normalize_style_key(item.style_key),
                 "topic_group": item.topic_group,
@@ -3843,6 +4072,7 @@ class RecommendationEngine:
             content_items=content_items,
             tone_profile=tone_profile,
             source_platform=batch[0].source_platform if batch else "bilibili",
+            reply_style=self._reply_style,
         )
 
         complete_structured = self._llm.complete_structured_task
@@ -3853,9 +4083,9 @@ class RecommendationEngine:
                 max_tokens=8192,
                 # v0.3.51+: expression generation is short copy
                 # writing per item — reasoning chain just bloats
-                # output (write_expression cost ~3x with reasoning
-                # vs without, no quality difference).
-                reasoning_effort="",
+                # output (write_expression cost ~3x with high reasoning
+                # vs low, no quality difference).
+                reasoning_effort=None,
                 caller="recommendation.write_expression",
                 **without_core_memory_kwargs(complete_structured),
             )
@@ -3969,6 +4199,36 @@ class RecommendationEngine:
         """
         budget = {"remaining": max(0, int(max_extra_requests))}
 
+        async def run_subsets(
+            subsets: tuple[list[DiscoveredContent], ...],
+            depth: int,
+            completed: int,
+        ) -> int:
+            total = completed
+            for subset in subsets:
+                if not subset or budget["remaining"] <= 0:
+                    break
+                budget["remaining"] -= 1
+                try:
+                    total += await run(subset, depth + 1)
+                except ExpressionCopyTransientError as downstream:
+                    raise ExpressionCopyTransientError(
+                        kind=downstream.kind,
+                        completed=total + downstream.completed,
+                        retry_after=downstream.retry_after,
+                    ) from downstream
+                except asyncio.CancelledError:
+                    raise
+                except Exception as downstream:
+                    if classify_llm_failure_kind(downstream) in {
+                        "auth_failed",
+                        "no_provider",
+                    }:
+                        prior = max(0, int(getattr(downstream, "completed", 0) or 0))
+                        downstream.completed = total + prior  # type: ignore[attr-defined]
+                    raise
+            return total
+
         async def run(items: list[DiscoveredContent], depth: int) -> int:
             try:
                 return await self._precompute_batch(items, profile, fallback_to_single=False)
@@ -3983,30 +4243,26 @@ class RecommendationEngine:
                 else:
                     midpoint = max(1, len(missing) // 2)
                     subsets = (missing[:midpoint], missing[midpoint:])
-                total = completed
-                for subset in subsets:
-                    if not subset or budget["remaining"] <= 0:
-                        break
-                    budget["remaining"] -= 1
-                    try:
-                        total += await run(subset, depth + 1)
-                    except ExpressionCopyTransientError as downstream:
-                        raise ExpressionCopyTransientError(
-                            kind=downstream.kind,
-                            completed=total + downstream.completed,
-                            retry_after=downstream.retry_after,
-                        ) from downstream
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as downstream:
-                        if classify_llm_failure_kind(downstream) in {
-                            "auth_failed",
-                            "no_provider",
-                        }:
-                            prior = max(0, int(getattr(downstream, "completed", 0) or 0))
-                            downstream.completed = total + prior  # type: ignore[attr-defined]
-                        raise
-                return total
+                return await run_subsets(subsets, depth, completed)
+            except Exception as exc:
+                # A JSON copy batch can also die because a reasoning-first
+                # model burned the whole output budget on invisible thinking
+                # (no final content, finish_reason=length). That failure is
+                # size-dependent, so halve the batch and retry instead of
+                # failing the whole run; rate limits / auth keep propagating.
+                if (
+                    not is_reasoning_budget_exhausted(exc)
+                    or len(items) <= 1
+                    or depth >= max_split_depth
+                    or budget["remaining"] <= 0
+                ):
+                    raise
+                logger.warning(
+                    "expression batch of %d exhausted the reasoning budget; splitting",
+                    len(items),
+                )
+                midpoint = max(1, len(items) // 2)
+                return await run_subsets((items[:midpoint], items[midpoint:]), depth, 0)
 
         return await run(batch, 0)
 
@@ -4192,6 +4448,13 @@ class RecommendationEngine:
                 "title": content.title,
                 "up_name": content.up_name,
                 "description": content.description,
+                # Temporal grounding for copy writing. ``evaluated_at`` is the
+                # exact clock from when this row was evaluated (never the copy
+                # generation time), so a freshly generated reason cannot call
+                # old content "latest" from model-knowledge guesses.
+                "published_at": content.published_at,
+                "published_label": content.published_label,
+                "evaluated_at": content.temporal_evaluated_at,
                 "source_strategy": content.source_strategy,
                 "style_key": normalize_style_key(content.style_key),
                 "topic_group": content.topic_group,
@@ -4201,6 +4464,7 @@ class RecommendationEngine:
             },
             tone_profile=tone_profile,
             source_platform=content.source_platform or "bilibili",
+            reply_style=self._reply_style,
         )
         try:
             complete_structured = self._llm.complete_structured_task
@@ -4272,13 +4536,13 @@ class RecommendationEngine:
         # ``bonus`` (opt-in cover-visual, default empty) is added to the
         # relevance term only — tier priority and the timestamp/view/bvid
         # tiebreakers are untouched, so an empty map is byte-identical ranking.
-        visual = (bonus or {}).get(item.bvid, 0.0)
+        visual = (bonus or {}).get(item.scoring_key, 0.0)
         return (
             0 if item.candidate_tier == "primary" else 1,
             -(item.relevance_score + visual),
             -RecommendationEngine._timestamp_score(item.last_scored_at or item.discovered_at),
             -item.view_count,
-            item.bvid,
+            item.scoring_key,
         )
 
     @staticmethod
@@ -4352,7 +4616,7 @@ class RecommendationEngine:
         startup) is responsible for filling the L2 SQLite cache so this
         lookup hits next time.
 
-        Returns ``{bvid: vector}`` only for items already cached. Pure
+        Returns ``{scoring_key: vector}`` only for items already cached. Pure
         synchronous-via-async; no I/O.
         """
         if self._embedding_service is None or not candidates:
@@ -4367,7 +4631,7 @@ class RecommendationEngine:
                 continue
             vec = lookup(text)
             if vec:
-                result[c.bvid] = vec
+                result[c.scoring_key] = vec
         return result
 
     async def warm_mmr_embeddings(
@@ -4490,7 +4754,9 @@ class RecommendationEngine:
         if score_override:
             ranked = sorted(
                 candidates,
-                key=lambda item: -(score_override.get(item.bvid, 0.0) + bonus.get(item.bvid, 0.0)),
+                key=lambda item: (
+                    -(score_override.get(item.scoring_key, 0.0) + bonus.get(item.scoring_key, 0.0))
+                ),
             )
         else:
             ranked = sorted(candidates, key=lambda item: cls._ranking_key(item, bonus))
@@ -4751,25 +5017,34 @@ class RecommendationEngine:
 
         def _relevance(item: DiscoveredContent) -> float:
             base = (
-                float(score_override.get(item.bvid, 0.0))
+                float(score_override.get(item.scoring_key, 0.0))
                 if score_override
                 else float(item.relevance_score or 0.0)
             )
-            return base + bonus.get(item.bvid, 0.0)
+            return base + bonus.get(item.scoring_key, 0.0)
+
+        # Same vectors and cosine implementation throughout this selection.
+        # Cache exact pair results locally; never share scores across batches.
+        # Caps, relevance weights, tie order and fallback passes stay intact.
+        pair_similarity: dict[tuple[str, str], float] = {}
 
         def _max_cos_to_picked(
             cand: DiscoveredContent,
             picked: list[DiscoveredContent],
         ) -> float:
-            cand_vec = embeddings.get(cand.bvid)
+            cand_vec = embeddings.get(cand.scoring_key)
             if not cand_vec or not picked:
                 return 0.0
             best = 0.0
             for p in picked:
-                p_vec = embeddings.get(p.bvid)
+                p_vec = embeddings.get(p.scoring_key)
                 if not p_vec:
                     continue
-                sim = cosine_similarity(cand_vec, p_vec)
+                pair = (cand.scoring_key, p.scoring_key)
+                sim = pair_similarity.get(pair)
+                if sim is None:
+                    sim = cosine_similarity(cand_vec, p_vec)
+                    pair_similarity[pair] = sim
                 if sim > best:
                     best = sim
             return best
@@ -4926,7 +5201,7 @@ class RecommendationEngine:
     ) -> float:
         if score_override is None:
             return item.relevance_score
-        return score_override.get(item.bvid, item.relevance_score)
+        return score_override.get(item.scoring_key, item.relevance_score)
 
     @staticmethod
     def _accessible_style_priority(item: DiscoveredContent) -> int:
@@ -5119,6 +5394,16 @@ class RecommendationEngine:
                 temporal_policy_version=str(
                     row.get("temporal_policy_version", "") or TEMPORAL_POLICY_VERSION
                 ),
+                temporal_validity_mode=str(row.get("temporal_validity_mode", "") or "none"),
+                temporal_valid_until=str(row.get("temporal_valid_until", "") or ""),
+                temporal_scope=str(row.get("temporal_scope", "") or "none"),
+                temporal_evidence=str(row.get("temporal_evidence", "") or ""),
+                temporal_state=str(row.get("temporal_state", "") or "unknown"),
+                temporal_next_review_at=str(row.get("temporal_next_review_at", "") or ""),
+                temporal_evaluated_at=str(row.get("temporal_evaluated_at", "") or ""),
+                temporal_evidence_complete=is_complete_temporal_evidence_marker(
+                    row.get("temporal_evidence_complete")
+                ),
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),
@@ -5129,9 +5414,13 @@ class RecommendationEngine:
                 last_scored_at=str(row.get("last_scored_at", "")),
                 content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                 content_url=str(row.get("content_url", "")),
-                source_platform=str(row.get("source_platform", "") or "bilibili"),
+                source_platform=source_family(
+                    row.get("source", ""),
+                    row.get("source_platform", ""),
+                ),
                 content_type=str(row.get("content_type", "") or "video"),
                 body_text=str(row.get("body_text", "") or ""),
+                source_metadata=self._parse_source_metadata(row.get("source_metadata", "{}")),
             )
             for row in rows
         ]
@@ -5195,6 +5484,7 @@ class RecommendationEngine:
         candidates = self._exclude_disliked_topic_candidates_for_serve(candidates, profile)
         after_disliked_count = len(candidates)
         candidates = self._exclude_recently_viewed(candidates)
+        candidates = self._filter_candidates_for_publication_serving(candidates)
         return (
             candidates,
             loaded_count,
@@ -5202,6 +5492,19 @@ class RecommendationEngine:
             after_disliked_count,
             len(candidates),
         )
+
+    def _filter_candidates_for_publication_serving(
+        self,
+        candidates: list[DiscoveredContent],
+    ) -> list[DiscoveredContent]:
+        """Apply strict publication-date eligibility before ranking."""
+        if self._curator is None:
+            return candidates
+
+        filter_for_serving = getattr(self._curator, "filter_candidates_for_serving", None)
+        if not callable(filter_for_serving):
+            return candidates
+        return cast("list[DiscoveredContent]", filter_for_serving(candidates))
 
     def _score_candidates_with_curator(
         self,
@@ -5305,6 +5608,33 @@ class RecommendationEngine:
             eligible_available_first=eligible_available_first,
         )
         return self._rows_to_discovered(rows)
+
+    @staticmethod
+    def _exclude_temporally_stale_candidates_for_serve(
+        candidates: list[DiscoveredContent],
+    ) -> list[DiscoveredContent]:
+        """Apply the shared hard gate to adapters that bypass canonical storage."""
+
+        now = datetime.now(UTC)
+        return [
+            item
+            for item in candidates
+            if evaluate_temporal_eligibility(
+                temporal_class=item.temporal_class,
+                temporal_confidence=item.temporal_confidence,
+                published_at=item.published_at,
+                temporal_validity_mode=item.temporal_validity_mode,
+                temporal_valid_until=item.temporal_valid_until,
+                temporal_scope=item.temporal_scope,
+                temporal_evidence=item.temporal_evidence,
+                temporal_state=item.temporal_state,
+                temporal_next_review_at=item.temporal_next_review_at,
+                temporal_evaluated_at=item.temporal_evaluated_at,
+                temporal_policy_version=item.temporal_policy_version,
+                evidence_complete=item.temporal_evidence_complete,
+                now=now,
+            ).eligible
+        ]
 
     def _exclude_recently_viewed(
         self,
@@ -5431,6 +5761,20 @@ class RecommendationEngine:
         if not isinstance(payload, list):
             return []
         return [str(item).strip() for item in payload if str(item).strip()]
+
+    @staticmethod
+    def _parse_source_metadata(value: object) -> dict[str, object]:
+        """Decode a normalizer-owned source metadata object fail closed."""
+
+        if isinstance(value, dict):
+            return dict(value)
+        if not isinstance(value, str) or not value.strip():
+            return {}
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return dict(payload) if isinstance(payload, dict) else {}
 
     @classmethod
     def _build_debug_summary(

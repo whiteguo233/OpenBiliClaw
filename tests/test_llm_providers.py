@@ -13,6 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from openbiliclaw.llm.api_route_provider import ApiRouteProvider
 from openbiliclaw.llm.base import (
     LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
     LLMAuthError,
@@ -20,12 +21,16 @@ from openbiliclaw.llm.base import (
     LLMRateLimitError,
     LLMResponseError,
     LLMTimeoutError,
+    is_reasoning_budget_exhausted,
 )
+from openbiliclaw.llm.cheaperinference_provider import CheaperInferenceProvider
 from openbiliclaw.llm.claude_provider import ClaudeProvider
 from openbiliclaw.llm.gemini_provider import GeminiProvider, gemini_sdk_available
 from openbiliclaw.llm.ollama_provider import OllamaProvider
 from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
 from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
+from openbiliclaw.llm.orcarouter_provider import OrcaRouterProvider
+from openbiliclaw.llm.requesty_provider import RequestyProvider
 
 
 def _openai_response(content: str = "ok") -> SimpleNamespace:
@@ -602,6 +607,173 @@ async def test_openai_compatible_retries_explicit_no_reasoning_with_disabled_thi
     assert "response_format" not in calls[1]
     assert calls[2]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert "reasoning_effort" not in calls[2]
+
+
+def _length_exhausted_response() -> SimpleNamespace:
+    return SimpleNamespace(
+        model="reasoning-model",
+        choices=[
+            SimpleNamespace(
+                finish_reason="length",
+                message=SimpleNamespace(
+                    content="",
+                    reasoning_content="reasoning exhausted the output budget",
+                ),
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=8192,
+            total_tokens=8202,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_retries_length_exhausted_reasoning_with_larger_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keyword-planner shape: configured effort, reasoning-only length truncation.
+
+    The generic recovery for callers that keep the provider's configured
+    ``reasoning_effort`` is a doubled output budget, not a thinking-disable
+    retry (which only applies to explicit no-reasoning calls).
+    """
+    provider = OpenAIProvider(
+        api_key="test-key",
+        model="reasoning-model",
+        base_url="https://relay.example.com/v1",
+        provider_name="openai_compatible",
+        reasoning_effort="low",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if len(calls) < 3:
+            return _length_exhausted_response()
+        return _openai_response('{"keywords":["并发控制"]}')
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "return json"}],
+        json_mode=True,
+        max_tokens=8192,
+    )
+
+    assert response.content == '{"keywords":["并发控制"]}'
+    assert len(calls) == 3
+    # Ladder: original ask → empty-content retry without response_format →
+    # length retry with a doubled budget (routing params preserved).
+    assert calls[0]["max_tokens"] == 8192
+    assert "response_format" not in calls[1]
+    assert calls[1]["max_tokens"] == 8192
+    assert calls[2]["max_tokens"] == 16384
+    assert calls[2]["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_retries_length_truncated_json_with_larger_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON payload cut off mid-stream (finish_reason=length) is retried once
+    with a doubled budget instead of being handed to the parser truncated."""
+    provider = OpenAIProvider(
+        api_key="test-key",
+        provider_name="openai_compatible",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            return SimpleNamespace(
+                model="gpt-4o",
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="length",
+                        message=SimpleNamespace(content='{"keywords":["并发'),
+                    )
+                ],
+                usage=SimpleNamespace(prompt_tokens=10, completion_tokens=512, total_tokens=522),
+            )
+        return _openai_response('{"keywords":["并发控制"]}')
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "return json"}],
+        json_mode=True,
+        max_tokens=512,
+    )
+
+    assert response.content == '{"keywords":["并发控制"]}'
+    assert len(calls) == 2
+    assert calls[1]["max_tokens"] == 1024
+    assert calls[1]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_raises_reasoning_error_when_length_retry_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When even the doubled budget comes back length-truncated and empty, the
+    original reasoning-budget error (and downstream fallback) is unchanged."""
+    provider = OpenAIProvider(
+        api_key="test-key",
+        provider_name="openai_compatible",
+        reasoning_effort="low",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return _length_exhausted_response()
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete(
+            [{"role": "user", "content": "return json"}],
+            json_mode=True,
+            max_tokens=8192,
+        )
+
+    message = str(exc_info.value)
+    assert "returned reasoning but no final content" in message
+    assert "finish_reason=length" in message
+    assert len(calls) == 3
+    assert calls[-1]["max_tokens"] == 16384
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_skips_length_retry_when_budget_at_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At or above the retry cap a retry would resend the same request, so the
+    call fails directly on the reasoning-only error."""
+    provider = OpenAIProvider(
+        api_key="test-key",
+        provider_name="openai_compatible",
+        reasoning_effort="low",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return _length_exhausted_response()
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete(
+            [{"role": "user", "content": "hi"}],
+            max_tokens=32768,
+        )
+
+    assert "returned reasoning but no final content" in str(exc_info.value)
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -1366,6 +1538,302 @@ async def test_openrouter_channel_empty_omits_unsafe_disable_for_mandatory_model
     assert "extra_body" not in captured
 
 
+def test_orcarouter_provider_defaults() -> None:
+    provider = OrcaRouterProvider(api_key="test-key", model="openai/gpt-4o")
+
+    assert provider.name == "orcarouter"
+    assert provider.base_url == "https://api.orcarouter.ai/v1"
+    # OrcaRouter does not use OpenRouter attribution headers.
+    assert provider._extra_headers() == {}
+    # OrcaRouter forwards reasoning args to the upstream route, which
+    # rejects them on non-reasoning models (HTTP 400 against gpt-4o), so
+    # the adapter never sends reasoning_effort or a provider-specific body.
+    assert provider._extra_body(reasoning_effort="medium") == {}
+    assert provider._openai_reasoning_effort("openai/gpt-4o", "high") is None
+
+
+@pytest.mark.asyncio
+async def test_orcarouter_provider_omits_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OrcaRouter never sends ``reasoning_effort`` or a nested ``reasoning``
+    object: the gateway forwards both to the upstream model, which rejects
+    them on non-reasoning routes (verified against ``openai/gpt-4o``)."""
+    provider = OrcaRouterProvider(api_key="test-key", model="openai/gpt-4o")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("orcarouter-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        reasoning_effort="high",
+    )
+
+    assert response.content == "orcarouter-ok"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_orcarouter_channel_empty_omits_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OrcaRouterProvider(api_key="test-key", model="openai/gpt-4o")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        reasoning_effort="",
+    )
+
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_orcarouter_provider_inherits_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OrcaRouterProvider(api_key="test-key", model="openai/gpt-4o")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("orcarouter-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="anthropic/claude-opus-4.8",
+    )
+
+    assert response.content == "orcarouter-ok"
+    assert captured["model"] == "anthropic/claude-opus-4.8"
+    assert provider._model == "openai/gpt-4o"
+
+
+def test_requesty_provider_defaults() -> None:
+    provider = RequestyProvider(api_key="test-key")
+
+    assert provider.name == "requesty"
+    assert provider.base_url == "https://router.requesty.ai/v1"
+    assert provider._model
+    assert provider.supports_embedding is False
+    assert provider._extra_headers() == {}
+    assert provider._extra_body(reasoning_effort="medium") == {}
+    assert provider._openai_reasoning_effort("openai/gpt-4o-mini", "high") is None
+
+
+def test_api_route_provider_defaults() -> None:
+    provider = ApiRouteProvider(api_key="test-key")
+
+    assert provider.name == "api_route"
+    assert provider.base_url == "https://global.api-route.com/v1"
+    assert provider._model == "gpt-5.5"
+    assert provider.supports_embedding is False
+    assert provider._openai_reasoning_effort("gpt-5.5", "high") is None
+
+
+@pytest.mark.asyncio
+async def test_api_route_provider_uses_per_call_model_without_reasoning_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ApiRouteProvider(api_key="test-key")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("api-route-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="claude-sonnet-4-6",
+        reasoning_effort="high",
+    )
+
+    assert response.content == "api-route-ok"
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert provider._model == "gpt-5.5"
+
+
+def test_cheaperinference_provider_defaults() -> None:
+    provider = CheaperInferenceProvider(api_key="ci_live_test")
+
+    assert provider.name == "cheaperinference"
+    assert provider.base_url == "https://api.cheaperinference.com/v1"
+    assert provider._model == "gpt-5.4-mini"
+    assert provider.supports_embedding is False
+    assert provider._openai_reasoning_effort("gpt-5.4-mini", "high") is None
+
+
+@pytest.mark.asyncio
+async def test_cheaperinference_provider_uses_per_call_model_without_reasoning_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = CheaperInferenceProvider(api_key="ci_live_test")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("cheaperinference-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="claude-sonnet-5",
+        reasoning_effort="high",
+    )
+
+    assert response.content == "cheaperinference-ok"
+    assert captured["model"] == "claude-sonnet-5"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert provider._model == "gpt-5.4-mini"
+
+
+@pytest.mark.asyncio
+async def test_cheaperinference_list_models_keeps_only_text_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = CheaperInferenceProvider(api_key="ci_live_test")
+
+    async def fake_catalog() -> SimpleNamespace:
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(id="gpt-5.4-mini", type="text"),
+                SimpleNamespace(id="claude-sonnet-5", type="text"),
+                SimpleNamespace(id="image-model", type="image"),
+                SimpleNamespace(id="video-model", type="video"),
+                SimpleNamespace(id="untyped-model"),
+                SimpleNamespace(id="", type="text"),
+            ]
+        )
+
+    monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
+
+    assert await provider.list_models() == ["claude-sonnet-5", "gpt-5.4-mini", "untyped-model"]
+
+
+def test_requesty_provider_accepts_regional_base_url() -> None:
+    provider = RequestyProvider(
+        api_key="test-key",
+        model="openai/gpt-4o-mini",
+        base_url="https://router.eu.requesty.ai/v1",
+    )
+
+    assert provider.base_url == "https://router.eu.requesty.ai/v1"
+
+
+@pytest.mark.asyncio
+async def test_requesty_provider_omits_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RequestyProvider(api_key="test-key", model="openai/gpt-4o-mini")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("requesty-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        reasoning_effort="high",
+    )
+
+    assert response.content == "requesty-ok"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
+async def test_requesty_provider_inherits_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RequestyProvider(api_key="test-key", model="openai/gpt-4o-mini")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("requesty-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="anthropic/claude-sonnet-4-5",
+    )
+
+    assert captured["model"] == "anthropic/claude-sonnet-4-5"
+    assert provider._model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_requesty_list_models_puts_managed_policies_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RequestyProvider(api_key="test-key")
+
+    async def fake_managed() -> object:
+        return {
+            "data": [
+                {"id": "smart-task", "api": "chat"},
+                {"id": "embed-policy", "api": "embedding"},
+                {"id": "openai/gpt-4o-mini"},
+                {"id": ""},
+            ]
+        }
+
+    async def fake_catalog() -> SimpleNamespace:
+        return SimpleNamespace(
+            data=[SimpleNamespace(id="openai/gpt-4o-mini"), SimpleNamespace(id="google/x")]
+        )
+
+    monkeypatch.setattr(provider, "_create_managed_model_list", fake_managed)
+    monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
+
+    models = await provider.list_models()
+
+    assert models[:2] == ["openai/gpt-4o-mini", "smart-task"]
+    assert "embed-policy" not in models
+    assert "google/x" in models
+    assert len(models) == len(set(models))
+
+
+@pytest.mark.asyncio
+async def test_requesty_list_models_falls_back_when_managed_listing_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RequestyProvider(api_key="test-key")
+    monkeypatch.setattr(provider, "_BASE_RETRY_DELAY", 0)
+
+    async def failing_managed() -> object:
+        raise RuntimeError("managed listing unavailable")
+
+    async def fake_catalog() -> SimpleNamespace:
+        return SimpleNamespace(data=[SimpleNamespace(id="openai/gpt-4o-mini")])
+
+    monkeypatch.setattr(provider, "_create_managed_model_list", failing_managed)
+    monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
+
+    assert await provider.list_models() == ["openai/gpt-4o-mini"]
+
+
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_gemini_provider_defaults() -> None:
     provider = GeminiProvider(api_key="test-key")
@@ -1702,15 +2170,26 @@ def test_claude_provider_defaults_to_official_base_url() -> None:
     assert "api.anthropic.com" in str(provider._client.base_url)
 
 
-def _responses_response(text: str = "ok", *, with_output_text: bool = True) -> SimpleNamespace:
+def _responses_response(
+    text: str = "ok",
+    *,
+    with_output_text: bool = True,
+    truncated: bool = False,
+    with_reasoning: bool = False,
+) -> SimpleNamespace:
+    output: list[SimpleNamespace] = []
+    if with_reasoning:
+        # Reasoning models emit a reasoning-phase item before the message.
+        output.append(SimpleNamespace(type="reasoning", summary=[]))
+    output.append(
+        SimpleNamespace(
+            type="message",
+            content=[SimpleNamespace(type="output_text", text=text)],
+        )
+    )
     response = SimpleNamespace(
         model="gpt-5-mini",
-        output=[
-            SimpleNamespace(
-                type="message",
-                content=[SimpleNamespace(type="output_text", text=text)],
-            )
-        ],
+        output=output,
         usage=SimpleNamespace(
             input_tokens=10,
             output_tokens=5,
@@ -1720,6 +2199,10 @@ def _responses_response(text: str = "ok", *, with_output_text: bool = True) -> S
     )
     if with_output_text:
         response.output_text = text
+    if truncated:
+        # How the Responses API reports output-token truncation on the wire.
+        response.status = "incomplete"
+        response.incomplete_details = SimpleNamespace(reason="max_output_tokens")
     return response
 
 
@@ -1752,7 +2235,10 @@ async def test_openai_provider_responses_flavor_maps_params_and_usage(
     )
 
     assert captured["instructions"] == "be terse"
-    assert captured["input"] == [{"role": "user", "content": "hi"}]
+    assert captured["input"] == [
+        {"role": "user", "content": "hi"},
+        {"role": "user", "content": "Return valid json."},
+    ]
     assert captured["max_output_tokens"] == 512
     assert captured["text"] == {"format": {"type": "json_object"}}
     assert captured["store"] is False
@@ -1853,6 +2339,208 @@ async def test_openai_provider_responses_flavor_retries_without_format_on_empty(
     assert response.content == '{"ok": true}'
     assert "text" in calls[0]
     assert "text" not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_retries_incomplete_json_with_larger_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON payload cut off mid-stream (status=incomplete with
+    incomplete_details.reason=max_output_tokens) is retried once with a
+    doubled ``max_output_tokens`` instead of being handed to the parser
+    truncated."""
+    provider = OpenAIProvider(
+        api_key="test-key",
+        model="gpt-5-mini",
+        base_url="https://relay.example.com/v1",
+        provider_name="openai_compatible",
+        api_flavor="responses",
+        reasoning_effort="low",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            return _responses_response('{"keywords":["并发', truncated=True)
+        return _responses_response('{"keywords":["并发控制"]}')
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "return json"}],
+        json_mode=True,
+        max_tokens=512,
+    )
+
+    assert response.content == '{"keywords":["并发控制"]}'
+    assert len(calls) == 2
+    assert calls[0]["max_output_tokens"] == 512
+    assert calls[1]["max_output_tokens"] == 1024
+    # The retry keeps every other request parameter intact.
+    assert calls[1]["text"] == {"format": {"type": "json_object"}}
+    assert calls[1]["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_retries_empty_incomplete_with_larger_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty content that stays ``incomplete/max_output_tokens`` after the
+    no-format retry gets one doubled-budget retry — the reasoning model spent
+    the whole output budget on thinking."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if len(calls) < 3:
+            return _responses_response("", truncated=True)
+        return _responses_response('{"ok": true}')
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "return json"}],
+        json_mode=True,
+        max_tokens=512,
+    )
+
+    assert response.content == '{"ok": true}'
+    assert len(calls) == 3
+    # Ladder: original ask → empty-content retry without text.format →
+    # truncation retry with a doubled budget.
+    assert "text" not in calls[1]
+    assert calls[1]["max_output_tokens"] == 512
+    assert calls[2]["max_output_tokens"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_raises_empty_error_when_retry_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When even the doubled budget comes back incomplete and empty, the
+    original empty-content error (and downstream fallback) is unchanged."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return _responses_response("", truncated=True)
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete(
+            [{"role": "user", "content": "hi"}],
+            max_tokens=512,
+        )
+
+    assert "returned empty content" in str(exc_info.value)
+    assert len(calls) == 2
+    assert calls[-1]["max_output_tokens"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_skips_length_retry_when_budget_at_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At or above the retry cap a retry would resend the same request, so the
+    call fails directly on the empty-content error."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return _responses_response("", truncated=True)
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete(
+            [{"role": "user", "content": "hi"}],
+            max_tokens=32768,
+        )
+
+    assert "returned empty content" in str(exc_info.value)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_reports_reasoning_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning-phase output + truncation + no final message raises the same
+    marker pair as the chat path, so ``is_reasoning_budget_exhausted()`` (and
+    the evaluation batch-halving self-heal) recognizes it. The doubled-budget
+    retry fires BEFORE the error is raised."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return _responses_response("", truncated=True, with_reasoning=True)
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete(
+            [{"role": "user", "content": "hi"}],
+            max_tokens=512,
+        )
+
+    message = str(exc_info.value)
+    assert "returned reasoning but no final content" in message
+    assert "finish_reason=length" in message
+    assert is_reasoning_budget_exhausted(exc_info.value)
+    assert len(calls) == 2
+    assert calls[-1]["max_output_tokens"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_plain_empty_error_without_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Truncated and empty but without any reasoning-phase output stays the
+    plain empty-content error and is not mistaken for reasoning-budget
+    exhaustion."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        return _responses_response("", truncated=True)
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert "returned empty content" in str(exc_info.value)
+    assert not is_reasoning_budget_exhausted(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_responses_flavor_reasoning_without_truncation_not_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reasoning-phase output with a non-truncated terminal status mirrors the
+    chat path's finish_reason!=length case: the message names the reasoning
+    phase but does NOT carry the length marker the classifier requires."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        response = _responses_response("", with_reasoning=True)
+        response.status = "completed"
+        return response
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    message = str(exc_info.value)
+    assert "returned reasoning but no final content" in message
+    assert "finish_reason=completed" in message
+    assert not is_reasoning_budget_exhausted(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -2008,3 +2696,36 @@ def test_gemini_provider_empty_proxy_is_zero_drift(
     assert isinstance(http_options, dict)
     assert "client_args" not in http_options
     assert "async_client_args" not in http_options
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_retries_when_temperature_must_be_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SenseNova's Kimi route requires temperature=1; retry instead of 400."""
+    provider = object.__new__(OpenAIProvider)
+    provider._provider_name = "openai_compatible"
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        if not calls:
+            calls.append(dict(kwargs))
+            raise LLMProviderError(
+                "openai_compatible request failed: HTTP 400: "
+                "field Temperature invalid, only 1 is allowed for this model"
+            )
+        calls.append(dict(kwargs))
+        return _openai_response("ok")
+
+    provider._request_with_retry = fake_request  # type: ignore[method-assign]
+
+    response = await provider._chat_request_with_temperature_compat(
+        model="kimi-k3",
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0,
+        max_tokens=16,
+    )
+
+    assert response.choices[0].message.content == "ok"
+    assert calls[0]["temperature"] == 0
+    assert calls[1]["temperature"] == 1

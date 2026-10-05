@@ -80,6 +80,18 @@ class RouteAsyncClient:
                 return FakeResponse(payloads.pop(0))
         raise AssertionError(f"Unexpected URL: {url}")
 
+    async def post(
+        self,
+        url: str,
+        data: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
+        self.calls.append((url, data, headers))
+        for path, payloads in self.routes.items():
+            if url.endswith(path):
+                return FakeResponse(payloads.pop(0))
+        raise AssertionError(f"Unexpected URL: {url}")
+
     async def aclose(self) -> None:
         return None
 
@@ -307,6 +319,66 @@ async def test_search_passes_order_parameter() -> None:
     assert client._client.calls[1][1]["page"] == "2"
     assert client._client.calls[1][1]["page_size"] == "10"
     assert client._client.calls[1][1]["order"] == "pubdate"
+
+
+@pytest.mark.asyncio
+async def test_search_passes_strict_publication_timestamp_bounds() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                        }
+                    },
+                }
+            ],
+            "/x/web-interface/wbi/search/type": [{"code": 0, "data": {"result": []}}],
+        }
+    )
+
+    await client.search(
+        "纪录片",
+        pubtime_begin=1704067200,
+        pubtime_end=1735689599,
+    )
+
+    params = client._client.calls[1][1]
+    assert params is not None
+    assert params["pubtime_begin"] == "1704067200"
+    assert params["pubtime_end"] == "1735689599"
+
+
+@pytest.mark.asyncio
+async def test_search_omits_open_publication_boundaries() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                        }
+                    },
+                }
+            ],
+            "/x/web-interface/wbi/search/type": [{"code": 0, "data": {"result": []}}],
+        }
+    )
+
+    await client.search("纪录片", pubtime_end=1735689599)
+
+    params = client._client.calls[1][1]
+    assert params is not None
+    assert "pubtime_begin" not in params
+    assert params["pubtime_end"] == "1735689599"
 
 
 @pytest.mark.asyncio
@@ -744,6 +816,147 @@ async def test_get_following_parses_users() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_user_card_parses_follow_state_and_normalizes_face() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    fake_http = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": {
+                "card": {
+                    "mid": "42",
+                    "name": "测试UP",
+                    "face": "//i0.hdslb.com/bfs/face/up.jpg",
+                    "sign": "签名",
+                    "fans": "12345",
+                },
+                "following": True,
+            },
+        }
+    )
+    client._client = fake_http
+
+    card = await client.get_user_card(42)
+
+    assert card == {
+        "mid": 42,
+        "name": "测试UP",
+        "face": "https://i0.hdslb.com/bfs/face/up.jpg",
+        "sign": "签名",
+        "fans": 12345,
+        "following": True,
+    }
+    assert fake_http.calls[0][0].endswith("/x/web-interface/card")
+    assert fake_http.calls[0][1] == {"mid": 42, "photo": "false"}
+
+
+@pytest.mark.asyncio
+async def test_get_user_card_rejects_non_positive_mid() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+
+    with pytest.raises(BilibiliAPIError, match="invalid mid"):
+        await client.get_user_card(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("follow", "expected_act"),
+    [(True, "1"), (False, "2")],
+)
+async def test_set_user_follow_posts_relation_modify_and_refreshes_card(
+    follow: bool, expected_act: str
+) -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake_http = RouteAsyncClient(
+        {
+            "/x/relation/modify": [{"code": 0, "data": {}}],
+            "/x/web-interface/card": [
+                {
+                    "code": 0,
+                    "data": {
+                        "card": {
+                            "mid": "42",
+                            "name": "测试UP",
+                            "face": "",
+                            "fans": 12346,
+                        },
+                        "following": follow,
+                    },
+                }
+            ],
+        }
+    )
+    client._client = fake_http
+
+    state = await client.set_user_follow(42, follow=follow)
+
+    assert state["following"] is follow
+    assert state["fans"] == 12346
+    assert fake_http.calls[0][0].endswith("/x/relation/modify")
+    assert fake_http.calls[0][1] == {
+        "fid": "42",
+        "act": expected_act,
+        "re_src": "11",
+        "csrf": "csrf123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_user_follow_requires_login() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+
+    with pytest.raises(BilibiliAuthExpiredError):
+        await client.set_user_follow(42, follow=True)
+
+
+@pytest.mark.asyncio
+async def test_set_user_follow_keeps_requested_state_when_card_refresh_fails() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake_http = RouteAsyncClient(
+        {
+            "/x/relation/modify": [{"code": 0, "data": {}}],
+            "/x/web-interface/card": [{"code": -352, "message": "风控"}],
+        }
+    )
+    client._client = fake_http
+
+    state = await client.set_user_follow(42, follow=True)
+
+    assert state == {
+        "mid": 42,
+        "name": "",
+        "face": "",
+        "sign": "",
+        "fans": 0,
+        "following": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_user_follow_treats_duplicate_follow_as_success() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake_http = RouteAsyncClient(
+        {
+            "/x/relation/modify": [{"code": 22014, "message": "已经关注用户，无法重复关注"}],
+            "/x/web-interface/card": [
+                {
+                    "code": 0,
+                    "data": {
+                        "card": {"mid": "42", "name": "测试UP", "fans": 99},
+                        "following": True,
+                    },
+                }
+            ],
+        }
+    )
+    client._client = fake_http
+
+    state = await client.set_user_follow(42, follow=True)
+
+    assert state["following"] is True
+    assert state["fans"] == 99
+
+
+@pytest.mark.asyncio
 async def test_get_video_comments_returns_top_n_comments() -> None:
     client = BilibiliAPIClient(cookie="SESSDATA=abc")
     client._client = RouteAsyncClient(
@@ -811,6 +1024,148 @@ async def test_get_video_info_returns_defaults_when_data_is_null() -> None:
     assert info.title == ""
     assert info.up_name == ""
     assert info.view_count == 0
+    assert info.cid == 0
+    assert info.tid == 0
+    assert info.tid_v2 == 0
+    # The live /view payload carries no tag array, so tags stay None here.
+    assert info.tags is None
+
+
+@pytest.mark.asyncio
+async def test_get_video_info_fills_zone_ids_from_the_view_payload() -> None:
+    """``tid`` / ``tid_v2`` ship in ``/x/web-interface/view`` and cost nothing
+    extra; the client must stop dropping them (issue #232, direction 1).
+
+    Live check on 2026-09-11 across eight ranking videos: ``tid`` / ``tid_v2``
+    are always present, while the payload's text labels ``tname`` /
+    ``tname_v2`` are always empty strings and no ``tag`` array exists at all.
+    """
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": {
+                "bvid": "BV1xx",
+                "aid": 1,
+                "cid": 222,
+                "tid": 121,
+                "tid_v2": 2071,
+                "stat": {"view": 10},
+                "owner": {"name": "alice", "mid": 7},
+            },
+        }
+    )
+
+    info = await client.get_video_info("BV1xx")
+
+    assert info.cid == 222
+    assert info.tid == 121
+    assert info.tid_v2 == 2071
+
+
+@pytest.mark.asyncio
+async def test_get_video_info_still_uses_exactly_one_request() -> None:
+    """Filling the extra fields must not add a request: tag names are only
+    fetched by an explicit :meth:`get_video_tags` call, so the hot path
+    (comments, danmaku preheat, play-url) keeps its single ``/view`` round-trip.
+    """
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    fake = FakeAsyncClient({"code": 0, "data": {"bvid": "BV1xx", "tid": 121}})
+    client._client = fake
+
+    await client.get_video_info("BV1xx")
+
+    assert len(fake.calls) == 1
+    assert fake.calls[0][0].endswith("/x/web-interface/view")
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_parses_bare_array_payload() -> None:
+    """``/x/tag/archive/tags`` returns ``data`` as a bare array of tag objects
+    (unlike most endpoints), so it must be coerced with the list helper and the
+    names returned in payload order.
+    """
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": [
+                {"tag_id": 42642704, "tag_name": "三角洲行动", "type": 1},
+                {"tag_id": 100231797, "tag_name": "三角洲行动二洲年", "type": 3},
+                {"tag_id": 1, "tag_name": "洲彦祖再集结", "type": 3},
+            ],
+        }
+    )
+
+    tags = await client.get_video_tags("BV1eqYx6UE9V")
+
+    assert tags == ["三角洲行动", "三角洲行动二洲年", "洲彦祖再集结"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"code": 0, "data": []}, []),
+        ({"code": 0, "data": None}, []),
+        # Blank / missing / non-string names must not become empty-string tags.
+        (
+            {"code": 0, "data": [{"tag_name": "  "}, {"tag_name": ""}, {}, {"tag_name": None}]},
+            [],
+        ),
+        # Malformed entries are skipped instead of raising mid-payload.
+        (
+            {"code": 0, "data": ["三角洲行动", {"tag_name": "赛博朋克"}, 42]},
+            ["赛博朋克"],
+        ),
+    ],
+)
+async def test_get_video_tags_tolerates_empty_and_malformed_payloads(
+    payload: dict[str, object],
+    expected: list[str],
+) -> None:
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(payload)
+
+    assert await client.get_video_tags("BV1xx") == expected
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_respects_limit() -> None:
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(
+        {"code": 0, "data": [{"tag_name": f"标签{index}"} for index in range(6)]}
+    )
+
+    assert await client.get_video_tags("BV1xx", limit=2) == ["标签0", "标签1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, -1])
+async def test_get_video_tags_non_positive_limit_returns_empty_without_request(
+    limit: int,
+) -> None:
+    """``limit`` is a hard maximum, so non-positive values yield no tags — and
+    short-circuit before any HTTP call, matching the other limit helpers.
+    """
+    client = BilibiliAPIClient(cookie="")
+    fake = FakeAsyncClient({"code": 0, "data": [{"tag_name": "标签0"}]})
+    client._client = fake
+
+    assert await client.get_video_tags("BV1xx", limit=limit) == []
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_propagates_api_errors() -> None:
+    """A failed tag fetch must stay distinguishable from "this video has no
+    tags": the error is not swallowed into an empty list.
+    """
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient({"code": -404, "message": "啥都木有"})
+
+    with pytest.raises(BilibiliAPIError):
+        await client.get_video_tags("BV1xx")
 
 
 def test_client_bypasses_env_and_system_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -864,3 +1219,86 @@ def test_csrf_token_requires_exact_cookie_names() -> None:
 
     with pytest.raises(BilibiliAuthExpiredError):
         client._csrf_token()
+
+
+async def test_post_comment_sends_csrf_and_thread_params() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": 0, "data": {"rpid": 987}}],
+        }
+    )
+    client._client = fake
+
+    result = await client.post_comment("BV1xx411c7mD", message="  好视频  ", root=12, parent=34)
+
+    assert result["rpid"] == 987
+    post_url, post_data, _headers = fake.calls[-1]
+    assert post_url.endswith("/x/v2/reply/add")
+    assert post_data["oid"] == 12345
+    assert post_data["type"] == 1
+    assert post_data["message"] == "好视频"
+    assert post_data["csrf"] == "csrf123"
+    assert post_data["root"] == "12"
+    assert post_data["parent"] == "34"
+
+
+async def test_post_comment_top_level_omits_thread_params() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": 0, "data": {"rpid": 1}}],
+        }
+    )
+    client._client = fake
+
+    await client.post_comment("BV1xx411c7mD", message="你好")
+
+    _post_url, post_data, _headers = fake.calls[-1]
+    assert "root" not in post_data
+    assert "parent" not in post_data
+
+
+async def test_post_comment_rejects_blank_or_long_message() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="   ")
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="长" * 1001)
+
+
+async def test_post_comment_propagates_api_failure() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": -403, "data": None}],
+        }
+    )
+    client._client = fake
+
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="你好")
+
+
+async def test_delete_comment_sends_aid_csrf_and_rpid() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/del": [{"code": 0, "data": None}],
+        }
+    )
+    client._client = fake
+
+    await client.delete_comment("BV1xx411c7mD", rpid=987)
+
+    post_url, post_data, _headers = fake.calls[-1]
+    assert post_url.endswith("/x/v2/reply/del")
+    assert post_data["oid"] == 12345
+    assert post_data["type"] == 1
+    assert post_data["rpid"] == "987"
+    assert post_data["csrf"] == "csrf123"

@@ -437,6 +437,49 @@ def test_awareness_prompt_mentions_dislike_as_awareness_signal() -> None:
     assert "最近开始避开" in messages[0]["content"]
 
 
+def test_awareness_prompts_require_evidence_for_dislike_claims() -> None:
+    """Issue #205: notes claimed 点踩 without any dislike event in evidence.
+    Both awareness system prompts must forbid dislike claims unless a real
+    negative-feedback event exists in recent_events."""
+    from openbiliclaw.llm.prompts import _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT
+
+    for system_prompt in (_AWARENESS_SYSTEM_PROMPT, _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT):
+        assert "负反馈一致性" in system_prompt
+        assert "绝不能在笔记中声称用户点踩" in system_prompt
+
+
+def test_build_awareness_with_confusions_prompt_includes_existing_confusions() -> None:
+    from openbiliclaw.llm.prompts import build_awareness_with_confusions_prompt
+
+    messages = build_awareness_with_confusions_prompt(
+        events=[{"event_type": "view", "title": "最新事件"}],
+        preference_summary={"interests": ["稳定偏好"]},
+        soul_profile={"core_traits": ["稳定画像"]},
+        existing_confusions=[
+            {
+                "id": 1,
+                "status": "open",
+                "topic": "城市菜市场与社区商业观察",
+                "observation": "反复停留但从不购买",
+                "interpretation": "可能是社区观察型兴趣",
+            },
+            {
+                "id": 2,
+                "status": "resolved",
+                "topic": "已经处理过的疑惑",
+                "observation": "历史确认过",
+                "interpretation": "无需再问",
+            },
+        ],
+    )
+
+    user = messages[1]["content"]
+    assert "<existing_confusions>" in user
+    assert "</existing_confusions>" in user
+    assert "城市菜市场与社区商业观察" in user
+    assert "已经处理过的疑惑" in user
+
+
 def test_build_awareness_prompt_user_block_ends_with_recent_events() -> None:
     """Recent events is the most-variable block and must be the suffix.
     Anything stable after it would shrink the cache prefix on every call."""
@@ -730,6 +773,9 @@ def test_content_evaluation_prompts_define_publication_time_semantics() -> None:
         assert "trending/search/feed 也不能决定分类" in system
         assert "temporal_confidence" in system
         assert "不是内容质量、相关性或新鲜度" in system
+        assert "条件、假设、可能性或未来态句子" in system
+        assert "如果支持版本发生变化就重新核验" in system
+        assert "Temporal V2 仍是当前受支持版本" in system
         assert '"evaluated_at": "2026-08-04T09:00:00Z"' in user
         assert '"published_at": "2026-08-01T00:00:00Z"' in user
 
@@ -754,6 +800,24 @@ def test_temporal_evaluation_output_contract_is_static_for_pretty_and_sparse_bat
         assert "temporal_class" in system
         assert "temporal_confidence" in system
         assert "temporal_reason" in system
+        assert "temporal_validity_mode" in system
+        assert "temporal_valid_until" in system
+        assert "temporal_scope" in system
+        assert "temporal_evidence" in system
+        assert "temporal_state" in system
+        assert "explicit_deadline" in system
+        assert "event_state" in system
+        assert "version_state" in system
+        assert "freshness_only" in system
+        assert "所有非 none mode 都必须给逐字证据" in system
+        assert "evergreen/historical" in system
+        assert "freshness_only + hook" in system
+        assert "限时免费领取" in system
+        assert "今晚首播" in system
+        assert "unknown、active、expired、superseded" in system
+        assert "event_state 只能" in system
+        assert "version_state 只能" in system
+        assert "temporal_class=unknown 时必须输出 temporal_confidence=0" in system
         assert '"temporal_class": "evergreen"' in system
         assert "分类看核心价值" in system
         assert "score 只衡量内容与用户画像的相关性及内容本身价值" in system
@@ -1345,6 +1409,105 @@ def test_preference_analysis_system_prompt_contains_full_vocab() -> None:
     assert "category 必须" in system
 
 
+def test_prompt_builders_strip_the_interest_decay_cursor() -> None:
+    """``last_decay_at`` is storage bookkeeping, not prompt input.
+
+    It moves on every merge and says nothing about user behaviour, so it must
+    not spend prompt budget, shift the preference analyzer's
+    ``max_prompt_chars`` chunking decision, or perturb prompt-cache prefixes.
+    """
+    from openbiliclaw.llm.prompts import (
+        build_awareness_prompt,
+        build_awareness_with_confusions_prompt,
+        build_insight_prompt,
+        build_preference_analysis_prompt,
+        build_soul_profile_prompt,
+        render_preference_summary,
+    )
+
+    interest = {
+        "name": "滑雪",
+        "category": "体育",
+        "weight": 0.8,
+        "first_seen": "2026-09-01T00:00:00",
+        "last_seen": "2026-09-01T00:00:00",
+        "source": "browse",
+    }
+    persisted = {"interests": [{**interest, "last_decay_at": "2026-09-08T00:00:00"}]}
+    cleaned = {"interests": [interest]}
+    events = [{"event_type": "view", "title": "标题"}]
+
+    for view in ("legacy", "compact-v1"):
+        messages = [
+            build_preference_analysis_prompt(
+                events=events,
+                existing_preference=persisted,
+                input_view=view,
+            ),
+            build_awareness_prompt(
+                events=events,
+                preference_summary=persisted,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events,
+                preference_summary=persisted,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_insight_prompt(
+                awareness_notes=[],
+                preference_summary=persisted,
+                soul_profile={},
+                input_view=view,
+            ),
+        ]
+        baselines = [
+            build_preference_analysis_prompt(
+                events=events,
+                existing_preference=cleaned,
+                input_view=view,
+            ),
+            build_awareness_prompt(
+                events=events,
+                preference_summary=cleaned,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events,
+                preference_summary=cleaned,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_insight_prompt(
+                awareness_notes=[],
+                preference_summary=cleaned,
+                soul_profile={},
+                input_view=view,
+            ),
+        ]
+
+        assert messages == baselines
+        assert "last_decay_at" not in json.dumps(messages, ensure_ascii=False)
+
+    soul_messages = build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=persisted,
+        tone_profile=None,
+    )
+    assert soul_messages == build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=cleaned,
+        tone_profile=None,
+    )
+    assert "last_decay_at" not in json.dumps(soul_messages, ensure_ascii=False)
+
+    assert render_preference_summary(persisted) == render_preference_summary(cleaned)
+    assert "last_decay_at" not in render_preference_summary(persisted)
+
+
 # ----------------------------------------------------------------------
 # v0.3.x batch_content_evaluation negative_examples block.
 
@@ -1616,6 +1779,52 @@ def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:
     assert "TWEET_BODY_MARKER" not in system
 
 
+_TEMPORAL_EXPRESSION_CONTENT = {
+    "title": "2024 年的老片重映",
+    "up_name": "某UP",
+    "published_at": "2024-05-01T12:00:00Z",
+    "published_label": "2024-05-01",
+    "evaluated_at": "2026-01-02T03:04:05Z",
+}
+
+
+def test_recommendation_expression_prompt_carries_temporal_grounding() -> None:
+    messages = build_recommendation_expression_prompt(
+        profile_summary={"a": 1},
+        content_summary=dict(_TEMPORAL_EXPRESSION_CONTENT),
+        tone_profile=None,
+        source_platform="bilibili",
+    )
+    system, user = messages[0]["content"], messages[1]["content"]
+
+    assert "2024-05-01T12:00:00Z" in user
+    assert "2024-05-01" in user
+    assert "2026-01-02T03:04:05Z" in user
+    # The evaluation clock must never leak into the static cached prefix.
+    assert "2024-05-01T12:00:00Z" not in system
+    assert "2026-01-02T03:04:05Z" not in system
+    # Static rule: only the supplied fields may be used for freshness.
+    assert "content_summary.evaluated_at" in system
+    assert "评估这条内容时的权威当前时间" in system
+
+
+def test_batch_expression_prompt_carries_per_item_temporal_grounding() -> None:
+    messages = build_batch_expression_prompt(
+        profile_summary={"a": 1},
+        content_items=[dict(_TEMPORAL_EXPRESSION_CONTENT)],
+        tone_profile=None,
+        source_platform="bilibili",
+    )
+    system, user = messages[0]["content"], messages[1]["content"]
+
+    assert "2024-05-01T12:00:00Z" in user
+    assert "2026-01-02T03:04:05Z" in user
+    assert "2024-05-01T12:00:00Z" not in system
+    assert "2026-01-02T03:04:05Z" not in system
+    assert "evaluated_at" in system
+    assert "评估该条内容时的权威当前时间" in system
+
+
 # ----------------------------------------------------------------------
 # Discover backpressure P1.4: merged multi-platform keyword builder + parser.
 
@@ -1825,6 +2034,8 @@ def test_merged_keywords_system_prompt_carries_supply_advantage_table() -> None:
     assert "热点" in sys_prompt and "搞笑" in sys_prompt  # douyin
     assert "英文长内容" in sys_prompt and "纪录片" in sys_prompt  # youtube
     assert "实时讨论" in sys_prompt and "英文技术" in sys_prompt  # twitter
+    assert "公开代码仓库" in sys_prompt and "开源工具" in sys_prompt  # github
+    assert "github" in sys_prompt
     assert "知乎" in sys_prompt and "回答" in sys_prompt  # zhihu
     assert "zhihu" in sys_prompt
     assert "subreddit" in sys_prompt and "经验讨论" in sys_prompt  # reddit
@@ -2065,3 +2276,198 @@ class TestPreferencePromptCognitionContext:
         assert body.index("<active_insights>") < body.index("<event_batch>")
         assert "最近在深挖 Rust 底层" in body
         assert "可能是系统编程从业者" in body
+
+
+class TestReplyStyleInjection:
+    """issue #255: ``soul.reply_style`` appends one tone-block line; empty stays byte-identical."""
+
+    _TONE = {
+        "density": "dense",
+        "warmth": "warm",
+        "playfulness": "medium",
+        "directness": "balanced",
+    }
+
+    def test_render_tone_profile_empty_reply_style_is_byte_identical(self) -> None:
+        from openbiliclaw.llm.prompts import _render_tone_profile
+
+        baseline = _render_tone_profile(self._TONE)
+        assert baseline == _render_tone_profile(self._TONE, reply_style="")
+        assert baseline == _render_tone_profile(self._TONE, reply_style="  \n\t ")
+        assert "- 回复风格:" not in baseline
+
+    def test_render_tone_profile_appends_single_collapsed_line(self) -> None:
+        from openbiliclaw.llm.prompts import _render_tone_profile
+
+        rendered = _render_tone_profile(self._TONE, reply_style="语气温和\n\n少用  梗")
+
+        assert rendered.endswith("\n- 回复风格: 语气温和 少用 梗")
+        assert rendered.count("- 回复风格:") == 1
+
+    def test_dialogue_prompt_empty_reply_style_is_byte_identical(self) -> None:
+        kwargs = {
+            "user_message": "我最近有点迷上纪录片",
+            "core_memory_text": "",
+            "tone_profile": self._TONE,
+            "history": [],
+        }
+
+        assert build_socratic_dialogue_prompt(**kwargs) == build_socratic_dialogue_prompt(
+            **kwargs, reply_style=""
+        )
+
+    def test_dialogue_prompt_injects_reply_style(self) -> None:
+        messages = build_socratic_dialogue_prompt(
+            user_message="我最近有点迷上纪录片",
+            core_memory_text="",
+            tone_profile=self._TONE,
+            history=[],
+            reply_style="像损友一样毒舌",
+        )
+
+        assert "- 回复风格: 像损友一样毒舌" in messages[0]["content"]
+
+    def test_soul_profile_prompt_empty_reply_style_is_byte_identical(self) -> None:
+        kwargs = {
+            "history_summary": {"total": 3},
+            "preference_summary": {"interests": []},
+            "tone_profile": self._TONE,
+        }
+
+        assert build_soul_profile_prompt(**kwargs) == build_soul_profile_prompt(
+            **kwargs, reply_style=""
+        )
+
+    def test_soul_profile_prompt_injects_reply_style_into_tone_block(self) -> None:
+        messages = build_soul_profile_prompt(
+            history_summary={"total": 3},
+            preference_summary={"interests": []},
+            tone_profile=self._TONE,
+            reply_style="简洁直接",
+        )
+        user_prompt = messages[1]["content"]
+
+        tone_block = user_prompt.split("<tone_profile>", 1)[1].split("</tone_profile>", 1)[0]
+        assert "- 回复风格: 简洁直接" in tone_block
+
+    def test_recommendation_expression_prompt_empty_reply_style_is_byte_identical(self) -> None:
+        kwargs = {
+            "profile_summary": {"personality_portrait": "偏好高信息密度内容"},
+            "content_summary": {"title": "讲透国际局势", "up_name": "某UP"},
+            "tone_profile": self._TONE,
+            "source_platform": "bilibili",
+        }
+
+        assert build_recommendation_expression_prompt(
+            **kwargs
+        ) == build_recommendation_expression_prompt(**kwargs, reply_style="")
+
+    def test_recommendation_expression_prompt_injects_reply_style(self) -> None:
+        messages = build_recommendation_expression_prompt(
+            profile_summary={"personality_portrait": "偏好高信息密度内容"},
+            content_summary={"title": "讲透国际局势", "up_name": "某UP"},
+            tone_profile=self._TONE,
+            source_platform="bilibili",
+            reply_style="活泼一点",
+        )
+
+        assert "- 回复风格: 活泼一点" in messages[1]["content"]
+
+    def test_batch_expression_prompt_empty_reply_style_is_byte_identical(self) -> None:
+        kwargs = {
+            "profile_summary": {"core_traits": ["fallback"]},
+            "content_items": [{"bvid": "BV1", "title": "候选"}],
+            "tone_profile": self._TONE,
+            "source_platform": "bilibili",
+        }
+
+        assert build_batch_expression_prompt(**kwargs) == build_batch_expression_prompt(
+            **kwargs, reply_style=""
+        )
+
+    def test_batch_expression_prompt_injects_reply_style(self) -> None:
+        messages = build_batch_expression_prompt(
+            profile_summary={"core_traits": ["fallback"]},
+            content_items=[{"bvid": "BV1", "title": "候选"}],
+            tone_profile=self._TONE,
+            source_platform="bilibili",
+            reply_style="多用短句",
+        )
+
+        assert "- 回复风格: 多用短句" in messages[1]["content"]
+
+
+class TestDialogueTonePromptReplacement:
+    """``soul.dialogue_tone_prompt`` replaces the dialogue tone block; empty is byte-identical."""
+
+    _TONE = {
+        "density": "dense",
+        "warmth": "warm",
+        "playfulness": "medium",
+        "directness": "balanced",
+    }
+
+    def _dialogue_kwargs(self) -> dict[str, object]:
+        return {
+            "user_message": "我最近有点迷上纪录片",
+            "core_memory_text": "",
+            "tone_profile": self._TONE,
+            "history": [],
+        }
+
+    def test_empty_dialogue_tone_prompt_is_byte_identical(self) -> None:
+        kwargs = self._dialogue_kwargs()
+
+        baseline = build_socratic_dialogue_prompt(**kwargs)
+        assert baseline == build_socratic_dialogue_prompt(**kwargs, dialogue_tone_prompt="")
+        assert baseline == build_socratic_dialogue_prompt(**kwargs, dialogue_tone_prompt="  \n\t ")
+
+    def test_non_empty_replaces_tone_block_and_keeps_other_segments(self) -> None:
+        custom = "说话像一个爱看纪录片的老朋友：\n- 多用短句\n- 先问动机再给建议"
+        baseline = build_socratic_dialogue_prompt(
+            **self._dialogue_kwargs(), reply_style="像损友一样毒舌"
+        )
+        replaced = build_socratic_dialogue_prompt(
+            **self._dialogue_kwargs(),
+            reply_style="像损友一样毒舌",
+            dialogue_tone_prompt=custom,
+        )
+
+        baseline_system = baseline[0]["content"]
+        replaced_system = replaced[0]["content"]
+
+        # The whole rendered tone block (including the reply_style line) is gone.
+        assert "- 信息密度" in baseline_system
+        assert "- 回复风格: 像损友一样毒舌" in baseline_system
+        assert "- 信息密度" not in replaced_system
+        assert "- 情绪温度" not in replaced_system
+        assert "- 回复风格:" not in replaced_system
+        # The user text appears verbatim (multi-line preserved).
+        assert custom in replaced_system
+        # Identity / Socratic behaviour / capability boundary / core-memory
+        # lead-in segments stay byte-identical.
+        for segment in (
+            "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
+            "请使用苏格拉底式对话风格",
+            "能力边界：",
+            "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
+        ):
+            assert segment in replaced_system
+
+    def test_dialogue_tone_prompt_is_stripped_but_not_collapsed(self) -> None:
+        messages = build_socratic_dialogue_prompt(
+            **self._dialogue_kwargs(),
+            dialogue_tone_prompt="\n  第一行\n  第二行  \n",
+        )
+
+        assert "第一行\n  第二行" in messages[0]["content"]
+
+    def test_other_builders_have_no_dialogue_tone_prompt_param(self) -> None:
+        import inspect
+
+        for builder in (
+            build_soul_profile_prompt,
+            build_recommendation_expression_prompt,
+            build_batch_expression_prompt,
+        ):
+            assert "dialogue_tone_prompt" not in inspect.signature(builder).parameters

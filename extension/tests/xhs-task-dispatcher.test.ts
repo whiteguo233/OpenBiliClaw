@@ -76,7 +76,7 @@ test("buildTaskUrl encodes keyword search URL", () => {
   const url = buildTaskUrl(task);
   assert.equal(
     url,
-    "https://www.xiaohongshu.com/search_result?keyword=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98",
+    "https://www.xiaohongshu.com/search_result?keyword=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98&openbiliclaw_xhs_task=1",
   );
 });
 
@@ -88,13 +88,13 @@ test("buildTaskUrl returns creator URL directly", () => {
   };
   assert.equal(
     buildTaskUrl(task),
-    "https://www.xiaohongshu.com/user/profile/abc",
+    "https://www.xiaohongshu.com/user/profile/abc?openbiliclaw_xhs_task=1",
   );
 });
 
 test("buildTaskUrl routes bootstrap profile tasks to explore", () => {
   const task: XhsTask = { id: "t-bootstrap", type: "bootstrap_profile" };
-  assert.equal(buildTaskUrl(task), "https://www.xiaohongshu.com/explore");
+  assert.equal(buildTaskUrl(task), "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1");
 });
 
 test("buildTaskUrl returns null for search without keyword", () => {
@@ -196,7 +196,7 @@ interface ChromeMock {
   tabs: {
     create: (opts: { url: string; active?: boolean }) => Promise<{ id: number }>;
     query: (opts: { active?: boolean; currentWindow?: boolean }) => Promise<Array<{ id?: number; url?: string; status?: string }>>;
-    update: (tabId: number, opts: { url?: string; active?: boolean }) => Promise<void>;
+    update: (tabId: number, opts: { url?: string; active?: boolean; muted?: boolean }) => Promise<void>;
     remove: (tabId: number) => Promise<void>;
     sendMessage: (tabId: number, message: unknown) => Promise<void>;
     onUpdated: {
@@ -214,7 +214,7 @@ interface MockState {
   sentMessages: { tabId: number; message: unknown }[];
   sendMessageImpl: (tabId: number, message: unknown) => Promise<void>;
   fetchCalls: { url: string; body?: unknown }[];
-  updatedTabs: { tabId: number; url?: string; active?: boolean }[];
+  updatedTabs: { tabId: number; url?: string; active?: boolean; muted?: boolean }[];
   removedTabs: number[];
   queriedTabs: { active?: boolean; currentWindow?: boolean }[];
   queryResult: Array<{ id?: number; url?: string; status?: string }>;
@@ -383,7 +383,7 @@ test("executeTask opens bootstrap_profile in a foreground tab regardless of scro
   await executeTask(task);
 
   assert.deepEqual(state.createdTabs, [
-    { url: "https://www.xiaohongshu.com/explore", active: true },
+    { url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1", active: true },
   ]);
 
   await handleTaskResult({ task_id: "t-bootstrap-no-scroll", urls: [], status: "ok" });
@@ -398,7 +398,7 @@ test("executeTask keeps search discovery in a background tab", async () => {
 
   assert.deepEqual(state.createdTabs, [
     {
-      url: "https://www.xiaohongshu.com/search_result?keyword=demo",
+      url: "https://www.xiaohongshu.com/search_result?keyword=demo&openbiliclaw_xhs_task=1",
       active: false,
     },
   ]);
@@ -407,7 +407,7 @@ test("executeTask keeps search discovery in a background tab", async () => {
   await handleTaskResult({ task_id: "t-search-bg", urls: [], status: "ok" });
   await flush();
   assert.deepEqual(state.removedTabs, [42]);
-  assert.deepEqual(state.updatedTabs, []);
+  assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }]);
 });
 
 test("rate-limited task result is reported and closes the task tab", async () => {
@@ -465,7 +465,7 @@ test("executeTask opens explore active and waits after clicked profile navigatio
 
   assert.deepEqual(state.createdTabs, [
     {
-      url: "https://www.xiaohongshu.com/explore",
+      url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1",
       active: true,
     },
   ]);
@@ -494,7 +494,11 @@ test("executeTask opens explore active and waits after clicked profile navigatio
   });
   await flush();
 
-  assert.deepEqual(state.updatedTabs, [], "clicked profile navigation must not call tabs.update");
+  assert.deepEqual(
+    state.updatedTabs,
+    [{ tabId: 42, muted: true }],
+    "clicked profile navigation must not call tabs.update beyond the initial mute",
+  );
 
   chrome.tabs.onUpdated._emit(42, { status: "complete" });
   await flush();
@@ -572,9 +576,10 @@ test("bootstrap task follows a discovered profile URL before reporting the resul
   await flush();
 
   assert.deepEqual(state.updatedTabs, [
+    { tabId: 42, muted: true },
     {
       tabId: 42,
-      url: "https://www.xiaohongshu.com/user/profile/current-user",
+      url: "https://www.xiaohongshu.com/user/profile/current-user?openbiliclaw_xhs_task=1",
     },
   ]);
   assert.equal(

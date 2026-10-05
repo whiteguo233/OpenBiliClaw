@@ -439,7 +439,7 @@ async def test_search_query_generation_uses_low_cost_structured_call() -> None:
     await strategy._generate_queries(_build_profile())
 
     assert llm_service.calls[0]["caller"] == "discovery.search.queries"
-    assert llm_service.calls[0]["reasoning_effort"] == ""
+    assert llm_service.calls[0]["reasoning_effort"] is None
     assert llm_service.calls[0]["inject_core_memory"] is False
 
 
@@ -483,6 +483,7 @@ class FakeBilibiliClient:
     results_by_query: dict[str, list[dict[str, object]]]
     failing_queries: set[str] = field(default_factory=set)
     calls: list[str] = field(default_factory=list)
+    call_details: list[dict[str, object]] = field(default_factory=list)
 
     async def search(
         self,
@@ -490,11 +491,89 @@ class FakeBilibiliClient:
         page: int = 1,
         page_size: int = 20,
         order: str = "totalrank",
+        *,
+        pubtime_begin: int | None = None,
+        pubtime_end: int | None = None,
     ) -> list[dict[str, object]]:
         self.calls.append(keyword)
+        self.call_details.append(
+            {
+                "page": page,
+                "page_size": page_size,
+                "order": order,
+                "pubtime_begin": pubtime_begin,
+                "pubtime_end": pubtime_end,
+            }
+        )
         if keyword in self.failing_queries:
             raise RuntimeError(f"boom: {keyword}")
         return self.results_by_query.get(keyword, [])
+
+
+def test_search_strategy_only_pushes_strict_publication_bounds() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
+
+    strict = SearchStrategy(
+        llm_service=FakeLLMService("{}"),
+        bilibili_client=FakeBilibiliClient({}),
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            start_date="2026-01-01",
+            end_date="2026-12-31",
+            weight=1.0,
+        ),
+    )
+    soft = SearchStrategy(
+        llm_service=FakeLLMService("{}"),
+        bilibili_client=FakeBilibiliClient({}),
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            start_date="2026-01-01",
+            end_date="2026-12-31",
+            weight=0.5,
+        ),
+    )
+
+    _, strict_plan = strict._build_request_plan(["纪录片"])
+    _, soft_plan = soft._build_request_plan(["纪录片"])
+
+    assert strict_plan[0].pubtime_begin is not None
+    assert strict_plan[0].pubtime_end is not None
+    assert soft_plan[0].pubtime_begin is None
+    assert soft_plan[0].pubtime_end is None
+
+
+def test_search_strategy_preserves_open_publication_boundaries() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
+
+    start_only = SearchStrategy(
+        llm_service=FakeLLMService("{}"),
+        bilibili_client=FakeBilibiliClient({}),
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            start_date="2026-01-01",
+            weight=1.0,
+        ),
+    )
+    end_only = SearchStrategy(
+        llm_service=FakeLLMService("{}"),
+        bilibili_client=FakeBilibiliClient({}),
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            end_date="2026-12-31",
+            weight=1.0,
+        ),
+    )
+
+    _, start_plan = start_only._build_request_plan(["纪录片"])
+    _, end_plan = end_only._build_request_plan(["纪录片"])
+
+    assert start_plan[0].pubtime_begin is not None
+    assert start_plan[0].pubtime_end is None
+    assert end_plan[0].pubtime_begin is None
+    assert end_plan[0].pubtime_end is not None
 
 
 def test_search_strategy_map_search_result_maps_available_metrics() -> None:

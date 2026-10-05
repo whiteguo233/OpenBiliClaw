@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -82,3 +84,57 @@ def test_update_json_state_serializes_typed_state_without_re_normalizing(
     assert first.count == 1
     assert second.count == 2
     assert json.loads(path.read_text(encoding="utf-8")) == {"count": 2}
+
+
+def test_atomic_write_json_retries_transient_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from openbiliclaw.memory import json_state
+    from openbiliclaw.memory.json_state import _atomic_write_json
+
+    path = tmp_path / "state.json"
+    real_replace = os.replace
+    attempts = 0
+    sleeps: list[float] = []
+
+    def flaky_replace(src: str, dst: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise PermissionError(5, "Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(json_state.os, "replace", flaky_replace)
+    monkeypatch.setattr(json_state.time, "sleep", sleeps.append)
+
+    _atomic_write_json(path, {"ok": True})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"ok": True}
+    assert attempts == 3
+    assert len(sleeps) == 2
+
+
+def test_atomic_write_json_raises_after_retries_exhausted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.memory import json_state
+    from openbiliclaw.memory.json_state import _atomic_write_json
+
+    path = tmp_path / "state.json"
+    sleeps: list[float] = []
+
+    def always_denied(src: str, dst: str) -> None:
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(json_state.os, "replace", always_denied)
+    monkeypatch.setattr(json_state.time, "sleep", sleeps.append)
+
+    with pytest.raises(PermissionError):
+        _atomic_write_json(path, {"ok": True})
+
+    assert len(sleeps) == json_state._ATOMIC_WRITE_MAX_ATTEMPTS - 1
+    assert list(tmp_path.glob("*.tmp")) == []

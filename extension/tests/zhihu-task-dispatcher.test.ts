@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   computeZhihuTaskTimeoutMs,
@@ -12,6 +14,13 @@ import {
 } from "../src/background/zhihu-task-dispatcher.ts";
 import type { NativeSaveResult, NativeSaveTask } from "../src/shared/native-save.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
+
+test("Zhihu content entry installs the read-only native-save verifier", () => {
+  const source = readFileSync(resolve("src/content/zhihu.ts"), "utf8");
+  assert.match(source, /installNativeSaveExecutor\(["']zhihu["'], saveZhihu, verifyZhihu\)/);
+  assert.ok(source.indexOf("installNativeSaveExecutor(") < source.indexOf("startCollector("));
+  assert.match(source, /shouldStartPassiveCollector\(\)[\s\S]*if \(shouldStart\) startCollector/);
+});
 
 test("isValidZhihuTask accepts discovery task types", () => {
   assert.equal(isValidZhihuTask({ id: "hot", type: "hot", max_items: 10 }), true);
@@ -94,13 +103,17 @@ test("Zhihu native dispatcher runs shared runner with exact slug and authenticat
   assert.equal(posted.length, 1);
 
   const calls: Array<{ url: string; init: RequestInit }> = [];
-  await postZhihuNativeSaveResult(posted[0], {
+  await postZhihuNativeSaveResult(posted[0], undefined, {
     resolveUrl: async (path) => `http://127.0.0.1:8420/api${path}`,
-    async fetch(url, init) { calls.push({ url, init }); return {}; },
+    async fetch(url, init) { calls.push({ url, init }); return { ok: true }; },
   });
   assert.equal(calls[0].url, "http://127.0.0.1:8420/api/sources/zhihu/task-result");
   assert.equal(calls[0].init.method, "POST");
   assert.deepEqual(JSON.parse(String(calls[0].init.body)), posted[0]);
+  await assert.rejects(postZhihuNativeSaveResult(posted[0], undefined, {
+    resolveUrl: async (path) => `http://127.0.0.1:8420/api${path}`,
+    async fetch() { return { ok: false }; },
+  }), /not acknowledged/);
 });
 
 test("computeZhihuTaskTimeoutMs scales discovery task breadth", () => {

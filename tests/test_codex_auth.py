@@ -10,12 +10,14 @@ import pytest
 from openbiliclaw.llm.codex_auth import (
     CodexAuthError,
     CodexCredentials,
+    CodexProbeState,
     delete_codex_credentials,
     get_valid_codex_token,
     import_codex_credentials,
     load_codex_credentials,
     refresh_codex_token,
     save_codex_credentials,
+    save_codex_probe_state,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +86,29 @@ def test_import_codex_credentials_reads_nested_codex_cli_shape(tmp_path: Path) -
     assert creds.expires_at == float(expires_at)
     assert creds.account_id == "acct_nested"
     assert load_codex_credentials(token_path=destination) == creds
+
+
+def test_save_load_round_trip_persists_last_probe_state(tmp_path: Path) -> None:
+    token_path = tmp_path / "codex_auth.json"
+    creds = CodexCredentials(
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=1234567890.0,
+        account_id="acct_123",
+    )
+
+    updated = save_codex_probe_state(
+        creds,
+        CodexProbeState(ok=False, checked_at=1234567891.0, model="gpt-5-nano", message="401"),
+        token_path=token_path,
+    )
+
+    assert updated.last_probe is not None
+    assert updated.last_probe.ok is False
+    assert updated.last_probe.model == "gpt-5-nano"
+    loaded = load_codex_credentials(token_path=token_path)
+    assert loaded is not None
+    assert loaded.last_probe == updated.last_probe
 
 
 def test_import_codex_credentials_rejects_missing_refresh_token(tmp_path: Path) -> None:

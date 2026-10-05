@@ -142,15 +142,17 @@ def apply_evidence(
     updated: list[dict[str, Any]],
     *,
     now: datetime | None = None,
+    evidence_keys: set[tuple[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[LifecycleTransition]]:
     """Overlay lifecycle metadata onto a freshly analysed interest list.
 
     ``updated`` is the analyzer's new interest list (which already merged
     weights against ``existing``); this carries the lifecycle fields forward
-    from ``existing`` by ``(name, category)`` key, counts each surviving or
-    new topic as one unit of evidence, and applies the evidence-driven
-    transitions (trial → active, archived/decaying → active). New topics
-    enter as ``trial``. Returns the mutated list and the transitions.
+    from ``existing`` by ``(name, category)`` key. By default each supplied
+    topic counts as evidence for compatibility with direct callers. Merge
+    pipelines that pass a full retained snapshot must provide ``evidence_keys``
+    so untouched topics only preserve their lifecycle metadata. New topics
+    always enter as ``trial``. Returns the mutated list and the transitions.
     """
     current = now or datetime.now()
     now_iso = current.isoformat()
@@ -172,6 +174,18 @@ def apply_evidence(
             item["last_evidence_at"] = now_iso
             item.setdefault("parent_topic", str(raw.get("parent_topic", "")))
             transitions.append(LifecycleTransition(name, "", TRIAL, "new topic entered trial"))
+            result.append(item)
+            continue
+
+        if evidence_keys is not None and _key(item) not in evidence_keys:
+            for field in ("state", "evidence_count", "last_evidence_at", "parent_topic"):
+                if field in old:
+                    item[field] = old[field]
+            if (
+                not str(item.get("first_seen", "")).strip()
+                and str(old.get("first_seen", "")).strip()
+            ):
+                item["first_seen"] = old["first_seen"]
             result.append(item)
             continue
 
@@ -207,6 +221,23 @@ def apply_evidence(
             transitions.append(LifecycleTransition(name, prev_state, new_state, reason))
         result.append(item)
     return result, transitions
+
+
+def changed_interest_keys(
+    existing: list[dict[str, Any]],
+    updated: list[dict[str, Any]],
+) -> set[tuple[str, str]]:
+    """Return topics that are new or received fresh evidence in a merged snapshot."""
+    prior = {_key(item): item for item in existing if isinstance(item, dict)}
+    changed: set[tuple[str, str]] = set()
+    for item in updated:
+        if not isinstance(item, dict):
+            continue
+        key = _key(item)
+        old = prior.get(key)
+        if old is None or str(item.get("last_seen", "")) != str(old.get("last_seen", "")):
+            changed.add(key)
+    return changed
 
 
 # -- Time-based scan (called from the 12h consolidation) ----------------------

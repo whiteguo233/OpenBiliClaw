@@ -325,7 +325,7 @@
         </div>
         <div class="box stream">
           <strong>runtime-stream 合并刷新</strong>
-          <span>`activity.added / profile_updated / config_reloaded / init_completed / interest.probe / avoidance.probe` 进入 debounce / single-flight；`refresh.pool_updated` 只做状态合并，不触发 hydrate。</span>
+          <span>`activity.added / profile_updated / config_reloaded / init_completed / interest.probe / avoidance.probe` 进入 debounce / single-flight；`refresh.pool_updated` 只做状态合并，不触发 hydrate；已有卡片时后台水合也跳过可能补池的推荐 GET。</span>
         </div>
       </div>
 
@@ -401,7 +401,7 @@
       <div class="step">
         <span class="step-num">3</span>
         <strong>首屏 REST hydration</strong>
-        <p>先用 provider-free `/api/ping` 判断是否降级；正常时再并行加载推荐、runtime、health/profile/activity/config，降级时只读配置并停止业务 hydration。</p>
+        <p>先用 provider-free `/api/ping` 判断是否降级；正常首屏并行加载推荐、runtime、health/profile/activity/config；已有卡片的后台恢复只读状态，空列表或明确手动刷新才读取可能触发补池的推荐快照。</p>
       </div>
       <div class="step">
         <span class="step-num">4</span>
@@ -411,7 +411,7 @@
       <div class="step">
         <span class="step-num">5</span>
         <strong>合并状态</strong>
-        <p>`refresh.pool_updated` 只更新池子数字和 header，不覆盖用户 append 出来的推荐列表。</p>
+        <p>`refresh.pool_updated` 只更新池子数字和 header；后台水合不以推荐快照覆盖用户 append 出来的推荐列表。</p>
       </div>
       <div class="step">
         <span class="step-num">6</span>

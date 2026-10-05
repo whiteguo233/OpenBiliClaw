@@ -1,10 +1,9 @@
 # OpenBiliClaw 隐私权政策
 
 生效日期：2026-05-31
-更新日期：2026-10-03
+更新日期：2026-10-05
 
-OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
-OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、V2EX 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
+OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问已启用浏览器接入的受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。GitHub v1 来源只由后端通过 GitHub 官方 REST API 读取公开仓库，不在 GitHub 页面运行内容脚本，也不申请 GitHub 主机权限或下发浏览器任务。
 
 Instagram 是默认关闭的实验来源：普通 Instagram 页面不做被动行为采集；只有用户启用公开发现或显式选择初始化时，插件才在隔离任务 tab 中执行有界同源只读任务。安全隔离不代表 Meta 授权，部署者仍需自行确认自动采集权限。
 
@@ -25,9 +24,11 @@ Instagram 是默认关闭的实验来源：普通 Instagram 页面不做被动�
 | 网站内容 | 页面上可见的文字、封面图 URL、视频 / 笔记标题、作者、标签、描述、链接、统计信息等元数据 | 理解内容主题、生成候选池、去重和解释推荐理由 |
 | V2EX 只读任务字段 | Topic / Node 的公开 ID、标题、URL、作者、Node、时间、回复摘录，以及布尔登录状态 | 执行用户主动触发的四个 bootstrap scope、聚合讨论事件和生成 Node 偏好；不用于站内写操作 |
 | Instagram 只读任务字段 | 公开 media / user ID、canonical URL、caption、作者、封面、权威发布时间；初始化时的 liked / saved / following scope、数字 current-account ID 与 `sessionid` 存在布尔值 | 公开 topic / creator 发现和用户显式触发的近期点赞、收藏、关注初始化；不用于普通浏览追踪或站内写操作 |
+| GitHub 后端只读字段 | 公开仓库的数值 ID、`node_id`、名称、作者、公开 URL、描述、topics、语言、许可证、统计与时间字段；初始化时还可使用公开 username 及其公开 starred 仓库 | 通过 GitHub 官方 REST API 完成公开仓库发现、去重、推荐和用户主动触发的画像初始化；服务端查询强制 `is:public`，返回行仍会再次拒绝非公开仓库，不执行 Star 或其他站内写操作 |
 | 个人通讯 | 用户在 OpenBiliClaw 插件侧边栏聊天框中主动输入的消息；以及用户在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（提交成功后经网络层采集，仅送本机后端） | 与用户配置的本地后端聊天接口交互，帮助查看画像、推荐和设置；用户亲手写的评论 / 弹幕是最强的兴趣表达之一，用于更准确地构建兴趣画像 |
 | 本地配置与 UI 状态 | 后端地址、已关闭提示、插件设置、缓存的后端配置、任务状态 | 保持插件连接、本地偏好和界面状态 |
 | 用户主动创建的迁移包 | 文件配置中的模型 / 来源 API Key 与 token、平台 Cookie、本地 SQLite、画像 / 记忆、历史、图片缓存和白名单桌面偏好；不包含源机整段 API auth（密码 / hash、session secret、设备 key 等） | 仅在用户从本机桌面配置页明确选择导出时，生成供用户自行搬到另一台机器的 `.obcbackup` |
+| 应用内 Tailnet 节点状态与单次入网材料 | 电脑端 tsnet 节点私钥 / 注册状态、节点名、Tailnet IP、最近脱敏运行事件；用户可在本机设置页单次提交 Auth Key，或 OAuth Client Secret + 设备 tag | 仅在用户明确开启 `[tailnet]` 后，让电脑端 OpenBiliClaw 自己加入用户的 tailnet，供 `OpenBiliClaw-mobile` Android / iOS 原生 App 私网访问；入网凭据只在本机私有暂存到下一次启动并经 stdin 交付，API 不回显；Web / Linux / macOS / Windows Flutter 客户端不在此能力范围，也不用于公网 Funnel |
 
 插件不以收集健康信息、财务和付款信息、精确位置数据为目的。如果用户正在访问的网页内容本身包含敏感信息，插件只会在受支持站点和用户启用功能范围内把它作为页面内容信号处理。
 
@@ -53,6 +54,24 @@ OpenBiliClaw 使用上述数据来：
 
 如果用户在设置中明确配置局域网或自托管后端，插件会请求该 `scheme://host/*` 的可选权限，并使用默认关闭的设备密钥认证连接。WebExtension 权限模型无法跨浏览器限定端口，实际网络请求仍固定到用户配置的端口。
 
+如果用户明确开启应用内 Tailnet，电脑端独立 `tsnet` helper 会连接用户选择的 Tailscale
+协调服务，并在用户自己的 tailnet 中建立节点。Tailscale 服务会处理节点身份、Tailnet 地址、
+登录 / 连通性等控制面元数据；业务 HTTP payload 通过 tailnet 的 WireGuard 链路加密，无法
+直连时可能经过 Tailscale DERP 中继。该路径只监听 tailnet 私网，不启用 Funnel / Serve，
+不会因此生成公网 OpenBiliClaw 地址。它只服务 Android / iOS 原生 App，不改变浏览器扩展或
+其它 Flutter 平台对远程 endpoint、HTTPS 和设备 key 的独立要求。helper 使用
+`ts_omit_logtail,ts_omit_webclient` 构建标签，编译移除 Tailscale 自动诊断日志上传与未使用的
+管理 Web UI，因此不会向 `log.tailscale.com` 上传 helper 诊断日志；代价是无法依赖相应上游
+自动日志支持。这不取消前述控制面 / DERP 联系及元数据处理。Tailscale 的处理规则以用户所用
+控制服务及其隐私政策为准。
+
+本机桌面 Web / 浏览器插件提交的 Tailnet 入网凭据不会写入普通 `config.toml` 或扩展存储。
+后端只允许真实本机 transport 写入，POSIX 下以 `0700` 目录、`0600` 文件原子暂存；下一次启动
+成功交付 helper stdin 后立即删除。`GET /api/config` 只返回“是否有待用凭据”，不会返回凭据、
+登录 URL 或原始错误。OAuth Client Secret 在 Tailscale 控制面仍是可反复签发带授权 tag 节点的
+长期秘密，本地文件删除不等于撤销 Secret；用户应在 Tailscale 后台采用专用最小权限 Client，
+并在不再需要时撤销。
+
 OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有或运营的远程服务器，也不会内置第三方分析、广告或遥测端点。
 
 数据迁移请求只允许后端验证为本机 loopback 的调用；浏览器请求还必须具备同源意图并明确拒绝扩展 Origin，无 Origin 的本机 CLI / curl 调用仍可通过同一显式请求头契约。导出文件由本机后端返回给本机客户端，导入文件只上传到用户自己的本机后端；OpenBiliClaw 开发者不会接收迁移包。用户后续主动把文件复制到 U 盘、局域网、聊天工具或云盘时，相应传输与保留由用户和所选服务控制。
@@ -67,9 +86,9 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 
 Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task / claim、任务 tab、deadline、分页进度、已归一化内容与待确认的 exact-result outbox，以便浏览器或扩展重启后恢复。后端确认或明确终态拒绝后清理；离线待重试时会继续保留，卸载扩展会清除这些扩展数据。此状态不含 Instagram Cookie、请求头、CSRF、原始 JSON/HTML 或挑战页正文；旧 `storage.session` 状态只迁移一次。
 
-用户主动导出的 `.obcbackup` 是**未加密的敏感 ZIP 文件**，可能包含模型 / 来源 API Key、平台 Cookie、画像和浏览 / 推荐历史。包内 manifest 带成员大小与 SHA-256，只用于完整性校验，不提供保密性。导出会合并磁盘 `config.toml` / `config.local.toml`、移除整段 `[api.auth]`，再写成包内单份可移植配置；因此源机的登录密码 / hash、session secret、设备访问 key 及其它 auth 策略不会进入包。导出同时刻意排除日志、旧备份、embedding / 评测 / 临时缓存、证书、自启动文件、OpenBiliClaw Web / 扩展访问会话、外部 CLI 凭据和环境变量值；平台登录 Cookie 则属于明确包含的可移植敏感数据。manifest 的 `source_omitted_environment_variables` 只记录源机当时有值、会影响 OpenBiliClaw 的环境变量名称，包括 `OPENBILICLAW_*`、Gemini 标准 Key 变量及系统代理 / CA 变量；导入端另返回 `target_active_environment_variables`，提示目标环境当前仍可能覆盖导入文件。两个列表都不包含变量值。用户应只在可信设备间传递，并及时删除不再需要的副本。
+用户主动导出的 `.obcbackup` 是**未加密的敏感 ZIP 文件**，可能包含模型 / 来源 API Key、平台 Cookie、画像和浏览 / 推荐历史。包内 manifest 带成员大小与 SHA-256，只用于完整性校验，不提供保密性。导出会合并磁盘 `config.toml` / `config.local.toml`、移除整段 `[api.auth]`，再写成包内单份可移植配置；因此源机的登录密码 / hash、session secret、设备访问 key 及其它 auth 策略不会进入包。导出同时刻意排除日志、旧备份、embedding / 评测 / 临时缓存、证书、自启动文件、`data/tailnet/` 节点私钥 / 状态和 `data/bin/` 可执行文件（根目录名按大小写不敏感判定）、OpenBiliClaw Web / 扩展访问会话、外部 CLI 凭据和环境变量值；平台登录 Cookie 则属于明确包含的可移植敏感数据。manifest 的 `source_omitted_environment_variables` 只记录源机当时有值、会影响 OpenBiliClaw 的环境变量名称，包括 `OPENBILICLAW_*`、Gemini 标准 Key 变量及系统代理 / CA 变量；导入端另返回 `target_active_environment_variables`，提示目标环境当前仍可能覆盖导入文件。两个列表都不包含变量值。用户应只在可信设备间传递，并及时删除不再需要的副本。
 
-导入后原配置和数据会按存在情况保留为本机 `pre-import-*.bak` 回滚副本，不会自动上传；下一次成功迁移会清理更早的同类迁移副本。目标机整段 `api.auth` 是导入基线，因此其门禁、密码、proxy 和 Origin 策略不会被源包覆盖；应用时会轮换文件中的会话签名密钥，并把 prepared DB 的会话撤销 epoch 设为来源与目标当前值最大值再加一、移除来源 password fingerprint，再清空、关闭扩展远程访问配对。这样即使 session secret 由目标环境固定，来源 / 目标旧 Web 会话与设备 key 也不会继续有效。导入暂存可在重启前取消，取消只删除私有 pending 副本，不改当前配置或用户数据。
+导入后原配置和数据会按存在情况保留为本机 `pre-import-*.bak` 回滚副本，不会自动上传；下一次成功迁移会清理更早的同类迁移副本。目标机整段 `api.auth` 与 `[tailnet]` 是导入基线，因此其门禁、密码、proxy / Origin 策略、Tailnet 开关 / 节点名和 `data/tailnet/` 机器身份不会被源包覆盖；`certs/`、`autostart/`、`tailnet/` 任一目标保留根含嵌套 symlink 时迁移会拒绝继续，不跟随链接复制目录外数据。应用时只从目标机保留 exact 当前平台 Tailnet helper 的普通非 symlink 文件，POSIX 还要求原文件已有执行位，再为可信副本恢复 `0700`；普通文件不会经迁移升级成 executable。随后会轮换文件中的会话签名密钥，并把 prepared DB 的会话撤销 epoch 设为来源与目标当前值最大值再加一、移除来源 password fingerprint，再清空、关闭扩展远程访问配对。这样即使 session secret 由目标环境固定，来源 / 目标旧 Web 会话与设备 key 也不会继续有效。导入暂存可在重启前取消，取消只删除私有 pending 副本，不改当前配置或用户数据。
 
 用户可以通过以下方式控制或删除数据：
 
@@ -77,6 +96,7 @@ Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task
 - 停止或删除本地 OpenBiliClaw 后端的数据目录。
 - 在插件设置中修改或清空后端地址。
 - 在后端配置中关闭对应平台 source、调度任务、自动刷新或第三方模型服务。
+- 源码 / 一句话安装可运行 `openbiliclaw tailnet disable` 并重启以停止应用内 Tailnet；桌面安装包需完整退出、把运行目录 `config.toml` 的 `[tailnet].enabled` 改为 `false` 后再启动。两种方式都会为方便再次启用而保留本机节点身份。若要彻底删除，应先退出应用、从 Tailnet 管理台移除节点，再删除 `data/tailnet/`。
 - 退出对应内容平台账号或清除浏览器 cookie，阻止插件继续同步该平台登录态。
 
 ## 权限说明
@@ -92,8 +112,7 @@ Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task
 | `scripting` | 在受支持平台页面注入内容脚本，采集页面内容和行为信号 |
 | `sidePanel` | 提供 OpenBiliClaw 侧边栏界面 |
 | `storage` | 保存插件设置、本地 UI 状态和后端连接信息 |
-| 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据 |
-| 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、V2EX 以及本机 OpenBiliClaw 后端之间读写必要数据 |
+| 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
 
 `https://*.instagram.com/*` 主机权限只用于带任务标记的隔离 tab。公开任务读取有界 topic/hashtag 或明确 creator 页面；初始化先匹配同源账户表单用户名与新鲜 `PolarisViewer` 的用户名和双 ID，再以 GET 读取 saved/following，被动观察原生 Likes 页只读 Bloks 响应。扩展不重放 Bloks POST、不执行其表达式或 Select/Unlike 动作。插件只上报 `sessionid` 存在性；Cookie value、Authorization/CSRF、请求头、原始 JSON/HTML/Bloks、挑战正文和完整历史不会上传。MAIN 桥只发送有界白名单 rows、cursor 与终态证据。扩展不提交 Instagram Search，不执行 like/save/follow/comment/message，不自动处理安全验证；页面自身的上游状态变化仍需独立审计。普通 Instagram 页面不启动 behavior collector。
 
@@ -108,6 +127,8 @@ Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task
 `*://*.bgm.tv/*` 和 `*://*.bangumi.tv/*` 的主机权限仅用于**账号身份识别**：读取页面公开的用户 uid（`CHOBITS_UID`）与导航栏用户名，实现零配置识别你的 Bangumi 账号，供画像初始化时读取你的公开收藏。在这两个站点上插件不读取 Cookie、不采集浏览行为、也不上传任何个人令牌；Bangumi 内容本身由本地后端通过官方匿名只读 API 获取。
 
 `*://*.v2ex.com/*` 的主机权限用于 V2EX 普通页面的只读 Topic / Node 阅读事件，以及用户主动触发的 `bootstrap_profile` / 增量任务。任务页只读取渲染后的公开 DOM：`/member/<username>` 的本人主题、`/member/<username>/replies` 的本人回复、`/my/topics` 的收藏主题和 `/my/nodes` 的收藏 Node。插件会在本地检查 V2EX 的 A2 Cookie 是否存在，但只向用户配置的后端发送 `logged_in` 布尔值，不发送 Cookie 值；可见页面中的用户名作为 `observed` 身份证据单独上报，登出心跳会清除旧 observed username，浏览器证据最多保留 72 小时。V2EX 任务结果只包含经过限制的公开字段（Topic/Node 标识、标题、URL、作者、Node、时间和最多三条代表性回复摘录），不包含页面 HTML、请求头、CSRF/once、私信、密码或浏览器完整历史。扩展只有在确认 route、页面壳和 scope 完整翻页时才上报 complete；本地后端对收藏 Topic / Node 采用连续两次完整快照缺失确认，生成的取消收藏 / 取消关注只作为本地 `retraction` 画像事件，不会向 V2EX 发请求。PAT 验证身份只保存公开 username 与当前 PAT 的单向 fingerprint，最多信任 6 小时；匹配 PAT 被明确拒绝时清除该声明，网络失败不清除。身份冲突时暂停账号数据合并；PAT 原文仍只存在于用户选择的环境变量 / 配置凭据位置。OpenBiliClaw 对 V2EX 严格只读，不发帖、不回复、不感谢、不收藏、不取消收藏、不关注 Node。
+
+GitHub v1 不使用浏览器 Cookie、页面内容脚本、主机权限或任务队列。后端可匿名读取公开仓库；用户主动配置公开 username 时可读取其公开 starred 仓库，也可选用 GitHub PAT 验证 username 并提高官方 API 配额。PAT 只从来源凭据配置或专用环境变量 `OPENBILICLAW_GITHUB_TOKEN` 解析，不读取通用 `GITHUB_TOKEN` / `GH_TOKEN`。写入配置文件的 PAT 可能随用户主动导出的未加密迁移包移动；环境变量值始终不导出。GitHub 数据只用于本地画像、发现与推荐，保存推荐也仅写本地数据库，不会向 GitHub 发出 Star、Unstar 或其他状态变更请求。
 
 ## 远程代码
 

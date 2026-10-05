@@ -18,6 +18,7 @@ from openbiliclaw.discovery.strategies.douyin_direct import (
 )
 
 if TYPE_CHECKING:
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.soul.profile import SoulProfile
 
 
@@ -37,6 +38,7 @@ class DouyinDiscoveryOptions:
     evaluate: bool = True
     per_source_limit: int = 20
     keywords_per_run: int = 5
+    date_preference: PublicationDatePreference | None = None
     # Unified keyword planner fetch path (P1.7): make the plugin-search client
     # raise ``DouyinBudgetExhausted`` on budget exhaustion so a claimed keyword
     # rolls back instead of being burned. Off → legacy behavior unchanged.
@@ -128,6 +130,7 @@ class DouyinDiscoveryService:
             keywords_per_run=max(1, opts.keywords_per_run),
             per_source_limit=max(1, opts.per_source_limit),
             llm_evaluation=opts.evaluate,
+            date_preference=opts.date_preference,
         )
 
 

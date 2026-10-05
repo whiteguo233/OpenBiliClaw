@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.204"
+version = "0.3.226"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,8 +31,12 @@ dependencies = [
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
     "bilibili-api-python>=16",
-    "openai>=1.0",
-    "anthropic>=0.40",
+    # openai>=3 / anthropic>=1 vendor httpx internally as ``httpx2`` and their
+    # isinstance guard rejects plain ``httpx.AsyncClient`` instances passed via
+    # ``http_client=`` (openai_provider.py / claude_provider.py proxy support),
+    # so keep both on the 2.x / 0.x lines until the providers migrate.
+    "openai>=1.0,<3",
+    "anthropic>=0.40,<1",
     "google-genai>=1.66",
     # X (Twitter) discovery uses the import package ``twitter_cli``. Keep it in
     # the default install so enabling [sources.twitter] never fails at runtime.
@@ -47,6 +51,8 @@ dependencies = [
     "fastapi>=0.115",
     "rich>=13",
     "typer>=0.12",
+    # Multiline chat input (issue #83): PromptSession with custom key bindings.
+    "prompt_toolkit>=3.0",
     "pydantic>=2.0",
     "apscheduler>=3.10",
     "uvicorn>=0.32",

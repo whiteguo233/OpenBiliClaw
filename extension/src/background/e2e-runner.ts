@@ -1,8 +1,10 @@
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
+import { createTaskTab } from "./task-tab.ts";
 import {
   actionsForE2EPlatform,
   E2E_PLATFORM_URLS,
+  NATIVE_SAVE_E2E_TARGETS,
   type E2EActionExecutionResult,
   type E2EContentExecuteMessage,
   type E2EPlatform,
@@ -40,17 +42,6 @@ export interface SafeNativeSaveE2EResult {
     | "failed";
   error_code: string;
 }
-
-export const NATIVE_SAVE_E2E_TARGETS: Readonly<
-  Record<NativeSavePlatform, Readonly<Record<NativeSaveAction, string>>>
-> = {
-  youtube: { favorite: "OpenBiliClaw", watch_later: "YouTube Watch Later" },
-  xiaohongshu: { favorite: "小红书收藏", watch_later: "小红书收藏" },
-  douyin: { favorite: "抖音收藏", watch_later: "抖音收藏" },
-  twitter: { favorite: "X Bookmarks", watch_later: "X Bookmarks" },
-  zhihu: { favorite: "OpenBiliClaw", watch_later: "OpenBiliClaw" },
-  reddit: { favorite: "Reddit Saved", watch_later: "Reddit Saved" },
-};
 
 const NATIVE_SAVE_E2E_AUTHORIZATION_KEYS = new Set([
   "allow_state_changing",
@@ -90,8 +81,14 @@ const NATIVE_SAVE_E2E_ERROR_CODES: Readonly<
     "interrupted",
     "invalid_adapter_result",
     "item_heartbeat_failed",
+    "native_confirmation_not_observed",
+    "native_content_not_ready",
+    "native_control_not_found",
+    "native_dialog_not_opened",
+    "native_request_rejected",
     "native_save_failed",
     "native_save_timeout",
+    "native_target_not_found",
     "not_saved_locally",
     "sync_already_in_progress",
   ]),
@@ -547,7 +544,7 @@ async function openOrReusePlatformTab(platform: E2EPlatform): Promise<chrome.tab
     return updated;
   }
 
-  return chrome.tabs.create({ active: true, url: targetUrl });
+  return createTaskTab({ active: true, url: targetUrl });
 }
 
 async function waitForTabComplete(tabId: number, timeoutMs: number): Promise<chrome.tabs.Tab> {

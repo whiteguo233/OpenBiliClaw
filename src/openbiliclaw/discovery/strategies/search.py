@@ -35,6 +35,11 @@ from openbiliclaw.discovery.strategies._utils import (
 from openbiliclaw.llm.prompts import build_search_queries_prompt
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.published_time import normalize_published_time
+from openbiliclaw.recommendation.publication_preference import (
+    PRESET_ALL,
+    PublicationDatePreference,
+    resolve_publication_window,
+)
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
@@ -62,6 +67,8 @@ class _SearchRequest:
     page_size: int
     order: str = "totalrank"
     discovery_lane: str = ""
+    pubtime_begin: int | None = None
+    pubtime_end: int | None = None
 
 
 @dataclass
@@ -78,6 +85,7 @@ class SearchStrategy(DiscoveryStrategy):
     max_pages: int = 1
     recent_lane_queries_per_run: int = 0
     recent_lane_page_size: int = RECENT_SUPPLY_LANE_PAGE_SIZE
+    publication_preference: PublicationDatePreference | None = None
     llm_evaluation: bool = True
     score_threshold: float = 0.60
     last_intermediates: dict[str, object] = field(default_factory=dict)
@@ -255,12 +263,8 @@ class SearchStrategy(DiscoveryStrategy):
             raw_candidates = ordered_candidates if recent_request_count else candidates
             return raw_candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
-        eval_candidates = ordered_candidates
+        evaluator = self.content_evaluator()
+        eval_candidates = self.filter_candidates_for_eval(ordered_candidates)
         eval_candidates = trim_candidates_for_llm(
             eval_candidates,
             limit=limit,
@@ -311,12 +315,15 @@ class SearchStrategy(DiscoveryStrategy):
                 )
                 effective_queries = effective_queries[:max_queries]
 
+        pubtime_begin, pubtime_end = self._strict_pubtime_bounds()
         request_plan = [
             _SearchRequest(
                 query_index=query_index,
                 query=query,
                 page=page,
                 page_size=max(1, int(self.page_size)),
+                pubtime_begin=pubtime_begin,
+                pubtime_end=pubtime_end,
             )
             for query_index, query in enumerate(effective_queries)
             for page in range(1, max_pages + 1)
@@ -331,10 +338,24 @@ class SearchStrategy(DiscoveryStrategy):
                 page_size=max(1, int(self.recent_lane_page_size)),
                 order="pubdate",
                 discovery_lane="recent",
+                pubtime_begin=pubtime_begin,
+                pubtime_end=pubtime_end,
             )
             for query_index, query in enumerate(effective_queries[:recent_count])
         )
         return effective_queries, request_plan
+
+    def _strict_pubtime_bounds(self) -> tuple[int | None, int | None]:
+        """Return Bilibili search timestamps only for strict date filtering."""
+        preference = self.publication_preference
+        if preference is None or preference.preset == PRESET_ALL or preference.weight < 1.0:
+            return None, None
+        window = resolve_publication_window(preference)
+        if window is None:
+            return None, None
+        start = int(window.start_utc.timestamp()) if window.start_utc is not None else None
+        end = int(window.end_utc.timestamp()) if window.end_utc is not None else None
+        return start, end
 
     @staticmethod
     def _interleave_query_candidates(
@@ -463,7 +484,9 @@ class SearchStrategy(DiscoveryStrategy):
                 # so this is purely a desync between queries.
                 await asyncio.sleep(0.5 + random.uniform(0.0, 0.5))
             try:
-                if request.discovery_lane:
+                if request.pubtime_begin is not None or request.pubtime_end is not None:
+                    result = await self._search_with_publication_bounds(client, request)
+                elif request.discovery_lane:
                     result = await client.search(
                         query,
                         page=page,
@@ -512,6 +535,60 @@ class SearchStrategy(DiscoveryStrategy):
             else:
                 consecutive_empty = 0
         return gathered
+
+    @staticmethod
+    async def _search_with_publication_bounds(
+        client: SupportsSearchClient,
+        request: _SearchRequest,
+    ) -> list[dict[str, object]]:
+        """Search with only the publication boundaries that actually exist."""
+        if request.discovery_lane:
+            if request.pubtime_begin is not None and request.pubtime_end is not None:
+                return await client.search(
+                    request.query,
+                    page=request.page,
+                    page_size=request.page_size,
+                    order=request.order,
+                    pubtime_begin=request.pubtime_begin,
+                    pubtime_end=request.pubtime_end,
+                )
+            if request.pubtime_begin is not None:
+                return await client.search(
+                    request.query,
+                    page=request.page,
+                    page_size=request.page_size,
+                    order=request.order,
+                    pubtime_begin=request.pubtime_begin,
+                )
+            return await client.search(
+                request.query,
+                page=request.page,
+                page_size=request.page_size,
+                order=request.order,
+                pubtime_end=request.pubtime_end,
+            )
+
+        if request.pubtime_begin is not None and request.pubtime_end is not None:
+            return await client.search(
+                request.query,
+                page=request.page,
+                page_size=request.page_size,
+                pubtime_begin=request.pubtime_begin,
+                pubtime_end=request.pubtime_end,
+            )
+        if request.pubtime_begin is not None:
+            return await client.search(
+                request.query,
+                page=request.page,
+                page_size=request.page_size,
+                pubtime_begin=request.pubtime_begin,
+            )
+        return await client.search(
+            request.query,
+            page=request.page,
+            page_size=request.page_size,
+            pubtime_end=request.pubtime_end,
+        )
 
     async def _generate_queries(
         self,
@@ -567,7 +644,7 @@ class SearchStrategy(DiscoveryStrategy):
                 user_input=prompt_messages[1]["content"],
                 max_tokens=1024,
                 caller="discovery.search.queries",
-                reasoning_effort="",
+                reasoning_effort=None,
                 **without_core_memory_kwargs(complete_structured),
             )
             queries = self._parse_queries(str(getattr(response, "content", "")))

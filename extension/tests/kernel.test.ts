@@ -28,6 +28,15 @@ test("click path treats a pressed like/favorite/follow control as a retraction",
   assert.match(kernelSource, /retracted_action:/);
 });
 
+test("DOM dislikes track click parity: even clicks are retractions, not new dislikes (issue 205)", () => {
+  // Bilibili dislike controls expose no pressed state, so the kernel tracks
+  // per-control click parity: odd = dislike, even = cancellation retraction.
+  assert.match(kernelSource, /feedback_type === "dislike"/);
+  assert.match(kernelSource, /DISLIKE_TOGGLE_RESET_MS/);
+  assert.match(kernelSource, /state\.clicks % 2 === 0/);
+  assert.match(kernelSource, /retracted_action: actionType/);
+});
+
 test("click path suppresses tap-authoritative actions on both the retraction and positive branches", () => {
   // On X the GraphQL tap emits the authoritative like/favorite/share/comment
   // AND retraction; the DOM path must only suppress, never double-emit — this
@@ -90,6 +99,15 @@ test("video play begins a dwell segment; pause and ended end it", () => {
 
 test("video listeners begin a segment at bind time when the element is already playing", () => {
   assert.match(kernelSource, /!video\.paused && !video\.ended[\s\S]*?beginSegment\(\)/);
+});
+
+test("seek events are only emitted shortly after a real pointer/keyboard input", () => {
+  // Programmatic seeks (watch-progress restore, episode/part switch) fire
+  // `seeked` without a preceding user gesture and must not be recorded.
+  assert.match(kernelSource, /lastSeekInputAt\s*=\s*0/);
+  assert.match(kernelSource, /addEventListener\(\s*"pointerdown",\s*markSeekInput/);
+  assert.match(kernelSource, /addEventListener\(\s*"keydown",\s*markSeekInput/);
+  assert.match(kernelSource, /Date\.now\(\)\s*-\s*lastSeekInputAt\s*>\s*1500/);
 });
 
 test("late-rendered <video> is retried with a bounded, navigation-cancelled loop", () => {

@@ -29,6 +29,21 @@ def test_estimate_cost_known_provider_model() -> None:
     assert cost == pytest.approx(0.005 + 0.006, rel=1e-9)
 
 
+def test_estimate_cost_api_route_default_model() -> None:
+    assert estimate_cost("api_route", "gpt-5.5", 1000, 1000) == pytest.approx(
+        0.00216 + 0.01296, rel=1e-9
+    )
+    assert estimate_cost("api_route", "another-model", 1000, 1000) == pytest.approx(
+        0.005 + 0.015, rel=1e-9
+    )
+
+
+def test_estimate_cost_cheaperinference_uses_gateway_default() -> None:
+    assert estimate_cost("cheaperinference", "gpt-5.4-mini", 1000, 1000) == pytest.approx(
+        0.005 + 0.015, rel=1e-9
+    )
+
+
 def test_estimate_cost_falls_back_to_provider_default() -> None:
     """Unknown model under known provider → default rate."""
     expected_default = PRICING["deepseek"]["default"]

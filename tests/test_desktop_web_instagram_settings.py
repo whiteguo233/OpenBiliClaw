@@ -52,3 +52,9 @@ def test_desktop_instagram_settings_round_trip_all_exposed_fields() -> None:
 
 def test_desktop_instagram_source_mark_has_a_visible_background() -> None:
     assert '.source-card-logo[data-source-logo="instagram"] { background:' in CSS.read_text()
+
+
+def test_instagram_date_preference_is_submitted_by_both_settings_surfaces() -> None:
+    assert '...sourceDateFieldsForUpdate("instagram")' in JS.read_text()
+    popup = (ROOT / "extension/popup/popup.js").read_text()
+    assert '...popupSourceDateFieldsForUpdate("instagram")' in popup

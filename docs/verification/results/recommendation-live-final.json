@@ -1,0 +1,117 @@
+{
+  "before": {
+    "total_available": 121,
+    "pool_status_version": 1788792136890,
+    "by_platform": {
+      "bilibili": 104,
+      "twitter": 17
+    }
+  },
+  "after": {
+    "total_available": 61,
+    "pool_status_version": 1788792147976,
+    "by_platform": {
+      "bilibili": 58,
+      "twitter": 3
+    }
+  },
+  "samples": [
+    {
+      "index": 1,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 1666.6,
+      "items": 10,
+      "remaining": 111,
+      "sources": {
+        "bilibili": 97,
+        "twitter": 14
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 2,
+      "action": "append",
+      "source": "all",
+      "ms": 1168.2,
+      "items": 10,
+      "remaining": 101,
+      "sources": {
+        "bilibili": 88,
+        "twitter": 13
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 3,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 1218.2,
+      "items": 10,
+      "remaining": 91,
+      "sources": {
+        "bilibili": 83,
+        "twitter": 8
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 4,
+      "action": "append",
+      "source": "all",
+      "ms": 1397.4,
+      "items": 10,
+      "remaining": 81,
+      "sources": {
+        "bilibili": 74,
+        "twitter": 7
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 5,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 1816.6,
+      "items": 10,
+      "remaining": 71,
+      "sources": {
+        "bilibili": 68,
+        "twitter": 3
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 6,
+      "action": "append",
+      "source": "all",
+      "ms": 1916.5,
+      "items": 10,
+      "remaining": 61,
+      "sources": {
+        "bilibili": 58,
+        "twitter": 3
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    }
+  ],
+  "unique_items": 60,
+  "latency_ms": {
+    "p50": 1397.4,
+    "p95": 1916.5,
+    "max": 1916.5
+  },
+  "health_ms": {
+    "samples": 53,
+    "p95": 53.3,
+    "max": 69.3
+  },
+  "pool_events": 11,
+  "failures": []
+}

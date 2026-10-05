@@ -178,6 +178,22 @@ function preferredNamedPlaylist(
   return matches[0] ?? null;
 }
 
+async function waitForVerificationTarget(
+  task: NativeSaveTask,
+  env: YouTubeNativeSaveEnvironment,
+  rateLimitBefore: string,
+): Promise<YouTubePlaylistRow | null> {
+  for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
+    const row = task.resolved_action === "watch_later"
+      ? env.findWatchLater()
+      : preferredNamedPlaylist(env, EXACT_PLAYLIST_TITLE);
+    if (row) return row;
+    if (hasNewRateLimit(env, rateLimitBefore)) return null;
+    if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
+  }
+  return null;
+}
+
 async function openDialog(env: YouTubeNativeSaveEnvironment): Promise<boolean> {
   try {
     return await env.openSaveDialog();
@@ -315,6 +331,69 @@ export async function saveYouTube(
       env.dispose?.();
     } catch {
       // Cleanup must not replace the authenticated task result.
+    }
+  }
+}
+
+async function performVerifyYouTube(
+  task: NativeSaveTask,
+  env: YouTubeNativeSaveEnvironment,
+): Promise<unknown> {
+  if (!isSupportedTask(task, env.currentUrl) || env.isUnavailable()) {
+    return { status: "unsupported", error_code: "unsupported_content_type" };
+  }
+  if (!hasExactActionTarget(task)) {
+    return { status: "failed", error_code: "native_save_failed" };
+  }
+  await waitForNativeSaveReadiness(
+    () => env.isLoggedIn() || env.isUnavailable(),
+    env.sleep,
+  );
+  if (!env.isLoggedIn()) return { status: "login_required" };
+  if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
+  await waitForNativeSaveReadiness(
+    () => env.hasSaveControl() || env.isUnavailable(),
+    env.sleep,
+  );
+  if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
+  if (!env.hasSaveControl()) return { status: "failed", error_code: "native_control_not_found" };
+  const rateLimitBefore = env.rateLimitFingerprint();
+  if (!(await openDialog(env))) {
+    return hasNewRateLimit(env, rateLimitBefore)
+      ? { status: "rate_limited" }
+      : { status: "failed", error_code: "native_dialog_not_opened" };
+  }
+
+  const row = await waitForVerificationTarget(task, env, rateLimitBefore);
+  if (
+    row && await confirmed(
+      row,
+      () => task.resolved_action === "watch_later"
+        ? env.findWatchLater()
+        : preferredNamedPlaylist(env, EXACT_PLAYLIST_TITLE),
+      env,
+      rateLimitBefore,
+    )
+  ) {
+    return { status: "already_synced" };
+  }
+  return hasNewRateLimit(env, rateLimitBefore)
+    ? { status: "rate_limited" }
+    : { status: "failed", error_code: "native_confirmation_not_observed" };
+}
+
+/** Verify persisted playlist membership after reload without clicking a target row. */
+export async function verifyYouTube(
+  task: NativeSaveTask,
+  env: YouTubeNativeSaveEnvironment = createYouTubeBrowserEnvironment(),
+): Promise<unknown> {
+  try {
+    return await performVerifyYouTube(task, env);
+  } finally {
+    try {
+      env.dispose?.();
+    } catch {
+      // Cleanup must not replace the persisted-state verification result.
     }
   }
 }
@@ -485,7 +564,9 @@ function checked(row: HTMLElement): boolean {
       (checkbox as HTMLElement & { checked?: boolean }).checked === true
     );
   }
-  const pressed = row.querySelector<HTMLElement>("yt-list-item-view-model[aria-pressed]");
+  const pressed = row.querySelector<HTMLElement>(
+    "[role='menuitem'][aria-pressed], button[aria-pressed], yt-list-item-view-model[aria-pressed]",
+  );
   if (pressed) return pressed.getAttribute("aria-pressed") === "true";
   const data = (row as HTMLElement & {
     data?: { initialState?: { isToggled?: unknown }; initialIsToggled?: unknown };
@@ -496,6 +577,8 @@ function checked(row: HTMLElement): boolean {
 function clickableRow(row: HTMLElement): HTMLElement {
   return row.querySelector<HTMLElement>(
     "tp-yt-paper-checkbox, [role='checkbox'], input[type='checkbox'], #checkbox",
+  ) ?? row.querySelector<HTMLElement>(
+    "[role='menuitem'][aria-pressed], button[aria-pressed], yt-list-item-view-model[aria-pressed]",
   ) ?? row.querySelector<HTMLElement>("yt-list-item-view-model") ?? row;
 }
 

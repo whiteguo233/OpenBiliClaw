@@ -80,6 +80,60 @@ def test_create_from_awareness_candidates_caps_batch(tmp_path: Path) -> None:
     assert len(ids) == MAX_CONFUSION_CANDIDATES_PER_ROUND
 
 
+def test_create_from_awareness_candidates_dedups_near_duplicate(tmp_path: Path) -> None:
+    mgr = ConfusionManager(_db(tmp_path))
+    first = mgr.create_from_awareness_candidates(
+        [
+            {
+                "topic": "城市菜市场与社区商业观察",
+                "observation": "对同城菜市场视频反复停留但从不购买，可能是社区观察型兴趣",
+                "interpretation": "可能是弱兴趣",
+                "interpretation_confidence": 0.4,
+                "evidence_refs": ["note-a"],
+            }
+        ]
+    )
+    second = mgr.create_from_awareness_candidates(
+        [
+            {
+                "topic": "城市菜市场与社区商业的观察",
+                "observation": "对同城菜市场视频反复停留但从不购买，可能属于社区观察型兴趣",
+                "interpretation": "可能还是弱兴趣",
+                "interpretation_confidence": 0.45,
+                "evidence_refs": ["note-b"],
+            }
+        ]
+    )
+
+    assert len(first) == 1
+    assert second == []
+    stored = mgr.get(first[0])
+    assert stored is not None
+    assert stored.source == "awareness"
+
+
+def test_list_for_generation_context_includes_history(tmp_path: Path) -> None:
+    mgr = ConfusionManager(_db(tmp_path))
+    candidate = {
+        "topic": "菜市场观察",
+        "observation": "对菜市场视频反复停留但从不购买",
+        "interpretation": "可能是弱兴趣",
+        "interpretation_confidence": 0.4,
+        "evidence_refs": [],
+    }
+    created = mgr.create_from_awareness_candidates([candidate])
+    assert len(created) == 1
+    cid = created[0]
+    mgr.get(cid)
+    mgr._db.update_confusion(cid, status="resolved")
+
+    context = mgr.list_for_generation_context()
+
+    assert any(item["id"] == cid for item in context)
+    assert any(item["status"] == "resolved" for item in context)
+    assert any("菜市场观察" in item["topic"] for item in context)
+
+
 # --------------------------------------------------------------------------
 # Producing source 2: speculation stalemate
 # --------------------------------------------------------------------------

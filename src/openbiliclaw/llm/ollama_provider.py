@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from .base import LLMProviderError, LLMResponse, LLMResponseError, LLMTimeoutError
+from .ollama_embedding_runtime import embedding_vector, post_embedding
 from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,10 @@ class OllamaProvider(OpenAIProvider):
             provider_name="ollama",
             timeout=timeout,
         )
+        # M1 keeps Ollama on the prompt-simulation tool path: native FC is
+        # only verified for the hosted OpenAI-compatible chat-completions
+        # endpoints, and Ollama's /v1 shim tool support varies by model.
+        self.supports_tool_calling = False
         self._embed_timeout = timeout
         # v0.3.x+: when >0, chat completions route through Ollama's *native*
         # ``/api/chat`` endpoint so we can pass ``options.num_ctx``. The
@@ -231,10 +236,11 @@ class OllamaProvider(OpenAIProvider):
         1024-dim). Other Ollama embedding models also work — just pass
         ``model=...``.
 
-        Retries once on transient errors (timeout / connection drop /
-        Ollama runner restart). Returns an empty list only after both
-        attempts fail. Callers (EmbeddingService) treat empty vectors
-        as "no embedding" and skip caching them.
+        Local native runner failures switch the endpoint/model to CPU and
+        retry the same input once. The shared choice also applies to readiness
+        probes and survives provider recreation until the app exits. Other
+        transient errors retain one retry. Failed or invalid vectors return
+        an empty list, which EmbeddingService never caches.
         """
         url = f"{self._native_root()}/api/embeddings"
         last_exc: Exception | None = None
@@ -260,16 +266,9 @@ class OllamaProvider(OpenAIProvider):
                     timeout=self._embed_timeout,
                     trust_env=False,
                 ) as client:
-                    response = await client.post(
-                        url,
-                        json={"model": model, "prompt": text},
-                    )
+                    response = await post_embedding(client, self._native_root(), model, text)
                     response.raise_for_status()
-                    data = response.json()
-                vec = data.get("embedding")
-                if not isinstance(vec, list):
-                    return []
-                return [float(v) for v in vec if isinstance(v, int | float)]
+                return embedding_vector(response)
             except Exception as exc:
                 last_exc = exc
                 if attempt == 1:

@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 def test_runtime_status_reports_and_retires_failed_initial_discovery(
     tmp_path: Path, recovery: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # This test mutates storage/coordinator directly, without the production
+    # pool-event invalidation path. Test durable reconciliation independently
+    # from main's one-second HTTP status snapshot cache.
+    monkeypatch.setattr("openbiliclaw.api.app._RUNTIME_STATUS_TTL_SECONDS", 0.0)
     db = Database(tmp_path / "test.db")
     db.initialize()
     memory = MemoryManager(tmp_path / "memory", database=db)

@@ -103,6 +103,7 @@ _PLANNER_PLATFORMS: tuple[str, ...] = (
     "douyin",
     "youtube",
     "twitter",
+    "github",
     "zhihu",
     "reddit",
     "bangumi",
@@ -331,6 +332,26 @@ _PLATFORM_QUERY_STYLES: dict[str, dict[str, tuple[str, ...]]] = {
         "examples": ("urban photography", "indie game art"),
         "avoid_markers": ("小红书", "知乎", "B站", "微博"),
     },
+    "github": {
+        "native_markers": (
+            "repository",
+            "repo",
+            "library",
+            "framework",
+            "toolkit",
+            "sdk",
+            "cli",
+            "starter",
+            "template",
+            "awesome",
+            "开源",
+            "项目",
+            "框架",
+            "工具",
+        ),
+        "examples": ("local llm agent framework", "self hosted knowledge base"),
+        "avoid_markers": ("热议", "探店", "种草", "短视频"),
+    },
 }
 # The planner reclaims in-flight rows that leaked past the claim lease before
 # each generation pass. ``executing`` rows belong to genuinely async (XHS)
@@ -367,10 +388,12 @@ _PER_PLATFORM_SUPPLY_TOP = 8
 # interest-name fallback. Size max_tokens from the actual per-cycle ask (sum of
 # the gen_batch-capped needs) with a generous per-keyword budget (Chinese phrase
 # + JSON quoting). Over-provisioning is effectively free: max_tokens is a ceiling
-# billed on real output, not a charge. Never drop below the prior 4096 default.
+# billed on real output, not a charge. The floor is 8192 (was 4096) because
+# reasoning-first instances can otherwise spend the whole budget on invisible
+# thinking and return no final JSON at all.
 _MERGED_TOKENS_PER_KEYWORD = 48
 _MERGED_JSON_OVERHEAD_TOKENS = 1024
-_MERGED_MIN_MAX_TOKENS = 4096
+_MERGED_MIN_MAX_TOKENS = 8192
 _INSPIRATION_AXIS_KEYWORD_MAX_TOKENS = 8192
 # F2 (Phase 2.1): the single axis+keyword call keeps the 8192 floor for small
 # slot counts and only scales past a comfortable threshold, so high-platform
@@ -1305,7 +1328,8 @@ class KeywordPlanner:
                 # Budget the merged call's max_tokens from the actual ask (sum of the
                 # gen_batch-capped needs) so the trailing platforms in the JSON are
                 # never truncated onto the interest-name fallback. Scales with
-                # platform count and gen_batch; floored at the prior 4096 default.
+                # platform count and gen_batch; floored at 8192 so reasoning-first
+                # instances can finish thinking before emitting the JSON.
                 merged_max_tokens = max(
                     _MERGED_MIN_MAX_TOKENS,
                     total_ask * _MERGED_TOKENS_PER_KEYWORD + _MERGED_JSON_OVERHEAD_TOKENS,
@@ -1329,7 +1353,7 @@ class KeywordPlanner:
                         system_instruction=messages[0]["content"],
                         user_input=messages[1]["content"],
                         caller="discovery.keyword_planner",
-                        reasoning_effort="",
+                        reasoning_effort=None,
                         max_tokens=merged_max_tokens,
                         **without_core_memory_kwargs(complete_structured),
                     )

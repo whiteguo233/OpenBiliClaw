@@ -63,7 +63,7 @@
 
   /** Platform slugs the contract covers, in settings-page display order. */
   const SOURCE_KEYS = Object.freeze([
-    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "zhihu", "reddit",
+    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",
     "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 
@@ -74,6 +74,7 @@
     weibo: Object.freeze({ guidedInit: true }),
     youtube: Object.freeze({ guidedInit: true }),
     twitter: Object.freeze({ guidedInit: true }),
+    github: Object.freeze({ guidedInit: true }),
     zhihu: Object.freeze({ guidedInit: true }),
     reddit: Object.freeze({ guidedInit: true }),
     bangumi: Object.freeze({ guidedInit: true }),
@@ -99,6 +100,7 @@
     weibo: "微博",
     youtube: "YouTube",
     twitter: "X",
+    github: "GitHub",
     zhihu: "知乎",
     reddit: "Reddit",
     bangumi: "Bangumi",
@@ -136,7 +138,7 @@
    * This is the **union** of the two tables it replaces, so no surface loses a
    * key it used to handle. Four of them (`syncing`, `expired`, `login_required`,
    * `error`) are not reachable from today's backend — spec D6's证伪 pass found
-   * the backend emits only the other eleven. They stay because a table that
+   * the backend emits only the other twelve. They stay because a table that
    * silently drops a key regresses the moment some future provider emits it,
    * and "unreachable today" is cheaper to carry than to re-derive later.
    */

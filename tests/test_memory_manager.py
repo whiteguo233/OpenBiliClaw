@@ -111,6 +111,31 @@ async def test_propagate_event_persists_to_sqlite(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_propagate_event_forwards_top_level_source_attribution(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    await memory.propagate_event(
+        {
+            "event_type": "view",
+            "url": "https://www.youtube.com/watch?v=video-42",
+            "title": "YouTube 事件",
+            "source_platform": "youtube",
+            "content_id": "video-42",
+            "source_confidence": "exact",
+            "metadata": {},
+        }
+    )
+
+    row = memory.query_events(limit=1)[0]
+    assert row["source_platform"] == "youtube"
+    assert row["content_id"] == "video-42"
+    assert row["source_confidence"] == "exact"
+    assert json.loads(str(row["metadata"]))["source_platform"] == "youtube"
+    assert json.loads(str(row["metadata"]))["content_id"] == "video-42"
+
+
+@pytest.mark.asyncio
 async def test_propagate_events_batches_init_imports(tmp_path: Path) -> None:
     memory = MemoryManager(tmp_path)
     memory.initialize()
@@ -594,6 +619,42 @@ def test_feedback_state_round_trips_to_json(tmp_path: Path) -> None:
     assert state["last_feedback_reanalyzed_at"] == "2026-03-09T12:00:00"
     assert state["feedback_owner_version"] == 2
     assert state["feedback_owner_cutover_at"] == "2026-08-01T01:02:03"
+
+
+def test_feedback_state_concurrent_saves_do_not_race_on_tmp_file(tmp_path: Path) -> None:
+    """Parallel writers used to share one ``*.tmp`` name; the loser crashed
+    with FileNotFoundError when its os.replace ran after the winner renamed
+    the tmp file away. Each save now uses a unique tmp name."""
+    import threading
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    errors: list[BaseException] = []
+
+    def _write(worker: int) -> None:
+        try:
+            for index in range(30):
+                memory.save_feedback_state(
+                    {
+                        "last_processed_feedback_event_id": worker * 1000 + index,
+                        "last_feedback_reanalyzed_at": "",
+                    }
+                )
+        except BaseException as exc:  # noqa: BLE001 - surfaced via assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_write, args=(worker,)) for worker in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    state = memory.load_feedback_state()
+    assert isinstance(state["last_processed_feedback_event_id"], int)
+    # No orphaned tmp files are left behind.
+    leftovers = list((tmp_path / "memory").glob("feedback_state.json.*.tmp"))
+    assert leftovers == []
 
 
 def test_discovery_runtime_state_defaults_when_missing(tmp_path: Path) -> None:

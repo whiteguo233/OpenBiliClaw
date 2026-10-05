@@ -65,8 +65,45 @@ export function isKnownScope(s: string): s is YtScope {
 // ---------------------------------------------------------------------------
 
 /**
+ * Query `selector` inside `root`, falling back to recursively scanning open
+ * shadow roots when the direct light-DOM query misses. YouTube's Lit
+ * components (``yt-lockup-view-model`` / ``yt-video-card-renderer``) sometimes
+ * keep card content inside an open shadow root, where ``Element.querySelector``
+ * returns null and the card would silently be skipped.
+ */
+export function queryIncludingShadow(
+  root: ParentNode,
+  selector: string,
+): Element | null {
+  const direct = root.querySelector(selector);
+  if (direct) return direct;
+  const rootShadow = (root as HTMLElement).shadowRoot;
+  if (rootShadow) {
+    const found = queryIncludingShadow(rootShadow, selector);
+    if (found) return found;
+  }
+  const descendants = Array.from(root.querySelectorAll<HTMLElement>("*"));
+  for (const el of descendants) {
+    const shadow = el.shadowRoot;
+    if (shadow) {
+      const found = queryIncludingShadow(shadow, selector);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
  * Extract items from a watch-history or liked-videos page.
- * Selects `ytd-video-renderer` and `ytd-playlist-video-renderer` elements.
+ *
+ * YouTube has been migrating from Polymer (``ytd-*``) to Lit (``yt-*`` /
+ * ``yt-lockup-view-model``) web components, and history/search cards moved
+ * from ``ytd-video-renderer`` to ``ytd-video-card-renderer`` / ``yt-video-card-renderer``.
+ * Current ``yt-lockup-view-model`` cards keep title/channel/thumbnail in light
+ * DOM under ``ytLockupMetadataViewModel*`` / ``ytContentMetadataViewModel*``
+ * classes (no shadow root), so we match those first, keep the legacy
+ * selectors for compatibility, and fall back to any ``/watch`` / ``/shorts``
+ * anchor inside the card.
  */
 export function extractVideoItems(scope: YtScope): YtBootstrapItem[] {
   const items: YtBootstrapItem[] = [];
@@ -74,38 +111,68 @@ export function extractVideoItems(scope: YtScope): YtBootstrapItem[] {
 
   const renderers = Array.from(
     document.querySelectorAll<HTMLElement>(
-      "ytd-video-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer",
+      [
+        "ytd-video-renderer",
+        "ytd-playlist-video-renderer",
+        "ytd-rich-item-renderer",
+        "ytd-video-card-renderer",
+        "yt-video-card-renderer",
+        "ytd-reel-item-renderer",
+        "yt-lockup-view-model",
+      ].join(", "),
     ),
   );
 
   for (const el of renderers) {
-    const anchor = el.querySelector<HTMLAnchorElement>(
+    const anchor = (queryIncludingShadow(
+      el,
       "a#thumbnail, a#video-title-link, a[id='thumbnail']",
-    );
+    ) ??
+      queryIncludingShadow(el, 'a[href*="/watch"], a[href*="/shorts/"]')) as
+      HTMLAnchorElement | null;
     const href = anchor?.href ?? anchor?.getAttribute("href") ?? "";
-    const videoId = extractVideoId(href);
+    const videoId = extractVideoId(href) || extractShortsId(href);
 
-    const titleEl =
-      el.querySelector<HTMLElement>("#video-title, #video-title-link") ??
-      el.querySelector<HTMLElement>("yt-formatted-string#video-title");
-    const title = (titleEl?.textContent ?? "").trim();
+    const titleEl = (queryIncludingShadow(
+      el,
+      "a.ytLockupMetadataViewModelTitle",
+    ) ??
+      queryIncludingShadow(el, "#video-title, #video-title-link") ??
+      queryIncludingShadow(el, "yt-formatted-string#video-title") ??
+      queryIncludingShadow(el, "#video-title yt-formatted-string")) as HTMLElement | null;
+    // New cards sometimes render the title only via aria-label / title
+    // attribute (text is lazy-rendered or inside a shadow tree).
+    const title =
+      (titleEl?.textContent ?? "").trim() ||
+      (titleEl?.getAttribute("aria-label") ?? "").trim() ||
+      (anchor?.getAttribute("aria-label") ?? "").trim() ||
+      (anchor?.title ?? "").trim();
 
     if (!title && !videoId) continue;
 
-    const channelEl =
-      el.querySelector<HTMLElement>(
-        "#channel-name a, ytd-channel-name a, .ytd-channel-name a",
-      ) ??
-      el.querySelector<HTMLElement>("#channel-name yt-formatted-string");
+    const channelEl = (queryIncludingShadow(
+      el,
+      "yt-content-metadata-view-model span.ytAttributedStringHost",
+    ) ??
+      queryIncludingShadow(el, "#channel-name a, ytd-channel-name a, .ytd-channel-name a") ??
+      queryIncludingShadow(el, "#channel-name yt-formatted-string") ??
+      queryIncludingShadow(el, "#channel-name")) as HTMLElement | null;
     const channel = (channelEl?.textContent ?? "").trim();
 
-    const thumbImg = el.querySelector<HTMLImageElement>(
-      "img#img, img.yt-thumbnail-view-model-wiz__image",
-    );
+    const thumbImg = (queryIncludingShadow(
+      el,
+      "yt-thumbnail-view-model img, img.ytCoreImageHost",
+    ) ??
+      queryIncludingShadow(
+        el,
+        "img#img, img.yt-thumbnail-view-model-wiz__image, yt-image img",
+      )) as HTMLImageElement | null;
     const cover_url = thumbImg?.src ?? "";
 
     const url = videoId
-      ? `https://www.youtube.com/watch?v=${videoId}`
+      ? /\/shorts\//.test(href)
+        ? `https://www.youtube.com/shorts/${videoId}`
+        : `https://www.youtube.com/watch?v=${videoId}`
       : href || "";
 
     const key = videoId || title;
@@ -120,7 +187,9 @@ export function extractVideoItems(scope: YtScope): YtBootstrapItem[] {
 
 /**
  * Extract channel items from /feed/channels.
- * Selects `ytd-channel-renderer` and `ytd-grid-channel-renderer` elements.
+ * Matches old ``ytd-channel-renderer`` / ``ytd-grid-channel-renderer`` and the
+ * newer ``ytd-channel-card-renderer`` / ``yt-channel-card-renderer`` cards,
+ * falling back to any ``/channel/`` or ``/@`` anchor inside the card.
  */
 export function extractChannelItems(scope: YtScope): YtBootstrapItem[] {
   const items: YtBootstrapItem[] = [];
@@ -128,25 +197,38 @@ export function extractChannelItems(scope: YtScope): YtBootstrapItem[] {
 
   const renderers = Array.from(
     document.querySelectorAll<HTMLElement>(
-      "ytd-channel-renderer, ytd-grid-channel-renderer",
+      [
+        "ytd-channel-renderer",
+        "ytd-grid-channel-renderer",
+        "ytd-channel-card-renderer",
+        "yt-channel-card-renderer",
+      ].join(", "),
     ),
   );
 
   for (const el of renderers) {
-    const nameEl =
-      el.querySelector<HTMLElement>("#channel-title, #channel-name, #name") ??
-      el.querySelector<HTMLElement>("yt-formatted-string#channel-title");
+    const nameEl = (queryIncludingShadow(
+      el,
+      "#channel-title, #channel-name, #name",
+    ) ??
+      queryIncludingShadow(el, "yt-formatted-string#channel-title")) as HTMLElement | null;
     const title = (nameEl?.textContent ?? "").trim();
     if (!title) continue;
 
-    const linkEl = el.querySelector<HTMLAnchorElement>(
+    const linkEl = (queryIncludingShadow(
+      el,
       "a#main-link, a#channel-title-link, a.channel-link",
-    );
+    ) ??
+      queryIncludingShadow(el, 'a[href*="/channel/"], a[href*="/@"]')) as
+      HTMLAnchorElement | null;
     const href = linkEl?.href ?? linkEl?.getAttribute("href") ?? "";
     const channelId = extractChannelId(href);
     const url = href || (channelId ? `https://www.youtube.com/channel/${channelId}` : "");
 
-    const thumbImg = el.querySelector<HTMLImageElement>("img#img, yt-img-shadow img");
+    const thumbImg = queryIncludingShadow(
+      el,
+      "img#img, yt-img-shadow img, yt-image img",
+    ) as HTMLImageElement | null;
     const cover_url = thumbImg?.src ?? "";
 
     const key = channelId || title;
@@ -180,6 +262,11 @@ function sleep(ms: number): Promise<void> {
 
 export function extractVideoId(href: string): string {
   const m = href.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : "";
+}
+
+export function extractShortsId(href: string): string {
+  const m = href.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
   return m ? m[1] : "";
 }
 

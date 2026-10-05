@@ -42,6 +42,7 @@ _XHS = "xiaohongshu"
 _DOUYIN = "douyin"
 _YOUTUBE = "youtube"
 _TWITTER = "twitter"
+_GITHUB = "github"
 _ZHIHU = "zhihu"
 _REDDIT = "reddit"
 _BANGUMI = "bangumi"
@@ -53,6 +54,7 @@ _SEARCH_PLATFORMS = (
     _DOUYIN,
     _YOUTUBE,
     _TWITTER,
+    _GITHUB,
     _ZHIHU,
     _REDDIT,
     _BANGUMI,
@@ -627,7 +629,7 @@ async def test_cold_start_multiple_platforms_one_merged_call(db: Database) -> No
     # Exactly one merged call, tagged with the planner caller.
     assert len(llm.calls) == 1
     assert llm.calls[0]["caller"] == "discovery.keyword_planner"
-    assert llm.calls[0]["reasoning_effort"] == ""
+    assert llm.calls[0]["reasoning_effort"] is None
     assert llm.calls[0]["inject_core_memory"] is False
     # The user prompt mentions all three due platforms but NOT the zero-deficit ones.
     user = llm.calls[0]["user"]
@@ -673,6 +675,23 @@ async def test_zhihu_deficit_is_included_in_unified_keyword_generation(db: Datab
     user = llm.calls[0]["user"]
     assert _ZHIHU in user
     assert _pending(db, _ZHIHU, digest) == ["认知科学 经验", "职场沟通 问答"]
+
+
+async def test_github_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
+    profile = _profile(("本地 AI agent", 0.95), ("开源工具", 0.82))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={_GITHUB: ["local llm agent framework", "open source cli toolkit"]})
+    deficit = _FakeDeficitSource(deficits={_GITHUB: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert ledger == {_GITHUB: 2}
+    assert _GITHUB in llm.calls[0]["user"]
+    assert _pending(db, _GITHUB, digest) == [
+        "local llm agent framework",
+        "open source cli toolkit",
+    ]
 
 
 async def test_bangumi_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
@@ -3207,13 +3226,13 @@ async def test_merged_ask_capped_at_gen_batch(db: Database) -> None:
     user = llm.calls[0]["user"]
     assert '"need": 10' in user
     assert '"need": 30' not in user
-    # Small ask (10) → max_tokens floored at the 4096 default.
-    assert llm.max_tokens_seen[0] == 4096
+    # Small ask (10) → max_tokens floored at the 8192 default (reasoning-first
+    # instances need headroom to think before the merged JSON is emitted).
+    assert llm.max_tokens_seen[0] == 8192
 
 
 async def test_merged_max_tokens_scales_with_total_ask(db: Database) -> None:
-    # 9 due platforms × gen_batch(30) = 270 keyword ask → max_tokens sized to it
-    # (270 × 48 + 1024 = 13984), well above the 4096 floor, so the trailing
+    # Every due platform × gen_batch(30) contributes to max_tokens, so the trailing
     # platforms in the merged JSON are never truncated onto the fallback.
     profile = _profile(("露营", 0.9), ("和田玉", 0.7))
     plats = _SEARCH_PLATFORMS
@@ -3221,7 +3240,7 @@ async def test_merged_max_tokens_scales_with_total_ask(db: Database) -> None:
     deficit = _FakeDeficitSource(deficits=dict.fromkeys(plats, 40))
     cfg = _discovery_cfg(kw_cache_high=30, gen_batch=30)
     await _make_planner(db, llm=llm, profile=profile, deficit=deficit, discovery=cfg).run_once()
-    assert llm.max_tokens_seen[0] == 270 * 48 + 1024
+    assert llm.max_tokens_seen[0] == len(plats) * 30 * 48 + 1024
 
 
 # ── Phase 2 Task 3: axis backfill tick wiring + ordering regression ──────

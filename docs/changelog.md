@@ -2,9 +2,11 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
----
+## 未发布：Instagram 实验性来源（2026-10-05）
 
-## 未发布
+- **main 集成交付（2026-10-06）**：保留最新主线的 GitHub、时效、Safari 恢复与聊天改动；Instagram 接通统一发布日期配置/准入，README 中英与首页标明实验性、默认关闭、尚未发布。[合并检查与交付记录](testing/2026-10-06-instagram-delivery.md)；已打开页面的跨端保存状态更新限制仍保留。
+
+- README 中英与项目首页同步入口和验收边界；真实账号初始化、配置模型发现与各端消费证据见 [Instagram 台账](platform-source-acceptance.instagram.md)。当前不发布新版本，不把模拟器当作手机真机，也不声称 Likes 全量终止或跨端实时保存状态已验收。
 
 - **补齐 Firefox 匿名 creator 的原生 SSR 公开证明**：真站页面有12条帖子且 `xig_user_by_username.is_private=false`，原解析器只识别 `data.user` 因而0响应。现支持已观察的 ScheduledServerJS/Relay 白名单包装；修复真实 Relay 的 `pk` 与 `id` 不同被误拒，优先正整数主键，非法主键不能回退放行。仍要求当前路径、用户名、媒体作者及非私密证明一致，未知/私密/建议账号不放行，新无效证明和截断扫描撤销旧缓存。实际 MAIN 扫描、拆分 SSR 与反例均有红绿回归，不执行模块指令或上传原始SSR；真站结论独立记录于台账。
 
@@ -44,7 +46,669 @@
 - **补齐 Instagram 桌面设置并记录真实场景验收缺口**：桌面平台源页新增实际来源卡，补全启用、topic / creator 预算、节流、初始化上限、候选份额和份额建议的读写闭环；沿用既有卡片布局、字段标签与保存状态，明确扩展站点授权和登录步骤。新增来源注册表与实际卡片一致性回归，修正原 Linux.do / V2EX 相邻结构测试对“末尾只有两张卡”的过时假设。2026-09-26 隔离环境以真实 Instagram 公开内容和原有真实 LLM 路由验证候选评估、推荐展示与 local-only 反馈；发现兴趣词直接拼 topic 路由的失败及模型限流 / 空响应，真实登录初始化与授权后的 dispatcher 仍未验收，详见 Instagram 验收台账，不宣称完整 E2E 通过。
 - **按真实 Instagram 页面收紧 creator 与登录墙解析**：2026-08-31 的已安装 Chrome 只读预验收确认公开 creator SSR 已改用 `polaris_ordered_timeline_connection`，扩展 MAIN-world tap 现将其作为 creator timeline 规范化；HTML 分类器不再把登录表单普通 `required` 属性误报为 challenge，仍对明确 challenge/checkpoint/captcha fail closed。新增真实响应形状与登录表单回归，Chrome/Firefox 产物重新构建并校验。
 - **新增 Instagram 来源接入（实验性、默认关闭）**：公开内容发现通过扩展隔离任务读取有界 topic / creator 页面；首次画像可选只读导入本人近期点赞、收藏与关注，分别映射为 `like` / `favorite` / `follow`。Cookie、Authorization、原始响应和搜索历史写入都不离开或不发生在浏览器任务中；后端只接收布尔 `sessionid` readiness、正向 current-account 身份和字段白名单结果。实现参考固定 commit 的 instagrapi / Instaloader 等协议事实并保持 clean-room，GPL 代码未复制。该路径不是 Meta 官方 Consumer API，生产启用仍以 Meta 自动采集许可或明确产品风险决定为门禁。
+
+## v0.3.226：本地模型自动回退与聊天体验修复（2026-10-04）
+
+- 发布回执、商店审核状态及国内源码/安装包镜像范围见[发布与验证记录](testing/2026-10-04-release-0.3.226.md)；国内下载入口按实际已上传版本标注。
+
+### 修复：本地向量模型自动回退 CPU（2026-10-04）
+
+- 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。
+
+- 本地 Ollama 向量请求先使用自动加速；遇到原生 runner 崩溃（包括 Windows `0xc0000409` / `0xc0000005`）、明确的 GPU / 内存分配错误或无效向量，原请求以 `num_gpu=0` 重试。同一后端进程的 endpoint/model 保持 CPU 到应用退出，正式调用与诊断共享选择。
+- CPU 返回有效向量才视为恢复；CPU 失败 / 无效向量不入缓存，回退后的健康探针超时不再乐观报告可用。缺模型、鉴权、路径错误、冷加载超时与远端服务不触发模式切换。
+- Windows 包保留 Vulkan 自动加速能力；CUDA/ROCm 仍按现有体积策略裁剪。桌面、移动 Web、插件与 CLI 共用后端逻辑，无新配置项或 UI 开关；详细行为见 [LLM 模块](modules/llm.md#本地-ollama-向量运行模式)，测试证据见 [验证记录](testing/2026-10-04-ollama-cpu-fallback.md)。
+
+### 修复：最新聊天链路真实请求复验（2026-10-02）
+
+- 整合最新 main 的逐字输出与链接摄取，以及此前聊天修复分支；修复插件漏显示 delta、首轮 GET 抢先触发后台补算、窄窗口待聊列表挤没卡片操作区。
+- 对齐 legacy 流式链接摄取，在执行锁内重查/提交回合状态，避免后台恢复与重试重复记录分享和学习；保留原始消息和卡片绑定。
+- 三端真实模型/网页/数据库结算与检查结果见[复验报告](testing/2026-10-02-chat-live-recheck.md)。
+- 收尾交付以 `4b7b3123` 为受测代码基准，补齐报告版本说明，将各轮截图与全量测试明细归档至本地主工作区，便于清理独立测试 worktree 后复查。
+
+### 修复：假设卡片操作被聊天提示条遮挡（2026-10-01）
+
+- 聊天页提示条不再接收指针事件，修复点击“聊聊”后“稍后”等卡片动作被悬停提示持续遮挡；补充真实 CSS 浏览器命中回归。
+- 使用 Codex CLI 明确请求 gpt-6-luna，在隔离数据上验证三端假设操作、绑定回复与疑惑三种结算，见[实测报告](testing/2026-10-01-chat-cards-codex-luna.md)。
+
+### 修复：聊天三端实测中的发送遮挡与恢复问题（2026-09-30）
+
+- 桌面聊天提示条移到输入区上方，修复提示条悬停暂停时持续挡住发送按钮；通道占用超时与配置重载使用不同文案，durable 排队恢复语义不变。
+- 插件在对话页恢复连接后自动补齐角色/风格/会话目录；移动端收到后台会话更新时保留改名草稿、焦点和选区，改名按钮聚焦新节点。
+- 合入 `main@ec94154b` 后逐端执行真实模型问答、记忆写改、网页读取、会话与风格交互、断网/刷新恢复、任务取消和窄屏检查。4 项缺陷均先复现再修复；上游 429、Exa ConnectError、部分外链浏览器连接关闭仍如实保留为未通过项，见[三端实测报告](testing/2026-09-30-chat-three-surfaces-e2e.md)。
+
+### 修复：三端聊天草稿串会话与完整复查（2026-09-30）
+
+- 桌面、移动 Web 与插件 popup 的未发送文字按会话分别保留；切到新会话输入为空，切回恢复对应草稿，清空或发送后的文字不再复活。
+- 在独立分支合并 `main@50bb906b` 与聊天功能链，使用新的真实数据副本、真实模型/搜索/网页请求完成审批拒绝、旧值冲突、成功删除、断流恢复、后台任务失败/重提/取消和三端交互验证。
+- 明确记录仍未解决的上游 429/400、长尾延迟与后台学习上下文膨胀，不将前台成功等同于后台学习成功；详情和优化优先级见[完整复查报告](testing/2026-09-30-chat-comprehensive-e2e.md)。
+
+### 功能：网页搜索、链接阅读与聊天笔记管理（2026-09-26）
+
+- 新增按需网页搜索和公开链接正文读取，保留真实来源，限制访问范围、时间与体积，三端复用既有工具过程。
+- 聊天笔记可按键/关键词定位、更正与审批删除；旧值校验防止误改，文件锁和原子写避免并发丢失，系统重建保留用户笔记。
+- 修复笔记保存后未进入后续 Agent 对话上下文的问题；以有界引用注入，不污染用户历史和学习原文。
+- 修复三端聊天裸来源网址不可点击；记忆写入回显新值，待审批回复明确尚未执行。
+- 9月28日复验：19 次真实模型请求及三端 UI 流程通过；记录一次约 13 秒延迟与既有后台学习/图片请求失败，详见真实请求复验报告。
+
+### 功能：按会话选择聊天风格（2026-09-26）
+
+- **六种表达模板**：自然朋友、简洁直接、温柔倾听、轻松幽默、理性分析、循循善诱，提供说明与同题示例；功能角色和聊天风格可独立组合，权限不变。
+- **三端可选并同步**：桌面 Web、移动 Web、插件 popup 均有选择入口；偏好保存在会话 metadata，刷新和跨设备恢复，保存不触发配置重载或新增模型调用。
+- **在途消息稳定**：创建回合时冻结风格，切换只影响新消息；SSE、重试和服务恢复使用原值。非法风格及客户端伪造冻结值被拒绝，旧会话兼容自然默认。
+- **实际体验修复**：320px 移动风格卡片采用自然行高与滚动，保存异常使用偏好专用提示；桌面忽略迟到共享历史，慢模板目录不阻塞会话加载。
+- **表达优先级**：当前用户要求优先；非自然预设覆盖旧全局语气中冲突的表达方式，所有风格仍保持简单问题简答。
+
+### 修复：旧会话时间标签与小屏状态栏（2026-09-26）
+
+- **旧历史不再作为带时间的回答模板**：真实长会话连续复现简单回复带 `[MM-DD HH:mm]` 前缀，提示词约束不足。Agent 将最近 20 轮历史作为引用记录传入，角色、正文、时间与回复目标分字段保留；已有时间标签仍可原样引用，不删用户内容、不改数据库，legacy 对话格式保持。
+- **320px 状态栏**：窄屏收紧顶部状态区间距，“在线”保持单行，两枚操作按钮保留 44px 宽度。
+- **第三轮真实复验**：[验收记录](testing/2026-09-26-chat-e2e-recheck.md)覆盖真实模型简答、桌面推荐收藏与观看反馈、移动输入与恢复、断流重放及后台任务完成/取消。
+
+### 修复：简单聊天速度与移动端输入体验（2026-09-26）
+
+- **简单问题直接答**：Agent 不再统一继承苏格拉底式追问；寒暄、致谢与简单事实优先短答，不重复介绍身份或强行另起话题。明确数据查询仍实际调用工具，复杂任务保留原有分析、推理与多跳预算。
+- **聊天设置局部生效**：系统管家审批的五项独立 Agent 配置通过原事务队列即时发布新的 loop / 配置；在途任务继续使用旧 loop，后台画像学习无需暂停。仅完整配置差异符合白名单时采用该路径，普通设置保存与其他改动继续完整热重载，并保留队列合并前后的 Cookie 客户端刷新要求。真实手机批准执行约 30 毫秒（此前同类全量重载 577 秒）。
+- **移动端发送与输入**：发送后立即显示用户气泡和等待状态，完成直接回显回复；重绘保留输入节点、草稿高度和选区，不把正在读历史的用户强制拉到底部。键盘压缩可视区时收起无关外层栏位，保留会话、角色、待聊和有效审批入口。
+- **真实验收**：[本轮报告](testing/2026-09-26-chat-mobile-response-speed.md)记录同组真实模型请求与移动端浏览器实测；简单请求样本中位数由约 3.1 秒降至 1.6 秒。
+
+### 修复：聊一聊真实请求与三端完整性复查（2026-09-26）
+
+- **工具链可执行**：订阅、推荐池和观看历史查询携带完整内容定位信息；历史提供真实推荐记录 ID，支持后续收藏、反馈及订阅开关。API 启动与配置热重载都向 Agent 工具绑定统一反馈入口，修复 `submit_feedback` 报 `event_ingress 未初始化`。
+- **流式执行与持久化**：同进程网络断连后原执行继续，事件逐条保存；同一 turn 的重试或并发请求重放已完成结果，不重复工具副作用。拒绝未知、消息/会话/skill 冲突的 turn；流式回复保留 canonical binding、学习锚和对象结算副作用。
+- **会话隔离与三端断流处理**：模型短期历史按会话恢复；三端忽略旧会话的迟到历史响应，流完成不覆盖用户新选的会话/角色。只有收到 SSE `done` 才算成功，popup 仅在 503 时走 legacy 降级，其余断流继续查询 durable turn。
+- **审批与配置事务**：hard_write 参数先校验再生成审批；系统管家对明确修改请求直接生成审批卡，执行仍以卡片批准为准。配置写入前验证运行时合同，无效 provider、非有限数字和私有字段被拒绝；生产写入统一经过设置事务队列，等待实际应用结果，失败回滚且审批显示失败，成功修订更新后续回滚基线。热重载状态显示实际等待阶段；兼容嵌入调用在重载失败后补偿磁盘和运行时。相对路径及符号链接下复用同一审批存储，避免配置生效后卡片状态回退。三端审批轮询保留拒绝理由、焦点与选区。
+- **确认列表性能**：保持模糊去重结果与顺序不变，增加相似度上界剪枝和按完整标题输入的缓存；一次查询会话内已打开的确认，替代逐条 SQLite 查询。319 条真实待确认下单次轮询从约 4.66 秒降至热缓存 29–45 毫秒。
+- **验收**：真实模型、真实数据副本和浏览器联调记录见 [聊一聊真实环境验收](testing/2026-09-26-chat-agent-live-audit.md)；同步 agent/api/soul、三端模块文档与架构图。
+
+### 优化：B 站搜索冷却半程恢复探测——风控解除不再空转整个冷却期（2026-10-02，feat/bili-cooldown-recovery-probe，issue #232）
+
+- **问题**：412 / v_voucher 冷却最长可升级到 1800s，期间即使 B 站已解除封禁，搜索也只能空转到 deadline 才恢复；这是 #232 方向 2 剩余的「明确风控恢复后的探测节奏」。
+- **方案**：冷却窗口过半时，`search()` 放行**一次**单 attempt 恢复探测——状态文件新增 `activated_at` / `last_probe_at` 字段（向后兼容，缺省 0），探测预算跨进程共享、每个冷却窗口最多一次；探测成功即清除全部冷却与 DOM fallback 状态（`clear` 模式整体覆写落盘）并传播到所有进程，探测失败则经既有 412 / v_voucher 路径自然重新武装（escalate）冷却；持久化禁用 / 不可读时退回进程内「每窗口一次」的内存语义。请求成本有界：每窗口至多一次额外搜索请求。回归：`tests/test_bilibili_search_backoff.py` +6 条（未过半不探测、过半探测且仅一次、探测预算跨进程共享、禁用持久化时内存兜底、无冷却不探测、探测成功清除冷却并落盘）。真实请求 E2E：半程窗口下探测发出恰好 nav + 1 次搜索请求、返回 5 条真实结果、冷却即刻清零落盘；未过半窗口保持零请求跳过。
+- **文档同步**：`docs/modules/bilibili.md`（搜索风控冷却特性行 + 设计要点第 10 条）。
+
+### 优化：B 站 /view 载荷进程内缓存——同一轮不再重复拉同一视频（2026-10-02，feat/bili-view-data-cache，issue #232）
+
+- **问题**：一轮 discovery 里同一个 bvid 会被多个环节各自请求 `/x/web-interface/view`——推荐打分（`get_video_info`）、danmaku / 字幕 / play 的 cid 解析、收藏 / 稍后再看的 aid 解析、API 层 view 转发，同一出口 IP 承受数倍于必要的请求量。
+- **方案**：`get_video_view_data()` 对成功响应做进程级 LRU 缓存（ClassVar `OrderedDict`，TTL 600s、上限 512 条）；缓存键携带 SESSDATA 指纹（匿名与登录响应可能不同，explore 策略使用匿名 client），失败永不缓存。回归：`tests/test_bilibili_view_cache.py` +6 条（同 bvid 只请求一次、不同 bvid 分别请求、匿名 / 登录隔离、过期重取、失败不缓存、LRU 逐出）；`tests/conftest.py` 增加 autouse fixture 每测试清空缓存，防止跨测试泄漏。
+- **文档同步**：`docs/modules/bilibili.md`（特性表新增「/view 进程内缓存」行）。
+
+### 修复：B 站搜索冷却状态跨进程共享（2026-10-01，feat/bili-search-cooldown-shared-state，issue #232）
+
+- **问题**：搜索冷却 / 退避档位 / v_voucher streak / DOM fallback 四项状态此前只是 `BilibiliAPIClient` 的 ClassVar，仅同进程共享；CLI 四进程布局（API 主进程 + worker + discovery worker）下，API 进程被 412 打进 600s 硬冷却后 discovery worker 仍用 API 搜索打同一出口 IP，worker 侧触发的 DOM fallback 信号 API 进程也看不到。
+- **方案**：新增 `bilibili/search_backoff.py`，把四项状态镜像到 `<data_dir>/bilibili_search_backoff.json`——deadline 以墙钟存储（`time.monotonic()` 跨进程不可比），复用 `memory/json_state.py` 的文件锁读-改-写，读取时按「最保守者赢」合并（deadline 取 max；escalation 档位与 streak 只在最长冷却 1800s 的事故窗口内合并，避免陈旧 streak 误触发新进程），任一进程搜索成功后清零计数并传播。状态文件不可写 / 不存在时完全退回进程内行为（fail-open，无新增配置项）；schema 预留 `scope` 字段，为后续按 cookie / proxy 分账留口。回归：`tests/test_bilibili_search_backoff.py` +9 条（412 硬冷却 / DOM fallback / streak 跨进程可见、最保守 deadline 获胜、reset 传播、陈旧计数忽略、禁用与不可写时逐字退回进程内行为、落盘 schema）；新增 `tests/conftest.py` 把套件的状态文件统一重定向到 tmp，避免测试读写真实 `data/`。
+- **文档同步**：`docs/modules/bilibili.md`（搜索风控冷却特性行 + 设计要点第 10 条）。
+
+### 新增 Cheaper Inference 内置 Provider（2026-09-30）
+
+- `provider_type="cheaperinference"` 通过 OpenAI 兼容接口接入 Cheaper Inference，默认 `https://api.cheaperinference.com/v1`、`gpt-5.4-mini`，模型名不带厂商前缀。支持独立实例、调用链、模型发现（只列 `type` 为 `text` 的聊天模型）和请求探测；多模型网关不发送 `reasoning_effort`，embedding 仍需独立配置。
+- 接入后端配置与 API、CLI 和安装向导（菜单第 10 项）、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
+
+### 维护：发版检查与测试隔离（2026-10-04）
+
+- 合并网页搜索的异步资源上下文，兼容 CI 的 Ruff 0.16.10 `SIM117` 检查，维持流式响应关闭顺序和总时限。
+- 修复推荐传输测试创建环境变量后未清理的问题：先登记再删除键，确保真实运行时直接写入的端口 / socket 在测试结束时恢复，避免后续 API 单测误走不存在的推荐 worker。
+
+## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
+
+### 特性：聊天回复 token 级流式输出（2026-10-01，feat/token-streaming，issue #83）
+
+- **LLM 层流式契约**：`LLMProvider` 新增 `stream_complete()` / `stream_complete_with_tools()` 异步生成器，产出 `LLMStreamChunk`（`delta` 增量块 + 携带聚合 `LLMResponse` 的终止块）；基类默认实现调用 `complete()` / `complete_with_tools()` 后一次性吐全文，Claude / Gemini / CodexChatGPT 等所有现存 provider 零改动兼容。真流式在 `OpenAIProvider`（chat-completions flavor）落地：`stream=True` + `stream_options.include_usage`（老网关拒绝 `stream_options` 时降级一次重试），FC 流式把 `tool_calls` 增量静默聚合到终止块、只把 content 增量实时吐出；responses flavor 与 `json_mode` 保持一次性回退（结构化调用依赖格式拒绝重试梯），DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / ApiRoute / openai_compatible 子类自动继承真流式。流式路径刻意不做「截断翻倍预算重发」——中途重发会重复已展示文本。
+- **registry / service 流式链**：`LLMRegistry` 新增与非流式一一对应的 6 个流式入口（`stream_complete` / `stream_chain` / `stream_provider` / `stream_complete_with_tools` / `stream_with_tools_chain` / `stream_provider_with_tools`），复用 cooldown / 限流 / 告警语义；流式专属规则——**只在首个 delta 之前允许 fallback**，已吐字后失败直接上抛。`LLMService` 新增 `stream_complete_with_core_memory()` / `stream_socratic_dialogue()` / `stream_complete_with_native_tools()`，同路由、同 provider slot、同 usage 记账；prompt 模拟工具路由保持一次性（回复是否为 tool_call JSON 要等全文才知道）。
+- **对话与 agent loop**：`AgentEvent` 新增 `delta` 类型（`{type, step, text}`），`AgentLoop` 每跳经 `stream_complete_with_native_tools()` 逐 token 流出——若该跳最终带 tool_calls，已流出的文本由 `thinking` 全文事件接管进过程流；无流式能力的旧 service double 自动回退一次性 `_complete()`。`SocraticDialogue.respond_stream()` 为单跳对话加流式路径（历史 / 回滚 / 学习语义与 `respond()` 一致；工具回合保持一次性）。
+- **API / SSE**：`POST /api/chat/agent/stream` 转发 `delta` 事件但不写入 `payload.agent_events`（回放仍由 `thinking` / `final` 全文重建，turn 行不被数百条片段撑大）；`final` / `done` 事件照旧，协议向后兼容（旧前端忽略未知事件即安全）。legacy `POST /api/chat/stream` 从「切片假流式」升级为真流式：`respond_stream()` 的增量直接作为 `content` 事件逐 token 下发，事件名与 `done` 协议不变。**注意**：生产装配的 legacy dialogue 带 SOURCE_TOOLS 工具回合，按设计保持一次性工具流、最终回复作为单个 `content` 事件下发（E2E 实测单事件）；逐 token 效果只在无工具配置（如 CLI `chat`）下可见。
+- **前端与 CLI**：移动 Web（`web/js/views/chat.js`）把 `delta` 实时渲染进回复气泡（`thinking` 到达时清空并移交过程流）；桌面 Web（`web/desktop/assets/js/app.js`）同样累加 `live.replyText` 即时重渲染；插件 popup 走兼容忽略（`final` 落成气泡）。CLI `openbiliclaw chat` 逐 token 打印回复（单次 `阿花：` 前缀、不解析 markup、不换行刷屏）。
+- **回归**：`tests/test_token_streaming.py` +18 条（基类回退、OpenAI 真流式 / json_mode 回退 / FC 增量聚合 / 中途断流错误映射、registry pre-delta fallback 与吐字后不重试、service native / 模拟路由、AgentLoop delta 事件序列、respond_stream 历史与回滚、两个 SSE 端点事件序列与 delta 不落库）；`tests/test_agent_loop.py` 模拟路径期望补一条 `delta`。
+- **文档同步**：`docs/modules/llm.md`（流式契约 + 公开 API）、`docs/modules/agent.md`（M2.5 行 + SSE 事件表 `delta` 行 + 不落库说明）、`docs/modules/api.md`（agent/stream 事件清单 + legacy 真流式）、`docs/modules/soul.md`（`respond_stream`）、`docs/modules/cli.md`（chat 逐 token 输出）、`docs/modules/desktop-web.md` / `extension.md`（delta 渲染与兼容口径）。
+
+### 新增：CLI chat 支持多行输入（2026-09-30，feat/cli-multiline-input，issue #83）
+
+- **多行输入（核心）**：用户反馈「求能换行」，此前 `openbiliclaw chat` 用 `typer.prompt` 单行读取，与 Web 端（Shift+Enter 换行）体验不一致。现交互式终端（stdin/stdout 均为 TTY）下输入框改由 prompt_toolkit `PromptSession` 驱动：Enter 发送，Esc+Enter（或 Alt+Enter，终端中即 Meta+Enter）插入换行，进入对话时副标题提示快捷键；非 TTY 环境（管道、重定向、自动化测试）自动回退原单行 `typer.prompt`，退出命令（exit / quit / 空行）、Ctrl+C/Ctrl+D 终止、单轮失败续聊等行为不变。可测逻辑抽到 `openbiliclaw.cli_input`：`supports_multiline_prompt()`（TTY 判定）、`is_chat_exit_command()`（退出判定）、`build_multiline_key_bindings()` / `build_multiline_session()`（会话构造）。新增依赖 `prompt_toolkit>=3.0`（输入交互能力此前全库缺失，无既有依赖可复用）。回归：`tests/test_cli_input.py` +6 条（TTY 判定双真才启用、退出命令大小写/空白/多行不误判、multiline buffer 与 Enter / Esc+Enter 键绑定注册、快捷键提示文案）。
+- **文档同步**：`docs/modules/cli.md`（`chat` 小节补多行输入与回退规则）。
+
+### 功能：对话内链接摄入——聊天粘贴 B站/知乎/小红书链接即被理解并记入偏好（2026-09-30，feat/chat-link-ingest）
+
+- **链接摄入服务（核心，issue #83）**：新增 `src/openbiliclaw/sources/link_ingest.py` 的 `LinkIngestor`。用户在聊天里粘贴链接（「我就喜欢这个」）时：① 从消息提取 URL（每条消息最多 3 个）；② 展开 b23.tv / xhslink.com 短链（跟随重定向，8s 超时、256 KiB 读取上限、非 HTML 拒绝，httpx 一律 `trust_env=False`，不给配置热重载留悬挂连接）；③ 按 `sources/platforms.py` 注册表识别平台——bilibili 复用 `BilibiliAPIClient.get_video_info`（标题/简介/UP 主/标签），知乎/小红书等抓页面 title/description/og 元数据（stdlib HTMLParser，零新依赖）；④ 摘要渲染为「【用户分享的链接】」块注入当轮 prompt，对话历史与审计仍存用户原文，仅 `relation_prefix`（如 `[分享了链接《…》]`）让后续轮次保持感知；⑤ 每个抓取成功的链接经 `MemoryManager.propagate_event` 记为 `share` 事件（显式正向偏好，默认信号强度 0.85，用户消息摘录进 `comment_text` 白名单字段直达偏好分析）。
+- **两条聊天入口共用一条接缝**：`SocraticDialogue` 新增可选 `link_ingestor` 依赖，`respond()` 与 `stream_agent_reply()` 在 user turn append 后、LLM 调用前预处理——Web 三端点（`/api/chat`、`/api/chat/stream`、`/api/chat/agent/stream`，`api/runtime_context.py` 装配）与 CLI `openbiliclaw chat`（`cli.py::_build_dialogue`）全覆盖；未装配 ingestor 时 prompt 逐字节不变。任何抓取/写入失败只降级当链接或记 WARNING，聊天永不阻塞。
+- **测试**：`tests/test_link_ingest.py` +17 条（URL 提取/去重/尾标点、b23.tv 与 xhslink 短链展开、B站 API 路径、知乎 og 元数据、XHS note_id 入事件、抓取失败/非 HTML/体积上限/条数上限降级、事件 sink 失败静默、share 事件形态）；`tests/test_dialogue_link_ingest.py` +5 条（prompt 注入且历史原文不变、relation_prefix、无链接基线不变、ingestor 异常不阻塞、agent stream 路径注入）。全部网络调用经注入 `http_client_factory` + `httpx.MockTransport` mock。
+- **文档同步**：`docs/modules/soul.md`（链接摄入特性行）、`docs/modules/api.md`（聊天端点链接摄入行）、`docs/modules/cli.md`（chat 命令行）、`docs/architecture.md`（sources 层模块清单）。
+
+### 修复：文案/评估协调器退避静默 + runtime-status 恒显 idle（2026-09-30，fix/expression-copy-backoff-observability）
+
+
+- **退避可观测（核心）**：真实环境 e2e 发现 discovery worker 里的 `ExpressionCopyCoordinator` 在 provider 429 后进入 15/30/60/120/300s transient backoff，期间**零日志**——表现为「19 条待写文案 10 分钟无进展、无任何日志」。现按 candidate_eval 的 worker failed 风格补齐状态迁移日志：transient 退避（WARNING 含退避时长/pending/streak/失败摘要）、no_provider/auth_failed 暂停、零进展 15s 重试、退避后恢复（INFO）、config_*/manual_*/startup 唤醒恢复（INFO）各一条，干净 drain 不刷日志。`CandidateEvalCoordinator` 同类静默分支一并补齐：rate-limit 退避（此前只有 transient 有日志）、no_provider/auth_failed 暂停、退避后 recovered、唤醒 resumed。回归：`tests/test_expression_copy_coordinator.py` +4 条（退避 WARNING 含时长/pending/原因、恢复 INFO、零进展 WARNING、干净 drain 无 WARNING、暂停/恢复日志）、`tests/test_candidate_eval_coordinator.py` +1 条。
+- **runtime-status 聚合 worker 协调器真实状态**：`openbiliclaw start` 的 delegated 部署中两个协调器跑在 discovery worker 进程，API 进程内实例从不启动，`/api/runtime-status` 的 `expression_*` / `candidate_eval_*` 恒显 idle。不新建 IPC：discovery worker 搭车既有 `WorkerStatusStore` 文件心跳机制，每 10s 原子发布 `runtime/discovery_worker_status.json`（`extra.coordinators` 嵌套两个协调器的 `status_payload()`）；`WorkerStatusStore` 新增 `read_if_fresh()`（心跳超 45s 视为缺失），`runtime_context` 向 controller 装配 `delegated_coordinator_status_reader`，`get_runtime_status()` 在本地合并之后用新鲜的 worker 载荷覆盖同名键，文件缺失/过期保持本地值（单进程 `serve-api` 语义不变）。回归：`tests/test_worker_status.py` +1 条（read_if_fresh 新鲜/过期/缺失）、`tests/test_discovery_worker_status.py` +3 条（载荷收集、失败/缺失跳过、心跳端到端写读）、`tests/test_refresh_runtime.py` +2 条（delegated 覆盖本地 idle、reader 返回 None 保持本地）。
+- **文档同步**：`docs/modules/runtime.md`（文案协调器退避日志、候选评估失败日志、delegated 状态聚合通道）。
+
+### 修复：LLM length 自愈两缺口——工具调用路径 + Responses reasoning 标识（2026-09-30，fix/llm-tools-length-responses-reasoning）
+
+- **原生工具调用补齐 length 预算放大重试（缺口 1）**：`OpenAIProvider.complete_with_tools()` 此前在 reasoning 模型把输出预算烧光（空 `content`、无 `tool_calls`、`finish_reason=length`）时直接 raise，agent loop 硬失败，而普通 `complete()` 已有翻倍预算自愈。现复用共享 `_retry_with_larger_budget()`：该场景翻倍 `max_tokens` 重试一次（封顶 32768 语义一致、已达上限不重试、`tools` / `tool_choice` 及其余参数原样保留）；携带 tool_calls 的响应永不进入重试，重试仍失败时抛出与此前一致的 reasoning-budget 错误。Responses-flavor 无原生 FC，其 prompt 模拟工具调用走 `complete()`，已被 `e4fa214e` 的 flavor 修复覆盖，本次补服务级集成回归。回归：`tests/test_llm_native_tools.py` +4 条（放大重试成功且 tools 保留、耗尽后错误可被 `is_reasoning_budget_exhausted()` 识别、正常 tool_calls 路径零重试、responses-flavor 模拟工具调用经放大重试恢复）。
+- **Responses 路径补齐 reasoning 预算耗尽标识（缺口 2）**：chat 路径对 reasoning-only 空响应报 `returned reasoning but no final content (finish_reason=length)`，`is_reasoning_budget_exhausted()` 据此触发 discovery `_evaluate_batch` / recommendation 分类与预计算批的「批减半递归重试」；Responses 路径此前统一报 `returned empty content`，该自愈对 `api_flavor="responses"` 实例不生效。现 `_complete_via_responses()` 在 `output` 含 `type="reasoning"` 条目但无最终 message 时抛出与 chat 完全相同的标识形态：`status="incomplete"` + `incomplete_details.reason="max_output_tokens"` 映射为 `finish_reason=length`（可被识别），其余终态映射为自身状态名（不被识别，镜像 chat 的非 length finish_reason）；无 reasoning 条目的空响应仍报 `returned empty content`。顺序保证：先走「去 text.format → 翻倍预算」重试梯，全部耗尽后才落该错误。回归：`tests/test_llm_providers.py` +3 条（reasoning+截断错误可识别且放大重试先于错误、无 reasoning 条目不误识别、reasoning+非截断终态不带 length 标识）、`tests/test_llm_service.py` +1 条（responses 实例的错误经 registry fallback + service 包装后仍可被 `is_reasoning_budget_exhausted()` 识别，即评估批减半路径现在能触发）。
+- **文档同步**：`docs/modules/llm.md`（「reasoning-only 诊断与兼容端点自愈」行补 Responses flavor 标识、「finish_reason=length 预算放大重试」行补工具调用路径）。
+
+### 修复：dialogue 布局 e2e 剩余滚轮固定等待收口（2026-09-30，fix/e2e-wheel-wait）
+
+- **`test_pending_inbox_is_bounded_and_independently_scrollable` 同款 flake 收口（纯测试）**：与 `fix/e2e-stability` 修过的 `test_many_dialogue_cards_keep_natural_height_and_scroll` 完全相同的模式——`mouse.wheel` 后固定 `wait_for_timeout(80)` 断言 `#desktopPendingConfirmations` 的 `scrollTop` 前进，headless Chromium 滚轮滚动由合成器异步落地，固定等待会早采样。同样改为 `wait_for_function` 轮询到 `scrollTop` 真正前进再断言；至此该文件内 wheel-scroll 断言的固定等待全部消除，连跑 5 遍全绿。
+
+### 修复：推荐进程 TCP 端口占用冲突无探测（2026-09-30，fix/recommendation-port-probe）
+
+- **回退 TCP 时递增探测空闲端口（现场故障后续）**：上一修复把超长 Unix socket 路径回退到固定 `127.0.0.1:8423`，但同机第二个实例同样回退（或 8423 被别的程序占用）时子进程 bind 失败，又回到 `Recommendation proxy failed: All connection attempts failed`。现 `recommendation_runtime.find_free_loopback_port()` 从基准端口（显式 `OPENBILICLAW_RECOMMENDATION_PORT` 或 8423）起逐个真实 bind 探测，被占递增、有界 21 个候选，最终选中端口写回 env，父进程反代与子进程读同一变量天然一致；Windows 主路径（本就走 TCP）同样受益。**显式端口语义**：被占时同样递增而非硬失败，并记 WARNING 说明原值与改选结果——该端口是纯内部 loopback IPC，唯一消费者是读同一 env 的自家反代，硬失败只会复现推荐页 502；非法端口值 WARNING 后按默认端口探测。探测耗尽保留基准端口并 WARNING，子进程新增 `_run_tcp` 在 bind 失败时记含端口号的清晰 ERROR（覆盖探测到 bind 之间的小概率竞态）。独立运行 `recommendation_server` 的超长路径兜底分支同样先探测。回归：`tests/test_recommendation_runtime.py` +8 条（探测跳过被占端口且选中端口可绑、有界扫描耗尽返回 None、默认端口被占时 TCP 分支递增且 env 一致、显式端口被占递增 + WARNING 语义、耗尽保留基准 + WARNING、超长路径回退也探测、子进程 bind 失败 ERROR 日志、独立运行回退探测）。
+- **文档同步**：`docs/modules/cli.md`（start 传输选择段补端口探测与显式端口语义）、`docs/modules/api.md`（反代传输说明补端口探测）。
+
+### 修复：Responses API flavor 缺 length 截断自愈（2026-09-30，fix/responses-length-retry）
+
+- **Responses 路径补齐预算放大重试（chat 修复的 flavor 补齐）**：`c36cff5a` 给 chat-completions 路径加的 `finish_reason=length` 翻倍预算重试未覆盖 `api_flavor="responses"` 实例——Responses 端点以 `status="incomplete"` + `incomplete_details.reason="max_output_tokens"` 表达输出截断，此前只在空 `content` 时用**相同预算**去掉 `text.format` 重试，reasoning 模型会再次把预算烧在思考上。现 `_complete_via_responses()` 获得等价自愈：① json_mode 下 JSON 被截断但有正文时翻倍 `max_output_tokens` 重试一次；② 空 `content` 走完「去 text.format」重试梯后仍是 `incomplete/max_output_tokens` 时翻倍重试一次。既有 `_chat_retry_with_larger_budget()` 泛化为共享的 `_retry_with_larger_budget()`（预算键 / 截断标记 / 发送函数参数化，封顶逻辑单一出处），新增 `_responses_output_truncated()` 判定，封顶同为 32768、已达上限不重试、重试保留其余请求参数、仍失败时抛与此前一致的 `returned empty content` 错误，下游回退行为不变。回归：`tests/test_llm_providers.py` +4 条（截断 JSON 放大重试成功且参数保留、空 content 梯后放大重试成功、重试耗尽错误与回退不变、已达封顶不重试）。
+- **文档同步**：`docs/modules/llm.md`（「finish_reason=length 预算放大重试」行扩为两条 flavor）。
+
+### 修复：桌面 web e2e 稳定性（2026-09-30，fix/e2e-stability）
+
+- **pool_refill 稳定性 e2e 按真实线上事件格式注入（测试过期，非产品 bug）**：`tests/test_desktop_web_list_stability_e2e.py::test_pool_refill_event_keeps_loaded_cards_and_scroll_position` 在干净 main 上稳定红，末条断言 `#metricPool == "70"` 不成立（实为 40）。根因：自 `408de9a8` 起头部库存只跟随带 `pool_status_version` 的已提交库存快照（`normalizeRuntimeStatus` 优先 `state.platformAvailability.total_available`，无版本事件的裸 `pool_available_count` 不再驱动头部），而测试注入的 `refresh.pool_updated` 缺 `pool_status_version` / `platform_available_counts`。产品行为正确（防 HTTP/WebSocket 竞态下旧快照覆盖新快照），故按真实后端 `_broadcast_recommendation_pool_status` 的线上格式补全注入字段，断言与 DOM 原地存活 / 滚动位置契约保持不变。
+- **dialogue 布局 e2e 滚轮 flake 改确定性等待**：`tests/test_desktop_dialogue_layout_e2e.py::test_many_dialogue_cards_keep_natural_height_and_scroll` 的 `mouse.wheel` 后固定 `wait_for_timeout(80)` 在并行负载下会早采样到 `scrollTop=0`（headless Chromium 滚轮滚动由合成器异步落地，实测延迟可超 80ms、随后正常到位），改为 `wait_for_function` 轮询到 `scrollTop` 真正前进再断言，连跑 5 遍全绿。
+
+### 修复：数据目录过深时推荐子进程 AF_UNIX 路径超限崩溃（2026-09-30，fix/recommendation-socket-fallback）
+
+- **Unix socket 路径超限自动回退 TCP（现场故障）**：推荐子进程与主 API 之间的 Unix socket 路径由 `<data_dir>/runtime/recommendation.sock` 直接拼接，macOS 上 `sun_path` 上限约 104 字节，数据目录稍深子进程启动即以 `OSError: AF_UNIX path too long` 崩溃，API 侧随后报 `Recommendation proxy failed: All connection attempts failed`（生产日志 2026-09-28 出现 4 次）。现 `recommendation_runtime.ensure_recommendation_transport_env()` 在选 Unix socket 前对最终路径（含显式 `OPENBILICLAW_RECOMMENDATION_SOCK`）做字节长度检查，达到 104 字节（含 NUL，按最严 POSIX 平台计）即自动回退 loopback TCP（默认 `127.0.0.1:8423`）并记一条 WARNING（含实际路径长度与所选端口）；传输仍由父进程环境变量单一决定，子进程与 API 反代读同一组变量，双方始终一致。独立直接运行 `openbiliclaw.recommendation_server`（无继承环境变量）时同样的长度检查在进程内兜底，不再崩溃。Windows 行为不变（本就走 TCP）。回归：`tests/test_recommendation_runtime.py` +5 条（长度边界、超长派生路径回退 TCP 且 WARNING 含长度/上限/端口、超长显式 SOCK 回退、ensure 与 server 经共享 env 同选 TCP、server 独立运行超长路径兜底 TCP）。
+- **文档同步**：`docs/modules/cli.md`（start 四进程段落补传输选择与回退规则）、`docs/modules/api.md`（推荐反代小节补传输一致性说明）、`docs/architecture.md`（系统概览数据流标注回退）。
+
+### 修复：reasoning 模型 length 截断导致关键词 planner 持续回退（2026-09-30，fix/keyword-planner-length-retry）
+
+- **`finish_reason=length` 预算放大重试（核心，现场故障）**：生产 7~9 月日志中 `keyword planner merged generation failed; falling back to interest names` 出现 21+ 次，搜索词质量下降。根因：配置了 `reasoning_effort` 的 OpenAI 兼容端点把输出预算全部耗在 thinking 上，响应以 `finish_reason=length` 结束——要么 `content` 为空（reasoning-only），要么 JSON 被截断。既有自愈路径都覆盖不到：「去掉 `response_format` 重试」用同一 `max_tokens` 重发必然再次 length；「显式禁 thinking 重试」只在调用方显式传 `reasoning_effort=""` 时触发，而 planner 等路由传 `None` 跟随实例配置。现 `OpenAIProvider.complete()`（chat-completions 路径，全部 OpenAI 协议子类继承）在两种 length 截断下各追加一次翻倍预算重试（封顶 32768，已达上限则不重试）：① 空 `content` 走完既有重试梯后仍为 length；② json_mode 下 JSON 被截断但有正文。重试保留原请求其余参数；仍失败时抛出与此前一致的 `returned reasoning but no final content (finish_reason=length)` 错误，planner 及 soul / discovery / recommendation / evaluation 各路由的回退行为不变。回归：`tests/test_llm_providers.py` +4 条（reasoning-only 放大重试成功且参数正确、截断 JSON 放大重试、重试耗尽后错误与回退不变、已达封顶不重试）。
+- **文档同步**：`docs/modules/llm.md`（新增「finish_reason=length 预算放大重试」行）。
+
+### 修复：移动端播放画质选择（2026-09-30）
+
+- B 站 DASH 取流先匹配请求的画质编号，再在该画质内优先选择指定编码。修复真实 iOS 播放中请求 480P（qn=32）却因选择首个 AVC 候选而返回 1080P（qn=80）的问题；目标画质不可用时沿用原有回退行为。
+- 补充覆盖多画质 / 多编码候选、编码偏好和不可用画质回退的回归测试。
+- 验证：相关 pytest 56 项、全仓 Ruff、295 个源码文件的 MyPy 通过；本机真实后端与 iOS 26.5 模拟器端到端验证请求 qn=32 后实际解码 850×480，并继续播放超过三秒。
+
+### 修复：failed_eval 死信无复活路径 + pool maintenance 不变量测量噪声自锁（2026-09-30，fix/pool-eval-recovery）
+
+- **failed_eval 死信复活（核心，现场故障）**：某 Windows 用户 7 月 deepseek 401/404 配置错误把 568 条候选的评估预算烧进 `failed_eval`，此后 provider 修好这批候选也没有任何回到 `pending_eval` 的路径，候选池只出不进。新增 `Database.revive_failed_eval_candidates(limit=500, max_revives=3)`（重置 status / `eval_attempts` / `batch_eval_attempts` / `eval_error` 与 claim 字段，`temporal_review_due:*` 行归 temporal 复审机制所有不参与）；`CandidateEvalCoordinator` 新增 `revive_failed_eval_callback`，在恢复信号（config rebuild 后的 `startup`、`config_*` / `manual_*` 唤醒，即解除 paused 的同一组 reason）触发一次复活，经 `DiscoveryCandidatePipeline.revive_failed_eval_candidates()` 委托到 storage。有界性两层保证：单次最多 `limit` 行 + 每候选持久化 `eval_revive_count` 终生最多复活 `max_revives` 次，对着仍然坏掉的 provider 反复重启不会无限重烧 LLM 配额。复活失败只记 WARNING，不影响唤醒路径。回归：`tests/test_failed_eval_revival.py` 11 条（状态/预算重置、单次限量、持久化复活上限、temporal 行跳过、coordinator 触发时机与异常隔离、pipeline 委托）。
+- **pool maintenance 不变量测量噪声自锁（liveness，现场故障）**：同一现场 8 月每 tick 回滚 652 次（`available inventory fell below protected floor: before=263 after=251 target=300`）。根因不是真实库存下降，而是事务内 before/after 两次 canonical availability 扫描测量基准不一致：`_filter_available_pool_candidate_rows` 每次取新的 `datetime.now(UTC)`（跨 `temporal_valid_until` 的行在中途翻转），动态 delight 阈值每次按当前样本分位重算（事务自身的 `pool_status` 写入会移动样本），池子低于 target 时 floor=`min(before, target)`=before，任何 1 行噪声都整笔回滚——stale 清不掉、suppressed 恢复不了。现 `maintain_pool_inventory` 在事务开始时捕获一次 `maintenance_now`、temporal transition 后快照一次 delight 阈值，两次扫描、恢复规划与全部 trim planner 经 `_now=` / `_delight_threshold=` 私有参数共享这组基线（缺省保持逐次实时计算的旧行为）；stale trim 的 `datetime('now')` 也改为按同一基线计算 cutoff。不变量本身保留不变。回归：`tests/test_pool_maintenance.py` +3 条（时钟跨越 temporal 边界时池低于 target 也能提交、动态阈值每事务只算一次、回滚如实填报——三条在 main 上均为红）。
+- **回滚结果如实填报 + 日志降级**：回滚分支的 `PoolMaintenanceResult` 此前返回默认 `mutation_count=0 / trimmed_*=0`，掩盖事务内真实尝试的写操作；现 `trimmed_*` / `deferred_*` / `mutation_count` 如实描述已被回滚的尝试批次（`available_after` / `raw_after` / `recovered_suppressed` 仍描述回滚后的持久态），`has_more` 固定 `False`。`_record_pool_maintenance_result` 把回滚从 ERROR 降为 WARNING（库存护栏的正常自愈路径；真正异常的 `bounded pool maintenance failed` 保持 ERROR），日志中回滚批次标注 `mutations=N(attempted)`。回归：`tests/test_pool_maintenance.py` +1（回滚字段与持久态不变）、`tests/test_refresh_runtime.py` +2（WARNING/INFO 级别与 attempted 标注）。
+- **文档同步**：`docs/modules/storage.md`（复活 API、共享测量基准、回滚字段语义）、`docs/modules/runtime.md`（`notify` 复活触发、回滚 WARNING、coordinator 装配）、`docs/modules/discovery.md`（pipeline 复活委托）。
+
+### 修复：Firefox event page 卸载导致抖音任务无结果、标签页残留（2026-09-29，fix/issue140-dy-firefox-task-state）
+
+- **抖音任务状态持久化 + alarm 超时兜底（issue #140，严重）**：Firefox MV3 的 background scripts 是 event page，空闲约 30 秒即被浏览器卸载；`dy-task-dispatcher.ts` 此前把任务执行状态（`taskTabId` / `searchProgress` 等）全部放在模块级内存，超时兜底用模块级 `setTimeout`——event page 卸载后超时回调不再触发、任务标签页残留，迟到的 `DY_SEARCH_RESULT` 也被 `if (!searchProgress) return` 丢弃。现把进行中任务的快照（任务体、任务 tab id、deadline、各类型进度）在每次状态迁移时串行写穿到 `chrome.storage.session`（key `openbiliclaw_dy_active_task`），超时改用一次性 `chrome.alarms`（`openbiliclaw-dy-task-timeout`）作为权威兜底，`setTimeout` 仅作同进程精确快速路径。新 worker 经 `ensureDyTaskRecovery()` 单例 barrier（service worker 启动、poll/超时 alarm、`DY_*_RESULT` 消息入口共用）恢复快照：迟到结果继续回传 partial/final 并收尾，过期记录补报 `failed + task_timeout` 并关闭任务 tab，tab 已消失时以 `task_tab_closed` 立即结算；无记录时按 `openbiliclaw_dy_task=1` URL 标记清扫孤儿任务标签页（不动用户标签）。Chrome service worker 回收场景同样受益。回归：新增 `extension/tests/dy-task-recovery.test.ts` 8 条。
+- **文档同步**：`docs/modules/extension.md`（新增「抖音任务状态跨 event page 持久化」行）。
+
+### 新增 API Route 内置 Provider（2026-09-28，feat/api-route-provider）
+
+- `provider_type="api_route"` 通过 OpenAI 兼容接口接入 API Route，默认 `https://global.api-route.com/v1`、`gpt-5.5`。支持独立实例、调用链、模型发现和请求探测；多模型路由不发送 `reasoning_effort`，embedding 仍需独立配置。
+- 接入后端配置与 API、CLI 和安装向导、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
+- 用量估价按 API Route 当前公开费率计算默认 `gpt-5.5`，其他路由使用网关中档估算值。
+
+### 修复：Windows pythonw 下子进程标准流缺失导致推荐页 502（2026-09-26，fix/pythonw-child-stdio）
+
+- **子进程 stdout/stderr 显式落盘（严重）**：Windows 桌面包用 `pythonw.exe`（无控制台）跑 `cli start`，`_run_api_server` 此前用 `subprocess.Popen([sys.executable, "-m", ...])` 拉起 4 个后台子进程但不传 stdout/stderr；Windows 上 Python 默认 `close_fds=True`，子 `pythonw` 的 `sys.stdout`/`sys.stderr` 为 `None`，`recommendation_server` 与 `image_service` 一写标准流就抛异常静默退出（stderr 同为 None，连堆栈都留不下），推荐页因此 502 空白。现统一走新辅助函数 `cli._spawn_background_child(name, module, env)`，把每个子进程的 stdout/stderr 重定向到 `logs/child-<name>.log`（append，utf-8）；这些文件落在 `logging_setup` 既有 unmanaged 清理策略内（超 200MB 截断、超 30 天删除、总预算 500MB）。回归：`tests/test_cli_child_stdio.py` 3 条（重定向参数与日志路径、命名、Popen 失败时句柄不泄漏）。
+- **迁移运行时锁 Windows 分支 PermissionError**：`storage/migration.py` `_try_acquire_runtime_lock` 的 `os.name == "nt"` 分支此前在 `msvcrt.locking` 上锁前先 `handle.read(1)`，锁已被别的实例持有时 Windows 在 read 这一步直接抛 PermissionError，第二个实例以回溯崩溃退出而不是走「检测到已有实例在运行」的优雅分支。现把 seek/read/write/lock 整段抽为 `_windows_runtime_lock`，任一步 OSError 都关闭句柄并返回 None。回归：同文件 3 条（成功上锁、read 抛 PermissionError、locking 失败）。
+- **文档同步**：`docs/modules/cli.md`（子进程控制台输出落盘 `logs/child-*.log` 及清理策略）。
+
+### 修复：SIGTERM 退出留下四个孤儿子进程（2026-09-27，fix/sigterm-child-orphans）
+
+- **SIGTERM 下 finally 不执行（严重）**：`openbiliclaw start` / `serve-api` 的 `_run_api_server` 在 finally 里 terminate 四个后台子进程（worker / discovery_worker / recommendation_server / image_service），但实测 SIGTERM（`docker stop` / `pkill` / launchd / systemd）下 finally 从未执行，子进程变成 PPID=1 的孤儿继续占用端口。根因是 uvicorn `Server.capture_signals`：退出时恢复"原始"信号处理器并 `raise_signal` 重发捕获信号——SIGINT 重发后变成 KeyboardInterrupt 能穿过 finally，SIGTERM 重发后落到 SIG_DFL 进程立即死亡。现 `_run_api_server` 在 uvicorn 启动前安装 `_install_sigterm_cleanup_hook()`（SIGTERM 处理器抛 `SystemExit(143)`），uvicorn 保存/恢复的"原始处理器"即该钩子，重发时异常穿过 finally 完成子进程清理并以约定退出码 143 退出；外层 finally 先恢复原处理器再做清理（清理期间再次 SIGTERM 走默认处置立即退出），两条 uvicorn 启动路径（`uvicorn.run` / `server.run`）均覆盖；仅主线程安装，非主线程为 no-op。SIGINT 行为不变。回归：`tests/test_cli_sigterm.py` 4 条（钩子退出码、安装/恢复、非主线程 no-op、subprocess 模拟 uvicorn restore+raise_signal 全链路断言退出码 143 且清理标记写出）。
+- **文档同步**：`docs/modules/cli.md`（start 进程段落补 SIGTERM 清理说明）。
+
+### 设计文档：推荐导演规格收口（2026-09-26）
+
+- **Jev 三模式架构增补（仅文档）**：新增 [逐对编排 / Agent+Jev 局部修正 / 纯 Agent 预编排方案](plans/2026-09-26-director-jev-modes.md) 与 [官方能力核实](plans/2026-09-26-jev-provider-research.md)，明确每次选两张卡、独立过滤 provider、应用层递归状态、未来草稿中间换卡后的后缀重验、整屏提交和分别计量的预算/归因。原单模式规格标明被替代条款；未接入服务、未调用付费 API，运行时代码与配置不变。
+- **补全可实施合同（仅文档）**：为推荐导演规格补齐确定性 Feedback Gate 阈值与版本、规划和请求并发活性、Batch 执行类型与回退归因、状态变更事件账本、slot 失败释放、DELIVERED 重规划、Phase 0A 反馈身份桥及不隐藏失败样本的工程验收门；当前推荐行为和配置未变化。
+
+### 修复：移动端聊一聊 SSE 僵尸流假死（2026-09-25，fix/mobile-stream-watchdog）
+
+- **服务端 SSE 心跳**：`/api/chat/agent/stream` 与旧 `/api/chat/stream` 的事件流统一经 `_sse_heartbeat_wrap` 包装——相邻事件静默超过 10 秒（`_SSE_HEARTBEAT_INTERVAL_SECONDS`，含首字节前的 LLM 首跳）即发一行 SSE 注释 `: ping`。此前事件间完全静默，代理缓冲 / NAT idle / 网络切换把连接掐死不报错时客户端永久挂起。心跳推进用 shielded task 包住内部迭代，超时不会取消在飞的 LLM 调用；三端 SSE 解析器本就跳过注释行。回归：`test_chat_agent_stream_api.py::test_agent_stream_emits_heartbeat_during_silent_gap`（慢 LLM 静默期断言收到 ping 且事件完好）。
+- **流式链路诊断端点**：新增 `GET /api/chat/agent/ping`，每秒发一个 `event: ping`（`{"seq": N}`）共 10 个，无状态、不调 LLM；用户可直接在手机浏览器打开验证代理链路是否保流式（序号停在 10 之前 = 中间环节断流/缓冲）。回归：`test_chat_agent_ping_endpoint_streams_numbered_events`。
+- **三端 SSE 读看门狗**：`web/shared/agent-chat.js` 与桌面 `chat-agent-core.js` 新增 `createSseReadWatchdog()`（默认 60s，收到任何字节含心跳注释即重置计时，超时 abort 请求）。此前三端的 `reader.read()` 无超时无 AbortController（其它请求都有 withTimeout，唯独 SSE 没有），僵尸流让 Promise 永不 settle——移动端 `sending=true` 永久锁死发送键。现移动 `web/js/api.js`（`streamAgentChatTurn` / `streamChatTurnLegacy`）、桌面 `app.js`（`streamAgentChatTurn` / `streamChatTurn`）、popup `popup-api.js`（两处）全部接入看门狗，断流后走既有 catch 路径显示「连接中断了，可以重试」并复位输入状态；turn 从 `streamingTurnIds` 清除后由 2.5s 历史轮询重新驱动（durable 兜底会重跑 agent loop 补答）。回归：`tests/js/sse-read-watchdog.test.mjs` 6 条（看门狗单元 + 停顿流 reject + 心跳喂活完成）、`tests/js/desktop-chat-agent-core.test.mjs` +3、`extension/tests/popup-api.test.ts` +2。
+- **移动端恢复钩子**：`web/js/views/chat.js` 新增 `visibilitychange` 回前台立即触发一次历史检查（iOS 锁屏/切后台 JS 挂起、系统杀连接后不再等下一个轮询 tick）；`startChatTurn` 补 30s 建 turn 超时（弱网不再挂在建 turn 阶段）。
+- **文档同步**：`docs/modules/api.md`（SSE 心跳 + ping 诊断端点）。
+
+### 修复：聊一聊 agent loop 真实环境 E2E 发现（2026-09-25，fix/agent-loop-e2e-findings）
+
+- **approve 端点解耦异步执行（严重）**：`POST /api/chat/approvals/{id}/approve` 此前在请求内同步 dispatch，update_config 走热重载 lane 排空实测卡 148s～10min+，HTTP 挂死。现端点只做 `pending→approved→executing` 快速迁移并立即返回（`queued=true`，`ok=null`），真实执行由 `BackgroundTaskRegistry` 登记的后台任务（`chat_approval_execute`，已加入热重载 `cancel_all` 豁免名单，否则 update_config 的执行会被自己触发的 reload 取消）完成，终态迁移 + 审计台账 + `approval_result` 回放事件都在后台落定；执行中重复 approve 返回 `already_queued=true` 不重复入队，终态后重复 approve 返回 `already_executed=true` 不重执行。前端轮询 `GET /api/chat/approvals` 观察 `executing → executed / failed`。回归：`tests/test_agent_approvals.py` API 三用例（异步执行与审计、executing 中不双执行、失败落 failed 终态）。
+- **审批状态机补全终态（问题 3）**：状态机扩为 `pending→approved→executing→executed / failed`，新增 `failed` 终态与 `mark_executing`（仅 approved 可入）、`mark_executed` 收紧为仅 executing 可入。根因是热重载每次新建 `ApprovalStore` 且读路径（get/list）无条件落盘：热重载窗口内旧实例标完 executed 后，新实例的陈旧内存被任意一次读重写回文件，GET 看到状态回退。现生产接线在 backing 路径不变时**复用同一 store 实例**（`api/runtime_context.py`），读路径只在惰性过期真的改变记录时才落盘；进程在 executing 期间崩溃后加载自动降回 approved，重新 approve 即重试（不自动重跑）。回归：store 层 6 条新用例（mark_executing 门槛与幂等、failed 终态、崩溃恢复、陈旧实例读不写回）。
+- **热重载窗口 agent 流不再挂死（问题 2a）**：`DialogueExecutionCoordinator.lease()` 新增可选准入超时；`/api/chat/agent/stream` 以 30 秒预算准入，热重载暂停/排空 lane 期间超时返回单个 `error` 事件（「系统正在重载配置，请稍后再试」）替代 300s+ 无响应挂起；此时 loop 未开始，durable turn 保持 pending 并唤醒兜底 worker，lane 恢复后由它重跑 agent loop 完成。durable worker 与 legacy 路径保持无限等待（自带退避重试）。回归：`test_dialogue_reply_scheduler.py` 租约超时/恢复两用例 + `test_chat_agent_stream_api.py::test_agent_stream_lease_timeout_errors_and_fallback_completes_turn` 全链路。
+- **兜底 turn 补齐 agent_events（问题 2b）**：根因是 streaming turn 断连后 durable 兜底走 legacy 单跳 `dialogue.respond`，只有 dialogue_binding 没有过程流。现 `POST /api/chat/turns` 对 streaming turn 由服务端写入 `payload.agent_stream`（+ 可选 `agent_skill`）标记（已加入客户端不可伪造的保留键清单），兜底 worker 对带标记的 turn 重跑同一多跳 loop（同 skill 绑定、同工具子集）并把事件落进 `payload.agent_events`，历史回放与交互路径一致；agent loop 未接线的降级 runtime 仍退回 legacy 单跳。回归：`test_chat_agent_stream_api.py` 标记持久化 + 孤儿 streaming turn 兜底重跑两用例。
+- **feedback_state.json tmp 竞态（问题 8）**：`memory/manager.py save_feedback_state` 多写者共享同一 `feedback_state.json.tmp` 名，负者 os.replace 时报 FileNotFoundError（日志 19 次）。tmp 名改为带 pid + uuid 唯一后缀，finally 清理孤儿 tmp，保持原子写语义。回归：`test_memory_manager.py::test_feedback_state_concurrent_saves_do_not_race_on_tmp_file`（4 线程 × 30 次并发写）。
+- **agent system prompt 三条工作纪律（问题 4/5/6）**：`soul/dialogue.py` 新增 `_AGENT_LOOP_GROUND_RULES` 追加到每个 agent 回合的 system prompt（全 skill 共享，精炼三条防小模型指令衰减）：① 工具纪律——严禁正文描述/编造工具调用与结果，没实际 tool_call 就不得声称查过/改过；② 记忆归属——记忆/历史来自跨会话共享底座，无明确依据不得断言发生在本对话；③ 会话边界——「本对话/第一回合」指当前会话。回归：`test_dialogue_agent_stream.py::test_system_prompt_carries_agent_ground_rules`。
+- **三端前端适配异步审批协议**：approve 响应不再携带执行结果，三端审批卡统一改为「批准 → 执行中… → 轮询落终态」：点批准后按 `normalizeApproveResponse`（新增共享纯函数，按响应有无 `queued` 字段区分新旧协议）归类——新协议 `queued`/`already_queued` 卡片就地转「执行中…」（移除按钮防重复点击）并登记本地跟踪；终态由既有 2.5s 轮询驱动（桌面 `refreshChatApprovals`、移动 `refreshApprovals`、popup `refreshChatApprovals`，均加取 `?status=executing` 列表 + 有跟踪项时取全量快照）落到「已批准并执行」（含 result 摘要）/「已批准，但执行失败」（含 error 详情）并提示；待审批面板/抽屉并列展示 executing 记录（无按钮）；刷新/历史回放时用 executing 列表把归约出的 pending 卡恢复为中间态（`applyApprovalRecordToProcess` / `applyApprovalRecordToRun`，已终态回放不被过期快照降级）；旧协议（同步 ok/result）直接显示结果兜底。改动面：桌面 `chat-agent-core.js` + `app.js`、移动 `web/js/views/chat.js` + `web/shared/agent-chat.js`、popup `popup.js`（+ `web/css/app.css` / `popup.html` 的 executing 状态色）。回归：`tests/js/desktop-chat-agent-core.test.mjs` +5（queued/幂等终态/旧协议归类、executing 卡、记录合并不降级）、`extension/tests/agent-chat.test.ts` +5、`extension/tests/popup-agent-chat.test.ts` +1、`tests/test_mobile_web_agent_chat.py` +1 静态接线。
+- **文档同步**：`docs/modules/api.md`（approve 异步响应协议 + 前端迁移说明、agent stream 租约超时与兜底一致性、approvals 状态过滤新增 executing/failed）、`docs/modules/agent.md`（状态机、异步执行、工作纪律、兜底一致性）、`docs/modules/runtime.md`（cancel_all 豁免名单 + store 复用）、`docs/modules/memory.md`（tmp 唯一后缀）、`docs/modules/desktop-web.md`（审批卡异步交互协议与轮询恢复）。
+
+### 修复：移动 Web 聊天历史首载加载指示（2026-09-25，fix/agent-loop-e2e-findings）
+
+- **移动端聊天历史首载不再误显示空态文案**：E2E 实测打开 `/m` 聊天页后约 14 秒一直显示空态文案「和 AI 聊聊你的兴趣和想法」且无任何加载指示（历史接口未返回前 `turns=[]` 走了空态分支），用户易误判为历史丢失。现 `web/js/view-models.js` 新增纯函数 `getChatHistoryViewState()` 统一首屏三态判定（`loading` / `empty` / `turns`）：首次历史拉取（`GET /api/chat/sessions/{id}`）settle 之前消息区显示 spinner +「正在加载聊天记录…」（`.chat-history-loading`，`role="status"`），接口返回空历史后才显示空态文案；`web/js/views/chat.js` 进入视图立即 `render()`、切换会话时重置 `historyLoaded`（避免切换瞬间闪空态）、离线或首次拉取失败也会退出加载态（2.5s 历史轮询恢复后自动对齐）。历史一次拉取 limit=100 与三路并行（历史/待聊/审批）的加载链路保持不变，首屏分页收敛留作后续优化。回归：`tests/js/mobile-chat-history-loading.test.mjs` 5 条（node:test 覆盖三态判定）+ `tests/test_mobile_web_agent_chat.py` 2 条静态接线断言。
+
+### 聊一聊 Agent Loop M10：收尾集成与全量质量门（2026-09-23，feat/chat-agent-loop）
+
+- **桌面静态资源指纹补齐**：`_desktop_asset_version()` 指纹列表与 `?v=` 注入覆盖 M8 新增的 `web/desktop/assets/js/chat-agent-core.js`（此前只有 app.js / app.css / classic.css 与两个 shared 模块参与指纹，chat-agent-core.js 升级后可能被浏览器缓存旧版）；`test_desktop_web_index_cache_busts_static_assets` 补断言。
+- **`ChatTurnIn` 保留键补齐（汇总卡防伪造）**：server-owned 保留键新增 `agent_task_summary` / `task_id` / `task_status`，并按值拒绝 `payload.type="agent_task_summary"`——M6 的后台任务汇总卡此前可被客户端经 `POST /api/chat/turns` 伪造；回归 `test_chat_turn_rejects_client_forged_agent_task_summary`。
+- **`agent.chat` / `agent.task` 归入交互流量**：M6 后台任务 loop 的 caller=`agent.task` 此前落入 maintenance，推荐池为空时会被 `RefillAdmissionSemaphore` park 最长 300s；用户显式发起的任务（与交互对话 `agent.chat` 一样）不是 daemon maintenance，现归入 interactive 类（仅过 total gate、不参与空库存 park），并消除未知 caller 告警。回归 `test_agent_loop_callers_are_not_parked_by_empty_inventory` + `test_confirmed_interactive_callers`。
+- **全量质量门**：`ruff format --check`（本分支触碰文件）/ `ruff check src/ tests/` / `mypy src/` / `pytest` 全量 / `extension` npm test · typecheck · build / `node --test tests/js/` / `openbiliclaw config-show` 冒烟通过；既有失败（`tests/test_desktop_web_list_stability_e2e.py`、`extension/tests/popup-api.test.ts` 的 `startChatTurn posts durable chat turn metadata`）与 main 表现一致，不在本分支处理。
+- **文档同步**：`docs/architecture.md` / `docs/spec.md` / `docs/architecture-overview.md` 补 chat agent loop 车道与 `agent/` 模块职责；`docs/modules/llm.md`（交互 caller 清单）/ `docs/modules/agent.md`（任务流量分级 + 汇总卡 server-owned）/ `docs/modules/api.md`（`POST /api/chat/turns` 保留键清单）同步；设计文档状态更新为「已实现」。
+
+### 聊一聊 Agent Loop M8：桌面 Web 前端（2026-09-23，feat/chat-agent-loop）
+
+- **桌面纯逻辑层 `web/desktop/assets/js/chat-agent-core.js`（新）**：暴露 `globalThis.OpenBiliClawChatAgentCore`（兼 `module.exports` 供 node:test），无 DOM 依赖。三件能力：`createSseParser()` 增量 SSE 帧解析（event 名 = AgentEvent type，容忍分片/CRLF/多行 data/注释行）；`createAgentProcess()` + `applyAgentEvent()` / `buildAgentProcess()` 把事件流或历史 turn 的 `payload.agent_events` 归约为过程视图模型（steps 配对 thinking/tool_call/tool_result、approval_request → approval_result 审批结局、step_limit_reached、final、error）；以及全量 markup 渲染器（过程折叠组件、审批卡、skill 建议卡、后台任务确认卡、会话列表、任务列表/详情、建议清单、skill 选择浮层），全部 `data-*` 钩子由 `app.js` 事件委托接线。
+- **聊天页重构（`web/desktop/index.html` + `app.css` + `app.js`）**：chatPage 在 agent 模式下切为「会话侧栏 + 对话区」两栏（legacy 模式经 `display: contents` 保持原单栏布局逐像素不变）。过程展示为 AI Coding 风格：thinking 流式过程文本、每步一行折叠工具摘要（绿/红/进行中小圆点 + summary，可展开看参数与结果）、进行中整体展开、完成后折叠为「过程（N 步）」条；`final` 渲染答复气泡；`error` 事件中文友好提示；轮询重渲染保留过程/证据展开状态。
+- **会话侧栏**：新建/切换/内联改名/归档（默认会话带徽标不可归档）、`active_turns>0` 活跃圆点、标题与 120 字符预览随 2.5s 共享聊天轮询刷新（标题异步生成数秒内自动出现）、显示/隐藏已归档；当前会话与按会话的 skill 选择持久化到 localStorage。
+- **skill 切换**：会话条 skill chip（图标+名称）弹出 `GET /api/chat/skills` 角色浮层（Esc/点击外部关闭），切换下一回合生效；`suggest_skill` 工具调用渲染「阿B 建议切换角色」卡（一键切换/忽略）。
+- **审批卡**：流内 `approval_request` 渲染审批卡（做什么 = summary + 可展开参数，影响 = impact，「批准并执行」/「拒绝」两级确认可填理由）；批准后调 approve 端点并就地显示执行结果（含执行失败详情）；侧栏「待审批」入口 badge 轮询 `GET /api/chat/approvals?status=pending`，抽屉内同款卡片可决策；回放经 `approval_result` 事件显示审批结局。
+- **任务中心**：侧栏入口 + 右侧抽屉：列表（状态 chip、进行中 progress 摘要、取消按钮）、详情复用过程折叠组件渲染 `steps`（进行中实时刷新）、完成后 report（markdown）+ 建议清单逐项确认按钮（v1 统一落成来源会话的结构化指令消息：soft_write 由 agent 当回合执行，hard_write 走审批卡）；`start_background_task` 确认卡确认后 `POST /api/chat/tasks` 并自动打开任务中心；`agent_task_summary` turn 渲染系统汇总卡（报告 + 建议 + 查看执行记录入口）。
+- **回退与兼容**：首次进入聊天 tab 探测 `/api/chat/skills`，失败即 legacy 模式（旧布局旧链路）；agent 流 503（`loop_enabled=false`）当轮透明回退旧 `/api/chat/stream` 假流式并提示；delight/探针内嵌聊天、假设卡片、待聊确认、对话上下文引用等既有行为不变（`scope!=chat` 的消息保持旧路径）。
+- **回归**：`tests/js/desktop-chat-agent-core.test.mjs` 24 条（SSE 解析、过程模型归约、折叠组件 markup、特殊卡片、各列表 markup）；`pytest tests/test_desktop_dialogue_layout*.py tests/test_web_chat_sync_and_back_to_top.py tests/test_desktop_web_pending_badge_toggle.py tests/test_desktop_web_motion_polish.py` 29 条通过；另用 mock OpenAI 实例 + Playwright 对真实后端做了端到端冒烟（流式过程、审批批准/拒绝、会话 CRUD 与标题生成、任务中心、suggest_skill/start_background_task 卡、503 回退）。
+
+### 聊一聊 Agent Loop M9：移动 Web 与插件 popup 前端（2026-09-23，feat/chat-agent-loop）
+
+- **共享前端模块 `web/shared/agent-chat.js`（新）**：安装 `globalThis.OpenBiliClawAgentChat`，移动 Web 经 `/shared/` 挂载加载、popup 由 `scripts/build.mjs` 复制进 `popup/shared/`（桌面 Web 的对应实现是 M8 的 `web/desktop/assets/js/chat-agent-core.js`，两者 markup 形态不同、后续可收敛共享解析层）。提供三件核心能力：`createAgentSseParser()` 增量 SSE 帧解析（event 名 = AgentEvent type，容忍分片/多行 data/注释行，坏帧丢弃不断流）；`createAgentRun()` + `applyAgentEvent()` 把事件流（或历史 turn 的 `payload.agent_events`）归约成过程流 run 模型（steps / thinking / tool_call 生命周期 / approval_request → approval_result 审批结局 / suggest_skill 与 start_background_task 元调用 / step_limit / final / done / error）；以及一组 markup 渲染器（过程流折叠卡、审批卡、skill 切换建议卡、后台任务确认卡、任务行/详情、`agent_task_summary` 汇总卡），全部经 `data-agent-*` 钩子由两端各自做事件委托接线。
+- **移动 Web（`web/js/views/chat.js` + `web/js/api.js`）**：主聊天切到 `POST /api/chat/agent/stream` 真流式——思考过程与工具调用逐跳铺在对话里（工具一行折叠摘要、可展开看参数/结果），`final` 落成答复气泡，`error` 事件给中文友好提示；`loop_enabled=false`（503）时本次页面会话永久回退旧 `/api/chat/stream` 假流式，历史里 pending 的流式 turn 由 agent 流重新驱动而不是空轮询。历史回放读取 `payload.agent_events`，完成后过程整体折叠为「执行过程（N 步）」。新增会话抽屉（新建/切换/改名/归档，活跃会话圆点指示，标题生成后约 4 秒自动刷新）、会话顶部 skill 指示 chip + 角色选择浮层（按会话持久化选择）、`suggest_skill` 建议卡一键切换（下一回合生效）、L2 审批卡（批准/拒绝，拒绝可填理由；「待审批操作」面板复用待聊确认的折叠列表习惯并随历史刷新轮询）、任务中心浮层（列表 + 详情复用过程流组件 + 取消 + report + 建议清单「带入对话」）、`start_background_task` 确认卡与 `agent_task_summary` 汇总卡渲染。delight/探针内嵌聊天、假设卡片与待聊确认行为不变。
+- **插件 popup（`extension/popup/popup.js` / `popup-api.js` / `popup.html`）**：对话 tab 内新增「对话 / 会话 / 任务」子 tab 适配小窗；过程流为紧凑单行摘要（11px）；skill 用紧凑下拉选择器；审批卡内嵌消息流 + 「待审批」折叠列表（轮询）；会话子 tab 支持新建/切换/归档；任务子 tab 为精简任务中心（列表 + 进行中徽标 + 取消 + 简化内联详情，详情里 report/建议/步骤可展开）。发送与历史恢复都先走 agent loop 流式（`pollChatTurnUntilSettled` 内优先 `streamAgentChatTurn`，503 回退旧 `streamChatTurn`）；scope=delight/probe/avoidance_probe 的内嵌聊天明确保持旧单跳路径。
+- **回归**：`extension/tests/agent-chat.test.ts` 16 条行为测试（SSE 分片/多行/坏帧解析、run 归约全事件类型、审批状态机、回放、各卡片 markup 钩子）；`extension/tests/popup-agent-chat.test.ts` 7 条 popup 接线静态回归；`tests/test_mobile_web_agent_chat.py` 5 条移动端接线静态回归；`extension` 全量 1482 通过（1 条 pre-existing 失败与本次无关），`pytest -k mobile` 131 通过。
+
+### 聊一聊 Agent Loop M7：L2 审批门（hard_write 逐项审批 + 审计）（2026-09-23，feat/chat-agent-loop）
+
+- **审批存储 `agent/approvals.py`（新模块，免迁移）**：`ApprovalRecord` + `ApprovalStore`，单 JSON 文件持久化（`{data_dir}/chat_approvals.json`，tmp + os.replace 原子写，threading.Lock 串行），刻意不动 `storage/database.py`。状态机 `pending → approved → executed`、`pending → rejected`、`pending → expired`（默认 24h TTL 惰性过期）；幂等语义：重复 approve/reject 已决记录返回现状，`mark_executed` 仅接受 approved 态，从机制上禁止二次执行。
+- **loop 拦截（`agent/loop.py`）**：接线 `approval_gate` 的 `AgentLoop` 遇到 hard_write 工具调用时**不执行**：登记审批记录、流出新事件 `approval_request`（`approval_id` / `tool_name` / `arguments` / `summary` / `impact`），并把「已提交审批、等待用户批准」作为 `tool_result` 回填模型，当前回合正常结束（不在 SSE 流中挂起）。未接线 gate 保持 legacy 直执行为；read/soft_write 不受影响。`Tool` 新增 `impact_hint`（审批卡「影响什么」），hard_write 三件套已填。
+- **审批端点（`api/app.py`）**：`GET /api/chat/approvals`（status/limit 过滤）、`POST /api/chat/approvals/{id}/approve`（端点级 asyncio 锁把 approve→二次 dispatch 执行→mark_executed 串成原子段；重复 approve 返回 `already_executed=true` 不重执行；执行结果追加 `approval_result` 事件到来源 turn 的 `payload.agent_events` 供历史回放）、`POST /api/chat/approvals/{id}/reject`（可带 reason，幂等不重写审计）。404/409/422 语义齐全。
+- **审计台账**：批准执行（成功/失败）与拒绝各写一行 `profile_update_ledger`（复用 `soul/ledger.py` 的 `ProfileLedger`，best-effort）：`write_point=agent.approval.<tool>`、`gate_verdict=approved|rejected`、`held_id=approval_id`、before=arguments、after=result。
+- **update_config 真写入（`agent/tools/config_tools.py`）**：取代 M3 占位（`ToolApprovalRequiredError` 移除）。白名单收敛：仅允许已存在的标量键（str/int/float/bool，按当前类型 coercion），密钥类标记（api_key/cookie/token/secret/password/credential/sessdata/access_key）与路径/存储类标记（dir/path/file/database 分词匹配 + 显式 `data_dir`）一律拒绝。写入路径：改 live Config → `config_persist_hook` 落 config.toml（失败回滚内存值）→ `config_reload_hook` 热重载；生产接线经 `ctx.config_reload_delegate`（`create_app` 一次性指向 `_rebuild_runtime_with_lane_handoff`，随 rebuild 不丢失）走与 `PUT /api/config` 相同的 lane-handoff 重建。
+- **接线**：`RuntimeContext._rebuild_components()` 新增 `ctx.chat_approval_store`、`ctx.agent_tool_context` 随热重载原子 swap，loop 构造挂 `approval_gate`；`SocraticDialogue.stream_agent_reply()` 新增 `session_id` 并把 session/session_id/turn_id 作为审批上下文传给 loop（审批记录可溯源到会话与 turn）。
+- **回归**：`tests/test_agent_approvals.py` 19 条（store 状态机/幂等/过期/持久化、loop 拦截与无 gate 直执、gate 故障回填、API 列表/批准/拒绝/404/409、批准后真执行 + 审计 + 幂等、SSE 端到端 approval_request → approve → 回放事件）；`tests/test_agent_bilibili_config_tools.py` 的 update_config 用例改写为真写入语义（白名单拒绝密钥/路径、coercion、持久化失败回滚、hook 未接线降级）。
+
+### 聊一聊 Agent Loop M6：任务中心（durable 后台任务）（2026-09-23，feat/chat-agent-loop）
+
+- **任务实体与存储（`storage/database.py`，schema 7 → 8）**：新增 `agent_tasks` 表（`task_id` 主键、`session_id` 来源会话、`title`/`prompt`、`status`、`skill`、`progress` 摘要、`report`、`suggestions`/`steps` JSON、`error`、`created_at`/`started_at`/`finished_at`/`updated_at`）+ `(status, created_at)`、`(session_id, created_at)` 索引；`_ensure_agent_tasks_table()` 幂等迁移。`status` ∈ pending/running/completed/failed/cancelled/**interrupted**（新增：服务重启或热重载中断的终态，不自动恢复）。CRUD：`create_agent_task`（幂等）/ `get_agent_task`（JSON 列容错解码）/ `list_agent_tasks(status, session_id, limit, offset)`（`(rows, total)` 分页，非法 status 抛 `ValueError`）/ `update_agent_task_status`（CAS，默认仅允许从 active 态转移；入 running 打 `started_at`、入终态打 `finished_at`）/ `append_agent_task_step`（终态拒写；单条 text ≤2000 字符截断；日志上限 200 条 / 200_000 字符，超限以 `steps_truncated` 标记收尾；顺带更新 `progress` 摘要）/ `set_agent_task_report`（CAS 落 completed + report ≤8000 字符 + suggestions ≤20 条，迟到报告不覆盖先到的取消/失败）/ `interrupt_stale_agent_tasks`（启动恢复）。
+- **后台执行器 `AgentTaskRunner`（`agent/tasks.py` 新模块）**：`start()` 落 pending 行并在 `BackgroundTaskRegistry.track("agent_task.<task_id>")` 登记的后台 asyncio task 里运行独立 `AgentLoop`（运行开始时惰性解析 `ctx.llm_service` / `agent_tool_registry` / `skill_catalog` / `config`，随热重载原子 swap 存活；caller=`agent.task`，不绕过全局并发闸，跳数预算取新的 `[agent] task_max_steps`，默认 32）。工具集 = `filter_by_permission("read")` ∩ skill 白名单 + `propose_suggestion` 元工具——后台 loop 物理上无写工具，写意图只能落成结构化建议 `{action, summary, payload}`（action ∈ write_memory/submit_feedback/save_item/create_source/toggle_source/update_config）。loop 事件实时 `append_agent_task_step` 落库；完成时 CAS 落 report + suggestions 并往来源会话写 `payload.type="agent_task_summary"` 的 durable chat turn（`reply` = 报告 + 建议清单导读，经 `create_chat_turn` + `complete_chat_turn` 既有路径）；失败同样写回失败说明；用户取消落 `cancelled` 不写回；热重载/重启取消靠 `_cancel_requested` 集合区分，落 `interrupted`。无 registry 时回退裸 `asyncio.create_task`（与 runtime 既有兼容规则一致）。
+- **任务 API（`api/app.py` / `api/models.py`）**：`POST /api/chat/tasks`（发起：prompt 必填，session_id 缺省默认会话/显式未知 404，skill 未知 422，`loop_enabled=false` 503）、`GET /api/chat/tasks`（`?status=&session_id=&limit=&offset=` 分页，列表不含 steps，非法 status 422）、`GET /api/chat/tasks/{id}`（详情含 steps）、`POST /api/chat/tasks/{id}/cancel`（未知 404、已终态 409）。runner 经 `_resolve_agent_task_runner()` 惰性构建并挂 `ctx.agent_task_runner`（RuntimeContext 新增同名字段）；`create_app` 启动时对遗留 pending/running 任务执行一次 `interrupted` 标记。
+- **交互侧发起元工具**：`start_background_task(prompt, title?, skill?)`（read 级、无副作用）注册进每个 skill 的工具子集（同 `suggest_skill` 模式）：agent 提议 → SSE `tool_call` 事件 → 前端确认卡 → 用户确认后前端调 `POST /api/chat/tasks` 发起；v1 不做无人值守自动派发。
+- **配置**：`[agent]` 新增 `task_max_steps`（默认 32，范围 1..256）；解析 / TOML 渲染 / `config.example.toml` / `docs/modules/config.md` 同步。
+- **回归**：`tests/test_agent_tasks.py` 22 条（建表与 legacy 库迁移、CRUD 与 CAS/时间戳、步骤截断与条数上限、报告/建议上限、重启恢复、runner 全流程（2 跳 + 建议 + 完成 → 会话写回汇总卡）、取消、失败写回、未接线运行时快速失败、skill 白名单 ∩ 只读、两个元工具的 schema/handler 双层校验、四个 API 端点集成、启动 interrupted 标记、后台预算生效）。
+
+### 聊一聊 Agent Loop M5：多会话模型（2026-09-23，feat/chat-agent-loop）
+
+- **会话实体与存储（`storage/database.py`）**：新增 `chat_sessions` 表（`session_id` 主键、`title`、`archived`、`metadata` JSON（additive bag，预留 M4 skill 绑定字段）、`created_at` / `updated_at` / `last_message_at`）；`chat_turns` 幂等补列 `session_id TEXT NOT NULL DEFAULT ''` + `(session_id, created_at, turn_id)` 索引，schema version 6 → 7。默认会话（`session_id='default'`，初始化时保证存在，可改名、不可归档）收编全部 `session_id=''` 的 legacy turn（归属谓词 `IN ('', 'default')`），现有历史全部保留可查、不改写旧行。CRUD：`create/get/list_chat_sessions`（按 last_activity 倒序，带 120 字符消息预览、turn_count、active_turns=pending 数）/ `rename` / `set_archived`；`create_chat_turn` 与 `complete/fail_chat_turn` 的 CAS 成功路径同步 bump 所属会话活跃时间；`list_chat_turns_by_session()` 提供 `(rows, total)` 分页。
+- **会话 API（`api/app.py` / `api/models.py`）**：`POST /api/chat/sessions`（创建，id 缺省自动生成）、`GET /api/chat/sessions`（活跃排序列表，带预览与活跃信息，`include_archived`）、`GET /api/chat/sessions/{id}`（详情 + `limit/offset` turns 分页 + `scope` 过滤）、`PATCH /api/chat/sessions/{id}`（改名/归档；空标题 422、归档默认会话 422）；不做 DELETE（删除即归档）。`POST /api/chat/turns` 与 `POST /api/chat/agent/stream` 新增可选 `session_id`：缺省归属默认会话，显式未知 id 返回 404；带 `turn_id` 时以 turn 落库时的归属为准，`agent/stream` 的 `done` 事件回显 `session_id`。`ChatTurnOut` 新增 `session_id` 字段；显式 `session_id` 纳入 `turn_id` 幂等重试的请求一致性比较（省略时保持 pre-M5 兼容）。
+- **标题自动生成**：`scope='chat'` 的首条用户消息落库后异步触发（fire-and-forget task）：`[agent] session_title_enabled=true`（默认）且能解析到 LLMService 时走 `complete_structured_task`（caller=`chat.session_title`、`reasoning_effort=""`、不注入 core memory，自动经全局并发闸）生成 ≤20 字中文标题；LLM 失败 / 超时（30s）/ JSON 非法 / 开关关闭一律回退为消息截断前缀（≤30 字符）。只在标题仍为空时写入，不覆盖手动改名。解析 / TOML 渲染 / `config.example.toml` 同步。
+- **回归**：`tests/test_chat_sessions.py` 19 条（迁移与旧数据兼容、默认会话行为、CRUD、列表预览与活跃排序、分页、标题生成 mock LLM 成功/失败回退/开关关闭/不覆盖手动改名、四个会话端点集成、turns 缺省归属与未知 session 404）。
+
+### 聊一聊 Agent Loop M4：Skill 体系（2026-09-23，feat/chat-agent-loop）
+
+- **SKILL.md 加载器（`agent/skill.py`）**：chat skill = 人设 prompt + 工具白名单 + 可用数据声明，载体 `*/SKILL.md` 目录约定。frontmatter（`name` slug 必填 / `description` 必填 / `title` / `tools` 白名单）+ 正文人设 prompt；手写 YAML 子集解析器（标量、`- ` 块列表、`[a, b]` 行内列表），不引入 PyYAML 依赖。`load_skill_catalog()` 先读内置 `agent/skills_builtin/`（随 wheel 与 PyInstaller datas 分发）再叠加 `{data_dir}/skills/`：同名用户 skill 覆盖内置并记 info，非法文件跳过并记 warning，不影响启动。既有 `Skill` ABC / `SkillRegistry` 代码技能骨架保留未动。
+- **4 个内置 skill**：`taste-companion`（口味伙伴，默认，全部 read + soft_write 共 11 个工具）；`taste-explorer`（口味探寻师：get_profile / read_memory / write_memory / search_history / submit_feedback，苏格拉底式追问人设）；`bangumi-advisor`（追番顾问：get_profile / read_memory / get_recommendations / get_watch_history / save_item / submit_feedback）；`system-steward`（系统管家：list_sources / get_config + hard_write 三件套，人设强调改动逐项经用户批准）。每个 skill 正文按「不塞数据，给入口」声明可用数据与工具入口。
+- **会话绑定与切换**：`POST /api/chat/agent/stream` body 新增可选 `skill` 字段（缺省口味伙伴，未知名 422 并附可选清单）；loop 工具集 = `ctx.agent_tool_registry.subset(skill.tools)` + `suggest_skill` 元工具，`SocraticDialogue.stream_agent_reply()` 把 skill 人设与其他 skill 清单叠加在 socratic system prompt 上（`_layer_skill_system_prompt()`）。会话中切换 = 下一回合带新 `skill` 值；agent 建议切换走 `suggest_skill` 元工具（`agent/tools/skill_tools.py`，只校验并生成建议，真实切换由用户确认后前端以下一回合 `skill` 字段发起）。终端 `done` 事件新增 `skill` 字段回显实际生效角色。新端点 `GET /api/chat/skills` 列出全部 skill（name / title / description / tools / source=builtin|custom / default）。
+- **生产接线升级**：`RuntimeContext._rebuild_components()` 的 agent loop 从 M1 的源管理三工具升级为全量 v1 工具集（`build_agent_tool_registry(AgentToolContext(...))`），并新增 `ctx.agent_tool_registry` 与 `ctx.skill_catalog` 随热重载原子 swap；degraded / 未接线场景端点惰性加载 catalog 兜底。
+- **回归**：`tests/test_agent_skills.py` 25 条（SKILL.md 解析正常/缺字段/非法 frontmatter、用户目录覆盖、非法文件跳过、4 个内置白名单与注册表一致性、subset 过滤、suggest_skill 元工具、system prompt 叠加、端点带 skill 参数集成 + 未知 skill 422 + `GET /api/chat/skills`）；`tests/test_chat_agent_stream_api.py` 更新 fake 签名与 `done` 事件断言。
+
+### 聊一聊 Agent Loop M3：v1 标准工具集（2026-09-23，feat/chat-agent-loop）
+
+- **`AgentToolContext` + `build_agent_tool_registry()`（`agent/tools/context.py`）**：轻量 dataclass 持有工具所需的运行时组件引用（database / soul_engine / memory_manager / recommendation_engine / config / event_ingress / saved_sync_service，字段名与 `api/runtime_context.py` 对齐但本里程碑不改生产接线）；总装函数一次注册全部 v1 工具。组件缺失时 handler 抛 `ToolComponentUnavailableError`（`agent/tools/common.py`），由 dispatch 统一映射为机器可读 `handler_error` 回填模型，不向上抛异常。
+- **read 级 8 个**：`get_profile`（`SoulEngine.get_profile()` 生效画像 markdown 渲染，未初始化返回可读提示）；`read_memory`（core 摘要 / 五层原始 JSON，`max_chars` 截断）；`search_history`（新增 `Database.search_chat_turns()` 关键词/时间范围检索 + `query_events` 行为事件，source=chat/event/all）；`get_recommendations`（推荐池头部只读预览，走 `get_pool_candidates` 而非 `serve()`，不消耗池）；`get_watch_history`（本地 30 天内容历史投影 clicked/shown/removed + 收藏/稍后再看清单，不触发抓取）；`query_discovery_pool`（候选池库存统计 + 可选抽样）；`get_config`（Config 递归脱敏：api_key/cookie/token/secret/password/credential/sessdata/access_key 一律打码，支持 section 过滤）；`list_sources`（M1 已有）。
+- **soft_write 级 3 个**：`write_memory`（写 event/preference/awareness/insight 层的 `agent_notes` 命名空间，键名/长度校验，soul 层 schema 级禁写）；`submit_feedback`（复用 `POST /api/feedback` / OpenClaw `submit_feedback` 同款 durable 流：`build_event` → `event_ingress.accept` 幂等（缺省自动生成 `chat-agent-<uuid>` ingest_key）→ `update_recommendation_feedback` 投影 → 非阻塞 `record_immediate_feedback_cognition` 钩子；duplicate 不重复投影）；`save_item`（`SavedSyncService.save_local(auto_sync=False)` 本地收藏/稍后再看，不同步平台账号）。
+- **hard_write 级 3 个**：`create_source` / `toggle_source`（M1 已有）；`update_config` 仅定义 schema + 占位 handler（抛 `ToolApprovalRequiredError`，登记 key/value/原因但不落盘），真写入待 M7 审批门。
+- 回归：`tests/test_agent_tool_context.py`（总装/权限过滤/白名单/schema 渲染）、`tests/test_agent_profile_memory_tools.py`、`tests/test_agent_recommendation_tools.py`、`tests/test_agent_bilibili_config_tools.py`（含 get_config 脱敏断言与 `Database.search_chat_turns` 真实库测试），共 54 条新增用例。
+
+### 聊一聊 Agent Loop M2：SSE 真流式接线（2026-09-23，feat/chat-agent-loop）
+
+- **新端点 `POST /api/chat/agent/stream`（真流式）**：消费 `AgentLoop.run()`，每个 `AgentEvent.to_dict()` 发一条 SSE event（event 名 = `type`：`thinking` / `tool_call` / `tool_result` / `step_limit_reached` / `final`），`final` 后紧跟端点级 `done`（`reply` + `turn_id`）；LLM 异常映射为单个 `error` 事件并结束流。无工具调用的跳只发 `final`，`step_limit_reached` 后必跟一个收尾 `final`。旧单跳 `/api/chat` 与假流式 `/api/chat/stream` 完全共存不动。事件协议详见 `docs/modules/agent.md`。
+- **对话侧接线 `SocraticDialogue.stream_agent_reply()`**：在 `_respond_lock` 下与 legacy `respond()` 串行，复用同一 socratic persona system prompt、认知历史与时间戳包装；user turn 先 append（loop 异常或空 final 回滚本轮、不触发学习），完成后 append agent 答复。学习提交逻辑抽取为 `_queue_dialogue_learning()`，`respond()` 与新入口共用（queued / legacy_direct / reply_only_test 语义不变；`test_api_app.py` 的 ordinary-chat-settle 结构契约随之指向新符号）。
+- **RuntimeContext 接线**：`_rebuild_components()` 在构造 dialogue 后同步构建 `ctx.agent_loop = AgentLoop.from_config(llm_service, build_source_tool_registry(database), config, caller="agent.chat", bypass_semaphore=True)`，随热重载原子 swap（swappable 组件计数 12 → 13）；degraded context 无 agent_loop，端点以 `error` 事件降级。
+- **并发与持久化**：整个 loop 在 app-owned `DialogueExecutionCoordinator` 租约内运行，与所有生产对话入口串行。带 `turn_id`（先经 `POST /api/chat/turns` 以 `streaming=True` 创建 pending turn）时按既有 CAS 语义 `complete_chat_turn` / `fail_chat_turn` 落终态，并新增 `Database.store_chat_turn_agent_events()` 把整段事件流以 `json_set` 写入 `chat_turns.payload.agent_events`（复用 payload JSON 列，无 schema 迁移），供历史回放；`agent_events` 加入 `ChatTurnIn` server-owned 保留键。不带 `turn_id` 为临时运行（不落库）。
+- **配置**：`[agent]` 新增 `loop_enabled`（默认 `true`），为 false 时端点返回 503；解析 / TOML 渲染 / `config.example.toml` / `docs/modules/config.md` 同步。
+- **回归**：`tests/test_chat_agent_stream_api.py`（多跳事件序列 + turn 落库、step_limit_reached→final→done、error 事件 + turn failed + 部分事件落库、无 turn_id 临时运行、开关 503、无 loop 降级、旧端点不受影响）与 `tests/test_dialogue_agent_stream.py`（事件转发 + 历史记录、queued 学习 payload、LLM 异常回滚、空 final 报错回滚）；`test_config.py` 补 `loop_enabled` round-trip。
+
+### 聊一聊 Agent Loop M1：后端核心（2026-09-23，feat/chat-agent-loop）
+
+- **JSON Schema 工具注册表（`agent/tools/`）**：新增 `Tool`（name / description / JSON Schema `parameters` / `permission_level` ∈ read/soft_write/hard_write / 同步或异步 handler）与 `ToolRegistry`（注册、skill 白名单 `subset()`、权限过滤 `filter_by_permission()`、OpenAI 格式 `llm_schemas()`、旧扁平格式 `legacy_schemas()`、参数校验 + `dispatch()`/`dispatch_sync()`）。`SOURCE_TOOLS` 三工具迁移为唯一事实来源 `agent/tools/source_tools.py`；`sources/tools.py` 的旧 `SOURCE_TOOLS` 列表与 `SourceToolDispatcher.dispatch()` 接口保持不变，委托同一组 handler（行为变化仅限：`strategy` 枚举与 `toggle_source.id` 必填现在会被参数校验拦截并回读给模型）。
+- **openai_compatible 原生 function calling**：`LLMProvider` 新增 `supports_tool_calling` 与 `complete_with_tools()`（默认抛 `LLMToolCallUnsupportedError`）；`OpenAIProvider` 实现 OpenAI `tools=[{"type":"function",...}]` 原生 FC，单次响应多 `tool_calls` 并行解析为 `{"id","name","arguments","arguments_raw"}`，带工具调用的空 content 合法；DeepSeek 继承并保留 thinking max_tokens 下限；`api_flavor="responses"` 与 Ollama 显式标 `False` 走兜底。`LLMRegistry` 新增 `complete_with_tools()` / `complete_with_tools_chain()` / `complete_provider_with_tools()` / `provider_supports_tool_calling()`，复用 fallback 链 cooldown / 限流 / 告警语义并跳过无 FC 能力实例。
+- **`LLMService.complete_with_native_tools()`**：agent loop 单跳入口，接收完整 canonical 消息列表 + OpenAI 工具 schema；路由首选 provider 支持原生 FC 走 native 链，否则把消息展平（assistant.tool_calls → 文本注释、role=tool → `[工具执行结果]`）进 prompt 模拟，解析 `{"tool_call": ...}` / `{"tool_calls": [...]}` 多调用 JSON；两条路径都不注入 core memory（loop 调用方拥有 system prompt）。旧 `complete_with_tools()`（单跳、旧扁平 schema）保持不变。
+- **多跳 `AgentLoop`（`agent/loop.py`）**：`run()` 异步生成器逐跳产出 `AgentEvent`（thinking / tool_call / tool_result / final / step_limit_reached，`to_dict()` 供 M2 SSE 序列化）；默认 64 跳上限（新增 `[agent]` 配置段 `loop_max_steps` / `tool_result_max_chars`，见 `docs/modules/config.md`），超限后发出 step_limit_reached 并以无工具收尾调用让模型汇报进展；未知工具名与参数校验失败以 `ok=false` 结果回填模型自纠；工具结果超长截断并标记。回归：`tests/test_agent_tool_registry.py` / `tests/test_llm_native_tools.py` / `tests/test_agent_loop.py` + `test_config.py` 的 `[agent]` round-trip。
+
+## v0.3.224：自定义回复语气与设置页一键测试（2026-09-19）
+
+- **Responses 初始化 JSON 请求修复（issue #265）**：启用 JSON mode 时，OpenAI / OpenAI-compatible Responses 适配器确保 `input` 消息包含 JSON 输出指令，修复 system 被拆到 `instructions` 后部分端点拒绝偏好分析的 HTTP 400。已有 JSON 输入不重复追加，普通文本调用与调用方消息不变。
+- **新增 Requesty 聚合 provider**：`provider_type="requesty"` 以 OpenAI 兼容协议接入 Requesty（`https://router.requesty.ai/v1`，欧盟区可改 `https://router.eu.requesty.ai/v1`），一个 Key 跑多家模型，默认 `openai/gpt-4o-mini`；复用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖，不发送推理参数；「获取模型」先列出 `GET /models/managed` 托管策略，再合并 `GET /models` 目录。后端 registry / 配置、API `/api/config`、CLI 向导与 `agent_bootstrap`（菜单第 8 项）、桌面 Web 设置页、首次运行 `/setup/` 向导、扩展 popup 与安装脚本提示均已接入；不进入任何自动排序或默认链，只有显式配置时才会调用。
+
+### 跨平台推荐评分键去碰撞
+
+- **推荐评分与排序统一使用 `DiscoveredContent.scoring_key`**：`PoolCurator` 的同步/异步评分、时效 shadow audit、MMR embedding、视觉/关键帧/弹幕加分、平台归一化与最终排序全部改用平台限定的 `item_key`，旧数据仅在缺失 `item_key` 时回退到 `bvid`。修复 YouTube、X、小红书等非 B 站候选因空 `bvid` 共享 `scores[""]`、互相覆盖的问题，同时避免键迁移期间 B 站视觉与弹幕加分失效。回归测试覆盖跨平台分数不碰撞、B 站封面加分排序、MMR 相似度缓存及各加分映射。
+
+### 发布日期偏好软模式入库门修复（issue #257）
+
+- **修复配置 `[sources.<name>].recommendation_date_preset != "all"` 后软模式来源被静默饿死**：统一候选入队的 `_source_publication_date_candidate_is_eligible()` 此前取 `PublicationDateDecision.in_range` 判定，把「范围外」和「无法判定发布时间」都当成必须丢弃——软模式（`weight<1`，默认 0.5）同样被硬过滤，且 `published_at` 缺失的来源（YouTube 主路径、X、小红书等）在配置任意非 `all` 预设后候选全部在入库前被丢弃，`discovery_candidates` 不再新增、来源池恒为 0。现改按 `eligible` 准入：严格模式（`weight=1`）行为不变（`eligible == in_range`，仍排除范围外/无法解析时间的候选）；软模式保留候选入队。策略内联 LLM 评估路径的 `filter_candidates_for_eval()` 同步改为 `eligible`，与 raw 入库门一致。日期偏好统一在 discovery 层分流：`1 - weight` 分数乘数仍只作用于 B 站池/推荐打分路径，非 B 站来源软模式只保留候选、不降权（`docs/modules/config.md`）。该修复同时恢复 `docs/modules/discovery.md` 已记录的「缺失/异常值默认不影响候选入队」契约。回归测试：`tests/test_source_publication_preference.py` 新增「软模式保留范围外 + 缺失发布时间候选」「严格模式仍排除缺失时间」「内联评估软模式不预过滤」三条。
+- **文档与设置页文案同步**：`docs/modules/config.md`、`docs/modules/recommendation.md`、`docs/modules/discovery.md`、`config.example.toml` 与桌面设置页来源卡片说明改为按严格/软模式描述，并显式标注非 B 站来源日期偏好只做 discovery 层分流、不进入池评分乘数。
+
+### 发布日期偏好入队门可观测性（issue #257 后续）
+
+- **新增按来源的日期门诊断计数与 100% 丢弃告警**：`Database.enqueue_discovery_candidates()` 按来源累计 `input` / `filtered_by_publication_date` / `inserted` 与最后时间戳，`Database.publication_date_filter_stats()` 返回快照；某一轮某来源候选全部被发布日期偏好丢弃时按来源 10 分钟限流写 WARNING，解决「生产者 ledger 只见 fetch 成功、来源已经静默饿死」的盲区（issue #257 潜伏一个月的直接原因）。配置热更新会清空告警限流，修正配置后下一轮立即复报。`GET /api/runtime-status` 新增 `publication_date_filter` 字段透出计数。回归：`tests/test_source_publication_preference.py` 断言计数与告警，`tests/test_api_app.py` 锁定 runtime-status 字段。
+
+### YouTube 精确发布时间补全（issue #257 建议 2）
+
+- **非 `all` 日期偏好下按频道 RSS 补 `published_at`**：scrapetube / InnerTube / yt-dlp flat 主路径只提供相对 `publishedTimeText`，原先只写 `published_label`，导致严格日期偏好下 YouTube 候选全被排除、软模式又完全没有时间依据。现在 `YtScraperClient.enrich_missing_published_at()` 从 renderer（`ownerText` / `shortBylineText` / `longBylineText` / `bylineText` 的 browseEndpoint）或 yt-dlp（`channel_id` / `channel_url`）解析 `UC...` channel id，按频道抓取公开 Atom feed（缓存 10 分钟、单轮上限 12 个 feed、并发 4），把精确 `<published>` 写入 `publishedAt`；相对 label 永不伪造成精确时间，RSS 只覆盖频道最近约 15 条，未覆盖的旧视频保持 label-only。`YoutubeSearchStrategy` / `YoutubeTrendingStrategy` / `YoutubeChannelStrategy` 仅在来源日期偏好非 `all` 时触发补全，默认路径零额外请求。真实环境验证：trending 10/10 补全后 `last_7_days` 严格模式 10/10 入队（补全前 0/10），`yt_channel` 5/5 命中；search 的多年常青视频不在频道最近 15 条内，保持 label-only 并按严格模式排除。回归：`tests/test_youtube_published_at.py`（RSS 解析 / channel id 提取 / 注入 / 缓存 / 上限）与 `tests/test_youtube_discovery_strategy.py` 的 search / trending 接线断言。
+
+### 小红书精确发布时间补全（issue #260）
+
+- **真实登录态审计**：搜索 `/api/sns/web/v2/search/notes` 与收藏 `note/collect/page` 的卡片不返回任何时间字段；个人页 `user_posted` 每条含 `time`（epoch ms）；笔记详情页 hydration 后 `__INITIAL_STATE__.note.noteDetailMap[noteId].note.time` 为精确发布时间。
+- **扩展**：MAIN-world sniffer 从 API payload 提取 `(note_id, time)` 并随现有 `obc-xhs-sniffer` 消息下发；task executor 合并到 creator / bootstrap 结果；后端在 `[sources.xiaohongshu].recommendation_date_preset != "all"` 时于 next-task 下发 `need_published_at`，content script 通过 MAIN-world state bridge 在隐藏同源 iframe 中打开缺失时间的候选笔记页（单任务最多 5 条、并发 2、每条 6s 超时），读 `noteDetailMap[noteId].note.time` 后即销毁 iframe；isolated world 不直接读页面 state，失败不影响任务。默认 `all` 零额外请求。
+- **后端**：现有 `normalize_published_time` 已支持 13 位 epoch ms；`need_published_at` 只作为扩展抓取提示，不改变准入规则。
+- **真实数据验证**：真实账号 `user_posted` 18/18 提取出 epoch ms；真实 note 详情 state 提取出 `time=1789303814000` 等精确值；并完成实时后端 + 已装扩展热更新的端到端验证：真实搜索任务 debug `published_at_requested=true / targets=5 / attempted=5 / fetched=5 / total=5`，入库核验 4/5（1 条为自有笔记被 self-filter）。回归：`extension/tests/xhs-published-at*.test.ts`；`tests/test_xhs_tasks.py` 覆盖 `need_published_at` 默认关闭 / 日期偏好开启；扩展 `tsc --noEmit` 与全量测试通过（唯一失败是与本改动无关、main 上同样失败的 popup chat 测试）。
+
+### 自定义回复语气配置（issue #255）
+
+- **`[soul]` 新增自由文本字段 `reply_style`（默认 `""`）**：非空时作为一行 `- 回复风格: <文本>` 追加进 `_render_tone_profile()` 语气块，覆盖对话回复、推荐文案（单条 + 批量）、画像文本四类 prompt；为空时所有 prompt 输出逐字节不变（回放门守护）。解析时把空白折叠为单行，上限 200 字符（`_collect_config_issues()` blocking 校验）。透传链：`SoulEngine._reply_style` → `LLMService.reply_style`（对话）+ `ProfileBuilder.reply_style`（画像），`RecommendationEngine._reply_style`（单条 + 批量文案）；CLI、`serve-api` 热重载与 OpenClaw bootstrap 三处构造点均已接线，`SocraticDialogue` 的 LLMService fallback 复用 `SoulEngine._reply_style`，工具调用路径（`_respond_with_tools`）同样从 `service.reply_style` 透传。新增 builder 级逐字节不变 / 注入断言（`tests/test_llm_prompts.py`）、config round-trip 与长度校验（`tests/test_config.py`）、LLMService / ProfileBuilder / RecommendationEngine / 工具路径接线回归。
+- **`[soul]` 新增 `dialogue_tone_prompt`（默认 `""`）：对话语气块整体替换**。`reply_style` 只能在语气块末尾追加一行；本字段非空（strip 后）时用用户原文（允许多行，上限 1000 字符 blocking 校验）整体替换 `build_socratic_dialogue_prompt` 里的 `_render_tone_profile()` 语气块——此时 `reply_style` 对对话的追加行一并被替换。system prompt 的身份、苏格拉底行为说明、能力边界与 core memory 引导段落逐字节不变；推荐文案与画像 prompt 不接受此参数（`inspect.signature` 断言锁定），功能行为零变化；为空时对话 prompt 逐字节不变。TOML 渲染新增 `_toml_multiline_string()`（换行转义为 `\n` 序列，round-trip 逐字节还原）。透传链：`SoulEngine._dialogue_tone_prompt` → `LLMService.dialogue_tone_prompt` → 对话 builder（含 `_respond_with_tools` 工具路径与 fallback 构造），CLI、`serve-api` 热重载与 OpenClaw bootstrap 均已接线；RecommendationEngine / ProfileBuilder 刻意不接。
+- **修复 `PUT /api/config` 静默丢弃两个语气字段**：soul 段合并逻辑原有字段白名单（prompt view / posture gate / 三个 int），`reply_style` 与 `dialogue_tone_prompt` 经 API 设置时被丢弃——落盘值与热重载重建都拿不到。现按 `_build_config` 同款归一化合并（`reply_style` 折叠单行、`dialogue_tone_prompt` 仅 strip），并加入 `SoulConfigOut` 回显。注意生效语义：经设置 API（`PUT /api/config` / 设置页保存）修改即时热重载；**直接编辑 config.toml 文件不会触发文件监听，需重启后端**。已用真实 LLM 请求端到端验证：PUT 设置 `reply_style="使用文言文"` 后下一句对话即转为文言文；PUT 切换 `dialogue_tone_prompt` 后语气块即时整体替换。回归测试 `test_put_config_persists_soul_tone_fields`（写入 + 回显 + 落盘 round-trip）。
+- **设置页 UI：两端可编辑 + 一键测试**。桌面 Web（`/web` 设置页「回复语气」section）与插件 side panel（「画像理解」页签）新增两个字段的编辑控件（`reply_style` 单行 input maxlength=200、`dialogue_tone_prompt` 多行 textarea maxlength=1000），加载自 `GET /api/config` 回显、保存并入 soul 提交对象（空串照常提交以支持清空）。两端均新增「测试语气」按钮：先 `PUT /api/config` 局部保存这两个字段（即时热重载），再 POST `/api/chat` 发固定试句并把真实回复内联展示在按钮下方，无需切到聊天页。已用 Playwright + 真实后端 + 真实 LLM 端到端验证：页面填「毒舌影评人」语气块 → 点测试 → 按钮下方直接展示毒舌短回复；刷新页面后字段从后端正确回填。回归：`tests/test_cognition_budget_settings_ui.py` 新增两端控件静态契约测试，`extension/tests/popup-settings.test.ts` 补加载 / 保存 / maxlength 断言。
+
+## v0.3.223：Windows 稳定性、推荐入口与画像一致性修复（2026-09-17）
+
+### LLM 输出预算下限与评估分批自愈
+
+- **修复推理实例在结构化小任务上「reasoning-only + finish_reason=length」拖垮整条模块路由链**：这类模型的 `max_tokens` 同时覆盖思考与正文，历史调用点按期望输出长度给的 16 / 256 / 512 / 1024 预算会被 thinking 整段吃掉，`content` 为空后 provider 判失败，模块链里若没有非推理实例兜底就写 error 级 `all_providers_failed` 告警（DSH 面板「异常报警」里表现为两条 `bad_response` warning + 一条 error）。现在分三层处理：① `LLMService.complete_structured_task()` / `complete_multimodal_structured_task()` 统一以 `MIN_STRUCTURED_MAX_TOKENS=4096` 兜底 `max_tokens`（`max_tokens` 是上限不是预扣，正常答完不产生额外成本），`api.sentiment` 16→512，`recommendation.evaluate_batch` 8192→16384，统一关键词 planner 合并生成下限 4096→8192；② 新增 `llm.base.is_reasoning_budget_exhausted()`，沿 cause/context 链统一识别该签名，`soul.posture_gate` 与 `soul.preference_analyzer` 的私有判定改用它（行为不变）；③ 评估 / 表达式批量在该签名下把批减半递归重试 —— discovery `_evaluate_batch` 把整个子批标记 missing 后走既有 split-retry（深度 3、额外请求 6），recommendation 新增 `_classify_batch_with_split_retry`（`classify_pool_backlog` 入口）并让 `_precompute_batch_with_split_retry` 同样按预算错误拆分；限流 / 鉴权 / 超时 / 传输错误继续原样上抛（rate limit 仍走 claim 释放，不因拆分放大请求）。
+- **测试与文档**：`tests/test_llm_service.py` 新增 helper 与结构化 / 多模态下限回归；`tests/test_discovery_engine.py` 新增「预算耗尽 → [45, 22, 23] 拆分」与「持续耗尽仍有界、不退化逐条」两个回归，并保留 rate limit 不拆分断言；`tests/test_recommendation_engine.py` 新增 classify 拆分 / 非预算异常直抛 / 表达式拆分三个回归；同步更新 `api.sentiment` 与 merged-keyword 上限断言，LLM / discovery / recommendation 模块文档补齐对应功能行。
+- **真实环境验证**：用本机 `config.toml` 的真实端点在 `openai_compatible`（deepseek-v4-flash）上复现了原始签名（16 token → reasoning-only + `finish_reason=length`）；同一请求经 `complete_structured_task()` 的下限后发 4096 真实成功（`{"arrival": "12:59"}`）。discovery 批量评估与 recommendation 批量分类在注入该真实异常后，真实子批请求各按 `4 → 2 + 2` 拆分并完成打分；限流失败仍一次直抛、不拆分（注入异常来自真实端点，重试全部为真实请求）。
+
+### 画像证据与衰减一致性
+
+- **稳定追加推荐通知回归测试**：使用与后台通知共享事件循环的异步 ASGI 客户端，避免同步测试请求结束后取消尚未完成的状态通知；覆盖无延迟和 50ms 状态读取延迟，不修改生产接口或放宽通知断言。
+- **修复画像证据虚增与重复衰减**：增量分析返回的全量偏好快照不再让未触及兴趣增加 `evidence_count`、刷新 `last_evidence_at` 或复活；兴趣权重新增 `last_decay_at` 增量游标，同一时刻重复合并或按日分批处理与一次处理得到相同衰减结果。新增未触及方向、被触及方向与衰减频率三条生命周期根因回归和相关模块全量回归。
+- **偏好 prompt 不再序列化内部衰减游标**：`last_decay_at` 是存储记账，不是用户行为，但会随原始偏好 dict 进入偏好分析 / 觉察 / 洞察 / 灵魂画像几条 prompt（实测每个兴趣 +53 字符，200 个兴趣每次多出约 10.6KB，足以把偏好分析顶过 `max_prompt_chars=24000` 触发额外分块）。现在 `profile_views.preference_prompt_payload()` 在五条 builder 与 `render_preference_summary` 的入口统一剔除它，无游标输入的 prompt 逐字节不变。
+
+### 移动端原生播放页 UP 主信息与关注
+
+- **新增 UP 主信息卡片与关注能力（移动端依赖）**：移动端原生播放页此前只能展示视频标题与简介，无法看到“是谁发的”。现在从既有的 `GET /api/bilibili/video/info` `owner` 对象取 `mid` / `name` / `face`；新增 `GET /api/bilibili/user/card?mid=<mid>` 透传 B 站 `/x/web-interface/card`，返回头像、签名、粉丝数与当前登录用户的 `following`；新增 `POST /api/bilibili/user/follow` 用 `{mid, follow}` 走 `/x/relation/modify`（`act=1` 关注 / `act=2` 取消关注），CSRF（`bili_jct`）仍只留在后端。B 站对“已经关注用户，无法重复关注”返回 `22014`，现按成功处理并回查 card，避免移动端本地状态过期时误报失败；card 回查失败时返回请求的目标状态，避免把已成功的关注回滚成失败。新增 `tests/test_bilibili_api.py` 覆盖 card 解析/协议相对头像归一化、关注/取消关注请求体、重复关注幂等、未登录拒绝与 card 回查失败保持状态，`tests/test_api_app.py` 固定两个新端点的响应契约。
+
+### 画像整理成员引用兼容
+
+- **修复普通画像整理簇拒绝对象成员引用**：likes judge prompt 提供 `{name, category}` 成员对象，但普通簇校验此前只登记裸名称，模型原样返回对象便会被误判为 unknown member、整簇被拒。普通簇现在按名称消费对象引用，并在写 rename map / run record 前把对象成员归一为名称，保证 override 重命名、keyword 标签迁移与用户 revert 的 no-merge pair 保护不丢；同名异类簇仍使用分类限定键严格校验。新增完整 `ProfileConsolidator.run()` 对象成员回归、对象成员 keyword 标签迁移回归与对象成员 revert 钉 pair 回归。
+
+### 后台 worker 降级等待与子进程存活看护（issue #250）
+
+- **修复 Windows 桌面版启动必弹两个错误对话框、且后台循环随子进程一起死掉（[issue #250](https://github.com/whiteguo233/OpenBiliClaw/issues/250)）**：四进程桌面版在 `config.toml` 没有任何可成功构造的 LLM 实例时（全新安装未配 key，或 key 失效），`worker` / `discovery_worker` 两个窗口化子进程分别在 `build_runtime_context`（`RegistryBuildError`）与 `raise RuntimeError("runtime_controller.run_forever not available")` 处未捕获退出——PyInstaller bootloader 各弹一个 "Unhandled exception in script" 对话框；主 API 进程虽已用 `build_degraded_runtime_context` 降级为可配密钥、但会按环境变量继续把后台循环委托给已死子进程，于是用户在 `/setup` 修好 key 后，发现 / 刷新 / 候选评估（`/api/sources/*/next-task`、`/api/events`）仍持续 503，直到重启应用。现在：① `worker/main.py::run_full_worker` 先用 `build_llm_registry(load_config())` 做纯构造探针（无网络），失败时每 15 秒重读磁盘配置重试，等待期间心跳照常写 `worker_status.json`，成功后重新加载配置再走完整 `build_runtime_context`；② `discovery_worker.py` 同样的探针门 + 重试循环（失败时先关闭 degraded 上下文再退避），拿不到 `run_forever` 只记日志不抛异常；③ `packaging/entry.py` 的 `--openbiliclaw-worker` 分发把子进程异常写进 `logs/desktop.log` 后以 `SystemExit(1)` 退出，任何未预期崩溃都不再触发 bootloader 弹窗；④ `proc.py::ChildProcessSupervisor` 让桌面父进程周期巡检后端子进程，崩溃后按 2s 起步、上限 60s 的指数退避重启（存活 ≥5 分钟重置退避），父进程退出时逆序 terminate/kill；⑤ API 侧 `RuntimeContext.warn_if_full_worker_heartbeat_stale()` 在委托模式下发现已存在但过期的 worker 心跳时打 WARNING（首次启动尚无心跳文件时不误报），配合 `/api/runtime-status` 既有的 `worker_running` / `worker_heartbeat_age_seconds` 暴露降级委托状态。⑥ `recommendation_server.py` 同样先探针等待可构造的 LLM 配置再 `create_app()`，避免独立推荐进程永久停在 degraded 而让主 API 热恢复后 `/api/recommendations` 仍回 503；新增 `tests/test_worker_degraded_boot.py`（探针重试、等待期心跳仍在、discovery worker 不再 raise、心跳告警边界）与 `tests/test_proc_supervisor.py`（崩溃重启、退避与重置、stop 清理）。
+
+### 上下文事件不再进入画像证据
+
+- **修复 hover / scroll / snapshot / reshuffle / pause / seek 等上下文事件被当成画像证据**：这些插件采集事件此前会随 generic durable 路径生成 `ProfileSignal`、写入 layer buffer 并交给 speculator，但它们只是活动时间线与诊断用的上下文，不应影响口味画像。现在 `sources/event_format.py` 新增 `NON_PROFILE_EVENT_TYPES`，`soul/pipeline.py` 在 `_enqueue_batch_locked` 中先识别并跳过这些信号：durable event 行保留、consumer cursor 照常推进（不阻塞后续事件、重启可恢复），但不 buffer、不触发 layer updater、不进入 speculator。`search` 特意不在集合内（满足度中性但属真实意图信号，继续按 0.5 强度进入 SURFACE updater），`view` 也继续作为画像证据。新增回归：六类事件参数化「零接受 / 零 buffer / cursor 不倒退」、`search` + `view` 仍被接受，以及 SoulEngine 层「消费 6 行 context-only + 1 行 view，cursor 推进 7、只 buffer view」的 durable 路径测试。
+
+### Windows 安装/卸载拦截运行中的应用
+
+- **修复卸载正在运行的 Windows 桌面版时卸载器自删、无法二次卸载**：Inno 的 `CloseApplications`/Restart Manager 只作用于安装，卸载器对占用文件按非致命错误处理后仍会照常删除开始菜单图标、注册表卸载项与 `unins000.exe` 自身——用户关掉程序后也没有入口重试卸载，只能手删 `%LOCALAPPDATA%\Programs\OpenBiliClaw`。现在 `packaging/entry.py` 为每个冻结进程（托盘主进程与 `--openbiliclaw-worker` 子进程）全程持有一个命名互斥体（`_acquire_installer_mutex`，fail-open，进程退出自动释放），`openbiliclaw.iss` 增设 `AppMutex`，Setup 与 Uninstall 启动即弹标准「检测到 OpenBiliClaw 正在运行」对话框（关闭应用后点 OK 自动重检）；卸载器侧 `[Code] CurUninstallStepChanged(usUninstall)` 复用 `StopRunningInstance` 的 `taskkill /T /F` 兜底——**必须在 AppMutex 门禁之后**执行：Inno 卸载器先跑 `[Code] InitializeUninstall` 事件再做内部互斥体检查（`Setup.Uninstall.pas` `RunSecondPhase` 的既定顺序），把强杀放进 InitializeUninstall 会先杀掉持锁进程、让门禁永远静默通过（真机验证过该反例）；usUninstall 在门禁通过后、删文件前触发，覆盖升级前尚无互斥体的旧安装与孤儿 worker/ollama 子进程。新增互斥体名与 `.iss` 的一致性回归（防两处漂移）及 fail-open / 非冻结守卫单测。真机验证：应用运行中触发卸载即被门禁拦截（卸载日志记录 `Defaulting to Cancel for suppressed message box: Uninstall has detected that OpenBiliClaw is currently running`），应用、文件与卸载入口零改动、退出应用后可重试。
+
+### 修复手动桌面安装包 workflow 的 Tailnet 模块预取缺失
+
+- **修复 `build-installers.yml` 自嵌入式 tailnet 宿主合入起必然失败（发现于 PR #249 的 Windows 安装器实测）**：`7f3b7e35` 给两个平台 job 加了 `actions/setup-go`，但没有把 tailnet 依赖预取进 Go module cache，而 `packaging/build.py` 会以 `GOPROXY=off`（离线、可复现）调起 `scripts/generate_tailnet_notices.py --check`；于是 `go list -tags=ts_omit_logtail,ts_omit_webclient -deps -json .` 在 tailscale.com v1.102.3 新增的 `github.com/tailscale/peercred`（unix 凭据文件）上直接 `module lookup disabled by GOPROXY=off`，PyInstaller 还没开始 job 就红了——`release-desktop.yml` 的两个 job 一直有 `python scripts/generate_tailnet_notices.py --prefetch`，所以 tag 发布路径不受影响，只有手动 workflow 自 2026-09-01 起没跑通过（main 上同样失败）。现与 release-desktop 对齐，在 macOS / windows 两个 job 的 PyInstaller 构建前各补一步预取；新增契约测试 `test_packaging_workflows_prefetch_tailnet_modules_before_every_build` 锁定「每个调用 `packaging/build.py` 的 job 之前都必须有 Tailnet 模块预取」，后续再漏加会直接失败。
+
+### Windows 交互安装改为点「完成」后启动
+
+- **修复 Windows 交互安装未点 Finish 程序就抢跑启动**：`packaging/openbiliclaw.iss` 的 `[Run]` 段此前是单条无条件条目——文件复制一完成、向导还停在最后一页时 `OpenBiliClaw.exe` 就已被拉起。这是 v0.3.182 为修静默升级「杀旧进程后无人拉起新进程」而引入的行为：更早那条 `postinstall nowait skipifsilent` 在 `/SILENT` / `/VERYSILENT` 下被 `skipifsilent` 整个跳过，静默升级因此杀掉旧进程却无人接管（注意 `postinstall` 条目在静默安装里同样会执行——向导会自动点过隐藏的 Finish 页复选框，「没有 Finish 页」并不足以拦住它），改成无条件条目修好了静默路径，副作用是全新交互安装也在用户点「完成」前启动。现拆为两条模式互斥的条目：交互安装走 `postinstall nowait skipifsilent`，Finish 页显示默认勾选的「Launch OpenBiliClaw」复选框，点「完成」才启动且可取消勾选（交互升级仍是杀旧实例→点「完成」→新版本接管）；静默安装/升级保留 `nowait skipifnotsilent` 自动拉起新版本，升级交接语义不变（两条条目必须靠各自的 skip 标志保持互斥：删掉 `skipifsilent` 会让静默安装启动两次）；windows-latest CI 既有的 `/VERYSILENT` 安装步骤继续覆盖静默交接，且交接断言已从空管道 no-op（进程没出现也会通过）改为等待安装器拉起的实例写出 profile 标记 `config.toml`（selftest 实例装配完后端即退出，直接查存活进程会与退出竞态；实测该实例确实写出了 profile / SQLite / 日志），没写标记即报错，见 `build-installers.yml` / `release-desktop.yml`。新增 `tests/test_installer_script.py` 契约测试锁定「恰好一条 postinstall + 一条 silent-only、禁止无条件条目」；另用本地 marker 假应用装置（替换 AppId / 应用名 / exe 名隔离真实安装，`[Run]` 段逐字节不变）编译 1.0.0 / 2.0.0 两个测试安装器跑通 5 场景矩阵：全新交互 Finish 前无进程、点「完成」后启动；取消勾选不启动；交互升级旧 PID 被杀、点「完成」后新版本接管；`/SILENT` 全新安装自动启动；`/VERYSILENT` 升级自动交接。
+
+### 推荐接口反代入口上下文修复
+
+- **修复网页「加载更多 / 换一批」固定 403（推荐接口反代丢失 Host）**：四进程模式下主 API 把 `/api/recommendations/*` 反代给独立推荐进程，转发前剔除了 `Host`，httpx 于是按后端地址自行生成 `Host: localhost`（Unix socket 路径）或 `127.0.0.1:<port>`（Windows 回环 TCP 路径），而 `Origin` 原样转发 —— 推荐进程内同一套认证中间件的 CSRF 同源校验比较的正是 `Origin` 与 effective host，于是同源判定永不成立，三端 Web 的写请求（`append` / `reshuffle` / `refresh`）在使用会话 cookie 时固定返回 `403 {"error":"csrf"}`；浏览器扩展走 Bearer 豁免 CSRF，因此只有网页受影响，且非 `recommendations` 的写接口照常可用。现在反代保留浏览器原始 `Host`（`content-length` / `connection` 等传输层头部仍不转发），推荐进程的 CSRF 判定与入口恢复到同一口径。新增 `tests/test_recommendation_proxy_headers.py`：覆盖 Unix socket 与回环 TCP 两条传输的 Host / Origin 透传、hop 头剔除，以及「反代后的请求能通过推荐进程 CSRF」的契约断言，并含把 `Host` 重新剔除后即失败的回归守卫。
+
+- **修复外部 TLS 终结部署（Caddy 等）下网页「加载更多 / 换一批」仍 403**：推荐进程走 Unix socket，对端没有地址，uvicorn 因此不会按 `X-Forwarded-Proto` 改写它的 scheme，于是 https 页面的 `Origin` 永远无法与它算出的 `http` 同源匹配。反代现在用主 API 自己的 effective 视角判定 `Origin`，同源时改写为 `http://<Host>`（与 `tls_proxy` 对内置 TLS 线程的处理一致；前提是入口能算出外部有效 host —— 反向代理保留原始 `Host`，或终结器列入 `auth.trusted_proxies` 并提供 `X-Forwarded-Host`），跨站 `Origin` 原样保留、继续被拒；并且不再把 `X-Forwarded-Proto` / `X-Forwarded-Host` 转给推荐进程 —— 这个 hop 无法验证这两个声明，scheme 与 host 锚点统一由主 API 重建；`X-Forwarded-For` / `X-Real-IP` / `Forwarded` 仍照常透传，否则会放宽 `auth_core` 对「loopback 对端 + 存在转发头」的 fail-closed 判定。
+
+### 推荐理由补齐发布时间与评估时刻
+
+- **修复推荐理由把 2024 年旧内容说成“最新”**：推荐理由（`expression`）生成链路此前既不传当前时间、也不传内容发布时间，模型只能靠标题年份或自身知识猜测时效。现在单条实时 `_try_generate_expression()` 与批量池 `_precompute_batch()` 都会把候选的 `published_at` / `published_label` 以及该条的评估时刻 `evaluated_at`（`DiscoveredContent.temporal_evaluated_at`，不是生成文案时的 wall clock）放进 user_prompt 的 content payload；单条和批量静态 system prompt 各加一条规则，只允许对照 `evaluated_at` + `published_at` 判断新旧，禁止根据标题年份、“最新/今天”等词、模型知识截止时间或其它字段推断，字段缺失时不得使用时效词或猜测年龄。时间字段位于可变 user payload，system prompt 仍字节静态，prompt cache 前缀不受影响。补单条 / 批量 prompt 与引擎级回归测试。
+
+---
+
+## v0.3.222：待聊红点开关、BM25 稀疏信号与鉴权补强（2026-09-13）
+
+- **PC Web 与插件新增「对话标签红点」开关（默认关闭）**：桌面 Web「聊聊口味」页顶部与插件 popup「对话」页顶部各加一个小开关，控制是否在对应入口显示待聊确认红点；关闭时红点始终隐藏。PC Web 保留「设置 → 前端 → 显示待聊未读数」并与其双向同步，偏好分别存于浏览器 `localStorage`（`openbiliclaw.webui.showPendingChatCount` / `openbiliclaw.popup.showChatPendingBadge`），默认改为不展示。真实后端回归覆盖默认关闭、开启后展示完整去重积压总数（>99 显示 99+）与关闭后隐藏。
+
+- **learned scorer 融合 BM25 稀疏词面信号（接手补全 [PR #245](https://github.com/whiteguo233/OpenBiliClaw/pull/245)）**：`LearnedRelevanceScorer` 在稠密 cosine 之上融合 BM25 词面匹配（CJK unigram + 字 bigram、拉丁词，纯 Python 无第三方依赖），默认 `bm25_weight=0.3`，构造时校验 `0 ≤ weight ≤ 1`。`features_digest` 升至 `learned-features-v2` 并纳入权重。补全点：① `cjk_tokenize` 同时产出 CJK unigram，单字兴趣词（如「车」）不再永远匹配不到 bigram；② 批内完全无词面命中时不再把稠密分无意义地整体缩放 `(1 - weight)`；③ `bm25_weight` 越界 / 非有限值直接拒绝，避免污染非法分数。原始实现由 [@SummerCaptain](https://github.com/SummerCaptain) 提交，维护者接管后 rebase 到 main 并补齐边界与文档。
+
+- **无鉴权本地 embedding 端点不再被静默禁用**：`setup-embedding` 选项 4（自建 vLLM / OneAPI / OpenAI 兼容网关）允许 API Key 留空，但 `build_embedding_service` 对 `provider="openai"` 仍要求非空 key、对 `openai_compatible` 更是要求 key + base_url 同时存在，于是无鉴权的本地向量服务会在日志里以 “No embedding-capable provider available” 静默降级。现在 `openai` 只在调用方显式提供自定义 `base_url` 时接受空 key，`openai_compatible` 则只把 `base_url` 当硬要求；两者都会在内部注入占位 key 满足 OpenAI SDK，同时保证空 key 绝不会暗落到 api.openai.com。`config.example.toml` 与扩展设置页注释同步说明，新增 registry / CLI 回归测试。
+
+- **补上 B 站扩展任务的 CSRF 门禁**：`GET /api/sources/bili/next-task` 与其它来源的 `next-task` 一样是「pending → in_progress」的领取型 GET，但此前不在 `api/auth.py` 的 `_CSRF_GET_EXACT` 集合里 —— 带 cookie 的跨站顶层导航（`SameSite=Lax` 会随顶层 GET 发送会话 cookie，且 `Sec-Fetch-Site: cross-site` 已使本机免登录 fast path fail-closed）可以在没有 `X-OBC-Auth` 的情况下把一条 pending 的 B 站扩展任务置为 `in_progress`，而扩展永远收不到它，只能等租约回收。现在该路径与其余九个来源一起强制 `X-OBC-Auth`；扩展走 `Authorization: Bearer`（Bearer 豁免 CSRF），不受影响，本机 CLI / 扩展链路无行为变化。同时把 CSRF 回归从手抄路径列表改为**集合相等断言**（`tests/test_api_auth.py`：已注册的 `*/next-task` 路由集合 == `_CSRF_GET_EXACT` 中登记的 claim 路径），后续新增来源漏登记会直接失败，`docs/modules/api-auth.md` 的 CSRF 行同步更正为十个来源。
+
+- **B 站视频信息补分区 id，新增标签读取方法（issue #57 / #232 方向 1）**：`get_video_info()` 补填同一 `/x/web-interface/view` 响应里一直存在、但此前被丢弃的 `tid` / `tid_v2`（零额外请求）；新增 `get_video_tags(bvid, limit=20)`，走 `/x/tag/archive/tags`（网页播放器标签行所用的端点）取标签名，匿名 Cookie 亦可读取，响应远轻于 `/x/web-interface/view/detail`（后者会连带 Card / Related / Reply）。**实测纠正**：2026-09-11 在 8 个分区各取 1 个样本（含 plain `/view` 与 WBI `/x/web-interface/wbi/view` 两种变体）确认 —— 该响应**不含 `tag` 数组**，`tname` / `tname_v2` **恒为空字符串**，因此 `VideoInfo.tags` 在这条路径上保持 `None`，标签只能由 `get_video_tags()` 显式获取；`get_video_info()` 的请求数不变（有回归测试锁定）。集成点（把标签喂给评估 prompt、摇摆区视频才拉标签）留待后续按需接入，本次不改变任何发现/推荐链路行为。
+
+---
+
+## v0.3.221：保存 URL 归一化、B 站视频信息回退与 learned scorer 校准（2026-09-11）
+
+- **修复协议相对封面 URL 导致「稍后再看 / 收藏」422（issue #237）**：B 站等上游常见返回 `//i2.hdslb.com/...` 这类协议相对地址，入站 `SavedItemIn` 的 `content_url` / `cover_url` 在 `_validate_http_url` 校验前统一补全为 `https://...` 再入库；三个图形界面共用同一端点，无需各客户端自行兜底，非 HTTP(S)、带凭据、含空白或控制字符等非法值仍照旧拒绝。真实进程 + 真实 HTTP 回归：未修复的 main 提交返回 422，修复后 200 并落库为绝对地址。
+
+- **B 站视频信息接口增加 WBI 签名回退**：新增后端 `GET /api/bilibili/video/info`，优先走普通 `/x/web-interface/view`，被 412 风控时回退到 WBI 签名 `/x/web-interface/wbi/view`，保证移动端原生播放页的简介与点赞 / 投币 / 收藏 / 评论数在风控下仍可获取。
+
+- **learned scorer 安全校准闭环（eval_scorer）**：`[discovery].eval_scorer` 默认 `"llm"` 保持既有行为，并在桌面 Web / 扩展「高级功能」中显示为 `Agent（默认）`；用户可显式切换 `Shadow（校准观察）` 或 `Learned（仅相关性，实验性）`，保存后经同一配置 API 热重载。注册策略与回填策略复用顶层 evaluator，直连发现、统一候选流水线和单条评估不再绕回默认 Agent。`shadow` 并跑 learned + 完整 LLM、由 LLM 决定产品 relevance 并落完整隐私安全对照，人工运行只读 gate 并确认通过后才应选择 `learned` hybrid relevance。learned 模式仍保留 LLM temporal / topic / style / franchise 元数据，且审计失败、非法分数 / 向量 / digest 或不完整 LLM 成员均 fail-open；gate 拒绝不完整 telemetry、零 admission 和缺失指标。切换只影响后续候选，不重算已有推荐；本版本不减少 LLM 调用。
+
+- **贡献者致谢**：learned scorer 功能初始 PR 由 [@aweds13](https://github.com/aweds13) 提交（[PR #228](https://github.com/whiteguo233/OpenBiliClaw/pull/228)）；随后由 [@whiteguo233](https://github.com/whiteguo233) 接管完善并合入。
+
+- **新增 AtomGit 国内源码镜像**：中英文 README 补充 [AtomGit 项目入口](https://atomgit.com/whiteguo233/OpenBiliClaw)，镜像从 GitHub 自动同步源码，方便国内访问并满足 G-Star 申请的项目链接展示要求。
+
+- **CI 基线清理（MyPy）**：修复 8 个既有 MyPy 报错（`soul/cognition_cycle.py`、`image_service.py`、`worker/main.py`、`api/app.py`），`mypy src/` 恢复 0 error，CI 不再在 MyPy 步骤阻断后续 pytest。改动仅为类型注解 + 一个鸭子类型 Protocol（`_BackgroundTaskHost`）与一个 TypedDict，无运行时行为变化。
+- **CI 基线清理（pytest）**：MyPy 恢复后 pytest 暴露的 9 个既有失败一并处理，CI 全绿。其中 1 个是真实缺陷：`_get_wbi_keys` 之前把 HTTP 状态码吞成一个无 code 的 `BilibiliAPIError`，导致 watch-later 遇到 412/429 时被误标为 `failed` 而不是 `rate_limited`（现改用 `_sanitized_http_error` 保留码值）；其余 8 个为与近期重构不同步的过期断言（image-fetch 并发上限默认值 4/3→10/8、weibo 测试桩缺 `include_delivered`、desktop `sendChat` 改流式、dialogue respond 调用点新增 `_respond`、candidate eval max_tokens 8192→16384）。
+- **发布状态**：后端源码 / 浏览器插件 / 桌面安装包 / Docker 镜像与聚合 Release 统一为 `v0.3.221`；客户端配套版本为移动端 `v0.3.156+2006`。
+
+## v0.3.220：Windows 推荐进程修复与保存键扩展（2026-09-09）
+
+- **修复 Windows 端 v0.3.219 启动崩溃（issue #234）**：Windows 的 asyncio/uvicorn 不支持 Unix socket，独立推荐进程改为监听 `127.0.0.1:8423` 回环 TCP，主 API 改用 HTTP 代理；POSIX 仍保留 Unix socket。同时为桌面 Web 的 `renderPoolStatus` 增加 `null` 状态保护。
+- **允许 Linux.do 主题类型内容 ID 保存**：saved-item key 校验新增 `linuxdo:topic:<positive-id>` 规范键，与既有知乎 / GitHub typed-content 规则保持一致。
+- **发布状态**：后端源码 / 浏览器插件 / 桌面安装包 / Docker 镜像与聚合 Release 均已发布为 `v0.3.220`；Chrome Web Store 已上传并提交 `0.3.220` 审核；Firefox AMO 已提交 listed `0.3.220`。
+
+## v0.3.219：四进程后台模式默认开启（2026-09-09）
+
+- **默认启动改为四进程后台模式**：`openbiliclaw start` / `serve-api` 以及桌面安装包现在默认拉起 `full worker`、`discovery worker`、独立推荐进程和独立图片代理；API 主进程不再承担重后台负载。仍可用 `OPENBILICLAW_WORKER=0`（`false` / `no` / `off`）回退到旧的单 API 进程模式。
+- **桌面安装包同步接入四进程模式**：PyInstaller 冻结版通过 `--openbiliclaw-worker` 子进程复用同一个 EXE 运行 worker 模块，子进程日志写入同一个 `logs/desktop.log`，并在启动时关闭子进程 splash。
+- **发布版本对齐**：后端、浏览器插件、桌面安装包统一为 `v0.3.219`；客户端配套版本为移动端 `v0.3.153+1`。
+
+## v0.3.218：Latest Release 版本确认（2026-09-04）
+
+- **待聊确认列表扩容与去重（issue #233，2026-09-08）**：`/api/chat/pending-confirmations` 的列表上限从 3 条提高到 10 条，并新增 `total` 返回去重后的完整积压数；插件、桌面 Web、移动 Web 的角标改用 `total`，不再被“Top-3 补位”误导。列表按标题归一化相似度折叠近似重复的假设/疑惑，同 session 已打开未结算的条目不重复计入；已进入对象 72 小时冷却的最近问过条目也不会再次出现在待聊列表。同时在洞察生产阶段（`InsightAnalyzer.merge_insights` 与 `SoulEngine._save_insights`）就按归一化相似度合并近似重复假设，避免新的重复持续写入 `insight.json`；确认/拒绝/未评价等不同语义状态仍分开保留。生成 prompt 也会携带已有假设的 `validated / user_verdict` 和已有疑惑历史（open/clarifying/resolved/dismissed），让模型在源头就知道哪些方向已经问过/确认过/否决过，尽量避免换措辞重新生成重复内容。Awareness 生成疑惑时还会对比已有 open/clarifying 疑惑，绕过近似重复的 `topic / observation`，不再每轮重复创建同一条疑惑。手动 `open` 仍绕过冷却，不会影响用户主动打开。
+
+- **惊喜队列阻塞修复合并收尾（2026-09-08）**：`db9667ab` 合入 main；本机完整服务从 main 加载补修，验证接口就绪后清理本次 worktree，沿用原配置和数据。
+
+- **修复推荐页并发读取阻塞（2026-09-08）**：手机刷新同时调用的惊喜队列接口改为线程池读取；保留动态阈值与完整筛选，避免同步历史扫描占住主 API 并拖慢换批转发；[定位与验证](verification/2026-09-08-delight-read-isolation.md)。
+
+- **推荐提速与手机库存同步收尾（2026-09-08）**：后端重复计算优化与配套客户端 `54fdb09` 分别合入 main；本机服务切回 main 后清理本次 worktree，保留完整推荐流程与现有数据。
+
+- **保留完整推荐流程的提速（2026-09-08）**：MMR 仅在当前批次复用相同向量对的余弦值；候选读取仅在当前只读事务复用相同 SQL 原始行，过滤与时效检查照常执行。固定真实历史重放中，40/80 条候选的 MMR 耗时约降低 84%/87%，输出条目和顺序一致；[对照与验证](verification/2026-09-08-recommendation-reuse.md)。
+
+- **推荐修复合并收尾（2026-09-08）**：合并真实换批性能、库存同步和客户端续页修复，并保留 main 新增的 B 站评论 `ctime / reply_count / avatar` 字段；配套 Flutter 客户端修正评论时间插值，详见对应仓库变更日志。
+- **真实环境补修推荐阻塞**：活动动态的同步状态扫描移出主 API 线程，合并并发缓存请求；同一 SQLite 推荐读取事务只计算一次动态阈值。新增真实 HTTP/WebSocket/数据库验收脚本及配套原生交互测试；常规 6 次真实请求约 1.17–1.92 秒，高负载及实体设备限制详见[真实验收报告](verification/2026-09-07-recommendation-live.md)。
+
+- **修复换批、库存及底部续页一致性**：保留独立推荐进程和完整排序，恢复当前 SQLite 快照及推荐/shown 原子提交，返回真实 ID；停止交互式使用延迟 worker outbox / 陈旧快照，遗留队列改为逐批确认。换批与追加响应新增精确总量/分平台库存及读取版本，主 API 桥接库存事件并观察后台补货。手机 Web 修复正文超时、空批恢复和哨兵漏触发，桌面 Web/扩展直接应用同批库存；原生 App 由配套仓库分支修复。
+
+- **按历史会话更新平台来源接入 skill**：Codex/Claude 镜像入口改为按新增、修复和审计范围选读；同步当前逐能力鉴权、周期账号同步默认关闭与 engagement 展示事实，补充 GitHub 鉴权分页/共享限流、浏览器任务用途、原生保存只读确认及 Feed 在途安全反例。验收模板拆分证据层级和全量测试，要求先核对真实 E2E 的配置、运行实例与安装产物；历史经验标明 main/在途边界，不改变平台运行代码。
+
+- **当前 Latest Release 以 `openbiliclaw-v0.3.218` 为准**：后端、浏览器插件、桌面安装包与聚合 Release 均使用同一版本号，避免此前文档同时出现 v0.3.215 / v0.3.218 造成混淆。
+- **Bilibili play-url 返回字幕轨道**：视频播放地址响应补充字幕轨道信息，便于移动端原生客户端与后续播放器集成。
+- **发布流程补强**：后端 Release 工作流增加手动触发入口，版本同步与发布元数据统一到 v0.3.218。
+
+## v0.3.215：GitHub PAT 修复与 B 站移动端接口（2026-09-03）
+
+- **新增 Bilibili 移动端原生播放器与视频互动接口**：后端新增移动端播放器所需的登录态、播放地址、cookie 导入接口，并扩展视频关系查询、点赞、投币、三连、收藏、稍后再看、相关推荐和评论等接口，配套补充 `BilibiliAPIClient` 方法，供移动端原生客户端接入。
+
+- **修复惊喜推荐“后台 ACK 后 popup 重灌为空”**：扩展后台收到 `delight.candidate` 后会调 `/api/delight/sent` 确认送达，旧逻辑把该确认直接写成 `delight_notified=1`，导致 `pending-batch` 重灌时过滤掉所有已推送但用户实际还没看过的惊喜候选。现将“已送达”和“用户已看”拆开：新增 `delight_seen`，`/delight/sent` 只标记已送达并保留重灌可见性，`view / dismiss / dislike` 才真正标记已看/消费。`/api/delight/pending-batch` 改用 `include_delivered=True` 返回未看过候选，插件重开或 `delight.refreshed` 后不会再出现空队列。
+
+- **修复 GitHub PAT 模式下 starred 分页 Link 路径校验**：使用 PAT 时 GitHub 分页 Link 会返回 `/user/<id>/starred`，而原始请求路径是 `/users/<username>/starred`，此前会误判为不安全路径导致 `fetch-github` 失败；现已允许这两种安全的 canonical 路径，并补充回归测试。
+
+- **桌面 Release Tailnet 构建修复**：桌面发布流程先按目标矩阵预取 Tailnet helper 模块，并修复生成的三方许可文件在 Windows CRLF 检出下的校验误报，避免安装包发布被构建期 notices 检查卡住。
+
+- **新增 Recommendation Director 完整设计规格（仅文档）**：记录推荐导演层的目标架构、FeedSession/BatchInstance 生命周期、受控 Proposal→Plan→CompiledPolicy 信任边界、反馈 Gate、并发 fencing、shadow/A-B 评估和分阶段落地顺序；未改变默认配置与当前推荐行为。
+
+## v0.3.214：新增 GitHub 内容来源（2026-09-03）
+
+- **新增 GitHub 内容来源**：GitHub 作为第十二个 canonical source 接线，v1 范围是公开 repository 的匿名/可选 PAT 官方 REST API、public starred repositories 初始化、`search / ranked / latest` discovery、统一关键词与 PC / mobile / extension 无封面文字卡。PAT 只用于提额和 `/user` 身份校验，私有仓库在共享 query sanitizer 与 normalizer 两层强制排除；不读取浏览器 Cookie，不执行 star/watch/follow，不将 forks、open issues 或 watchers 伪装成跨平台 engagement。formal / inspiration 共用持久来源 cooldown，status 只聚合当前启用 modes；与当前 PAT 指纹匹配的 discovery 401 会让 profile/bootstrap 状态如实 unavailable，轮换令牌后旧标记自动失效。Star 分页在已有完整页后超时保留此前事件并报 `partial_timeout`，混合 init 会隔离 GitHub 失败并继续其它有效来源。当前卡片可见 owner/name、description 和 stars，topics/language/license/forks/issues/watchers 仅保留在后端 source metadata，尚未由三端 JS 渲染。只读 smoke 已观察到三种 discovery 模式返回公开仓库且没有本地、LLM 或上游写入；匿名 starred 路径曾观察到公开结果/肯定空结果，后续请求也真实遇到匿名 rate limit。有效 PAT、完整初始化终态与浏览器 UI/E2E 仍未完成验收，不据此宣称功能已发布；逐门状态见 [GitHub acceptance ledger](platform-source-acceptance.github.md)。
+
+- **避免 Tailnet 测试夹具触发 Secret Scanning**：测试中的 Auth Key 模拟值不再使用形似有效凭据的连续 `tskey-auth-` 字面量；需要验证 OAuth 前缀分支的夹具改为源码中分段构造，并新增仓库回归检查，防止测试数据再次被 GitHub 误报为可能有效的 Tailscale Key。
+
+- **稳定 CI 异步心跳回归**：保存同步 watchdog 与引导初始化 heartbeat 测试改为等待数据库终态和 detached 清理等真实可观测条件，不再用固定 wall-clock sleep 推断异步任务已经完成，避免高负载 runner 上的时序假失败。
+
+- **修复 Tailnet notices 的 CI 冷缓存校验**：生成脚本新增 `--prefetch`，主 CI 在离线生成跨平台第三方依赖清单前，按同一目标矩阵和构建 tags 精确预热所需 Go 模块，避免 Linux helper 测试只下载当前平台依赖后，Windows 专属模块因 `GOPROXY=off` 被误判为 notices 失败；新增目标遍历与工作流顺序回归测试。
+
+- **修复 YouTube / 知乎平台已收藏但 Web 误报同步失败**：原生保存发出点击后若页面选中态未在短轮询窗口内更新，扩展曾直接回传 `native_confirmation_not_observed`，后端因此持久化为失败。现在 runner 在导航前登记自有 task tab 并禁止普通行为采集；收到不确定结果后先终止并等待 mutation sender，再重载精确内容页，只有新 `document_instance_id` 完成 READY 握手才发送独立 `execution_id` 的 `verification_only`。真实 Chrome 复核进一步确认知乎桌面端已从命名收藏夹弹窗改成条目级全局 `收藏 / 已收藏` 开关：后端目标同步改为 `知乎收藏`、取消 named-collection capability，首次“收藏”只点击一次并等待“已收藏”，初始“已收藏”及所有 verification 路径严格只读，避免重复任务反向取消。YouTube 新版 `toggleable-list-item-view-model` 又把实际状态与点击点移到内层 `button[role=menuitem][aria-pressed]`，外层 `yt-list-item-view-model` 仅为 presentation；执行器现优先读取并点击内层按钮，同时保留旧 renderer 兼容，避免假点击无写入。YouTube verifier 继续只读检查 exact playlist；只有正面 persisted-state 证据才升级为 `already_synced`，其它结果保持原失败。扩展 callback 现要求 2xx、在独立 deadline 内以同一 payload 有界重试；后端只幂等确认完全相同的 canonical terminal replay，变化后的晚回调仍 409。临时 tab 删除结果会区分已删除、已不存在与未知失败，未知失败保留 MV3 恢复记录。新增 runner、平台 verifier、传输、canonical replay、零被动事件与零二次 mutation 回归测试。
+
+- **电脑端应用内 Tailnet 远程入口**：新增默认关闭的 `[tailnet]` 与 Go `tsnet` helper，由
+  Python supervisor 随后端生命周期托管，把用户自己 tailnet 内的 HTTP / WebSocket 固定反代到
+  `127.0.0.1:<本次启动的有效 server port>`；通常使用 `[api].port`，也跟随 `start` /
+  `serve-api --port` 与桌面 `OPENBILICLAW_PORT` 覆盖。电脑不再要求安装或全局开启系统 Tailscale，
+  已内嵌 tsnet 的 `OpenBiliClaw-mobile` Android / iOS 原生 App 可经
+  `App → tailnet → 电脑 helper → FastAPI` 在非局域网访问；Web / Linux / macOS / Windows Flutter
+  构建不在首版支持面。桌面安装包内置 helper，
+  源码安装提供 `tailnet build-helper`（Go 1.26.6）；Docker 首版不内置。节点身份保存在
+  `data/tailnet/` 并排除迁移包；`data/bin/` 的任意大小写变体也不允许随包迁移，导入只保留
+  目标机 exact native helper，POSIX 要求它原本可执行再恢复 `0700`；目标机器保留根含嵌套
+  symlink 时 fail closed，避免跟随链接复制目录外数据。首次登录 URL 自动展示 / 打开，非交互 Auth Key 只经 stdin
+  bootstrap 传递、不写配置、argv、状态或日志。入口仅限 tailnet 私网，不启用 Funnel/Serve，
+  并清洗重建转发头以保持 API 密码门禁的远程请求语义。`config.local.toml` 的 Tailnet 字段级
+  覆盖保留 provenance；`OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` 显式环境覆盖优先于 local/base，
+  通用保存不会烘焙覆盖值，CLI 遇到 env/local shadowed 修改会明确拒绝；Auth Key / helper path
+  保持 runtime-only。helper 固定使用 `ts_omit_logtail,ts_omit_webclient`，不向
+  `log.tailscale.com` 上传自动诊断日志且不携带未用管理 Web UI，控制面 / DERP 边界仍照常披露；
+  完整依赖 notice 由生成脚本产出并由 CI / 桌面构建校验。Go 1.26.6 helper 的 macOS
+  `minos=12.0`，启动前单独 preflight；主应用仍支持 10.15+，旧 macOS 只降级 Tailnet。桌面 Web
+  与浏览器插件「设置 → 通用」现新增 Tailnet 控制和脱敏状态：可留空走网页登录、提交
+  `tskey-auth-…` Auth Key，或提交 `tskey-client-…` OAuth Client Secret + 已授权设备 tag。
+  入网凭据是只允许真实本机请求写入的 API write-only 字段，不进 TOML / 扩展存储 / 回显；以
+  私有权限原子暂存到下一次完整重启，成功写入 helper stdin 后删除。OAuth helper 注册为持久、
+  预授权、tag-owned 节点；环境输入仍可用于无人值守注册，且环境凭据优先于设置页暂存。
+
+- **README 下载与星标徽章**：中英文 README 顶部新增 GitHub Releases 总下载数与仓库 Star 动态徽章，点击可直达对应页面。
+
+- **桌面 Web 手机版二维码优先使用手动配置的后端地址**：校园网等存在 AP/客户端隔离或多网卡选错网卡的场景下，`/api/qr-info` 自动探测的局域网 IP 可能手机不可达，而桌面 Web 设置里手动填写的后端地址此前会被自动探测结果覆盖。现在二维码生成时显式配置的后端 host/port 始终优先，用户可填写手机可达的 IP、域名或内网穿透地址后再扫码；未填写时行为保持不变。更新 `tests/test_desktop_web_mobile_entry.py` 静态契约测试。
+
+## v0.3.220：Windows 推荐进程修复与保存键扩展（2026-09-09）
+
+- **修复 Windows 下高并发 JSON 原子写入偶发 WinError 5（issue #229）**：`_atomic_write_json()` 在 Windows 上多线程/多进程竞争替换同一状态文件时，`os.replace()` 会短暂抛出 `PermissionError: [WinError 5] 拒绝访问`，导致探索缓冲等状态更新丢失。现在替换阶段对瞬时 `PermissionError` 增加带随机抖动的指数退避重试，重试耗尽才向上抛出。
+
+## v0.3.213：推荐供给与时效判断修复（2026-08-27）
+
+- **推荐池供给修复（issue #220）**：同质高分内容不再把普通推荐池误判成不可服务，补货和惊喜推荐在池内内容质量集中时仍能正常提供；新增回归测试覆盖该边界。
+
+- **待聊确认徽章可选隐藏（issue #217）**：桌面 Web 设置新增开关，允许用户关闭导航栏上的待聊确认数量徽章；设置持久化并在刷新后保持，默认行为不变。
+
+- **时效判断收紧（issue #218）**：`versioned` 内容的排序 bonus 半衰期与复审间隔从 120 天收紧到 60 天，并为 v1 legacy 行补充 120 天准入 TTL；评估提示将仍在迭代的软件、产品、模型、工具、框架、游戏与设备识别为 `versioned`，只有已闭合、以档案价值为主的对象才归为 `historical`。
+
+- **发布状态**：后端源码、浏览器插件、macOS / Windows 桌面安装包、Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.213`，完整性门禁与主 CI 全绿，详见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.213)。Chrome Web Store 已上传并提交 `0.3.213` 审核（当前为 `PENDING_REVIEW`）。
+
+- **国内下载入口**：已创建 [Gitee v0.3.213 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.213)，挂载 4 个小包；7 个包均已上传至 [123 云盘永久分享](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)，分享页显示 7 项均有效，可直接打开下载。
+
+## v0.3.212：修复 explore 调度堵塞导致的惊喜候选断供（2026-08-26）
+
+- **修复 explore 调度三条堵塞链路**：Planner 生成 explore 词后不再回写 `last_explore_refresh_at`，改为独立的 `last_explore_planned_at`；执行戳只在 ExploreStrategy 真正派发且 `supply attempts > 0` 后更新，避免“没跑也算跑”。`_build_refresh_plan` 不再在 270–299 死区直接 `return []`：水位以下只补 `search + related_chain`，due 的 `trending / explore` 作为独立计划项入队；`refresh_if_needed` 不再因 pool at cap 直接跳过周期探索，`_run_refresh_plan` 的 cap break 只作用于 `search / related_chain`。补充拆钟、270–299 区间、补货拆分与 supply attempts 打戳等测试；真实环境验证 `deepseek-v4-flash` 下 explore 成功发现 2 条并写入 content_cache。
+
+- **versioned 时效衰减 120 天 → 60 天并补齐准入 TTL**：`versioned` 排序 bonus 半衰期从 120 天收紧到 60 天（versioned 内容指涉可识别的软件 / 产品 / 模型 / 游戏等仍在迭代的对象，价值衰减比旧曲线更快），复审间隔同步为 60 天，并新增 120 天准入 TTL（v1 legacy 行按年龄触发复审）。同步更新 `TEMPORAL_CLASS_POLICIES` 校准注释、`docs/modules/recommendation.md` / `discovery.md` / `storage.md` / `spec.md` 与推荐架构图。
+
+- **候选评估 temporal 边界判别优化**：评估 prompt 的 `temporal_class` 六选一新增「指涉对象是否仍在演进 / 迭代」核心判别式——`versioned` 定义从「强绑定版本号」扩展为「指涉可识别、在迭代的具体对象（软件 / 产品 / 模型 / 工具 / 框架 / 游戏 / 设备）」；`historical` 只保留「指涉对象已闭合、价值是档案」的内容，`盘点 / 回顾 / 年度总结` 框架本身不再构成 historical 理由；教程若具体指涉快速迭代的工具或产品归 versioned 而非 evergreen。单条与批量 system prompt 同步更新（sparse 变体经同一常量派生）。
+
+- **发布状态**：后端 / 插件 / 桌面安装包 / Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.212`，完整性门禁全绿，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Gitee 镜像已同步 main 与四个频道 tag。
+- **国内下载入口**：Gitee 已创建 [v0.3.212 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.212)，挂载扩展包、Safari DMG 与普通 Windows 安装包；三款超过 100 MB 的桌面包已上传到 [123 云盘永久分享](https://4001474255.share.123pan.cn/123pan/IxbZMh-rp6O3)，分享页支持免登录下载。
+
+## v0.3.211：异常报警可视化与商汤日日新零成本上手（2026-08-26）
+
+- **新增商汤日日新（SenseNova）免费额度 preset（issue #193）**：OpenAI 协议兼容子菜单新增 `sensenova` preset（第 6 位，总数 9→10）：`base_url=https://token.sensenova.cn/v1`、默认模型 `deepseek-v4-flash`——该端点已按 OpenAI 协议真实请求验证连通（成功调用 + 401 鉴权失败路径均实测），新用户免费额度可零成本体验本项目；`scripts/agent_bootstrap.py --llm-preset sensenova` 同步支持（`LLM_PRESETS` / `HUMAN_OPENAI_COMPAT_PRESETS` / choices 三处同步）。token 推理端点未验证 `/v1/embeddings`，preset 如实标注 `supports_embedding=false` 并引导 Phase 3 独立 Ollama bge-m3。新增 cli↔bootstrap 两张 preset 表的键/顺序同步测试（新增 preset 时同步文档子菜单清单的提醒也固化在断言里）；`docs/agent-install.md` 与 `docs/openclaw-quickstart.md` 子菜单清单已同步为 10 个 preset。
+
+- **新增异常报警（LLM / Embedding 请求异常可视化）**：新顶层模块 `diagnostics_alerts` 维护进程内有界环形缓冲（60s 内同类别/来源/错误码合并为一条并累加计数，上限 100 条），`LLMRegistry` 的限流 / 鉴权失败 / 超时 / 响应异常 / 全部实例失败与 `EmbeddingService` 的单次失败 / 熔断触发都会自动记录（熔断与全部实例失败为 error 级，单次失败为 warning 级）；记录永不抛错、不阻塞热路径。新增只读端点 `GET /api/diagnostics/alerts?since_id=&limit=`（支持增量拉取），新告警同时经 event hub 以 `type="diagnostics.alert"` 实时推送到 `/api/runtime-stream`；桌面 Web 设置页日志 tab 与插件 popup 设置页「日志」tab 均新增「异常报警」区（摘要 + 错误/警告徽标 + 中文错误码说明 + 刷新 + 可见面板时轮询/实时刷新）。**展示面范围**：移动 Web 与 CLI 明确不在本功能范围——移动 Web 没有日志/设置面（views 仅 chat/history/library/login/profile/recommend/saved），CLI 只有 `logs-prune` 等文件维护命令、无运行时 feed 展示面。测试覆盖缓冲合并、快照、发布、LLM 与 embedding 失败钩子，并为插件与桌面 Web 新增异常报警区结构契约测试（`popup-diagnostics-alerts.test.ts` / `test_desktop_web_diagnostics_alerts.py`）；`docs/modules/api.md`、`docs/modules/llm.md` 与 `docs/modules/extension.md` 已同步。
+
+- **修复 temporal 存储测试时间炸弹**：`test_storage.py` 四个用例硬编码的 `next_review_at`（2026-08-26）被真实时钟越过，`cache_content` 重算 disposition 后行状态 `eligible → review_due` 集体翻转、main CI 与本地同时失败。新增 `_freeze_storage_clock()` helper（monkeypatch database 模块 `datetime` 为冻结时钟）应用到受影响用例，恢复确定性而不是把日期改成下一颗炸弹。纯测试改动，无运行时行为变化。
+
+## v0.3.210：海外代理路由统一修复与来源日期过滤（2026-08-23）
+
+- **修复 LLM 模块路由失效导致「聊聊口味」永久卡死（issue #213）**：用户配置的 `[llm.routes.soul]` 自定义链引用了已删除 / 已停用的实例后，每次对话调用都在发起任何 HTTP 请求前快速失败并归类为 `no_provider`（relay 本身健康、curl / 健康检查均正常，因为请求根本没发出去），而 durable 聊天 worker 对这种配置型错误无限原位重试，UI 永久停在「阿B 正在思考」且严格串行阻塞后续所有 turn；唯一的线索是一条 INFO 级日志。三层修复：(1) `LLMService` 的模块路由实例过滤与 legacy override 忽略日志从 INFO 升为 WARNING，点名 bucket、失效实例 ID 与修复方式；(2) durable 聊天 turn 对连续 3 次快速 `no_provider` 失败（约 3s，保留设置页切换实例等瞬态窗口的自愈机会）终态化为带修复提示的 failed，不再无限等待也不再阻塞队列，其余失败种类（限流 / 超时 / 网络等瞬态错误）仍保持无限有界退避；(3) 保存时校验（`_collect_llm_instance_routing_issues`）此前已拦截无效路由链，本次补齐运行期可诊断性。测试新增空链 WARNING 回归与 no_provider 终态化端到端；`docs/modules/llm.md` 与 `docs/modules/api.md` 已同步。
+
+- **发布状态**：后端 / 插件 / 桌面安装包（macOS arm64 普通 + embedding、Windows 普通 + embedding）/ Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.210`，完整性门禁全绿，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Chrome Web Store 已上传并提交 `0.3.210` 审核；Firefox AMO 已提交 listed `0.3.210`；Gitee 镜像已同步 main 与四个频道 tag，发行说明见 Gitee Release 页。
+
+- **修复 custom 代理下国内网络 YouTube 封面全裂**：`/api/image-proxy` 的境外 CDN 抓取硬编码 `trust_env=True`，但 `[network] mode="custom"` 的代理只存于 `openbiliclaw.network` 模块全局、从不写 `os.environ`，trust_env 读到空值，i.ytimg.com / ggpht.com 实际从国内网络直连、全部超时成裂图（youtube/client 等其它海外客户端都经 `outbound_httpx_kwargs()` 拿代理，唯独 image_cache 漏接）。`fetch_cover_bytes` 改为按主机分流：国内 CDN（hdslb / xhscdn 等）恒直连不变，境外 CDN（ytimg / ggpht / lain.bgm.tv）跟随进程级 `[network]` 出口策略（custom 显式传代理 / system 继承环境变量 / direct 强制直连），按次查询策略使配置热更新对下一张封面即时生效；测试覆盖三种模式的分流断言，`docs/modules/runtime.md` 与 `docs/modules/config.md` 已同步。
+- **灵感搜索海外后端接入 `[network]` 出口策略（同类问题排查）**：全量审计 31 个 httpx 客户端构造点后发现 discovery 灵感搜索的 Exa / You.com / Serply 直连 HTTP 后端硬编码 `trust_env=false` 且不接代理，mcporter 子进程也不注入代理环境——custom 模式下全部绕过配置代理，实测 api.exa.ai 从国内直连超时（与 ytimg 同症状），且 V2EX 正式 search 的 Exa/You 召回同样受害。三个后端改经 `outbound_httpx_kwargs()` 跟随策略，mcporter 子进程改用 Reddit rdt-cli 同款 `outbound_cli_environment()`；Bing RSS 属国内可达服务保持恒直连并加注释。测试新增三后端 × 三模式分流断言、Bing 直连守卫与 mcporter env 注入断言。
+- **新增按来源发布日期偏好过滤（issue #18）**：`[sources.<name>]` 支持 `recommendation_date_preset` / `recommendation_date_start` / `recommendation_date_end` / `recommendation_date_weight`（默认 `all` = 不启用），桌面设置页与插件 popup 的每个平台源卡片都提供日期范围与权重控件；发现阶段在 LLM 评估前硬过滤范围外候选，候选池打分与推荐服务保留 `weight` 语义，严格模式还把包含式边界下推到 B 站 API 和扩展网页搜索；`GET/PUT /api/config`、配置校验与热更新均已覆盖。
+- **来源日期过滤测试时区无关化**：source-date 相关单测改用固定 UTC 锚点构造断言，不再依赖运行机器的本地时区；同步更新受影响的 API surface 断言。纯测试改动。
+
+## v0.3.209：负反馈误报修复、移动端提速与依赖加固（2026-08-22）
+
+## v0.3.209：负反馈误报修复、移动端提速与依赖加固（2026-08-22）
+
+- **发布状态**：后端 / 插件 / 桌面安装包（macOS arm64 普通 + embedding、Windows 普通 + embedding）/ Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.209`，完整性门禁全绿，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Chrome Web Store 已上传并提交 `0.3.209` 审核（`PENDING_REVIEW`）；Firefox AMO 已提交 listed `0.3.209` 并验证受理；Gitee 镜像已同步 main 与四个频道 tag，发行说明见 Gitee Release 页。
+
+- **修复 custom 代理下国内网络 YouTube 封面全裂**：`/api/image-proxy` 的境外 CDN 抓取硬编码 `trust_env=True`，但 `[network] mode="custom"` 的代理只存于 `openbiliclaw.network` 模块全局、从不写 `os.environ`，trust_env 读到空值，i.ytimg.com / ggpht.com 实际从国内网络直连、全部超时成裂图（youtube/client 等其它海外客户端都经 `outbound_httpx_kwargs()` 拿代理，唯独 image_cache 漏接）。`fetch_cover_bytes` 改为按主机分流：国内 CDN（hdslb / xhscdn 等）恒直连不变，境外 CDN（ytimg / ggpht / lain.bgm.tv）跟随进程级 `[network]` 出口策略（custom 显式传代理 / system 继承环境变量 / direct 强制直连），按次查询策略使配置热更新对下一张封面即时生效；测试覆盖三种模式的分流断言，`docs/modules/runtime.md` 与 `docs/modules/config.md` 已同步。
+- **灵感搜索海外后端接入 `[network]` 出口策略（同类问题排查）**：全量审计 31 个 httpx 客户端构造点后发现 discovery 灵感搜索的 Exa / You.com / Serply 直连 HTTP 后端硬编码 `trust_env=false` 且不接代理，mcporter 子进程也不注入代理环境——custom 模式下全部绕过配置代理，实测 api.exa.ai 从国内直连超时（与 ytimg 同症状），且 V2EX 正式 search 的 Exa/You 召回同样受害。三个后端改经 `outbound_httpx_kwargs()` 跟随策略，mcporter 子进程改用 Reddit rdt-cli 同款 `outbound_cli_environment()`；Bing RSS 属国内可达服务保持恒直连并加注释。测试新增三后端 × 三模式分流断言、Bing 直连守卫与 mcporter env 注入断言。
+- **锁定 openai<3 / anthropic<1，修复全新安装的 LLM 代理支持被新版 SDK 破坏**：openai 3.x 与 anthropic 1.0 把 httpx 以 `httpx2` 名字 vendor 进包内，客户端构造时的 isinstance 守卫会拒绝外部传入的 `httpx.AsyncClient`，导致 `openai_provider` / `claude_provider` 的代理与 `trust_env=False` 路径在全新安装（CI / pip 新解析）下直接 TypeError。两个依赖分别加上界 `<3` / `<1` 并同步 uv.lock，待 provider 适配 vendored httpx2 后再放开；本地已装 2.x / 0.x 的环境不受影响。
+- **修复 main 分支 CI 自 8 月 20 日起持续红灯的测试问题**：架构总览图迁出 README（80eb6d92）后，文档一致性测试同步改为读取 `docs/architecture-overview(.en).md`；`test_mobile_web_view_models` 修复一处 E501 超长行；`soul_engine` / `web_guided_init` 的测试桩补齐 d8f63745 新增的 `llm_concurrency` 参数。纯测试改动，无运行时行为变化。
+
+- **修复普通视频点击被误记为点踩（issue #205，含真实浏览器 A/B 验证）**：#200 的长度守卫只保护了 textContent，`aria-label`/`title` 路径仍会把标题含“不喜欢/不感兴趣”的普通卡片点击记成 `feedback(dislike)`——真实 bilibili.com 搜索页 A/B 实测：修复前构建点 3 张真实卡片产生 3 条误报，修复后 0 条。中文平台适配器（bilibili/douyin/zhihu）统一改为「≤8 字符短标签 + className token 匹配」（真实控件标签最长 6 字）；英文平台把动词锚定到真实控件——YouTube 控件 aria-label 动词开头（"Like this video…"/“不喜欢此视频”），结果卡片是「标题 by 作者」句式，故 aria 用动词前缀匹配、卡片文案封顶 12 字符；Reddit 投票只认 aria/class 锚定的 downvote/upvote。真实 YouTube A/B：修复前点 3 张标题含 "dislike" 的结果卡片产生 3 条误报（词边界版仍有 13/48 卡片命中，已改锚定后归零），修复后 0 条且 watch 页真实 dislike 控件正向采集正常。kernel 对 DOM 点踩新增按控件的奇偶点击追踪：第二次点击识别为取消（记 `retraction` 而非新 dislike），10 分钟无操作重置计数。awareness 双 system prompt 新增「负反馈一致性」规则：笔记声称点踩时必须引用真实的负反馈事件。`docs/modules/extension.md` 与 `docs/modules/llm.md` 已同步。
+- **修复移动 Web 加载更多推荐时的卡顿感**：`handleAppend()` 不再在插入新卡片前 `await` 整批封面预解码（原来后端返回后还要等最多 3 秒），而是先插入卡片、再后台预热前 4 张封面，其余封面保持 `loading="lazy"` 并交给滚动预热 observer 在接近视口时补拉；`renderCard()` 改为只对列表前 4 张卡使用 eager 封面，避免一次 append 10 张卡同时抢图片代理与解码资源。`appendRecommendations()` 补上 `DEFAULT_READ_TIMEOUT_MS` 请求超时；加载更多失败不再把 `autoAppendExhausted` 永久置为 true，而是在 header 显示「加载更多失败，请稍后重试」并允许下次滚动/点击重试。
+- **新增 Serply 作为 query inspiration 搜索后端**：`[discovery]` 新增 `serply_api_key`，填写后 `SerplyInspirationProvider` 直连 [serply.io](https://serply.io) 的 `GET /v1/search`；`inspiration_search_backends` 默认追加 `serply`，留空 Key 时该后端直接跳过，不影响现有 Exa / You.com / mcporter 链路。
+- **为平台数据撤回补齐事件来源归属**：`events` 新增 `source_platform`、`content_id` 和 `source_confidence` 三个持久化字段；新事件统一按显式来源 → metadata → 规范 URL → 兼容默认解析，无法确认的事件保持 `legacy_unknown`。旧库只在首次补列时按 metadata / 规范 URL 保守回填，旧 metadata 继续保留，未在本次变更中删除事件或实现撤回动作。
+- **收紧事件来源兼容读取**：来源统计优先读取事件顶层归属；事件 identity 的稳定内容 ID 改由跨模块共享注册表提取，覆盖 X / 知乎等非 B 站事件；schema 版本提升至 6。
+- **修复候选内容身份重复**：共享身份清单按优先级选择每条事件的第一个有效字段；例如同时存在 `content_id` 与 `topic_id` 时只保留规范 `content_id`，缺失时才使用备用字段，避免 seen ledger 为同一内容写入多个键。
+- **AI 文案换行保留（issue #184）**：推荐理由、惊喜理由、探针理由等 AI 生成文案在插件 side panel、桌面 Web 与移动 Web 统一使用 `white-space: pre-wrap` 保留换行，不再把多行输出显示成一大坨；聊天回复仍沿用既有的安全 Markdown 渲染。
+- **认知循环上下文预算可配置（issue #169）**：`[soul]` 新增 `awareness_event_batch_size`（默认 300，范围 10..900）、`insight_note_batch_size`（默认 150，范围 10..450）与 `cognition_max_tokens`（默认 32768，范围 1024..128000），分别对应 `cognition_cycle` 原有的 `_AWARENESS_EVENT_BATCH_SIZE` / `_INSIGHT_NOTE_BATCH_SIZE` / `_COGNITION_MAX_TOKENS` 三处模块常量。默认值不变；80-100K 上下文的本地模型（如 qwen3.8-27B）可在 config.toml 调小这些值，不必再改源码。三处 SoulEngine 构建面（CLI、OpenClaw bootstrap、API 热重载）与 `GET/PUT /api/config` 已同步透传，`docs/modules/config.md` 与 `docs/modules/soul.md` 已更新。
+- **修复有 Key 无模型的 legacy provider 被投影为启用的空实例**：`effective_llm_instances` 不再把 `[llm.<provider>]` 中只填了 `api_key` 但 `model` 为空的固定 provider 块投影为 v2 实例（这些通常是历史模板残留），避免桌面 Web / API 保存时被 blocking「启用的 LLM 实例必须明确填写模型」拦下。默认 provider / fallback / 模块路由显式引用的 provider 仍会投影并由原生 v2 校验给出缺模型提示；每条空模型跳过打一次 WARNING。
+
+## v0.3.208：来源周期回拉逐源开关与发布同步（2026-08-18）
+
+- **修复 LLM 预算首次告警被系统运行时间误吞**：`_last_llm_budget_warned_at` 初值从 `0` 改为 `-inf`，避免在机器启动不足一个预算窗口时，第一次触发后台 LLM 预算暂停不输出 WARNING。
+- **发布状态**：后端 / 插件 / 桌面安装包 / Docker 镜像与聚合 Release 均已发布为 `v0.3.208`，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Chrome Web Store 已上传并提交 `0.3.208` 审核；Firefox AMO 已提交 listed `0.3.208`。聚合 Latest Release 已附扩展 ZIP / Safari DMG 与四份桌面安装器。
+- **国内下载入口**：README、GitHub Pages 首页、文档导航与 Gitee v0.3.208 发行说明均补充 123 云盘国内下载入口；当前分享永久有效并支持免登录下载超过 Gitee 100 MB 附件上限的 macOS / Windows 大安装包。
+- **来源周期回拉支持逐源开关（issue #180 相关）**：`[sources.<slug>]` 新增 `incremental_enabled`（默认 `false`），与 `[scheduler].source_incremental_enabled` 总开关组成“总开关 + 每来源开关”两级控制；插件 side panel 与桌面 Web 的「平台源」配置页为 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX 增加“允许扩展周期回拉”勾选项，调度页暴露总开关。后端只有两级开关都为 `true` 时才入队周期 bootstrap 任务；关闭某来源时其 scheduler-owned pending / stale in-progress 任务会被取消，避免再打开前台标签页。默认所有开关均为关闭，手动初始化、`fetch-*` 与后台 discovery 不受影响。
+- **后台 LLM 自设预算 + Embedding 熔断（issue #188）**：`[scheduler]` 新增 `llm_budget_max_calls`（默认 120 / 小时）与 `llm_budget_window_seconds`（默认 3600），daemon 通过共享 `LLMConcurrencyGate` 统计后台 LLM 请求，窗口内达到上限即暂停自动发现 / 补池 / 画像等循环并打一条 WARNING，避免无人值守时持续烧 DeepSeek 等付费额度；手动 CLI / API 请求不受影响，`0` 可关闭预算。`EmbeddingService` 新增连续失败熔断：默认连续 3 次异常或空向量后冷却 60 秒，冷却期内不再触碰不可达 embedding 端点、不再逐条打 full-traceback WARN，冷却后自动重探。
+- **修复 defer(暂缓) 后假设仍显示在待聊确认（issue #189）**：`/api/chat/pending-confirmations` 现在读取 `memory/dialogue_confirmation_state.json` 中的 `deferred_until`，冷却结束前已 defer 的假设不再出现在待聊列表；冷却到期后自动恢复。用户主动 open 仍按原契约绕过冷却，不会因列表过滤而误 404。
+- **修复停用知乎来源后扩展仍打开知乎任务标签页（issue #187）**：`/api/sources/zhihu/next-task` 现在在领取自动任务前动态检查 `[sources.zhihu].enabled`；来源关闭时返回 bodyless 204，scheduler-owned 增量任务会被清理避免卡住其它来源，手动 pending 任务保留、重新开启后可恢复。`SourceIncrementalSync` 的 active 任务复核同步忽略已停用来源，避免遗留知乎任务阻塞周期调度。
+- **修复 `--llm-preset` 写入 `openai` 导致中转站 DeepSeek 推理 token 耗尽（issue #175）**：`agent_bootstrap` 的 OpenAI 兼容 preset（`relay` / `kimi` / `qwen` / ...）现在隐式写入 `provider_type="openai_compatible"`，使通用 OpenAI 兼容适配器能对中转站 DeepSeek 关闭 thinking；历史 `--provider openai` 与 preset 组合自动 remap，显式非兼容 provider 仍冲突报错。同步更新 `docs/agent-install.md` 的 preset 说明。
+- **修复 bootstrap 二次运行追加重复 TOML 实例段（issue #174）**：`agent_bootstrap` 的 section 匹配现在忽略裸键/引号键差异，`[llm.instances.openai]` 与 `[llm.instances."openai"]` 视为同一表，避免 `tomllib` 报 `Cannot declare ... twice`。
+- **补充 PR #182 贡献者致谢**：README 中英文与贡献指南正式记录 [@LHMQ878](https://github.com/LHMQ878) 对 `agent_bootstrap` 引号键 TOML 实例段 section 匹配修复的贡献。
+- **修复非 DeepSeek 安装被默认空 Key 实例拦截（issue #176）**：`agent_bootstrap` 选择其他 LLM provider 时，会自动停用样例中的无 API Key DeepSeek 实例并从 `default_chain` 移除；已有 DeepSeek Key 的备选实例保持不变，`init` 不再要求用户手改 `config.toml`。
+- **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
+- **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。
+- **修复 YouTube bootstrap 任务卡在 `in_progress` 无法回收（issue #178）**：Chrome MV3 service worker 休眠会丢失 `setTimeout`，导致扩展 `yt-task-dispatcher.ts` 的任务超时不再触发、`/api/sources/yt/next-task` 被一条 stale `in_progress` 任务长期占住。扩展侧改为 `chrome.alarms` 一次性定时器（`when: deadline_at`）做任务超时，并把 `{task_id, deadline_at, tab_id}` 写入 `chrome.storage.session`（不可用时回退 `chrome.storage.local`）；alarm 触发或 worker 重启后检测到持久化记录时回传 `task_timeout` / `service_worker_restart` 终态并关闭孤儿 tab。后端 `YtTaskQueue` 新增 `expire_stale_in_progress()`，在 `/api/sources/yt/next-task` 领取前与 `enqueue_yt_bootstrap` 入队前把超过阈值（`OPENBILICLAW_YT_STALE_IN_PROGRESS_SECONDS`，默认 600s）且无 staged canonical 结果的 `in_progress` 任务自动置 `failed`；带 `_openbiliclaw_terminal_status` 的结果保留不覆盖，仍走 stale-reclaim 修复投影；`next_pending` 同时把 `claimed_at IS NULL` 的旧 in-progress 行纳入可重领范围。
+- **修复密码门禁下首次设置模型保存返回 403（issue #171）**：setup 向导的同源请求统一携带既有 `X-OBC-Auth: 1` CSRF 请求头与 Cookie，覆盖模型配置保存、模型发现和向量模型修复；后端 CSRF 策略保持不变。
+- **修复 YouTube bootstrap DOM 选择器失效拉取 0 条（issue #173）**：YouTube 已将历史 / 喜欢 / 订阅页的卡片从 Polymer（`ytd-video-renderer` 等）迁移到 Lit（`yt-video-card-renderer` / `ytd-video-card-renderer` / `yt-lockup-view-model` / `ytd-reel-item-renderer`），旧选择器只命中 Shorts，普通视频全部漏抓。`extension/src/content/yt/task-executor.ts` 的选择器扩展到新旧组件，并增加「卡片内任意 `/watch` / `/shorts` 链接」兜底、标题 `aria-label` / `title` 兜底、Shorts URL 正确拼成 `/shorts/<id>`；频道卡片同样覆盖新旧组件并支持 `/@` 手柄链接。新增 `tests/yt-task-executor.test.ts` 锁定新旧布局提取与去重行为。
+- **修复 YouTube 新版 `yt-lockup-view-model` 卡片标题 / 频道 / 封面为空**：真实 Chrome 端到端验证发现当前 YouTube 历史 / 喜欢页的 `yt-lockup-view-model` 卡片把标题、频道和封面放在 light DOM 的 `ytLockupMetadataViewModel*` / `ytContentMetadataViewModel*` 类名下，而不是旧的 `#video-title` / `#channel-name` / `img#img`；这会让任务从「0 条」变成「有 video_id 但标题为空」的低质量信号。`task-executor.ts` 优先匹配新版类名（`a.ytLockupMetadataViewModelTitle` / `yt-content-metadata-view-model span.ytAttributedStringHost` / `yt-thumbnail-view-model img`），并保留旧选择器与 shadow-root 递归兜底。新增对应单测，并用隔离后端 + 真实登录 Chrome 跑通 `fetch-youtube`：观看历史 91 / 订阅 9 / 点赞 3，共 103 条事件。
+- **Codex OAuth 升级为可实际调用的 ChatGPT 订阅传输（issue #170）**：`auth_mode="codex_oauth"` 不再把 ChatGPT/Codex token 当作 OpenAI Platform API Key 发给 `api.openai.com/v1`（该路径因缺少 `api.responses.write` scope 必 401），而是新增 `CodexChatGPTProvider`，请求发往官方 Codex CLI 同款通道 `https://chatgpt.com/backend-api/codex/responses`（SSE Responses 流，`Authorization: Bearer <token>` + `chatgpt-account-id` 头）。`base_url` 校验同步收紧为只允许官方 Codex 域名，第三方中转与 Platform API 组合继续被阻止；401 时自动刷新 token 并重试一次，刷新后仍失败返回稳定可操作的鉴权错误。`openbiliclaw login codex --import` 导入后立即做一次真实 LLM 能力探测（新增 `--status --probe`），结果持久化到本地凭据文件，CLI 状态页与 `/api/health` 新增 `llm_registered` / `llm_callable` 字段以区分「Provider 已注册」与「默认模型链真实可调用」；桌面设置与 `/setup/` 向导把 Codex OAuth 标为实验性可选项，并隐藏 API Key 与 /models 发现入口。Codex 后端不支持 Platform API 模型（如 `gpt-5-nano` 会被 HTTP 400 拒绝），探测/调用默认使用 Codex 后端模型 `gpt-5.4`，模型留空时先从官方 `backend-api/codex/models` 目录自动发现；`max_output_tokens` 因该通道拒绝而不再发送。
+- **自动打开的任务标签页默认静音（issue #163）**：扩展新增 `background/task-tab.ts` 的共享助手 `createTaskTab()`，B 站搜索兜底、小红书、抖音、知乎、Reddit、Linux.do、V2EX、微博、YouTube 及原生保存/E2E 新开标签页统一在创建后立即 `tabs.update(tabId, { muted: true })`，避免抖音等自动播放内容在电脑无人值守时突然出声。Chrome 的 `tabs.create` 不支持 `muted`，因此跨 Chrome / Firefox / Safari 统一采用「先 create、再 update 静音」；静音跨后续导航保持，用户可在标签栏手动取消，静音失败不阻断任务。复用用户已有标签页的路径保持原样。
+- **新增 OrcaRouter 聚合 provider**：`provider_type="orcarouter"` 以 OpenAI 兼容协议接入 OrcaRouter（`https://api.orcarouter.ai/v1`），一个 Key 跑 150+ 模型；复用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；网关会原样转发推理参数给上游路由、非推理模型会以 HTTP 400 拒绝，因此适配器不发送 `reasoning_effort` 与嵌套 `reasoning` 对象，推理模型使用自身默认档位。后端 registry / 配置、API `/api/config`、CLI 向导与 `agent_bootstrap`、桌面 Web 设置页、首次运行 `/setup/` 向导与扩展 popup 均已接入，`config.example.toml` 提供实例模板。
+
+## v0.3.208：来源周期回拉逐源开关与发布同步（2026-08-18）
+
+- **修复 LLM 预算首次告警被系统运行时间误吞**：`_last_llm_budget_warned_at` 初值从 `0` 改为 `-inf`，避免在机器启动不足一个预算窗口时，第一次触发后台 LLM 预算暂停不输出 WARNING。
+- **发布状态**：后端 / 插件 / 桌面安装包 / Docker 镜像与聚合 Release 均已发布为 `v0.3.208`，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Chrome Web Store 已上传并提交 `0.3.208` 审核；Firefox AMO 已提交 listed `0.3.208`。聚合 Latest Release 已附扩展 ZIP / Safari DMG 与四份桌面安装器。
+- **国内下载入口**：README、GitHub Pages 首页、文档导航与 Gitee v0.3.208 发行说明均补充 123 云盘国内下载入口；当前分享永久有效并支持免登录下载超过 Gitee 100 MB 附件上限的 macOS / Windows 大安装包。
+- **来源周期回拉支持逐源开关（issue #180 相关）**：`[sources.<slug>]` 新增 `incremental_enabled`（默认 `false`），与 `[scheduler].source_incremental_enabled` 总开关组成“总开关 + 每来源开关”两级控制；插件 side panel 与桌面 Web 的「平台源」配置页为 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX 增加“允许扩展周期回拉”勾选项，调度页暴露总开关。后端只有两级开关都为 `true` 时才入队周期 bootstrap 任务；关闭某来源时其 scheduler-owned pending / stale in-progress 任务会被取消，避免再打开前台标签页。默认所有开关均为关闭，手动初始化、`fetch-*` 与后台 discovery 不受影响。
+- **后台 LLM 自设预算 + Embedding 熔断（issue #188）**：`[scheduler]` 新增 `llm_budget_max_calls`（默认 120 / 小时）与 `llm_budget_window_seconds`（默认 3600），daemon 通过共享 `LLMConcurrencyGate` 统计后台 LLM 请求，窗口内达到上限即暂停自动发现 / 补池 / 画像等循环并打一条 WARNING，避免无人值守时持续烧 DeepSeek 等付费额度；手动 CLI / API 请求不受影响，`0` 可关闭预算。`EmbeddingService` 新增连续失败熔断：默认连续 3 次异常或空向量后冷却 60 秒，冷却期内不再触碰不可达 embedding 端点、不再逐条打 full-traceback WARN，冷却后自动重探。
+- **修复 defer(暂缓) 后假设仍显示在待聊确认（issue #189）**：`/api/chat/pending-confirmations` 现在读取 `memory/dialogue_confirmation_state.json` 中的 `deferred_until`，冷却结束前已 defer 的假设不再出现在待聊列表；冷却到期后自动恢复。用户主动 open 仍按原契约绕过冷却，不会因列表过滤而误 404。
+- **修复停用知乎来源后扩展仍打开知乎任务标签页（issue #187）**：`/api/sources/zhihu/next-task` 现在在领取自动任务前动态检查 `[sources.zhihu].enabled`；来源关闭时返回 bodyless 204，scheduler-owned 增量任务会被清理避免卡住其它来源，手动 pending 任务保留、重新开启后可恢复。`SourceIncrementalSync` 的 active 任务复核同步忽略已停用来源，避免遗留知乎任务阻塞周期调度。
+- **修复 `--llm-preset` 写入 `openai` 导致中转站 DeepSeek 推理 token 耗尽（issue #175）**：`agent_bootstrap` 的 OpenAI 兼容 preset（`relay` / `kimi` / `qwen` / ...）现在隐式写入 `provider_type="openai_compatible"`，使通用 OpenAI 兼容适配器能对中转站 DeepSeek 关闭 thinking；历史 `--provider openai` 与 preset 组合自动 remap，显式非兼容 provider 仍冲突报错。同步更新 `docs/agent-install.md` 的 preset 说明。
+- **修复 bootstrap 二次运行追加重复 TOML 实例段（issue #174）**：`agent_bootstrap` 的 section 匹配现在忽略裸键/引号键差异，`[llm.instances.openai]` 与 `[llm.instances."openai"]` 视为同一表，避免 `tomllib` 报 `Cannot declare ... twice`。
+- **补充 PR #182 贡献者致谢**：README 中英文与贡献指南正式记录 [@LHMQ878](https://github.com/LHMQ878) 对 `agent_bootstrap` 引号键 TOML 实例段 section 匹配修复的贡献。
+- **修复非 DeepSeek 安装被默认空 Key 实例拦截（issue #176）**：`agent_bootstrap` 选择其他 LLM provider 时，会自动停用样例中的无 API Key DeepSeek 实例并从 `default_chain` 移除；已有 DeepSeek Key 的备选实例保持不变，`init` 不再要求用户手改 `config.toml`。
+- **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
+- **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。
+- **修复 YouTube bootstrap 任务卡在 `in_progress` 无法回收（issue #178）**：Chrome MV3 service worker 休眠会丢失 `setTimeout`，导致扩展 `yt-task-dispatcher.ts` 的任务超时不再触发、`/api/sources/yt/next-task` 被一条 stale `in_progress` 任务长期占住。扩展侧改为 `chrome.alarms` 一次性定时器（`when: deadline_at`）做任务超时，并把 `{task_id, deadline_at, tab_id}` 写入 `chrome.storage.session`（不可用时回退 `chrome.storage.local`）；alarm 触发或 worker 重启后检测到持久化记录时回传 `task_timeout` / `service_worker_restart` 终态并关闭孤儿 tab。后端 `YtTaskQueue` 新增 `expire_stale_in_progress()`，在 `/api/sources/yt/next-task` 领取前与 `enqueue_yt_bootstrap` 入队前把超过阈值（`OPENBILICLAW_YT_STALE_IN_PROGRESS_SECONDS`，默认 600s）且无 staged canonical 结果的 `in_progress` 任务自动置 `failed`；带 `_openbiliclaw_terminal_status` 的结果保留不覆盖，仍走 stale-reclaim 修复投影；`next_pending` 同时把 `claimed_at IS NULL` 的旧 in-progress 行纳入可重领范围。
+- **修复密码门禁下首次设置模型保存返回 403（issue #171）**：setup 向导的同源请求统一携带既有 `X-OBC-Auth: 1` CSRF 请求头与 Cookie，覆盖模型配置保存、模型发现和向量模型修复；后端 CSRF 策略保持不变。
+- **修复 YouTube bootstrap DOM 选择器失效拉取 0 条（issue #173）**：YouTube 已将历史 / 喜欢 / 订阅页的卡片从 Polymer（`ytd-video-renderer` 等）迁移到 Lit（`yt-video-card-renderer` / `ytd-video-card-renderer` / `yt-lockup-view-model` / `ytd-reel-item-renderer`），旧选择器只命中 Shorts，普通视频全部漏抓。`extension/src/content/yt/task-executor.ts` 的选择器扩展到新旧组件，并增加「卡片内任意 `/watch` / `/shorts` 链接」兜底、标题 `aria-label` / `title` 兜底、Shorts URL 正确拼成 `/shorts/<id>`；频道卡片同样覆盖新旧组件并支持 `/@` 手柄链接。新增 `tests/yt-task-executor.test.ts` 锁定新旧布局提取与去重行为。
+- **修复 YouTube 新版 `yt-lockup-view-model` 卡片标题 / 频道 / 封面为空**：真实 Chrome 端到端验证发现当前 YouTube 历史 / 喜欢页的 `yt-lockup-view-model` 卡片把标题、频道和封面放在 light DOM 的 `ytLockupMetadataViewModel*` / `ytContentMetadataViewModel*` 类名下，而不是旧的 `#video-title` / `#channel-name` / `img#img`；这会让任务从「0 条」变成「有 video_id 但标题为空」的低质量信号。`task-executor.ts` 优先匹配新版类名（`a.ytLockupMetadataViewModelTitle` / `yt-content-metadata-view-model span.ytAttributedStringHost` / `yt-thumbnail-view-model img`），并保留旧选择器与 shadow-root 递归兜底。新增对应单测，并用隔离后端 + 真实登录 Chrome 跑通 `fetch-youtube`：观看历史 91 / 订阅 9 / 点赞 3，共 103 条事件。
+- **Codex OAuth 升级为可实际调用的 ChatGPT 订阅传输（issue #170）**：`auth_mode="codex_oauth"` 不再把 ChatGPT/Codex token 当作 OpenAI Platform API Key 发给 `api.openai.com/v1`（该路径因缺少 `api.responses.write` scope 必 401），而是新增 `CodexChatGPTProvider`，请求发往官方 Codex CLI 同款通道 `https://chatgpt.com/backend-api/codex/responses`（SSE Responses 流，`Authorization: Bearer <token>` + `chatgpt-account-id` 头）。`base_url` 校验同步收紧为只允许官方 Codex 域名，第三方中转与 Platform API 组合继续被阻止；401 时自动刷新 token 并重试一次，刷新后仍失败返回稳定可操作的鉴权错误。`openbiliclaw login codex --import` 导入后立即做一次真实 LLM 能力探测（新增 `--status --probe`），结果持久化到本地凭据文件，CLI 状态页与 `/api/health` 新增 `llm_registered` / `llm_callable` 字段以区分「Provider 已注册」与「默认模型链真实可调用」；桌面设置与 `/setup/` 向导把 Codex OAuth 标为实验性可选项，并隐藏 API Key 与 /models 发现入口。Codex 后端不支持 Platform API 模型（如 `gpt-5-nano` 会被 HTTP 400 拒绝），探测/调用默认使用 Codex 后端模型 `gpt-5.4`，模型留空时先从官方 `backend-api/codex/models` 目录自动发现；`max_output_tokens` 因该通道拒绝而不再发送。
+- **自动打开的任务标签页默认静音（issue #163）**：扩展新增 `background/task-tab.ts` 的共享助手 `createTaskTab()`，B 站搜索兜底、小红书、抖音、知乎、Reddit、Linux.do、V2EX、微博、YouTube 及原生保存/E2E 新开标签页统一在创建后立即 `tabs.update(tabId, { muted: true })`，避免抖音等自动播放内容在电脑无人值守时突然出声。Chrome 的 `tabs.create` 不支持 `muted`，因此跨 Chrome / Firefox / Safari 统一采用「先 create、再 update 静音」；静音跨后续导航保持，用户可在标签栏手动取消，静音失败不阻断任务。复用用户已有标签页的路径保持原样。
+- **新增 OrcaRouter 聚合 provider**：`provider_type="orcarouter"` 以 OpenAI 兼容协议接入 OrcaRouter（`https://api.orcarouter.ai/v1`），一个 Key 跑 150+ 模型；复用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；网关会原样转发推理参数给上游路由、非推理模型会以 HTTP 400 拒绝，因此适配器不发送 `reasoning_effort` 与嵌套 `reasoning` 对象，推理模型使用自身默认档位。后端 registry / 配置、API `/api/config`、CLI 向导与 `agent_bootstrap`、桌面 Web 设置页、首次运行 `/setup/` 向导与扩展 popup 均已接入，`config.example.toml` 提供实例模板。
+
+## v0.3.207：补货提速与搜索后端升级（2026-08-15）
+
+- **发布状态**：后端 / 插件 / 桌面安装包与聚合 Release 均发布为 `v0.3.207`，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。
+- **修复 `extension-v*` Safari DMG 校验路径**：Safari 打包 step 的 `working-directory` 已是 `extension/`，校验路径去掉重复前缀，避免 DMG 已生成却被误报 missing 导致插件发版失败。
+- **修复 B 站份额已满时全局库存跑不满**：`_build_refresh_plan` 在“池子低于目标、但 `_build_source_replenishment_plan()` 为空（B 站已达自身份额，缺额来自 V2EX / 微博 / YouTube 等不可用或节流的来源）”时不再直接返回空计划；只要 discovery candidate 管线里没有 `pending_eval/evaluating` 在途工作，就回落到按 `trending_refresh_minutes` / `explore_refresh_minutes` 巡航的 B 站周期计划，让健康超份额来源继续引入新 topic 补全局库存。份额再平衡仍会在欠份额来源恢复后把超份额行退坑，不破坏 pool-share fairness 的长期收敛。
+- **减少来源侧的无效失败与告警**：`build_inspiration_search_provider` 在 `mcporter` CLI 缺失时直接跳过 Exa / You 后端并给出一次性可操作告警，V2EX 搜索不再先触发 `FileNotFoundError` 再回退官方有界搜索；微博 `search` / `hot` 分支遇到 `upstream_rejected` 时按“本分支空结果”处理，不再把整轮微博标记为 error / 触发 60 秒 outcome backoff，让其它分支继续执行。
+- **Exa / You.com 改为 Python 直连 API（mcporter 降级为可选 fallback）**：`[discovery]` 新增 `exa_api_key` / `you_api_key`；填写后 `ExaInspirationProvider` / `YouInspirationProvider` 直接通过 `httpx` 调用 Exa `POST /search` 与 You.com `GET /search`（`trust_env=False`），不再依赖本机 `mcporter` Node CLI。未填写 API Key 时仍按原逻辑回退 mcporter（若已安装），两者都没有则跳过对应后端。`build_v2ex_external_search_provider`、API runtime 与 CLI 三处组装同步传入 API Key。
+- **新增无 key 的 Bing RSS 免费搜索兜底**：`BingRssInspirationProvider` 调用 `bing.com/search?format=rss`（标准 RSS 解析，`trust_env=False`），默认后端链变为 `local_cache → platform_sources → bing_rss → exa → you`；即使没有 mcporter、也没有 Exa / You API Key，灵感 grounding 仍有真实全网搜索结果。V2EX 的 `site:v2ex.com/t` 外部召回链也接受 `bing_rss`，无 Exa/You Key 时先试 Bing RSS 再回退官方 latest/hot 有界搜索。
+- **Safari Web Extension 支持（issue #156）**：`extension/` 新增 `manifest.safari.json` 与 `build:safari` / `clean:safari` / `verify:assets:safari` / `convert:safari` 脚本，产出自包含 `dist-safari/`，并由 `scripts/convert-safari.mjs` 调用 Apple `safari-web-extension-converter` 生成 Xcode 工程（仅 macOS + Xcode 可用）。Safari 不支持 `side_panel` / `sidePanel` / `notifications` / `world`（MAIN-world 内容脚本），因此 Safari manifest 改用 `action.default_popup` 承载同一套 popup UI，去掉上述权限与 `world` 字段并保留 `alarms` / `scripting` / `cookies` / `storage`；service worker 对 `chrome.notifications` / `chrome.alarms` 注册加空值守卫（无该 API 时降级为 WS 驱动刷新而不崩溃），Safari 构建额外经 esbuild banner 注入 `browser → chrome` 兼容 shim（在已提供 `chrome` 的环境为 no-op，不影响 Chrome/Firefox 产物）。**MAIN-world tap 恢复为 page-context 桥接**：`content/safari-page-injector.js` 在 `document_start` 按 hostname 把 B 站 / 小红书 / 抖音 / X / Bangumi 的 `main/*.js` tap 以 `<script src>` 注入页面上下文（已列入 `web_accessible_resources`），隔离世界既有 `window.postMessage` 监听不变，Safari 上的网络层确定性点赞/收藏/评论与登录态识别恢复生效（best-effort，页面 CSP 可能拦截）。**Cookie 同步加固**：`cookie-sync.ts` 改为全量读取 + JS 域过滤，规避 Safari `cookies.getAll({domain})` 的精确域差异，并在 unfiltered `getAll({})` 不可用时逐域回退。已验证 `npm run build:safari` → `convert:safari` → `xcodebuild`（macOS target）全链路构建成功，1402 条扩展测试与 `typecheck` 通过；构建/签名/已知限制矩阵见 `docs/safari-extension-build.md`。
+- **Safari 插件接入 `extension-v*` 发版链（无需 Apple 凭据即可出包）**：`release-extension.yml` 新增 macOS 构建腿，推 `extension-v*` tag 时在 `macos-14` 上自动执行 `npm run package:safari` 打 `openbiliclaw-extension-v*-safari.dmg`，与 Chrome/Firefox 资产一起上传 `extension-v*` 与 `openbiliclaw-v*` 聚合 Release。CI 检测到 `APPLE_DEVELOPER_ID_CERTIFICATE_BASE64` / `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD` / `APPLE_TEAM_ID` / `APPLE_NOTARY_USER` / `APPLE_NOTARY_PASSWORD` 齐全时自动切换 `npm run package:safari -- --notarize`（Developer ID 签名 + notarytool 公证 + stapler staple）；缺凭据或 `SAFARI_SIGNING_ENABLED=false` 时回退 ad-hoc 未签名 DMG（实验包，需用户在 Safari 开启「允许未签名扩展」），不再 fail-closed。`verify-release-completeness.yml` 始终把 Safari DMG 列为 `extension-v*` / 聚合 Release 完整性门禁，`sync-aggregate-release.sh` 同步展示 Safari 下载行并注明签名/未签名安装差异。新增 `extension/scripts/package-safari.mjs`：本地 `npm run package:safari` 即可产 ad-hoc DMG/ZIP，完全不需要 Apple 账号。
+
+## v0.3.206：with-embedding 崩溃修复与可靠性提升（2026-08-15）
+
+- **项目首页与 README 重新对齐**：补齐一直遗漏的 YouTube / X 来源卡，使首页明确展示 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与开放 Web；首屏补回“本地运行、只为一个人构建、反馈可调教”的定位，产品入口从过时的“只有浏览器侧边栏”更新为浏览器插件、桌面 Web、移动 Web、Flutter 与 DSH 五端，并修正中文微博文案误用英文、Firefox、架构分层、聚合 Release 说明以及静态 HTML / 中文词典漂移。
+- **README 新增 Linux.do 友情链接（折叠）**：主项目 README（中英）顶部原有的「LINUX DO Community」徽章移除，改在 README 底部新增可折叠的「友情链接」区块，内含指向 https://linux.do/ 的 LINUX DO 友情徽章；讨论帖徽章保留。DSH 插件仓库（dsh-openbiliclaw）README 底部同步新增同款折叠友情链接。
+- 修复 `scripts/install.ps1` 在原生 Windows 上的一键安装解析失败（issue #157）：双引号字符串内 `$InstallDir:` 会被解析为作用域限定变量引用，导致整个脚本在 PowerShell parse 阶段直接报错，改为 `${InstallDir}`；同时为脚本补充 UTF-8 BOM，确保 Windows PowerShell 5.1（脚本声明 `#requires -Version 5.1`）按 UTF-8 解码含中文注释与 here-string 的内容；`Invoke-Bootstrap` 内的 `$args` 改名 `$bootstrapArgs`，避免遮蔽自动变量（`PSAvoidAssignmentToAutomaticVariable`）。
+- **修复 with-embedding 安装包 bge-m3 调用 500（llama-server `0xc0000005` 访问违规）的诊断与随包版本**：Windows 随包 Ollama 从 `0.30.6` 升到 `0.32.13`（`release-desktop.yml` / `build-installers.yml` / `docker/ollama-bundled.Dockerfile` 同步），降低旧版 llama-server 在 embedding 负载上的崩溃概率；`ollama_diagnostics` 新增 `0xc0000005` / access violation 识别，`model_broken` 文案改为按「一键重拉 → 重启 → 内存/虚拟内存 → 杀软白名单 → 升级安装包」排序排查，不再只说「下载不完整或内存不足」；托管 Ollama 在桌面包启动时（`OPENBILICLAW_PROJECT_ROOT` 已设置）把 `ollama serve` 与 llama-server 的 stdout/stderr 写入 `<project>/logs/ollama-managed.log`，让后续同类崩溃有原生日志可查，CLI / dev / 测试仍保持 DEVNULL。测试补充访问违规分类与日志捕获 / 关闭。
+
+## v0.3.205：证据驱动时效推荐与可靠性升级（2026-08-14）
+
+- **发布与市场状态**：`backend-v0.3.205`、`extension-v0.3.205`、`desktop-v0.3.205` 与聚合 `openbiliclaw-v0.3.205` 均指向提交 `a49af312`；聚合 Latest Release 已附两份扩展 ZIP 与四份桌面安装器。Chrome Web Store 已上传 `0.3.205` 并进入 `PENDING_REVIEW`；Firefox AMO 已接受 listed `0.3.205`，文件状态为 `unreviewed`。AMO `eula_policy` API 仍返回 HTTP 406，manifest 数据类别、reviewer notes、商店描述和随包隐私政策已提交。
+- **新增 DeepSeek Harness（DSH）客户端插件（独立仓库）**：OpenBiliClaw-dsh 插件把消费侧搬进 DSH Web GUI——DSH 界面常驻第四栏（aside 槽位），提供推荐 / 内容库 / 对话 / 画像 / 设置面板，并注册 22 个 `openbiliclaw_*` Agent Bridge 工具与 `openbiliclaw-adapter` skill，让 DSH 里的 Agent 也能读推荐、答探测、保存内容、参与学习闭环。插件只做消费侧，爬取 / 平台源管理 / 账号同步仍留在主项目。README（中英）顶部新增「重要更新」提示，核心入口由四个更新为五个（浏览器插件 / 桌面 Web / 移动 Web / Flutter 原生客户端 / DSH 插件）。
+- **修复 embedding L2 缓存无界增长（issue #153）**：`data/embedding_cache.db` 持久化向量从 JSON 文本改为版本化 little-endian float32 BLOB（`OBLV` 头 + dtype/dimension 元数据），4096 维向量从约 90 KiB/行降到约 16 KiB/行；读取对 legacy JSON、BLOB 与降级回写产生的 mixed-format 数据按内容自适应解码，单行损坏只降级为 miss。旧库启动时自动执行幂等、小批量、可中断续跑的 JSON→BLOB 迁移（进度即 `encoding` 列），schema 升级补齐 `dimension` / `created_at` / `last_accessed_at` 元数据。新增可配置磁盘预算 `[llm.embedding].cache_max_bytes`（默认 0 = 不设上限）与高低水位，超高位后按「非 active namespace（含 legacy 行）→ active namespace 最旧/最近未访问」顺序批量淘汰；`last_accessed_at` 命中刷新限频，写路径按节奏抽样检查。新增 CLI `embedding-cache-stats`（行数 / 逻辑载荷 / 文件与 WAL 大小 / namespace 分布 / 水位 / 最近维护）与 `embedding-cache-clean`（默认 dry-run，`--apply` 执行迁移 + 回收失效 namespace + WAL checkpoint / `VACUUM INTO` / `integrity_check` / 原子替换做物理回收，`--keep-model` / `--keep-legacy` / `--no-compact` / `--batch-size`）。四表面契约：CLI 与后端程序化接口覆盖；桌面 Web / 插件 / 移动 Web 暂未提供该维护入口（属运维面，PR 显式声明排除）。
+- **README Star 历史图表临时替换为 Star 徽章**：GitHub 自 2026-06-30 起将 stargazers API 限制为仅仓库管理员/协作者可读，star-history 实时图表对非协作者全部渲染为「GitHub restricted access to star data」错误占位图；README（中英）暂以 shields.io Star 徽章替代并保留说明，待上游恢复或配置新的加密 token 后换回实时图表。
 - **新增「重新初始化 / 重建画像」入口（gui-init §4 收口）**：已初始化后，桌面 Web 设置页「通用 → 初始化与画像」与扩展 popup 通用 tab 提供「重新初始化 / 重建画像」按钮（`window.confirm` 二次确认后调 `POST /api/init {force:true}`，成功后回推荐 tab 展示四阶段进度）；CLI `openbiliclaw init --force` 跳过已初始化二次确认并按重新初始化执行（交互终端默认检测到已初始化时先 y/N 确认，非交互保持直接重跑）。语义为 force 重建：重新拉取所选平台数据、重建完整画像并补足首轮发现池，现有事件 / 收藏 / 对话历史 / 手动编辑覆盖全部保留。**force 重初始化同时清空旧推荐池**（`pool_status='purged_by_reinit'`，按新画像重新发现并生成首轮推荐，避免旧画像推荐滞留并顶满 backfill 目标）；可选 `reset_cognition`（CLI `--reset-cognition` / API body / 设置页复选框）清空旧 awareness / insight 认知层，适合换账号或大改兴趣。**重初始化前自动创建快照备份**（`data/backups/reinit-<时间戳>/`：SQLite 冷备 + `data/memory/` 全部画像/认知层，CLI 可 `--no-backup` 跳过），重建覆盖的画像与删除的认知层均可恢复。后端 `POST /api/init` 的 `force:true` 绕过 `already_initialized` 守卫，其余前置复验与写者门控不变；移动 Web 无设置页，重新初始化入口按四表面契约声明排除。
+- **时效资格升级为证据驱动三态生命周期（temporal v2）**：Evaluation Agent 继续把相关性与时效解耦，并原子输出 `class/confidence/reason + validity_mode/valid_until/scope/evidence/state`；其中 evidence 必须是 Agent 实际可见 prompt projection 的逐字摘录，state 明确区分 `unknown/active/expired/superseded`，`evaluated_at/next_review_at/policy_version/evidence_complete` 则由代码生成并在 storage 重算。确定性 policy 返回 `eligible/review_due/expired`：只有置信度 `>=0.80`、证据组完整、`scope=core` 且 grounding 成功时，已过明确 deadline 或事件 `expired` / 版本 `superseded` 才 hard expire；deadline 证据必须明确给出日期、具体时刻和时区并与 `valid_until` 为同一瞬间，终态证据必须正向明示结束 / 替代，`active` 证据也必须正向明示仍在进行 / 仍受支持，条件句或泛化复核提示不能解除 hold。日期-only、反向证据、标题钩子、低置信、缺失、malformed、未 grounding 与不一致组合全部 fail-neutral；`freshness_only` 也必须逐字 grounding，虚构摘录不会生成复审时钟。`breaking/current/versioned` 的 1 / 14 / 120 天仅为复审节奏，旧 v1 `breaking/current` 的 3 / 60 天也只触发复审，不再按年龄判死。`review_due` 的 discovery 行回到 `pending_eval`，正式池行进入可逆 `pool_status='temporal_review_hold'`，不可展示、不计库存并复用现有评估链；两边失败复审均按逐行 1 / 2 / 4 / 8 / 16 / 24 小时领取有界租约，候选租约未到时不 claim、也不计 raw / projected / 来源容量；若模型执行超过租约，完成、失败与 orphan/release 出口会从落库时续租，避免立即热循环。只有高置信 grounded core 证据或高置信 `evergreen/historical + mode=none` 耐久结论能覆盖旧强分类并解除 hold；低置信、hook-only、中性或未 grounding 复审一律保留旧证据和租约，确定过期才进入 `rejected_temporal_stale` / `stale`。SQLite 在写锁内把整组证据与 lifecycle outcome 原子保存，raw 重抓和旧缓存也不能局部洗字段或复活 hold/stale；pipeline 在 admission 前重读 durable row，只有数据库最终状态仍为 `evaluated` 才可写入正式池。等待扫描、canonical 读取、copy/delight/通知、`PoolServeSnapshot`、最终 recommendation + shown 写事务和 API 1 秒 single-flight 快照使用同一 policy 复核，连续刷新与 snapshot 竞态不能绕过。publication bonus 与 ranking shadow 保持独立：前者只在合格内容之间排序，后者继续只保存聚合观测。
 - **新增 Flutter 原生移动客户端（独立仓库）**：OpenBiliClaw-mobile 提供 Android / iOS / Web / Linux / macOS / Windows 全平台客户端，连接同一本地后端；推荐 / 对话 / 画像 / 收藏与 30 天历史 / 消息收件箱齐全，B 站封面 CDN 直连省两跳。首个安装包已随其 Latest Release 发布（Android 签名 APK / iOS 未签名 IPA）。README（中英）、项目主页与文档导航同步加入入口链接与下载入口。
 
 ## v0.3.204：后台来源调度与搜索修复（2026-08-11）
@@ -894,7 +1558,6 @@
 
 后端源码走 `backend-v0.3.154`，浏览器插件走 `extension-v0.3.154`，桌面安装包走 `desktop-v0.3.154`。
 
-
 - **Windows 桌面包支持系统 SOCKS 代理**：用户系统设置 `ALL_PROXY` / `HTTPS_PROXY=socks5://...` 时，冻结包启动阶段创建 OpenAI / 兼容 LLM 客户端会触发 `httpx` 的 SOCKS 路径；此前默认依赖未安装、PyInstaller 也未显式收集 `socksio`，导致启动弹出 `Failed to execute script 'entry'`，浏览器随后只能看到 `127.0.0.1 refused`。现在默认依赖改为 `httpx[socks]`，spec 增加 `socksio` hidden import，并补打包回归测试。
 - **运行时可选依赖补齐**：专项审计发现两处同类隐患：(1) `/api/runtime-stream` 是插件 / Web UI 的核心通道，但 `websockets` 只在 `dev` extra，桌面包按 `.[packaging]` 构建时只装裸 `uvicorn`，WebSocket 协议实现可能缺失；(2) `discovery.multimodal` 直接 import `PIL`，此前普通运行路径靠 `bilibili-api-python` 的传递依赖碰巧带入 Pillow。现在默认依赖显式加入 `websockets>=13` 与 `Pillow>=10.0`，PyInstaller spec 增加 `uvicorn.protocols.websockets.websockets_impl` / `websockets` hidden import，并补元数据与打包回归测试。
 - **未初始化客户端稳定进入引导流程（全入口审计修复）**：针对「未初始化的客户端必须稳定看到引导初始化」目标做了一轮四入口审计并修复：① `/web` 页面比后端先加载（冻结包启动竞速）后永久空白——runtime-stream 首次连上时若 initStatus/runtimeStatus 均为空则触发补水重拉；② 安装包入口 `webbrowser.open` 在 uvicorn 绑定前执行必然 `ERR_CONNECTION_REFUSED`——改为后台线程轮询 `/api/health`（≤30s）后再开页，并读 `/api/init-status` 决定落地页（已配置但从未初始化 → `/setup/` 而非 `/web/`；「已有实例」分支同样 init 感知）；③ `/setup/` 向导刷新后静默落回第 0 步——load 时恢复现场（running → 直挂实时进度，initialized → 完成页 / 等待态），已存 key 的 provider 留空即沿用不必重贴，首池等待态新增「先进入应用 →」逃生链接（此前用户被永久停在 95% 禁用按钮上）；④ 插件对「在线但未初始化」零信号（badge 被清空、与健康态视觉一致）——新增三态 badge 决策表（灰 `!`=后端未启动、橙 `!`=未初始化点击开始引导、清空=健康），WS 连上用零探针的 `/api/runtime-status` 刷新，`init_completed`/`refresh.pool_updated` 事件即时清除；⑤ Docker 文档把方式 A/B 用户指向容器内被 `unsupported_runtime` 封锁的「开始初始化」按钮——文档 / compose 注释 / 前端文案统一改为「/setup/ 完成配置与前置检查 + 宿主机 `docker exec … openbiliclaw init`」；⑥ `start`/`serve-api` 未初始化时启动前打印引导入口 WARN 面板。新增 packaging 落地页判定 / 健康等待单测、`/setup` 恢复现场与逃生口 Playwright E2E、badge 决策表单测与多条静态契约测试。
@@ -1333,7 +1996,6 @@ B 站不再是初始化的强制基座：CLI、插件面板、桌面 Web 和安�
 - 存量 git 安装升级提示：旧版 updater 代码仍会被脏 `uv.lock` 卡住，无法自动升到本版。在安装目录手动执行一次 `git checkout -- uv.lock && git pull`（或重跑一键安装脚本，会复用现有目录与配置）即可解卡，此后自动更新恢复正常。
 - 修复 `/api/sources/status` 小红书状态「永久绿点」：原先只看带 `xsec_token` 缓存行的总数，插件停止同步几周后令牌早已失效（xhs 300031）状态仍显示就绪。现在以 24 小时新鲜窗口判定——窗口内有新发现的带令牌缓存行、或有被令牌回填刷新过 `last_seen_at` 的候选行才算 `ready`，仅剩存量旧行降级为新状态 `stale`（黄点，提示逛逛小红书即可刷新）。
 - B 站 cookie 缺少核心登录字段（`SESSDATA`/`bili_jct`/`DedeUserID` 不全）时不再报绿点 `ready`，改为新状态 `partial`（黄点）——绿点不再掩盖「凭据存在但大概率已坏」的情况。桌面 Web 与插件的彩点映射同步新增 `partial`/`stale`，并在状态行可见时每 30 秒自动重拉 `/api/sources/status`（此前只在打开设置页时拉一次，去别的标签页登录平台后回来状态不会变）。
-
 
 ## v0.3.114 / extension v0.3.74: 来源 Cookie 配置对齐（2026-06-10）
 

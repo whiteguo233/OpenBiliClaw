@@ -454,6 +454,7 @@ def _reddit_credential_without_session(env: _Env) -> None:
 # ``bangumi_discovery_runs`` rows), which every case here uses.
 
 _BANGUMI_TOKEN = "bgm-personal-access-token"
+_GITHUB_TOKEN = "github-personal-access-token"
 _V2EX_TOKEN = "v2ex-personal-access-token"
 
 
@@ -493,6 +494,20 @@ def _bangumi_token_disabled(env: _Env) -> None:
     """A saved token on a switched-off source — the credential is idle."""
     env.cfg.sources.bangumi.enabled = False
     env.cfg.sources.bangumi.access_token = _BANGUMI_TOKEN
+
+
+def _github_no_account_scope(env: _Env) -> None:
+    env.cfg.sources.github.enabled = True
+
+
+def _github_public_username(env: _Env) -> None:
+    env.cfg.sources.github.enabled = True
+    env.cfg.sources.github.username = "octocat"
+
+
+def _github_token_disabled(env: _Env) -> None:
+    env.cfg.sources.github.enabled = False
+    env.cfg.sources.github.access_token = _GITHUB_TOKEN
 
 
 # ── linuxdo preconditions ───────────────────────────────────────────
@@ -974,6 +989,38 @@ _CASES: dict[str, _Case] = {
         enabled=False,
         token_state="ok",
     ),
+    # github — public repository discovery with optional account scope.
+    "github-no-account-scope": _Case(
+        "github",
+        _github_no_account_scope,
+        "no_auth",
+        True,
+        detail=(
+            "GitHub 公开仓库发现无需登录；可填写公开用户名导入 Starred 仓库，"
+            "或配置可选 PAT 以确认身份并提高 API 限额。"
+        ),
+        enabled=True,
+    ),
+    "github-public-username": _Case(
+        "github",
+        _github_public_username,
+        "no_auth",
+        True,
+        detail=(
+            "GitHub 公开仓库发现无需登录；可填写公开用户名导入 Starred 仓库，"
+            "或配置可选 PAT 以确认身份并提高 API 限额。 "
+            "当前公开账号范围：octocat（不代表所有权验证）。"
+        ),
+        enabled=True,
+    ),
+    "github-token-disabled": _Case(
+        "github",
+        _github_token_disabled,
+        "no_auth",
+        True,
+        detail="已配置 GitHub PAT，尚未联网确认；公开仓库发现仍可使用。",
+        enabled=False,
+    ),
     # linuxdo — anonymous-public discovery with an optional extension heartbeat.
     "linuxdo-no-heartbeat": _Case(
         "linuxdo",
@@ -1102,7 +1149,13 @@ def contract_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Env:
        no ``OPENBILICLAW_*`` variable can redirect.
     """
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
-    for var in ("OPENBILICLAW_DOUYIN_COOKIE", "OPENBILICLAW_X_COOKIE"):
+    for var in (
+        "OPENBILICLAW_DOUYIN_COOKIE",
+        "OPENBILICLAW_X_COOKIE",
+        "OPENBILICLAW_GITHUB_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ):
         monkeypatch.delenv(var, raising=False)
 
     rdt_credential_path = tmp_path / "rdt" / "credential.json"
@@ -1365,6 +1418,7 @@ def test_contract_covers_every_platform_with_at_least_three_preconditions() -> N
         "zhihu",
         "reddit",
         "bangumi",
+        "github",
         "linuxdo",
         "v2ex",
         "weibo",
@@ -1523,6 +1577,9 @@ _EXPECTED_VERIFY_METHODS = {
     # method 知乎 has. The action ``VERIFY_ACTIONS['bangumi']`` is still
     # ``live_probe`` (see the bangumi verify tests below, which supply a token).
     "bangumi": "none",
+    # GitHub public discovery is anonymous; no PAT means there is nothing for
+    # the fixed live-probe action to verify.
+    "github": "none",
     # Linux.do public discovery works anonymously. Without a browser heartbeat
     # there is no credential verdict to verify, so the current method is none;
     # the fixed verify action remains browser_heartbeat.
@@ -1995,6 +2052,111 @@ def test_bangumi_status_reflects_a_cached_token_verdict(contract_env: _Env) -> N
     assert contract.verify_method == "live_probe"
     assert contract.verification == "failed"
     assert check_legacy_consistency("bangumi", contract) == []
+
+
+def _install_github_probe(
+    env: _Env,
+    *,
+    payload: object = None,
+    error: Exception | None = None,
+) -> list[str]:
+    calls: list[str] = []
+
+    class _FakeClient:
+        def __init__(self, *, token: str | None = None, **_kw: object) -> None:
+            self._token = token
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def get_user(self) -> object:
+            calls.append(str(self._token or ""))
+            if error is not None:
+                raise error
+            return payload
+
+    env.monkeypatch.setattr(
+        "openbiliclaw.sources.github_client.GitHubClient",
+        _FakeClient,
+    )
+    return calls
+
+
+def test_github_verify_with_valid_pat_is_verified(contract_env: _Env) -> None:
+    from openbiliclaw.runtime.github_producer import (
+        GitHubDiscoveryProducer,
+        _persist_token_rejection,
+        _token_fingerprint,
+    )
+
+    contract_env.cfg.sources.github.access_token = _GITHUB_TOKEN
+    GitHubDiscoveryProducer(
+        database=contract_env.db,
+        soul_engine=object(),
+        client=object(),
+    )._ensure_tables()
+    _persist_token_rejection(contract_env.db, _token_fingerprint(_GITHUB_TOKEN))
+    calls = _install_github_probe(
+        contract_env,
+        payload={"login": "octocat", "id": 583231},
+    )
+
+    body = _verify_post(contract_env, "github")
+    contract = SourceAuthContract.model_validate(body["auth"])
+
+    assert calls == [_GITHUB_TOKEN]
+    assert contract.auth_required is False
+    assert contract.verification == "verified"
+    assert contract.verify_method == "live_probe"
+    assert body["outcome"] == "verified"
+    assert contract.capabilities["discover"].ready is True
+    assert contract.capabilities["bootstrap"].ready is True
+    assert check_legacy_consistency("github", contract) == []
+    marker = contract_env.db.conn.execute(
+        "SELECT 1 FROM github_discovery_state WHERE state_key = 'token_rejected'"
+    ).fetchone()
+    assert marker is None
+
+
+def test_github_verify_rejected_pat_is_failed(contract_env: _Env) -> None:
+    from openbiliclaw.sources.github_client import GitHubAPIError
+
+    contract_env.cfg.sources.github.access_token = _GITHUB_TOKEN
+    contract_env.cfg.sources.github.username = "octocat"
+    _install_github_probe(
+        contract_env,
+        error=GitHubAPIError("unauthorized", "Bad credentials", status_code=401),
+    )
+
+    body = _verify_post(contract_env, "github")
+    contract = SourceAuthContract.model_validate(body["auth"])
+
+    assert contract.verification == "failed"
+    assert body["outcome"] == "failed"
+    assert contract.capabilities["discover"].ready is True
+    assert contract.capabilities["profile"].ready is False
+    assert contract.capabilities["profile"].state == "unavailable"
+    assert contract.capabilities["bootstrap"].ready is False
+    assert contract.capabilities["bootstrap"].state == "unavailable"
+    assert check_legacy_consistency("github", contract) == []
+
+
+def test_github_does_not_capture_generic_token_environment(
+    contract_env: _Env,
+) -> None:
+    contract_env.monkeypatch.setenv("GITHUB_TOKEN", "must-not-be-read")
+    contract_env.monkeypatch.setenv("GH_TOKEN", "must-not-be-read-either")
+
+    item = _status_payload(contract_env)["github"]
+    contract = SourceAuthContract.model_validate(item["auth"])
+
+    assert contract.credential == "none"
+    assert contract.credential_origin == "none"
+    assert contract.capabilities["discover"].ready is True
+    assert contract.capabilities["profile"].state == "identity_required"
 
 
 def test_optional_credential_may_carry_a_live_method_but_none_may_not() -> None:

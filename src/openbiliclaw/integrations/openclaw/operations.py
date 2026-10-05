@@ -366,9 +366,12 @@ class OpenClawAdapter:
         refresh_if_needed: bool = False,
         source_platform: str = "",
         excluded_item_ids: list[str] | None = None,
+        realtime: bool = False,
     ) -> RecommendationResponse:
         """Generate multi-source recommendations for an agent host.
 
+        Serves precomputed pool copy (fast) by default.  Set ``realtime=True``
+        to generate fresh per-item LLM expressions at request time (slow).
         ``source_platform`` and ``excluded_item_ids`` mirror the current API
         recommendation contract.  Older engines and test doubles continue to
         work through the historical ``generate_recommendations`` fallback.
@@ -465,13 +468,14 @@ class OpenClawAdapter:
                 return RecommendationResponse(items=[_recommendation_from_row(row) for row in rows])
             engine = self.services.recommendation_engine
             serve = getattr(engine, "serve", None)
-            if callable(serve) and (scope or excluded):
+            expression_mode = "realtime" if realtime else "precomputed"
+            if callable(serve):
                 result = await _maybe_await(
                     serve(
                         profile,
                         limit=limit,
                         excluded_bvids=frozenset(excluded),
-                        expression_mode="realtime",
+                        expression_mode=expression_mode,
                         source_platform=scope,
                     )
                 )
@@ -686,9 +690,10 @@ class OpenClawAdapter:
             raise AdapterOperationError("Failed to submit recommendation feedback.") from exc
 
         # Durable first write + recommendation projection is the command's
-        # commit boundary. Everything below is retryable follow-up work and may
-        # only downgrade ``processing`` to queued, never fail the command.
-        follow_up_failed = False
+        # commit boundary. The preference-analysis + refresh hooks are retryable
+        # and must NOT block the command: the durable event is already committed
+        # and the runtime's background feedback-batch + refresh schedulers drain
+        # it asynchronously (the same non-blocking shape the chat path uses).
         immediate = getattr(
             self.services.soul_engine,
             "record_immediate_feedback_cognition",
@@ -702,33 +707,7 @@ class OpenClawAdapter:
                     note=request.note,
                 )
             except Exception:
-                follow_up_failed = True
                 logger.warning("OpenClaw feedback cognition follow-up deferred", exc_info=True)
-
-        drain_completed = False
-        process_feedback = getattr(
-            self.services.soul_engine,
-            "process_feedback_batch_if_needed",
-            None,
-        )
-        if callable(process_feedback):
-            try:
-                process_result = await process_feedback()
-                if isinstance(process_result, dict) and process_result.get("skipped"):
-                    logger.info("OpenClaw feedback owner busy; durable event remains queued")
-                else:
-                    drain_completed = True
-            except Exception:
-                follow_up_failed = True
-                logger.warning("OpenClaw feedback owner follow-up deferred", exc_info=True)
-
-        refresh = getattr(self.services.runtime_controller, "refresh_after_feedback", None)
-        if item_receipt.inserted and callable(refresh):
-            try:
-                await refresh()
-            except Exception:
-                follow_up_failed = True
-                logger.warning("OpenClaw feedback refresh follow-up deferred", exc_info=True)
 
         return FeedbackResponse(
             ok=True,
@@ -736,7 +715,7 @@ class OpenClawAdapter:
             feedback_type=request.feedback_type,
             event_id=item_receipt.event_id,
             duplicate=item_receipt.duplicate,
-            processing=("completed" if drain_completed and not follow_up_failed else "queued"),
+            processing="queued",
         )
 
     async def get_delight(self) -> DelightResponse:

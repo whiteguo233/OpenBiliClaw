@@ -30,6 +30,7 @@ from openbiliclaw.discovery.strategies._utils import (
 from openbiliclaw.published_time import normalize_published_time
 
 if TYPE_CHECKING:
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
@@ -48,6 +49,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
     score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
     llm_evaluation: bool = True
     max_seeds: int = 5
     related_per_seed: int = 8
@@ -86,11 +88,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
         Returns:
             Discovered content list.
         """
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         seed_descriptors = await self._select_seed_descriptors(profile)
         self.last_intermediates = {
             "seeds": [(bvid, topic) for bvid, topic in seed_descriptors],
@@ -223,6 +221,13 @@ class RelatedChainStrategy(DiscoveryStrategy):
                 batch_candidates = trimmed
 
             # Evaluate all candidates in batched LLM calls
+            date_eligible_bvids = {
+                item.bvid
+                for item in self.filter_candidates_for_eval([c for c, _, _, _ in batch_candidates])
+            }
+            batch_candidates = [
+                entry for entry in batch_candidates if entry[0].bvid in date_eligible_bvids
+            ]
             contents = [c for c, _, _, _ in batch_candidates]
             if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
                 results.extend(contents)

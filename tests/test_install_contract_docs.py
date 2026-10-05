@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -14,7 +15,8 @@ def test_shell_installers_recommend_same_default_llm_provider() -> None:
 
     expected_default = "Choose your LLM chat provider (default: deepseek):"
     expected_supported = (
-        "Supported: deepseek | openai | gemini | claude | openrouter | openai_compatible"
+        "Supported: deepseek | openai | gemini | claude | openrouter | requesty | "
+        "api_route | cheaperinference | openai_compatible"
     )
     # Local Ollama is embedding-only in onboarding (v0.3.177); the chat menu
     # must not offer it, and both shell installers must say so identically.
@@ -147,11 +149,14 @@ def test_human_installers_run_full_terminal_wizard_before_init() -> None:
 def test_agent_install_llm_menu_numbering_matches_current_options() -> None:
     doc = _read("docs/agent-install.md")
 
-    assert "Present **seven top-level options**" in doc
+    assert "Present **ten top-level options**" in doc
     assert "Present **three top-level options**" not in doc
     assert 'is folded into "Advanced" further down' not in doc
-    assert "**Hardware caveat for option 7 (Ollama)**" in doc
-    assert "#### Options 3-6 (OpenAI 官方 / Gemini / Claude / OpenRouter)" in doc
+    assert "**Hardware caveat for local Ollama**" in doc
+    assert (
+        "#### Options 3-10 (OpenAI 官方 / Gemini / Claude / OpenRouter / "
+        "OrcaRouter / Requesty / API Route / Cheaper Inference)"
+    ) in doc
     assert "#### Option 2 (OpenAI 官方 / Gemini / Claude / OpenRouter)" not in doc
 
 
@@ -227,3 +232,68 @@ def test_installers_can_clone_code_into_existing_packaged_data_root() -> None:
     assert "Test-UserDataOnlyRoot" in install_ps1
     assert "Clone-IntoUserDataRoot" in install_ps1
     assert "_is_user_data_only_root" in bootstrap
+
+
+def test_install_ps1_captures_git_clone_stderr_before_exit_code_check() -> None:
+    install_ps1 = _read("scripts/install.ps1")
+
+    # Windows PowerShell 5.1 can terminate a script with
+    # $ErrorActionPreference=Stop when git writes normal progress to stderr.
+    # Keep both clone paths behind the same guarded invocation so a successful
+    # clone reaches bootstrap and a failed clone still exposes Git diagnostics.
+    assert "function Invoke-GitClone" in install_ps1
+    assert (
+        "git clone --branch $CloneBranch --depth 1 $CloneRepoUrl $Destination "
+        "2> $cloneStderrLog | Out-Host"
+    ) in install_ps1
+    assert "$cloneExitCode = $LASTEXITCODE" in install_ps1
+    assert install_ps1.count("Invoke-GitClone $RepoUrl $Branch") == 2
+    assert "Windows PowerShell 5.1 treats native stderr as a terminating error" in install_ps1
+
+
+def test_install_ps1_starts_with_utf8_bom() -> None:
+    # `install.ps1` declares `#requires -Version 5.1`. Windows PowerShell 5.1
+    # (the default shell on Win10/11) decodes a BOM-less script with the system
+    # ANSI/GBK codepage, corrupting the Chinese comments and here-string
+    # boundaries and producing dozens of parse errors. A UTF-8 BOM is what makes
+    # 5.1 read the file as UTF-8 (issue #157).
+    raw = (ROOT / "scripts" / "install.ps1").read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), (
+        "scripts/install.ps1 must start with a UTF-8 BOM so Windows PowerShell "
+        "5.1 decodes it as UTF-8, not ANSI/GBK."
+    )
+
+
+# Legitimate PowerShell scope / provider qualifiers that may appear as `$name:`
+# inside double-quoted strings (e.g. `$env:PATH`, `$script:ReuseFrom`).
+_PS_SCOPE_PROVIDERS = {
+    "env",
+    "variable",
+    "function",
+    "alias",
+    "global",
+    "local",
+    "script",
+    "private",
+    "using",
+    "workflow",
+}
+
+
+def test_install_ps1_has_no_bare_variable_colon_in_double_quotes() -> None:
+    install_ps1 = _read("scripts/install.ps1")
+
+    # In a double-quoted PowerShell string, `$name:` is parsed as a
+    # scope/provider-qualified reference (like `$env:PATH`). When `name` is a
+    # plain variable the `:` is followed by a non-name character and the whole
+    # script fails to parse with "Variable reference is not valid" — the exact
+    # breakage from issue #157. `${InstallDir}:` (braced) is the correct
+    # escaping; `$env:` / `$script:` and a backtick-escaped `` `$name `` are
+    # legitimate and must stay allowed.
+    for match in re.finditer(r"\$([A-Za-z_][A-Za-z0-9_]*):", install_ps1):
+        name = match.group(1)
+        escaped = install_ps1[match.start() - 1 : match.start()] == "`"
+        assert name in _PS_SCOPE_PROVIDERS or escaped, (
+            f"scripts/install.ps1 has a bare `$name:` variable reference at "
+            f"offset {match.start()}; use `${{{name}}}:` in double-quoted strings."
+        )

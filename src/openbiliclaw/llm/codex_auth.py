@@ -36,6 +36,24 @@ class CodexAuthError(RuntimeError):
     """Raised when Codex credentials cannot be loaded, imported, or refreshed."""
 
 
+@dataclass(frozen=True)
+class CodexProbeState:
+    """Persisted outcome of a real Codex ChatGPT LLM capability probe."""
+
+    ok: bool
+    checked_at: float
+    model: str = ""
+    message: str = ""
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "checked_at": self.checked_at,
+            "model": self.model,
+            "message": self.message,
+        }
+
+
 class _AsyncPostClient(Protocol):
     async def post(
         self,
@@ -54,18 +72,22 @@ class CodexCredentials:
     refresh_token: str
     expires_at: float
     account_id: str = ""
+    last_probe: CodexProbeState | None = None
 
     def is_expired(self, *, skew_seconds: float = _EXPIRY_SKEW_SECONDS) -> bool:
         """Return whether the token is expired or too close to expiry."""
         return self.expires_at <= time.time() + skew_seconds
 
     def to_json(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
             "expires_at": self.expires_at,
             "account_id": self.account_id,
         }
+        if self.last_probe is not None:
+            payload["last_probe"] = self.last_probe.to_json()
+        return payload
 
 
 def default_token_path() -> Path:
@@ -229,6 +251,7 @@ def _credentials_from_mapping(data: object, *, source: Path) -> CodexCredentials
         refresh_token=refresh_token,
         expires_at=expires_at,
         account_id=account_id,
+        last_probe=_parse_probe_state(data),
     )
 
 
@@ -311,6 +334,7 @@ def _credentials_from_refresh_response(
         refresh_token=refresh_token,
         expires_at=expires_at,
         account_id=account_id,
+        last_probe=previous.last_probe,
     )
 
 
@@ -330,6 +354,40 @@ def _refresh_expires_at(
     if isinstance(jwt_exp, int | float):
         return float(jwt_exp)
     raise CodexAuthError("Codex token 刷新响应缺少有效期。")
+
+
+def _parse_probe_state(data: dict[str, object]) -> CodexProbeState | None:
+    raw = data.get("last_probe")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        ok = bool(raw.get("ok"))
+        checked_at = float(raw.get("checked_at") or 0.0)
+        model = str(raw.get("model") or "").strip()
+        message = str(raw.get("message") or "").strip()
+    except (TypeError, ValueError):
+        return None
+    if checked_at <= 0:
+        return None
+    return CodexProbeState(ok=ok, checked_at=checked_at, model=model, message=message)
+
+
+def save_codex_probe_state(
+    credentials: CodexCredentials,
+    probe: CodexProbeState,
+    *,
+    token_path: Path | None = None,
+) -> CodexCredentials:
+    """Persist a capability-probe outcome on the credential record."""
+    updated = CodexCredentials(
+        access_token=credentials.access_token,
+        refresh_token=credentials.refresh_token,
+        expires_at=credentials.expires_at,
+        account_id=credentials.account_id,
+        last_probe=probe,
+    )
+    save_codex_credentials(updated, token_path=token_path)
+    return updated
 
 
 def _chmod_best_effort(path: Path, mode: int) -> None:

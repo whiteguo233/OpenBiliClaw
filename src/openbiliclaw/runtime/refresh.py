@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from openbiliclaw.runtime.image_cache import (
 )
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _KW_PLATFORM_BILIBILI
 from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
+from openbiliclaw.runtime.source_policy import SOURCE_ORDER as _PLATFORM_SOURCE_ORDER
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import (
     _normalize_probe_mode,
@@ -91,20 +93,6 @@ _COVER_PREFETCH_MAX_FETCH = 40
 _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "bilibili": 5,
 }
-_PLATFORM_SOURCE_ORDER = (
-    "bilibili",
-    "xiaohongshu",
-    "douyin",
-    "youtube",
-    "twitter",
-    "zhihu",
-    "reddit",
-    "bangumi",
-    "linuxdo",
-    "v2ex",
-    "weibo",
-    "instagram",
-)
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
 # Pool-share fairness (spec 2026-07-20, Phase 3): max over-share rows evicted
 # per drain tick. Deliberately small so pool composition converges toward the
@@ -366,6 +354,14 @@ class ContinuousRefreshController:
     discovery_candidate_pipeline: Any | None = None
     candidate_eval_coordinator: Any | None = None
     expression_copy_coordinator: Any | None = None
+    # Delegated deployment (``openbiliclaw start``): the coordinators above run
+    # in the discovery-worker process, so this process's instances never start
+    # and would report a perpetual idle in runtime-status. When wired by the
+    # composition root, this reader returns the worker's live coordinator
+    # payloads (nested per coordinator) while its status heartbeat is fresh;
+    # ``None`` keeps the local values. See ``_status_store_for`` in
+    # discovery_worker.py for the publishing side.
+    delegated_coordinator_status_reader: Callable[[], dict[str, Any] | None] | None = None
     # OpenClaw's bridge is intentionally one-shot: it has no daemon loop to
     # own ExpressionCopyCoordinator.  When supplied, this callback finishes
     # the durable copy stage synchronously after inline admission instead of
@@ -389,6 +385,7 @@ class ContinuousRefreshController:
     v2ex_producer: Any | None = None
     weibo_producer: Any | None = None
     instagram_producer: Any | None = None
+    github_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
     presence: PresenceTracker = field(default_factory=PresenceTracker)
     # gui-init D1: optional init-aware gate. When it returns True (a guided init
@@ -525,6 +522,7 @@ class ContinuousRefreshController:
     # exhausted retries on the first half-hour.
     _init_grace_consumed: bool = False
     _last_llm_gate_allowed: bool = field(default=True, init=False)
+    _last_llm_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
 
@@ -550,6 +548,8 @@ class ContinuousRefreshController:
             except Exception:
                 pass
         allowed = background_llm_work_allowed(self.scheduler_config, self.presence)
+        if allowed:
+            allowed = self._llm_budget_allowed()
         if allowed != self._last_llm_gate_allowed:
             logger.info(
                 "Background LLM work gate %s",
@@ -557,6 +557,47 @@ class ContinuousRefreshController:
             )
             self._last_llm_gate_allowed = allowed
         return allowed
+
+    def _llm_budget_allowed(self) -> bool:
+        """Return whether the daemon's per-window background LLM budget remains.
+
+        The budget is a self-imposed quota (issue #188): scheduler-owned loops
+        count every background LLM request through ``LLMConcurrencyGate`` and
+        pause once the configured window cap is reached. ``max_calls <= 0``
+        disables the guard; a missing gate also keeps the legacy behaviour.
+        """
+        max_calls = int(getattr(self.scheduler_config, "llm_budget_max_calls", 0) or 0)
+        window_seconds = int(
+            getattr(self.scheduler_config, "llm_budget_window_seconds", 3600) or 3600
+        )
+        if max_calls <= 0 or window_seconds <= 0:
+            return True
+        gate = self.llm_concurrency_gate
+        count_getter = getattr(gate, "background_call_count", None)
+        if not callable(count_getter):
+            return True
+        try:
+            count = int(count_getter(window_seconds))
+        except Exception:
+            logger.debug("LLM budget count unavailable; allowing work", exc_info=True)
+            return True
+        if count < max_calls:
+            return True
+
+        now = time.monotonic()
+        if now - self._last_llm_budget_warned_at >= window_seconds:
+            self._last_llm_budget_warned_at = now
+            logger.warning(
+                "Background LLM calls reached %d in the last %d seconds "
+                "(max %d). Automatic discovery/LLM loops are paused until the "
+                "window rolls over; raise scheduler.llm_budget_max_calls or set "
+                "it to 0 to disable this guard, or run manual CLI/API commands "
+                "to continue explicitly.",
+                count,
+                window_seconds,
+                max_calls,
+            )
+        return False
 
     def _xhs_self_nickname(self) -> str:
         """Return the persisted XHS self nickname for pool guards."""
@@ -696,6 +737,10 @@ class ContinuousRefreshController:
             "pending_delight_count": pending_delight_count,
             "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
         }
+        date_filter_stats = getattr(self.database, "publication_date_filter_stats", None)
+        if callable(date_filter_stats):
+            with suppress(Exception):
+                payload["publication_date_filter"] = date_filter_stats()
         status_payload = getattr(self.candidate_eval_coordinator, "status_payload", None)
         if callable(status_payload):
             with suppress(Exception):
@@ -704,6 +749,7 @@ class ContinuousRefreshController:
         if callable(expression_status):
             with suppress(Exception):
                 payload.update(expression_status())
+        self._overlay_delegated_coordinator_status(payload)
         gate_status_payload = getattr(self.llm_concurrency_gate, "status_payload", None)
         if callable(gate_status_payload):
             with suppress(Exception):
@@ -748,6 +794,27 @@ class ContinuousRefreshController:
             "恢复后重试内容发现；无需重新初始化。"
         )
 
+    def _overlay_delegated_coordinator_status(self, payload: dict[str, Any]) -> None:
+        """Overlay the discovery worker's live coordinator payloads, when fresh.
+
+        The worker's payloads use the same key names as the local
+        ``status_payload()`` merges above, so a fresh delegated read simply
+        wins over this process's never-started idle values.
+        """
+        reader = self.delegated_coordinator_status_reader
+        if not callable(reader):
+            return
+        try:
+            delegated = reader()
+        except Exception:
+            logger.debug("delegated coordinator status read failed", exc_info=True)
+            return
+        if not isinstance(delegated, dict):
+            return
+        for nested in delegated.values():
+            if isinstance(nested, dict):
+                payload.update(nested)
+
     async def refresh_if_needed(self) -> dict[str, object]:
         """Refresh discovery candidates when thresholds are met.
 
@@ -785,10 +852,12 @@ class ContinuousRefreshController:
             if not self._is_initialized():
                 return _result({"refreshed": False, "strategies": [], "reason": "not_initialized"})
 
-            pool_at_cap = await self._enforce_pool_cap_async()
+            # Keep the pool at its cap, but do not return early when it is full:
+            # a due explore/trending sweep must still run. ``_build_refresh_plan``
+            # is responsible for excluding replenishment entries (search / related_chain)
+            # when the pool is at or above target.
+            await self._enforce_pool_cap_async()
             await self._publish_pool_status_if_changed()
-            if pool_at_cap:
-                return _result({"refreshed": False, "strategies": [], "reason": "pool_at_cap"})
 
             profile = await self.soul_engine.get_profile()
             plan = self._build_refresh_plan(state)
@@ -1197,7 +1266,18 @@ class ContinuousRefreshController:
 
     def _record_pool_maintenance_result(self, result: PoolMaintenanceResult) -> bool:
         """Publish one batch's metrics and update the in-memory inventory gate."""
-        log_fn = logger.error if result.rolled_back else logger.info
+        # A rollback is the availability guard working as designed (the batch
+        # is retried on the next tick), not an operational fault — keep it at
+        # WARNING so ERROR stays reserved for genuinely unexpected failures
+        # (e.g. the ``bounded pool maintenance failed`` exception path).
+        log_fn = logger.warning if result.rolled_back else logger.info
+        # On a rollback the mutation counter reports the attempted (reverted)
+        # batch; label it so the count is not read as committed work.
+        mutations_label = (
+            f"{getattr(result, 'mutation_count', 0)}(attempted)"
+            if result.rolled_back
+            else str(getattr(result, "mutation_count", 0))
+        )
         log_fn(
             "pool_maintenance available=%s->%s target=%s raw=%s->%s/%s "
             "mutations=%s has_more=%s lock_wait_ms=%.1f total_ms=%.1f "
@@ -1208,7 +1288,7 @@ class ContinuousRefreshController:
             result.raw_before,
             result.raw_after,
             result.raw_ceiling,
-            getattr(result, "mutation_count", 0),
+            mutations_label,
             getattr(result, "has_more", False),
             float(getattr(result, "lock_wait_ms", 0.0)),
             float(getattr(result, "total_ms", 0.0)),
@@ -1730,6 +1810,7 @@ class ContinuousRefreshController:
             "v2ex": self._tick_v2ex_producer,
             "weibo": self._tick_weibo_producer,
             "instagram": self._tick_instagram_producer,
+            "github": self._tick_github_producer,
         }
         raw_results = await asyncio.gather(
             *(ticker() for ticker in tickers.values()),
@@ -1855,6 +1936,7 @@ class ContinuousRefreshController:
             ├─ _loop_linuxdo_producer()  60s   Linux.do extension discovery when under quota
             ├─ _loop_weibo_producer()    60s   Weibo guest-session discovery when under quota
             ├─ _loop_instagram_producer() 60s  Instagram browser-task public discovery
+            ├─ _loop_github_producer()   60s   GitHub public repository discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
             ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_source_incremental_sync() 60s  extension account refresh
@@ -1903,6 +1985,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_v2ex_producer()),
             asyncio.create_task(self._loop_weibo_producer()),
             asyncio.create_task(self._loop_instagram_producer()),
+            asyncio.create_task(self._loop_github_producer()),
             asyncio.create_task(self._loop_proactive_push()),
             asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
@@ -2248,14 +2331,24 @@ class ContinuousRefreshController:
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_instagram_producer(self) -> None:
-        """Run public Instagram discovery when its source quota is underfilled."""
-
+        """Run public Instagram discovery when its quota is underfilled."""
         while True:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
                 await self._tick_instagram_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_github_producer(self) -> None:
+        """Run public GitHub repository discovery when its quota is underfilled."""
+
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_github_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_keyword_planner(self) -> None:
@@ -2540,10 +2633,17 @@ class ContinuousRefreshController:
 
     async def _tick_instagram_producer(self) -> dict[str, object]:
         """Invoke Instagram discovery when its source-family quota has a deficit."""
-
         return await self._tick_platform_producer(
             source_family="instagram",
             producer=self.instagram_producer,
+        )
+
+    async def _tick_github_producer(self) -> dict[str, object]:
+        """Invoke GitHub discovery when its source-family quota has a deficit."""
+
+        return await self._tick_platform_producer(
+            source_family="github",
+            producer=self.github_producer,
         )
 
     async def _tick_soul_pipeline(self) -> None:
@@ -2579,24 +2679,55 @@ class ContinuousRefreshController:
         self._update_llm_inventory_state(pool_available)
         pool_below_target = pool_available < self.pool_target_count
 
-        if pool_below_target:
-            if not self._pool_below_replenishment_watermark(pool_available):
-                return []
+        plan: list[tuple[list[str], int]] = []
+
+        if pool_below_target and self._pool_below_replenishment_watermark(pool_available):
             source_plan = self._build_source_replenishment_plan()
             if source_plan:
-                return source_plan
-            # When Bilibili is already at its platform quota, the missing
-            # capacity belongs to enabled non-Bilibili platform producers.
-            # Running the Bilibili fallback here would immediately violate
-            # the configured pool-source ratio.
+                # Automatic replenishment only fills the gap with search +
+                # related_chain. Trending and explore are periodic sweeps and
+                # join the plan independently below when their own clocks are
+                # due, so a small gap can never defer them to zero.
+                plan.extend(
+                    (["search", "related_chain"], limit)
+                    if set(strategies) == set(_BILIBILI_DISCOVERY_SOURCES)
+                    else (strategies, limit)
+                    for strategies, limit in source_plan
+                )
+            else:
+                # No source has an own-share deficit. That includes the
+                # healthy-source stall seen in production: Bilibili (and often
+                # XHS/Reddit) are already at/over quota while the missing
+                # capacity belongs to sources that are missing, throttled, or
+                # rate-limited (V2EX CLI absent, X unhealthy, YouTube/Weibo
+                # cooling down). If the discovery-candidate pipeline still has
+                # claimed/evaluating work, let it drain first; otherwise fall
+                # through to the periodic Bilibili plan so healthy over-share
+                # sources can keep introducing fresh topics and fill the global
+                # pool. Pool-share rebalancing can still demote them later when
+                # the under-share sources recover.
+                readiness = self._pool_readiness_counts()
+                if int(readiness.get("pending_eval", 0) or 0) > 0:
+                    self._log_empty_refresh_plan_diagnostics(pool_available=pool_available)
+                    return []
+        # Pool below target but above the replenishment watermark is deliberate:
+        # search / related_chain do not replenish in that band, but due
+        # trending / explore sweeps are still evaluated below.
+
+        if "bilibili" not in self._normalized_pool_source_shares():
             self._log_empty_refresh_plan_diagnostics(pool_available=pool_available)
             return []
 
-        if "bilibili" not in self._normalized_pool_source_shares():
-            return []
-
-        plan: list[tuple[list[str], int]] = []
-        if pending_events >= self.signal_event_threshold:
+        # Signal-event search only makes sense when the pool is below the
+        # replenishment watermark; in the 270-299 band (below target but above
+        # watermark) automatic replenishment stays quiet and only due periodic
+        # sweeps are considered.
+        if (
+            pool_below_target
+            and self._pool_below_replenishment_watermark(pool_available)
+            and pending_events >= self.signal_event_threshold
+            and not any("search" in strategies for strategies, _limit in plan)
+        ):
             plan.append((["search", "related_chain"], self.discovery_limit))
         if self._is_due(
             str(state.get("last_trending_refresh_at", "")),
@@ -2608,6 +2739,8 @@ class ContinuousRefreshController:
             minutes=self.explore_refresh_minutes,
         ):
             plan.append((["explore"], self.discovery_limit))
+        if not plan:
+            self._log_empty_refresh_plan_diagnostics(pool_available=pool_available)
         return plan
 
     def _pool_below_replenishment_watermark(self, pool_available: int) -> bool:
@@ -2893,6 +3026,7 @@ class ContinuousRefreshController:
         all_discovered: list[Any] = []
         pipeline_discovered_count = 0
         flattened_strategies: list[str] = []
+        explore_dispatched_with_budget = False
         replenished_topics: list[str] = []
         post_admission_copy_owned = False
 
@@ -2908,7 +3042,12 @@ class ContinuousRefreshController:
         for strategies, requested_limit in plan:
             current_pool_counts = self._pool_readiness_counts()
             current_pool_count = current_pool_counts["available"]
-            if current_pool_count >= self.pool_target_count:
+            if current_pool_count >= self.pool_target_count and (
+                "search" in strategies or "related_chain" in strategies
+            ):
+                # Replenishment entries stop once the pool is full. Periodic
+                # trending / explore entries are allowed to run even at cap;
+                # post-refresh pool maintenance trims the overflow.
                 break
 
             effective_limit = self._requested_refresh_limit(
@@ -3033,8 +3172,18 @@ class ContinuousRefreshController:
                             if isinstance(supply_result, dict)
                             else 0
                         )
+                        if "explore" in effective_strategies:
+                            supply_attempts = int(
+                                dict(supply_result).get("attempts", 0) or 0
+                                if isinstance(supply_result, dict)
+                                else 0
+                            )
+                            if supply_attempts > 0:
+                                explore_dispatched_with_budget = True
                     else:
                         produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
+                        if "explore" in effective_strategies:
+                            explore_dispatched_with_budget = True
                     coordinator_notify = getattr(self.candidate_eval_coordinator, "notify", None)
                     if callable(coordinator_notify):
                         # API runtime wires ``pipeline.on_candidates_enqueued`` to
@@ -3077,6 +3226,8 @@ class ContinuousRefreshController:
                     if injected_keyword_ids and _call_accepts_keyword_ids(discover_fn):
                         discover_kwargs["keyword_ids"] = injected_keyword_ids
                     discovered = await discover_fn(profile, **discover_kwargs)
+                    if "explore" in effective_strategies:
+                        explore_dispatched_with_budget = True
                     topic_items = discovered
                     discovered_count = len(discovered)
                     admitted_count = discovered_count
@@ -3165,7 +3316,7 @@ class ContinuousRefreshController:
             runtime_updates["last_processed_event_id"] = latest_event_id
         if "trending" in flattened_strategies:
             runtime_updates["last_trending_refresh_at"] = now
-        if "explore" in flattened_strategies:
+        if "explore" in flattened_strategies and explore_dispatched_with_budget:
             runtime_updates["last_explore_refresh_at"] = now
         after_pool_counts = self._pool_readiness_counts()
         after_pool_count = after_pool_counts["available"]
@@ -3559,6 +3710,8 @@ class ContinuousRefreshController:
             if source == "bilibili":
                 # Bilibili is a platform quota now, but its implementation
                 # still fans out through four established strategy names.
+                # ``_build_refresh_plan`` splits this back out for automatic
+                # replenishment so trending / explore only run when due.
                 plan.append((list(_BILIBILI_DISCOVERY_SOURCES), requested))
         return plan
 
@@ -3788,11 +3941,10 @@ class ContinuousRefreshController:
     def keyword_planner_explore_due_soon(self) -> bool:
         """Whether planner may piggyback B站 exploratory queries this pass.
 
-        This intentionally mirrors refresh-plan timing instead of giving the
-        planner its own clock. The small lead window lets a planner pass that
-        runs just before the refresh tick reuse the merged keyword LLM call for
-        explore, avoiding the later standalone ``discovery.explore.queries``
-        call while still respecting ``explore_refresh_minutes``.
+        The planner tracks its own ``last_explore_planned_at`` clock so it can
+        reuse the merged keyword LLM call for explore without overwriting
+        ``last_explore_refresh_at`` (which is reserved for a completed
+        ExploreStrategy sweep).
         """
         if "bilibili" not in self._normalized_pool_source_shares():
             return False
@@ -3804,7 +3956,7 @@ class ContinuousRefreshController:
             logger.exception("keyword_planner_explore_due_soon state load failed")
             return False
         return self._is_due_soon(
-            str(state.get("last_explore_refresh_at", "")),
+            str(state.get("last_explore_planned_at", "")),
             minutes=self.explore_refresh_minutes,
             lead_seconds=max(0, int(self.check_interval_seconds)),
         )
@@ -3823,10 +3975,16 @@ class ContinuousRefreshController:
             return []
 
     def keyword_planner_mark_explore_planned(self) -> None:
-        """Mark explore refresh consumed after planner inserted explore queries."""
+        """Mark that the planner generated explore keywords this cycle.
+
+        This deliberately does NOT touch ``last_explore_refresh_at``: that
+        timestamp is reserved for a real ExploreStrategy sweep. The planner
+        uses ``last_explore_planned_at`` only to avoid generating explore
+        keywords every pass.
+        """
         now = self._now().isoformat()
         self._update_discovery_runtime_state(
-            lambda runtime_state: runtime_state.update({"last_explore_refresh_at": now})
+            lambda runtime_state: runtime_state.update({"last_explore_planned_at": now})
         )
 
     def _source_requested_count(
@@ -3943,6 +4101,8 @@ class ContinuousRefreshController:
                 stranded.append("youtube")
             elif source == "twitter" and self.x_producer is None:
                 stranded.append("twitter")
+            elif source == "github" and self.github_producer is None:
+                stranded.append("github")
             elif source == "zhihu" and self.zhihu_producer is None:
                 stranded.append("zhihu")
             elif source == "reddit" and self.reddit_producer is None:
@@ -3963,6 +4123,7 @@ class ContinuousRefreshController:
                 "douyin",
                 "youtube",
                 "twitter",
+                "github",
                 "zhihu",
                 "reddit",
                 "bangumi",

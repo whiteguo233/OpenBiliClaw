@@ -104,7 +104,25 @@
     return /^https?:\/\//i.test(href) ? escapeHtmlRaw(href) : "";
   }
 
-  function renderMarkdownInline(value) {
+  function bareLinkTarget(value) {
+    let href = value.replace(/[.,;:!?]+$/, "");
+    // Keep parentheses in real paths, but leave prose wrappers outside links.
+    for (const [open, close] of [["(", ")"], ["[", "]"]]) {
+      let excess = href.split(close).length - href.split(open).length;
+      while (excess > 0 && href.endsWith(close)) {
+        href = href.slice(0, -1);
+        excess -= 1;
+      }
+    }
+    try {
+      const parsed = new URL(href);
+      return parsed.hostname && /^https?:$/.test(parsed.protocol) ? href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function renderMarkdownInline(value, allowLinks = true) {
     const slots = [];
     let source = String(value ?? "");
 
@@ -119,17 +137,32 @@
       /`([^`\n]+)`/g,
       (_match, code) => markdownSlot(slots, `<code>${escapeHtmlRaw(code)}</code>`),
     );
-    source = source.replace(
-      /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi,
-      (match, label, href) => {
-        const safeHref = safeMarkdownHref(href);
-        if (!safeHref) return match;
-        return markdownSlot(
-          slots,
-          `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${renderMarkdownInline(label)}</a>`,
-        );
-      },
-    );
+    if (allowLinks) {
+      source = source.replace(
+        /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi,
+        (match, label, href) => {
+          const safeHref = safeMarkdownHref(href);
+          if (!safeHref) return match;
+          return markdownSlot(
+            slots,
+            `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${renderMarkdownInline(label, false)}</a>`,
+          );
+        },
+      );
+      // Operate on unrendered text after links/code have become opaque slots.
+      // Never run a URL replacement over HTML or recursively link a link label.
+      source = source.replace(
+        /\bhttps?:\/\/[^\s\u0000-\u001f<>"'`*\\，。；：！？、（）【】《》“”‘’]+/gi,
+        (match) => {
+          const href = bareLinkTarget(match);
+          if (!href) return match;
+          return markdownSlot(
+            slots,
+            `<a href="${safeMarkdownHref(href)}" target="_blank" rel="noopener noreferrer">${escapeHtmlRaw(href)}</a>`,
+          ) + match.slice(href.length);
+        },
+      );
+    }
 
     let rendered = escapeHtmlRaw(source);
     rendered = rendered.replace(/\*\*\*([^*\n]+?)\*\*\*/g, "<strong><em>$1</em></strong>");

@@ -14,15 +14,18 @@ from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.discovery.admission import effective_admission_threshold
 from openbiliclaw.discovery.candidate_pool import (
+    EVALUATED,
     REJECTED_CACHE_ADMISSION,
     REJECTED_FRANCHISE_QUOTA,
     REJECTED_LOW_SCORE,
     REJECTED_RECENTLY_VIEWED,
+    REJECTED_TEMPORAL_STALE,
     DiscoveryCandidateWrite,
     discovered_content_to_candidate_write,
     discovery_candidate_pending_cap,
     row_to_discovered_content,
 )
+from openbiliclaw.discovery.temporal import evaluate_temporal_eligibility
 from openbiliclaw.llm.base import classify_llm_unavailability
 from openbiliclaw.sources.platforms import source_family as _source_family
 
@@ -602,21 +605,60 @@ class DiscoveryCandidatePipeline:
             recently_viewed=recently_viewed,
             claim_token=claim.token,
         )
+        durable_rows = self._durable_candidate_rows(updated_ids)
+        durable_by_id = {int(row["id"]): row for row in durable_rows}
 
         accepted: list[tuple[dict[str, Any], DiscoveredContent]] = []
         rejected = 0
-        for row, item, score in zip(rows, items, scores, strict=True):
+        for row, _item, _score in zip(rows, items, scores, strict=True):
             candidate_id = int(row["id"])
             if candidate_id not in updated_ids:
                 continue
-            final_score = float(item.relevance_score or score or 0.0)
+            durable_row = durable_by_id.get(candidate_id)
+            if durable_row is None:
+                continue
+            # A successful write does not imply admission eligibility. Storage
+            # may have atomically translated the evaluator result into a
+            # review lease or terminal rejection after grounding it against
+            # older evidence. Only its final durable status can open the gate.
+            if str(durable_row.get("status") or "") != EVALUATED:
+                rejected += 1
+                continue
+            item = row_to_discovered_content(durable_row)
+            final_score = float(item.relevance_score or 0.0)
             if self._is_recently_viewed(item, recently_viewed):
                 rejected += 1
                 continue
-            if final_score < self._threshold_for(row):
+            temporal = evaluate_temporal_eligibility(
+                temporal_class=item.temporal_class,
+                temporal_confidence=item.temporal_confidence,
+                published_at=item.published_at,
+                temporal_validity_mode=item.temporal_validity_mode,
+                temporal_valid_until=item.temporal_valid_until,
+                temporal_scope=item.temporal_scope,
+                temporal_evidence=item.temporal_evidence,
+                temporal_state=item.temporal_state,
+                temporal_next_review_at=item.temporal_next_review_at,
+                temporal_evaluated_at=item.temporal_evaluated_at,
+                temporal_policy_version=item.temporal_policy_version,
+                evidence_complete=item.temporal_evidence_complete,
+            )
+            if temporal.hard_expired:
+                self.database.reject_discovery_candidate(
+                    candidate_id,
+                    status=REJECTED_TEMPORAL_STALE,
+                    reason=temporal.rejection_reason,
+                )
                 rejected += 1
                 continue
-            accepted.append((row, item))
+            if temporal.needs_review:
+                self._requeue_temporal_review(candidate_id, temporal.reason)
+                rejected += 1
+                continue
+            if final_score < self._threshold_for(durable_row):
+                rejected += 1
+                continue
+            accepted.append((durable_row, item))
 
         admitted_items: list[DiscoveredContent] = []
         cached, admission_rejected = self._admit_until_full(
@@ -626,11 +668,12 @@ class DiscoveryCandidatePipeline:
             limit=admission_limit,
         )
         self.last_admitted_items = list(admitted_items)
+        confirmed_ids = set(durable_by_id)
         return {
-            "evaluated": len(updated_ids),
+            "evaluated": len(confirmed_ids),
             "cached": cached,
             "rejected": rejected + admission_rejected,
-            "stale": len(rows) - len(updated_ids),
+            "stale": len(rows) - len(confirmed_ids),
         }
 
     def release_claim(
@@ -668,6 +711,22 @@ class DiscoveryCandidatePipeline:
             increment_attempts=increment_attempts,
         )
         return len(ids)
+
+    def revive_failed_eval_candidates(self) -> int:
+        """Re-queue dead-lettered candidates after an evaluator recovery.
+
+        Delegates to storage with the same getattr guard style as the other
+        durable hooks so test doubles without the method keep working.
+        """
+
+        revive = getattr(self.database, "revive_failed_eval_candidates", None)
+        if not callable(revive):
+            return 0
+        try:
+            return int(revive() or 0)
+        except Exception:
+            logger.debug("failed_eval candidate revival failed", exc_info=True)
+            return 0
 
     async def _drain_pending_locked(
         self,
@@ -824,6 +883,12 @@ class DiscoveryCandidatePipeline:
     def admit_evaluated(self, *, limit: int) -> dict[str, int]:
         """Admit previously evaluated rows before spending another LLM call."""
 
+        cleanup = getattr(
+            self.database,
+            "reject_temporally_stale_evaluated_candidates",
+            None,
+        )
+        stale_rejected = int(cleanup() or 0) if callable(cleanup) else 0
         admitted_items: list[DiscoveredContent] = []
         cached, rejected = self._admit_evaluated_candidates(
             limit=max(0, int(limit)),
@@ -831,7 +896,7 @@ class DiscoveryCandidatePipeline:
             admitted_items=admitted_items,
         )
         self.last_admitted_items = admitted_items
-        return {"cached": cached, "rejected": rejected}
+        return {"cached": cached, "rejected": stale_rejected + rejected}
 
     def _admit_evaluated_candidates(
         self,
@@ -927,7 +992,30 @@ class DiscoveryCandidatePipeline:
             if self._is_recently_viewed(item, recently_viewed):
                 status = REJECTED_RECENTLY_VIEWED
                 eval_error = "recently viewed"
-            elif final_score < self._threshold_for(row):
+            else:
+                temporal = evaluate_temporal_eligibility(
+                    temporal_class=item.temporal_class,
+                    temporal_confidence=item.temporal_confidence,
+                    published_at=item.published_at,
+                    temporal_validity_mode=item.temporal_validity_mode,
+                    temporal_valid_until=item.temporal_valid_until,
+                    temporal_scope=item.temporal_scope,
+                    temporal_evidence=item.temporal_evidence,
+                    temporal_state=item.temporal_state,
+                    temporal_next_review_at=item.temporal_next_review_at,
+                    temporal_evaluated_at=item.temporal_evaluated_at,
+                    temporal_policy_version=item.temporal_policy_version,
+                    evidence_complete=item.temporal_evidence_complete,
+                )
+                if temporal.hard_expired:
+                    status = REJECTED_TEMPORAL_STALE
+                    eval_error = temporal.rejection_reason
+                elif temporal.needs_review:
+                    # Canonical storage atomically translates this evaluated
+                    # result back to pending_eval. Older adapters are handled
+                    # by complete/admission's explicit requeue fallback.
+                    eval_error = temporal.reason
+            if status == "evaluated" and final_score < self._threshold_for(row):
                 status = REJECTED_LOW_SCORE
                 eval_error = f"score {final_score:.2f} below threshold"
             evaluations.append(
@@ -940,6 +1028,14 @@ class DiscoveryCandidatePipeline:
                     "temporal_confidence": item.temporal_confidence,
                     "temporal_reason": item.temporal_reason,
                     "temporal_policy_version": item.temporal_policy_version,
+                    "temporal_validity_mode": item.temporal_validity_mode,
+                    "temporal_valid_until": item.temporal_valid_until,
+                    "temporal_scope": item.temporal_scope,
+                    "temporal_evidence": item.temporal_evidence,
+                    "temporal_state": item.temporal_state,
+                    "temporal_next_review_at": item.temporal_next_review_at,
+                    "temporal_evaluated_at": item.temporal_evaluated_at,
+                    "temporal_evidence_complete": item.temporal_evidence_complete,
                     "topic_key": item.topic_key,
                     "topic_group": item.topic_group,
                     "style_key": item.style_key,
@@ -973,6 +1069,25 @@ class DiscoveryCandidatePipeline:
         if updated == len(evaluations):
             return {int(evaluation["candidate_id"]) for evaluation in evaluations}
         return set()
+
+    def _durable_candidate_rows(self, candidate_ids: set[int]) -> list[dict[str, Any]]:
+        """Reload persisted rows before admission, failing closed if unavailable."""
+
+        if not candidate_ids:
+            return []
+        get_rows = getattr(self.database, "get_discovery_candidates_by_ids", None)
+        if not callable(get_rows):
+            logger.error(
+                "durable candidate reload unavailable; withholding %d admission(s)",
+                len(candidate_ids),
+            )
+            return []
+        try:
+            rows = get_rows(sorted(candidate_ids))
+        except Exception:
+            logger.exception("durable candidate reload failed; withholding admission")
+            return []
+        return [dict(row) for row in rows if int(row.get("id") or 0) in candidate_ids]
 
     def _admit_until_full(
         self,
@@ -1104,18 +1219,51 @@ class DiscoveryCandidatePipeline:
             return "rejected"
         block_status, block_reason = self._cache_admission_block(row, item)
         if block_status:
+            if block_status == "temporal_review_due":
+                self._requeue_temporal_review(int(row["id"]), block_reason)
+                return "rejected"
             self.database.reject_discovery_candidate(
                 int(row["id"]),
                 status=block_status,
                 reason=block_reason,
             )
             return "rejected"
-        cache_fn = getattr(self.discovery_engine, "cache_evaluated_results", None)
-        if callable(cache_fn):
-            persisted = int(cache_fn([item]))
+        detailed_cache_fn = getattr(
+            self.discovery_engine,
+            "cache_evaluated_results_detailed",
+            None,
+        )
+        if callable(detailed_cache_fn):
+            cache_outcome = detailed_cache_fn([item])
+            persisted = int(cache_outcome.newly_cached)
+            item_outcomes = tuple(getattr(cache_outcome, "items", ()))
+            temporal_rejection_reason = (
+                str(getattr(item_outcomes[0], "temporal_rejection_reason", "") or "")
+                if item_outcomes
+                else ""
+            )
+            if temporal_rejection_reason:
+                self.database.reject_discovery_candidate(
+                    int(row["id"]),
+                    status=REJECTED_TEMPORAL_STALE,
+                    reason=temporal_rejection_reason,
+                )
+                return "rejected"
+            temporal_review_reason = (
+                str(getattr(item_outcomes[0], "temporal_review_reason", "") or "")
+                if item_outcomes
+                else ""
+            )
+            if temporal_review_reason:
+                self._requeue_temporal_review(int(row["id"]), temporal_review_reason)
+                return "rejected"
         else:
-            self.discovery_engine._cache_results([item])  # noqa: SLF001
-            persisted = 1
+            cache_fn = getattr(self.discovery_engine, "cache_evaluated_results", None)
+            if callable(cache_fn):
+                persisted = int(cache_fn([item]))
+            else:
+                self.discovery_engine._cache_results([item])  # noqa: SLF001
+                persisted = 1
         if persisted > 0:
             self.database.mark_discovery_candidate_cached(int(row["id"]))
             admitted_items.append(item)
@@ -1186,6 +1334,25 @@ class DiscoveryCandidatePipeline:
         row: dict[str, Any],
         item: DiscoveredContent,
     ) -> tuple[str, str]:
+        temporal = evaluate_temporal_eligibility(
+            temporal_class=getattr(item, "temporal_class", "unknown"),
+            temporal_confidence=getattr(item, "temporal_confidence", 0.0),
+            published_at=getattr(item, "published_at", ""),
+            temporal_validity_mode=getattr(item, "temporal_validity_mode", "none"),
+            temporal_valid_until=getattr(item, "temporal_valid_until", ""),
+            temporal_scope=getattr(item, "temporal_scope", "none"),
+            temporal_evidence=getattr(item, "temporal_evidence", ""),
+            temporal_state=getattr(item, "temporal_state", "unknown"),
+            temporal_next_review_at=getattr(item, "temporal_next_review_at", ""),
+            temporal_evaluated_at=getattr(item, "temporal_evaluated_at", ""),
+            temporal_policy_version=getattr(item, "temporal_policy_version", "v1"),
+            evidence_complete=getattr(item, "temporal_evidence_complete", False),
+        )
+        if temporal.hard_expired:
+            return REJECTED_TEMPORAL_STALE, temporal.rejection_reason
+        if temporal.needs_review:
+            return "temporal_review_due", temporal.reason
+
         block_fn = getattr(self.discovery_engine, "cache_admission_block_reason", None)
         if not callable(block_fn):
             return "", ""
@@ -1200,7 +1367,29 @@ class DiscoveryCandidatePipeline:
             franchise = str(item.franchise_key or row.get("franchise_key") or "").strip()
             suffix = f": {franchise}" if franchise else ""
             return REJECTED_FRANCHISE_QUOTA, f"franchise quota reached{suffix}"
+        if reason == "temporal_stale":
+            return REJECTED_TEMPORAL_STALE, "temporal stale"
+        if reason == "temporal_review_due":
+            return "temporal_review_due", "temporal review due"
         return "", ""
+
+    def _requeue_temporal_review(self, candidate_id: int, reason: str) -> None:
+        """Best-effort compatibility bridge for a review-due candidate."""
+
+        requeue = getattr(
+            self.database,
+            "requeue_discovery_candidate_for_temporal_review",
+            None,
+        )
+        if callable(requeue):
+            requeue(candidate_id, reason)
+            return
+        reset = getattr(self.database, "reset_discovery_candidates_to_pending", None)
+        if callable(reset):
+            try:
+                reset([candidate_id], reason=reason, increment_attempts=False)
+            except TypeError:
+                reset([candidate_id], reason=reason)
 
     def _threshold_for(self, row: dict[str, Any]) -> float:
         payload = self._raw_payload(row)
@@ -1329,7 +1518,7 @@ class DiscoveryCandidatePipeline:
             logger.debug("discovery candidate supply count unavailable", exc_info=True)
             return 0, 0
         return (
-            int(counts.get("pending_eval", 0) or 0),
+            int(counts.get("pending_eval_ready", counts.get("pending_eval", 0)) or 0),
             int(counts.get("evaluating", 0) or 0),
         )
 
@@ -1425,7 +1614,7 @@ class DiscoveryCandidatePipeline:
         except Exception:
             logger.debug("pending discovery candidate count unavailable", exc_info=True)
             return None
-        return int(counts.get("pending_eval", 0) or 0)
+        return int(counts.get("pending_eval_ready", counts.get("pending_eval", 0)) or 0)
 
     @staticmethod
     def _raw_payload(row: dict[str, Any]) -> dict[str, Any]:

@@ -1240,6 +1240,15 @@
       color: var(--text-secondary);
     }
 
+    .delight-reason,
+    .delight-banner-reason,
+    .message-reason,
+    .spec-reason,
+    .delight-response {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     .delight-response {
       padding: 10px 12px;
       border-radius: 16px;
@@ -1492,6 +1501,17 @@
     .recommendation-cover.is-text-card .recommendation-source-corner.source-platform-reddit {
       background: rgba(255, 69, 0, 0.12);
       color: #d93f00;
+    }
+
+    .recommendation-source-corner.source-platform-github {
+      background: rgba(36, 41, 47, 0.82);
+      color: #fff;
+    }
+
+    .recommendation-cover.is-fallback .recommendation-source-corner.source-platform-github,
+    .recommendation-cover.is-text-card .recommendation-source-corner.source-platform-github {
+      background: rgba(36, 41, 47, 0.12);
+      color: #24292f;
     }
 
     .recommendation-source-corner.source-platform-weibo {
@@ -3405,6 +3425,44 @@
       background: linear-gradient(180deg, rgba(255, 248, 251, 0.98), rgba(249, 251, 255, 0.98));
     }
 
+    .chat-pending-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-right: 7px;
+    }
+
+    .chat-pending-head .chat-pending-toggle { flex: 1 1 auto; width: auto; min-width: 0; }
+
+    /* Quick switch at the top of the 「对话」 tab: controls whether the
+       pending-confirmation red dot appears on the tab. Default off. */
+    .chat-badge-pref {
+      position: relative;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border: 1px solid rgba(239, 221, 233, 0.96);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--text-secondary);
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .chat-badge-pref input { position: absolute; opacity: 0; pointer-events: none; }
+    .chat-badge-pref-switch { position: relative; width: 26px; height: 15px; flex: 0 0 auto; border-radius: 999px; background: rgba(143, 155, 176, 0.35); transition: background 160ms ease; }
+    .chat-badge-pref-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(56, 76, 112, 0.28); transition: transform 160ms ease; }
+    .chat-badge-pref input:checked + .chat-badge-pref-switch { background: var(--brand); }
+    .chat-badge-pref input:checked + .chat-badge-pref-switch::after { transform: translateX(11px); }
+    .chat-badge-pref input:focus-visible + .chat-badge-pref-switch { box-shadow: var(--focus-ring); }
+
     .chat-pending-toggle {
       flex: 0 0 auto;
       width: 100%;
@@ -5031,7 +5089,7 @@
     }
 
     /* 平台源卡片：卡面常驻（标题 / 启用 / 接入状态），配置按需展开。
-       侧栏宽度有限，9 个来源全展开会让这一页长到无法浏览。 */
+       侧栏宽度有限，全部来源同时展开会让这一页长到无法浏览。 */
     .settings-source-card[data-open] {
       padding-bottom: 0;
     }
@@ -5144,6 +5202,114 @@
 
     .settings-section h3 .section-icon {
       font-size: 16px;
+    }
+
+    /* ── 异常报警（LLM / Embedding 请求失败等异常事件）── */
+    .diag-alerts-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .diag-alert-summary {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+
+    .diag-alerts-refresh {
+      flex-shrink: 0;
+    }
+
+    .diag-alerts-empty {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    .diag-alert-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    .diag-alert-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-soft);
+    }
+
+    .diag-alert-item[data-severity="error"] {
+      border-color: rgba(239, 122, 134, 0.45);
+      background: rgba(239, 122, 134, 0.08);
+    }
+
+    .diag-alert-item-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .diag-alert-badge {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      padding: 1px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .diag-alert-item[data-severity="error"] .diag-alert-badge {
+      background: rgba(239, 122, 134, 0.22);
+      color: #b3475a;
+    }
+
+    .diag-alert-item[data-severity="warning"] .diag-alert-badge {
+      background: var(--warning-soft);
+      color: #9a6b1f;
+    }
+
+    .diag-alert-source {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .diag-alert-message {
+      color: var(--text-main);
+      font-size: 11.5px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .diag-alert-meta {
+      color: var(--text-muted);
+      font-size: 10.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .settings-field {
@@ -5732,6 +5898,399 @@
       .saved-load-retry { min-width: 44px; min-height: 44px; }
     }
 
+    /* ── 聊一聊 agent loop（M9，popup 紧凑形态）───────────────── */
+    .chat-subtabs {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .chat-subtab {
+      flex: 1;
+      min-height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .chat-subtab.is-active {
+      background: var(--brand-soft);
+      border-color: var(--line-strong);
+      color: var(--text-main);
+    }
+
+    .chat-subtab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+    .chat-subpanel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .chat-subpanel[hidden] { display: none; }
+
+    .chat-agent-bar {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .chat-skill-select {
+      flex: 1;
+      min-width: 0;
+      min-height: 44px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--text-main);
+      font-size: 11px;
+      padding: 2px 8px;
+    }
+
+    .chat-persona-toggle {
+      min-height: 44px;
+      max-width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--text-main);
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .chat-persona-dialog {
+      width: min(420px, calc(100vw - 24px));
+      max-height: calc(100dvh - 32px);
+      box-sizing: border-box;
+      margin: auto;
+      padding: 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      color: var(--text-main);
+      background: var(--bg-base, #fff);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .chat-persona-dialog::backdrop { background: rgba(20, 20, 35, .4); }
+    .chat-persona-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .chat-persona-dialog-head h2 { margin: 0; font-size: 18px; }
+    .chat-persona-dialog p { font-size: 12px; line-height: 1.6; }
+    .chat-persona-list { display: grid; gap: 8px; }
+    .chat-persona-option {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      text-align: left;
+      color: var(--text-main);
+      background: transparent;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+      cursor: pointer;
+    }
+    .chat-persona-option:hover, .chat-persona-option[aria-pressed="true"] { background: var(--brand-soft); }
+    .chat-persona-option[aria-pressed="true"] { border-color: var(--brand); }
+    .chat-persona-option strong { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+    .chat-persona-option strong span { font-size: 11px; }
+    .chat-persona-example { border-left: 2px solid var(--line-strong); padding-left: 8px; }
+    .chat-persona-toggle:focus-visible, .chat-persona-option:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+    .chat-persona-option:disabled { opacity: .65; cursor: wait; }
+    #chatPersonaStatus:empty { display: none; }
+
+    .chat-approvals-toggle {
+      flex: 0 0 auto;
+      width: auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+
+    .chat-approvals-list {
+      flex: 0 0 auto;
+      max-height: min(32vh, 220px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      display: grid;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .chat-sessions-list,
+    .chat-tasks-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      padding-bottom: 8px;
+    }
+
+    #chatSessionNew { flex: 0 0 auto; margin-bottom: 8px; }
+
+    .chat-task-detail {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-bottom: 8px;
+    }
+
+    .agent-session-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px 8px;
+      background: var(--surface);
+    }
+
+    .agent-session-row.is-active { border-color: var(--line-strong); background: var(--brand-soft); }
+
+    .agent-session-main {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      display: grid;
+      gap: 2px;
+      padding: 2px;
+    }
+
+    .agent-session-title { font-size: 12px; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-session-preview { font-size: 10px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-session-active { color: var(--brand); font-size: 9px; }
+
+    .agent-run {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      padding: 4px 8px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin: 4px 0;
+    }
+
+    .agent-run.is-collapsed { padding: 0; }
+    .agent-run.is-collapsed > .agent-run-toggle {
+      padding: 6px 8px;
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .agent-run.is-collapsed > .agent-step,
+    .agent-run.is-collapsed > .agent-step-limit,
+    .agent-run.is-collapsed > .agent-skill-card,
+    .agent-run.is-collapsed > .agent-task-proposal { margin: 0 8px 6px; }
+
+    .agent-step { margin: 2px 0; }
+
+    .agent-thinking {
+      margin: 2px 0;
+      font-size: 11px;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+    }
+
+    .agent-tool {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      margin: 2px 0;
+    }
+
+    .agent-tool > summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 4px 6px;
+      cursor: pointer;
+      font-size: 11px;
+      list-style: none;
+    }
+    .agent-tool > summary::-webkit-details-marker { display: none; }
+    .agent-tool[data-status="failed"] > summary .agent-tool-state { color: var(--danger); }
+    .agent-tool[data-status="ok"] > summary .agent-tool-state { color: #22a06b; }
+    .agent-tool[data-status="running"] > summary .agent-tool-state { color: var(--brand); }
+
+    .agent-tool-detail { padding: 0 6px 6px; }
+
+    .agent-detail-pre {
+      margin: 2px 0;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: rgba(32, 48, 74, 0.05);
+      font-size: 10px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+
+    .agent-tool-result.is-error { color: var(--danger); }
+    .agent-step-limit { margin: 4px 0; font-size: 11px; color: var(--text-secondary); }
+    .agent-run-error { margin: 4px 0; font-size: 11px; color: var(--danger); }
+
+    .agent-btn {
+      min-height: 26px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 11px;
+    }
+    .agent-btn-primary { background: var(--brand); color: #fff; }
+    .agent-btn-secondary { background: var(--surface-strong); border-color: var(--line); color: var(--text-main); }
+    .agent-btn-ghost { background: transparent; color: var(--text-secondary); }
+    .agent-btn:disabled { opacity: 0.6; }
+
+    .agent-approval-card {
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--surface-strong);
+      padding: 8px;
+      margin: 4px 0;
+    }
+
+    .agent-approval-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .agent-approval-status { font-size: 10px; color: var(--text-secondary); font-weight: 400; }
+    .agent-approval-status[data-tone="pending"],
+    .agent-approval-status[data-tone="approved"],
+    .agent-approval-status[data-tone="executing"] { color: var(--brand); }
+    .agent-approval-status[data-tone="executed"] { color: #22a06b; }
+    .agent-approval-status[data-tone="rejected"],
+    .agent-approval-status[data-tone="failed"] { color: var(--danger); }
+
+    .agent-approval-summary,
+    .agent-approval-reason,
+    .agent-approval-impact,
+    .agent-approval-result { margin: 2px 0; font-size: 11px; color: var(--text-main); }
+    .agent-approval-impact,
+    .agent-approval-reason { color: var(--text-secondary); }
+
+    .agent-approval-args summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+    .agent-approval-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .agent-approval-reject { margin-top: 6px; }
+    .agent-approval-reason {
+      width: 100%;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+
+    .agent-skill-card,
+    .agent-task-proposal,
+    .agent-task-summary {
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--brand-soft);
+      padding: 8px;
+      margin: 4px 0;
+      font-size: 12px;
+      color: var(--text-main);
+    }
+
+    .agent-skill-card-text,
+    .agent-task-proposal-text { margin: 0 0 4px; }
+    .agent-task-proposal-prompt { margin: 0 0 4px; font-size: 11px; color: var(--text-secondary); }
+
+    .agent-task-summary-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .agent-task-suggestions {
+      margin: 6px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 4px;
+    }
+    .agent-task-suggestions li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .agent-task-suggestion-text { flex: 1; min-width: 0; }
+
+    .agent-task-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px 8px;
+      background: var(--surface);
+    }
+
+    .agent-task-row-main {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      display: grid;
+      gap: 2px;
+      padding: 2px;
+    }
+
+    .agent-task-row-title { font-size: 12px; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-task-row-progress { font-size: 10px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-task-row-status { font-size: 10px; color: var(--text-secondary); }
+    .agent-task-row-status[data-tone="running"],
+    .agent-task-row-status[data-tone="pending"] { color: var(--brand); }
+    .agent-task-row-status[data-tone="completed"] { color: #22a06b; }
+    .agent-task-row-status[data-tone="failed"],
+    .agent-task-row-status[data-tone="interrupted"] { color: var(--danger); }
+
+    .agent-task-detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+    .agent-task-detail-prompt { font-size: 11px; color: var(--text-secondary); margin: 0 0 6px; }
+    .agent-task-detail-report { margin-top: 6px; font-size: 12px; }
+    .agent-tasks-empty { font-size: 12px; color: var(--text-secondary); text-align: center; margin: 18px 0; }
   </style>
 </head>
 <body>
@@ -6052,21 +6611,51 @@
 
       <section id="viewChat" class="view" role="tabpanel" aria-labelledby="tabChat" hidden>
         <div class="chat-shell">
-          <div class="chat-pending">
-            <button id="chatPendingToggle" class="chat-pending-toggle" type="button" aria-expanded="false" aria-controls="chatPendingList">
-              <span>待聊确认 <span id="chatPendingCount" class="chat-pending-count">0</span></span>
-            </button>
-            <div id="chatPendingList" class="chat-pending-list" aria-label="待聊确认列表" hidden></div>
+          <div class="chat-subtabs" role="tablist" aria-label="对话视图切换">
+            <button id="chatSubtabChat" class="chat-subtab is-active" type="button" role="tab" aria-selected="true" data-chat-subtab="chat">对话</button>
+            <button id="chatSubtabSessions" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="sessions">会话</button>
+            <button id="chatSubtabTasks" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="tasks">任务 <span id="chatTasksBadge" class="tab-count-badge" hidden>0</span></button>
           </div>
-          <div id="chatMessages" class="chat-messages" role="region" aria-label="口味对话记录" tabindex="0"></div>
-          <form id="chatForm" class="chat-form">
-            <label class="chat-input-shell">
-              <span class="chat-input-label">写点你的想法和口味</span>
-              <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
-            </label>
-            <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
-            <p id="chatStatus" class="chat-status" aria-live="polite"></p>
-          </form>
+          <div id="chatSubpanelChat" class="chat-subpanel">
+            <div class="chat-agent-bar">
+              <select id="chatSkillSelect" class="chat-skill-select" aria-label="对话角色" title="对话角色（skill）"></select>
+              <button id="chatPersonaToggle" class="chat-persona-toggle" type="button" aria-haspopup="dialog" aria-controls="chatPersonaDialog">风格 · 自然朋友</button>
+              <button id="chatApprovalsToggle" class="chat-pending-toggle chat-approvals-toggle" type="button" aria-expanded="false" aria-controls="chatApprovalsList" hidden>
+                <span>待审批 <span id="chatApprovalsCount" class="chat-pending-count">0</span></span>
+              </button>
+            </div>
+            <div id="chatApprovalsList" class="chat-pending-list chat-approvals-list" aria-label="待审批操作列表" hidden></div>
+            <div class="chat-pending">
+              <div class="chat-pending-head">
+                <button id="chatPendingToggle" class="chat-pending-toggle" type="button" aria-expanded="false" aria-controls="chatPendingList">
+                  <span>待聊确认 <span id="chatPendingCount" class="chat-pending-count">0</span></span>
+                </button>
+                <label class="chat-badge-pref" title="开启后「对话」标签上显示待聊数量红点；关闭则始终隐藏。默认关闭。">
+                  <input id="chatPendingBadgeToggle" type="checkbox">
+                  <span class="chat-badge-pref-switch" aria-hidden="true"></span>
+                  <span id="chatPendingBadgeToggleText" class="chat-badge-pref-text">标签红点</span>
+                </label>
+              </div>
+              <div id="chatPendingList" class="chat-pending-list" aria-label="待聊确认列表" hidden></div>
+            </div>
+            <div id="chatMessages" class="chat-messages" role="region" aria-label="口味对话记录" tabindex="0"></div>
+            <form id="chatForm" class="chat-form">
+              <label class="chat-input-shell">
+                <span class="chat-input-label">写点你的想法和口味</span>
+                <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
+              </label>
+              <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
+              <p id="chatStatus" class="chat-status" aria-live="polite"></p>
+            </form>
+          </div>
+          <div id="chatSubpanelSessions" class="chat-subpanel" hidden>
+            <button id="chatSessionNew" class="action-button action-secondary" type="button">新建会话</button>
+            <div id="chatSessionsList" class="chat-sessions-list" aria-label="会话列表"></div>
+          </div>
+          <div id="chatSubpanelTasks" class="chat-subpanel" hidden>
+            <div id="chatTasksList" class="chat-tasks-list" aria-label="任务列表"></div>
+            <div id="chatTaskDetail" class="chat-task-detail" hidden></div>
+          </div>
         </div>
       </section>
     </main>
@@ -6162,7 +6751,7 @@
         </div>
         <div class="settings-field">
           <label for="cfgLlmConcurrencyV2">LLM 并发数</label>
-          <input id="cfgLlmConcurrencyV2" type="number" min="1" max="16" step="1" placeholder="4">
+          <input id="cfgLlmConcurrencyV2" type="number" min="1" step="1" placeholder="3">
         </div>
         <div class="settings-field">
           <label for="cfgLlmTimeoutV2">单实例超时（秒）</label>
@@ -6185,12 +6774,16 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama (本地)</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
         <div class="settings-field">
           <label for="cfgLlmConcurrency">LLM 并发数</label>
-          <input id="cfgLlmConcurrency" type="number" min="1" max="16" step="1" placeholder="4">
+          <input id="cfgLlmConcurrency" type="number" min="1" step="1" placeholder="3">
         </div>
         <div class="settings-field">
           <label for="cfgLlmTimeout">LLM 超时 (秒)</label>
@@ -6206,6 +6799,10 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama (本地)</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
@@ -6321,6 +6918,66 @@
             <input id="cfgOpenrouterTitle" type="text" placeholder="OpenBiliClaw">
           </div>
         </div>
+        <!-- OrcaRouter -->
+        <div class="settings-provider-fields" data-provider="orcarouter">
+          <div class="settings-field">
+            <label for="cfgOrcarouterKey">OrcaRouter API Key</label>
+            <input id="cfgOrcarouterKey" type="password" autocomplete="off" placeholder="sk-orca-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOrcarouterModel">Model</label>
+            <input id="cfgOrcarouterModel" type="text" placeholder="openai/gpt-4o">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOrcarouterBaseUrl">Base URL</label>
+            <input id="cfgOrcarouterBaseUrl" type="text" placeholder="https://api.orcarouter.ai/v1">
+          </div>
+        </div>
+        <!-- Requesty -->
+        <div class="settings-provider-fields" data-provider="requesty">
+          <div class="settings-field">
+            <label for="cfgRequestyKey">Requesty API Key</label>
+            <input id="cfgRequestyKey" type="password" autocomplete="off" placeholder="rqsty-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgRequestyModel">Model</label>
+            <input id="cfgRequestyModel" type="text" placeholder="openai/gpt-4o-mini">
+          </div>
+          <div class="settings-field">
+            <label for="cfgRequestyBaseUrl">Base URL</label>
+            <input id="cfgRequestyBaseUrl" type="text" placeholder="https://router.requesty.ai/v1">
+          </div>
+        </div>
+        <!-- API Route -->
+        <div class="settings-provider-fields" data-provider="api_route">
+          <div class="settings-field">
+            <label for="cfgApiRouteKey">API Route API Key</label>
+            <input id="cfgApiRouteKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgApiRouteModel">Model</label>
+            <input id="cfgApiRouteModel" type="text" placeholder="gpt-5.5">
+          </div>
+          <div class="settings-field">
+            <label for="cfgApiRouteBaseUrl">Base URL</label>
+            <input id="cfgApiRouteBaseUrl" type="text" placeholder="https://global.api-route.com/v1">
+          </div>
+        </div>
+        <!-- Cheaper Inference -->
+        <div class="settings-provider-fields" data-provider="cheaperinference">
+          <div class="settings-field">
+            <label for="cfgCheaperinferenceKey">Cheaper Inference API Key</label>
+            <input id="cfgCheaperinferenceKey" type="password" autocomplete="off" placeholder="ci_live_...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgCheaperinferenceModel">Model</label>
+            <input id="cfgCheaperinferenceModel" type="text" placeholder="gpt-5.4-mini">
+          </div>
+          <div class="settings-field">
+            <label for="cfgCheaperinferenceBaseUrl">Base URL</label>
+            <input id="cfgCheaperinferenceBaseUrl" type="text" placeholder="https://api.cheaperinference.com/v1">
+          </div>
+        </div>
         <!-- OpenAI Compatible -->
         <div class="settings-provider-fields" data-provider="openai_compatible">
           <p class="settings-hint">
@@ -6407,6 +7064,10 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -6424,6 +7085,10 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -6441,6 +7106,10 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -6458,6 +7127,10 @@
             <option value="deepseek">DeepSeek</option>
             <option value="ollama">Ollama</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="orcarouter">OrcaRouter</option>
+            <option value="requesty">Requesty</option>
+            <option value="api_route">API Route</option>
+            <option value="cheaperinference">Cheaper Inference</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -6502,6 +7175,27 @@
           <input id="cfgBilibiliMinInterval" type="number" min="0" step="1" placeholder="3">
         </div>
         <div class="settings-field">
+          <label for="cfgBiliDatePreset">B站发布日期范围</label>
+          <select id="cfgBiliDatePreset">
+            <option value="all">全部日期</option>
+            <option value="last_7_days">最近一周</option>
+            <option value="last_30_days">最近一个月</option>
+            <option value="last_6_months">最近半年</option>
+            <option value="last_1_year">最近一年</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+        <div class="settings-field" id="cfgBiliDateCustomFields" hidden>
+          <label for="cfgBiliDateStart">开始日期（YYYY-MM-DD，留空不限）</label>
+          <input id="cfgBiliDateStart" type="date">
+          <label for="cfgBiliDateEnd">结束日期（YYYY-MM-DD，留空不限）</label>
+          <input id="cfgBiliDateEnd" type="date">
+        </div>
+        <div class="settings-field">
+          <label for="cfgBiliDateWeight">范围外权重（0 到 1；1 = 严格排除）</label>
+          <input id="cfgBiliDateWeight" type="number" min="0" max="1" step="0.01" inputmode="decimal" placeholder="0.5">
+        </div>
+        <div class="settings-field">
           <label for="cfgBiliBrowserExecutable">agent-browser 路径</label>
           <input id="cfgBiliBrowserExecutable" type="text" placeholder="留空使用全局安装">
         </div>
@@ -6523,6 +7217,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-xiaohongshu">
+        <div class="settings-field-row">
+          <input id="cfgXhsIncremental" type="checkbox">
+          <label for="cfgXhsIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6558,6 +7257,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-douyin">
+        <div class="settings-field-row">
+          <input id="cfgDouyinIncremental" type="checkbox">
+          <label for="cfgDouyinIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6660,6 +7364,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-youtube">
+        <div class="settings-field-row">
+          <input id="cfgYoutubeIncremental" type="checkbox">
+          <label for="cfgYoutubeIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6737,6 +7446,52 @@
       </div>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="github" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-github">
+        <h3><span class="section-icon" aria-hidden="true">GH</span> GitHub</h3>
+        <div class="settings-field-row">
+          <input id="cfgGithubEnabled" type="checkbox">
+          <label for="cfgGithubEnabled">启用 GitHub 来源</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgGithubStatus" data-source-status="github"><span class="src-dot">●</span> <span class="src-detail">GitHub 来源状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-github">
+        <div class="settings-probe-row source-verify-row">
+          <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
+          <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+        </div>
+        <div class="settings-field">
+          <label for="cfgGithubUsername">公开用户名（可留空）</label>
+          <input id="cfgGithubUsername" type="text" maxlength="39" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例如 octocat">
+        </div>
+        <div class="settings-field">
+          <label for="cfgGithubAccessToken">Personal Access Token（可选）</label>
+          <input id="cfgGithubAccessToken" type="password" maxlength="512" autocomplete="off" placeholder="可留空；不会回显已保存的 PAT">
+          <div class="settings-field-row">
+            <input id="cfgGithubClearToken" type="checkbox">
+            <label for="cfgGithubClearToken">清除已保存的 PAT</label>
+          </div>
+          <p class="settings-hint">仅使用 GitHub 官方 REST API 读取公开 repository。公开用户名用于导入该账号公开的 starred repositories；PAT 只用于 <code>GET /user</code> 身份确认和提高 API 限额，不会开放私有仓库。PAT 留空保持已有值，勾选清除才会删除。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a>。</p>
+        </div>
+        <div class="settings-field">
+          <label>内容发现分支</label>
+          <div class="settings-field-row"><input id="cfgGithubModeSearch" type="checkbox"><label for="cfgGithubModeSearch">搜索</label></div>
+          <div class="settings-field-row"><input id="cfgGithubModeRanked" type="checkbox"><label for="cfgGithubModeRanked">排名（按 stars）</label></div>
+          <div class="settings-field-row"><input id="cfgGithubModeLatest" type="checkbox"><label for="cfgGithubModeLatest">最新（近 30 天创建，按最近更新）</label></div>
+        </div>
+        <div class="settings-field"><label for="cfgGithubDailySearchBudget">每日搜索条目</label><input id="cfgGithubDailySearchBudget" type="number" min="0" step="1" placeholder="120"></div>
+        <div class="settings-field"><label for="cfgGithubDailyRankedBudget">每日排名条目</label><input id="cfgGithubDailyRankedBudget" type="number" min="0" step="1" placeholder="60"></div>
+        <div class="settings-field"><label for="cfgGithubDailyLatestBudget">每日最新条目</label><input id="cfgGithubDailyLatestBudget" type="number" min="0" step="1" placeholder="60"></div>
+        <p class="settings-hint" data-budget-note>预算 = 每日条目上限，不是开关；GitHub 匿名 Search API 有严格限额，请保留合理请求间隔。</p>
+        <div class="settings-field"><label for="cfgGithubRequestInterval">请求间隔秒数</label><input id="cfgGithubRequestInterval" type="number" min="0" max="60" step="1" placeholder="6"></div>
+        <div class="settings-field"><label for="cfgGithubMinInterval">最小调度间隔分钟</label><input id="cfgGithubMinInterval" type="number" min="0" max="1440" step="1" placeholder="10"></div>
+        <div class="settings-field"><label for="cfgGithubBootstrapLimit">初始化 starred repository 上限</label><input id="cfgGithubBootstrapLimit" type="number" min="1" max="1000" step="1" placeholder="300"></div>
+        <div class="settings-field"><label for="cfgGithubBootstrapMaxPages">初始化最多页数</label><input id="cfgGithubBootstrapMaxPages" type="number" min="1" max="100" step="1" placeholder="10"></div>
+        <p class="settings-hint">匿名即可使用 search / ranked / latest。GitHub 来源始终只读、只处理公开仓库；扩展不会申请 GitHub host permission，也不会打开任务页或同步 Cookie。</p>
+      </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="zhihu" data-open="0">
         <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-zhihu">
         <h3><span class="section-icon">&#x77E5;</span> 知乎</h3>
@@ -6748,6 +7503,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-zhihu">
+        <div class="settings-field-row">
+          <input id="cfgZhihuIncremental" type="checkbox">
+          <label for="cfgZhihuIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6819,6 +7579,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-reddit">
+        <div class="settings-field-row">
+          <input id="cfgRedditIncremental" type="checkbox">
+          <label for="cfgRedditIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6955,6 +7720,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-linuxdo">
+        <div class="settings-field-row">
+          <input id="cfgLinuxdoIncremental" type="checkbox">
+          <label for="cfgLinuxdoIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-probe-row source-verify-row">
           <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
           <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
@@ -6990,6 +7760,11 @@
           <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
         </div>
         <div class="source-card-body" id="sourceCardBody-v2ex">
+        <div class="settings-field-row">
+          <input id="cfgV2exIncremental" type="checkbox">
+          <label for="cfgV2exIncremental">允许扩展周期回拉（可能打开前台标签页）</label>
+        </div>
+        <p class="settings-hint">默认关闭；需同时在「调度」页开启周期回拉总开关。</p>
         <div class="settings-field">
           <label for="cfgV2exAccessToken">PAT（可留空）</label>
           <input id="cfgV2exAccessToken" type="password" maxlength="512" autocomplete="off" placeholder="可留空；匿名公开发现可直接使用">
@@ -7079,6 +7854,10 @@
           <input id="cfgPoolShareTwitter" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-field">
+          <label for="cfgPoolShareGithub">候选池 GitHub 占比</label>
+          <input id="cfgPoolShareGithub" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
           <label for="cfgPoolShareZhihu">候选池知乎占比</label>
           <input id="cfgPoolShareZhihu" type="number" min="1" step="1" placeholder="1">
         </div>
@@ -7155,6 +7934,28 @@
           <p class="settings-hint" id="cfgAutostartHint">读取开机自启动状态中…</p>
           <p class="settings-note">只影响下次登录拉起后端，不启停当前进程；本机 Ollama 配置可能随启动预检一起拉起。若依赖 shell 环境变量，建议先写入 config.toml。</p>
         </div>
+        <div class="settings-field" id="tailnetControlField">
+          <label>应用内 Tailnet 远程访问</label>
+          <div class="settings-field-row">
+            <input id="cfgTailnetEnabled" type="checkbox">
+            <label for="cfgTailnetEnabled">允许手机通过私有 Tailnet 访问电脑端</label>
+          </div>
+          <p class="settings-hint">电脑端只为 OpenBiliClaw 内嵌 Tailscale 节点，不会开启系统级 VPN。</p>
+          <label for="cfgTailnetHostname">电脑节点名</label>
+          <input id="cfgTailnetHostname" type="text" autocomplete="off" placeholder="openbiliclaw-host">
+          <label for="cfgTailnetBootstrapCredential">首次入网凭据（可选）</label>
+          <input id="cfgTailnetBootstrapCredential" type="password" autocomplete="new-password" placeholder="tskey-auth-… / tskey-client-…">
+          <p class="settings-hint">可填 Auth Key；也可填具有 <code>auth_keys</code> 写权限的 OAuth Client Secret。留空则首次启动时走网页登录。</p>
+          <label for="cfgTailnetAdvertiseTags">OAuth 设备标签</label>
+          <input id="cfgTailnetAdvertiseTags" type="text" autocomplete="off" placeholder="tag:openbiliclaw">
+          <p class="settings-hint">使用 <code>tskey-client-…</code> 时必填，且必须是该 OAuth Client 已授权的 tag；多个 tag 用逗号分隔。</p>
+          <div class="settings-field-row" id="cfgTailnetClearCredentialField" hidden>
+            <input id="cfgTailnetClearCredential" type="checkbox">
+            <label for="cfgTailnetClearCredential">清除已暂存的单次凭据</label>
+          </div>
+          <p class="settings-probe-status" id="cfgTailnetStatus" aria-live="polite">读取 Tailnet 状态中…</p>
+          <p class="settings-note">凭据只在运行后端的电脑上以私有文件暂存到下次完整重启（POSIX 权限 0600），交给 helper 后立即删除，不会写进 config.toml 或回传插件。</p>
+        </div>
         <div class="settings-field" id="savedSyncControlField">
           <label>保存与平台同步</label>
           <div class="settings-field-row">
@@ -7173,6 +7974,16 @@
           <div class="settings-field-row">
             <input id="cfgReinitResetCognition" type="checkbox" data-settings-ignore-dirty>
             <label for="cfgReinitResetCognition">同时清空旧认知观察与洞察（换账号 / 大改兴趣时建议）</label>
+          </div>
+          <div class="settings-field-row">
+            <label for="cfgReinitLlmConcurrency">初始化 LLM 并发</label>
+            <input id="cfgReinitLlmConcurrency" type="number" min="1" step="1" inputmode="numeric" value="3" data-settings-ignore-dirty>
+            <span class="settings-hint">默认 3；限流严重时可降到 1-2</span>
+          </div>
+          <div class="settings-field-row">
+            <label for="cfgReinitTimeoutMinutes">初始化总超时（分钟）</label>
+            <input id="cfgReinitTimeoutMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric" value="60" data-settings-ignore-dirty>
+            <span class="settings-hint">默认 60；越长越能容忍慢模型</span>
           </div>
           <p id="cfgReinitStatus" class="settings-probe-status" aria-live="polite">读取初始化状态中…</p>
         </div>
@@ -7253,6 +8064,11 @@
           <label for="cfgSchedulerEnabled">停止后台 LLM 请求</label>
         </div>
         <p class="settings-hint">开启后会暂停定时发现、候选池预计算和画像更新中的 LLM / embedding 调用；推荐列表不再自动补充，候选池为空时可能暂时没有推荐，建议初始化完成并已有内容后再开启。</p>
+        <div class="settings-field-row">
+          <input id="cfgSourceIncrementalEnabled" type="checkbox">
+          <label for="cfgSourceIncrementalEnabled">启用扩展来源周期回拉（总开关）</label>
+        </div>
+        <p class="settings-hint">默认关闭。开启后仍需要到「平台源」页为对应来源单独打开“允许扩展周期回拉”；这些任务可能打开前台标签页抓取账号数据。</p>
         <div class="settings-field-row">
           <input id="cfgPauseOnDisconnect" type="checkbox">
           <label for="cfgPauseOnDisconnect">关闭浏览器后停止后台</label>
@@ -7344,6 +8160,19 @@
 
       <div id="settingsPanelAdvanced" class="settings-panel" data-settings-panel="advanced" role="tabpanel" aria-labelledby="settingsTabAdvanced" hidden>
       <div class="settings-section">
+        <h3>候选评分模式</h3>
+        <div class="settings-field">
+          <label for="cfgEvalScorer">评分器模式</label>
+          <select id="cfgEvalScorer" aria-describedby="cfgEvalScorerHint">
+            <option value="llm" selected>Agent（默认）</option>
+            <option value="shadow">Shadow（校准观察）</option>
+            <option value="learned">Learned（仅相关性，实验性）</option>
+          </select>
+        </div>
+        <p class="settings-hint" id="cfgEvalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+      </div>
+
+      <div class="settings-section">
         <h3>推荐增强</h3>
         <p class="settings-hint">P1 用户视觉画像、P2 弹幕语义、P3 视频关键帧本质都是排序信号加权，不是过滤。P1/P3 依赖多模态 image embedding，P2 只需文本 embedding；P1 每个极性反馈不足 8 条时会安全 no-op。关闭开关会保留缓存与参数并回退到原排序，不影响现有主流程；关键帧和弹幕目前仅作用于 B 站。</p>
         <div class="settings-field-row">
@@ -7424,6 +8253,41 @@
         </div>
         <p class="settings-hint">经典：仅用合并关键词生成器；混合：在经典基础上再叠加 search-backed 灵感轴链路（最丰富，但同时跑两套，混合最贵）；灵感：完全用灵感轴链路替代经典。</p>
       </div>
+
+      <div class="settings-section">
+        <h3>认知循环预算</h3>
+        <p class="settings-hint">觉察 / 洞察每轮 LLM 调用的输入批量与输出 token 上限。默认按 256K 上下文模型设计；80-100K 上下文的本地模型（如 qwen3.8-27B）可调小，无需改源码。</p>
+        <div class="settings-field">
+          <label for="cfgAwarenessEventBatchSize">觉察事件批量大小</label>
+          <input id="cfgAwarenessEventBatchSize" type="number" min="10" max="900" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgInsightNoteBatchSize">洞察笔记批量大小</label>
+          <input id="cfgInsightNoteBatchSize" type="number" min="10" max="450" step="1" placeholder="150">
+        </div>
+        <div class="settings-field">
+          <label for="cfgCognitionMaxTokens">认知输出 token 上限</label>
+          <input id="cfgCognitionMaxTokens" type="number" min="1024" max="128000" step="1" placeholder="32768">
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>回复语气</h3>
+        <div class="settings-field">
+          <label for="cfgReplyStyle">回复风格指令</label>
+          <input id="cfgReplyStyle" type="text" maxlength="200" autocomplete="off" placeholder="例如：说话简短直接，少用表情包语气">
+        </div>
+        <p class="settings-hint">追加一条语气要求，影响对话、推荐文案与画像，≤200 字，留空恢复默认。</p>
+        <div class="settings-field">
+          <label for="cfgDialogueTonePrompt">聊天语气块（整体替换）</label>
+          <textarea id="cfgDialogueTonePrompt" rows="3" maxlength="1000" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="留空使用内置默认语气"></textarea>
+        </div>
+        <p class="settings-hint">整体替换聊天 prompt 的语气块，只影响聊天，支持多行，≤1000 字，留空恢复默认；设置后回复风格指令对聊天不再生效。</p>
+        <div class="settings-actions">
+          <button id="cfgTestTone" class="settings-save" type="button">测试语气</button>
+        </div>
+        <p class="settings-hint" id="cfgTestToneResult" aria-live="polite"></p>
+      </div>
       </div>
 
       <div id="settingsPanelLogging" class="settings-panel" data-settings-panel="logging" role="tabpanel" aria-labelledby="settingsTabLogging" hidden>
@@ -7473,6 +8337,17 @@
           <input id="cfgLogUnmanagedMaxAge" type="number" min="0" step="1" placeholder="30">
         </div>
       </div>
+
+      <!-- Diagnostics alerts (LLM / Embedding 请求失败等异常事件) -->
+      <div class="settings-section diag-alerts-section">
+        <h3><span class="section-icon">&#x26A0;&#xFE0F;</span> 异常报警</h3>
+        <div class="diag-alerts-head">
+          <span class="diag-alert-summary" id="cfgDiagAlertSummary" aria-live="polite"></span>
+          <button id="cfgRefreshDiagAlerts" class="settings-secondary-btn diag-alerts-refresh" type="button">刷新</button>
+        </div>
+        <p class="diag-alerts-empty" id="cfgDiagAlertsEmpty">暂无异常报警，LLM / Embedding 请求异常会显示在这里。</p>
+        <ul class="diag-alert-list" id="cfgDiagAlertList" hidden></ul>
+      </div>
       </div>
 
       <p class="settings-note">保存后会尝试热重载；少数路径类设置仍建议重启后端确认。</p>
@@ -7512,6 +8387,10 @@
                 <option value="gemini">Gemini</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="openrouter">OpenRouter</option>
+                <option value="orcarouter">OrcaRouter</option>
+                <option value="requesty">Requesty</option>
+                <option value="api_route">API Route</option>
+                <option value="cheaperinference">Cheaper Inference</option>
                 <option value="ollama">Ollama</option>
                 <option value="openai_compatible">OpenAI-compatible</option>
               </select>
@@ -7606,12 +8485,25 @@
     </footer>
   </div>
 
+  <dialog id="chatPersonaDialog" class="chat-persona-dialog" aria-labelledby="chatPersonaTitle" aria-describedby="chatPersonaDescription">
+    <div class="chat-persona-dialog-head">
+      <h2 id="chatPersonaTitle">聊天风格</h2>
+      <button class="chat-persona-toggle" type="button" data-persona-close aria-label="关闭聊天风格">关闭</button>
+    </div>
+    <p id="chatPersonaDescription">选择喜欢的说话方式，用于本会话的新消息。功能角色和工具权限保持原样。</p>
+    <p id="chatPersonaExamplePrompt" hidden></p>
+    <div id="chatPersonaList" class="chat-persona-list" aria-label="可选聊天风格"></div>
+    <p id="chatPersonaStatus" role="status" aria-live="polite"></p>
+    <button class="chat-persona-toggle" type="button" data-persona-retry>刷新风格列表</button>
+  </dialog>
+
   <!-- Frontend helpers shared with backend-served pages; copied into the
        package by scripts/build.mjs because MV3's CSP forbids loading them from
        the backend. Classic scripts run before the module below so popup.js can
        read their globals. -->
   <script src="shared/dialogue-confirmation.js"></script>
   <script src="shared/source-status.js"></script>
+  <script src="shared/agent-chat.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

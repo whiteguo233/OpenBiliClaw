@@ -75,7 +75,7 @@ class _PerUrlBlockingFetcher:
 
 async def test_total_and_background_caps_are_enforced() -> None:
     fetcher = _GlobalBlockingFetcher()
-    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher)
+    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher, max_active=4, max_background=3)
     background = [
         asyncio.create_task(coordinator.fetch(_url(f"bg-{index}"), priority="background"))
         for index in range(8)
@@ -103,7 +103,7 @@ async def test_released_slot_goes_to_waiting_foreground_before_background() -> N
     queued_fg = _url("queued-fg")
     all_urls = [*active_bg, active_fg, queued_bg, queued_fg]
     fetcher = _PerUrlBlockingFetcher(all_urls)
-    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher)
+    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher, max_active=4, max_background=3)
 
     tasks = [
         asyncio.create_task(coordinator.fetch(url, priority="background")) for url in active_bg
@@ -151,7 +151,7 @@ async def test_foreground_join_promotes_queued_background_same_key() -> None:
     )
     assert image_cache_key(stale_target) == image_cache_key(fresh_target)
     fetcher = _PerUrlBlockingFetcher([*blockers, stale_target, fresh_target])
-    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher)
+    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher, max_active=4, max_background=3)
 
     blocker_tasks = [
         asyncio.create_task(coordinator.fetch(url, priority="background")) for url in blockers
@@ -270,7 +270,7 @@ async def test_cache_hit_uses_no_gate_or_upstream_slot() -> None:
 
 async def test_shutdown_cancels_active_and_queued_work_and_rejects_new_fetches() -> None:
     fetcher = _GlobalBlockingFetcher()
-    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher)
+    coordinator = ImageFetchCoordinator(upstream_fetcher=fetcher, max_active=4, max_background=3)
     tasks = [
         asyncio.create_task(coordinator.fetch(_url(f"shutdown-bg-{index}"), priority="background"))
         for index in range(5)

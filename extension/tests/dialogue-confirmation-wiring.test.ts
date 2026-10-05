@@ -76,7 +76,7 @@ test("all visible clients hydrate and reconnect the pending-confirmation badge",
 
   assert.match(
     desktop,
-    /const pendingConfirmationsPromise = refreshDesktopPendingConfirmations\(\);[\s\S]*const recommendationsPromise = readRecommendationSnapshot\(\)/,
+    /const pendingConfirmationsPromise = refreshDesktopPendingConfirmations\(\);[\s\S]*const recommendationsPromise = shouldReadRecommendations\s*\? readRecommendationSnapshot\(\)/,
     "desktop must start the badge request before the recommendation-card request fan-out",
   );
   assert.match(desktop, /const secondaryPromises = \[\s*pendingConfirmationsPromise,/);
@@ -182,4 +182,26 @@ test("popup and desktop cognition insights are read-only while the legacy endpoi
   assert.match(desktop, /洞察区只读；请在对话的待聊确认入口继续/);
 
   assert.match(backend, /@app\.post\("\/api\/insights\/feedback"/);
+});
+
+test("popup chat-tab red dot is opt-in and off by default", () => {
+  const popup = extensionFile("popup/popup.js");
+  const html = extensionFile("popup/popup.html");
+
+  // Quick switch at the top of the 「对话」 tab.
+  assert.match(html, /id="chatPendingBadgeToggle" type="checkbox"/);
+  assert.match(html, /id="chatPendingBadgeToggleText"[^>]*>标签红点/);
+  assert.ok(
+    html.indexOf('id="chatPendingBadgeToggle"') < html.indexOf('id="chatPendingList"'),
+    "the quick switch sits above the pending-confirmation list",
+  );
+
+  assert.match(popup, /CHAT_PENDING_BADGE_STORAGE_KEY = "openbiliclaw\.popup\.showChatPendingBadge"/);
+  assert.match(popup, /let showChatPendingBadge = false;/);
+  assert.match(popup, /localStorage\.getItem\(CHAT_PENDING_BADGE_STORAGE_KEY\) === "1"/);
+  assert.match(
+    popup,
+    /elements\.chatPendingTabCount\.hidden = !showChatPendingBadge \|\| count <= 0;/,
+  );
+  assert.match(popup, /elements\.chatPendingBadgeToggle\.addEventListener\("change"/);
 });

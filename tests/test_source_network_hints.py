@@ -67,10 +67,11 @@ def test_overseas_platform_list_is_the_verified_one() -> None:
     """
     assert {
         "bangumi",
+        "github",
+        "instagram",
         "youtube",
         "twitter",
         "reddit",
-        "instagram",
     } == OVERSEAS_EGRESS_PLATFORMS
     for family in ("bilibili", "xiaohongshu", "douyin", "zhihu"):
         assert not requires_overseas_network(family), f"{family} is CN-direct"
@@ -89,7 +90,7 @@ def test_overseas_hints_distinguish_backend_and_browser_transports() -> None:
     instead of being told that changing the backend setting will fix it.
     """
     routed = {rule.family for rule in SOURCE_FAMILY_RULES if rule.routed_by_network_mode}
-    assert routed == {"bangumi", "youtube", "twitter", "reddit"}
+    assert routed == {"bangumi", "github", "youtube", "twitter", "reddit"}
     assert OVERSEAS_EGRESS_PLATFORMS - routed == {"instagram"}
 
     for family in routed:

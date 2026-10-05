@@ -14,8 +14,12 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openbiliclaw.discovery.engine import DiscoveredContent
-from openbiliclaw.discovery.temporal import TEMPORAL_POLICY_VERSION
+from openbiliclaw.discovery.temporal import (
+    TEMPORAL_POLICY_VERSION,
+    is_complete_temporal_evidence_marker,
+)
 from openbiliclaw.saved_sync.identity import make_item_key
+from openbiliclaw.sources.platforms import normalize_source_platform
 
 PENDING_EVAL = "pending_eval"
 EVALUATING = "evaluating"
@@ -26,6 +30,7 @@ REJECTED_DUPLICATE = "rejected_duplicate"
 REJECTED_CACHE_ADMISSION = "rejected_cache_admission"
 REJECTED_RECENTLY_VIEWED = "rejected_recently_viewed"
 REJECTED_FRANCHISE_QUOTA = "rejected_franchise_quota"
+REJECTED_TEMPORAL_STALE = "rejected_temporal_stale"
 FAILED_EVAL = "failed_eval"
 
 
@@ -82,26 +87,7 @@ class DiscoveryCandidateWrite:
 
 
 def _canonical_platform(raw_platform: object) -> str:
-    raw = str(raw_platform or "").strip().lower()
-    if raw in {"bili", "bilibili", "哔哩哔哩", "b站"}:
-        return "bilibili"
-    if raw in {"xhs", "xiaohongshu", "小红书"}:
-        return "xiaohongshu"
-    if raw in {"dy", "douyin", "抖音"}:
-        return "douyin"
-    if raw in {"yt", "youtube"}:
-        return "youtube"
-    if raw in {"x", "twitter"}:
-        return "twitter"
-    if raw in {"zhihu", "知乎"}:
-        return "zhihu"
-    if raw in {"bangumi", "bgm"}:
-        return "bangumi"
-    if raw in {"weibo", "wb", "微博"}:
-        return "weibo"
-    if raw in {"instagram", "ig"}:
-        return "instagram"
-    return raw or "unknown"
+    return normalize_source_platform(raw_platform, default="unknown")
 
 
 def _canonical_url(raw_url: object) -> str:
@@ -182,6 +168,15 @@ def discovered_content_to_candidate_write(
     content_id = str(item.content_id or item.bvid or "").strip()
     bvid = str(item.bvid or content_id or "").strip()
     payload = dict(raw_payload or {})
+    # This key is reserved for the normalized dataclass field. A producer may
+    # carry other bounded diagnostics in ``raw_payload``, but it cannot smuggle
+    # an upstream object through the source-metadata channel.
+    payload.pop("source_metadata", None)
+    if item.source_metadata:
+        # ``source_metadata`` is the adapter-normalized allowlist, never the
+        # raw upstream row.  Prefer it over a caller-provided payload copy so
+        # untrusted/raw metadata cannot shadow authoritative provenance.
+        payload["source_metadata"] = dict(item.source_metadata)
     if item.engagement_available and "engagement_available" not in payload:
         payload["engagement_available"] = list(item.engagement_available)
     raw_discovery_lane = str(getattr(item, "discovery_lane", "") or "").strip().lower()
@@ -282,10 +277,28 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         decoded_payload = raw_payload_value if isinstance(raw_payload_value, dict) else {}
     available = decoded_payload.get("engagement_available")
     engagement_available = (
-        [str(value) for value in available if str(value) in {"view", "like", "comment"}]
+        [
+            str(value)
+            for value in available
+            if str(value)
+            in {
+                "view",
+                "like",
+                "favorite",
+                "collect",
+                "comment",
+                "share",
+                "danmaku",
+                "reply",
+                "retweet",
+                "bookmark",
+            }
+        ]
         if isinstance(available, list)
         else []
     )
+    raw_source_metadata = decoded_payload.get("source_metadata")
+    source_metadata = dict(raw_source_metadata) if isinstance(raw_source_metadata, dict) else {}
     return DiscoveredContent(
         bvid=bvid,
         title=str(row.get("title") or ""),
@@ -327,6 +340,21 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         temporal_confidence=float(row.get("temporal_confidence") or 0.0),
         temporal_reason=str(row.get("temporal_reason") or ""),
         temporal_policy_version=str(row.get("temporal_policy_version") or TEMPORAL_POLICY_VERSION),
+        temporal_validity_mode=str(row.get("temporal_validity_mode") or "none"),
+        temporal_valid_until=str(row.get("temporal_valid_until") or ""),
+        temporal_scope=str(row.get("temporal_scope") or "none"),
+        temporal_evidence=str(row.get("temporal_evidence") or ""),
+        temporal_state=str(row.get("temporal_state") or "unknown"),
+        temporal_next_review_at=str(row.get("temporal_next_review_at") or ""),
+        temporal_evaluated_at=str(row.get("temporal_evaluated_at") or ""),
+        temporal_evidence_complete=is_complete_temporal_evidence_marker(
+            row.get("temporal_evidence_complete")
+        ),
+        temporal_evaluated=(
+            str(row.get("temporal_class") or "unknown").strip().lower() != "unknown"
+            or float(row.get("temporal_confidence") or 0.0) != 0.0
+            or bool(str(row.get("temporal_reason") or "").strip())
+        ),
         pool_expression=str(row.get("pool_expression") or ""),
         pool_topic_label=str(row.get("pool_topic_label") or ""),
         candidate_tier=str(row.get("candidate_tier") or "primary"),
@@ -337,5 +365,6 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         score_threshold=float(row.get("score_threshold") or 0.0),
         body_text=str(row.get("body_text") or ""),
         content_type=str(row.get("content_type") or "video"),
+        source_metadata=source_metadata,
         source_keyword_id=_coerce_optional_int(row.get("source_keyword_id")),
     )

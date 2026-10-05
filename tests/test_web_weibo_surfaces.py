@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+
+from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,12 +78,16 @@ def test_weibo_current_docs_store_metadata_and_release_boundary_are_in_sync() ->
     changelog = _read("docs/changelog.md")
     amo = json.loads(_read("extension/amo-metadata.json"))
 
-    assert "linuxdo / v2ex / weibo / instagram` 枚举" in storage
-    assert "12 个 canonical family" in diagram
+    assert "linuxdo / v2ex / weibo / github / instagram` 枚举" in storage
+    assert f"{len(CANONICAL_SOURCE_FAMILIES)} 个 canonical family" in diagram
     assert "微博" in docker
     assert "微博" in listing
     assert "七平台内容发现 AI Agent" not in listing
-    assert changelog.index("## 未发布") < changelog.index("## v0.3.201")
+    # The newest version section must sit above the v0.3.201 boundary; do not
+    # anchor on "## 未发布" so the check survives release commits.
+    newest_version_heading = re.search(r"(?m)^## v\d+\.\d+\.\d+", changelog)
+    assert newest_version_heading is not None
+    assert newest_version_heading.start() < changelog.index("## v0.3.201")
     assert "微博" in changelog.split("## v0.3.201", 1)[0]
     assert "Weibo" in amo["description"]["en-US"]
     assert "微博" in amo["description"]["zh-CN"]

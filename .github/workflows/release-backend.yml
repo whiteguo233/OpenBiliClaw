@@ -1,6 +1,7 @@
 name: Validate Backend Source Tag
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "backend-v*"

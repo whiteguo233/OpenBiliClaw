@@ -26,6 +26,7 @@ import type {
 } from "../main/x-graphql-tap.js";
 import type { BehaviorEvent } from "../shared/types.js";
 import { installNativeSaveExecutor } from "./native-save/runtime.ts";
+import { shouldStartPassiveCollector } from "./native-save/task-mode.ts";
 import { saveX } from "./native-save/x.ts";
 import { COMMENT_TEXT_MAX_CHARS, sanitizeUserText } from "../shared/text-sanitize.ts";
 
@@ -135,8 +136,11 @@ export function isXEngagement(value: unknown): value is XEngagement {
 if (typeof window !== "undefined" && typeof chrome !== "undefined") {
   // Dynamic import so node:test's static analysis doesn't pull the DOM-heavy
   // kernel graph into this module (mirrors content/douyin.ts).
-  void import("./kernel.js").then(({ startCollector }) => {
-    startCollector(twitterAdapter);
+  void shouldStartPassiveCollector().then((shouldStart) => {
+    if (!shouldStart) return;
+    void import("./kernel.js").then(({ startCollector }) => {
+      startCollector(twitterAdapter);
+    });
   });
   registerE2EExecutor("twitter");
   installNativeSaveExecutor("twitter", saveX);

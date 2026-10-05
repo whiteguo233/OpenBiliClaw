@@ -91,6 +91,13 @@ export function buildAppDeepLink(url) {
     return "";
   }
 
+  if (hostMatches(host, "github.com")) {
+    // GitHub exposes no stable private scheme we can safely claim here.
+    // Returning empty keeps the adapter-issued canonical HTTPS repository URL
+    // as the browser/universal-link target on both iOS and Android.
+    return "";
+  }
+
   return "";
 }
 

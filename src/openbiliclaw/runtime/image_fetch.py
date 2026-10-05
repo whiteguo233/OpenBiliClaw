@@ -52,8 +52,8 @@ class ImageFetchCoordinator:
     """
 
     upstream_fetcher: CoverFetcher | None = None
-    max_active: int = 4
-    max_background: int = 3
+    max_active: int = 10
+    max_background: int = 8
     _condition: asyncio.Condition = field(init=False, repr=False)
     _inflight: dict[str, _InflightFetch] = field(init=False, default_factory=dict, repr=False)
     _closed: bool = field(init=False, default=False, repr=False)

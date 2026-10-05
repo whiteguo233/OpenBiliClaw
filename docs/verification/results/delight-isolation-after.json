@@ -1,0 +1,38 @@
+[
+  {
+    "request": {
+      "path": "/api/delight/pending-batch?limit=10",
+      "ms": 386.6,
+      "status": 200
+    },
+    "concurrent_ping": {
+      "path": "/api/ping",
+      "ms": 8.6,
+      "status": 200
+    }
+  },
+  {
+    "request": {
+      "path": "/api/delight/pending-batch?limit=10",
+      "ms": 403.7,
+      "status": 200
+    },
+    "concurrent_ping": {
+      "path": "/api/ping",
+      "ms": 5.8,
+      "status": 200
+    }
+  },
+  {
+    "request": {
+      "path": "/api/delight/pending-batch?limit=10",
+      "ms": 361.8,
+      "status": 200
+    },
+    "concurrent_ping": {
+      "path": "/api/ping",
+      "ms": 5.8,
+      "status": 200
+    }
+  }
+]

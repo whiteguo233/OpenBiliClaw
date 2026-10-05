@@ -326,11 +326,15 @@ class _SplitRetryBatchLLMService:
         invalid_all_batches: bool = False,
         count_mismatch_batch_calls: set[int] | None = None,
         rate_limit_batch_calls: set[int] | None = None,
+        reasoning_budget_batch_calls: set[int] | None = None,
+        reasoning_budget_all_batches: bool = False,
     ) -> None:
         self.invalid_batch_calls = invalid_batch_calls or set()
         self.invalid_all_batches = invalid_all_batches
         self.count_mismatch_batch_calls = count_mismatch_batch_calls or set()
         self.rate_limit_batch_calls = rate_limit_batch_calls or set()
+        self.reasoning_budget_batch_calls = reasoning_budget_batch_calls or set()
+        self.reasoning_budget_all_batches = reasoning_budget_all_batches
         self.batch_call_sizes: list[int] = []
         self.single_calls = 0
 
@@ -355,6 +359,11 @@ class _SplitRetryBatchLLMService:
         call_index = len(self.batch_call_sizes)
         if call_index in self.rate_limit_batch_calls:
             raise LLMProviderExecutionError("Provider returned 429 rate limit")
+        if self.reasoning_budget_all_batches or call_index in self.reasoning_budget_batch_calls:
+            raise LLMProviderExecutionError(
+                "openai_compatible returned reasoning but no final content "
+                "(finish_reason=length); disable thinking/reasoning or increase max_tokens"
+            )
         if self.invalid_all_batches or call_index in self.invalid_batch_calls:
             return _SlowResponse("not json")
 
@@ -1853,7 +1862,7 @@ async def test_text_batch_evaluation_bounds_declared_output_tokens() -> None:
     )
 
     assert scores == [0.8] * 8
-    assert llm_service.max_tokens == [4096]
+    assert llm_service.max_tokens == [16384]
 
 
 @pytest.mark.asyncio
@@ -1935,7 +1944,7 @@ async def test_multimodal_evaluation_sends_prepared_cover_images(monkeypatch) ->
     ]
     assert '"cover_image_ref":"cover:0"' in llm_service.user_inputs[0]
     assert "cover-0" not in llm_service.user_inputs[0]
-    assert llm_service.max_tokens == [4096]
+    assert llm_service.max_tokens == [8192]
 
 
 @pytest.mark.asyncio
@@ -2293,6 +2302,32 @@ def test_cache_results_rechecks_admission_before_writing() -> None:
     )
 
     assert database.cached_bvids == ["BV1EXPLORE"]
+
+
+def test_cache_results_cannot_bypass_temporal_admission_gate() -> None:
+    database = _RecordingCacheDatabase(set())
+    engine = ContentDiscoveryEngine(database=database)  # type: ignore[arg-type]
+    stale = DiscoveredContent(
+        bvid="BV1STALEBREAKING",
+        title="过期突发内容",
+        published_at="2000-01-01T00:00:00Z",
+        relevance_score=0.95,
+    )
+    stale.temporal_class = "breaking"
+    stale.temporal_confidence = 0.95
+    stale.temporal_policy_version = "v1"
+    durable = DiscoveredContent(
+        bvid="BV1DURABLE",
+        title="长期有效内容",
+        published_at="2000-01-01T00:00:00Z",
+        relevance_score=0.95,
+    )
+    durable.temporal_class = "evergreen"
+    durable.temporal_confidence = 0.95
+
+    engine._cache_results([stale, durable])
+
+    assert database.cached_bvids == ["BV1DURABLE"]
 
 
 @pytest.mark.asyncio
@@ -3714,6 +3749,43 @@ async def test_evaluate_content_batch_rate_limit_propagates_without_split_retry(
 
 
 @pytest.mark.asyncio
+async def test_evaluate_content_batch_splits_when_reasoning_exhausts_budget() -> None:
+    """reasoning-only + finish_reason=length is size-dependent: halve and retry."""
+    llm_service = _SplitRetryBatchLLMService(reasoning_budget_batch_calls={1})
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        evaluation_candidate_transport="production",
+    )
+    contents = _split_retry_contents(45, prefix="REASON")
+
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=45)
+
+    assert llm_service.batch_call_sizes == [45, 22, 23]
+    assert llm_service.single_calls == 0
+    assert scores == [0.73] * 45
+    assert all(content.relevance_score == 0.73 for content in contents)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_batch_persistent_reasoning_exhaustion_is_bounded() -> None:
+    """A budget-exhausted batch never degrades into per-item single calls."""
+    llm_service = _SplitRetryBatchLLMService(reasoning_budget_all_batches=True)
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        evaluation_candidate_transport="production",
+    )
+    contents = _split_retry_contents(16, prefix="REASONFAIL")
+
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=16)
+
+    assert llm_service.batch_call_sizes[0] == 16
+    assert len(llm_service.batch_call_sizes) == 7
+    assert llm_service.single_calls == 0
+    assert scores == [0.0] * 16
+    assert all(c.relevance_reason == "evaluation_response_missing" for c in contents)
+
+
+@pytest.mark.asyncio
 async def test_evaluate_content_batch_splits_idless_count_mismatch() -> None:
     llm_service = _SplitRetryBatchLLMService(count_mismatch_batch_calls={1})
     engine = ContentDiscoveryEngine(
@@ -4700,7 +4772,7 @@ async def test_sparse_evaluation_repairs_multi_member_results_without_ids() -> N
     assert llm.ids_by_call == [["0", "1"], ["0"], ["0"]]
 
 
-def test_sparse_evaluation_is_the_v4_cache_default_with_explicit_rollback_seams() -> None:
+def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams() -> None:
     default_engine = ContentDiscoveryEngine()
     explicit_production_engine = ContentDiscoveryEngine(evaluation_candidate_transport="production")
     sparse_engine = ContentDiscoveryEngine(evaluation_candidate_transport="sparse-json")
@@ -4745,9 +4817,9 @@ def test_sparse_evaluation_is_the_v4_cache_default_with_explicit_rollback_seams(
     assert _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT == "sparse-json"
     assert default_engine.evaluation_candidate_transport == "sparse-json"
     assert default_key == sparse_key
-    assert default_key.startswith("content-eval-v4:batch:")
+    assert default_key.startswith("content-eval-v6:batch:")
     assert default_key.endswith(":transport:sparse-json")
-    assert explicit_production_key.startswith("content-eval-v4:batch:")
+    assert explicit_production_key.startswith("content-eval-v6:batch:")
     assert ":transport:" not in explicit_production_key
     assert explicit_production_key != default_key
     assert row_key.endswith(":transport:row-wire-v1")
@@ -4763,8 +4835,8 @@ def test_sparse_evaluation_is_the_v4_cache_default_with_explicit_rollback_seams(
         content(),
         profile_digest="profile",
     )
-    assert single_key.startswith("content-eval-v4:single:")
-    old_batch_key = default_key.replace("content-eval-v4:", "content-eval-v3:", 1)
+    assert single_key.startswith("content-eval-v6:single:")
+    old_batch_key = default_key.replace("content-eval-v6:", "content-eval-v5:", 1)
     default_engine._set_eval_cache_entry(
         old_batch_key,
         (0.9, "old", "old", "deep_focus", ""),
@@ -5418,7 +5490,8 @@ async def test_eval_cache_reads_legacy_five_tuple_entries_with_neutral_temporal_
     assert content.temporal_class == "unknown"
     assert content.temporal_confidence == 0.0
     assert content.temporal_reason == ""
-    assert content.temporal_policy_version == "v1"
+    assert content.temporal_policy_version == "v2"
+    assert content.temporal_evaluated is False
     assert llm.user_inputs == []
 
 
@@ -5435,6 +5508,11 @@ async def test_single_evaluation_parses_and_caches_temporal_metadata() -> None:
                 "temporal_class": "versioned",
                 "temporal_confidence": 0.88,
                 "temporal_reason": "内容依赖具体产品版本",
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_evidence": "当前仍受支持",
+                "temporal_state": "active",
                 "temporal_policy_version": "model-owned-value-is-ignored",
             },
             ensure_ascii=False,
@@ -5445,7 +5523,7 @@ async def test_single_evaluation_parses_and_caches_temporal_metadata() -> None:
     def candidate() -> DiscoveredContent:
         return DiscoveredContent(
             content_id="single-temporal",
-            title="Python 3.8 安装教程",
+            title="Python 3.8 当前仍受支持安装教程",
             source_platform="youtube",
             source_strategy="search",
         )
@@ -5459,10 +5537,140 @@ async def test_single_evaluation_parses_and_caches_temporal_metadata() -> None:
         assert item.temporal_class == "versioned"
         assert item.temporal_confidence == 0.88
         assert item.temporal_reason == "内容依赖具体产品版本"
-        assert item.temporal_policy_version == "v1"
+        assert item.temporal_policy_version == "v2"
+        assert item.temporal_validity_mode == "version_state"
+        assert item.temporal_scope == "core"
+        assert item.temporal_evidence == "当前仍受支持"
+        assert item.temporal_state == "active"
+        assert item.temporal_next_review_at
+        assert item.temporal_evaluated_at
+        assert item.temporal_evidence_complete is True
+        assert item.temporal_evaluated is True
     assert len(llm.calls) == 1
-    assert {len(entry) for entry in engine._eval_cache.values()} == {9}
-    assert {entry[-1] for entry in engine._eval_cache.values()} == {"v1"}
+    assert {len(entry) for entry in engine._eval_cache.values()} == {17}
+    assert {entry[8] for entry in engine._eval_cache.values()} == {"v2"}
+
+
+@pytest.mark.asyncio
+async def test_explicit_deadline_is_grounded_scheduled_and_preserved_on_cache_hit() -> None:
+    llm = FakeLLMService(
+        json.dumps(
+            {
+                "score": 0.83,
+                "reason": "match",
+                "topic_group": "活动",
+                "style_key": "social_chat",
+                "franchise_key": "",
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.93,
+                "temporal_reason": "报名入口有明确截止时间",
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-08-13T12:00:00Z",
+                "temporal_scope": "core",
+                "temporal_evidence": "报名截止 2026-08-13 20:00 +08:00",
+                "temporal_state": "unknown",
+            },
+            ensure_ascii=False,
+        )
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm, eval_prefilter_mode="off")
+
+    def candidate() -> DiscoveredContent:
+        return DiscoveredContent(
+            content_id="grounded-deadline",
+            title="报名截止 2026-08-13 20:00 +08:00",
+            source_platform="bilibili",
+            source_strategy="search",
+        )
+
+    cold = candidate()
+    warm = candidate()
+    assert await engine.evaluate_content(cold, _build_profile()) == 0.83
+    assert await engine.evaluate_content(warm, _build_profile()) == 0.83
+
+    for item in (cold, warm):
+        assert item.temporal_validity_mode == "explicit_deadline"
+        assert item.temporal_valid_until == "2026-08-13T12:00:00Z"
+        assert item.temporal_next_review_at == "2026-08-13T12:00:00Z"
+        assert item.temporal_scope == "core"
+        assert item.temporal_evidence == "报名截止 2026-08-13 20:00 +08:00"
+        assert item.temporal_state == "unknown"
+        assert item.temporal_evaluated_at
+        assert item.temporal_evidence_complete is True
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_deadline_downgrades_before_entering_eval_cache() -> None:
+    llm = FakeLLMService(
+        json.dumps(
+            {
+                "score": 0.8,
+                "reason": "match",
+                "topic_group": "活动",
+                "style_key": "social_chat",
+                "franchise_key": "",
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.91,
+                "temporal_reason": "模型声称有限时入口",
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-08-13T12:00:00Z",
+                "temporal_scope": "core",
+                "temporal_evidence": "报名截止 2026-08-13",
+                "temporal_state": "unknown",
+            },
+            ensure_ascii=False,
+        )
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm, eval_prefilter_mode="off")
+    content = DiscoveredContent(
+        content_id="ungrounded-deadline",
+        title="普通活动介绍",
+        source_platform="bilibili",
+        source_strategy="search",
+    )
+
+    assert await engine.evaluate_content(content, _build_profile()) == 0.8
+
+    assert content.temporal_validity_mode == "freshness_only"
+    assert content.temporal_valid_until == ""
+    assert content.temporal_next_review_at
+    assert content.temporal_evidence_complete is True
+    cached = next(iter(engine._eval_cache.values()))
+    assert cached[9] == "freshness_only"
+    assert cached[10] == ""
+
+
+@pytest.mark.asyncio
+async def test_eval_cache_reads_legacy_nine_tuple_without_fabricating_v2_evidence() -> None:
+    db = _StubNegativeExemplarsDatabase(rows=[])
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    profile = _build_profile()
+    content = DiscoveredContent(
+        bvid="BVlegacy9",
+        title="旧缓存候选",
+        up_name="u",
+        source_strategy="search",
+    )
+    cache_key = engine._batch_eval_cache_key(
+        content,
+        profile_digest=engine._evaluation_profile_digest(profile),
+        negative_digest=engine._negative_examples_digest(None),
+    )
+    engine._set_eval_cache_entry(
+        cache_key,
+        (0.76, "legacy", "topic", "deep_focus", "", "current", 0.9, "近期", "v1"),
+    )
+
+    assert await engine.evaluate_content_batch([content], profile) == [0.76]
+    assert content.temporal_class == "current"
+    assert content.temporal_policy_version == "v1"
+    assert content.temporal_validity_mode == "none"
+    assert content.temporal_evidence == ""
+    assert content.temporal_evidence_complete is False
+    assert content.temporal_evaluated is False
+    assert llm.user_inputs == []
 
 
 @pytest.mark.asyncio
@@ -5494,7 +5702,48 @@ async def test_single_evaluation_keeps_valid_relevance_when_temporal_fields_are_
     assert content.temporal_class == "unknown"
     assert content.temporal_confidence == 0.0
     assert content.temporal_reason == ""
-    assert content.temporal_policy_version == "v1"
+    assert content.temporal_policy_version == "v2"
+    assert content.temporal_evaluated is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_unknown_temporal_cache_is_neutral_on_cold_and_warm_paths() -> None:
+    llm = FakeLLMService(
+        json.dumps(
+            {
+                "score": 0.79,
+                "reason": "match",
+                "topic_group": "systems",
+                "style_key": "deep_focus",
+                "franchise_key": "",
+                "temporal_class": "unknown",
+                "temporal_confidence": 0.0,
+                "temporal_reason": "",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+            }
+        )
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm, eval_prefilter_mode="off")
+
+    def candidate() -> DiscoveredContent:
+        return DiscoveredContent(
+            content_id="explicit-unknown-temporal",
+            title="证据不足但相关性有效",
+            source_platform="twitter",
+            source_strategy="search",
+        )
+
+    cold = candidate()
+    warm = candidate()
+    assert await engine.evaluate_content(cold, _build_profile()) == 0.79
+    assert await engine.evaluate_content(warm, _build_profile()) == 0.79
+    assert cold.temporal_evaluated is False
+    assert warm.temporal_evaluated is False
+    assert len(llm.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -5515,6 +5764,11 @@ async def test_batch_evaluation_keeps_valid_relevance_when_temporal_fields_are_i
                     "temporal_class": "current",
                     "temporal_confidence": "high",
                     "temporal_reason": "依赖近期语境",
+                    "temporal_validity_mode": "freshness_only",
+                    "temporal_valid_until": "",
+                    "temporal_scope": "core",
+                    "temporal_evidence": "最新",
+                    "temporal_state": "unknown",
                 }
             ],
             ensure_ascii=False,
@@ -5538,7 +5792,60 @@ async def test_batch_evaluation_keeps_valid_relevance_when_temporal_fields_are_i
     assert content.temporal_class == "unknown"
     assert content.temporal_confidence == 0.0
     assert content.temporal_reason == ""
-    assert content.temporal_policy_version == "v1"
+    assert content.temporal_policy_version == "v2"
+    assert content.temporal_evaluated is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["production", "sparse-json"])
+async def test_batch_temporal_grounding_uses_only_prompt_visible_text(
+    transport: str,
+) -> None:
+    evidence = "赛事已经结束"
+    llm = _RecordingBatchLLMService(
+        response=json.dumps(
+            [
+                {
+                    "id": "0",
+                    "score": 0.81,
+                    "reason": "匹配用户兴趣",
+                    "topic_group": "赛事",
+                    "style_key": "deep_focus",
+                    "franchise_key": "",
+                    "temporal_class": "current",
+                    "temporal_confidence": 0.95,
+                    "temporal_reason": "赛事终态会使核心信息失效",
+                    "temporal_validity_mode": "event_state",
+                    "temporal_valid_until": "",
+                    "temporal_scope": "core",
+                    "temporal_evidence": evidence,
+                    "temporal_state": "expired",
+                }
+            ],
+            ensure_ascii=False,
+        )
+    )
+    engine = ContentDiscoveryEngine(
+        llm_service=llm,
+        eval_prefilter_mode="off",
+        evaluation_candidate_transport=transport,
+    )
+    # Batch prompts expose only the first 400 description characters. The
+    # terminal phrase exists in storage but was never visible to the model.
+    content = DiscoveredContent(
+        bvid="BVPROMPTVISIBLE",
+        title="普通赛事介绍",
+        description=("甲" * 401) + evidence,
+        source_strategy="search",
+    )
+
+    scores = await engine.evaluate_content_batch([content], _build_profile())
+
+    assert scores == [0.81]
+    assert evidence not in llm.user_inputs[0]
+    assert content.temporal_validity_mode == "freshness_only"
+    assert content.temporal_state == "unknown"
+    assert content.temporal_next_review_at
 
 
 @pytest.mark.asyncio
@@ -5920,3 +6227,41 @@ async def test_batch_eval_empty_interest_vector_is_not_a_stable_zero_recall() ->
     await engine.evaluate_content_batch([candidate()], profile)
 
     assert len(llm.user_inputs) == 2, "partial interest-vector recall must not poison cache"
+
+
+def test_cached_backfill_preserves_temporal_evaluation_metadata() -> None:
+    class _BackfillDatabase:
+        def get_unrecommended_content(self, **_kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "bvid": "BVBACKFILLTEMPORAL",
+                    "title": "版本化内容",
+                    "source": "search",
+                    "source_platform": "bilibili",
+                    "relevance_score": 0.9,
+                    "temporal_class": "versioned",
+                    "temporal_confidence": 0.91,
+                    "temporal_reason": "依赖具体软件版本",
+                    "temporal_policy_version": "v1",
+                    "pool_expression": "已经生成的正式文案",
+                    "pool_topic_label": "软件版本",
+                }
+            ]
+
+    engine = ContentDiscoveryEngine(
+        llm_service=None,
+        database=_BackfillDatabase(),  # type: ignore[arg-type]
+    )
+
+    [item] = engine._load_cached_backfill(
+        limit=1,
+        exclude_bvids=set(),
+        source_platforms={"bilibili"},
+    )
+
+    assert item.temporal_class == "versioned"
+    assert item.temporal_confidence == pytest.approx(0.91)
+    assert item.temporal_reason == "依赖具体软件版本"
+    assert item.temporal_policy_version == "v1"
+    assert item.pool_expression == "已经生成的正式文案"
+    assert item.pool_topic_label == "软件版本"

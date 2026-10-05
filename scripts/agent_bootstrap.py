@@ -89,7 +89,11 @@ SUPPORTED_PROVIDERS = (
     "deepseek",
     "ollama",
     "openrouter",
+    "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 )
 REMOTE_PROVIDERS = (
     "openai",
@@ -97,7 +101,11 @@ REMOTE_PROVIDERS = (
     "gemini",
     "deepseek",
     "openrouter",
+    "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 )
 
 # Providers whose backend has no embeddings endpoint. When a user picks
@@ -106,7 +114,15 @@ REMOTE_PROVIDERS = (
 # pulls the embedding model (otherwise embeddings silently fall back at
 # runtime to whatever the registry can find — see registry.py
 # build_embedding_service).
-PROVIDERS_WITHOUT_EMBED = ("claude", "deepseek", "openrouter")
+PROVIDERS_WITHOUT_EMBED = (
+    "claude",
+    "deepseek",
+    "openrouter",
+    "orcarouter",
+    "requesty",
+    "api_route",
+    "cheaperinference",
+)
 
 
 def ensure_local_no_proxy() -> str:
@@ -130,8 +146,9 @@ def ensure_local_no_proxy() -> str:
 
 # Mirror of cli.py's _OPENAI_COMPAT_PRESETS for non-interactive (AI agent
 # driven) installs. Keep the model defaults in sync with cli.py — when
-# updating one, update the other. Each preset implies provider="openai"
-# (the universal Bearer-auth + /v1/chat/completions client).
+# updating one, update the other. Each preset implies
+# provider="openai_compatible" so DeepSeek-backed relays can disable
+# thinking instead of burning max_tokens on hidden reasoning.
 LLM_PRESETS: dict[str, dict[str, str]] = {
     "kimi": {
         "base_url": "https://api.moonshot.ai/v1",
@@ -148,6 +165,10 @@ LLM_PRESETS: dict[str, dict[str, str]] = {
     "zhipu": {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "model": "glm-4.7-flash",
+    },
+    "sensenova": {
+        "base_url": "https://token.sensenova.cn/v1",
+        "model": "deepseek-v4-flash",
     },
     "yi": {
         "base_url": "https://api.lingyiwanwu.com/v1",
@@ -184,6 +205,10 @@ HUMAN_LLM_MENU: tuple[tuple[str, str, str], ...] = (
     ("gemini", "Gemini 官方", "gemini-2.5-flash"),
     ("claude", "Claude 官方", "claude-sonnet-4-6"),
     ("openrouter", "OpenRouter 聚合", "openai/gpt-5-nano"),
+    ("orcarouter", "OrcaRouter 聚合", "openai/gpt-4o"),
+    ("requesty", "Requesty 聚合", "openai/gpt-4o-mini"),
+    ("api_route", "API Route 聚合", "gpt-5.5"),
+    ("cheaperinference", "Cheaper Inference 聚合", "gpt-5.4-mini"),
 )
 
 HUMAN_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
@@ -192,6 +217,7 @@ HUMAN_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
     "minimax",
     "qwen",
     "zhipu",
+    "sensenova",
     "yi",
     "azure",
     "self-hosted",
@@ -204,6 +230,10 @@ PROVIDER_MODEL_DEFAULTS: dict[str, str] = {
     "gemini": "gemini-2.5-flash",
     "claude": "claude-sonnet-4-6",
     "openrouter": "openai/gpt-5-nano",
+    "orcarouter": "openai/gpt-4o",
+    "requesty": "openai/gpt-4o-mini",
+    "api_route": "gpt-5.5",
+    "cheaperinference": "gpt-5.4-mini",
     "ollama": "qwen2.5:7b",
 }
 
@@ -211,6 +241,10 @@ PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com",
     "ollama": "http://127.0.0.1:11434/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "orcarouter": "https://api.orcarouter.ai/v1",
+    "requesty": "https://router.requesty.ai/v1",
+    "api_route": "https://global.api-route.com/v1",
+    "cheaperinference": "https://api.cheaperinference.com/v1",
 }
 
 
@@ -881,8 +915,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Override the chosen provider's base_url. Required for OpenAI-"
             "compatible gateways (Azure / vLLM / LMStudio / OneAPI / 任意 "
-            "OpenAI 兼容服务). The 'openai' provider is a protocol family, "
-            "not a vendor — point it anywhere that speaks /v1/chat/completions."
+            "OpenAI 兼容服务). --llm-preset already implies "
+            "provider=openai_compatible; pass --provider openai only for "
+            "the official OpenAI endpoint."
         ),
     )
     parser.add_argument(
@@ -897,6 +932,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "minimax",
             "qwen",
             "zhipu",
+            "sensenova",
             "yi",
             "self-hosted",
             "relay",
@@ -908,11 +944,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Shortcut for OpenAI-protocol-compatible services. Picks the "
             "preset's canonical Base URL + default model so AI-agent-driven "
             "installs don't have to remember each vendor's endpoint. "
-            "Implies --provider=openai. --llm-base-url / --llm-model still "
+            "Implies --provider=openai_compatible. --llm-base-url / --llm-model still "
             "override the preset on a per-field basis. Presets: "
             "kimi (Moonshot), minimax (M2.7), qwen (DashScope), zhipu (GLM), "
-            "yi (零一万物), self-hosted (vLLM/LMStudio), relay (中转站/OneAPI), "
-            "azure (Azure OpenAI), custom (no preset)."
+            "sensenova (商汤日日新, 免费额度), yi (零一万物), self-hosted (vLLM/LMStudio), "
+            "relay (中转站/OneAPI), azure (Azure OpenAI), custom (no preset)."
         ),
     )
     parser.add_argument(
@@ -1817,6 +1853,57 @@ def read_simple_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
+def _toml_table_path(header: str) -> tuple[str, ...]:
+    """Normalize ``[a.b."c"]`` / ``[a.b.c]`` to ``('a', 'b', 'c')``.
+
+    Backend rewrites of config.toml often quote dotted keys
+    (``[llm.instances."openai"]``). Those tables are the same as the bare-key
+    form the bootstrap editor writes (``[llm.instances.openai]``).
+    """
+
+    text = header.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1].strip()
+    parts: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\" and index + 1 < len(text):
+                buf.append(text[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            else:
+                buf.append(char)
+            index += 1
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            index += 1
+            continue
+        if char == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+            index += 1
+            continue
+        buf.append(char)
+        index += 1
+    parts.append("".join(buf).strip())
+    return tuple(part for part in parts if part)
+
+
+def _toml_section_matches(header_line: str, section: str) -> bool:
+    """True when a TOML header names the same table as ``section``."""
+
+    return _toml_table_path(header_line) == _toml_table_path(f"[{section}]")
+
+
 def set_toml_raw_value(content: str, section: str, key: str, rendered_value: str) -> str:
     """Rewrite one scalar/array value under ``[section]``.
 
@@ -1839,7 +1926,7 @@ def set_toml_raw_value(content: str, section: str, key: str, rendered_value: str
             if in_section:
                 insert_at = index
                 break
-            in_section = stripped == section_header
+            in_section = _toml_section_matches(stripped, section)
             if in_section:
                 section_found = True
                 insert_at = index + 1
@@ -1916,14 +2003,13 @@ def clear_toml_string_value(content: str, section: str, key: str) -> tuple[str, 
     """
 
     new_line = f'{key} = ""'
-    section_header = f"[{section}]"
     lines = content.splitlines()
     in_section = False
     changed = False
     for index, raw_line in enumerate(lines):
         stripped = raw_line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_section = stripped == section_header
+            in_section = _toml_section_matches(stripped, section)
             continue
         if not in_section:
             continue
@@ -2028,7 +2114,11 @@ def _ensure_llm_instance(project_dir: Path, provider: str) -> str:
         "deepseek": "DeepSeek",
         "ollama": "Ollama",
         "openrouter": "OpenRouter",
+        "orcarouter": "OrcaRouter",
         "openai_compatible": "OpenAI-compatible",
+        "requesty": "Requesty",
+        "api_route": "API Route",
+        "cheaperinference": "Cheaper Inference",
     }
     update_config_secret(
         config_path,
@@ -2052,6 +2142,7 @@ def _ensure_llm_instance(project_dir: Path, provider: str) -> str:
         "gemini",
         "deepseek",
         "openrouter",
+        "orcarouter",
     }:
         update_config_secret(config_path, section, "reasoning_effort", "medium")
     return instance_id
@@ -2252,6 +2343,48 @@ def persist_cookie_file(project_dir: Path, cookie: str) -> None:
     cookie_path.write_text(json.dumps({"cookie": cookie}, ensure_ascii=False), encoding="utf-8")
 
 
+def _disable_unconfigured_deepseek_instances(
+    config_path: Path,
+    llm: dict[str, Any],
+) -> set[str]:
+    """Disable enabled DeepSeek instances that have no usable API key.
+
+    The shipped v2 template intentionally starts with a DeepSeek instance so
+    the default install path is ready for a DeepSeek key.  When bootstrap
+    switches to another provider, that template endpoint must not remain an
+    enabled, empty-key instance: config validation checks every enabled
+    instance, not only the first entry in ``default_chain``.  Configured
+    DeepSeek fallbacks are left untouched.
+    """
+
+    instances = llm.get("instances", {})
+    if not isinstance(instances, dict):
+        return set()
+
+    disabled: set[str] = set()
+    for raw_instance_id, raw_instance in instances.items():
+        if not isinstance(raw_instance, dict):
+            continue
+        provider_type = str(raw_instance.get("provider_type", "") or "").strip().lower()
+        if provider_type != "deepseek":
+            continue
+        if str(raw_instance.get("api_key", "") or "").strip():
+            continue
+
+        instance_id = str(raw_instance_id)
+        normalized_instance_id = instance_id.strip().lower()
+        disabled.add(normalized_instance_id)
+        if not bool(raw_instance.get("enabled", True)):
+            continue
+        update_config_raw_value(
+            config_path,
+            f"llm.instances.{instance_id}",
+            "enabled",
+            "false",
+        )
+    return disabled
+
+
 def apply_provider_override(project_dir: Path, provider: str) -> None:
     config_path = project_dir / "config.toml"
     data = read_simple_toml(config_path)
@@ -2265,6 +2398,14 @@ def apply_provider_override(project_dir: Path, provider: str) -> None:
         if isinstance(refreshed, dict) and isinstance(refreshed.get("default_chain"), list)
         else []
     )
+    if provider.strip().lower() != "deepseek":
+        disabled_deepseek = _disable_unconfigured_deepseek_instances(
+            config_path,
+            refreshed if isinstance(refreshed, dict) else {},
+        )
+        current_chain = [
+            item for item in current_chain if item.strip().lower() not in disabled_deepseek
+        ]
     chain = [instance_id, *[item for item in current_chain if item != instance_id]]
     update_config_raw_value(
         config_path,
@@ -2480,9 +2621,7 @@ def apply_module_overrides(project_dir: Path, specs: list[str]) -> dict[str, Any
         )
         effective_provider = provider or default_provider
         instance_id = (
-            _llm_instance_id_for_provider(data, effective_provider, model=model)
-            if model
-            else ""
+            _llm_instance_id_for_provider(data, effective_provider, model=model) if model else ""
         )
         if not instance_id:
             instance_id = _llm_instance_id_for_provider(data, effective_provider)
@@ -3083,7 +3222,18 @@ config_path = Path("/app/runtime/config.toml")
 cookie_path = Path("/app/runtime/data/bilibili_cookie.json")
 data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
 llm = data.get("llm", {})
-remote = {"openai", "claude", "gemini", "deepseek", "openrouter", "openai_compatible"}
+remote = {
+    "openai",
+    "claude",
+    "gemini",
+    "deepseek",
+    "openrouter",
+    "orcarouter",
+    "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
+}
 instances = llm.get("instances", {}) if isinstance(llm.get("instances"), dict) else {}
 chain = llm.get("default_chain", []) if isinstance(llm.get("default_chain"), list) else []
 try:
@@ -3769,35 +3919,49 @@ def run(args: argparse.Namespace) -> int:
     return 5
 
 
+def apply_llm_preset_args(args: Any) -> int | None:
+    """Resolve ``--llm-preset`` onto provider / base_url / model.
+
+    Returns an exit code on conflict; ``None`` when args were applied or
+    when no preset was requested. Never overrides an explicit
+    ``--llm-base-url`` / ``--llm-model``.
+    """
+
+    if not getattr(args, "llm_preset", None):
+        return None
+    preset = LLM_PRESETS.get(args.llm_preset, {})
+    implied = "openai_compatible" if args.llm_preset in HUMAN_OPENAI_COMPAT_PRESETS else "openai"
+    if not args.provider or (args.provider == "openai" and implied == "openai_compatible"):
+        args.provider = implied
+    elif args.provider != implied:
+        emit(
+            BootstrapResult(
+                "error",
+                "preset_provider_conflict",
+                {
+                    "reason": (
+                        f"--llm-preset implies provider={implied} but you "
+                        f"passed --provider={args.provider}. Drop one of them."
+                    )
+                },
+            )
+        )
+        return 2
+    if args.llm_base_url is None and preset.get("base_url"):
+        args.llm_base_url = preset["base_url"]
+    if args.llm_model is None and preset.get("model"):
+        args.llm_model = preset["model"]
+    return None
+
+
 def main() -> int:
     parser = build_arg_parser()
     args = parser.parse_args()
     # Resolve --llm-preset before run() so the rest of the pipeline
-    # sees concrete provider/base_url/model values. The preset implies
-    # provider=openai but never overrides explicit user-provided
-    # --llm-base-url / --llm-model.
-    if getattr(args, "llm_preset", None):
-        preset = LLM_PRESETS.get(args.llm_preset, {})
-        if not args.provider:
-            args.provider = "openai"
-        elif args.provider != "openai":
-            emit(
-                BootstrapResult(
-                    "error",
-                    "preset_provider_conflict",
-                    {
-                        "reason": (
-                            f"--llm-preset implies provider=openai but you "
-                            f"passed --provider={args.provider}. Drop one of them."
-                        )
-                    },
-                )
-            )
-            return 2
-        if args.llm_base_url is None and preset.get("base_url"):
-            args.llm_base_url = preset["base_url"]
-        if args.llm_model is None and preset.get("model"):
-            args.llm_model = preset["model"]
+    # sees concrete provider/base_url/model values.
+    preset_error = apply_llm_preset_args(args)
+    if preset_error is not None:
+        return preset_error
     try:
         return run(args)
     except KeyboardInterrupt:

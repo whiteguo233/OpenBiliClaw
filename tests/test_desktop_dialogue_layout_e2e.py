@@ -126,6 +126,32 @@ def _scroll_report(page: Page, selector: str) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize(("width", "height"), [(375, 667), (768, 720), (1440, 1000)])
+def test_chat_toast_does_not_cover_composer(chromium_page: Page, width: int, height: int) -> None:
+    chromium_page.set_viewport_size({"width": width, "height": height})
+    chromium_page.set_content(_dialogue_fixture_html(), wait_until="domcontentloaded")
+    # Keep a notice present, as hovering a real toast pauses its expiry. Use the
+    # production classes/CSS and hit testing so this catches blocked clicks.
+    chromium_page.evaluate(
+        """() => {
+          const container = document.createElement('div');
+          container.className = 'toast-container';
+          container.innerHTML = '<div class="toast-item" style="bottom:0">请稍后重试。</div>';
+          document.body.appendChild(container);
+          document.querySelector('#chatForm').addEventListener('submit', e => {
+            e.preventDefault();
+            window.submissions = (window.submissions || 0) + 1;
+          });
+        }"""
+    )
+    toast = chromium_page.locator(".toast-item").bounding_box()
+    composer = chromium_page.locator("#chatForm").bounding_box()
+    assert toast is not None and composer is not None
+    assert toast["y"] + toast["height"] <= composer["y"], "toast covers chat composer"
+    chromium_page.get_by_role("button", name="发送", exact=True).click(timeout=1000)
+    assert chromium_page.evaluate("window.submissions") == 1
+
+
 @pytest.mark.parametrize(
     ("width", "height"),
     [(375, 667), (768, 720), (1024, 768), (1440, 900)],
@@ -152,13 +178,13 @@ def test_many_dialogue_cards_keep_natural_height_and_scroll(
     assert before["scrollHeight"] > before["clientHeight"] * 4
     chromium_page.locator("#chatLog").hover()
     chromium_page.mouse.wheel(0, 700)
-    # wheel() queues compositor input; it does not wait for the scroll. A fixed
-    # 80ms sleep failed under full-suite load despite a scrollable container.
-    # Wait for the same observable assertion, never synthesize scrollTop.
+    # 滚轮滚动在 headless Chromium 里由合成器异步落地（实测 80ms 固定等待在
+    # 并行负载下会早采样到 scrollTop=0，滚动随后才到）；必须等到 scrollTop
+    # 真正前进再采样，不能把时序当成布局契约。
     chromium_page.wait_for_function(
-        "before => document.querySelector('#chatLog').scrollTop > before",
+        "(threshold) => document.querySelector('#chatLog').scrollTop > threshold",
         arg=before["scrollTop"],
-        timeout=2000,
+        timeout=5000,
     )
     after = _scroll_report(chromium_page, "#chatLog")
     assert after["scrollTop"] > before["scrollTop"]
@@ -176,10 +202,13 @@ def test_pending_inbox_is_bounded_and_independently_scrollable(chromium_page: Pa
     assert panel["scrollHeight"] > panel["clientHeight"]
     chromium_page.locator("#desktopPendingConfirmations").hover()
     chromium_page.mouse.wheel(0, 500)
+    # 与 #chatLog 相同：滚轮滚动由合成器异步落地，固定等待会早采样，
+    # 必须等到 scrollTop 真正前进再断言。
     chromium_page.wait_for_function(
-        "before => document.querySelector('#desktopPendingConfirmations').scrollTop > before",
+        "(threshold) => document.querySelector('#desktopPendingConfirmations')"
+        ".scrollTop > threshold",
         arg=panel["scrollTop"],
-        timeout=2000,
+        timeout=5000,
     )
     after = _scroll_report(chromium_page, "#desktopPendingConfirmations")
     assert after["scrollTop"] > panel["scrollTop"]

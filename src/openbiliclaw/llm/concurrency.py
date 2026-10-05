@@ -6,6 +6,7 @@ import asyncio
 import heapq
 import itertools
 import logging
+import time
 from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOTAL_LLM_CONCURRENCY = 4
+DEFAULT_TOTAL_LLM_CONCURRENCY = 3
 
 # How long an empty content pool may park maintenance traffic before it is
 # admitted anyway. Calibrated against the observed cost of the failure it
@@ -352,6 +353,13 @@ _INTERACTIVE_CALLERS = {
     "soul.dialogue.tools",
     "soul.dialogue.tool_followup",
     "api.sentiment",
+    # 「聊一聊」 agent loop lanes are user-initiated: the interactive chat
+    # loop ("agent.chat") answers live in the conversation, and durable
+    # background tasks ("agent.task") are launched by an explicit user
+    # request from the chat. Neither is daemon maintenance, so neither may
+    # be parked behind the empty-pool refill reservation.
+    "agent.chat",
+    "agent.task",
 }
 _EXPRESSION_CALLERS = {
     "recommendation.expression",
@@ -392,6 +400,8 @@ class LLMConcurrencyGate:
         self._total = PrioritySemaphore(self.total_concurrency)
         self._background = RefillAdmissionSemaphore(self.background_concurrency)
         self._warned_unknown_callers: set[str] = set()
+        self._budget_window_started_at = time.monotonic()
+        self._budget_window_calls = 0
 
     @property
     def inventory_priority_state(self) -> InventoryPriorityState:
@@ -418,6 +428,23 @@ class LLMConcurrencyGate:
         self.background_concurrency = background
         self._total.resize(total)
         self._background.resize(background)
+
+    def background_call_count(self, window_seconds: int) -> int:
+        """Return the number of background LLM calls in the current fixed window.
+
+        A non-positive window disables the budget and simply returns the raw
+        count since the last explicit rollover.
+        """
+        now = time.monotonic()
+        if window_seconds > 0 and now - self._budget_window_started_at >= window_seconds:
+            self._budget_window_started_at = now
+            self._budget_window_calls = 0
+        return self._budget_window_calls
+
+    def reset_background_budget(self) -> None:
+        """Manually start a fresh budget window (e.g. user confirmed continue)."""
+        self._budget_window_started_at = time.monotonic()
+        self._budget_window_calls = 0
 
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()
@@ -464,6 +491,10 @@ class LLMConcurrencyGate:
         priority = self._priority(traffic)
         uses_background = traffic is not LLMTrafficClass.INTERACTIVE and not bypass_background
         if uses_background:
+            # Count daemon/background LLM requests for the scheduler's
+            # self-imposed per-window quota guard. Interactive user requests
+            # are deliberately excluded.
+            self._budget_window_calls += 1
             async with self._background.slot(traffic, priority), self._total.slot(priority):
                 yield
             return

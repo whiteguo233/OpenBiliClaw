@@ -10,6 +10,7 @@ import pytest
 
 from openbiliclaw.runtime.dialogue_reply_scheduler import (
     DialogueExecutionCoordinator,
+    DialogueLeaseTimeoutError,
     DurableChatReplyScheduler,
     TerminalChatReplyError,
 )
@@ -292,6 +293,7 @@ def test_every_production_dialogue_respond_call_is_behind_stable_lease() -> None
     assert sorted(enclosing_functions) == sorted(
         [
             "_generate_durable_chat_reply",
+            "_respond",
             "_run_avoidance_chat",
             "_run_delight_chat",
             "_run_legacy_chat",
@@ -301,5 +303,82 @@ def test_every_production_dialogue_respond_call_is_behind_stable_lease() -> None
     assert "ctx.dialogue.respond" not in source
     assert "async with _dialogue_execution_lease() as current_dialogue:" in source
     assert source.count("await _run_with_dialogue_execution(") == 4
+    # The legacy /api/chat/stream path streams token deltas, so it cannot
+    # wrap the whole reply in one ``_run_with_dialogue_execution`` await;
+    # it holds the lease directly around the delta loop instead.
+    assert "async for delta in _respond_deltas(current_dialogue):" in source
     assert 'current_speculator = getattr(ctx.soul_engine, "_speculator", None)' in source
     assert 'current_speculator = getattr(ctx.soul_engine, "_avoidance_speculator", None)' in source
+
+
+@pytest.mark.asyncio
+async def test_lease_timeout_raises_during_pause_and_recovers_after_resume() -> None:
+    coordinator = DialogueExecutionCoordinator()
+    owner_started = asyncio.Event()
+    release_owner = asyncio.Event()
+
+    async def active_owner() -> None:
+        async with coordinator.lease():
+            owner_started.set()
+            await release_owner.wait()
+
+    active = asyncio.create_task(active_owner())
+    await asyncio.wait_for(owner_started.wait(), timeout=1)
+    draining = asyncio.create_task(coordinator.pause_and_drain(timeout=5))
+
+    with pytest.raises(DialogueLeaseTimeoutError) as exc_info:
+        async with coordinator.lease(timeout=0.05):
+            raise AssertionError("lease must not be admitted during pause")
+    assert "重载配置" in exc_info.value.safe_message
+
+    release_owner.set()
+    await draining
+    await coordinator.resume()
+    await active
+
+    # After the handoff completes, bounded admission works again.
+    async with coordinator.lease(timeout=1):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_busy_lease_timeout_does_not_claim_configuration_reload() -> None:
+    coordinator = DialogueExecutionCoordinator()
+    async with coordinator.lease():
+        with pytest.raises(DialogueLeaseTimeoutError) as exc_info:
+            async with coordinator.lease(timeout=0.01):
+                raise AssertionError("busy lease must not admit another execution")
+        assert "对话" in exc_info.value.safe_message
+        assert "重载配置" not in exc_info.value.safe_message
+    async with coordinator.lease(timeout=1):
+        assert coordinator.active
+
+
+async def test_lease_without_timeout_waits_through_pause() -> None:
+    coordinator = DialogueExecutionCoordinator()
+    owner_started = asyncio.Event()
+    release_owner = asyncio.Event()
+    queued_observed: list[str] = []
+
+    async def active_owner() -> None:
+        async with coordinator.lease():
+            owner_started.set()
+            await release_owner.wait()
+
+    async def queued_execution() -> None:
+        async with coordinator.lease():
+            queued_observed.append("admitted")
+
+    active = asyncio.create_task(active_owner())
+    await asyncio.wait_for(owner_started.wait(), timeout=1)
+    draining = asyncio.create_task(coordinator.pause_and_drain(timeout=5))
+    await asyncio.sleep(0)
+    queued = asyncio.create_task(queued_execution())
+    await asyncio.sleep(0)
+    assert queued.done() is False
+
+    release_owner.set()
+    await draining
+    await coordinator.resume()
+    await asyncio.gather(active, queued)
+    assert queued_observed == ["admitted"]

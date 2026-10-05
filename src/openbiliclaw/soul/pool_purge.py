@@ -204,7 +204,7 @@ async def _llm_judge(
                 temperature=0.1,
                 max_tokens=2048,
                 caller="pool_purge.llm_agent",
-                reasoning_effort="",
+                reasoning_effort=None,
                 **without_core_memory_kwargs(llm_service.complete_structured_task),
             )
         except Exception:

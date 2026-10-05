@@ -4,6 +4,11 @@ Provides async-compatible SQLite operations for event logs,
 content cache, and recommendation history.
 """
 
+# [INPUT]: SQLite 数据库、规范化事件与推荐/来源持久化请求
+# [OUTPUT]: Database facade、事件写入与查询/迁移能力；读取事务内复用相同候选 SQL 结果
+# [POS]: 所有 durable 事件字段的最终存储边界，负责兼容迁移而不推断未知来源
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 from __future__ import annotations
 
 import ast
@@ -20,10 +25,10 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -36,6 +41,11 @@ from openbiliclaw.discovery.admission import (
     EXPLORE_STRATEGY,
     effective_admission_threshold,
 )
+from openbiliclaw.discovery.eval_scorer_audit import (
+    LEARNED_AUDIT_MAX_ROWS,
+    LEARNED_AUDIT_RETENTION_DAYS,
+    validate_learned_storage_record,
+)
 from openbiliclaw.discovery.inspiration import (
     AxisRow,
     _normalize_match_text,
@@ -47,9 +57,17 @@ from openbiliclaw.discovery.prefilter_audit import (
     validate_prefilter_storage_record,
 )
 from openbiliclaw.discovery.temporal import (
+    PUBLICATION_CLOCK_SKEW_TOLERANCE,
+    TEMPORAL_CONFIDENCE_FULL,
     TEMPORAL_POLICY_VERSION,
+    TemporalEligibilityDecision,
+    evaluate_temporal_eligibility,
+    ground_temporal_evaluation,
+    is_complete_temporal_evidence_marker,
     normalize_temporal_class,
     normalize_temporal_confidence,
+    parse_temporal_evaluation,
+    schedule_temporal_evaluation,
 )
 from openbiliclaw.published_time import normalize_published_time
 from openbiliclaw.saved_sync.identity import (
@@ -82,14 +100,21 @@ from openbiliclaw.sources.platforms import (
     PLATFORM_YOUTUBE as _YOUTUBE_SOURCE_FAMILY,
 )
 from openbiliclaw.sources.platforms import (
+    SOURCE_CONFIDENCE_EXACT,
+    SOURCE_CONFIDENCE_INFERRED,
+    SOURCE_CONFIDENCE_LEGACY_UNKNOWN,
+    constrain_source_confidence,
+    extract_source_content_id,
     infer_source_platform_from_url,
     normalize_source_platform,
+    resolve_source_attribution,
 )
 from openbiliclaw.sources.platforms import (
     source_family as _source_family,
 )
 
 if TYPE_CHECKING:
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.saved_sync.extension_broker import ExtensionNativeSaveJob
 
 logger = logging.getLogger(__name__)
@@ -178,6 +203,11 @@ _TEMPORAL_RANKING_AUDIT_RETENTION_DAYS = 30
 _TEMPORAL_RANKING_AUDIT_MAX_ROWS = 5_000
 _TEMPORAL_RANKING_AUDIT_POLICY = "temporal-ranking-shadow-v1"
 
+# A source whose batch is 100% rejected by its publication-date preference has
+# effectively stopped supplying candidates; warn once per source per interval
+# so a misconfigured strict preference is visible without flooding the log.
+_PUBLICATION_DATE_FILTER_WARN_INTERVAL_SECONDS = 600.0
+
 
 def _validated_card_settlement_ref(ref: object) -> str:
     """Return a bounded, non-control settlement ref for stable-key derivation."""
@@ -237,7 +267,14 @@ def _looks_like_serialized_llm_payload(value: str) -> bool:
 
 @dataclass(frozen=True)
 class PoolMaintenanceResult:
-    """Observable outcome of one bounded recommendation-pool maintenance pass."""
+    """Observable outcome of one bounded recommendation-pool maintenance pass.
+
+    When ``rolled_back`` is true the transaction was reverted: the
+    ``trimmed_*`` / ``deferred_*`` counters and ``mutation_count`` describe
+    the attempted (uncommitted) batch, while ``available_after`` /
+    ``raw_after`` / ``recovered_suppressed`` describe the durable
+    post-rollback state (the before view, restored).
+    """
 
     available_before: int
     available_after: int
@@ -326,6 +363,44 @@ class PoolServePersistResult:
     """IDs committed by the recommendation hot path's isolated write."""
 
     recommendation_ids: tuple[int, ...]
+    # ``None`` preserves compatibility with adapters that only return IDs.
+    # The built-in SQLite path always returns the exact committed identities.
+    committed_bvids: tuple[str, ...] | None = None
+    temporally_stale_bvids: tuple[str, ...] = ()
+    skipped_bvids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CacheContentWriteResult:
+    """Authoritative outcome of one ``content_cache`` upsert.
+
+    The temporal decision and final status are captured under the same SQLite
+    writer lock as the row mutation.  Callers must use ``admitted`` instead of
+    inferring success from physical row-count growth: an item can cross its
+    TTL while waiting for that lock and be durably written as ``stale``.
+    """
+
+    bvid: str
+    created: bool
+    pool_status: str
+    temporal_decision: TemporalEligibilityDecision
+
+    @property
+    def admitted(self) -> bool:
+        """Whether this write left the item in the active fresh pool."""
+
+        return self.temporal_decision.eligible and self.pool_status == "fresh"
+
+
+@dataclass(frozen=True)
+class _CacheContentPreparedWrite:
+    """Parameters and evidence derived only after acquiring the writer lock."""
+
+    params: tuple[Any, ...]
+    bvid: str
+    created: bool
+    temporal_decision: TemporalEligibilityDecision
+    renewed_review_retry_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -372,6 +447,12 @@ _MAINTENANCE_DB_BUSY_TIMEOUT_MS = 75
 # while bounding every write transaction; the async runner releases the lock
 # and yields the loop between batches.
 _POOL_MAINTENANCE_BATCH_SIZE = 50
+# failed_eval dead-letter revival: one resume event re-queues at most this
+# many rows, and each row can be resurrected at most this many times ever
+# (persisted in ``eval_revive_count``) so a process restarting against a
+# still-broken provider cannot re-burn LLM quota without bound.
+_FAILED_EVAL_REVIVE_BATCH_SIZE = 500
+_FAILED_EVAL_MAX_REVIVES = 3
 _NATIVE_INTERNAL_RUNNER_PREFIX = "__openbiliclaw_"
 _LEGACY_NATIVE_SAVE_RUNNER_ID = f"{_NATIVE_INTERNAL_RUNNER_PREFIX}legacy_runner__"
 _EXTENSION_NATIVE_SAVE_PLATFORM_SLUGS = {
@@ -420,15 +501,6 @@ _EXTENSION_NATIVE_SAVE_RESULT_MESSAGES = {
 }
 _BVID_PATTERN = re.compile(r"(BV[0-9A-Za-z]+)")
 _LOCAL_EVIDENCE_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-_VIEW_CONTENT_ID_METADATA_KEYS = (
-    "content_id",
-    "bvid",
-    "note_id",
-    "aweme_id",
-    "video_id",
-    "yt_video_id",
-    "post_id",
-)
 # Event types that prove the user already consumed a piece of content, and so
 # feed the durable seen ledger. ``view`` was the only member until 2026-07-26,
 # which meant a video the user had explicitly favourited (or liked, or coined)
@@ -846,6 +918,9 @@ def _chunks(values: Sequence[str], size: int) -> list[list[str]]:
 _DELIGHT_CLAIM_MIN_SCORE = 0.75
 _DELIGHT_DYNAMIC_TOP_FRACTION = 0.10
 _DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE = 150
+# Only suppresses the Top 10% boundary for homogeneous pools whose boundary
+# is at/below the floor. A homogeneous above-floor pool still uses the
+# boundary so the regular feed is not starved by the delight claim guard.
 _DELIGHT_DYNAMIC_MIN_STDDEV = 0.08
 _DELIGHT_SCORE_SYNC_EPSILON = 0.000001
 _DEFAULT_ADMISSION_MIN_SCORE = DEFAULT_ADMISSION_MIN_SCORE
@@ -871,6 +946,25 @@ def _delight_unseen_guard_sql() -> str:
                         WHERE seen.item_key = content_cache.item_key
                       )
     """
+
+
+def _delight_visibility_sql(*, include_delivered: bool) -> str:
+    """Return the SQL predicate for which delight rows are queue-visible.
+
+    Default (``include_delivered=False``) is the proactive push / CLI /
+    manual-trigger view: only candidates that have not yet been delivered
+    to any client (``delight_notified=0``).
+
+    ``include_delivered=True`` is the popup re-hydration view: a candidate
+    that was pushed to a background client but has not been seen/read by
+    the user (``delight_seen=0``) must still be returned so the popup can
+    re-show it after a reload.  ``mark_delight_viewed`` / user dismissal
+    set ``delight_seen=1`` and are the actions that remove it from this
+    queue.
+    """
+    if include_delivered:
+        return "AND COALESCE(delight_seen, 0) = 0"
+    return "AND COALESCE(delight_notified, 0) = 0"
 
 
 # Rows claimed by the surprise (delight) channel: already delivered as a
@@ -932,8 +1026,55 @@ _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
-# Schema version for migrations
-_SCHEMA_VERSION = 3
+# Schema version for migrations.  V4 adds the atomic temporal-evidence and
+# review lifecycle fields to both discovery candidates and cached content; V6
+# records the event source-attribution schema marker; V7 adds the chat
+# multi-session model (chat_sessions + chat_turns.session_id); V8 adds the
+# durable background task center (agent_tasks).
+_SCHEMA_VERSION = 8
+
+# Well-known chat session that owns every legacy chat turn whose session_id
+# stayed ''.  It can be renamed but never archived.
+DEFAULT_CHAT_SESSION_ID = "default"
+DEFAULT_CHAT_SESSION_TITLE = "默认会话"
+
+# Durable agent task center (「聊一聊」 M6).  ``interrupted`` marks tasks a
+# previous process (or a config hot reload) left in pending/running; it is a
+# terminal state — tasks are never auto-resumed, the user re-issues them.
+AGENT_TASK_STATUSES: tuple[str, ...] = (
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+)
+AGENT_TASK_TERMINAL_STATUSES: tuple[str, ...] = (
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+)
+AGENT_TASK_ACTIVE_STATUSES: tuple[str, ...] = ("pending", "running")
+# Bounds on the JSON step log kept inline in agent_tasks.steps: at most 200
+# entries, each entry's text truncated to 2000 chars, and the serialized
+# array capped at 200_000 chars (a truncation marker replaces further
+# appends).  Reports and suggestions have their own caps.
+MAX_AGENT_TASK_STEPS = 200
+MAX_AGENT_TASK_STEP_CHARS = 2000
+MAX_AGENT_TASK_STEPS_CHARS = 200_000
+MAX_AGENT_TASK_SUGGESTIONS = 20
+MAX_AGENT_TASK_REPORT_CHARS = 8000
+
+# SQL fragment matching the turns owned by one chat session (sessions aliased
+# ``s``, turns aliased ``t``).  The default session also owns legacy turns
+# whose session_id stayed ''.
+_CHAT_SESSION_TURN_MEMBERSHIP_SQL = (
+    f"(s.session_id = '{DEFAULT_CHAT_SESSION_ID}' "
+    f"AND t.session_id IN ('', '{DEFAULT_CHAT_SESSION_ID}')) "
+    f"OR (s.session_id <> '{DEFAULT_CHAT_SESSION_ID}' "
+    "AND t.session_id = s.session_id)"
+)
 
 _SCHEMA_SQL = """
 -- Event log (behavioral data from browser extension)
@@ -942,6 +1083,9 @@ CREATE TABLE IF NOT EXISTS events (
     event_type            TEXT NOT NULL,        -- click, search, scroll, comment, etc.
     url                   TEXT,
     title                 TEXT,
+    source_platform       TEXT NOT NULL DEFAULT '', -- canonical producer/platform tag
+    content_id            TEXT NOT NULL DEFAULT '', -- stable source-content identity when known
+    source_confidence     TEXT NOT NULL DEFAULT 'legacy_unknown',
     context               TEXT,                 -- JSON: DOM snapshot reference, viewport, etc.
     metadata              TEXT,                 -- JSON: additional event-specific data
     -- v0.3.x event-satisfaction signal: deterministic classification
@@ -1009,6 +1153,16 @@ CREATE TABLE IF NOT EXISTS content_cache (
     temporal_confidence REAL DEFAULT 0.0,
     temporal_reason TEXT DEFAULT '',
     temporal_policy_version TEXT DEFAULT 'v1',
+    temporal_validity_mode TEXT DEFAULT 'none',
+    temporal_valid_until TEXT DEFAULT '',
+    temporal_scope TEXT DEFAULT 'none',
+    temporal_state TEXT DEFAULT 'unknown',
+    temporal_evidence TEXT DEFAULT '',
+    temporal_next_review_at TEXT DEFAULT '',
+    temporal_evaluated_at TEXT DEFAULT '',
+    temporal_evidence_complete INTEGER DEFAULT 0,
+    temporal_review_attempts INTEGER DEFAULT 0,
+    temporal_review_retry_at TEXT DEFAULT '',
     pool_expression TEXT DEFAULT '',
     pool_topic_label TEXT DEFAULT '',
     candidate_tier TEXT DEFAULT 'primary',
@@ -1023,6 +1177,7 @@ CREATE TABLE IF NOT EXISTS content_cache (
     source      TEXT,                -- Which discovery strategy found it
     body_text   TEXT DEFAULT '',     -- Full text body for text-first sources (X tweet/thread)
     content_type TEXT DEFAULT 'video',  -- Content shape: "video"|"note"|"tweet"|"thread"
+    source_metadata TEXT DEFAULT '{}',  -- JSON allowlist from the source normalizer
     -- P1.8 yield provenance: discovery_keywords.id that produced this row;
     -- NULL for legacy / non-search / flag-off content.
     source_keyword_id INTEGER
@@ -1080,6 +1235,16 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     temporal_confidence   REAL NOT NULL DEFAULT 0.0,
     temporal_reason       TEXT NOT NULL DEFAULT '',
     temporal_policy_version TEXT NOT NULL DEFAULT 'v1',
+    temporal_validity_mode TEXT NOT NULL DEFAULT 'none',
+    temporal_valid_until TEXT NOT NULL DEFAULT '',
+    temporal_scope TEXT NOT NULL DEFAULT 'none',
+    temporal_state TEXT NOT NULL DEFAULT 'unknown',
+    temporal_evidence TEXT NOT NULL DEFAULT '',
+    temporal_next_review_at TEXT NOT NULL DEFAULT '',
+    temporal_evaluated_at TEXT NOT NULL DEFAULT '',
+    temporal_evidence_complete INTEGER NOT NULL DEFAULT 0,
+    temporal_review_attempts INTEGER NOT NULL DEFAULT 0,
+    temporal_review_retry_at TEXT NOT NULL DEFAULT '',
     pool_expression       TEXT NOT NULL DEFAULT '',
     pool_topic_label      TEXT NOT NULL DEFAULT '',
     eval_error            TEXT NOT NULL DEFAULT '',
@@ -1098,7 +1263,6 @@ CREATE INDEX IF NOT EXISTS idx_discovery_candidates_source_status
     ON discovery_candidates(source_platform, status);
 CREATE INDEX IF NOT EXISTS idx_discovery_candidates_content_id
     ON discovery_candidates(source_platform, content_id);
-
 -- Bangumi anonymous API discovery pacing, cursors and diagnostics.
 CREATE TABLE IF NOT EXISTS bangumi_discovery_runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1166,6 +1330,7 @@ CREATE TABLE IF NOT EXISTS chat_turns (
     reply         TEXT NOT NULL DEFAULT '',
     error         TEXT NOT NULL DEFAULT '',
     payload       TEXT NOT NULL DEFAULT '{}',
+    session_id    TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -1173,6 +1338,50 @@ CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created
     ON chat_turns(session, created_at, turn_id);
 CREATE INDEX IF NOT EXISTS idx_chat_turns_scope_subject
     ON chat_turns(scope, subject_id, created_at);
+
+-- Multi-session chat model (「聊一聊」 M5).  One row per user-facing
+-- conversation; chat_turns.session_id links turns to it.  ``metadata`` is
+-- an additive JSON bag reserved for skill bindings (M4).  The well-known
+-- row ``default`` owns every legacy turn whose session_id stayed ''.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    session_id      TEXT PRIMARY KEY,
+    title           TEXT NOT NULL DEFAULT '',
+    archived        INTEGER NOT NULL DEFAULT 0,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_message_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_activity
+    ON chat_sessions(archived, last_message_at);
+
+-- Durable background task center (「聊一聊」 M6).  Tasks are first-class
+-- persistent objects independent of their originating chat session: each
+-- row carries its read-only execution log (``steps``, a capped JSON array
+-- of AgentEvent-shaped entries), the final ``report`` and the structured
+-- ``suggestions`` list handed back to the conversation for user-confirmed
+-- writes.  ``started_at``/``finished_at`` bracket the actual execution.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    task_id     TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    prompt      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    skill       TEXT NOT NULL DEFAULT '',
+    progress    TEXT NOT NULL DEFAULT '',
+    report      TEXT NOT NULL DEFAULT '',
+    suggestions TEXT NOT NULL DEFAULT '[]',
+    steps       TEXT NOT NULL DEFAULT '[]',
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at  TIMESTAMP,
+    finished_at TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created
+    ON agent_tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_created
+    ON agent_tasks(session_id, created_at);
 
 -- Atomic winner receipt for durable dialogue-confirmation cards. Dialogue
 -- effects are serialized by the single in-process settlement worker.
@@ -1244,6 +1453,22 @@ CREATE INDEX IF NOT EXISTS idx_prefilter_shadow_created
     ON evaluator_prefilter_shadow_audit(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_prefilter_shadow_platform_context
     ON evaluator_prefilter_shadow_audit(platform_class, context_class, created_at);
+
+CREATE TABLE IF NOT EXISTS evaluator_learned_scorer_shadow_audit (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id              TEXT NOT NULL UNIQUE,
+    candidate_hash           TEXT NOT NULL,
+    platform_class           TEXT NOT NULL,
+    context_class            TEXT NOT NULL,
+    learned_score            REAL NOT NULL,
+    llm_score                REAL NOT NULL,
+    admission_threshold      REAL NOT NULL,
+    admission_result         INTEGER NOT NULL,
+    features_digest          TEXT NOT NULL,
+    created_at               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_learned_shadow_created
+    ON evaluator_learned_scorer_shadow_audit(created_at, id);
 
 -- Aggregate-only counterfactual for the recommendation temporal bonus. It
 -- intentionally stores no content identity, title, URL, author, or keyword.
@@ -1538,6 +1763,7 @@ def _normalize_temporal_fields_for_storage(
     temporal_class: object,
     temporal_confidence: object,
     temporal_reason: object,
+    temporal_policy_version: object | None = None,
 ) -> tuple[str, float, str, str]:
     """Validate temporal evaluator metadata before it reaches SQLite."""
 
@@ -1577,13 +1803,310 @@ def _normalize_temporal_fields_for_storage(
                 type(temporal_confidence).__name__,
                 type(temporal_reason).__name__,
             )
-        return ("unknown", 0.0, "", TEMPORAL_POLICY_VERSION)
+        policy_version = (
+            TEMPORAL_POLICY_VERSION
+            if str(temporal_policy_version or "").strip().lower() == TEMPORAL_POLICY_VERSION
+            else "v1"
+        )
+        return ("unknown", 0.0, "", policy_version)
+    policy_version = (
+        TEMPORAL_POLICY_VERSION
+        if str(temporal_policy_version or "").strip().lower() == TEMPORAL_POLICY_VERSION
+        else "v1"
+    )
     return (
         normalized_class,
         normalized_confidence,
         normalized_reason,
-        TEMPORAL_POLICY_VERSION,
+        policy_version,
     )
+
+
+def _publication_datetime_for_merge(value: object) -> datetime | None:
+    """Parse stored canonical publication evidence without applying a future cap."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (OverflowError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    try:
+        return parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _merge_publication_evidence_conservatively(
+    *,
+    existing_at: object,
+    existing_label: object,
+    incoming_at: object,
+    incoming_label: object,
+) -> tuple[str, str]:
+    """Keep the earliest trustworthy timestamp and its matching label.
+
+    Once an evaluator has attached non-neutral temporal semantics, allowing a
+    later raw timestamp to replace an older publication clock can resurrect an
+    expired item.  Earlier corrections are safe and deliberately win.  A label
+    follows the timestamp it described instead of being merged independently.
+    """
+
+    existing_value = str(existing_at or "").strip()
+    incoming_value = str(incoming_at or "").strip()
+    existing_text = str(existing_label or "").strip()
+    incoming_text = str(incoming_label or "").strip()
+    if not existing_value:
+        return incoming_value, incoming_text
+    if not incoming_value:
+        return existing_value, existing_text
+    existing_clock = _publication_datetime_for_merge(existing_value)
+    incoming_clock = _publication_datetime_for_merge(incoming_value)
+    if existing_clock is None:
+        return (
+            (incoming_value, incoming_text)
+            if incoming_clock is not None
+            else (
+                existing_value,
+                existing_text,
+            )
+        )
+    if incoming_clock is None or existing_clock < incoming_clock:
+        return existing_value, existing_text
+    if incoming_clock < existing_clock:
+        return incoming_value, incoming_text
+    return existing_value, existing_text or incoming_text
+
+
+_TEMPORAL_LIFECYCLE_FIELDS = (
+    "temporal_validity_mode",
+    "temporal_valid_until",
+    "temporal_scope",
+    "temporal_state",
+    "temporal_evidence",
+    "temporal_next_review_at",
+    "temporal_evaluated_at",
+    "temporal_evidence_complete",
+)
+
+
+def _temporal_lifecycle_group_for_storage(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Normalize the v2 temporal evidence fields as one indivisible group."""
+
+    return (
+        str(value.get("temporal_validity_mode", "none") or "none").strip().lower(),
+        str(value.get("temporal_valid_until", "") or "").strip(),
+        str(value.get("temporal_scope", "none") or "none").strip().lower(),
+        str(value.get("temporal_state", "unknown") or "unknown").strip().lower(),
+        str(value.get("temporal_evidence", "") or "").strip(),
+        str(value.get("temporal_next_review_at", "") or "").strip(),
+        str(value.get("temporal_evaluated_at", "") or "").strip(),
+        int(is_complete_temporal_evidence_marker(value.get("temporal_evidence_complete"))),
+    )
+
+
+def _parse_temporal_storage_clock(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (OverflowError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    try:
+        return parsed.astimezone(UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _normalize_temporal_evidence_group_for_storage(
+    value: Mapping[str, Any],
+    *,
+    content_text: object | None = None,
+) -> tuple[tuple[str, float, str, str], tuple[Any, ...]]:
+    """Validate v2 model evidence atomically, while retaining v1 rows."""
+
+    policy_version = str(value.get("temporal_policy_version") or "").strip().lower()
+    if policy_version != TEMPORAL_POLICY_VERSION:
+        temporal = _normalize_temporal_fields_for_storage(
+            temporal_class=value.get("temporal_class", "unknown"),
+            temporal_confidence=value.get("temporal_confidence", 0.0),
+            temporal_reason=value.get("temporal_reason", ""),
+            temporal_policy_version=policy_version or None,
+        )
+        return temporal, (
+            "none",
+            "",
+            "none",
+            "unknown",
+            "",
+            "",
+            "",
+            int(is_complete_temporal_evidence_marker(value.get("temporal_evidence_complete"))),
+        )
+
+    parsed = parse_temporal_evaluation(value)
+    if content_text is not None:
+        # Sink-side defense: an in-process/manual caller cannot turn a model
+        # claim into hard expiry merely by setting ``evidence_complete``. The
+        # exact excerpt must still exist in the same prompt-visible fields as
+        # the evaluator path. Existing durable groups pass ``None`` here and
+        # are preserved as already-validated evidence.
+        parsed = ground_temporal_evaluation(parsed, content_text=content_text)
+    evaluated_at = str(value.get("temporal_evaluated_at") or "").strip()
+    evaluated_clock = _parse_temporal_storage_clock(evaluated_at) if evaluated_at else None
+    try:
+        evaluated_is_trusted = bool(
+            evaluated_clock is not None
+            and evaluated_clock <= datetime.now(UTC) + PUBLICATION_CLOCK_SKEW_TOLERANCE
+        )
+    except (OverflowError, OSError, ValueError):
+        evaluated_is_trusted = False
+    complete = is_complete_temporal_evidence_marker(
+        value.get("temporal_evidence_complete")
+    ) and bool(parsed.evidence_complete)
+    if not complete or not evaluated_is_trusted:
+        return (
+            ("unknown", 0.0, "", TEMPORAL_POLICY_VERSION),
+            ("none", "", "none", "unknown", "", "", "", 0),
+        )
+
+    # Review clocks are policy-owned, not evaluator/caller-owned.  Recompute
+    # them from the validated evidence and evaluation clock at every storage
+    # boundary so a malformed adapter cannot postpone a required review to an
+    # arbitrary date (for example 2099). Existing rows are canonicalized by
+    # the same rule when they next pass through an admission decision.
+    scheduled = schedule_temporal_evaluation(parsed, evaluated_at=evaluated_at)
+    if not scheduled.evidence_complete or not scheduled.temporal_evaluated_at:
+        return (
+            ("unknown", 0.0, "", TEMPORAL_POLICY_VERSION),
+            ("none", "", "none", "unknown", "", "", "", 0),
+        )
+    return (
+        (
+            scheduled.temporal_class,
+            scheduled.temporal_confidence,
+            scheduled.temporal_reason,
+            TEMPORAL_POLICY_VERSION,
+        ),
+        (
+            scheduled.temporal_validity_mode,
+            scheduled.temporal_valid_until,
+            scheduled.temporal_scope,
+            scheduled.temporal_state,
+            scheduled.temporal_evidence,
+            scheduled.temporal_next_review_at,
+            scheduled.temporal_evaluated_at,
+            1,
+        ),
+    )
+
+
+def _temporal_grounding_was_downgraded(
+    value: Mapping[str, Any],
+    *,
+    content_text: object,
+) -> bool:
+    """Return whether grounding weakened an otherwise complete active claim."""
+
+    parsed = parse_temporal_evaluation(value)
+    if not parsed.evidence_complete or parsed.temporal_validity_mode not in {
+        "explicit_deadline",
+        "event_state",
+        "version_state",
+        "freshness_only",
+    }:
+        return False
+    grounded = ground_temporal_evaluation(parsed, content_text=content_text)
+    return grounded.temporal_validity_mode != parsed.temporal_validity_mode
+
+
+def _temporal_evidence_is_authoritative_replacement(
+    temporal: tuple[str, float, str, str],
+    lifecycle: tuple[Any, ...],
+) -> bool:
+    """Return whether new evidence may replace an existing classification.
+
+    A low-confidence or hook-only rereview is useful metadata on a new item,
+    but it cannot release an item held by older high-confidence core evidence.
+    Durable evergreen/historical conclusions are the one legitimate
+    scope-less replacement because their contract is precisely ``none``.
+    """
+
+    temporal_class, confidence, _reason, policy_version = temporal
+    mode, _until, scope, _state, _evidence, _review_at, _evaluated_at, complete = lifecycle
+    if (
+        policy_version != TEMPORAL_POLICY_VERSION
+        or temporal_class == "unknown"
+        or confidence < TEMPORAL_CONFIDENCE_FULL
+        or not bool(complete)
+    ):
+        return False
+    normalized_mode = str(mode)
+    normalized_scope = str(scope)
+    if temporal_class in {"evergreen", "historical"}:
+        return normalized_mode == "none" and normalized_scope == "none"
+    return normalized_scope == "core" and normalized_mode != "none"
+
+
+def _temporal_review_retry_hours(attempts: int) -> int:
+    """Return the bounded retry delay for an already-counted review attempt."""
+
+    exponent = min(max(0, int(attempts) - 1), 5)
+    return int(min(24, 2**exponent))
+
+
+def _temporal_review_retry_text(*, now: datetime, attempts: int) -> str:
+    return (
+        (now + timedelta(hours=_temporal_review_retry_hours(attempts)))
+        .astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+_TEMPORAL_REVIEW_RETRY_REFRESH_ASSIGNMENT_SQL = """
+temporal_review_retry_at = CASE
+    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+     AND (
+        COALESCE(temporal_review_retry_at, '') = ''
+        OR julianday(temporal_review_retry_at) <= julianday('now')
+     )
+    THEN datetime(
+        'now',
+        '+' || CASE
+            WHEN COALESCE(temporal_review_attempts, 0) <= 1 THEN 1
+            WHEN temporal_review_attempts = 2 THEN 2
+            WHEN temporal_review_attempts = 3 THEN 4
+            WHEN temporal_review_attempts = 4 THEN 8
+            WHEN temporal_review_attempts = 5 THEN 16
+            ELSE 24
+        END || ' hours'
+    )
+    ELSE COALESCE(temporal_review_retry_at, '')
+END
+""".strip()
+
+
+def _temporal_decision_disposition(decision: TemporalEligibilityDecision) -> str:
+    """Return the v2 three-state result while preserving v1 compatibility."""
+
+    disposition = str(getattr(decision, "disposition", "") or "").strip().lower()
+    if disposition in {"eligible", "review_due", "expired"}:
+        return disposition
+    return "eligible" if decision.eligible else "expired"
+
+
+def _pool_status_for_temporal_decision(decision: TemporalEligibilityDecision) -> str:
+    disposition = _temporal_decision_disposition(decision)
+    if disposition == "expired":
+        return "stale"
+    if disposition == "review_due":
+        return "temporal_review_hold"
+    return "fresh"
 
 
 class Database:
@@ -1605,7 +2128,24 @@ class Database:
         self._connection_owner_thread_id: int | None = None
         self._connections_by_thread: dict[int, sqlite3.Connection] = {}
         self._admission_min_score = _DEFAULT_ADMISSION_MIN_SCORE
+        # RuntimeContext updates this immutable policy when configuration is
+        # applied. None preserves the historical platform-neutral pool gate.
+        self._publication_date_preference: object | None = None
+        # Per-source publication-date preferences for raw candidate enqueue
+        # filtering (discovery_candidates). None / empty = platform-neutral.
+        self._source_publication_date_preferences: dict[str, Any] | None = None
+        # Diagnostic-only counters for the raw-candidate date gate. They reset
+        # with the process and never feed admission decisions; a WARNING is
+        # emitted when one round filters every candidate of a source (the
+        # failure mode from issue #257 that used to be invisible to callers).
+        self._publication_date_filter_stats: dict[str, dict[str, Any]] = {}
+        self._publication_date_filter_stats_lock = threading.Lock()
+        self._publication_date_filter_warned_at: dict[str, float] = {}
         self._preserve_read_transaction = False
+        self._snapshot_delight_thresholds: dict[float, float] | None = None
+        self._snapshot_available_query_rows: (
+            dict[tuple[sqlite3.Connection, str, tuple[Any, ...]], tuple[dict[str, Any], ...]] | None
+        ) = None
         # The two queues must remain separate: a slow/background maintenance
         # batch must never sit in front of an interactive recommendation read.
         # Executors are lazy so short-lived CLI/tests that never use async DB
@@ -1626,6 +2166,169 @@ class Database:
         """Set the unified recommendation-pool admission floor."""
         self._admission_min_score = _normalize_admission_min_score(value)
 
+    def set_publication_date_preference(self, preference: object | None) -> None:
+        """Set the current Bilibili publication policy used by pool reads."""
+        self._publication_date_preference = preference
+
+    def set_source_publication_date_preferences(
+        self,
+        preferences: dict[str, Any] | None,
+    ) -> None:
+        """Set the per-source publication policy used by raw candidate enqueue."""
+        if preferences is None:
+            self._source_publication_date_preferences = None
+        elif isinstance(preferences, dict):
+            self._source_publication_date_preferences = dict(preferences)
+        else:
+            self._source_publication_date_preferences = None
+        # A configuration change invalidates the warning throttle: if the next
+        # productive-looking round is still 100% filtered, warn immediately.
+        with self._publication_date_filter_stats_lock:
+            self._publication_date_filter_warned_at.clear()
+
+    def _source_publication_date_candidate_is_eligible(
+        self,
+        source_platform: str,
+        published_at: object,
+    ) -> bool:
+        """Apply a source date preference before a raw candidate is enqueued.
+
+        ``PublicationDateDecision.eligible`` is the admission contract: strict
+        mode (``weight == 1``) excludes out-of-window and unparseable
+        timestamps here, while soft mode keeps them (the ``1 - weight``
+        multiplier is a Bilibili pool-scoring behavior and is not applied to
+        other sources).  Missing timestamps therefore do not block enqueue for
+        a soft preference (multi-platform publication metadata contract); only
+        an explicit strict preference excludes them.
+        """
+        preferences = self._source_publication_date_preferences
+        if not preferences:
+            return True
+        preference = preferences.get(source_platform)
+        if preference is None:
+            return True
+        try:
+            from openbiliclaw.recommendation.publication_preference import (
+                evaluate_source_publication_preference,
+            )
+
+            return evaluate_source_publication_preference(
+                published_at=published_at,
+                preference=preference,
+            ).eligible
+        except (TypeError, ValueError):
+            logger.warning(
+                "Ignoring invalid publication preference during candidate enqueue",
+                exc_info=True,
+            )
+            return True
+
+    def _record_publication_date_filter_batch(
+        self,
+        *,
+        input_by_source: Mapping[str, int],
+        filtered_by_source: Mapping[str, int],
+        inserted_by_source: Mapping[str, int],
+    ) -> None:
+        """Accumulate date-gate diagnostics and warn on 100%-filtered rounds.
+
+        A source that fetches candidates every cycle but has all of them
+        rejected by an active publication preference otherwise looks healthy
+        (the producer ledger only sees the fetch); issue #257 stayed invisible
+        for a month for exactly that reason.  Counters are process-local and
+        diagnostic-only, while the WARNING is rate limited per source so a
+        permanently-misconfigured preference cannot flood the log.
+        """
+        if not input_by_source:
+            return
+        now_iso = datetime.now(UTC).isoformat()
+        monotonic_now = time.monotonic()
+        warnings: list[tuple[str, int, bool]] = []
+        with self._publication_date_filter_stats_lock:
+            for source, offered in input_by_source.items():
+                offered = int(offered)
+                if offered <= 0:
+                    continue
+                stats = self._publication_date_filter_stats.setdefault(
+                    source,
+                    {
+                        "input": 0,
+                        "filtered_by_publication_date": 0,
+                        "inserted": 0,
+                        "last_input_at": "",
+                        "last_filtered_at": "",
+                    },
+                )
+                stats["input"] = int(stats["input"]) + offered
+                stats["last_input_at"] = now_iso
+                filtered = int(filtered_by_source.get(source, 0))
+                if filtered > 0:
+                    stats["filtered_by_publication_date"] = (
+                        int(stats["filtered_by_publication_date"]) + filtered
+                    )
+                    stats["last_filtered_at"] = now_iso
+                stats["inserted"] = int(stats["inserted"]) + int(inserted_by_source.get(source, 0))
+                if filtered < offered:
+                    continue
+                last_warned = self._publication_date_filter_warned_at.get(source, 0.0)
+                if monotonic_now - last_warned < _PUBLICATION_DATE_FILTER_WARN_INTERVAL_SECONDS:
+                    continue
+                self._publication_date_filter_warned_at[source] = monotonic_now
+                preference = (self._source_publication_date_preferences or {}).get(source)
+                strict = bool(
+                    preference is not None
+                    and float(getattr(preference, "weight", 0.5) or 0.0) >= 1.0
+                )
+                warnings.append((source, offered, strict))
+        for source, offered, strict in warnings:
+            logger.warning(
+                "publication date preference filtered all %d candidate(s) from source=%s "
+                "(strict=%s); this source will stop supplying until the preference, "
+                "published_at coverage or weight changes",
+                offered,
+                source,
+                strict,
+            )
+
+    def publication_date_filter_stats(self) -> dict[str, dict[str, Any]]:
+        """Return per-source publication-date gate counters for diagnostics."""
+
+        with self._publication_date_filter_stats_lock:
+            return {
+                source: dict(stats) for source, stats in self._publication_date_filter_stats.items()
+            }
+
+    def _publication_date_row_is_eligible(
+        self,
+        row: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """Apply strict Bilibili date preference without deleting stored rows."""
+        preference = self._publication_date_preference
+        if preference is None:
+            return True
+        try:
+            from openbiliclaw.recommendation.publication_preference import (
+                evaluate_publication_preference,
+            )
+
+            decision = evaluate_publication_preference(
+                # Older pool rows may have an empty platform column; derive
+                # their canonical family from the persisted source strategy.
+                source_platform=(
+                    row.get("source_platform")
+                    or _pool_source_family(row.get("source"), row.get("source_platform"))
+                ),
+                published_at=row.get("published_at", ""),
+                preference=cast("PublicationDatePreference", preference),
+                now=now,
+            )
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid publication preference in pool read", exc_info=True)
+            return True
+        return decision.eligible
+
     def initialize(self) -> None:
         """Initialize the database and run migrations if needed."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1640,6 +2343,7 @@ class Database:
             self._connections_by_thread = {owner_thread_id: self._conn}
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA_SQL)
+        self._ensure_event_source_columns()
         self._ensure_event_satisfaction_columns()
         self._ensure_event_ingest_key_column()
         self._ensure_recommendation_feedback_columns()
@@ -1661,6 +2365,8 @@ class Database:
         self._normalize_legacy_style_keys()
         self._ensure_llm_usage_cache_columns()
         self._ensure_chat_turns_table()
+        self._ensure_chat_sessions_table()
+        self._ensure_agent_tasks_table()
         self._ensure_profile_update_ledger_table()
         self._ensure_confusions_table()
         self._ensure_watch_later_table()
@@ -1884,6 +2590,8 @@ class Database:
         isolated = Database(self._db_path)
         isolated._conn = conn
         isolated._admission_min_score = self._admission_min_score
+        isolated._publication_date_preference = self._publication_date_preference
+        isolated._source_publication_date_preferences = self._source_publication_date_preferences
         isolated._seen_state_lock = self._seen_state_lock
         isolated._seen_state_cache = self._seen_state_cache
         return isolated
@@ -1908,9 +2616,22 @@ class Database:
         """
         scope = normalize_source_platform(source_platform)
         isolated = self._isolated_database(busy_timeout_ms=_INTERACTIVE_DB_BUSY_TIMEOUT_MS)
+        try:
+            isolated.retire_temporally_stale_pool_items()
+        except sqlite3.OperationalError:
+            # Canonical availability applies the same pure policy in memory,
+            # and the final serve transaction rechecks it again.  A transient
+            # maintenance lock therefore must not turn recommendation reads
+            # into a 500 response.
+            logger.warning(
+                "temporal pool retirement deferred by SQLite contention; "
+                "serving with in-memory eligibility guard",
+            )
         isolated._preserve_read_transaction = True
         try:
             isolated.conn.execute("BEGIN")
+            isolated._snapshot_delight_thresholds = {}
+            isolated._snapshot_available_query_rows = {}
             # Materialize the canonical all-time seen ledger once and reuse it
             # across every availability/candidate helper in this transaction.
             viewed_content_keys, seen_bvids = isolated._seen_state_on(isolated.conn)
@@ -2010,6 +2731,8 @@ class Database:
             isolated.conn.rollback()
             raise
         finally:
+            isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_available_query_rows = None
             isolated._preserve_read_transaction = False
             isolated.close()
 
@@ -2021,11 +2744,10 @@ class Database:
         """Persist recommendation rows and shown state on an isolated connection."""
         isolated = self._isolated_database(busy_timeout_ms=_INTERACTIVE_DB_BUSY_TIMEOUT_MS)
         try:
-            ids = isolated.batch_insert_recommendations_and_mark_shown(
+            return isolated.batch_insert_eligible_recommendations_and_mark_shown(
                 items,
                 shown_bvids,
             )
-            return PoolServePersistResult(recommendation_ids=tuple(ids))
         finally:
             isolated.close()
 
@@ -2036,9 +2758,21 @@ class Database:
     ) -> dict[str, int]:
         """Read exact inventory using a short-lived connection."""
         isolated = self._isolated_database(busy_timeout_ms=_INTERACTIVE_DB_BUSY_TIMEOUT_MS)
+        isolated._preserve_read_transaction = True
         try:
-            return isolated.count_pool_readiness(xhs_self_nickname=xhs_self_nickname)
+            isolated.conn.execute("BEGIN")
+            isolated._snapshot_delight_thresholds = {}
+            isolated._snapshot_available_query_rows = {}
+            counts = isolated.count_pool_readiness(xhs_self_nickname=xhs_self_nickname)
+            isolated.conn.commit()
+            return counts
+        except Exception:
+            isolated.conn.rollback()
+            raise
         finally:
+            isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_available_query_rows = None
+            isolated._preserve_read_transaction = False
             isolated.close()
 
     def load_pool_platform_availability(
@@ -2059,6 +2793,8 @@ class Database:
         isolated._preserve_read_transaction = True
         try:
             isolated.conn.execute("BEGIN")
+            isolated._snapshot_delight_thresholds = {}
+            isolated._snapshot_available_query_rows = {}
             viewed_content_keys, _ = isolated._seen_state_on(isolated.conn)
             rows = isolated._load_available_pool_candidate_rows_on(
                 isolated.conn,
@@ -2071,6 +2807,8 @@ class Database:
             isolated.conn.rollback()
             raise
         finally:
+            isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_available_query_rows = None
             isolated._preserve_read_transaction = False
             isolated.close()
         counts: dict[str, int] = defaultdict(int)
@@ -2131,6 +2869,75 @@ class Database:
                 attempts -= 1
                 logger.warning(
                     "SQLite write locked, retrying (%s attempts left): %s",
+                    attempts,
+                    sql.splitlines()[0].strip() if sql.strip() else "<empty-sql>",
+                )
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
+    def _execute_prepared_write(
+        self,
+        sql: str,
+        prepare_params: Callable[[sqlite3.Connection], _CacheContentPreparedWrite],
+    ) -> CacheContentWriteResult:
+        """Run a cache upsert and capture its result under one writer lock."""
+
+        connection = self.conn
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                if connection.in_transaction:
+                    # Some legacy callers stage writes directly on ``conn``
+                    # and then use ``cache_content`` as the committing sink.
+                    # A no-op DML upgrades that existing deferred transaction
+                    # to a writer transaction without attempting a nested
+                    # BEGIN; the time-sensitive params are still derived only
+                    # after SQLite grants the writer lock.
+                    connection.execute("UPDATE content_cache SET bvid = bvid WHERE 0")
+                else:
+                    connection.execute("BEGIN IMMEDIATE")
+                try:
+                    prepared = prepare_params(connection)
+                    connection.execute(sql, prepared.params)
+                    if prepared.renewed_review_retry_at:
+                        connection.execute(
+                            """
+                            UPDATE content_cache
+                            SET temporal_review_attempts = MAX(
+                                    COALESCE(temporal_review_attempts, 0),
+                                    1
+                                ),
+                                temporal_review_retry_at = ?
+                            WHERE bvid = ?
+                              AND pool_status = 'temporal_review_hold'
+                            """,
+                            (prepared.renewed_review_retry_at, prepared.bvid),
+                        )
+                    row = connection.execute(
+                        "SELECT COALESCE(pool_status, 'fresh') AS pool_status "
+                        "FROM content_cache WHERE bvid = ? LIMIT 1",
+                        (prepared.bvid,),
+                    ).fetchone()
+                    if row is None:  # pragma: no cover - upsert invariant
+                        raise RuntimeError("content_cache upsert did not persist its target row")
+                    result = CacheContentWriteResult(
+                        bvid=prepared.bvid,
+                        created=prepared.created,
+                        pool_status=str(row["pool_status"] or "fresh"),
+                        temporal_decision=prepared.temporal_decision,
+                    )
+                    connection.commit()
+                    return result
+                except Exception:
+                    connection.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                self._rollback_failed_write(connection)
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                logger.warning(
+                    "SQLite prepared write locked, retrying (%s attempts left): %s",
                     attempts,
                     sql.splitlines()[0].strip() if sql.strip() else "<empty-sql>",
                 )
@@ -2211,7 +3018,38 @@ class Database:
             context_text = ""
         else:
             context_text = json.dumps(raw_context, ensure_ascii=False)
-        metadata_payload = kwargs.get("metadata", {})
+        raw_metadata = kwargs.get("metadata", {})
+        metadata_payload = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+        explicit_platform = kwargs.get("source_platform", "")
+        metadata_platform = metadata_payload.get("source_platform", "")
+        provided_confidence = str(kwargs.get("source_confidence", "") or "").strip()
+        source_platform, detected_confidence = resolve_source_attribution(
+            explicit_platform=explicit_platform,
+            metadata_platform=metadata_platform,
+            url=kwargs.get("url", ""),
+        )
+        # Callers may suggest a confidence value, but they cannot claim
+        # stronger evidence than the resolver observed. This keeps a direct
+        # ``insert_event(..., url=x.com, source_confidence="exact")`` from
+        # turning URL inference into exact attribution.
+        source_confidence = constrain_source_confidence(
+            provided_confidence,
+            detected_confidence,
+        )
+        # A confidence value without a resolved platform cannot be evidence
+        # for a source. Keep the row explicitly unknown at the storage
+        # boundary even when a legacy caller supplied "exact".
+        if not source_platform:
+            source_confidence = SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+        if not source_platform:
+            source_platform = normalize_source_platform(explicit_platform or metadata_platform)
+        if source_platform:
+            metadata_payload["source_platform"] = source_platform
+        content_id = str(kwargs.get("content_id", "") or "").strip() or extract_source_content_id(
+            metadata_payload
+        )
+        if content_id:
+            metadata_payload["content_id"] = content_id
         classifier_event: dict[str, Any] = {
             "event_type": event_type,
             "url": kwargs.get("url", ""),
@@ -2229,6 +3067,9 @@ class Database:
             event_type,
             kwargs.get("url", ""),
             kwargs.get("title", ""),
+            source_platform,
+            content_id,
+            source_confidence,
             context_text,
             json.dumps(metadata_payload, ensure_ascii=False),
             inferred_satisfaction,
@@ -2264,14 +3105,15 @@ class Database:
                     seen_changed = False
                     newest_inserted_id = 0
                     for params in rows:
-                        ingest_key = str(params[7])
+                        ingest_key = str(params[10])
                         if ingest_key:
                             cursor = conn.execute(
                                 """
                                 INSERT INTO events (
-                                    event_type, url, title, context, metadata,
+                                    event_type, url, title, source_platform, content_id,
+                                    source_confidence, context, metadata,
                                     inferred_satisfaction, satisfaction_reason, ingest_key
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(ingest_key) WHERE ingest_key <> '' DO NOTHING
                                 """,
                                 params,
@@ -2280,9 +3122,10 @@ class Database:
                             cursor = conn.execute(
                                 """
                                 INSERT INTO events (
-                                    event_type, url, title, context, metadata,
+                                    event_type, url, title, source_platform, content_id,
+                                    source_confidence, context, metadata,
                                     inferred_satisfaction, satisfaction_reason, ingest_key
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 params,
                             )
@@ -2296,7 +3139,7 @@ class Database:
                                     self._upsert_seen_items_from_view_event_on(
                                         conn,
                                         event_id=event_id,
-                                        row={"url": params[1], "metadata": params[4]},
+                                        row={"url": params[1], "metadata": params[7]},
                                     )
                                     or seen_changed
                                 )
@@ -2559,6 +3402,246 @@ class Database:
     # Durable popup chat turns
     # ------------------------------------------------------------------
 
+    # --- Multi-session chat model (「聊一聊」 M5) ---
+
+    @staticmethod
+    def _normalize_chat_session_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Decode the additive session metadata while tolerating corrupt rows."""
+        normalized = dict(row)
+        raw_metadata = normalized.get("metadata", "{}")
+        try:
+            parsed = json.loads(str(raw_metadata or "{}"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = {}
+        normalized["metadata"] = parsed if isinstance(parsed, dict) else {}
+        normalized["archived"] = bool(normalized.get("archived", 0))
+        normalized["title"] = str(normalized.get("title", "") or "")
+        normalized["last_message_at"] = str(normalized.get("last_message_at", "") or "")
+        return normalized
+
+    def ensure_default_chat_session(self) -> dict[str, Any]:
+        """Create the well-known default chat session if missing and return it."""
+        self._execute_write(
+            "INSERT OR IGNORE INTO chat_sessions (session_id, title) VALUES (?, ?)",
+            (DEFAULT_CHAT_SESSION_ID, DEFAULT_CHAT_SESSION_TITLE),
+        )
+        row = self.get_chat_session(DEFAULT_CHAT_SESSION_ID)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError("Failed to create the default chat session")
+        return row
+
+    def create_chat_session(
+        self,
+        *,
+        session_id: str,
+        title: str = "",
+        metadata: Mapping[str, object] | None = None,
+    ) -> dict[str, Any]:
+        """Create one chat session; idempotent on the session id."""
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            raise ValueError("Chat session id is required")
+        serialized_metadata = json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True)
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO chat_sessions (session_id, title, metadata)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_id, title.strip(), serialized_metadata),
+        )
+        row = self.get_chat_session(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError(f"Failed to create chat session {normalized_id!r}")
+        return row
+
+    def get_chat_session(self, session_id: str) -> dict[str, Any] | None:
+        """Return one chat session by id."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """
+            SELECT session_id, title, archived, metadata,
+                   created_at, updated_at, last_message_at
+            FROM chat_sessions
+            WHERE session_id = ?
+            """,
+            (session_id.strip(),),
+        ).fetchone()
+        return self._normalize_chat_session_row(row) if row is not None else None
+
+    def list_chat_sessions(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return chat sessions ordered by latest activity, most recent first.
+
+        Each row carries a ``last_message_preview`` (truncated latest user
+        message), ``turn_count``, ``active_turns`` (pending replies) and the
+        computed ``last_activity`` used for ordering.  The default session
+        also owns legacy turns whose ``session_id`` stayed ''.
+        """
+        self._ensure_fresh_read()
+        membership = _CHAT_SESSION_TURN_MEMBERSHIP_SQL
+        cursor = self.conn.execute(
+            f"""
+            SELECT s.session_id, s.title, s.archived, s.metadata,
+                   s.created_at, s.updated_at, s.last_message_at,
+                   (SELECT COUNT(*) FROM chat_turns t WHERE {membership}) AS turn_count,
+                   (SELECT COUNT(*) FROM chat_turns t
+                    WHERE ({membership}) AND t.status = 'pending') AS active_turns,
+                   (SELECT substr(t.message, 1, 120) FROM chat_turns t
+                    WHERE {membership}
+                    ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1) AS last_message_preview,
+                   COALESCE(
+                       s.last_message_at,
+                       (SELECT MAX(t.created_at) FROM chat_turns t WHERE {membership}),
+                       s.updated_at
+                   ) AS last_activity
+            FROM chat_sessions s
+            WHERE (? OR s.archived = 0)
+            ORDER BY last_activity DESC, turn_count DESC, s.session_id ASC
+            LIMIT ?
+            """,
+            (1 if include_archived else 0, max(1, int(limit))),
+        )
+        return [self._normalize_chat_session_row(row) for row in cursor.fetchall()]
+
+    def get_chat_session_summary(self, session_id: str) -> dict[str, Any] | None:
+        """Return one session with the same aggregate preview fields as the list."""
+        self._ensure_fresh_read()
+        membership = _CHAT_SESSION_TURN_MEMBERSHIP_SQL
+        row = self.conn.execute(
+            f"""
+            SELECT s.session_id, s.title, s.archived, s.metadata,
+                   s.created_at, s.updated_at, s.last_message_at,
+                   (SELECT COUNT(*) FROM chat_turns t WHERE {membership}) AS turn_count,
+                   (SELECT COUNT(*) FROM chat_turns t
+                    WHERE ({membership}) AND t.status = 'pending') AS active_turns,
+                   (SELECT substr(t.message, 1, 120) FROM chat_turns t
+                    WHERE {membership}
+                    ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1) AS last_message_preview,
+                   COALESCE(
+                       s.last_message_at,
+                       (SELECT MAX(t.created_at) FROM chat_turns t WHERE {membership}),
+                       s.updated_at
+                   ) AS last_activity
+            FROM chat_sessions s
+            WHERE s.session_id = ?
+            """,
+            (session_id.strip(),),
+        ).fetchone()
+        return self._normalize_chat_session_row(row) if row is not None else None
+
+    def rename_chat_session(self, session_id: str, *, title: str) -> bool:
+        """Rename one chat session; returns False when the session is missing."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (title.strip(), session_id.strip()),
+        )
+        return cursor.rowcount == 1
+
+    def set_chat_session_archived(self, session_id: str, *, archived: bool) -> bool:
+        """Archive/unarchive one session. The default session cannot be archived."""
+        normalized_id = session_id.strip()
+        if normalized_id == DEFAULT_CHAT_SESSION_ID and archived:
+            raise ValueError("The default chat session cannot be archived")
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET archived = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (1 if archived else 0, normalized_id),
+        )
+        return cursor.rowcount == 1
+
+    def set_chat_session_persona(self, session_id: str, *, persona: str) -> bool:
+        """Atomically replace only the persona key, preserving other metadata."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET metadata = json_set(
+                    CASE WHEN json_valid(metadata) THEN
+                        CASE WHEN json_type(metadata) = 'object' THEN metadata ELSE '{}' END
+                    ELSE '{}' END,
+                    '$.persona', ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (persona, session_id.strip()),
+        )
+        return cursor.rowcount == 1
+
+    def touch_chat_session(self, session_id: str) -> bool:
+        """Bump one session's last-message activity timestamp."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET last_message_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (session_id.strip(),),
+        )
+        return cursor.rowcount == 1
+
+    def list_chat_turns_by_session(
+        self,
+        *,
+        session_id: str,
+        scope: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page one session's turns (newest page first) plus the total count.
+
+        Rows come back in ascending display order within the requested page,
+        matching ``list_chat_turns``.  The default session includes legacy
+        turns whose ``session_id`` stayed ''.
+        """
+        self._ensure_fresh_read()
+        normalized_id = session_id.strip()
+        if normalized_id == DEFAULT_CHAT_SESSION_ID:
+            clauses = ["session_id IN ('', ?)"]
+            params: list[Any] = [DEFAULT_CHAT_SESSION_ID]
+        else:
+            clauses = ["session_id = ?"]
+            params = [normalized_id]
+        if scope:
+            clauses.append("scope = ?")
+            params.append(scope)
+        where = " AND ".join(clauses)
+        total_row = self.conn.execute(
+            f"SELECT COUNT(*) AS count FROM chat_turns WHERE {where}",
+            params,
+        ).fetchone()
+        total = int(total_row["count"] if total_row is not None else 0)
+        cursor = self.conn.execute(
+            f"""
+            SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
+                   status, reply, error, payload, session_id, created_at, updated_at
+            FROM (
+                SELECT rowid AS insertion_rowid,
+                       turn_id, session, scope, subject_id, subject_title,
+                       reply_to_turn_id, message,
+                       status, reply, error, payload, session_id, created_at, updated_at
+                FROM chat_turns
+                WHERE {where}
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ? OFFSET ?
+            )
+            ORDER BY created_at ASC, insertion_rowid ASC
+            """,
+            [*params, max(1, int(limit)), max(0, int(offset))],
+        )
+        rows = [self._normalize_chat_turn_row(row) for row in cursor.fetchall()]
+        return rows, total
+
     def create_chat_turn(
         self,
         *,
@@ -2570,16 +3653,18 @@ class Database:
         subject_title: str = "",
         reply_to_turn_id: str = "",
         payload: Mapping[str, object] | None = None,
+        session_id: str = "",
     ) -> dict[str, Any]:
         """Create a pending popup chat turn if it does not already exist."""
         serialized_payload = json.dumps(dict(payload or {}), ensure_ascii=False, sort_keys=True)
+        normalized_session_id = session_id.strip()
         self._execute_write(
             """
             INSERT OR IGNORE INTO chat_turns (
                 turn_id, session, scope, subject_id, subject_title, reply_to_turn_id,
-                message, status, payload
+                message, status, payload, session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
             (
                 turn_id,
@@ -2590,8 +3675,11 @@ class Database:
                 reply_to_turn_id or "",
                 message,
                 serialized_payload,
+                normalized_session_id,
             ),
         )
+        if normalized_session_id:
+            self.touch_chat_session(normalized_session_id)
         row = self.get_chat_turn(turn_id)
         if row is None:
             raise RuntimeError(f"Failed to create chat turn {turn_id!r}")
@@ -2634,6 +3722,41 @@ class Database:
                 (session or "popup", ref, ref),
             ).fetchone()
             return self._normalize_chat_turn_row(row) if row is not None else None
+        finally:
+            conn.close()
+
+    def get_chat_confirmation_refs(self, *, session: str) -> set[str]:
+        """Read active confirmation identities for one surface in a single query.
+
+        Uses the same scope, status and payload conditions as
+        ``get_chat_confirmation_turn`` without opening one connection per
+        hypothesis when a chat client polls its pending-confirmation list.
+        """
+        conn = self.open_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT subject_id
+                FROM chat_turns
+                WHERE session = ?
+                  AND status = 'completed'
+                  AND json_valid(payload)
+                  AND json_extract(payload, '$.ref') = subject_id
+                  AND (
+                        (
+                            scope = 'hypothesis'
+                            AND json_extract(payload, '$.type') = 'card'
+                            AND json_extract(payload, '$.state') IN ('pending', 'discussing')
+                        )
+                        OR (
+                            scope = 'confusion'
+                            AND json_extract(payload, '$.type') = 'question'
+                        )
+                      )
+                """,
+                (session or "popup",),
+            ).fetchall()
+            return {str(row["subject_id"]) for row in rows}
         finally:
             conn.close()
 
@@ -2799,6 +3922,8 @@ class Database:
             """,
             (reply, turn_id),
         )
+        if cursor.rowcount == 1:
+            self._touch_chat_session_for_turn(turn_id)
         return cursor.rowcount == 1
 
     def fail_chat_turn(self, turn_id: str, *, error: str, reply: str = "") -> bool:
@@ -2815,7 +3940,23 @@ class Database:
             """,
             (reply, error, turn_id),
         )
+        if cursor.rowcount == 1:
+            self._touch_chat_session_for_turn(turn_id)
         return cursor.rowcount == 1
+
+    def _touch_chat_session_for_turn(self, turn_id: str) -> None:
+        """Reflect a turn outcome in its owning session's activity timestamp."""
+        self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET last_message_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = (
+                SELECT session_id FROM chat_turns WHERE turn_id = ?
+            )
+            """,
+            (turn_id,),
+        )
 
     def get_chat_turn(self, turn_id: str) -> dict[str, Any] | None:
         """Return one durable popup chat turn by id."""
@@ -2824,7 +3965,7 @@ class Database:
             """
             SELECT turn_id, session, scope, subject_id, subject_title,
                    reply_to_turn_id, message,
-                   status, reply, error, payload, created_at, updated_at
+                   status, reply, error, payload, session_id, created_at, updated_at
             FROM chat_turns
             WHERE turn_id = ?
             """,
@@ -2851,18 +3992,63 @@ class Database:
         cursor = self.conn.execute(
             f"""
             SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
-                   status, reply, error, payload, created_at, updated_at
+                   status, reply, error, payload, session_id, created_at, updated_at
             FROM (
                    SELECT rowid AS insertion_rowid,
                        turn_id, session, scope, subject_id, subject_title,
                        reply_to_turn_id, message,
-                       status, reply, error, payload, created_at, updated_at
+                       status, reply, error, payload, session_id, created_at, updated_at
                 FROM chat_turns
                 WHERE {" AND ".join(clauses)}
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
             )
             ORDER BY created_at ASC, insertion_rowid ASC
+            """,
+            params,
+        )
+        return [self._normalize_chat_turn_row(row) for row in cursor.fetchall()]
+
+    def search_chat_turns(
+        self,
+        *,
+        keyword: str = "",
+        session: str = "",
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search durable chat turns by keyword and optional time range, newest first.
+
+        Backs the agent-loop ``search_history`` tool: keyword matches against
+        both the user message and the assistant reply.
+        """
+        self._ensure_fresh_read()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if keyword:
+            like = f"%{keyword}%"
+            clauses.append("(message LIKE ? OR reply LIKE ?)")
+            params.extend([like, like])
+        if session:
+            clauses.append("session = ?")
+            params.append(session)
+        if start_time is not None:
+            clauses.append("created_at >= ?")
+            params.append(start_time.isoformat(sep=" "))
+        if end_time is not None:
+            clauses.append("created_at <= ?")
+            params.append(end_time.isoformat(sep=" "))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        cursor = self.conn.execute(
+            f"""
+            SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
+                   status, reply, error, payload, session_id, created_at, updated_at
+            FROM chat_turns
+            {where}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
             """,
             params,
         )
@@ -2929,6 +4115,9 @@ class Database:
         # Additive relation migration: legacy rows have no relation and must
         # hydrate as explicitly unbound rather than crashing or guessing.
         normalized.setdefault("reply_to_turn_id", "")
+        # Additive multi-session migration (M5): legacy rows have no owning
+        # session entity and are read through the default session.
+        normalized.setdefault("session_id", "")
         return normalized
 
     def update_chat_turn_payload_state(
@@ -2985,6 +4174,317 @@ class Database:
             (f"$.{receipt_key}", serialized, turn_id),
         )
         return int(cursor.rowcount or 0) == 1
+
+    def store_chat_turn_agent_events(
+        self,
+        turn_id: str,
+        *,
+        events: list[Mapping[str, object]],
+    ) -> bool:
+        """Persist one agent-loop event stream inside the turn payload.
+
+        The events (``AgentEvent.to_dict()`` shapes: thinking / tool_call /
+        tool_result / step_limit_reached / final) live under
+        ``payload.agent_events`` so chat history replay can re-render the
+        loop's steps without a schema migration.
+        """
+        serialized = json.dumps([dict(event) for event in events], ensure_ascii=False)
+        cursor = self._execute_write(
+            """
+            UPDATE chat_turns
+            SET payload = json_set(
+                    CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,
+                    '$.agent_events',
+                    json(?)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE turn_id = ?
+            """,
+            (serialized, turn_id),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    # --- Durable agent task center (「聊一聊」 M6) ---
+
+    @staticmethod
+    def _normalize_agent_task_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Decode the JSON columns while tolerating corrupt rows."""
+        normalized = dict(row)
+        json_list_fields: tuple[tuple[str, list[Any]], ...] = (
+            ("suggestions", []),
+            ("steps", []),
+        )
+        for field_name, fallback in json_list_fields:
+            raw_value = normalized.get(field_name, fallback)
+            try:
+                parsed = json.loads(str(raw_value)) if isinstance(raw_value, str) else raw_value
+            except (json.JSONDecodeError, TypeError, ValueError):
+                parsed = fallback
+            normalized[field_name] = parsed if isinstance(parsed, list) else []
+        for field_name in (
+            "session_id",
+            "title",
+            "prompt",
+            "status",
+            "skill",
+            "progress",
+            "report",
+            "error",
+        ):
+            normalized[field_name] = str(normalized.get(field_name, "") or "")
+        for field_name in ("created_at", "started_at", "finished_at", "updated_at"):
+            normalized[field_name] = str(normalized.get(field_name, "") or "")
+        return normalized
+
+    def create_agent_task(
+        self,
+        *,
+        task_id: str,
+        session_id: str = "",
+        title: str = "",
+        prompt: str,
+        skill: str = "",
+    ) -> dict[str, Any]:
+        """Create one durable background task in ``pending`` state (idempotent)."""
+        normalized_id = task_id.strip()
+        if not normalized_id:
+            raise ValueError("Agent task id is required")
+        if not prompt.strip():
+            raise ValueError("Agent task prompt is required")
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO agent_tasks (task_id, session_id, title, prompt, skill)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_id,
+                session_id.strip(),
+                title.strip(),
+                prompt.strip(),
+                skill.strip(),
+            ),
+        )
+        row = self.get_agent_task(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError(f"Failed to create agent task {normalized_id!r}")
+        return row
+
+    def get_agent_task(self, task_id: str) -> dict[str, Any] | None:
+        """Return one agent task by id, with ``suggestions``/``steps`` decoded."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """
+            SELECT task_id, session_id, title, prompt, status, skill, progress,
+                   report, suggestions, steps, error,
+                   created_at, started_at, finished_at, updated_at
+            FROM agent_tasks
+            WHERE task_id = ?
+            """,
+            (task_id.strip(),),
+        ).fetchone()
+        return self._normalize_agent_task_row(row) if row is not None else None
+
+    def list_agent_tasks(
+        self,
+        *,
+        status: str = "",
+        session_id: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page agent tasks (newest first) plus the total count.
+
+        ``status`` filters one exact status; ``session_id`` filters the
+        originating conversation.  Step logs are included per row — the API
+        layer strips them from list responses.
+        """
+        self._ensure_fresh_read()
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_status = status.strip()
+        if normalized_status:
+            if normalized_status not in AGENT_TASK_STATUSES:
+                raise ValueError(f"Unknown agent task status: {normalized_status}")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+        if session_id.strip():
+            clauses.append("session_id = ?")
+            params.append(session_id.strip())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total_row = self.conn.execute(
+            f"SELECT COUNT(*) AS count FROM agent_tasks {where}",
+            params,
+        ).fetchone()
+        total = int(total_row["count"] if total_row is not None else 0)
+        cursor = self.conn.execute(
+            f"""
+            SELECT task_id, session_id, title, prompt, status, skill, progress,
+                   report, suggestions, steps, error,
+                   created_at, started_at, finished_at, updated_at
+            FROM agent_tasks
+            {where}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, max(1, int(limit)), max(0, int(offset))],
+        )
+        rows = [self._normalize_agent_task_row(row) for row in cursor.fetchall()]
+        return rows, total
+
+    def update_agent_task_status(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        progress: str = "",
+        error: str = "",
+        expected: tuple[str, ...] | None = None,
+    ) -> bool:
+        """CAS one task into ``status``; returns False when the transition lost.
+
+        ``expected`` defaults to the active states (pending/running) so
+        terminal rows are never overwritten.  Entering ``running`` stamps
+        ``started_at``; entering any terminal status stamps ``finished_at``.
+        """
+        if status not in AGENT_TASK_STATUSES:
+            raise ValueError(f"Unknown agent task status: {status}")
+        allowed = expected if expected is not None else AGENT_TASK_ACTIVE_STATUSES
+        if not allowed:
+            return False
+        placeholders = ", ".join("?" for _ in allowed)
+        assignments = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
+        params: list[Any] = [status]
+        if progress:
+            assignments.append("progress = ?")
+            params.append(progress)
+        if error or status in AGENT_TASK_TERMINAL_STATUSES:
+            assignments.append("error = ?")
+            params.append(error)
+        if status == "running":
+            assignments.append("started_at = COALESCE(started_at, CURRENT_TIMESTAMP)")
+        if status in AGENT_TASK_TERMINAL_STATUSES:
+            assignments.append("finished_at = CURRENT_TIMESTAMP")
+        cursor = self._execute_write(
+            f"""
+            UPDATE agent_tasks
+            SET {", ".join(assignments)}
+            WHERE task_id = ?
+              AND status IN ({placeholders})
+            """,
+            (*params, task_id.strip(), *allowed),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def append_agent_task_step(self, task_id: str, *, step: Mapping[str, object]) -> bool:
+        """Append one execution-log entry to a non-terminal task's step log.
+
+        Entries are ``AgentEvent.to_dict()``-shaped dicts with text truncated
+        to ``MAX_AGENT_TASK_STEP_CHARS``.  The log is bounded: once it reaches
+        ``MAX_AGENT_TASK_STEPS`` entries or ``MAX_AGENT_TASK_STEPS_CHARS``
+        serialized, further appends collapse into a single trailing
+        ``steps_truncated`` marker.  The task's ``progress`` summary follows
+        the latest step.
+        """
+        row = self.conn.execute(
+            "SELECT status, steps FROM agent_tasks WHERE task_id = ?",
+            (task_id.strip(),),
+        ).fetchone()
+        if row is None or str(row["status"] or "") in AGENT_TASK_TERMINAL_STATUSES:
+            return False
+        try:
+            steps = json.loads(str(row["steps"] or "[]"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            steps = []
+        if not isinstance(steps, list):
+            steps = []
+        entry = dict(step)
+        text = str(entry.get("text", "") or "")
+        if len(text) > MAX_AGENT_TASK_STEP_CHARS:
+            entry["text"] = text[:MAX_AGENT_TASK_STEP_CHARS] + "…（已截断）"
+            entry["truncated"] = True
+        steps.append(entry)
+        serialized = json.dumps(steps, ensure_ascii=False)
+        if len(steps) > MAX_AGENT_TASK_STEPS or len(serialized) > MAX_AGENT_TASK_STEPS_CHARS:
+            marker = {
+                "type": "steps_truncated",
+                "text": (
+                    f"执行记录已达上限（{MAX_AGENT_TASK_STEPS} 条 / "
+                    f"{MAX_AGENT_TASK_STEPS_CHARS} 字符），后续步骤省略。"
+                ),
+            }
+            steps = steps[: MAX_AGENT_TASK_STEPS - 1] + [marker]
+            serialized = json.dumps(steps, ensure_ascii=False)
+        progress = str(entry.get("summary", "") or "") or text[:120]
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET steps = ?,
+                progress = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+              AND status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+            """,
+            (serialized, progress, task_id.strip()),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def set_agent_task_report(
+        self,
+        task_id: str,
+        *,
+        report: str,
+        suggestions: list[Mapping[str, object]] | None = None,
+    ) -> bool:
+        """Publish the final report + suggestion list and complete the task.
+
+        CAS from the active states only, so a cancel or failure that landed
+        first is never overwritten by a late report.
+        """
+        trimmed_report = report.strip()
+        if len(trimmed_report) > MAX_AGENT_TASK_REPORT_CHARS:
+            trimmed_report = trimmed_report[:MAX_AGENT_TASK_REPORT_CHARS] + "…（报告已截断）"
+        normalized_suggestions = [
+            dict(item) for item in (suggestions or [])[:MAX_AGENT_TASK_SUGGESTIONS]
+        ]
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET status = 'completed',
+                report = ?,
+                suggestions = ?,
+                error = '',
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+              AND status IN ('pending', 'running')
+            """,
+            (
+                trimmed_report,
+                json.dumps(normalized_suggestions, ensure_ascii=False),
+                task_id.strip(),
+            ),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def interrupt_stale_agent_tasks(self) -> int:
+        """Mark tasks a previous process left active as ``interrupted``.
+
+        Called once at app startup: in-flight asyncio tasks never survive a
+        restart, so any row still pending/running belongs to a dead process.
+        Tasks are never auto-resumed — the user re-issues them from the task
+        center.  Returns the number of rows marked.
+        """
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET status = 'interrupted',
+                error = '服务重启或热重载中断了该任务，可从任务中心重新发起。',
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('pending', 'running')
+            """,
+        )
+        return int(cursor.rowcount or 0)
 
     def try_create_card_settlement(
         self,
@@ -3067,10 +4567,11 @@ class Database:
             conn.execute(
                 """
                 INSERT INTO events (
-                    event_type, url, title, context, metadata,
+                    event_type, url, title, source_platform, content_id,
+                    source_confidence, context, metadata,
                     inferred_satisfaction, satisfaction_reason, ingest_key
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 params,
             )
@@ -3852,6 +5353,89 @@ class Database:
         )
         return inserted
 
+    def record_learned_scorer_shadow_audit(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> int:
+        """Persist learned-vs-LLM shadow decisions for calibration.
+
+        Stores only privacy-safe fields (decision_id + domain hash + bounded
+        classes) plus the learned/LLM scores and admission result.
+        """
+        params: list[tuple[Any, ...]] = []
+        for row in rows:
+            validate_learned_storage_record(row)
+            params.append(
+                (
+                    str(row["decision_id"]),
+                    str(row["candidate_hash"]),
+                    str(row["platform_class"]),
+                    str(row["context_class"]),
+                    float(row["learned_score"]),
+                    float(row["llm_score"]),
+                    float(row["admission_threshold"]),
+                    1 if bool(row["admission_result"]) else 0,
+                    str(row["features_digest"]),
+                )
+            )
+        if not params:
+            return 0
+        connection = self.conn
+        changes_before = connection.total_changes
+        self._execute_many_write(
+            """
+            INSERT OR IGNORE INTO evaluator_learned_scorer_shadow_audit (
+                decision_id,
+                candidate_hash,
+                platform_class,
+                context_class,
+                learned_score,
+                llm_score,
+                admission_threshold,
+                admission_result,
+                features_digest
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            params,
+        )
+        inserted = max(0, connection.total_changes - changes_before)
+        self._execute_write(
+            """
+            DELETE FROM evaluator_learned_scorer_shadow_audit
+            WHERE created_at < datetime('now', ?)
+            """,
+            (f"-{LEARNED_AUDIT_RETENTION_DAYS} days",),
+        )
+        self._execute_write(
+            """
+            DELETE FROM evaluator_learned_scorer_shadow_audit
+            WHERE id IN (
+                SELECT id
+                FROM evaluator_learned_scorer_shadow_audit
+                ORDER BY created_at DESC, id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (LEARNED_AUDIT_MAX_ROWS,),
+        )
+        return inserted
+
+    def query_learned_scorer_shadow_audit(self, *, limit: int = 20_000) -> list[dict[str, Any]]:
+        """Return the bounded privacy-safe learned-vs-LLM comparison cohort."""
+
+        rows = self.conn.execute(
+            """
+            SELECT id, decision_id, candidate_hash, platform_class, context_class,
+                   learned_score, llm_score, admission_threshold, admission_result,
+                   features_digest, created_at
+            FROM evaluator_learned_scorer_shadow_audit
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (max(0, min(LEARNED_AUDIT_MAX_ROWS, int(limit))),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def complete_prefilter_shadow_decisions(
         self,
         outcomes: Sequence[Mapping[str, Any]],
@@ -4581,8 +6165,8 @@ class Database:
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [payload for _, _, payload in scored[: max(1, int(limit))]]
 
-    def cache_content(self, bvid: str, **kwargs: Any) -> None:
-        """Cache discovered content.
+    def cache_content(self, bvid: str, **kwargs: Any) -> CacheContentWriteResult:
+        """Cache discovered content and return the lock-held admission outcome.
 
         Args:
             bvid: Video BV ID.
@@ -4594,14 +6178,43 @@ class Database:
             kwargs.get("published_at"),
             label=kwargs.get("published_label"),
         )
-        temporal = _normalize_temporal_fields_for_storage(
-            temporal_class=kwargs.get("temporal_class", "unknown"),
-            temporal_confidence=kwargs.get("temporal_confidence", 0.0),
-            temporal_reason=kwargs.get("temporal_reason", ""),
-        )
-        has_explicit_temporal = all(
+        temporal_fields_present = all(
             field in kwargs
             for field in ("temporal_class", "temporal_confidence", "temporal_reason")
+        )
+        incoming_evidence_complete = is_complete_temporal_evidence_marker(
+            kwargs.get(
+                "temporal_evidence_complete",
+                kwargs.get("temporal_evaluated", temporal_fields_present),
+            )
+        )
+        incoming_lifecycle_source = dict(kwargs)
+        incoming_lifecycle_source["temporal_evidence_complete"] = incoming_evidence_complete
+        incoming_review_clock = _parse_temporal_storage_clock(kwargs.get("temporal_evaluated_at"))
+        incoming_content_text = {
+            "title": kwargs.get("title", ""),
+            "description": kwargs.get("description", ""),
+            "body_text": kwargs.get("body_text", ""),
+            "published_label": published.published_label,
+        }
+        raw_source_metadata = kwargs.get("source_metadata", {})
+        normalized_source_metadata = (
+            dict(raw_source_metadata) if isinstance(raw_source_metadata, Mapping) else {}
+        )
+        incoming_grounding_downgraded = _temporal_grounding_was_downgraded(
+            incoming_lifecycle_source,
+            content_text=incoming_content_text,
+        )
+        temporal, incoming_lifecycle = _normalize_temporal_evidence_group_for_storage(
+            incoming_lifecycle_source,
+            content_text=incoming_content_text,
+        )
+        # ``DiscoveredContent.to_cache_kwargs()`` always carries neutral
+        # dataclass defaults.  Only complete, non-neutral evaluator evidence
+        # may replace a durable classification; malformed or explicit
+        # ``unknown`` results must not wash a prior hard-gate decision away.
+        has_explicit_temporal = (
+            temporal_fields_present and temporal[0] != "unknown" and bool(incoming_lifecycle[7])
         )
         source_platform = str(kwargs.get("source_platform", "bilibili") or "").strip()
         raw_content_id = str(kwargs.get("content_id", bvid) or "").strip()
@@ -4611,13 +6224,222 @@ class Database:
             identity_content_id,
             str(kwargs.get("content_url", "") or ""),
         )
-        existing_identity_row = self.conn.execute(
-            "SELECT bvid FROM content_cache WHERE item_key = ?",
-            (item_key,),
-        ).fetchone()
-        if existing_identity_row is not None:
-            bvid = str(existing_identity_row["bvid"])
-        self._execute_write(
+
+        def _cache_write_params(
+            connection: sqlite3.Connection,
+        ) -> _CacheContentPreparedWrite:
+            existing_identity_row = connection.execute(
+                "SELECT bvid FROM content_cache WHERE item_key = ?",
+                (item_key,),
+            ).fetchone()
+            resolved_bvid = (
+                str(existing_identity_row["bvid"]) if existing_identity_row is not None else bvid
+            )
+            existing_temporal_row = connection.execute(
+                """
+                SELECT
+                    published_at,
+                    published_label,
+                    temporal_class,
+                    temporal_confidence,
+                    temporal_reason,
+                    temporal_policy_version,
+                    temporal_validity_mode,
+                    temporal_valid_until,
+                    temporal_scope,
+                    temporal_state,
+                    temporal_evidence,
+                    temporal_next_review_at,
+                    temporal_evaluated_at,
+                    temporal_evidence_complete,
+                    temporal_review_attempts,
+                    temporal_review_retry_at,
+                    pool_status
+                FROM content_cache
+                WHERE bvid = ?
+                LIMIT 1
+                """,
+                (resolved_bvid,),
+            ).fetchone()
+            merged_published_at = published.published_at
+            merged_published_label = published.published_label
+            merged_temporal_class: object = temporal[0]
+            merged_temporal_confidence: object = temporal[1]
+            temporal_to_persist = temporal
+            temporal_lifecycle_to_persist = incoming_lifecycle
+            persist_temporal_fields = has_explicit_temporal
+            renewed_review_retry_at = ""
+            if existing_temporal_row is not None:
+                existing_temporal = _normalize_temporal_fields_for_storage(
+                    temporal_class=existing_temporal_row["temporal_class"],
+                    temporal_confidence=existing_temporal_row["temporal_confidence"],
+                    temporal_reason=existing_temporal_row["temporal_reason"],
+                    temporal_policy_version=existing_temporal_row["temporal_policy_version"],
+                )
+                existing_has_temporal_evidence = existing_temporal[0] != "unknown"
+                _, existing_lifecycle = _normalize_temporal_evidence_group_for_storage(
+                    dict(existing_temporal_row)
+                )
+                if existing_has_temporal_evidence or has_explicit_temporal:
+                    merged_published_at, merged_published_label = (
+                        _merge_publication_evidence_conservatively(
+                            existing_at=existing_temporal_row["published_at"],
+                            existing_label=existing_temporal_row["published_label"],
+                            incoming_at=published.published_at,
+                            incoming_label=published.published_label,
+                        )
+                    )
+                else:
+                    merged_published_at = published.published_at or str(
+                        existing_temporal_row["published_at"] or ""
+                    )
+                    merged_published_label = published.published_label or str(
+                        existing_temporal_row["published_label"] or ""
+                    )
+                incoming_replaces_existing = has_explicit_temporal and (
+                    not existing_has_temporal_evidence
+                    or (
+                        _temporal_evidence_is_authoritative_replacement(
+                            temporal,
+                            incoming_lifecycle,
+                        )
+                        and not incoming_grounding_downgraded
+                    )
+                )
+                temporal_to_persist = temporal if incoming_replaces_existing else existing_temporal
+                temporal_lifecycle_to_persist = (
+                    incoming_lifecycle
+                    if incoming_replaces_existing or not existing_has_temporal_evidence
+                    else existing_lifecycle
+                )
+                merged_temporal_class = temporal_to_persist[0]
+                merged_temporal_confidence = temporal_to_persist[1]
+                # Repair a legacy/corrupt partial triple (for example a
+                # missing reason) to the same fail-neutral tuple used by this
+                # lock-held decision, so later readers cannot reinterpret it.
+                persist_temporal_fields = True
+            decision_now = datetime.now(UTC)
+            temporal_decision = evaluate_temporal_eligibility(
+                temporal_class=merged_temporal_class,
+                temporal_confidence=merged_temporal_confidence,
+                published_at=merged_published_at,
+                temporal_validity_mode=temporal_lifecycle_to_persist[0],
+                temporal_valid_until=temporal_lifecycle_to_persist[1],
+                temporal_scope=temporal_lifecycle_to_persist[2],
+                temporal_state=temporal_lifecycle_to_persist[3],
+                temporal_evidence=temporal_lifecycle_to_persist[4],
+                temporal_next_review_at=temporal_lifecycle_to_persist[5],
+                temporal_evaluated_at=temporal_lifecycle_to_persist[6],
+                evidence_complete=bool(temporal_lifecycle_to_persist[7]),
+                temporal_policy_version=temporal_to_persist[3],
+                now=decision_now,
+            )
+            temporal_disposition = _temporal_decision_disposition(temporal_decision)
+            if existing_temporal_row is not None:
+                existing_review_clock = _parse_temporal_storage_clock(
+                    existing_temporal_row["temporal_evaluated_at"]
+                )
+                existing_retry_clock = _parse_temporal_storage_clock(
+                    existing_temporal_row["temporal_review_retry_at"]
+                )
+                completed_new_review = bool(
+                    incoming_review_clock is not None
+                    and incoming_review_clock != existing_review_clock
+                )
+                if (
+                    str(existing_temporal_row["pool_status"] or "fresh") == "temporal_review_hold"
+                    and temporal_disposition == "review_due"
+                    and completed_new_review
+                    and (existing_retry_clock is None or existing_retry_clock <= decision_now)
+                ):
+                    renewed_review_retry_at = _temporal_review_retry_text(
+                        now=decision_now,
+                        attempts=max(
+                            1,
+                            int(existing_temporal_row["temporal_review_attempts"] or 0),
+                        ),
+                    )
+            params = (
+                resolved_bvid,
+                item_key,
+                kwargs.get("title", ""),
+                kwargs.get("up_name", ""),
+                kwargs.get("up_mid", 0),
+                kwargs.get("duration", 0),
+                json.dumps(kwargs.get("tags", []), ensure_ascii=False),
+                kwargs.get("topic_key", ""),
+                kwargs.get("topic_group", ""),
+                _normalize_style_key_for_storage(kwargs.get("style_key", "")),
+                kwargs.get("franchise_key", ""),
+                kwargs.get("description", ""),
+                merged_published_at,
+                merged_published_label,
+                kwargs.get("cover_url", ""),
+                kwargs.get("view_count", 0),
+                kwargs.get("like_count", 0),
+                kwargs.get("favorite_count", 0),
+                kwargs.get("collect_count", 0),
+                kwargs.get("comment_count", 0),
+                kwargs.get("share_count", 0),
+                kwargs.get("danmaku_count", 0),
+                kwargs.get("reply_count", 0),
+                kwargs.get("retweet_count", 0),
+                kwargs.get("bookmark_count", 0),
+                kwargs.get("relevance_score", 0.0),
+                kwargs.get("relevance_reason", ""),
+                temporal_to_persist[0],
+                temporal_to_persist[1],
+                temporal_to_persist[2],
+                temporal_to_persist[3],
+                *temporal_lifecycle_to_persist,
+                _pool_status_for_temporal_decision(temporal_decision),
+                kwargs.get("pool_expression", ""),
+                kwargs.get("pool_topic_label", ""),
+                kwargs.get("candidate_tier", "primary"),
+                kwargs.get("source", ""),
+                kwargs.get("content_id", resolved_bvid),
+                kwargs.get("content_url", ""),
+                kwargs.get("source_platform", "bilibili"),
+                kwargs.get("author_name", ""),
+                kwargs.get("body_text", ""),
+                kwargs.get("content_type", "video") or "video",
+                self._candidate_json_payload(normalized_source_metadata, default={}),
+                self._coerce_source_keyword_id(kwargs.get("source_keyword_id")),
+                float(kwargs.get("rating_score", 0.0) or 0.0),
+                max(0, int(kwargs.get("rating_count", 0) or 0)),
+                max(0, int(kwargs.get("source_rank", 0) or 0)),
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                persist_temporal_fields,
+                has_explicit_temporal,
+                temporal_disposition,
+                has_explicit_temporal,
+                temporal_disposition,
+                temporal_disposition,
+                temporal_disposition,
+                has_explicit_temporal,
+                EXPLORE_STRATEGY,
+                EXPLORE_ADMISSION_MIN_SCORE,
+                self._pool_admission_min_score(),
+            )
+            return _CacheContentPreparedWrite(
+                params=params,
+                bvid=resolved_bvid,
+                created=existing_temporal_row is None,
+                temporal_decision=temporal_decision,
+                renewed_review_retry_at=renewed_review_retry_at,
+            )
+
+        return self._execute_prepared_write(
             """
             INSERT INTO content_cache (
                 bvid,
@@ -4651,6 +6473,15 @@ class Database:
                 temporal_confidence,
                 temporal_reason,
                 temporal_policy_version,
+                temporal_validity_mode,
+                temporal_valid_until,
+                temporal_scope,
+                temporal_state,
+                temporal_evidence,
+                temporal_next_review_at,
+                temporal_evaluated_at,
+                temporal_evidence_complete,
+                pool_status,
                 pool_expression,
                 pool_topic_label,
                 candidate_tier,
@@ -4662,6 +6493,7 @@ class Database:
                 author_name,
                 body_text,
                 content_type,
+                source_metadata,
                 source_keyword_id,
                 rating_score,
                 rating_count,
@@ -4670,7 +6502,8 @@ class Database:
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -4704,16 +6537,11 @@ class Database:
                     ''
                 ),
                 description = excluded.description,
-                published_at = COALESCE(
-                    NULLIF(excluded.published_at, ''),
-                    content_cache.published_at,
-                    ''
-                ),
-                published_label = COALESCE(
-                    NULLIF(excluded.published_label, ''),
-                    content_cache.published_label,
-                    ''
-                ),
+                -- Publication and temporal evidence are merged under the
+                -- writer lock.  Assign the prepared pair as one unit so a
+                -- later raw timestamp cannot resurrect an expired item.
+                published_at = excluded.published_at,
+                published_label = excluded.published_label,
                 cover_url = COALESCE(
                     NULLIF(excluded.cover_url, ''),
                     content_cache.cover_url,
@@ -4757,6 +6585,46 @@ class Database:
                         'v1'
                     )
                 END,
+                temporal_validity_mode = CASE
+                    WHEN ? THEN excluded.temporal_validity_mode
+                    ELSE COALESCE(content_cache.temporal_validity_mode, 'none')
+                END,
+                temporal_valid_until = CASE
+                    WHEN ? THEN excluded.temporal_valid_until
+                    ELSE COALESCE(content_cache.temporal_valid_until, '')
+                END,
+                temporal_scope = CASE
+                    WHEN ? THEN excluded.temporal_scope
+                    ELSE COALESCE(content_cache.temporal_scope, 'none')
+                END,
+                temporal_state = CASE
+                    WHEN ? THEN excluded.temporal_state
+                    ELSE COALESCE(content_cache.temporal_state, 'unknown')
+                END,
+                temporal_evidence = CASE
+                    WHEN ? THEN excluded.temporal_evidence
+                    ELSE COALESCE(content_cache.temporal_evidence, '')
+                END,
+                temporal_next_review_at = CASE
+                    WHEN ? THEN excluded.temporal_next_review_at
+                    ELSE COALESCE(content_cache.temporal_next_review_at, '')
+                END,
+                temporal_evaluated_at = CASE
+                    WHEN ? THEN excluded.temporal_evaluated_at
+                    ELSE COALESCE(content_cache.temporal_evaluated_at, '')
+                END,
+                temporal_evidence_complete = CASE
+                    WHEN ? THEN excluded.temporal_evidence_complete
+                    ELSE COALESCE(content_cache.temporal_evidence_complete, 0)
+                END,
+                temporal_review_attempts = CASE
+                    WHEN ? AND ? != 'review_due' THEN 0
+                    ELSE COALESCE(content_cache.temporal_review_attempts, 0)
+                END,
+                temporal_review_retry_at = CASE
+                    WHEN ? AND ? != 'review_due' THEN ''
+                    ELSE COALESCE(content_cache.temporal_review_retry_at, '')
+                END,
                 pool_expression = COALESCE(
                     NULLIF(excluded.pool_expression, ''),
                     content_cache.pool_expression,
@@ -4780,6 +6648,17 @@ class Database:
                 -- rows only revive after a fresh/effective score meets the
                 -- unified admission floor.
                 pool_status = CASE
+                    WHEN ? = 'expired'
+                         AND COALESCE(content_cache.pool_status, 'fresh')
+                             IN ('fresh', 'suppressed', 'temporal_review_hold')
+                    THEN 'stale'
+                    WHEN ? = 'review_due'
+                         AND COALESCE(content_cache.pool_status, 'fresh')
+                             IN ('fresh', 'suppressed', 'temporal_review_hold')
+                    THEN 'temporal_review_hold'
+                    WHEN content_cache.pool_status = 'temporal_review_hold'
+                         AND ?
+                    THEN 'fresh'
                     WHEN content_cache.pool_status = 'suppressed'
                          AND (
                             CASE
@@ -4813,6 +6692,14 @@ class Database:
                     content_cache.content_type,
                     'video'
                 ),
+                -- Source adapters provide this bounded allowlist. Preserve a
+                -- previously observed payload when a legacy rediscovery path
+                -- has no source-specific metadata to contribute.
+                source_metadata = CASE
+                    WHEN excluded.source_metadata != '{}'
+                    THEN excluded.source_metadata
+                    ELSE COALESCE(content_cache.source_metadata, '{}')
+                END,
                 -- P1.8: keep the producing-keyword provenance once set; a later
                 -- re-ingest from a source that doesn't carry the id (NULL) must
                 -- not wipe it.
@@ -4824,60 +6711,7 @@ class Database:
                 rating_count = excluded.rating_count,
                 source_rank = excluded.source_rank
             """,
-            (
-                bvid,
-                item_key,
-                kwargs.get("title", ""),
-                kwargs.get("up_name", ""),
-                kwargs.get("up_mid", 0),
-                kwargs.get("duration", 0),
-                json.dumps(kwargs.get("tags", []), ensure_ascii=False),
-                kwargs.get("topic_key", ""),
-                kwargs.get("topic_group", ""),
-                _normalize_style_key_for_storage(kwargs.get("style_key", "")),
-                kwargs.get("franchise_key", ""),
-                kwargs.get("description", ""),
-                published.published_at,
-                published.published_label,
-                kwargs.get("cover_url", ""),
-                kwargs.get("view_count", 0),
-                kwargs.get("like_count", 0),
-                kwargs.get("favorite_count", 0),
-                kwargs.get("collect_count", 0),
-                kwargs.get("comment_count", 0),
-                kwargs.get("share_count", 0),
-                kwargs.get("danmaku_count", 0),
-                kwargs.get("reply_count", 0),
-                kwargs.get("retweet_count", 0),
-                kwargs.get("bookmark_count", 0),
-                kwargs.get("relevance_score", 0.0),
-                kwargs.get("relevance_reason", ""),
-                temporal[0],
-                temporal[1],
-                temporal[2],
-                temporal[3],
-                kwargs.get("pool_expression", ""),
-                kwargs.get("pool_topic_label", ""),
-                kwargs.get("candidate_tier", "primary"),
-                kwargs.get("source", ""),
-                kwargs.get("content_id", bvid),
-                kwargs.get("content_url", ""),
-                kwargs.get("source_platform", "bilibili"),
-                kwargs.get("author_name", ""),
-                kwargs.get("body_text", ""),
-                kwargs.get("content_type", "video") or "video",
-                self._coerce_source_keyword_id(kwargs.get("source_keyword_id")),
-                float(kwargs.get("rating_score", 0.0) or 0.0),
-                max(0, int(kwargs.get("rating_count", 0) or 0)),
-                max(0, int(kwargs.get("source_rank", 0) or 0)),
-                has_explicit_temporal,
-                has_explicit_temporal,
-                has_explicit_temporal,
-                has_explicit_temporal,
-                EXPLORE_STRATEGY,
-                EXPLORE_ADMISSION_MIN_SCORE,
-                self._pool_admission_min_score(),
-            ),
+            _cache_write_params,
         )
 
     @staticmethod
@@ -4928,12 +6762,25 @@ class Database:
         """
 
         inserted = 0
+        filtered_by_date = 0
         touched_sources: set[str] = set()
+        input_by_source: dict[str, int] = defaultdict(int)
+        filtered_by_source: dict[str, int] = defaultdict(int)
+        inserted_by_source: dict[str, int] = defaultdict(int)
         for candidate in candidates:
             candidate_key = str(self._candidate_value(candidate, "candidate_key", "") or "").strip()
             if not candidate_key:
                 continue
             source_platform = str(self._candidate_value(candidate, "source_platform", "") or "")
+            stats_source = source_platform or "unknown"
+            input_by_source[stats_source] += 1
+            if not self._source_publication_date_candidate_is_eligible(
+                source_platform,
+                self._candidate_value(candidate, "published_at", ""),
+            ):
+                filtered_by_date += 1
+                filtered_by_source[stats_source] += 1
+                continue
             tags = self._candidate_json_payload(
                 self._candidate_value(candidate, "tags", []),
                 default=[],
@@ -5038,13 +6885,28 @@ class Database:
                 touched_sources.add(source_platform)
             if cursor.rowcount > 0:
                 inserted += 1
+                inserted_by_source[stats_source] += 1
                 continue
             self._execute_write(
                 """
                 UPDATE discovery_candidates
                 SET last_seen_at = CURRENT_TIMESTAMP,
-                    published_at = COALESCE(NULLIF(?, ''), published_at, ''),
-                    published_label = COALESCE(NULLIF(?, ''), published_label, ''),
+                    -- Publication is part of the evaluation snapshot.  Raw
+                    -- rediscovery may refine it only before a row is claimed;
+                    -- otherwise complete_claim could cache evidence from a
+                    -- different clock than the durable candidate row.
+                    published_at = CASE
+                        WHEN status = 'pending_eval'
+                             AND COALESCE(temporal_evidence_complete, 0) = 0
+                        THEN COALESCE(NULLIF(?, ''), published_at, '')
+                        ELSE COALESCE(published_at, '')
+                    END,
+                    published_label = CASE
+                        WHEN status = 'pending_eval'
+                             AND COALESCE(temporal_evidence_complete, 0) = 0
+                        THEN COALESCE(NULLIF(?, ''), published_label, '')
+                        ELSE COALESCE(published_label, '')
+                    END,
                     rating_score = ?,
                     rating_count = ?,
                     source_rank = ?
@@ -5058,6 +6920,22 @@ class Database:
                     max(0, int(self._candidate_value(candidate, "source_rank", 0) or 0)),
                     candidate_key,
                 ),
+            )
+        self._record_publication_date_filter_batch(
+            input_by_source=input_by_source,
+            filtered_by_source=filtered_by_source,
+            inserted_by_source=inserted_by_source,
+        )
+        if filtered_by_date:
+            breakdown = ", ".join(
+                f"{source}={count}"
+                for source, count in sorted(filtered_by_source.items())
+                if count > 0
+            )
+            logger.info(
+                "candidate enqueue: filtered %d raw candidate(s) by publication date (%s)",
+                filtered_by_date,
+                breakdown,
             )
         if max_pending_per_source is not None:
             max_pending = max(0, int(max_pending_per_source))
@@ -5087,43 +6965,52 @@ class Database:
         if not source or cap <= 0:
             return 0
         self._ensure_fresh_read()
-        row = self.conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE source_platform = ?
-              AND status IN ('pending_eval', 'evaluating', 'evaluated')
-            """,
-            (source,),
-        ).fetchone()
-        current = int(row["count"] if row else 0)
+        self.reject_temporally_stale_evaluated_candidates()
+        active_rows = self._load_temporally_eligible_admission_waiting_rows_on(
+            self.conn,
+            source_platform=source,
+        )
+        current = len(active_rows)
         excess = current - cap
         if excess <= 0:
             return 0
         family = _pool_source_family("", source)
-        cursor = self._execute_write(
+        victims = sorted(
+            (
+                row
+                for row in active_rows
+                if str(row["status"]) in {"pending_eval", "evaluated"}
+                and row["claim_token"] is None
+            ),
+            key=lambda row: (
+                # A due review is existing inventory being reconsidered. If
+                # the source queue is over capacity, shed those retries before
+                # sacrificing genuinely new supply.
+                0
+                if str(row["status"]) == "pending_eval"
+                and str(row["eval_error"] or "").startswith("temporal_review_due:")
+                else 1
+                if str(row["status"]) == "pending_eval"
+                else 2,
+                self._sort_timestamp_score(str(row["last_seen_at"] or "")),
+                int(row["id"]),
+            ),
+        )[:excess]
+        if not victims:
+            return 0
+        cursor = self._execute_many_write(
             """
             UPDATE discovery_candidates
             SET status = 'trimmed_capacity',
                 eval_error = ?,
                 claimed_at = NULL,
                 claim_token = NULL
-            WHERE id IN (
-                SELECT id
-                FROM discovery_candidates
-                WHERE source_platform = ?
-                  AND status IN ('pending_eval', 'evaluated')
-                  AND claim_token IS NULL
-                ORDER BY
-                    CASE status WHEN 'pending_eval' THEN 0 ELSE 1 END ASC,
-                    last_seen_at ASC,
-                    id ASC
-                LIMIT ?
-            )
+            WHERE id = ?
+              AND source_platform = ?
               AND status IN ('pending_eval', 'evaluated')
               AND claim_token IS NULL
             """,
-            (f"source_raw_ceiling:{family}", source, excess),
+            [(f"source_raw_ceiling:{family}", int(row["id"]), source) for row in victims],
         )
         return int(cursor.rowcount)
 
@@ -5152,7 +7039,30 @@ class Database:
                 SET status = 'pending_eval',
                     claimed_at = NULL,
                     claim_token = NULL,
-                    eval_error = 'orphaned evaluating claim reset'
+                    eval_error = CASE
+                        WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                        THEN eval_error
+                        ELSE 'orphaned evaluating claim reset'
+                    END,
+                    temporal_review_retry_at = CASE
+                        WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                         AND (
+                            COALESCE(temporal_review_retry_at, '') = ''
+                            OR julianday(temporal_review_retry_at) <= julianday('now')
+                         )
+                        THEN datetime(
+                            'now',
+                            '+' || CASE
+                                WHEN COALESCE(temporal_review_attempts, 0) <= 1 THEN 1
+                                WHEN temporal_review_attempts = 2 THEN 2
+                                WHEN temporal_review_attempts = 3 THEN 4
+                                WHEN temporal_review_attempts = 4 THEN 8
+                                WHEN temporal_review_attempts = 5 THEN 16
+                                ELSE 24
+                            END || ' hours'
+                        )
+                        ELSE COALESCE(temporal_review_retry_at, '')
+                    END
                 WHERE status = 'evaluating'
                 """
             )
@@ -5163,7 +7073,30 @@ class Database:
             SET status = 'pending_eval',
                 claimed_at = NULL,
                 claim_token = NULL,
-                eval_error = 'stale evaluating claim reset'
+                eval_error = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN eval_error
+                    ELSE 'stale evaluating claim reset'
+                END,
+                temporal_review_retry_at = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                     AND (
+                        COALESCE(temporal_review_retry_at, '') = ''
+                        OR julianday(temporal_review_retry_at) <= julianday('now')
+                     )
+                    THEN datetime(
+                        'now',
+                        '+' || CASE
+                            WHEN COALESCE(temporal_review_attempts, 0) <= 1 THEN 1
+                            WHEN temporal_review_attempts = 2 THEN 2
+                            WHEN temporal_review_attempts = 3 THEN 4
+                            WHEN temporal_review_attempts = 4 THEN 8
+                            WHEN temporal_review_attempts = 5 THEN 16
+                            ELSE 24
+                        END || ' hours'
+                    )
+                    ELSE COALESCE(temporal_review_retry_at, '')
+                END
             WHERE status = 'evaluating'
               AND (claimed_at IS NULL OR claimed_at < datetime('now', ?))
             """,
@@ -5212,6 +7145,10 @@ class Database:
             SELECT *
             FROM discovery_candidates
             WHERE status = 'pending_eval'
+              AND (
+                    COALESCE(temporal_review_retry_at, '') = ''
+                    OR julianday(temporal_review_retry_at) <= julianday('now')
+              )
             ORDER BY {order_prefix}last_seen_at ASC, id ASC
             LIMIT ?
             """,
@@ -5263,9 +7200,37 @@ class Database:
             SET status = 'evaluating',
                 claimed_at = CURRENT_TIMESTAMP,
                 claim_token = ?,
-                eval_error = ''
+                eval_error = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN eval_error
+                    ELSE ''
+                END,
+                temporal_review_retry_at = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN datetime(
+                        'now',
+                        '+' || CASE
+                            WHEN COALESCE(temporal_review_attempts, 0) <= 0 THEN 1
+                            WHEN temporal_review_attempts = 1 THEN 2
+                            WHEN temporal_review_attempts = 2 THEN 4
+                            WHEN temporal_review_attempts = 3 THEN 8
+                            WHEN temporal_review_attempts = 4 THEN 16
+                            ELSE 24
+                        END || ' hours'
+                    )
+                    ELSE COALESCE(temporal_review_retry_at, '')
+                END,
+                temporal_review_attempts = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN MIN(COALESCE(temporal_review_attempts, 0) + 1, 6)
+                    ELSE COALESCE(temporal_review_attempts, 0)
+                END
             WHERE id IN ({placeholders})
               AND status = 'pending_eval'
+              AND (
+                    COALESCE(temporal_review_retry_at, '') = ''
+                    OR julianday(temporal_review_retry_at) <= julianday('now')
+              )
             """,
             (token, *ids),
         )
@@ -5296,7 +7261,9 @@ class Database:
         ``preferred_source_platforms`` is given, under-share sources sort ahead
         of the FIFO order so a fixed admission window is not monopolized by an
         over-supplied source's backlog. Omitting it keeps the legacy
-        ``evaluated_at ASC`` ordering byte-for-byte (invariant 5).
+        ``evaluated_at ASC`` ordering byte-for-byte (invariant 5). Temporal
+        eligibility is applied before ``limit`` so an expired backlog cannot
+        hide later admissible rows.
         """
 
         admission_limit = max(0, int(limit))
@@ -5311,21 +7278,51 @@ class Database:
         if platforms:
             placeholders = ", ".join("?" for _ in platforms)
             order_prefix = f"CASE WHEN source_platform IN ({placeholders}) THEN 0 ELSE 1 END, "
-            params: tuple[Any, ...] = (*platforms, admission_limit)
+            params: tuple[Any, ...] = tuple(platforms)
         else:
             order_prefix = ""
-            params = (admission_limit,)
+            params = ()
         cursor = self.conn.execute(
             f"""
             SELECT *
             FROM discovery_candidates
             WHERE status = 'evaluated'
             ORDER BY {order_prefix}evaluated_at ASC, last_seen_at ASC, id ASC
-            LIMIT ?
             """,
             params,
         )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        eligible: list[dict[str, Any]] = []
+        for row in cursor:
+            item = dict(row)
+            if not self._temporal_eligibility_for_row(item, now=temporal_now):
+                continue
+            eligible.append(item)
+            if len(eligible) >= admission_limit:
+                break
+        return eligible
+
+    def get_discovery_candidates_by_ids(
+        self,
+        candidate_ids: Sequence[int],
+    ) -> list[dict[str, Any]]:
+        """Return current durable candidate rows in caller-supplied order."""
+
+        ids = list(dict.fromkeys(int(candidate_id) for candidate_id in candidate_ids))
+        ids = [candidate_id for candidate_id in ids if candidate_id > 0]
+        if not ids:
+            return []
+        self._ensure_fresh_read()
+        rows_by_id: dict[int, dict[str, Any]] = {}
+        for offset in range(0, len(ids), 900):
+            chunk = ids[offset : offset + 900]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = self.conn.execute(
+                f"SELECT * FROM discovery_candidates WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            rows_by_id.update((int(row["id"]), dict(row)) for row in rows)
+        return [rows_by_id[candidate_id] for candidate_id in ids if candidate_id in rows_by_id]
 
     def update_discovery_candidate_evaluations(
         self,
@@ -5338,57 +7335,257 @@ class Database:
             candidate_id = int(evaluation.get("candidate_id") or evaluation.get("id") or 0)
             if candidate_id <= 0:
                 continue
-            temporal = _normalize_temporal_fields_for_storage(
-                temporal_class=evaluation.get("temporal_class", "unknown"),
-                temporal_confidence=evaluation.get("temporal_confidence", 0.0),
-                temporal_reason=evaluation.get("temporal_reason", ""),
-            )
-            cursor = self._execute_write(
-                """
-                UPDATE discovery_candidates
-                SET status = ?,
-                    topic_key = ?,
-                    topic_group = ?,
-                    style_key = ?,
-                    franchise_key = ?,
-                    relevance_score = ?,
-                    relevance_reason = ?,
-                    temporal_class = ?,
-                    temporal_confidence = ?,
-                    temporal_reason = ?,
-                    temporal_policy_version = ?,
-                    pool_expression = ?,
-                    pool_topic_label = ?,
-                    eval_error = ?,
-                    eval_attempts = 0,
-                    batch_eval_attempts = 0,
-                    evaluated_at = CURRENT_TIMESTAMP,
-                    claimed_at = NULL,
-                    claim_token = NULL
-                WHERE id = ?
-                  AND status = 'evaluating'
-                """,
-                (
-                    str(evaluation.get("status") or "evaluated"),
-                    str(evaluation.get("topic_key") or ""),
-                    str(evaluation.get("topic_group") or ""),
-                    _normalize_style_key_for_storage(evaluation.get("style_key")),
-                    str(evaluation.get("franchise_key") or ""),
-                    float(evaluation.get("relevance_score") or evaluation.get("score") or 0.0),
-                    str(evaluation.get("relevance_reason") or evaluation.get("reason") or ""),
-                    temporal[0],
-                    temporal[1],
-                    temporal[2],
-                    temporal[3],
-                    str(evaluation.get("pool_expression") or ""),
-                    str(evaluation.get("pool_topic_label") or ""),
-                    str(evaluation.get("eval_error") or ""),
-                    candidate_id,
-                ),
-            )
-            if cursor.rowcount > 0:
+            if self._persist_discovery_candidate_evaluation(
+                candidate_id=candidate_id,
+                evaluation=evaluation,
+                claim_token=None,
+            ):
                 updated += 1
         return updated
+
+    def _persist_discovery_candidate_evaluation(
+        self,
+        *,
+        candidate_id: int,
+        evaluation: Mapping[str, Any],
+        claim_token: str | None,
+    ) -> bool:
+        """Merge and persist one evaluation under the candidate writer lock.
+
+        A re-review may return malformed or explicitly neutral temporal output.
+        Such output must not erase older classified evidence and release a row
+        whose review is still due.  The durable prompt-visible fields and the
+        old evidence group are therefore read only after ``BEGIN IMMEDIATE``;
+        the same transaction grounds the incoming evidence, selects the group
+        to retain, derives its disposition, and performs the ownership CAS.
+        """
+
+        connection = self.conn
+        token_clause = " AND claim_token = ?" if claim_token is not None else ""
+        ownership_params: tuple[Any, ...] = (
+            (candidate_id, claim_token) if claim_token is not None else (candidate_id,)
+        )
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                if connection.in_transaction:
+                    # Match the other prepared-write sinks: legacy callers may
+                    # have staged work directly on ``conn`` before completing
+                    # a claim, so upgrade that transaction without nesting.
+                    connection.execute("UPDATE discovery_candidates SET id = id WHERE 0")
+                else:
+                    connection.execute("BEGIN IMMEDIATE")
+                try:
+                    durable_row = connection.execute(
+                        f"""
+                        SELECT id, published_at, published_label, title, description,
+                               body_text, temporal_class, temporal_confidence,
+                               temporal_reason, temporal_policy_version,
+                               temporal_validity_mode, temporal_valid_until,
+                               temporal_scope, temporal_state, temporal_evidence,
+                               temporal_next_review_at, temporal_evaluated_at,
+                               temporal_evidence_complete, eval_error,
+                               temporal_review_attempts, temporal_review_retry_at
+                        FROM discovery_candidates
+                        WHERE id = ?
+                          AND status = 'evaluating'
+                          {token_clause}
+                        LIMIT 1
+                        """,
+                        ownership_params,
+                    ).fetchone()
+                    if durable_row is None:
+                        connection.commit()
+                        return False
+
+                    durable = dict(durable_row)
+                    candidate_content_text = {
+                        "title": durable.get("title", ""),
+                        # Candidate evaluation uses the batch prompt, whose
+                        # description projection is capped at 400 characters.
+                        # The storage sink must not ground against text the
+                        # model never saw.
+                        "description": str(durable.get("description", "") or "")[:400],
+                        "body_text": durable.get("body_text", ""),
+                        "published_label": durable.get("published_label", ""),
+                    }
+                    incoming_grounding_downgraded = _temporal_grounding_was_downgraded(
+                        evaluation,
+                        content_text=candidate_content_text,
+                    )
+                    incoming_temporal, incoming_lifecycle = (
+                        _normalize_temporal_evidence_group_for_storage(
+                            evaluation,
+                            content_text=candidate_content_text,
+                        )
+                    )
+                    existing_temporal, existing_lifecycle = (
+                        _normalize_temporal_evidence_group_for_storage(durable)
+                    )
+
+                    existing_is_classified = existing_temporal[0] != "unknown"
+                    incoming_can_replace = (
+                        incoming_temporal[3] == TEMPORAL_POLICY_VERSION
+                        and incoming_temporal[0] != "unknown"
+                        and bool(incoming_lifecycle[7])
+                        and _temporal_evidence_is_authoritative_replacement(
+                            incoming_temporal,
+                            incoming_lifecycle,
+                        )
+                        # A syntactically complete terminal claim can be
+                        # weakened by grounding (for example, its quoted
+                        # evidence is absent or contradicts "expired"). It is
+                        # useful as freshness-only evidence for a new row, but
+                        # must never erase an older, grounded classification.
+                        and not (existing_is_classified and incoming_grounding_downgraded)
+                    )
+                    if incoming_can_replace or not existing_is_classified:
+                        temporal = incoming_temporal
+                        lifecycle = incoming_lifecycle
+                    else:
+                        # Preserve both complete v2 evidence and classified v1
+                        # evidence.  In particular, a malformed re-review does
+                        # not reset an already-due row to temporal eligibility.
+                        temporal = existing_temporal
+                        lifecycle = existing_lifecycle
+
+                    decision_now = datetime.now(UTC)
+                    temporal_decision = evaluate_temporal_eligibility(
+                        temporal_class=temporal[0],
+                        temporal_confidence=temporal[1],
+                        published_at=durable.get("published_at", ""),
+                        temporal_validity_mode=lifecycle[0],
+                        temporal_valid_until=lifecycle[1],
+                        temporal_scope=lifecycle[2],
+                        temporal_state=lifecycle[3],
+                        temporal_evidence=lifecycle[4],
+                        temporal_next_review_at=lifecycle[5],
+                        temporal_evaluated_at=lifecycle[6],
+                        temporal_policy_version=temporal[3],
+                        evidence_complete=bool(lifecycle[7]),
+                        now=decision_now,
+                    )
+                    requested_status = str(evaluation.get("status") or "evaluated")
+                    disposition = _temporal_decision_disposition(temporal_decision)
+                    stored_status = requested_status
+                    stored_error = str(evaluation.get("eval_error") or "")
+                    review_attempts = 0
+                    review_retry_at = ""
+                    if requested_status in {"evaluated", "rejected_temporal_stale"}:
+                        if disposition == "expired":
+                            stored_status = "rejected_temporal_stale"
+                            stored_error = temporal_decision.reason
+                        elif disposition == "review_due":
+                            stored_status = "pending_eval"
+                            stored_error = temporal_decision.reason
+                            review_attempts = max(
+                                0,
+                                int(durable.get("temporal_review_attempts", 0) or 0),
+                            )
+                            review_retry_at = str(durable.get("temporal_review_retry_at", "") or "")
+                            durable_has_review_marker = str(
+                                durable.get("eval_error", "") or ""
+                            ).startswith("temporal_review_due:")
+                            retry_clock = _parse_temporal_storage_clock(review_retry_at)
+                            if not durable_has_review_marker:
+                                retry_hours = min(24, 2 ** min(review_attempts, 5))
+                                review_attempts = min(review_attempts + 1, 6)
+                                review_retry_at = (
+                                    (decision_now + timedelta(hours=retry_hours))
+                                    .astimezone(UTC)
+                                    .isoformat()
+                                    .replace("+00:00", "Z")
+                                )
+                            elif retry_clock is None or retry_clock <= decision_now:
+                                review_retry_at = _temporal_review_retry_text(
+                                    now=decision_now,
+                                    attempts=max(1, review_attempts),
+                                )
+                        else:
+                            # Storage-side grounding is authoritative.  A
+                            # caller's stale status cannot survive when its
+                            # evidence normalizes to an eligible group.
+                            stored_status = "evaluated"
+                            if requested_status == "rejected_temporal_stale":
+                                stored_error = ""
+
+                    cursor = connection.execute(
+                        f"""
+                        UPDATE discovery_candidates
+                        SET status = ?,
+                            topic_key = ?,
+                            topic_group = ?,
+                            style_key = ?,
+                            franchise_key = ?,
+                            relevance_score = ?,
+                            relevance_reason = ?,
+                            temporal_class = ?,
+                            temporal_confidence = ?,
+                            temporal_reason = ?,
+                            temporal_policy_version = ?,
+                            temporal_validity_mode = ?,
+                            temporal_valid_until = ?,
+                            temporal_scope = ?,
+                            temporal_state = ?,
+                            temporal_evidence = ?,
+                            temporal_next_review_at = ?,
+                            temporal_evaluated_at = ?,
+                            temporal_evidence_complete = ?,
+                            temporal_review_attempts = ?,
+                            temporal_review_retry_at = ?,
+                            pool_expression = ?,
+                            pool_topic_label = ?,
+                            eval_error = ?,
+                            eval_attempts = 0,
+                            batch_eval_attempts = 0,
+                            evaluated_at = CURRENT_TIMESTAMP,
+                            claimed_at = NULL,
+                            claim_token = NULL
+                        WHERE id = ?
+                          AND status = 'evaluating'
+                          {token_clause}
+                        """,
+                        (
+                            stored_status,
+                            str(evaluation.get("topic_key") or ""),
+                            str(evaluation.get("topic_group") or ""),
+                            _normalize_style_key_for_storage(evaluation.get("style_key")),
+                            str(evaluation.get("franchise_key") or ""),
+                            float(
+                                evaluation.get("relevance_score") or evaluation.get("score") or 0.0
+                            ),
+                            str(
+                                evaluation.get("relevance_reason") or evaluation.get("reason") or ""
+                            ),
+                            temporal[0],
+                            temporal[1],
+                            temporal[2],
+                            temporal[3],
+                            *lifecycle,
+                            review_attempts,
+                            review_retry_at,
+                            str(evaluation.get("pool_expression") or ""),
+                            str(evaluation.get("pool_topic_label") or ""),
+                            stored_error,
+                            *ownership_params,
+                        ),
+                    )
+                    connection.commit()
+                    return cursor.rowcount > 0
+                except Exception:
+                    connection.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                self._rollback_failed_write(connection)
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                logger.warning(
+                    "SQLite candidate evaluation write locked, retrying (%s attempts left)",
+                    attempts,
+                )
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
 
     def persist_claimed_discovery_candidate_evaluations(
         self,
@@ -5404,57 +7601,11 @@ class Database:
             candidate_id = int(evaluation.get("candidate_id") or evaluation.get("id") or 0)
             if candidate_id <= 0:
                 continue
-            temporal = _normalize_temporal_fields_for_storage(
-                temporal_class=evaluation.get("temporal_class", "unknown"),
-                temporal_confidence=evaluation.get("temporal_confidence", 0.0),
-                temporal_reason=evaluation.get("temporal_reason", ""),
-            )
-            cursor = self._execute_write(
-                """
-                UPDATE discovery_candidates
-                SET status = ?,
-                    topic_key = ?,
-                    topic_group = ?,
-                    style_key = ?,
-                    franchise_key = ?,
-                    relevance_score = ?,
-                    relevance_reason = ?,
-                    temporal_class = ?,
-                    temporal_confidence = ?,
-                    temporal_reason = ?,
-                    temporal_policy_version = ?,
-                    pool_expression = ?,
-                    pool_topic_label = ?,
-                    eval_error = ?,
-                    eval_attempts = 0,
-                    batch_eval_attempts = 0,
-                    evaluated_at = CURRENT_TIMESTAMP,
-                    claimed_at = NULL,
-                    claim_token = NULL
-                WHERE id = ?
-                  AND status = 'evaluating'
-                  AND claim_token = ?
-                """,
-                (
-                    str(evaluation.get("status") or "evaluated"),
-                    str(evaluation.get("topic_key") or ""),
-                    str(evaluation.get("topic_group") or ""),
-                    _normalize_style_key_for_storage(evaluation.get("style_key")),
-                    str(evaluation.get("franchise_key") or ""),
-                    float(evaluation.get("relevance_score") or evaluation.get("score") or 0.0),
-                    str(evaluation.get("relevance_reason") or evaluation.get("reason") or ""),
-                    temporal[0],
-                    temporal[1],
-                    temporal[2],
-                    temporal[3],
-                    str(evaluation.get("pool_expression") or ""),
-                    str(evaluation.get("pool_topic_label") or ""),
-                    str(evaluation.get("eval_error") or ""),
-                    candidate_id,
-                    token,
-                ),
-            )
-            if cursor.rowcount > 0:
+            if self._persist_discovery_candidate_evaluation(
+                candidate_id=candidate_id,
+                evaluation=evaluation,
+                claim_token=token,
+            ):
                 updated_ids.add(candidate_id)
         return updated_ids
 
@@ -5487,7 +7638,12 @@ class Database:
                     END,
                     claimed_at = NULL,
                     claim_token = NULL,
-                    eval_error = ?,
+                    eval_error = CASE
+                        WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                        THEN eval_error
+                        ELSE ?
+                    END,
+                    {_TEMPORAL_REVIEW_RETRY_REFRESH_ASSIGNMENT_SQL},
                     evaluated_at = CASE
                         WHEN batch_eval_attempts + 1 >= ? THEN CURRENT_TIMESTAMP
                         ELSE evaluated_at
@@ -5522,7 +7678,12 @@ class Database:
                 END,
                 claimed_at = NULL,
                 claim_token = NULL,
-                eval_error = ?,
+                eval_error = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN eval_error
+                    ELSE ?
+                END,
+                {_TEMPORAL_REVIEW_RETRY_REFRESH_ASSIGNMENT_SQL},
                 evaluated_at = CASE
                     WHEN eval_attempts + 1 >= ? THEN CURRENT_TIMESTAMP
                     ELSE evaluated_at
@@ -5566,7 +7727,12 @@ class Database:
                     END,
                     claimed_at = NULL,
                     claim_token = NULL,
-                    eval_error = ?,
+                    eval_error = CASE
+                        WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                        THEN eval_error
+                        ELSE ?
+                    END,
+                    {_TEMPORAL_REVIEW_RETRY_REFRESH_ASSIGNMENT_SQL},
                     evaluated_at = CASE
                         WHEN batch_eval_attempts + 1 >= ? THEN CURRENT_TIMESTAMP
                         ELSE evaluated_at
@@ -5599,7 +7765,12 @@ class Database:
                 END,
                 claimed_at = NULL,
                 claim_token = NULL,
-                eval_error = ?,
+                eval_error = CASE
+                    WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
+                    THEN eval_error
+                    ELSE ?
+                END,
+                {_TEMPORAL_REVIEW_RETRY_REFRESH_ASSIGNMENT_SQL},
                 evaluated_at = CASE
                     WHEN eval_attempts + 1 >= ? THEN CURRENT_TIMESTAMP
                     ELSE evaluated_at
@@ -5615,6 +7786,60 @@ class Database:
         )
         return int(cursor.rowcount)
 
+    def revive_failed_eval_candidates(
+        self,
+        *,
+        limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE,
+        max_revives: int = _FAILED_EVAL_MAX_REVIVES,
+    ) -> int:
+        """Re-queue a bounded batch of dead-lettered candidates for evaluation.
+
+        ``failed_eval`` rows have no organic path back to ``pending_eval``:
+        once a provider outage burns through the attempt budget the pool can
+        only drain (field log 2026-08: 568 candidates died to a deepseek
+        401/404 misconfiguration and the pool never refilled). The candidate
+        evaluation coordinator calls this on resume signals — startup after a
+        config rebuild, ``config_*``/``manual_*`` wakes — so rows dead-lettered
+        by a transient provider failure get fresh attempts once evaluation may
+        work again.
+
+        Boundedness: at most ``limit`` rows revive per call, and each row
+        carries a persistent ``eval_revive_count`` capped at ``max_revives``,
+        so restarting against a still-broken provider cannot resurrect the
+        same candidates (and re-burn their LLM attempts) forever. Rows parked
+        for temporal re-review keep their existing owner and are not touched.
+        Returns the number of rows moved back to ``pending_eval``.
+        """
+
+        max_rows = max(0, int(limit))
+        if max_rows <= 0:
+            return 0
+        revive_cap = max(0, int(max_revives))
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_candidates
+            SET status = 'pending_eval',
+                eval_attempts = 0,
+                batch_eval_attempts = 0,
+                eval_revive_count = eval_revive_count + 1,
+                eval_error = '',
+                claimed_at = NULL,
+                claim_token = NULL,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE id IN (
+                SELECT id
+                FROM discovery_candidates
+                WHERE status = 'failed_eval'
+                  AND eval_revive_count < ?
+                  AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
+                ORDER BY id ASC
+                LIMIT ?
+            )
+            """,
+            (revive_cap, max_rows),
+        )
+        return int(cursor.rowcount)
+
     def mark_discovery_candidate_cached(self, candidate_id: int) -> None:
         """Mark an evaluated candidate as successfully inserted into content_cache."""
 
@@ -5625,7 +7850,9 @@ class Database:
                 cached_at = CURRENT_TIMESTAMP,
                 eval_error = '',
                 eval_attempts = 0,
-                batch_eval_attempts = 0
+                batch_eval_attempts = 0,
+                temporal_review_attempts = 0,
+                temporal_review_retry_at = ''
                 , claimed_at = NULL
                 , claim_token = NULL
             WHERE id = ?
@@ -5649,6 +7876,8 @@ class Database:
             SET status = ?,
                 eval_error = ?,
                 evaluated_at = COALESCE(evaluated_at, CURRENT_TIMESTAMP),
+                temporal_review_attempts = 0,
+                temporal_review_retry_at = '',
                 claimed_at = NULL,
                 claim_token = NULL
             WHERE id = ?
@@ -5657,8 +7886,50 @@ class Database:
             (status, reason, int(candidate_id)),
         )
 
+    def requeue_discovery_candidate_for_temporal_review(
+        self,
+        candidate_id: int,
+        reason: str = "",
+    ) -> int:
+        """CAS one owned/waiting candidate back to the evaluator for review."""
+
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_candidates
+            SET status = 'pending_eval',
+                eval_error = ?,
+                temporal_review_attempts = MAX(
+                    COALESCE(temporal_review_attempts, 0),
+                    1
+                ),
+                temporal_review_retry_at = CASE
+                    WHEN COALESCE(temporal_review_retry_at, '') = ''
+                      OR julianday(temporal_review_retry_at) <= julianday('now')
+                    THEN datetime(
+                        'now',
+                        '+' || CASE
+                            WHEN COALESCE(temporal_review_attempts, 0) <= 1 THEN 1
+                            WHEN temporal_review_attempts = 2 THEN 2
+                            WHEN temporal_review_attempts = 3 THEN 4
+                            WHEN temporal_review_attempts = 4 THEN 8
+                            WHEN temporal_review_attempts = 5 THEN 16
+                            ELSE 24
+                        END || ' hours'
+                    )
+                    ELSE temporal_review_retry_at
+                END,
+                claimed_at = NULL,
+                claim_token = NULL,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND status IN ('evaluating', 'evaluated')
+            """,
+            (str(reason), int(candidate_id)),
+        )
+        return int(cursor.rowcount)
+
     def count_discovery_candidates_by_status(self) -> dict[str, int]:
-        """Return candidate queue counts grouped by lifecycle status."""
+        """Return lifecycle totals plus the currently claimable pending count."""
 
         self._ensure_fresh_read()
         cursor = self.conn.execute(
@@ -5669,7 +7940,20 @@ class Database:
             ORDER BY status ASC
             """
         )
-        return {str(row["status"]): int(row["count"]) for row in cursor.fetchall()}
+        counts = {str(row["status"]): int(row["count"]) for row in cursor.fetchall()}
+        ready_row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM discovery_candidates
+            WHERE status = 'pending_eval'
+              AND (
+                    COALESCE(temporal_review_retry_at, '') = ''
+                    OR julianday(temporal_review_retry_at) <= julianday('now')
+              )
+            """
+        ).fetchone()
+        counts["pending_eval_ready"] = int(ready_row["count"] if ready_row is not None else 0)
+        return counts
 
     def get_existing_discovery_candidate_keys(self, candidate_keys: Sequence[str]) -> set[str]:
         """Return candidate keys already present in the raw evaluation queue."""
@@ -5755,32 +8039,175 @@ class Database:
             counts.setdefault(source, {})[status] = int(row["count"])
         return counts
 
+    def _load_temporally_eligible_admission_waiting_rows_on(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_platform: str | None = None,
+        _now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return non-terminal discovery rows that still count as supply.
+
+        ``pending_eval`` and ``evaluating`` have not received an Agent class,
+        so they remain fail-open. ``evaluated`` rows can cross a temporal TTL
+        while waiting for pool headroom and are rechecked here before they
+        influence readiness, raw ceilings, or source-share rebalancing.
+
+        ``_now`` pins the temporal recheck clock so callers measuring inside
+        one transaction (pool maintenance) share a single time baseline.
+        """
+
+        source = str(source_platform or "").strip()
+        source_clause = " AND source_platform = ?" if source else ""
+        cursor = conn.execute(
+            f"""
+            SELECT id, status, source_platform, source_strategy,
+                   relevance_score, last_seen_at, claim_token, eval_error,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete,
+                   temporal_review_attempts, temporal_review_retry_at
+            FROM discovery_candidates
+            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
+              AND (
+                    status != 'pending_eval'
+                    OR COALESCE(temporal_review_retry_at, '') = ''
+                    OR julianday(temporal_review_retry_at) <= julianday('now')
+              )
+            {source_clause}
+            """,
+            (source,) if source else (),
+        )
+        temporal_now = _now or datetime.now(UTC)
+        rows: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            if str(item.get("status", "")) == "evaluated" and not (
+                self._temporal_eligibility_for_row(item, now=temporal_now)
+            ):
+                continue
+            rows.append(item)
+        return rows
+
+    def reject_temporally_stale_evaluated_candidates(
+        self,
+        *,
+        limit: int = 500,
+        now: datetime | None = None,
+    ) -> int:
+        """Terminalize candidates that expired while waiting for admission.
+
+        Acquire the writer lock before the read so rediscovery cannot refresh
+        a candidate between its temporal decision and terminal status update.
+        """
+
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return 0
+        explicit_now = now
+        if explicit_now is not None and explicit_now.tzinfo is None:
+            explicit_now = explicit_now.replace(tzinfo=UTC)
+        self._ensure_fresh_read()
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            connection = self.conn
+            try:
+                cursor = connection.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    rows = cursor.execute(
+                        """
+                        SELECT id, published_at, temporal_class, temporal_confidence,
+                               temporal_policy_version, temporal_validity_mode,
+                               temporal_valid_until, temporal_scope, temporal_state,
+                               temporal_evidence,
+                               temporal_next_review_at, temporal_evaluated_at,
+                               temporal_evidence_complete
+                        FROM discovery_candidates
+                        WHERE status = 'evaluated'
+                          AND claim_token IS NULL
+                        ORDER BY evaluated_at ASC, last_seen_at ASC, id ASC
+                        """
+                    )
+                    effective_now = explicit_now or datetime.now(UTC)
+                    stale: list[tuple[str, int]] = []
+                    review_due: list[tuple[str, int]] = []
+                    for row in rows:
+                        decision = self._temporal_decision_for_row(
+                            dict(row),
+                            now=effective_now,
+                        )
+                        disposition = _temporal_decision_disposition(decision)
+                        if disposition == "expired":
+                            stale.append((decision.reason, int(row["id"])))
+                        elif disposition == "review_due":
+                            review_due.append((decision.reason, int(row["id"])))
+                        if len(stale) + len(review_due) >= max_rows:
+                            break
+                    if stale:
+                        result = cursor.executemany(
+                            """
+                            UPDATE discovery_candidates
+                            SET status = 'rejected_temporal_stale',
+                                eval_error = ?,
+                                evaluated_at = COALESCE(evaluated_at, CURRENT_TIMESTAMP),
+                                claimed_at = NULL,
+                                claim_token = NULL
+                            WHERE id = ?
+                              AND status = 'evaluated'
+                              AND claim_token IS NULL
+                            """,
+                            stale,
+                        )
+                        updated = int(result.rowcount)
+                    else:
+                        updated = 0
+                    if review_due:
+                        cursor.executemany(
+                            """
+                            UPDATE discovery_candidates
+                            SET status = 'pending_eval',
+                                eval_error = ?,
+                                claimed_at = NULL,
+                                claim_token = NULL,
+                                last_seen_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                              AND status = 'evaluated'
+                              AND claim_token IS NULL
+                            """,
+                            review_due,
+                        )
+                    connection.commit()
+                    return updated
+                except Exception:
+                    connection.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                self._rollback_failed_write(connection)
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                logger.warning(
+                    "SQLite temporal candidate sweep locked, retrying (%s attempts left)",
+                    attempts,
+                )
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
     def count_discovery_pending_raw_material_by_source(self) -> dict[str, int]:
         """Return not-yet-cached raw candidate counts grouped by source."""
 
         self._ensure_fresh_read()
-        cursor = self.conn.execute(
-            """
-            SELECT source_platform, COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-            GROUP BY source_platform
-            ORDER BY source_platform ASC
-            """
-        )
-        return {str(row["source_platform"] or "unknown"): int(row["count"]) for row in cursor}
+        counts: dict[str, int] = defaultdict(int)
+        for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
+            counts[str(row.get("source_platform") or "unknown")] += 1
+        return dict(sorted(counts.items()))
 
     def _count_pending_discovery_raw_material(self) -> int:
         self._ensure_fresh_read()
-        cursor = self.conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-            """
-        )
-        row = cursor.fetchone()
-        return int(row["count"] if row else 0)
+        return len(self._load_temporally_eligible_admission_waiting_rows_on(self.conn))
 
     def get_cached_content(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get cached discovered content ordered by basic quality signals."""
@@ -5840,6 +8267,8 @@ class Database:
             SELECT c.*
             FROM content_cache AS c
             WHERE {admission_sql}
+              AND COALESCE(c.pool_status, 'fresh') = 'fresh'
+              AND COALESCE(c.feedback_type, '') != 'dislike'
               {platform_sql}
               AND NOT EXISTS (
                 SELECT 1
@@ -5852,11 +8281,15 @@ class Database:
                 c.last_scored_at DESC,
                 c.view_count DESC,
                 c.bvid ASC
-            LIMIT ?
             """,
-            (*admission_params, *platform_params, max(limit * 5, 50)),
+            (*admission_params, *platform_params),
         )
-        rows = [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
         rows = self._exclude_viewed_rows(
             rows,
             self.get_recent_viewed_content_keys(),
@@ -5905,6 +8338,162 @@ class Database:
             admission_params,
         )
         return int(cursor.rowcount or 0)
+
+    def retire_temporally_stale_pool_items(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> set[str]:
+        """Atomically demote expired temporal content out of the fresh pool.
+
+        The same pure policy guards initial admission and final serving.  This
+        sweep persists the middle transition so every existing ``fresh``-only
+        inventory, copy, enrichment, and delight query naturally stops seeing
+        items that expired while waiting in ``content_cache``.
+        """
+
+        explicit_now = now
+        if explicit_now is not None and explicit_now.tzinfo is None:
+            explicit_now = explicit_now.replace(tzinfo=UTC)
+        self._ensure_fresh_read()
+        # The common path has no expired rows. Keep it read-only so every
+        # reshuffle does not acquire a SQLite RESERVED lock merely to commit a
+        # no-op. A positive preflight is only a hint; the write transaction
+        # re-reads and re-evaluates all fresh rows before mutating anything.
+        preflight_rows = self.conn.execute(
+            """
+            SELECT bvid, published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+            """
+        ).fetchall()
+        preflight_now = explicit_now or datetime.now(UTC)
+        if not any(
+            str(row["bvid"] or "")
+            and not self._temporal_eligibility_for_row(
+                dict(row),
+                now=preflight_now,
+            )
+            for row in preflight_rows
+        ):
+            return set()
+
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    rows = cursor.execute(
+                        """
+                        SELECT bvid, published_at, temporal_class, temporal_confidence,
+                               temporal_policy_version, temporal_validity_mode,
+                               temporal_valid_until, temporal_scope, temporal_state,
+                               temporal_evidence,
+                               temporal_next_review_at, temporal_evaluated_at,
+                               temporal_evidence_complete
+                        FROM content_cache
+                        WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+                        """
+                    ).fetchall()
+                    effective_now = explicit_now or datetime.now(UTC)
+                    transitions: list[tuple[str, str]] = []
+                    for row in rows:
+                        bvid = str(row["bvid"] or "")
+                        if not bvid:
+                            continue
+                        decision = self._temporal_decision_for_row(
+                            dict(row),
+                            now=effective_now,
+                        )
+                        disposition = _temporal_decision_disposition(decision)
+                        if disposition == "expired":
+                            transitions.append(("stale", bvid))
+                        elif disposition == "review_due":
+                            transitions.append(("temporal_review_hold", bvid))
+                    if transitions:
+                        cursor.executemany(
+                            """
+                            UPDATE content_cache
+                            SET pool_status = ?
+                            WHERE bvid = ?
+                              AND COALESCE(pool_status, 'fresh') = 'fresh'
+                            """,
+                            transitions,
+                        )
+                    self.conn.commit()
+                    if transitions:
+                        logger.info(
+                            "held or retired %d temporally due item(s) from the fresh pool",
+                            len(transitions),
+                        )
+                    return {bvid for _status, bvid in transitions}
+                except Exception:
+                    self.conn.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                self._rollback_failed_write(self.conn)
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
+    def _transition_temporally_due_pool_items_on(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        now: datetime,
+        limit: int,
+    ) -> tuple[int, bool]:
+        """Persist due fresh rows before maintenance counts or trims them."""
+
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return 0, False
+        rows = conn.execute(
+            """
+            SELECT bvid, published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state,
+                   temporal_evidence, temporal_next_review_at,
+                   temporal_evaluated_at, temporal_evidence_complete
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+            ORDER BY bvid ASC
+            """
+        ).fetchall()
+        transitions: list[tuple[str, str]] = []
+        has_more = False
+        for row in rows:
+            decision = self._temporal_decision_for_row(dict(row), now=now)
+            disposition = _temporal_decision_disposition(decision)
+            if disposition == "eligible":
+                continue
+            if len(transitions) >= max_rows:
+                has_more = True
+                break
+            transitions.append(
+                (
+                    "stale" if disposition == "expired" else "temporal_review_hold",
+                    str(row["bvid"]),
+                )
+            )
+        if transitions:
+            conn.executemany(
+                """
+                UPDATE content_cache
+                SET pool_status = ?
+                WHERE bvid = ?
+                  AND COALESCE(pool_status, 'fresh') = 'fresh'
+                """,
+                transitions,
+            )
+        return len(transitions), has_more
 
     def get_pool_candidates(
         self,
@@ -5988,6 +8577,7 @@ class Database:
         xhs_self_nickname: str,
         *,
         pool_status: str = "fresh",
+        _delight_threshold: float | None = None,
     ) -> tuple[str, tuple[Any, ...]]:
         """Shared WHERE fragment + params defining a ``serve()``-loadable row.
 
@@ -5998,12 +8588,21 @@ class Database:
         rows carrying an ``xsec_token``, not claimed by the delight channel,
         and not already recommended. Returns the fragment (no leading
         ``WHERE``, references the ``content_cache`` table) and its bind params.
+
+        ``_delight_threshold`` pins the delight guard's score boundary; the
+        pool-maintenance transaction passes its pre-mutation snapshot so the
+        guard cannot drift as the transaction rewrites ``pool_status`` rows
+        that feed the dynamic percentile sample.
         """
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = self._dynamic_delight_threshold_on(
-            conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        delight_threshold = (
+            float(_delight_threshold)
+            if _delight_threshold is not None
+            else self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            )
         )
         delight_guard_sql = _delight_claim_guard_sql()
         clause = f"""
@@ -6196,6 +8795,8 @@ class Database:
         max_per_topic_group: int = 3,
         xhs_self_nickname: str = "",
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
+        _delight_threshold: float | None = None,
         full_rows: bool = False,
     ) -> list[dict[str, Any]]:
         """Load rows counted by the frontend-visible pool availability gate.
@@ -6208,12 +8809,22 @@ class Database:
         rows without touching the gate or ordering, so platform-scoped serve
         reads can hand complete candidates to the recommendation path while
         still coming from the exact set the counts report.
+
+        ``_now`` / ``_delight_threshold`` pin the measurement baseline: the
+        pool-maintenance transaction passes one shared timestamp and one
+        pre-mutation threshold snapshot to every scan so before/after
+        availability cannot diverge on clock drift or on a percentile
+        boundary the transaction's own writes shifted.
         """
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = self._dynamic_delight_threshold_on(
-            conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        delight_threshold = (
+            float(_delight_threshold)
+            if _delight_threshold is not None
+            else self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            )
         )
         delight_guard_sql = _delight_claim_guard_sql()
         projection = (
@@ -6221,11 +8832,15 @@ class Database:
             if full_rows
             else (
                 "bvid, content_id, source, source_platform, content_url, topic_group, "
-                "candidate_tier, relevance_score, last_scored_at, view_count"
+                "candidate_tier, relevance_score, last_scored_at, view_count, "
+                "published_at, temporal_class, temporal_confidence, "
+                "temporal_policy_version, temporal_validity_mode, "
+                "temporal_valid_until, temporal_scope, temporal_state, temporal_evidence, "
+                "temporal_next_review_at, temporal_evaluated_at, "
+                "temporal_evidence_complete"
             )
         )
-        cursor = conn.execute(
-            f"""
+        sql = f"""
             SELECT {projection}
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
@@ -6252,10 +8867,19 @@ class Database:
                 last_scored_at DESC,
                 view_count DESC,
                 bvid ASC
-            """,
-            (*admission_params, *guard_params, delight_threshold),
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
+            """
+        params = (*admission_params, *guard_params, delight_threshold)
+        # Only identical SQL inside the same isolated read transaction is
+        # reused. Time eligibility, viewed filtering and topic windows still
+        # run below on every call, with their original inputs and current time.
+        cache = self._snapshot_available_query_rows
+        key = (conn, sql, params)
+        cached = cache.get(key) if cache is not None else None
+        if cached is None:
+            cached = tuple(dict(row) for row in conn.execute(sql, params).fetchall())
+            if cache is not None:
+                cache[key] = cached
+        rows = list(cached)
         viewed_content_keys = (
             self._recent_viewed_content_keys_on(conn)
             if _viewed_content_keys is None
@@ -6264,24 +8888,36 @@ class Database:
         filtered = self._filter_available_pool_candidate_rows(
             rows,
             viewed_content_keys=viewed_content_keys,
+            now=_now,
         )
         return self._apply_pool_topic_window(
             filtered,
             max_per_topic_group=max_per_topic_group,
         )
 
-    @staticmethod
     def _filter_available_pool_candidate_rows(
+        self,
         rows: Sequence[Mapping[str, Any]],
         *,
         viewed_content_keys: set[str],
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Apply the Python half of the canonical availability gate."""
+        """Apply the Python half of the canonical availability gate.
+
+        ``now`` defaults to the current time; the pool-maintenance
+        transaction passes one shared timestamp so its before/after scans
+        cannot disagree about rows sitting on a temporal boundary.
+        """
 
         filtered: list[dict[str, Any]] = []
+        effective_now = now or datetime.now(UTC)
         for row in rows:
             row_dict = dict(row)
             if not str(row_dict.get("bvid", "")).strip():
+                continue
+            if not Database._temporal_eligibility_for_row(row_dict, now=effective_now):
+                continue
+            if not self._publication_date_row_is_eligible(row_dict, now=effective_now):
                 continue
             if Database._is_viewed_row(row_dict, viewed_content_keys):
                 continue
@@ -6293,6 +8929,42 @@ class Database:
                 continue
             filtered.append(row_dict)
         return filtered
+
+    @staticmethod
+    def _temporal_eligibility_for_row(
+        row: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> bool:
+        """Return whether one stored row remains temporally recommendable."""
+
+        return Database._temporal_decision_for_row(row, now=now).eligible
+
+    @staticmethod
+    def _temporal_decision_for_row(
+        row: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> TemporalEligibilityDecision:
+        """Evaluate the complete stored temporal evidence group."""
+
+        return evaluate_temporal_eligibility(
+            temporal_class=row.get("temporal_class", "unknown"),
+            temporal_confidence=row.get("temporal_confidence", 0.0),
+            published_at=row.get("published_at", ""),
+            temporal_validity_mode=row.get("temporal_validity_mode", "none"),
+            temporal_valid_until=row.get("temporal_valid_until", ""),
+            temporal_scope=row.get("temporal_scope", "none"),
+            temporal_state=row.get("temporal_state", "unknown"),
+            temporal_evidence=row.get("temporal_evidence", ""),
+            temporal_next_review_at=row.get("temporal_next_review_at", ""),
+            temporal_evaluated_at=row.get("temporal_evaluated_at", ""),
+            evidence_complete=is_complete_temporal_evidence_marker(
+                row.get("temporal_evidence_complete")
+            ),
+            temporal_policy_version=row.get("temporal_policy_version", "v1"),
+            now=now,
+        )
 
     @staticmethod
     def _apply_pool_topic_window(
@@ -6354,8 +9026,14 @@ class Database:
         conn: sqlite3.Connection,
         *,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Connection-aware raw content-cache rows governed by the ceiling."""
+        """Connection-aware raw content-cache rows governed by the ceiling.
+
+        ``_now`` pins the temporal-eligibility clock; the pool-maintenance
+        transaction passes its shared timestamp so raw counts and trim plans
+        inside one transaction cannot disagree at a temporal boundary.
+        """
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = conn.execute(
             f"""
@@ -6369,7 +9047,19 @@ class Database:
                 pool_expression,
                 pool_topic_label,
                 style_key,
-                topic_group
+                topic_group,
+                published_at,
+                temporal_class,
+                temporal_confidence,
+                temporal_policy_version,
+                temporal_validity_mode,
+                temporal_valid_until,
+                temporal_scope,
+                temporal_state,
+                temporal_evidence,
+                temporal_next_review_at,
+                temporal_evaluated_at,
+                temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6386,9 +9076,12 @@ class Database:
             else _viewed_content_keys
         )
         rows: list[dict[str, Any]] = []
+        now = _now or datetime.now(UTC)
         for row in cursor.fetchall():
             row_dict = dict(row)
             if not str(row_dict.get("bvid", "")).strip():
+                continue
+            if not self._temporal_eligibility_for_row(row_dict, now=now):
                 continue
             if self._is_viewed_row(row_dict, viewed_content_keys):
                 continue
@@ -6406,20 +9099,15 @@ class Database:
         conn: sqlite3.Connection,
         *,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> int:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-            """
-        ).fetchone()
         return len(
             self._load_pool_raw_material_rows_on(
                 conn,
                 _viewed_content_keys=_viewed_content_keys,
+                _now=_now,
             )
-        ) + int(row["count"] if row else 0)
+        ) + len(self._load_temporally_eligible_admission_waiting_rows_on(conn, _now=_now))
 
     def count_pool_raw_material_by_source(self) -> dict[str, int]:
         """Return raw fresh material grouped by source family.
@@ -6431,17 +9119,12 @@ class Database:
         for row in self._load_pool_raw_material_rows():
             source_family = _pool_source_family(row["source"], row["source_platform"])
             counts[source_family] += 1
-        cursor = self.conn.execute(
-            """
-            SELECT source_platform, source_strategy, COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-            GROUP BY source_platform, source_strategy
-            """
-        )
-        for row in cursor.fetchall():
-            source_family = _pool_source_family(row["source_strategy"], row["source_platform"])
-            counts[source_family] += int(row["count"])
+        for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
+            source_family = _pool_source_family(
+                row.get("source_strategy"),
+                row.get("source_platform"),
+            )
+            counts[source_family] += 1
         return dict(counts)
 
     def count_evaluated_discovery_candidates_by_source(self) -> dict[str, int]:
@@ -6453,17 +9136,14 @@ class Database:
         """
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
-        cursor = self.conn.execute(
-            """
-            SELECT source_platform, source_strategy, COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status = 'evaluated'
-            GROUP BY source_platform, source_strategy
-            """
-        )
-        for row in cursor.fetchall():
-            source_family = _pool_source_family(row["source_strategy"], row["source_platform"])
-            counts[source_family] += int(row["count"])
+        for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
+            if str(row.get("status", "")) != "evaluated":
+                continue
+            source_family = _pool_source_family(
+                row.get("source_strategy"),
+                row.get("source_platform"),
+            )
+            counts[source_family] += 1
         return dict(counts)
 
     def count_admission_waiting_discovery_candidates_by_source(self) -> dict[str, int]:
@@ -6480,17 +9160,12 @@ class Database:
         """
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
-        cursor = self.conn.execute(
-            """
-            SELECT source_platform, source_strategy, COUNT(*) AS count
-            FROM discovery_candidates
-            WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-            GROUP BY source_platform, source_strategy
-            """
-        )
-        for row in cursor.fetchall():
-            source_family = _pool_source_family(row["source_strategy"], row["source_platform"])
-            counts[source_family] += int(row["count"])
+        for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
+            source_family = _pool_source_family(
+                row.get("source_strategy"),
+                row.get("source_platform"),
+            )
+            counts[source_family] += 1
         return dict(counts)
 
     def demote_lowest_ranked_pool_rows(self, *, source_family: str, limit: int) -> int:
@@ -6511,7 +9186,12 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT bvid, source, source_platform, relevance_score, last_scored_at
+            SELECT bvid, source, source_platform, relevance_score, last_scored_at,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6521,10 +9201,13 @@ class Database:
             """
         )
         candidates: list[dict[str, Any]] = []
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
             row_dict = dict(row)
             bvid = str(row_dict.get("bvid", "")).strip()
             if not bvid:
+                continue
+            if not self._temporal_eligibility_for_row(row_dict, now=temporal_now):
                 continue
             if _pool_source_family(row_dict["source"], row_dict["source_platform"]) != family:
                 continue
@@ -6573,7 +9256,12 @@ class Database:
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         raw_cursor = self.conn.execute(
             f"""
-            SELECT COUNT(*) AS count
+            SELECT bvid, published_at, source, source_platform,
+                   temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6587,7 +9275,13 @@ class Database:
             """,
             (*admission_params, *guard_params),
         )
-        raw_count = int(raw_cursor.fetchone()["count"])
+        temporal_now = datetime.now(UTC)
+        raw_count = sum(
+            1
+            for row in raw_cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+            and self._publication_date_row_is_eligible(dict(row))
+        )
         pending_cursor = self.conn.execute(
             f"""
             SELECT
@@ -6599,7 +9293,19 @@ class Database:
                 pool_expression,
                 pool_topic_label,
                 style_key,
-                topic_group
+                topic_group,
+                published_at,
+                temporal_class,
+                temporal_confidence,
+                temporal_policy_version,
+                temporal_validity_mode,
+                temporal_valid_until,
+                temporal_scope,
+                temporal_state,
+                temporal_evidence,
+                temporal_next_review_at,
+                temporal_evaluated_at,
+                temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6621,6 +9327,10 @@ class Database:
         pending_count = 0
         for row in pending_cursor.fetchall():
             item = dict(row)
+            if not self._temporal_eligibility_for_row(item, now=temporal_now):
+                continue
+            if not self._publication_date_row_is_eligible(item):
+                continue
             if self._is_viewed_row(item, viewed_content_keys):
                 continue
             if (
@@ -6636,11 +9346,13 @@ class Database:
             ):
                 pending_count += 1
 
-        status_counts = self.count_discovery_candidates_by_status()
-        pending_eval_count = int(status_counts.get("pending_eval", 0)) + int(
-            status_counts.get("evaluating", 0)
+        waiting_rows = self._load_temporally_eligible_admission_waiting_rows_on(self.conn)
+        pending_eval_count = sum(
+            str(row.get("status", "")) in {"pending_eval", "evaluating"} for row in waiting_rows
         )
-        evaluated_pending_count = int(status_counts.get("evaluated", 0))
+        evaluated_pending_count = sum(
+            str(row.get("status", "")) == "evaluated" for row in waiting_rows
+        )
         discovery_pending_count = pending_eval_count + evaluated_pending_count
 
         available = self.count_pool_candidates(
@@ -6732,9 +9444,12 @@ class Database:
             else _viewed_content_keys
         )
         rows: list[dict[str, Any]] = []
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
             item = dict(row)
             if not str(item.get("bvid", "")).strip():
+                continue
+            if not self._temporal_eligibility_for_row(item, now=temporal_now):
                 continue
             if self._is_viewed_row(item, viewed_content_keys):
                 continue
@@ -6789,7 +9504,12 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url
+            SELECT bvid, source, source_platform, content_url,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6804,10 +9524,15 @@ class Database:
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, int] = defaultdict(int)
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
             row_dict = dict(row)
-            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+            if (
+                not bvid
+                or not self._temporal_eligibility_for_row(row_dict, now=temporal_now)
+                or self._is_viewed_row(row_dict, viewed_content_keys)
+            ):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -6824,7 +9549,13 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, topic_group, style_key, franchise_key, source, source_platform, content_url
+            SELECT bvid, topic_group, style_key, franchise_key,
+                   source, source_platform, content_url,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -6845,10 +9576,15 @@ class Database:
             "style_key": defaultdict(int),
             "franchise_key": defaultdict(int),
         }
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
             row_dict = dict(row)
-            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+            if (
+                not bvid
+                or not self._temporal_eligibility_for_row(row_dict, now=temporal_now)
+                or self._is_viewed_row(row_dict, viewed_content_keys)
+            ):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -6875,7 +9611,12 @@ class Database:
             cursor = self.conn.execute(
                 f"""
                 SELECT bvid, topic_group, style_key, franchise_key,
-                       source, source_platform, content_url
+                       source, source_platform, content_url,
+                       published_at, temporal_class, temporal_confidence,
+                       temporal_policy_version, temporal_validity_mode,
+                       temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                       temporal_next_review_at, temporal_evaluated_at,
+                       temporal_evidence_complete
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                   AND COALESCE(feedback_type, '') != 'dislike'
@@ -6893,10 +9634,15 @@ class Database:
             logger.debug("get_pool_topic_counts_by_platform query failed", exc_info=True)
             return {}
         counts: dict[str, dict[str, int]] = {}
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
             row_dict = dict(row)
-            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+            if (
+                not bvid
+                or not self._temporal_eligibility_for_row(row_dict, now=temporal_now)
+                or self._is_viewed_row(row_dict, viewed_content_keys)
+            ):
                 continue
             if not _is_linkable_pool_source(
                 row["source"], row["source_platform"], row["content_url"]
@@ -6997,18 +9743,30 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT LOWER(TRIM(franchise_key)) AS fk, COUNT(*) AS n
+            SELECT LOWER(TRIM(franchise_key)) AS fk,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
               AND {admission_sql}
               AND franchise_key IS NOT NULL
               AND TRIM(franchise_key) != ''
-            GROUP BY LOWER(TRIM(franchise_key))
             """,
             admission_params,
         )
-        return {str(row["fk"]): int(row["n"]) for row in cursor.fetchall() if row["fk"]}
+        temporal_now = datetime.now(UTC)
+        counts: dict[str, int] = defaultdict(int)
+        for row in cursor.fetchall():
+            if not self._temporal_eligibility_for_row(dict(row), now=temporal_now):
+                continue
+            franchise = str(row["fk"] or "")
+            if franchise:
+                counts[franchise] += 1
+        return dict(counts)
 
     def get_distinct_topic_groups(self) -> list[str]:
         """Return distinct non-empty ``topic_group`` values in the fresh pool.
@@ -7020,7 +9778,11 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT DISTINCT topic_group
+            SELECT topic_group, published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND {admission_sql}
@@ -7028,7 +9790,15 @@ class Database:
             """,
             admission_params,
         )
-        return [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+        temporal_now = datetime.now(UTC)
+        return list(
+            dict.fromkeys(
+                str(row["topic_group"])
+                for row in cursor.fetchall()
+                if row["topic_group"]
+                and self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+            )
+        )
 
     def get_active_pool_topic_groups(
         self,
@@ -7048,7 +9818,11 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT topic_group, COUNT(*) AS n
+            SELECT topic_group, published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND {admission_sql}
@@ -7056,14 +9830,21 @@ class Database:
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
-            GROUP BY topic_group
-            HAVING COUNT(*) >= ?
-            ORDER BY n DESC, topic_group ASC
-            LIMIT ?
             """,
-            (*admission_params, max(1, int(min_count)), max(1, int(limit))),
+            admission_params,
         )
-        return [str(row["topic_group"]) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        counts: dict[str, int] = defaultdict(int)
+        for row in cursor.fetchall():
+            if not self._temporal_eligibility_for_row(dict(row), now=temporal_now):
+                continue
+            counts[str(row["topic_group"])] += 1
+        minimum = max(1, int(min_count))
+        ordered = sorted(
+            (group for group, count in counts.items() if count >= minimum),
+            key=lambda group: (-counts[group], group),
+        )
+        return ordered[: max(1, int(limit))]
 
     def get_topic_group_samples(
         self,
@@ -7089,7 +9870,12 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT topic_group, title, relevance_score
+            SELECT topic_group, title, relevance_score,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND {admission_sql}
@@ -7102,7 +9888,10 @@ class Database:
         by_group: dict[str, list[str]] = defaultdict(list)
         group_max_score: dict[str, float] = {}
         group_count: dict[str, int] = defaultdict(int)
+        temporal_now = datetime.now(UTC)
         for row in cursor.fetchall():
+            if not self._temporal_eligibility_for_row(dict(row), now=temporal_now):
+                continue
             group = str(row["topic_group"]).strip()
             title = str(row["title"]).strip()
             if not group or not title:
@@ -7137,19 +9926,26 @@ class Database:
         *,
         protected_ids: set[str],
         max_age_days: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
+        # Compute the age cutoff against the caller's time baseline instead of
+        # per-statement ``datetime('now')`` so every planner inside one
+        # maintenance transaction measures staleness against the same instant.
+        cutoff = ((_now or datetime.now(UTC)) - timedelta(days=max(0, int(max_age_days)))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         rows = conn.execute(
             """
             SELECT bvid
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
-              AND discovered_at < datetime('now', '-' || ? || ' days')
+              AND discovered_at < ?
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
             ORDER BY discovered_at ASC, bvid ASC
             """,
-            (max_age_days,),
+            (cutoff,),
         ).fetchall()
         stale_ids = [str(row["bvid"]) for row in rows]
         return _ContentTrimPlan(
@@ -7163,13 +9959,19 @@ class Database:
         *,
         protected_ids: set[str],
         max_per_cluster: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         admission_sql, admission_params = self._pool_admission_sql()
         rows = [
             dict(row)
             for row in conn.execute(
                 f"""
-                SELECT bvid, title, topic_key, relevance_score, last_scored_at
+                SELECT bvid, title, topic_key, relevance_score, last_scored_at,
+                       published_at, temporal_class, temporal_confidence,
+                       temporal_policy_version, temporal_validity_mode,
+                       temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                       temporal_next_review_at, temporal_evaluated_at,
+                       temporal_evidence_complete
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                   AND COALESCE(feedback_type, '') != 'dislike'
@@ -7180,7 +9982,10 @@ class Database:
             ).fetchall()
         ]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        temporal_now = _now or datetime.now(UTC)
         for row in rows:
+            if not self._temporal_eligibility_for_row(row, now=temporal_now):
+                continue
             cluster = self._explore_risk_cluster(row)
             if cluster:
                 grouped[cluster].append(row)
@@ -7208,6 +10013,7 @@ class Database:
         *,
         protected_ids: set[str],
         max_per_topic_group: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         if max_per_topic_group <= 0:
             return _ContentTrimPlan()
@@ -7218,7 +10024,12 @@ class Database:
                 f"""
                 SELECT bvid, source, source_platform, content_url, topic_group,
                        relevance_score, last_scored_at, pool_expression,
-                       pool_topic_label, style_key
+                       pool_topic_label, style_key,
+                       published_at, temporal_class, temporal_confidence,
+                       temporal_policy_version, temporal_validity_mode,
+                       temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                       temporal_next_review_at, temporal_evaluated_at,
+                       temporal_evidence_complete
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                   AND COALESCE(feedback_type, '') != 'dislike'
@@ -7232,7 +10043,10 @@ class Database:
             ).fetchall()
         ]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        temporal_now = _now or datetime.now(UTC)
         for row in rows:
+            if not self._temporal_eligibility_for_row(row, now=temporal_now):
+                continue
             if not self._content_is_ready_reserve(row):
                 continue
             grouped[str(row["topic_group"]).strip().lower()].append(row)
@@ -7260,11 +10074,13 @@ class Database:
         protected_ids: set[str],
         source_share_quotas: Mapping[str, int],
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in self._load_pool_raw_material_rows_on(
             conn,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
         ):
             if not self._content_is_ready_reserve(row):
                 continue
@@ -7324,21 +10140,15 @@ class Database:
         raw_ceiling: int,
         raw_source_share_quotas: Mapping[str, int],
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> _RawTrimPlan:
         content_rows = self._load_pool_raw_material_rows_on(
             conn,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
         )
         candidate_rows = [
-            dict(row)
-            for row in conn.execute(
-                """
-                SELECT id, status, source_platform, source_strategy,
-                       relevance_score, last_seen_at, claim_token
-                FROM discovery_candidates
-                WHERE status IN ('pending_eval', 'evaluating', 'evaluated')
-                """
-            ).fetchall()
+            row for row in self._load_temporally_eligible_admission_waiting_rows_on(conn, _now=_now)
         ]
         raw_count = len(content_rows) + len(candidate_rows)
         excess = max(0, raw_count - raw_ceiling)
@@ -7482,6 +10292,8 @@ class Database:
         xhs_self_nickname: str,
         max_restore: int = _POOL_MAINTENANCE_BATCH_SIZE,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
+        _delight_threshold: float | None = None,
     ) -> list[str]:
         """Restore a bounded set of paid-for rows without rescanning per row.
 
@@ -7502,6 +10314,8 @@ class Database:
             conn,
             xhs_self_nickname=xhs_self_nickname,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
+            _delight_threshold=_delight_threshold,
         )
         desired_available = len(available_rows) + clean_deficit
         current_family_count: dict[str, int] = defaultdict(int)
@@ -7518,6 +10332,7 @@ class Database:
             conn,
             xhs_self_nickname,
             pool_status="suppressed",
+            _delight_threshold=_delight_threshold,
         )
         candidate_rows = [
             dict(row)
@@ -7536,10 +10351,12 @@ class Database:
             if _viewed_content_keys is None
             else _viewed_content_keys
         )
+        temporal_now = _now or datetime.now(UTC)
         eligible_rows = [
             row
             for row in candidate_rows
             if str(row.get("bvid", "")).strip()
+            and self._temporal_eligibility_for_row(row, now=temporal_now)
             and not self._is_viewed_row(row, viewed_content_keys)
             and _is_linkable_pool_source(
                 row.get("source"),
@@ -7651,6 +10468,28 @@ class Database:
         source_trim_ms = 0.0
         raw_trim_ms = 0.0
         write_ms = 0.0
+        temporal_due_count = 0
+        temporal_due_has_more = False
+        # Rollback reporting: track the attempted batch so a rolled-back
+        # result can describe what the transaction tried to write instead of
+        # fabricating zeros. Every write is still reverted on rollback; these
+        # counters only record intent up to the failure point.
+        recovered_ids: list[str] = []
+        stale_plan = _ContentTrimPlan()
+        explore_plan = _ContentTrimPlan()
+        topic_plan = _ContentTrimPlan()
+        source_plan = _ContentTrimPlan()
+        raw_plan = _RawTrimPlan()
+        stale_ids: set[str] = set()
+        explore_ids: set[str] = set()
+        topic_ids: set[str] = set()
+        source_ids: set[str] = set()
+        initial_raw_rows: dict[str, dict[str, Any]] = {}
+        all_content_victims: set[str] = set()
+        trimmed_ready_reserve = 0
+        trimmed_evaluated = 0
+        trimmed_raw = 0
+        trimmed_by_source: dict[str, int] = {}
         try:
             conn = self.open_connection()
             if isinstance(conn, sqlite3.Connection):
@@ -7658,6 +10497,31 @@ class Database:
             lock_started = time.perf_counter()
             conn.execute("BEGIN IMMEDIATE")
             lock_wait_ms = (time.perf_counter() - lock_started) * 1000.0
+            # One measurement baseline for the whole transaction. Both
+            # canonical availability scans (before/after) and every planner
+            # below must observe identical time and delight-threshold inputs:
+            # a fresh clock per scan lets a row crossing temporal_valid_until
+            # mid-transaction fake an inventory drop, and recomputing the
+            # dynamic delight threshold per scan lets the transaction's own
+            # pool_status writes shift the percentile sample. Either noise
+            # source makes after < min(before, target) and rolled a healthy
+            # batch back forever once the pool sat below target (field log
+            # 2026-08: 652 consecutive rollbacks with mutations=0).
+            maintenance_now = datetime.now(UTC)
+            temporal_due_count, temporal_due_has_more = (
+                self._transition_temporally_due_pool_items_on(
+                    conn,
+                    now=maintenance_now,
+                    limit=mutation_budget,
+                )
+            )
+            # Snapshot the delight threshold after the temporal transitions
+            # (they already rewrote pool_status for this batch) but before any
+            # trim/recovery write below can shift the percentile sample.
+            delight_threshold = self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            )
+            maintenance_budget = max(0, mutation_budget - temporal_due_count)
             # All maintenance reads share one write transaction, so the view
             # event snapshot cannot change underneath us. Parse it once: the
             # source-aware extractor is Python-heavy and repeated scans used
@@ -7667,23 +10531,25 @@ class Database:
                 conn,
                 xhs_self_nickname=xhs_self_nickname,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+                _delight_threshold=delight_threshold,
             )
             available_before = len(before_rows)
             snapshot_acquired = True
             raw_before = self._count_pool_raw_material_on(
                 conn,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
             )
             protected_ids = {
                 str(row["bvid"]) for row in before_rows[: min(len(before_rows), clean_target)]
             }
-            recovered_ids: list[str] = []
             # Suppressed rows do not count as raw material until restored. Never
             # restore through an already-exhausted raw ceiling: doing so used to
             # alternate forever with the next batch's capacity trim while the
             # frontend-visible availability remained unchanged.
             recovery_budget = min(
-                mutation_budget,
+                maintenance_budget,
                 max(0, clean_raw_ceiling - raw_before),
             )
             if recover_suppressed and recovery_budget > 0:
@@ -7695,12 +10561,16 @@ class Database:
                     xhs_self_nickname=xhs_self_nickname,
                     max_restore=recovery_budget,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
+                    _delight_threshold=delight_threshold,
                 )
                 recovery_ms = (time.perf_counter() - phase_started) * 1000.0
                 recovered_available_rows = self._load_available_pool_candidate_rows_on(
                     conn,
                     xhs_self_nickname=xhs_self_nickname,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
+                    _delight_threshold=delight_threshold,
                 )
                 recovered_set = set(recovered_ids)
                 visible_recovered = {
@@ -7742,6 +10612,7 @@ class Database:
                 for row in self._load_pool_raw_material_rows_on(
                     conn,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
                 )
             }
 
@@ -7750,6 +10621,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_age_days=clean_stale_days,
+                _now=maintenance_now,
             )
             stale_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -7757,6 +10629,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_per_cluster=clean_explore_cap,
+                _now=maintenance_now,
             )
             explore_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -7764,6 +10637,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_per_topic_group=clean_topic_cap,
+                _now=maintenance_now,
             )
             topic_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -7772,10 +10646,11 @@ class Database:
                 protected_ids=protected_ids,
                 source_share_quotas=clean_source_quotas,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
             )
             source_trim_ms = (time.perf_counter() - phase_started) * 1000.0
 
-            remaining_budget = max(0, mutation_budget - len(recovered_ids))
+            remaining_budget = max(0, maintenance_budget - len(recovered_ids))
             omitted_mutations = 0
             claimed_content_ids: set[str] = set()
 
@@ -7829,24 +10704,11 @@ class Database:
                 untrimmed_excess=full_raw_plan.untrimmed_excess,
             )
             raw_trim_ms = (time.perf_counter() - phase_started) * 1000.0
-            write_started = time.perf_counter()
-            self._apply_raw_trim_on(conn, raw_plan)
-            write_ms += (time.perf_counter() - write_started) * 1000.0
-            after_rows = self._load_available_pool_candidate_rows_on(
-                conn,
-                xhs_self_nickname=xhs_self_nickname,
-                _viewed_content_keys=viewed_content_keys,
-            )
-            raw_after = self._count_pool_raw_material_on(
-                conn,
-                _viewed_content_keys=viewed_content_keys,
-            )
-            self._validate_pool_maintenance_invariant(
-                available_before=available_before,
-                available_after=len(after_rows),
-                target=clean_target,
-            )
 
+            # Victim statistics derive only from the plans and the pre-write
+            # raw snapshot, so they stay valid even when the invariant below
+            # rolls the transaction back; the rollback branch reports them
+            # instead of fabricating zeros.
             all_content_victims = (
                 stale_ids | explore_ids | topic_ids | source_ids | set(raw_plan.content_bvids)
             )
@@ -7862,13 +10724,11 @@ class Database:
                 if bvid in initial_raw_rows
             ) + sum(status == "pending_eval" for status in candidate_statuses.values())
             trimmed_evaluated = sum(status == "evaluated" for status in candidate_statuses.values())
-            trimmed_by_source: dict[str, int] = defaultdict(int)
+            by_source: dict[str, int] = defaultdict(int)
             for bvid in all_content_victims:
                 row = initial_raw_rows.get(bvid)
                 if row is not None:
-                    trimmed_by_source[
-                        _pool_source_family(row["source"], row["source_platform"])
-                    ] += 1
+                    by_source[_pool_source_family(row["source"], row["source_platform"])] += 1
             if raw_plan.candidate_ids:
                 placeholders = ", ".join("?" for _ in raw_plan.candidate_ids)
                 for row in conn.execute(
@@ -7879,9 +10739,31 @@ class Database:
                     """,
                     raw_plan.candidate_ids,
                 ).fetchall():
-                    trimmed_by_source[
+                    by_source[
                         _pool_source_family(row["source_strategy"], row["source_platform"])
                     ] += 1
+            trimmed_by_source = dict(by_source)
+
+            write_started = time.perf_counter()
+            self._apply_raw_trim_on(conn, raw_plan)
+            write_ms += (time.perf_counter() - write_started) * 1000.0
+            after_rows = self._load_available_pool_candidate_rows_on(
+                conn,
+                xhs_self_nickname=xhs_self_nickname,
+                _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+                _delight_threshold=delight_threshold,
+            )
+            raw_after = self._count_pool_raw_material_on(
+                conn,
+                _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+            )
+            self._validate_pool_maintenance_invariant(
+                available_before=available_before,
+                available_after=len(after_rows),
+                target=clean_target,
+            )
 
             recovered_suppressed = 0
             if recovered_ids:
@@ -7920,7 +10802,7 @@ class Database:
                 trimmed_ready_reserve=trimmed_ready_reserve,
                 trimmed_evaluated=trimmed_evaluated,
                 trimmed_raw=trimmed_raw,
-                trimmed_by_source=dict(trimmed_by_source),
+                trimmed_by_source=trimmed_by_source,
                 deferred_topic_trim=topic_plan.deferred,
                 deferred_source_trim=source_plan.deferred,
                 deferred_stale_trim=stale_plan.deferred,
@@ -7931,9 +10813,12 @@ class Database:
                 untrimmed_raw_excess=max(0, raw_after - clean_raw_ceiling),
                 rolled_back=False,
                 mutation_count=(
-                    len(recovered_ids) + len(all_content_victims) + len(raw_plan.candidate_ids)
+                    temporal_due_count
+                    + len(recovered_ids)
+                    + len(all_content_victims)
+                    + len(raw_plan.candidate_ids)
                 ),
-                has_more=(omitted_mutations > 0 or recovery_can_continue),
+                has_more=(temporal_due_has_more or omitted_mutations > 0 or recovery_can_continue),
                 lock_wait_ms=lock_wait_ms,
                 recovery_ms=recovery_ms,
                 stale_trim_ms=stale_trim_ms,
@@ -7964,28 +10849,41 @@ class Database:
                     "pool maintenance snapshot unavailable"
                 ) from exc
             logger.error("pool maintenance rolled back: %s", exc)
+            # Truthful rollback reporting: the trim/recovery counters describe
+            # the attempted (now reverted) batch so operators can see what the
+            # transaction tried to do; inventory counts describe the durable
+            # post-rollback state (the rollback restored the before view).
             return PoolMaintenanceResult(
                 available_before=available_before,
                 available_after=available_before,
                 target=clean_target,
                 protected_available=len(protected_ids),
                 recovered_suppressed=0,
-                trimmed_stale=0,
-                trimmed_explore_cluster=0,
-                trimmed_ready_reserve=0,
-                trimmed_evaluated=0,
-                trimmed_raw=0,
-                trimmed_by_source={},
-                deferred_topic_trim=0,
-                deferred_source_trim=0,
-                deferred_stale_trim=0,
-                deferred_explore_cluster_trim=0,
+                trimmed_stale=len(stale_ids),
+                trimmed_explore_cluster=len(explore_ids),
+                trimmed_ready_reserve=trimmed_ready_reserve,
+                trimmed_evaluated=trimmed_evaluated,
+                trimmed_raw=trimmed_raw,
+                trimmed_by_source=trimmed_by_source,
+                deferred_topic_trim=topic_plan.deferred,
+                deferred_source_trim=source_plan.deferred,
+                deferred_stale_trim=stale_plan.deferred,
+                deferred_explore_cluster_trim=explore_plan.deferred,
                 raw_before=raw_before,
                 raw_after=raw_before,
                 raw_ceiling=clean_raw_ceiling,
                 untrimmed_raw_excess=max(0, raw_before - clean_raw_ceiling),
                 rolled_back=True,
                 reason=str(exc),
+                mutation_count=(
+                    temporal_due_count
+                    + len(recovered_ids)
+                    + len(all_content_victims)
+                    + len(raw_plan.candidate_ids)
+                ),
+                # A rollback must never spin the per-tick batch loop: the next
+                # scheduled tick re-attempts with a fresh transaction.
+                has_more=False,
                 lock_wait_ms=lock_wait_ms,
                 recovery_ms=recovery_ms,
                 stale_trim_ms=stale_trim_ms,
@@ -8005,7 +10903,12 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, title, topic_key, relevance_score, last_scored_at
+            SELECT bvid, title, topic_key, relevance_score, last_scored_at,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -8014,7 +10917,12 @@ class Database:
             """,
             admission_params,
         )
-        rows = [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
             cluster = self._explore_risk_cluster(row)
@@ -8078,7 +10986,12 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, topic_group, relevance_score, last_scored_at
+            SELECT bvid, topic_group, relevance_score, last_scored_at,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -8090,7 +11003,12 @@ class Database:
             """,
             admission_params,
         )
-        rows = [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
         if not rows:
             return 0
 
@@ -8373,7 +11291,13 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url, relevance_score, last_scored_at
+            SELECT bvid, source, source_platform, content_url,
+                   relevance_score, last_scored_at,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'suppressed'
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -8393,11 +11317,16 @@ class Database:
         selected_bvids: list[str] = []
         selected_counts: dict[str, int] = defaultdict(int)
         target_selection_count = sum(deficits.values())
+        temporal_now = datetime.now(UTC)
 
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
             row_dict = dict(row)
-            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+            if (
+                not bvid
+                or not self._temporal_eligibility_for_row(row_dict, now=temporal_now)
+                or self._is_viewed_row(row_dict, viewed_content_keys)
+            ):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -8859,20 +11788,32 @@ class Database:
         Returns only the fields needed for embedding-based matching:
         bvid, title, topic_key, topic_group, pool_topic_label.
         """
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return []
         cursor = self.conn.execute(
             """
-            SELECT bvid, title, topic_key, topic_group, pool_topic_label
+            SELECT bvid, title, topic_key, topic_group, pool_topic_label,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
-              )
+            )
             ORDER BY discovered_at DESC
-            LIMIT ?
-            """,
-            (limit,),
+            """
         )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
+        return rows[:max_rows]
 
     def mark_pool_items_purged_by_dislike(self, bvids: list[str]) -> int:
         """Mark specified bvids as purged_by_dislike (only if currently fresh)."""
@@ -8915,51 +11856,128 @@ class Database:
         return cursor.rowcount
 
     def get_pool_candidates_needing_evaluation(
-        self, limit: int = 20, *, xhs_self_nickname: str = ""
+        self,
+        limit: int = 20,
+        *,
+        xhs_self_nickname: str = "",
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Return fresh pool candidates that lack LLM content classification.
+        """Claim unclassified fresh rows and due temporal-review holds.
 
         Targets items with empty ``style_key`` AND empty ``topic_group`` —
         typically content from non-bilibili sources (e.g. xiaohongshu) that
         was inserted directly into ``content_cache`` without passing through
         the discovery engine's ``evaluate_content`` pipeline.
 
-        These items need LLM evaluation to receive ``style_key``,
-        ``topic_group``, and ``relevance_score`` so the diversity mechanism
-        in ``_select_diversified_batch`` can treat them equally alongside
-        bilibili content.
+        Selecting a hold atomically leases its next retry using bounded
+        exponential backoff. A failed evaluator batch therefore cannot select
+        the same recent row every refresh and starve later holds. A complete
+        non-neutral review clears the lease in :meth:`cache_content`.
         """
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return []
+        explicit_now = now
+        if explicit_now is not None and explicit_now.tzinfo is None:
+            explicit_now = explicit_now.replace(tzinfo=UTC)
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        cursor = self.conn.execute(
-            f"""
-            SELECT *
-            FROM content_cache
-            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
-              AND COALESCE(feedback_type, '') != 'dislike'
-              AND COALESCE(style_key, '') = ''
-              AND COALESCE(topic_group, '') = ''
-              AND COALESCE(relevance_score, 0) = 0
-              {guard_sql}
-              AND NOT EXISTS (
-                SELECT 1
-                FROM recommendations AS r
-                WHERE r.bvid = content_cache.bvid
-              )
-            ORDER BY
-                last_scored_at DESC,
-                bvid ASC
-            LIMIT ?
-            """,
-            (*guard_params, limit),
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
-        rows = self._exclude_viewed_rows(
-            rows,
-            self.get_recent_viewed_content_keys(),
-            limit=len(rows),
-        )
-        return rows[:limit]
+        self._ensure_fresh_read()
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                connection = self.conn
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    effective_now = explicit_now or datetime.now(UTC)
+                    now_text = effective_now.astimezone(UTC).isoformat().replace("+00:00", "Z")
+                    rows = [
+                        dict(row)
+                        for row in connection.execute(
+                            f"""
+                            SELECT *
+                            FROM content_cache
+                            WHERE COALESCE(pool_status, 'fresh')
+                                    IN ('fresh', 'temporal_review_hold')
+                              AND COALESCE(feedback_type, '') != 'dislike'
+                              AND (
+                                    (
+                                        pool_status = 'temporal_review_hold'
+                                        AND (
+                                            COALESCE(temporal_review_retry_at, '') = ''
+                                            OR julianday(temporal_review_retry_at)
+                                                <= julianday(?)
+                                        )
+                                    )
+                                    OR (
+                                        COALESCE(pool_status, 'fresh') = 'fresh'
+                                        AND COALESCE(style_key, '') = ''
+                                        AND COALESCE(topic_group, '') = ''
+                                        AND COALESCE(relevance_score, 0) = 0
+                                    )
+                              )
+                              {guard_sql}
+                              AND NOT EXISTS (
+                                SELECT 1
+                                FROM recommendations AS r
+                                WHERE r.bvid = content_cache.bvid
+                              )
+                            ORDER BY
+                                CASE WHEN pool_status = 'temporal_review_hold'
+                                    THEN 0 ELSE 1 END,
+                                COALESCE(temporal_review_attempts, 0) ASC,
+                                COALESCE(NULLIF(temporal_review_retry_at, ''),
+                                         NULLIF(temporal_next_review_at, ''),
+                                         last_scored_at) ASC,
+                                bvid ASC
+                            """,
+                            (now_text, *guard_params),
+                        ).fetchall()
+                    ]
+                    selected = self._exclude_viewed_rows(
+                        rows,
+                        self._recent_viewed_content_keys_on(connection),
+                        limit=max_rows,
+                    )[:max_rows]
+                    leases: list[tuple[str, str]] = []
+                    for row in selected:
+                        if str(row.get("pool_status") or "fresh") != "temporal_review_hold":
+                            continue
+                        review_attempts = max(
+                            0,
+                            int(row.get("temporal_review_attempts", 0) or 0),
+                        )
+                        retry_hours = min(24, 2 ** min(review_attempts, 5))
+                        retry_at = (
+                            (effective_now + timedelta(hours=retry_hours))
+                            .astimezone(UTC)
+                            .isoformat()
+                            .replace("+00:00", "Z")
+                        )
+                        leases.append((retry_at, str(row["bvid"])))
+                    if leases:
+                        connection.executemany(
+                            """
+                            UPDATE content_cache
+                            SET temporal_review_attempts =
+                                    COALESCE(temporal_review_attempts, 0) + 1,
+                                temporal_review_retry_at = ?
+                            WHERE bvid = ?
+                              AND pool_status = 'temporal_review_hold'
+                            """,
+                            leases,
+                        )
+                    connection.commit()
+                    return selected
+                except Exception:
+                    connection.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                self._rollback_failed_write(self.conn)
+                if "database is locked" not in str(exc).lower() or attempts <= 1:
+                    raise
+                attempts -= 1
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
 
     def get_pool_candidates_needing_copy(
         self,
@@ -9155,6 +12173,159 @@ class Database:
         """
         return self.batch_insert_recommendations_and_mark_shown(items, [])
 
+    def batch_insert_eligible_recommendations_and_mark_shown(
+        self,
+        items: list[dict[str, Any]],
+        shown_bvids: list[str],
+        *,
+        now: datetime | None = None,
+    ) -> PoolServePersistResult:
+        """Commit only candidates still fresh and temporally eligible.
+
+        This is the final recommendation eligibility boundary.  It re-reads
+        temporal metadata under the same ``BEGIN IMMEDIATE`` that inserts
+        history and marks rows shown, closing the snapshot-to-commit race in
+        which an item could expire or be consumed by another process.
+        """
+
+        if not items:
+            return PoolServePersistResult(
+                recommendation_ids=(),
+                committed_bvids=(),
+            )
+        explicit_now = now
+        if explicit_now is not None and explicit_now.tzinfo is None:
+            explicit_now = explicit_now.replace(tzinfo=UTC)
+        requested_shown = {str(value) for value in shown_bvids if str(value)}
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    # Production calls take their clock only after acquiring
+                    # the write lock, so waiting for another writer cannot
+                    # carry a candidate across its TTL on a stale timestamp.
+                    # Tests may inject ``now`` for deterministic boundaries.
+                    effective_now = explicit_now or datetime.now(UTC)
+                    ids: list[int] = []
+                    committed_bvids: list[str] = []
+                    temporally_stale_bvids: list[str] = []
+                    skipped_bvids: list[str] = []
+                    processed_bvids: set[str] = set()
+                    for item in items:
+                        bvid = str(item.get("bvid", "")).strip()
+                        if not bvid or bvid in processed_bvids:
+                            continue
+                        if requested_shown and bvid not in requested_shown:
+                            continue
+                        processed_bvids.add(bvid)
+                        row = cursor.execute(
+                            """
+                            SELECT bvid, pool_status, published_at,
+                                   temporal_class, temporal_confidence,
+                                   temporal_policy_version, temporal_validity_mode,
+                                   temporal_valid_until, temporal_scope,
+                                   temporal_state, temporal_evidence,
+                                   temporal_next_review_at,
+                                   temporal_evaluated_at,
+                                   temporal_evidence_complete
+                            FROM content_cache
+                            WHERE bvid = ?
+                            LIMIT 1
+                            """,
+                            (bvid,),
+                        ).fetchone()
+                        if row is None or str(row["pool_status"] or "fresh") != "fresh":
+                            skipped_bvids.append(bvid)
+                            continue
+                        temporal = self._temporal_decision_for_row(
+                            dict(row),
+                            now=effective_now,
+                        )
+                        disposition = _temporal_decision_disposition(temporal)
+                        if disposition != "eligible":
+                            target_status = (
+                                "stale" if disposition == "expired" else "temporal_review_hold"
+                            )
+                            cursor.execute(
+                                """
+                                UPDATE content_cache
+                                SET pool_status = ?
+                                WHERE bvid = ?
+                                  AND COALESCE(pool_status, 'fresh') = 'fresh'
+                                """,
+                                (target_status, bvid),
+                            )
+                            if disposition == "expired":
+                                temporally_stale_bvids.append(bvid)
+                            else:
+                                skipped_bvids.append(bvid)
+                            continue
+                        already_recommended = cursor.execute(
+                            "SELECT 1 FROM recommendations WHERE bvid = ? LIMIT 1",
+                            (bvid,),
+                        ).fetchone()
+                        if already_recommended is not None:
+                            skipped_bvids.append(bvid)
+                            continue
+                        cursor.execute(
+                            """
+                            INSERT INTO recommendations
+                                (bvid, item_key, expression, topic, confidence, presented)
+                            VALUES (
+                                ?,
+                                COALESCE(
+                                    NULLIF(?, ''),
+                                    (SELECT item_key FROM content_cache WHERE bvid = ?),
+                                    ?
+                                ),
+                                ?, ?, ?, ?
+                            )
+                            """,
+                            (
+                                bvid,
+                                str(item.get("item_key", "")).strip(),
+                                bvid,
+                                self._fallback_recommendation_item_key(bvid),
+                                str(item.get("expression", "")),
+                                str(item.get("topic", "")),
+                                float(item.get("confidence", 0.0) or 0.0),
+                                int(item.get("presented", 0) or 0),
+                            ),
+                        )
+                        ids.append(cursor.lastrowid or 0)
+                        committed_bvids.append(bvid)
+                    if committed_bvids:
+                        placeholders = ", ".join("?" for _ in committed_bvids)
+                        cursor.execute(
+                            f"""
+                            UPDATE content_cache
+                            SET pool_status = 'shown',
+                                recommended_at = CURRENT_TIMESTAMP
+                            WHERE bvid IN ({placeholders})
+                              AND COALESCE(pool_status, 'fresh') = 'fresh'
+                            """,
+                            committed_bvids,
+                        )
+                    self.conn.commit()
+                    return PoolServePersistResult(
+                        recommendation_ids=tuple(ids),
+                        committed_bvids=tuple(committed_bvids),
+                        temporally_stale_bvids=tuple(temporally_stale_bvids),
+                        skipped_bvids=tuple(skipped_bvids),
+                    )
+                except Exception:
+                    self.conn.rollback()
+                    raise
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                self._rollback_failed_write(self.conn)
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
     def batch_insert_recommendations_and_mark_shown(
         self,
         items: list[dict[str, Any]],
@@ -9337,6 +12508,14 @@ class Database:
         processed_clause = (
             "AND (r.feedback_type IS NULL OR r.feedback_type = '')" if exclude_processed else ""
         )
+        # Actionable rows can age out after their recommendation history row
+        # was created. Fetch the complete actionable set so temporal filtering
+        # happens before the caller's limit; immutable history reads keep the
+        # existing bounded SQL path and retain expired entries for audit.
+        limit_clause = "" if exclude_processed else "LIMIT ?"
+        query_params: tuple[Any, ...] = (
+            (*admission_params,) if exclude_processed else (*admission_params, limit)
+        )
         cursor = self.conn.execute(
             f"""
             SELECT
@@ -9362,12 +12541,25 @@ class Database:
                 COALESCE(c.content_type, 'video') AS content_type,
                 COALESCE(c.description, '') AS description,
                 COALESCE(c.body_text, '') AS body_text,
+                COALESCE(c.source_metadata, '{{}}') AS source_metadata,
                 COALESCE(c.tags, '[]') AS tags,
                 COALESCE(c.topic_key, '') AS topic_key,
                 COALESCE(c.topic_group, '') AS topic_group,
                 COALESCE(c.pool_topic_label, '') AS pool_topic_label,
                 COALESCE(c.published_at, '') AS published_at,
                 COALESCE(c.published_label, '') AS published_label,
+                COALESCE(c.temporal_class, 'unknown') AS temporal_class,
+                COALESCE(c.temporal_confidence, 0.0) AS temporal_confidence,
+                COALESCE(c.temporal_reason, '') AS temporal_reason,
+                COALESCE(c.temporal_policy_version, 'v1') AS temporal_policy_version,
+                COALESCE(c.temporal_validity_mode, 'none') AS temporal_validity_mode,
+                COALESCE(c.temporal_valid_until, '') AS temporal_valid_until,
+                COALESCE(c.temporal_scope, 'none') AS temporal_scope,
+                COALESCE(c.temporal_state, 'unknown') AS temporal_state,
+                COALESCE(c.temporal_evidence, '') AS temporal_evidence,
+                COALESCE(c.temporal_next_review_at, '') AS temporal_next_review_at,
+                COALESCE(c.temporal_evaluated_at, '') AS temporal_evaluated_at,
+                COALESCE(c.temporal_evidence_complete, 0) AS temporal_evidence_complete,
                 COALESCE(c.franchise_key, '') AS franchise_key,
                 COALESCE(c.duration, 0) AS duration,
                 COALESCE(c.view_count, 0) AS view_count,
@@ -9397,11 +12589,18 @@ class Database:
             AND {admission_sql}
             {processed_clause}
             ORDER BY r.created_at DESC, r.id DESC
-            LIMIT ?
+            {limit_clause}
             """,
-            (*admission_params, limit),
+            query_params,
         )
-        return [dict(row) for row in cursor.fetchall()]
+        rows = [dict(row) for row in cursor.fetchall()]
+        if not exclude_processed:
+            return rows
+        temporal_now = datetime.now(UTC)
+        eligible = [
+            row for row in rows if self._temporal_eligibility_for_row(row, now=temporal_now)
+        ]
+        return eligible[: max(0, int(limit))]
 
     def count_recommendations(self) -> int:
         """Return the total number of stored recommendations."""
@@ -9432,13 +12631,41 @@ class Database:
         return row is not None
 
     def count_unread_recommendations(self) -> int:
-        """Return the number of unpresented recommendations."""
+        """Return temporally eligible recommendations not yet presented."""
         self._ensure_fresh_read()
         cursor = self.conn.execute(
-            "SELECT COUNT(*) AS count FROM recommendations WHERE presented = 0"
+            """
+            SELECT COALESCE(c.published_at, '') AS published_at,
+                   COALESCE(c.temporal_class, 'unknown') AS temporal_class,
+                   COALESCE(c.temporal_confidence, 0.0) AS temporal_confidence,
+                   COALESCE(c.temporal_policy_version, 'v1') AS temporal_policy_version,
+                   COALESCE(c.temporal_validity_mode, 'none') AS temporal_validity_mode,
+                   COALESCE(c.temporal_valid_until, '') AS temporal_valid_until,
+                   COALESCE(c.temporal_scope, 'none') AS temporal_scope,
+                   COALESCE(c.temporal_state, 'unknown') AS temporal_state,
+                   COALESCE(c.temporal_evidence, '') AS temporal_evidence,
+                   COALESCE(c.temporal_next_review_at, '') AS temporal_next_review_at,
+                   COALESCE(c.temporal_evaluated_at, '') AS temporal_evaluated_at,
+                   COALESCE(c.temporal_evidence_complete, 0) AS temporal_evidence_complete
+            FROM recommendations AS r
+            LEFT JOIN content_cache AS c ON c.item_key = COALESCE(
+                NULLIF(r.item_key, ''),
+                (SELECT item_key FROM content_cache WHERE bvid = r.bvid),
+                (
+                    SELECT CASE WHEN COUNT(*) = 1 THEN MIN(item_key) END
+                    FROM content_cache
+                    WHERE content_id = r.bvid
+                )
+            )
+            WHERE r.presented = 0
+            """
         )
-        row = cursor.fetchone()
-        return int(row["count"]) if row is not None else 0
+        temporal_now = datetime.now(UTC)
+        return sum(
+            1
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        )
 
     def get_notification_candidate(
         self,
@@ -9462,6 +12689,18 @@ class Database:
                 COALESCE(c.topic_key, '') AS topic_key,
                 COALESCE(c.topic_group, '') AS topic_group,
                 COALESCE(c.pool_topic_label, '') AS pool_topic_label,
+                COALESCE(c.published_at, '') AS published_at,
+                COALESCE(c.temporal_class, 'unknown') AS temporal_class,
+                COALESCE(c.temporal_confidence, 0.0) AS temporal_confidence,
+                COALESCE(c.temporal_policy_version, 'v1') AS temporal_policy_version,
+                COALESCE(c.temporal_validity_mode, 'none') AS temporal_validity_mode,
+                COALESCE(c.temporal_valid_until, '') AS temporal_valid_until,
+                COALESCE(c.temporal_scope, 'none') AS temporal_scope,
+                COALESCE(c.temporal_state, 'unknown') AS temporal_state,
+                COALESCE(c.temporal_evidence, '') AS temporal_evidence,
+                COALESCE(c.temporal_next_review_at, '') AS temporal_next_review_at,
+                COALESCE(c.temporal_evaluated_at, '') AS temporal_evaluated_at,
+                COALESCE(c.temporal_evidence_complete, 0) AS temporal_evidence_complete,
                 c.notification_sent,
                 c.notified_at
             FROM recommendations AS r
@@ -9473,14 +12712,18 @@ class Database:
               AND c.notification_sent = 0
               AND r.confidence >= ?
             ORDER BY r.confidence DESC, r.created_at DESC, r.id DESC
-            LIMIT 1
             """,
             (min_confidence,),
         )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        temporal_now = datetime.now(UTC)
+        return next(
+            (
+                dict(row)
+                for row in cursor.fetchall()
+                if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+            ),
+            None,
+        )
 
     def mark_notification_sent(self, bvid: str) -> None:
         """Mark one cached item as already notified."""
@@ -9532,6 +12775,48 @@ class Database:
             WHERE r.id = ?
             """,
             (recommendation_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def get_recommendation_by_identity(
+        self,
+        *,
+        bvid: str = "",
+        item_key: str = "",
+    ) -> dict[str, Any] | None:
+        """Return the newest recommendation row matching a content identity.
+
+        Used as a feedback fallback when a client holds a stale history row id
+        after backend restarts/migrations but still knows the content bvid or
+        item key.
+        """
+        if not bvid.strip() and not item_key.strip():
+            return None
+        self._ensure_fresh_read()
+        cursor = self.conn.execute(
+            """
+            SELECT
+                r.*,
+                r.topic AS topic_label,
+                c.title AS title,
+                c.up_name AS up_name,
+                COALESCE(c.content_id, r.bvid) AS content_id,
+                COALESCE(c.content_url, '') AS content_url,
+                COALESCE(c.source_platform, '') AS source_platform
+            FROM recommendations AS r
+            LEFT JOIN content_cache AS c ON c.bvid = COALESCE(
+                (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
+                (SELECT bvid FROM content_cache WHERE content_id = r.bvid LIMIT 1)
+            )
+            WHERE (? != '' AND r.bvid = ?)
+               OR (? != '' AND r.item_key = ?)
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT 1
+            """,
+            (bvid.strip(), bvid.strip(), item_key.strip(), item_key.strip()),
         )
         row = cursor.fetchone()
         if row is None:
@@ -10515,6 +13800,121 @@ class Database:
                 continue
             self.conn.execute(f"ALTER TABLE llm_usage ADD COLUMN {column_name} {column_type}")
 
+    def _ensure_event_source_columns(self) -> None:
+        """Add durable event attribution without guessing over legacy rows.
+
+        New producers write canonical columns directly.  Existing databases
+        are backfilled only from explicit metadata or a canonical URL; rows
+        that cannot be identified remain blank/``legacy_unknown`` so a future
+        platform-revocation flow can fail closed instead of deleting the wrong
+        source.
+        """
+        existing_columns = {
+            str(row["name"]) for row in self.conn.execute("PRAGMA table_info(events)").fetchall()
+        }
+        added_columns = False
+        required_columns = {
+            "source_platform": "TEXT NOT NULL DEFAULT ''",
+            "content_id": "TEXT NOT NULL DEFAULT ''",
+            "source_confidence": "TEXT NOT NULL DEFAULT 'legacy_unknown'",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                self.conn.execute(f"ALTER TABLE events ADD COLUMN {column_name} {column_type}")
+                added_columns = True
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_source_content "
+            "ON events(source_platform, content_id)"
+        )
+
+        # Existing rows need this compatibility backfill only when the
+        # additive columns are first introduced. Valid rows with an empty
+        # content_id are legitimate (for example a follow event), so using
+        # that emptiness as a startup trigger would rescan the whole table on
+        # every process start.
+        if not added_columns:
+            return
+
+        rows = self.conn.execute(
+            """
+            SELECT id, url, metadata, source_platform, content_id, source_confidence
+            FROM events
+            WHERE COALESCE(source_platform, '') = ''
+               OR COALESCE(content_id, '') = ''
+               OR COALESCE(source_confidence, '') NOT IN (?, ?, ?)
+            """,
+            (
+                SOURCE_CONFIDENCE_EXACT,
+                SOURCE_CONFIDENCE_INFERRED,
+                SOURCE_CONFIDENCE_LEGACY_UNKNOWN,
+            ),
+        ).fetchall()
+        updates: list[tuple[str, str, str, int]] = []
+        for row in rows:
+            metadata: dict[str, Any] = {}
+            raw_metadata = row["metadata"]
+            if isinstance(raw_metadata, str) and raw_metadata:
+                try:
+                    decoded = json.loads(raw_metadata)
+                except (TypeError, ValueError):
+                    decoded = {}
+                if isinstance(decoded, dict):
+                    metadata = decoded
+
+            current_confidence = str(row["source_confidence"] or "").strip()
+            current_platform = normalize_source_platform(row["source_platform"])
+            metadata_platform = str(metadata.get("source_platform") or "").strip()
+            legacy_platform = (
+                current_platform if current_confidence == SOURCE_CONFIDENCE_LEGACY_UNKNOWN else ""
+            )
+            # The old API filled missing source_platform with B站. Treat that
+            # particular legacy value as a fallback, while still accepting an
+            # explicit non-B站 metadata tag and URL inference. If there is no
+            # stronger signal, keep B站 as a legacy-unknown attribution rather
+            # than dropping the only source hint entirely.
+            if (
+                current_confidence == SOURCE_CONFIDENCE_LEGACY_UNKNOWN
+                and normalize_source_platform(metadata_platform) == _BILIBILI_SOURCE_FAMILY
+            ):
+                legacy_platform = legacy_platform or _BILIBILI_SOURCE_FAMILY
+                metadata_platform = ""
+            authoritative_platform = (
+                current_platform
+                if current_confidence in {SOURCE_CONFIDENCE_EXACT, SOURCE_CONFIDENCE_INFERRED}
+                else ""
+            )
+            platform, detected_confidence = resolve_source_attribution(
+                explicit_platform=authoritative_platform,
+                metadata_platform=metadata_platform,
+                url=row["url"],
+                legacy_platform=legacy_platform,
+            )
+            if not platform:
+                platform = current_platform
+            confidence = (
+                current_confidence
+                if current_confidence in {SOURCE_CONFIDENCE_EXACT, SOURCE_CONFIDENCE_INFERRED}
+                and current_platform
+                else detected_confidence
+            )
+            content_id = str(row["content_id"] or "").strip() or extract_source_content_id(metadata)
+            if (
+                platform != current_platform
+                or content_id != str(row["content_id"] or "").strip()
+                or confidence != current_confidence
+            ):
+                updates.append((platform, content_id, confidence, int(row["id"])))
+
+        if updates:
+            self.conn.executemany(
+                """
+                UPDATE events
+                SET source_platform = ?, content_id = ?, source_confidence = ?
+                WHERE id = ?
+                """,
+                updates,
+            )
+
     def _ensure_event_satisfaction_columns(self) -> None:
         """Backfill v0.3.x event-satisfaction columns for pre-migration DBs.
 
@@ -10612,11 +14012,29 @@ class Database:
             "temporal_confidence": "REAL DEFAULT 0.0",
             "temporal_reason": "TEXT DEFAULT ''",
             "temporal_policy_version": "TEXT DEFAULT 'v1'",
+            "temporal_validity_mode": "TEXT DEFAULT 'none'",
+            "temporal_valid_until": "TEXT DEFAULT ''",
+            "temporal_scope": "TEXT DEFAULT 'none'",
+            "temporal_state": "TEXT DEFAULT 'unknown'",
+            "temporal_evidence": "TEXT DEFAULT ''",
+            "temporal_next_review_at": "TEXT DEFAULT ''",
+            "temporal_evaluated_at": "TEXT DEFAULT ''",
+            "temporal_evidence_complete": "INTEGER DEFAULT 0",
+            "temporal_review_attempts": "INTEGER DEFAULT 0",
+            "temporal_review_retry_at": "TEXT DEFAULT ''",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
                 continue
             self.conn.execute(f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_cache_temporal_review "
+            "ON content_cache(pool_status, temporal_next_review_at, bvid)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_cache_temporal_review_retry "
+            "ON content_cache(pool_status, temporal_review_retry_at, bvid)"
+        )
 
     def _ensure_content_cache_topic_columns(self) -> None:
         """Backfill topic bucketing fields for existing content-cache rows."""
@@ -10666,6 +14084,7 @@ class Database:
             "delight_hook": "TEXT DEFAULT ''",
             "delight_notified": "INTEGER DEFAULT 0",
             "delight_notified_at": "TIMESTAMP",
+            "delight_seen": "INTEGER DEFAULT 0",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
@@ -10749,7 +14168,12 @@ class Database:
             f"""
             SELECT bvid, title, cover_url, keyframe_count,
                    keyframe_embedding_fingerprint, keyframe_embedding_dimension,
-                   keyframe_sampling_signature
+                   keyframe_sampling_signature,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE {clause}
               AND {provenance_sql}
@@ -10757,11 +14181,16 @@ class Database:
               AND COALESCE(NULLIF(source_platform, ''), 'bilibili') = 'bilibili'
               AND COALESCE(NULLIF(content_type, ''), 'video') = 'video'
             ORDER BY COALESCE(relevance_score, 0) DESC
-            LIMIT ?
             """,
-            (*params, max(1, int(limit))),
+            params,
         )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
+        return rows[: max(1, int(limit))]
 
     def mark_keyframes_fetched(
         self,
@@ -10867,7 +14296,12 @@ class Database:
         cursor = self.conn.execute(
             f"""
             SELECT bvid, title, danmaku_text, danmaku_fetched_at,
-                   danmaku_embedding_fingerprint, danmaku_embedding_dimension
+                   danmaku_embedding_fingerprint, danmaku_embedding_dimension,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE {clause}
               AND {provenance_sql}
@@ -10875,11 +14309,16 @@ class Database:
               AND COALESCE(NULLIF(source_platform, ''), 'bilibili') = 'bilibili'
               AND COALESCE(NULLIF(content_type, ''), 'video') = 'video'
             ORDER BY COALESCE(relevance_score, 0) DESC
-            LIMIT ?
             """,
-            (*params, max(1, int(limit))),
+            params,
         )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
+        return rows[: max(1, int(limit))]
 
     def update_danmaku_text(
         self,
@@ -10974,6 +14413,7 @@ class Database:
             "author_name": "TEXT DEFAULT ''",
             "body_text": "TEXT DEFAULT ''",
             "content_type": "TEXT DEFAULT 'video'",
+            "source_metadata": "TEXT DEFAULT '{}'",
             "favorite_count": "INTEGER DEFAULT 0",
             "collect_count": "INTEGER DEFAULT 0",
             "comment_count": "INTEGER DEFAULT 0",
@@ -11219,6 +14659,23 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
         ]
         merge_columns = [column for column in columns if column not in {"bvid", "item_key"}]
+        temporal_columns = {
+            "published_at",
+            "published_label",
+            "temporal_class",
+            "temporal_confidence",
+            "temporal_reason",
+            "temporal_policy_version",
+            *_TEMPORAL_LIFECYCLE_FIELDS,
+        }
+        temporal_risk_order = {
+            "breaking": 0,
+            "current": 1,
+            "versioned": 2,
+            "evergreen": 3,
+            "historical": 4,
+        }
+        temporal_now = datetime.now(UTC)
         for duplicate in duplicate_keys:
             item_key = str(duplicate["item_key"])
             members = [
@@ -11252,10 +14709,144 @@ class Database:
             merged = dict(keeper)
             for member in members:
                 for column in merge_columns:
+                    if column in temporal_columns:
+                        continue
                     if self._content_identity_metadata_missing(
                         merged.get(column)
                     ) and not self._content_identity_metadata_missing(member.get(column)):
                         merged[column] = member[column]
+
+            # Publication and evaluator-owned temporal metadata form one
+            # evidence group.  Prefer any evidence that already proves the
+            # identity stale; otherwise select deterministically by temporal
+            # risk, confidence, publication time, then storage key.  Picking
+            # fields independently can synthesize ``breaking/.95 + now`` from
+            # two legacy rows and resurrect an expired duplicate.
+            temporal_sources: list[
+                tuple[
+                    tuple[int, int, float, datetime, str],
+                    dict[str, Any],
+                    tuple[Any, ...],
+                ]
+            ] = []
+            for member in members:
+                normalized, normalized_lifecycle = _normalize_temporal_evidence_group_for_storage(
+                    member
+                )
+                if normalized[0] == "unknown":
+                    continue
+                temporal_source = {
+                    **member,
+                    "temporal_class": normalized[0],
+                    "temporal_confidence": normalized[1],
+                    "temporal_reason": normalized[2],
+                    "temporal_policy_version": normalized[3],
+                    **dict(
+                        zip(
+                            _TEMPORAL_LIFECYCLE_FIELDS,
+                            normalized_lifecycle,
+                            strict=True,
+                        )
+                    ),
+                }
+                decision = self._temporal_decision_for_row(
+                    temporal_source,
+                    now=temporal_now,
+                )
+                disposition = _temporal_decision_disposition(decision)
+                publication_clock = _publication_datetime_for_merge(
+                    member.get("published_at")
+                ) or datetime.max.replace(tzinfo=UTC)
+                temporal_sources.append(
+                    (
+                        (
+                            {"expired": 0, "review_due": 1}.get(disposition, 2),
+                            temporal_risk_order.get(normalized[0], 99),
+                            -normalized[1],
+                            publication_clock,
+                            str(member.get("bvid") or ""),
+                        ),
+                        temporal_source,
+                        (*normalized, *normalized_lifecycle),
+                    )
+                )
+
+            merged_published_at = ""
+            merged_published_label = ""
+            if temporal_sources:
+                _, temporal_source, normalized_temporal = min(
+                    temporal_sources,
+                    key=lambda source: source[0],
+                )
+                merged_published_at = str(temporal_source.get("published_at") or "")
+                merged_published_label = str(temporal_source.get("published_label") or "")
+                merged.update(
+                    {
+                        "temporal_class": normalized_temporal[0],
+                        "temporal_confidence": normalized_temporal[1],
+                        "temporal_reason": normalized_temporal[2],
+                        "temporal_policy_version": normalized_temporal[3],
+                        **dict(
+                            zip(
+                                _TEMPORAL_LIFECYCLE_FIELDS,
+                                normalized_temporal[4:],
+                                strict=True,
+                            )
+                        ),
+                    }
+                )
+            else:
+                merged.update(
+                    {
+                        "temporal_class": "unknown",
+                        "temporal_confidence": 0.0,
+                        "temporal_reason": "",
+                        "temporal_policy_version": TEMPORAL_POLICY_VERSION,
+                        "temporal_validity_mode": "none",
+                        "temporal_valid_until": "",
+                        "temporal_scope": "none",
+                        "temporal_state": "unknown",
+                        "temporal_evidence": "",
+                        "temporal_next_review_at": "",
+                        "temporal_evaluated_at": "",
+                        "temporal_evidence_complete": 0,
+                    }
+                )
+                merged_published_at = str(keeper.get("published_at") or "")
+                merged_published_label = str(keeper.get("published_label") or "")
+                for member in members:
+                    merged_published_at, merged_published_label = (
+                        _merge_publication_evidence_conservatively(
+                            existing_at=merged_published_at,
+                            existing_label=merged_published_label,
+                            incoming_at=member.get("published_at"),
+                            incoming_label=member.get("published_label"),
+                        )
+                    )
+            merged["published_at"] = merged_published_at
+            merged["published_label"] = merged_published_label
+
+            if temporal_sources:
+                merged_decision = self._temporal_decision_for_row(
+                    merged,
+                    now=temporal_now,
+                )
+                disposition = _temporal_decision_disposition(merged_decision)
+                pool_status = str(merged.get("pool_status") or "fresh")
+                if disposition == "expired" and pool_status in {
+                    "fresh",
+                    "suppressed",
+                    "temporal_review_hold",
+                }:
+                    merged["pool_status"] = "stale"
+                elif disposition == "review_due" and pool_status in {
+                    "fresh",
+                    "suppressed",
+                    "temporal_review_hold",
+                }:
+                    merged["pool_status"] = "temporal_review_hold"
+                elif disposition == "eligible" and pool_status == "temporal_review_hold":
+                    merged["pool_status"] = "fresh"
 
             changed_columns = [
                 column for column in merge_columns if merged.get(column) != keeper.get(column)
@@ -11336,6 +14927,19 @@ class Database:
             "temporal_confidence": "REAL NOT NULL DEFAULT 0.0",
             "temporal_reason": "TEXT NOT NULL DEFAULT ''",
             "temporal_policy_version": "TEXT NOT NULL DEFAULT 'v1'",
+            "temporal_validity_mode": "TEXT NOT NULL DEFAULT 'none'",
+            "temporal_valid_until": "TEXT NOT NULL DEFAULT ''",
+            "temporal_scope": "TEXT NOT NULL DEFAULT 'none'",
+            "temporal_state": "TEXT NOT NULL DEFAULT 'unknown'",
+            "temporal_evidence": "TEXT NOT NULL DEFAULT ''",
+            "temporal_next_review_at": "TEXT NOT NULL DEFAULT ''",
+            "temporal_evaluated_at": "TEXT NOT NULL DEFAULT ''",
+            "temporal_evidence_complete": "INTEGER NOT NULL DEFAULT 0",
+            "temporal_review_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "temporal_review_retry_at": "TEXT NOT NULL DEFAULT ''",
+            # Dead-letter revival budget: persisted so restarting against a
+            # still-broken provider cannot resurrect the same rows forever.
+            "eval_revive_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
@@ -11343,6 +14947,14 @@ class Database:
             self.conn.execute(
                 f"ALTER TABLE discovery_candidates ADD COLUMN {column_name} {column_type}"
             )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discovery_candidates_temporal_review "
+            "ON discovery_candidates(status, temporal_next_review_at, id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discovery_candidates_temporal_retry "
+            "ON discovery_candidates(status, temporal_review_retry_at, id)"
+        )
 
     def _normalize_legacy_style_keys(self) -> None:
         """Rewrite known legacy content-form style keys to viewing-mode keys."""
@@ -11467,10 +15079,61 @@ class Database:
             self.conn.execute(
                 "ALTER TABLE chat_turns ADD COLUMN reply_to_turn_id TEXT NOT NULL DEFAULT ''"
             )
+        if "session_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE chat_turns ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_turns_reply_to ON chat_turns(reply_to_turn_id)"
         )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id_created "
+            "ON chat_turns(session_id, created_at, turn_id)"
+        )
         self._migrate_card_settlements_to_wave_2()
+
+    def _ensure_chat_sessions_table(self) -> None:
+        """Create the multi-session chat model for existing databases (M5)."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                session_id      TEXT PRIMARY KEY,
+                title           TEXT NOT NULL DEFAULT '',
+                archived        INTEGER NOT NULL DEFAULT 0,
+                metadata        TEXT NOT NULL DEFAULT '{}',
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_message_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_activity
+                ON chat_sessions(archived, last_message_at);
+        """)
+        self.ensure_default_chat_session()
+
+    def _ensure_agent_tasks_table(self) -> None:
+        """Create the durable agent task center for existing databases (M6)."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS agent_tasks (
+                task_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL DEFAULT '',
+                title       TEXT NOT NULL DEFAULT '',
+                prompt      TEXT NOT NULL DEFAULT '',
+                status      TEXT NOT NULL DEFAULT 'pending',
+                skill       TEXT NOT NULL DEFAULT '',
+                progress    TEXT NOT NULL DEFAULT '',
+                report      TEXT NOT NULL DEFAULT '',
+                suggestions TEXT NOT NULL DEFAULT '[]',
+                steps       TEXT NOT NULL DEFAULT '[]',
+                error       TEXT NOT NULL DEFAULT '',
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at  TIMESTAMP,
+                finished_at TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created
+                ON agent_tasks(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_created
+                ON agent_tasks(session_id, created_at);
+        """)
 
     def _migrate_card_settlements_to_wave_2(self) -> None:
         """Rebuild legacy claim/segment receipts into the Wave 2 winner schema."""
@@ -14735,7 +18398,7 @@ class Database:
         error_code: str,
         error_message: str,
     ) -> bool:
-        """Complete one claimed job when slug, UUID, and item identity match."""
+        """Complete one claimed job or acknowledge an exact canonical replay."""
         safe_job_id = _validated_extension_native_save_uuid(job_id, "job_id")
         safe_slug = self._validated_extension_native_save_slug(platform_slug)
         safe_item_key = _validated_extension_native_save_text(item_key, "item_key", max_length=768)
@@ -14755,8 +18418,24 @@ class Database:
                 """,
                 (safe_status, safe_code, safe_message, safe_job_id, safe_slug, safe_item_key),
             )
+            accepted = cursor.rowcount == 1
+            if not accepted:
+                existing = conn.execute(
+                    """
+                    SELECT status, last_error_code, last_error_message
+                    FROM extension_native_save_jobs
+                    WHERE job_id = ? AND platform_slug = ? AND item_key = ?
+                    """,
+                    (safe_job_id, safe_slug, safe_item_key),
+                ).fetchone()
+                accepted = bool(
+                    existing is not None
+                    and str(existing["status"]) == safe_status
+                    and str(existing["last_error_code"] or "") == safe_code
+                    and str(existing["last_error_message"] or "") == safe_message
+                )
             conn.commit()
-            return cursor.rowcount == 1
+            return accepted
         finally:
             conn.close()
 
@@ -17647,9 +21326,9 @@ class Database:
 
         The dynamic component uses the current formal candidate pool, not raw
         ``discovery_candidates``. The percentile is computed over rows that
-        already have ``delight_score``. When the scored pool is too small or
-        too homogeneous for a meaningful percentile, the caller-provided
-        default is returned unchanged.
+        already have ``delight_score``. When the scored pool is too small, or
+        the Top 10% boundary is at/below the floor (so the floor is already the
+        more selective bar), the caller-provided default is returned unchanged.
         """
         self._ensure_fresh_read()
         return self._dynamic_delight_threshold_on(
@@ -17669,10 +21348,31 @@ class Database:
         except (TypeError, ValueError):
             floor = _DELIGHT_CLAIM_MIN_SCORE
         floor = min(1.0, max(0.0, floor))
+        # Candidate, readiness and platform-floor queries share one immutable
+        # SQLite snapshot. Re-evaluating thousands of historical temporal rows
+        # for each helper adds seconds while producing the same threshold.
+        # The cache exists only inside that isolated read transaction and is
+        # discarded before close; the next request observes current writes.
+        cache = self._snapshot_delight_thresholds
+        if cache is not None and floor in cache:
+            return cache[floor]
+        value = self._compute_dynamic_delight_threshold_on(conn, floor=floor)
+        if cache is not None:
+            cache[floor] = value
+        return value
 
+    def _compute_dynamic_delight_threshold_on(
+        self, conn: sqlite3.Connection, *, floor: float
+    ) -> float:
+        """Calculate the percentile against the caller's current read snapshot."""
         cursor = conn.execute(
             f"""
-            SELECT COALESCE(delight_score, 0.0) AS score
+            SELECT COALESCE(delight_score, 0.0) AS score,
+                   published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
               AND COALESCE(feedback_type, '') != 'dislike'
@@ -17682,14 +21382,25 @@ class Database:
             ORDER BY score DESC
             """
         )
-        scores = [float(row["score"]) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        scores = [
+            float(row["score"])
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
         if len(scores) < _DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE:
-            return floor
-        if statistics.pstdev(scores) < _DELIGHT_DYNAMIC_MIN_STDDEV:
             return floor
 
         top_count = max(1, math.ceil(len(scores) * _DELIGHT_DYNAMIC_TOP_FRACTION))
         boundary = min(1.0, max(0.0, scores[top_count - 1]))
+        if statistics.pstdev(scores) < _DELIGHT_DYNAMIC_MIN_STDDEV and boundary <= floor:
+            # A homogeneous score band at/below the floor makes the Top 10%
+            # percentile a no-op: the floor is already more selective, so keep
+            # it. A homogeneous band above the floor must still use the
+            # percentile boundary — otherwise the regular feed's delight-claim
+            # guard would reserve every above-floor row for delight and starve
+            # the normal pool (issue #220).
+            return floor
         return max(floor, boundary)
 
     def get_delight_candidate(
@@ -17717,8 +21428,14 @@ class Database:
         min_delight_score: float = 0.85,
         limit: int = 20,
         include_liked: bool = False,
+        include_delivered: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return up to ``limit`` un-notified delight candidates ordered by score.
+        """Return up to ``limit`` queue-visible delight candidates ordered by score.
+
+        By default this returns only not-yet-delivered candidates
+        (``delight_notified=0``).  When ``include_delivered=True`` it returns
+        delivered-but-not-yet-seen candidates too (``delight_seen=0``), which
+        is what popup re-hydration uses.
 
         Queue readiness is stricter than merely having a score and arbitrary
         non-empty metadata: ``pool_expression`` / ``pool_topic_label`` must be
@@ -17754,7 +21471,7 @@ class Database:
             FROM content_cache
             WHERE COALESCE(delight_score, 0.0) >= ?
               AND {admission_sql}
-              AND COALESCE(delight_notified, 0) = 0
+              {_delight_visibility_sql(include_delivered=include_delivered)}
               {_delight_ready_copy_sql()}
               AND TRIM(COALESCE(delight_reason, '')) =
                   TRIM(COALESCE(pool_expression, ''))
@@ -17764,11 +21481,16 @@ class Database:
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
               {_delight_unseen_guard_sql()}
             ORDER BY delight_score DESC, relevance_score DESC, discovered_at DESC
-            LIMIT ?
             """,
-            (min_delight_score, *admission_params, max(1, int(limit))),
+            (min_delight_score, *admission_params),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
+        return rows[: max(1, int(limit))]
 
     def mark_delight_notified(self, bvid: str) -> None:
         """Mark one content item as delight-notified."""
@@ -17777,6 +21499,26 @@ class Database:
             UPDATE content_cache
             SET delight_notified = 1,
                 delight_notified_at = CURRENT_TIMESTAMP
+            WHERE bvid = ?
+            """,
+            (bvid,),
+        )
+
+    def mark_delight_viewed(self, bvid: str) -> None:
+        """Mark a delight as read/viewed by the user.
+
+        Unlike ``mark_delight_notified``, this sets the ``delight_seen``
+        flag so the candidate leaves popup re-hydration while remaining
+        visible in the in-session queue. It does not write the permanent
+        ``seen_items`` ledger; a later dismiss is still the action that
+        removes the content from both normal and surprise channels.
+        """
+        self._execute_write(
+            """
+            UPDATE content_cache
+            SET delight_notified = 1,
+                delight_notified_at = CURRENT_TIMESTAMP,
+                delight_seen = 1
             WHERE bvid = ?
             """,
             (bvid,),
@@ -17811,7 +21553,7 @@ class Database:
             if platform and platform != "unknown" and content_id:
                 self.mark_items_seen(platform, [content_id])
                 recorded = True
-        self.mark_delight_notified(bvid)
+        self.mark_delight_viewed(bvid)
         return recorded
 
     def update_delight_score(
@@ -17870,7 +21612,11 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT COUNT(*) AS count
+            SELECT published_at, temporal_class, temporal_confidence,
+                   temporal_policy_version, temporal_validity_mode,
+                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
+                   temporal_next_review_at, temporal_evaluated_at,
+                   temporal_evidence_complete
             FROM content_cache
             WHERE COALESCE(delight_score, 0.0) >= ?
               AND {admission_sql}
@@ -17881,13 +21627,17 @@ class Database:
               AND TRIM(COALESCE(delight_hook, '')) =
                   TRIM(COALESCE(pool_topic_label, ''))
               AND COALESCE(feedback_type, '') = ''
-              AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
+              AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
               {_delight_unseen_guard_sql()}
             """,
             (min_delight_score, *admission_params),
         )
-        row = cursor.fetchone()
-        return int(row["count"]) if row is not None else 0
+        temporal_now = datetime.now(UTC)
+        return sum(
+            1
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        )
 
     def get_pool_candidates_needing_delight_score(
         self,
@@ -17913,6 +21663,9 @@ class Database:
         entirely — they're not going to delight anyone they don't
         already half-fit.
         """
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return []
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         effective_min_relevance_score = _normalize_admission_min_score(min_relevance_score)
@@ -17929,12 +21682,10 @@ class Database:
                   {guard_sql}
                   {_delight_unseen_guard_sql()}
                 ORDER BY relevance_score DESC, discovered_at DESC
-                LIMIT ?
                 """,
                 (
                     effective_min_relevance_score,
                     *guard_params,
-                    limit,
                 ),
             )
         else:
@@ -17976,7 +21727,6 @@ class Database:
                     relevance_score DESC,
                     delight_score DESC,
                     discovered_at DESC
-                LIMIT ?
                 """,
                 (
                     effective_min_relevance_score,
@@ -17984,10 +21734,15 @@ class Database:
                     min_delight_score_for_reason,
                     min_delight_score_for_reason,
                     *guard_params,
-                    limit,
                 ),
             )
-        return [dict(row) for row in cursor.fetchall()]
+        temporal_now = datetime.now(UTC)
+        rows = [
+            dict(row)
+            for row in cursor.fetchall()
+            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
+        ]
+        return rows[:max_rows]
 
     @staticmethod
     def _decode_event_metadata(row: dict[str, Any]) -> dict[str, Any]:
@@ -18032,34 +21787,27 @@ class Database:
                 else cls._infer_source_platform_from_url(url)
             )
 
-        content_ids: set[str] = set()
-        for key in _VIEW_CONTENT_ID_METADATA_KEYS:
-            raw_value = metadata.get(key, "")
-            if isinstance(raw_value, (str, int)):
-                value = str(raw_value).strip()
-                if value:
-                    content_ids.add(value)
-                    if (
-                        platform == _REDDIT_SOURCE_FAMILY
-                        and not value.startswith("t3_")
-                        and re.fullmatch(r"[A-Za-z0-9_]+", value)
-                    ):
-                        content_ids.add(f"t3_{value}")
-
-        url_content_id = cls._extract_content_id_from_url(platform, url)
-        if url_content_id:
-            content_ids.add(url_content_id)
-
-        if bvid:
-            content_ids.add(bvid)
+        content_id = extract_source_content_id(metadata)
+        if not content_id:
+            content_id = cls._extract_content_id_from_url(platform, url)
+        if not content_id:
+            content_id = bvid
             platform = platform or _BILIBILI_SOURCE_FAMILY
 
         keys: set[str] = set()
-        for content_id in content_ids:
-            if content_id.startswith("BV"):
-                keys.add(content_id)
-            if platform:
-                keys.add(f"{platform}:{content_id}")
+        if content_id:
+            content_id_aliases: tuple[str, ...] = (content_id,)
+            if (
+                platform == _REDDIT_SOURCE_FAMILY
+                and not content_id.startswith("t3_")
+                and re.fullmatch(r"[A-Za-z0-9_]+", content_id)
+            ):
+                content_id_aliases = (content_id, f"t3_{content_id}")
+            for content_id_alias in content_id_aliases:
+                if content_id_alias.startswith("BV"):
+                    keys.add(content_id_alias)
+                if platform:
+                    keys.add(f"{platform}:{content_id_alias}")
         return keys, bvid
 
     @staticmethod

@@ -3,26 +3,15 @@ from __future__ import annotations
 import hashlib
 from urllib.parse import urlsplit, urlunsplit
 
-_ALIASES = {
-    "bili": "bilibili",
-    "xhs": "xiaohongshu",
-    "dy": "douyin",
-    "yt": "youtube",
-    "x": "twitter",
-    "zh": "zhihu",
-    "rd": "reddit",
-    "bgm": "bangumi",
-    "v2": "v2ex",
-    "wb": "weibo",
-    "ig": "instagram",
-}
+from openbiliclaw.sources.platforms import normalize_source_platform
 
-_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"weibo", "instagram"})
+_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"github", "weibo", "instagram"})
 
 
 def canonical_source_platform(value: str) -> str:
-    normalized = value.strip().lower()
-    return _ALIASES.get(normalized, normalized)
+    """Resolve aliases through the canonical source-family registry."""
+
+    return normalize_source_platform(value)
 
 
 def is_native_save_local_only(value: str) -> bool:

@@ -1,7 +1,7 @@
 # OpenBiliClaw configuration example
 # Copy this file to config.toml and edit as needed.
 # 首次运行如果缺少 config.toml，程序会自动基于本文件生成模板。
-# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter）时，需要为调用链中的实例填写 api_key。
+# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）时，需要为调用链中的实例填写 api_key。
 # 本地 Ollama 主要用于向量检索（embedding, bge-m3）。作为聊天 provider 属高级用法：
 # 捆绑的 Ollama 只装了 embedding 模型，小体积本地聊天模型达不到内容管线质量线，
 # 因此图形向导 / init / bootstrap 都不再推荐把它当聊天默认。确要如此的高级用户可手动
@@ -57,11 +57,11 @@ routing_version = 2
 default_chain = ["deepseek"]
 # Shared max concurrency for LLM requests. Higher values replenish faster but
 # may hit provider/local-proxy rate limits sooner.
-# 总并发 4；后台派生为 3
-concurrency = 4
+# 总并发 3；后台派生为 2
+concurrency = 3
 # Global request timeout for all LLM providers (seconds).
 # Applies to OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter /
-# openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
+# OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
 timeout = 1200
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
@@ -76,6 +76,47 @@ timeout = 1200
 # api_flavor = ""
 #
 # default_chain = ["deepseek", "relay-backup"]
+#
+# [llm.instances.orcarouter]
+# name = "OrcaRouter 聚合"
+# provider_type = "orcarouter"
+# enabled = true
+# api_key = "sk-orca-..."
+# model = "openai/gpt-4o"
+# base_url = "https://api.orcarouter.ai/v1"
+# reasoning_effort = "medium"
+#
+# default_chain = ["deepseek", "orcarouter"]
+#
+# [llm.instances.requesty]
+# name = "Requesty 聚合"
+# provider_type = "requesty"
+# enabled = true
+# api_key = "rqsty-..."
+# model = "openai/gpt-4o-mini"
+# base_url = "https://router.requesty.ai/v1"
+#
+# default_chain = ["deepseek", "requesty"]
+#
+# [llm.instances.api-route]
+# name = "API Route 聚合"
+# provider_type = "api_route"
+# enabled = true
+# api_key = "your-api-route-key"
+# model = "gpt-5.5"
+# base_url = "https://global.api-route.com/v1"
+#
+# default_chain = ["deepseek", "api-route"]
+#
+# [llm.instances.cheaperinference]
+# name = "Cheaper Inference 聚合"
+# provider_type = "cheaperinference"
+# enabled = true
+# api_key = "ci_live_..."
+# model = "gpt-5.4-mini"
+# base_url = "https://api.cheaperinference.com/v1"
+#
+# default_chain = ["deepseek", "cheaperinference"]
 
 [llm.instances.deepseek]
 name = "DeepSeek 官方"
@@ -87,6 +128,10 @@ api_key = ""
 # 旧名 deepseek-chat / deepseek-reasoner 将于 2026/07/24 弃用
 model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com"
+# 官方 API 对内容安全审核较严，跑 rebuild-profile / init 偏好分析时若遇到
+# HTTP 400 "Content Exists Risk"，说明当前批次内容命中审核；系统会自动拆分
+# 并跳过命中事件，但更省心的做法是给 default_chain 加一个第三方中转
+# （openai_compatible）作为 fallback，或在设置页使用 relay 跑 deepseek-v4-pro。
 # v4 thinking 默认用均衡档 medium（DeepSeek 官方兼容映射为 high）。
 # 渠道的关键词、抽取、评分和短文案任务仍按单次调用传空并关闭 thinking；
 # 需要最深推理时可改为 "max"，完全关闭可改为 ""。
@@ -103,6 +148,10 @@ reasoning_effort = "medium"
 # provider: empty = disable embedding; embedding does not implicitly follow the chat chain
 #           "ollama" = local Ollama (no API key needed)
 #           "openai" / "gemini" = remote embeddings
+#           "openai_compatible" = any OpenAI-protocol /v1/embeddings endpoint
+#             (vLLM / LM Studio / OneAPI / self-hosted bridge); base_url is
+#             required, api_key may stay empty for a no-auth local service
+#           "dashscope" = Alibaba Model Studio multimodal embedding
 # model:    matched to provider when empty:
 #             gemini → gemini-embedding-001
 #             openai → text-embedding-3-small
@@ -124,6 +173,8 @@ model = ""
 # v0.3.32+: dedicated embedding credentials. Empty values only borrow the
 # first matching enabled [llm.instances.*] endpoint when fallback_enabled=true
 # (back-compat; emits a one-time WARNING). Ollama doesn't need an api_key.
+# openai_compatible (and "openai" with a custom base_url) also accepts an
+# empty api_key for a no-auth local endpoint.
 # base_url is optional for Ollama (defaults to localhost), OpenAI
 # (defaults to api.openai.com), and Gemini (defaults to the official API).
 api_key = ""
@@ -148,6 +199,18 @@ fallback_provider = ""
 # Default off — local ollama/bge-m3 and text-only remote models skip images.
 # Independent of [discovery].multimodal_evaluation_enabled (vision LLM eval).
 multimodal_enabled = false
+# L2 persistent cache (data/embedding_cache.db) 磁盘预算，单位字节；0 = 不设上限。
+# 向量以紧凑 float32 二进制存储（4096 维约 16 KiB/行，而旧 JSON 约 90 KiB/行），
+# 新版本启动时会自动把旧 JSON 行迁移为二进制。设置上限后，缓存占用超过
+# cache_max_bytes * cache_high_watermark 时开始淘汰：先删失效 namespace /
+# 旧 legacy 行，再按最近访问时间淘汰活跃 namespace 中的最旧行，直到降到
+# cache_max_bytes * cache_low_watermark。缓存可重建，淘汰只影响冷数据。
+# 推荐值 536870912 (512 MiB)；需要 4096 维大向量库时再调大。
+cache_max_bytes = 0
+# 淘汰触发水位（占用 / 预算 的比例，0..1）
+cache_high_watermark = 0.9
+# 淘汰停止水位（占用 / 预算 的比例，0..1，需 <= cache_high_watermark）
+cache_low_watermark = 0.7
 
 # Per-module routes. inherit=true 表示完整继承 [llm].default_chain；
 # 需要隔离质量/成本时改为 false，并按优先级填写实例 ID。
@@ -200,10 +263,10 @@ executable = ""
 headed = false
 
 # ── 海外网络路由（仅作用于海外客户端）──
-# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / openai_compatible
+# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible
 # 的 chat + embedding、YouTube(yt-dlp)、X(twitter-cli)、Reddit(rdt-cli /
 # OpenCLI)、Bangumi(api.bgm.tv 与封面 CDN lain.bgm.tv 均为海外 Cloudflare,
-# 国内网络直连易超时,需走代理)、GitHub 自动更新、Codex OAuth。
+# 国内网络直连易超时,需走代理)、GitHub 内容来源 / 自动更新、Codex OAuth。
 # X / Reddit 回落到浏览器扩展任务时仍由浏览器自己的网络设置决定。
 # B站 / 抖音 / Ollama 等国内直连请求始终直连,不受此项影响。
 # system(默认) = 继承环境 / 系统代理；direct = 忽略环境 / 系统代理；
@@ -236,6 +299,16 @@ enabled = true
 # 仅作用于「B 站 API 搜索被风控冷却」时接管的扩展搜索兜底 producer；
 # 主发现路径（search / trending / explore / related）的节奏在 [scheduler]。
 min_interval_minutes = 3                 # producer 两次入队之间的最小间隔
+# B站推荐发布日期范围：all | last_7_days | last_30_days |
+# last_6_months | last_1_year | custom。默认 all = 不按日期过滤。
+# 所有 [sources.*] 来源都支持这四个字段。
+recommendation_date_preset = "all"
+# custom 时填写 YYYY-MM-DD；留空表示该边界不限制。
+recommendation_date_start = ""
+recommendation_date_end = ""
+# 范围外候选：1 = 严格过滤（入库/评估前排除）；默认 0.5 = 软模式（保留候选）。
+# 分数乘数 (1 - weight) 仅 B 站池/推荐打分生效，非 B 站来源只做 discovery 层分流。
+recommendation_date_weight = 0.5
 
 # ── 小红书（xhs）专用配置 ──
 # 内容发现和元数据提取完全由浏览器扩展在真实登录态下完成：
@@ -246,6 +319,9 @@ min_interval_minutes = 3                 # producer 两次入队之间的最小�
 # pool_source_shares 中的 xiaohongshu 配额会被丢弃（不会让池子卡在低于目标）。
 # 默认 false；init 交互式提示选 Yes、--yes-xhs 或插件设置页打开后才会写回 true。
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+# 开启后可能由插件打开前台标签页抓取账号数据。
+incremental_enabled = false
 # 每天后端允许入队的 Soul 驱动搜索任务数上限；默认 20，0 表示不设每日上限。
 daily_search_budget = 20
 # 每天订阅创作者抓取任务上限；0 表示不设每日上限。
@@ -263,6 +339,8 @@ min_interval_minutes = 20                # producer 两次入队之间的最小�
 # 每轮 discovery_limit、producer 节流与 request_interval_seconds 控制。
 [sources.douyin]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 mode = "direct"
 cookie_env = "OPENBILICLAW_DOUYIN_COOKIE"
 daily_search_budget = 0
@@ -279,6 +357,8 @@ min_interval_minutes = 3                 # producer 两次执行最小间隔
 # bootstrap 画像导入仍走浏览器扩展 yt_tasks。
 [sources.youtube]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 daily_search_budget = 0
 daily_trending_budget = 0
 daily_channel_budget = 0
@@ -308,6 +388,8 @@ min_interval_minutes = 3               # producer 两次执行最小间隔
 # enabled=false 时 pool_source_shares 中的 zhihu 配额会被丢弃。
 [sources.zhihu]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 source_modes = ["search", "hot", "feed", "creator", "related"]
 daily_search_budget = 0                 # 搜索 discovery 每日任务上限，0 = 不设每日上限
 daily_hot_budget = 0                    # 热榜 discovery 每日任务上限，0 = 不设每日上限
@@ -327,6 +409,8 @@ min_interval_minutes = 3               # ZhihuDiscoveryProducer 两次执行最�
 # enabled=false 时 pool_source_shares 中的 reddit 配额会被丢弃。
 [sources.reddit]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 backend = "rdt"
 source_modes = ["search", "hot", "subreddit", "related"]
 daily_search_budget = 300               # 搜索 discovery 每日条目上限
@@ -358,11 +442,33 @@ request_interval_seconds = 1
 min_interval_minutes = 3
 bootstrap_limit = 300
 
+# ── GitHub 官方 REST API（公开仓库，只读）──
+# search / ranked / latest 发现无需登录；username 可导入该公开账号的 Starred
+# 仓库作为收藏画像。可选 PAT 只用于 GET /user 身份确认和提高公开 API 限额，
+# 永远不会开放私有仓库，也不会执行 star / follow / watch 等写操作。
+[sources.github]
+enabled = false
+username = ""
+# PAT 可写在这里，或只通过 OPENBILICLAW_GITHUB_TOKEN 注入。不要使用通用
+# GITHUB_TOKEN / GH_TOKEN：OpenBiliClaw 故意不读取它们，避免借用其他工具的权限。
+access_token = ""
+token_env = "OPENBILICLAW_GITHUB_TOKEN" # 固定安全边界，不支持改名
+source_modes = ["search", "ranked", "latest"]
+daily_search_budget = 120
+daily_ranked_budget = 60
+daily_latest_budget = 60
+request_interval_seconds = 6            # 匿名 Search API 10 次/分钟
+min_interval_minutes = 10
+bootstrap_limit = 300
+bootstrap_max_pages = 10
+
 # ── Linux.do（浏览器插件同源只读）──
 # 公开 search/hot/feed/creator/related 无需登录；登录后还可读取本人收藏、点赞和
 # 最近阅读，用于画像初始化与周期增量。Cookie 始终留在浏览器内。
 [sources.linuxdo]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 source_modes = ["search", "hot", "feed", "creator", "related"]
 daily_search_budget = 0
 daily_hot_budget = 0
@@ -378,6 +484,8 @@ bootstrap_limit = 300
 # writes. Browser-login bootstrap/favorites are not part of this backend phase.
 [sources.v2ex]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 username = ""
 access_token = ""
 token_env = "OPENBILICLAW_V2EX_TOKEN"
@@ -417,7 +525,7 @@ request_interval_seconds = 3
 min_interval_minutes = 10
 
 # ── Instagram 公开发现 + 登录态初始化（只读）──
-# topic / creator 发现由浏览器执行匿名同源任务；初始化时可读取当前账号最近的
+# topic / creator 发现由浏览器执行可选登录的只读任务；初始化时可读取当前账号最近的
 # liked / saved / following。扩展只同步 sessionid 是否存在的布尔心跳，不上传 Cookie。
 # 首版个人信号为 init-only，不注册后台周期增量。
 [sources.instagram]
@@ -428,10 +536,22 @@ daily_creator_budget = 30             # 每日实际保留的 creator 候选上�
 request_interval_seconds = 3          # 扩展对上游分页请求的最小间隔（1..30 秒）
 min_interval_minutes = 10             # producer 两次有产出运行的最小间隔
 bootstrap_limit = 300                 # 每个个人 scope 最多读取 300 条
+recommendation_date_preset = "all"    # 与其它来源共用日期准入；默认不过滤
+recommendation_date_start = ""
+recommendation_date_end = ""
+recommendation_date_weight = 0.5
 
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
+# Self-imposed background LLM call budget (issue #188). The daemon counts
+# scheduler-owned LLM requests through the shared concurrency gate; when
+# max_calls is reached inside window_seconds, automatic discovery loops pause
+# until the window rolls over (manual CLI/API commands still work). Embedding
+# endpoint outages are handled separately by EmbeddingService's circuit breaker.
+# 0 disables this guard. Defaults are deliberately conservative for paid APIs.
+llm_budget_max_calls = 120
+llm_budget_window_seconds = 3600
 # Optional cost-saving guard for daemon-owned background LLM / embedding work.
 # When true, refresh / pool precompute / account sync / speculation / proactive
 # push only run while the browser extension has an active runtime-stream
@@ -521,8 +641,9 @@ auto_update_allowed_remotes = [
   # 不敏感）；带凭据的 URL 一律拒绝；走 GitHub 镜像克隆的安装把镜像 URL 加进来即可
 
 [scheduler.pool_source_shares]
-# Candidate-pool source mix by platform family. The saved default 5:1:1:1:1:1
-# keeps B 站 as the main source when optional platforms are enabled.
+# Candidate-pool source mix by platform family. The saved default gives B 站
+# weight 5 and every optional canonical source weight 1; disabled sources are
+# removed before normalization.
 # 关掉的源（[sources.<name>].enabled = false）的配额会被自动剔除，剩余
 # 源按比例重新归一化吃满 pool_target_count——所以这里写多少不重要，重要的
 # 是源本身的 enabled 开关。
@@ -534,6 +655,7 @@ twitter = 1
 zhihu = 1
 reddit = 1
 bangumi = 1
+github = 1
 linuxdo = 1
 v2ex = 1
 weibo = 1
@@ -577,10 +699,20 @@ inspiration_search_enabled = true
 # 搜索后端按顺序尝试。默认先用 local_cache 复用本地 content_cache evidence；
 # 本地证据不足时再用已启用的平台源做 inspiration-only grounding（当前同步支持
 # B站 / YouTube / X / Reddit，抖音 direct client；小红书 / 知乎 bridge 可用时
-# 也会加入；不写候选池），再用 Exa；Exa 免费 MCP 限流 / 返回空时再用
-# You.com 免费 MCP profile 兜底。远端 MCP 需要在本机 mcporter 配置里有
-# `exa` 和 / 或 `you` server。
-inspiration_search_backends = ["local_cache", "platform_sources", "exa", "you"]
+# 也会加入；不写候选池），再用 Bing RSS 无 key 全网搜索兜底；之后用 Exa，
+# Exa 不可用/返回空时再用 You.com 兜底，最后是 Serply。远端 MCP 需要在本机
+# mcporter 配置里有 `exa` 和 / 或 `you` server；填写 exa_api_key / you_api_key /
+# serply_api_key 后则直连 HTTP API。
+inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
+# Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
+# 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter
+# 兜底，留空即跳过该后端）。
+# Exa: https://exa.ai  →  x-api-key
+# You.com: https://you.com  →  x-api-key
+# Serply: https://serply.io（文档 https://serply.io/docs）→ X-Api-Key
+exa_api_key = ""
+you_api_key = ""
+serply_api_key = ""
 # 实验开关：开启且 inspiration provider 可用时，跳过旧 merged keyword planner，
 # 每轮 due 平台只用 inspiration flow 产词。
 inspiration_replace_merged_keywords = false
@@ -599,6 +731,10 @@ candidate_eval_concurrency = 3
 # enforce = 低相似候选不进 LLM。默认 shadow；先 grep prefilter-shadow，
 # 确认 would-be-filtered 且 LLM 分数 >= admission_min_score 的候选约为 0 后再切 enforce。
 eval_prefilter_mode = "shadow"
+# relevance 后端："llm"（默认，配置页显示为 Agent）；"shadow" 同跑 learned/LLM、以 LLM 为准并落审计；
+# "learned" 使用 learned relevance，但仍由 LLM 提供 temporal/topic/style/franchise 安全元数据。
+# 两种校准模式都会绕过 normal eval cache，且把 prefilter enforce 当成 shadow；当前不减少 LLM 调用。
+eval_scorer = "llm"
 # 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时
 # 把已压缩的候选封面一并送入评估器，模型不支持时自动退回纯文本评估。
 multimodal_evaluation_enabled = false
@@ -686,6 +822,25 @@ preference_prompt_view = "legacy"
 awareness_prompt_view = "compact-v1"
 insight_prompt_view = "legacy"
 
+# Cognition-cycle prompt/output budgets (issue #169). The defaults are sized
+# for 256k-class providers. Small-context local models (e.g. qwen3.8-27B on a
+# 24G card with 80-100K context) should lower these instead of patching
+# src/openbiliclaw/soul/cognition_cycle.py.
+# awareness_event_batch_size = 300   # events per awareness LLM call (10..900)
+# insight_note_batch_size = 150      # awareness notes per insight LLM call (10..450)
+# cognition_max_tokens = 32768       # max output tokens per cognition call (1024..128000)
+
+# 自定义 AI 回复语气（issue #255，自由文本，上限 200 字符）。
+# 默认空字符串时所有 prompt 输出逐字节不变；非空时会作为一行附加指令注入
+# 语气块，覆盖对话回复、推荐文案（单条 + 批量）、画像文本四类 prompt。
+# reply_style = "语气温和一点，少用网络梗，多给具体例子"
+
+# 整体替换聊天对话的语气块（自由文本，上限 1000 字符，支持多行）。
+# 默认空字符串时对话 prompt 逐字节不变；非空时仅对聊天对话 prompt，用这段
+# 原文整体替换自动生成的语气块（此时 reply_style 对对话不再追加）。身份、
+# 苏格拉底行为说明、能力边界、core memory 引导语不受影响；推荐与画像不受影响。
+# dialogue_tone_prompt = "说话像一个爱看纪录片的老朋友：\n- 多用短句\n- 先问动机再给建议"
+
 [soul.preference]
 # v0.3.x event-satisfaction signal.
 # When true, preference analysis ignores passive negative events such as
@@ -693,6 +848,36 @@ insight_prompt_view = "legacy"
 # retained as disliked_topics evidence instead of being learned as a
 # positive interest.
 satisfaction_filter_enabled = true
+
+
+# ──────────────────────────────────────────────────────────────
+# Chat agent loop（「聊一聊」多跳工具调用）
+# ──────────────────────────────────────────────────────────────
+[agent]
+# 流式 agent 聊天端点（POST /api/chat/agent/stream）开关；关闭后旧单跳聊天端点不受影响。
+# loop_enabled = true
+# 每轮对话「思考 → 调工具 → 再思考」的最大跳数；超限后模型会收尾汇报进展。
+# loop_max_steps = 64
+# 单次工具结果回填进 prompt 的字符上限，超出部分截断。
+# tool_result_max_chars = 4000
+# 多会话标题自动生成（M5）：开启后新会话首条消息会用 LLM 生成简短标题
+# （失败时回退为消息截断前缀）；关闭则直接使用截断前缀、不发起 LLM 调用。
+# session_title_enabled = true
+# 后台任务（任务中心，M6）单次执行的跳数预算：后台任务无人值守、只挂只读工具，
+# 预算比交互对话小；超限后模型会收尾汇报进展。
+# task_max_steps = 32
+
+
+# ──────────────────────────────────────────────────────────────
+# Embedded Tailnet host
+# ──────────────────────────────────────────────────────────────
+# 让 OpenBiliClaw 自己加入 tailnet，不要求电脑安装系统级 Tailscale。
+# 默认关闭；启用后节点身份保存在本机 data/tailnet，Auth Key 不写入配置文件。
+[tailnet]
+enabled = false
+# 单个 DNS label，1..63 字符；会归一化为小写。首尾只能是字母/数字，
+# 中间可使用字母、数字和连字符，不能填写完整域名或带点名称。
+hostname = "openbiliclaw-host"
 
 
 # ──────────────────────────────────────────────────────────────

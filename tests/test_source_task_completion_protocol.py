@@ -165,6 +165,7 @@ def durable_source_app(
                 daily_creator_budget=10,
                 task_interval_seconds=45,
             ),
+            zhihu=SimpleNamespace(enabled=True),
             linuxdo=SimpleNamespace(enabled=True),
         ),
         scheduler=SimpleNamespace(

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createYouTubeBrowserEnvironment,
   saveYouTube,
+  verifyYouTube,
   type YouTubeNativeSaveEnvironment,
   type YouTubePlaylistRow,
 } from "../src/content/native-save/youtube.ts";
@@ -41,6 +42,8 @@ interface FixtureOptions {
   dialogAvailable?: boolean;
   readyAfterSleeps?: number;
   saveControlReadyAfterSleeps?: number;
+  persistedAfterSleeps?: number;
+  targetVisibleAfterSleeps?: number;
 }
 
 function fixture(options: FixtureOptions = {}): YouTubeNativeSaveEnvironment & {
@@ -84,8 +87,11 @@ function fixture(options: FixtureOptions = {}): YouTubeNativeSaveEnvironment & {
         pendingCreatedRow = null;
       }
       if (!open) return [];
+      if (sleeps < (options.targetVisibleAfterSleeps ?? 0)) return [];
       return rows.filter((candidate) => candidate.title === title).map((row) => ({
-        isChecked: () => row.checked ?? false,
+        isChecked: () => row.checked ?? (
+          options.persistedAfterSleeps !== undefined && sleeps >= options.persistedAfterSleeps
+        ),
         click() {
           env.actions.push(`select:${row.title}`);
           env.mutations += 1;
@@ -96,8 +102,11 @@ function fixture(options: FixtureOptions = {}): YouTubeNativeSaveEnvironment & {
     },
     findWatchLater(): YouTubePlaylistRow | null {
       if (!open) return null;
+      if (sleeps < (options.targetVisibleAfterSleeps ?? 0)) return null;
       return {
-        isChecked: () => watchLaterChecked,
+        isChecked: () => watchLaterChecked || (
+          options.persistedAfterSleeps !== undefined && sleeps >= options.persistedAfterSleeps
+        ),
         click() {
           env.actions.push("select:watch-later");
           env.mutations += 1;
@@ -186,6 +195,33 @@ test("YouTube native save reports the exact failed execution stage", async () =>
       error_code: errorCode,
     });
   }
+});
+
+test("YouTube persisted verification observes delayed membership without mutating", async () => {
+  for (const candidate of [
+    task,
+    {
+      ...task,
+      requested_action: "watch_later" as const,
+      resolved_action: "watch_later" as const,
+      target_label: "YouTube Watch Later",
+    },
+  ]) {
+    const env = fixture({ persistedAfterSleeps: 2, targetVisibleAfterSleeps: 2 });
+    assert.deepEqual(await verifyYouTube(candidate, env), { status: "already_synced" });
+    assert.equal(env.mutations, 0);
+    assert.equal(env.actions.some((action) => action.startsWith("select:")), false);
+    assert.equal(env.actions.some((action) => action.startsWith("create:")), false);
+  }
+});
+
+test("YouTube persisted verification leaves unconfirmed membership failed without mutating", async () => {
+  const env = fixture({ confirmAfterClick: false });
+  assert.deepEqual(await verifyYouTube(task, env), {
+    status: "failed",
+    error_code: "native_confirmation_not_observed",
+  });
+  assert.equal(env.mutations, 0);
 });
 
 test("YouTube native save deterministically reuses duplicate exact playlists", async () => {
@@ -654,7 +690,12 @@ test("YouTube browser environment reads the exact title from renderer data befor
 test("YouTube browser environment reads exact modern toggleable playlist rows", () => {
   const modernRow = (playlistId: string, title: string, initiallyToggled: boolean) => {
     let toggled = initiallyToggled;
-    const innerRow = {
+    let presentationClicks = 0;
+    const presentationRow = {
+      getAttribute: (name: string) => name === "role" ? "presentation" : null,
+      click: () => { presentationClicks += 1; },
+    };
+    const actionButton = {
       getAttribute: (name: string) => name === "aria-pressed" ? (toggled ? "true" : "false") : null,
       click: () => { toggled = true; },
     };
@@ -677,12 +718,13 @@ test("YouTube browser environment reads exact modern toggleable playlist rows", 
     getAttribute: () => null,
     querySelector(selector: string) {
       if (selector.includes("ytListItemViewModelTitle")) return { textContent: title };
-      if (selector.includes("yt-list-item-view-model[aria-pressed]")) return innerRow;
-      if (selector === "yt-list-item-view-model") return innerRow;
+      if (selector.includes("[role='menuitem'][aria-pressed]")) return actionButton;
+      if (selector === "yt-list-item-view-model") return presentationRow;
       return null;
     },
     querySelectorAll: () => [],
     click() {},
+    presentationClicks: () => presentationClicks,
     };
   };
   const favoriteRow = modernRow("PL-openbiliclaw", "OpenBiliClaw", false);
@@ -706,11 +748,17 @@ test("YouTube browser environment reads exact modern toggleable playlist rows", 
     },
   } as unknown as Document;
   const env = createYouTubeBrowserEnvironment(documentFixture, task.content_url);
-  assert.equal(env.findNamedPlaylists("OpenBiliClaw").length, 1);
+  const favorite = env.findNamedPlaylists("OpenBiliClaw")[0];
+  assert.ok(favorite);
+  assert.equal(favorite.isChecked(), false);
+  favorite.click();
+  assert.equal(favorite.isChecked(), true);
   const watchLater = env.findWatchLater();
   assert.equal(watchLater?.isChecked(), false);
   watchLater?.click();
   assert.equal(watchLater?.isChecked(), true);
+  assert.equal(favoriteRow.presentationClicks(), 0);
+  assert.equal(watchLaterRow.presentationClicks(), 0);
 });
 
 test("YouTube browser environment rejects WL-prefix hrefs and accepts exact parsed list WL", () => {

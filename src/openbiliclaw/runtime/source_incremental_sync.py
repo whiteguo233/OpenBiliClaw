@@ -58,6 +58,15 @@ _SOURCE_CONFIG_ALIASES: dict[str, tuple[str, ...]] = {
     "linuxdo": ("linuxdo",),
     "v2ex": ("v2ex",),
 }
+_SOURCE_CONFIG_NAMES: dict[str, str] = {
+    "xhs": "xiaohongshu",
+    "dy": "douyin",
+    "yt": "youtube",
+    "zhihu": "zhihu",
+    "reddit": "reddit",
+    "linuxdo": "linuxdo",
+    "v2ex": "v2ex",
+}
 _SOURCE_INTERVAL_FIELDS = {
     "xhs": "xhs_incremental_hours",
     "dy": "douyin_incremental_hours",
@@ -182,6 +191,22 @@ class SourceIncrementalSync:
                     "scheduler_disabled" if not scheduler_enabled else "source_incremental_disabled"
                 )
                 return SourceIncrementalSyncResult(reason=reason)
+
+            disabled_sources = {
+                source for source in SOURCE_ORDER if not self._source_incremental_enabled(source)
+            }
+            if disabled_sources:
+                try:
+                    await asyncio.to_thread(
+                        cancel_incremental_bootstrap_tasks,
+                        self.database,
+                        sources=disabled_sources,
+                    )
+                except Exception:
+                    logger.warning(
+                        "disabled per-source incremental task cleanup failed",
+                        exc_info=True,
+                    )
 
             try:
                 present = self.presence.is_present(
@@ -429,7 +454,11 @@ class SourceIncrementalSync:
                 if row is not None:
                     recorded = row
 
-        if recorded is not None and recorded.status in _ACTIVE_STATUSES:
+        if (
+            recorded is not None
+            and recorded.status in _ACTIVE_STATUSES
+            and self._source_is_enabled(recorded.source)
+        ):
             return SourceIncrementalSyncResult(
                 reason="active_task",
                 source=recorded.source,
@@ -474,7 +503,9 @@ class SourceIncrementalSync:
                 )
                 return SourceIncrementalSyncResult(reason="state_error")
 
-        active_rows = self._find_active_tasks()
+        active_rows = [
+            row for row in self._find_active_tasks() if self._source_is_enabled(row.source)
+        ]
         if not active_rows:
             return None
 
@@ -630,6 +661,15 @@ class SourceIncrementalSync:
             return value != 0
         return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
+    def _source_incremental_enabled(self, source: str) -> bool:
+        # Production always passes ``runtime_config``; tests that construct the
+        # scheduler without it keep the legacy all-sources-on behaviour.
+        if self.runtime_config is None:
+            return True
+        sources = getattr(self.runtime_config, "sources", None)
+        source_config = getattr(sources, _SOURCE_CONFIG_NAMES[source], None)
+        return bool(getattr(source_config, "incremental_enabled", False))
+
     def _source_is_enabled(self, source: str) -> bool:
         policy = self.source_enabled() if callable(self.source_enabled) else self.source_enabled
         if not isinstance(policy, Mapping):
@@ -679,6 +719,8 @@ class SourceIncrementalSync:
             if excluded and source in excluded:
                 continue
             if not self._source_is_enabled(source):
+                continue
+            if not self._source_incremental_enabled(source):
                 continue
             interval_hours = self._effective_interval_hours(source)
             if interval_hours == 0:

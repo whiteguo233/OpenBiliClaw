@@ -23,6 +23,7 @@ from openbiliclaw.llm.ollama_diagnostics import (
     DIAG_OK,
     _looks_like_disk_full,
     _looks_like_model_oom,
+    _looks_like_native_access_violation,
     _looks_like_network_failure,
     diagnose_ollama_embedding,
     native_root,
@@ -175,6 +176,33 @@ async def test_diagnose_memory_ish_500_is_model_oom() -> None:
     assert "重新下载无效" in detail
 
 
+async def test_diagnose_access_violation_gets_ordered_checklist() -> None:
+    """0xc0000005 is a native llama-server crash — not just a corrupt download."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return _tags_response("bge-m3")
+        return httpx.Response(
+            500,
+            json={
+                "error": (
+                    "llama-server process has terminated: exit status 0xc0000005: "
+                    "The instruction at 0x7ffa referenced memory at 0x0. "
+                    "The memory could not be read."
+                )
+            },
+        )
+
+    code, detail = await diagnose_ollama_embedding(
+        BASE_URL, "bge-m3", transport=_transport(handler)
+    )
+    assert code == DIAG_MODEL_BROKEN
+    assert "0xc0000005" in detail
+    assert "重新拉取" in detail
+    assert "内存与虚拟内存" in detail
+    assert "最新安装包" in detail
+
+
 async def test_diagnose_path_encoding_wins_before_model_oom() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
@@ -249,6 +277,14 @@ def test_model_oom_signature_helper_is_conservative() -> None:
     assert _looks_like_model_oom("内存不足，无法加载模型")
     assert not _looks_like_model_oom("insufficient space on disk")
     assert not _looks_like_model_oom("C:\\Users\\��\\.ollama\\models")
+
+
+def test_native_access_violation_helper_is_conservative() -> None:
+    assert _looks_like_native_access_violation("exit status 0xc0000005: access violation")
+    assert _looks_like_native_access_violation("llama-server access violation at 0x0")
+    assert not _looks_like_native_access_violation("failed to load model")
+    assert not _looks_like_native_access_violation("out of memory")
+    assert not _looks_like_native_access_violation("access violation in some other app")
 
 
 def test_disk_space_precheck_reports_disk_full(monkeypatch, tmp_path) -> None:

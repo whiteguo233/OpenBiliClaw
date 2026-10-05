@@ -125,6 +125,7 @@ class _FakeDatabase:
         *,
         min_delight_score: float = 0.85,
         limit: int = 20,
+        **kwargs: object,
     ) -> list[dict[str, object]]:
         candidate = self.get_delight_candidate(min_delight_score=min_delight_score)
         return [] if candidate is None else [candidate]

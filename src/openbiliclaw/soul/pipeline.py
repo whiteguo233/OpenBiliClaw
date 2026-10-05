@@ -34,6 +34,7 @@ from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
 )
+from openbiliclaw.sources.event_format import NON_PROFILE_EVENT_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,21 @@ class ProfileSignal:
     payload: dict[str, object]
     target_layers: frozenset[OnionLayer]
     confidence: float = 0.0
+
+
+def _is_non_profile_signal(signal: ProfileSignal) -> bool:
+    """Whether a signal comes from a context-only collector event type.
+
+    These rows stay in the durable event ledger and their consumer cursor still
+    advances past them; they are simply never buffered as profile evidence or
+    handed to the speculators. ``search`` is intentionally absent from
+    ``NON_PROFILE_EVENT_TYPES`` (it is a real intent signal).
+    """
+    payload = signal.payload
+    if not isinstance(payload, dict):
+        return False
+    event_type = str(payload.get("event_type") or payload.get("type") or "").strip().lower()
+    return event_type in NON_PROFILE_EVENT_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1307,12 @@ class ProfileUpdatePipeline:
             if signal.id in known_ids:
                 continue
             known_ids.add(signal.id)
+            if _is_non_profile_signal(signal):
+                # Context-only collector events (hover / scroll / snapshot /
+                # reshuffle / pause / seek) are consumed here: the durable row
+                # exists, the consumer cursor advances past it, but no profile
+                # buffer is touched and the speculators never observe it.
+                continue
             accepted.append(signal)
 
         # Atomic retraction-discount preprocessing runs BEFORE any threshold

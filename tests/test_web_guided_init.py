@@ -444,6 +444,18 @@ def test_setup_wizard_config_save_401_points_to_login_instead_of_dead_end() -> N
     assert '<a href="/web">' in setup_html
 
 
+def test_setup_wizard_protected_requests_use_csrf_auth_fetch_contract() -> None:
+    """Password-authenticated setup writes must use the shared CSRF-aware fetch."""
+    setup_html = Path("src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
+
+    assert 'credentials: "same-origin"' in setup_html
+    assert '"X-OBC-Auth": "1"' in setup_html
+    assert 'const r = await fetch("/api/config", {' not in setup_html
+    assert 'const r = await fetchWithTimeout("/api/config", {' in setup_html
+    assert '"/api/config/discover-models"' in setup_html
+    assert '"/api/embedding/repair"' in setup_html
+
+
 def test_web_surfaces_offer_embedding_repair_and_progress() -> None:
     """Both web init checklists expose one-click model download + live progress.
 
@@ -543,7 +555,12 @@ async def test_heartbeat_task_keeps_touching_until_cancelled(tmp_path) -> None:
     seq_before = db.get_latest_init_run()["sequence"]
 
     task = asyncio.create_task(_run_init_heartbeat(coord, "run-1", interval=0.01))
-    await asyncio.sleep(0.06)
+    target_sequence = seq_before + 2
+    for _ in range(100):
+        seq_after = db.get_latest_init_run()["sequence"]
+        if seq_after >= target_sequence:
+            break
+        await asyncio.sleep(0.01)
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
@@ -650,7 +667,9 @@ class _StubEngine:
         self.profile = object()
         self.discover_profiles: list[object] = []
 
-    async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+    async def analyze_events(
+        self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+    ):
         self.received_callback = progress_callback
         if progress_callback is not None:
             for i in range(1, self.chunk_reports + 1):
@@ -772,7 +791,7 @@ async def test_run_guided_init_emits_stage_progress_for_sources_and_chunks(monke
         (2, 3),
         (3, 3),
     ]
-    assert stage2[0]["note"] == "已完成 0/1 批 · AI 开始处理（并发上限 1）"
+    assert stage2[0]["note"] == "全平台共 1 条事件 · 已完成 0/1 批 · AI 开始处理（并发上限 1）"
     assert stage2[-1]["note"] == "第 3/3 批"
     assert stage2[0]["elapsed_seconds"] == 0
     assert all(call["max_seconds"] == 2700 for call in stage2)
@@ -872,7 +891,9 @@ async def test_run_guided_init_bounds_hung_preference_analysis(monkeypatch) -> N
             super().__init__()
             self.cancelled = False
 
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             try:
                 await asyncio.Event().wait()
             finally:
@@ -1247,7 +1268,9 @@ async def test_run_guided_init_idle_analysis_reports_connectivity_message(monkey
             super().__init__()
             self.cancelled = False
 
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             try:
                 await asyncio.Event().wait()
             finally:
@@ -1289,7 +1312,9 @@ async def test_run_guided_init_slow_analysis_completes_past_old_fixed_budget(mon
     ticks = {"n": 0}
 
     class _SlowProgressingEngine(_StubEngine):
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             self.received_callback = progress_callback
             for i in range(1, 7):
                 # Each chunk takes longer than the whole old floor budget would

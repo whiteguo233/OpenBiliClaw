@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -95,6 +97,30 @@ def _read_json(path: Path) -> object:
         return _MISSING
 
 
+_ATOMIC_WRITE_MAX_ATTEMPTS = 5
+_ATOMIC_WRITE_BASE_DELAY_SECONDS = 0.01
+
+
+def _replace_with_retry(tmp_name: str, path: Path) -> None:
+    """Replace ``path`` with ``tmp_name``, retrying Windows sharing violations.
+
+    Windows can briefly reject ``os.replace`` with ``PermissionError`` when
+    multiple writers race on the same destination (antivirus/indexer scans and
+    other transient file locks can also cause this).  Retry with exponential
+    backoff plus random jitter so concurrent writers stagger instead of failing
+    the update outright.
+    """
+    for attempt in range(_ATOMIC_WRITE_MAX_ATTEMPTS):
+        try:
+            os.replace(tmp_name, path)
+            return
+        except PermissionError:
+            if attempt == _ATOMIC_WRITE_MAX_ATTEMPTS - 1:
+                raise
+            delay = _ATOMIC_WRITE_BASE_DELAY_SECONDS * (2**attempt) * random.uniform(1.0, 3.0)
+            time.sleep(delay)
+
+
 def _atomic_write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -104,7 +130,7 @@ def _atomic_write_json(path: Path, payload: object) -> None:
             file.write("\n")
             file.flush()
             os.fsync(file.fileno())
-        os.replace(tmp_name, path)
+        _replace_with_retry(tmp_name, path)
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)

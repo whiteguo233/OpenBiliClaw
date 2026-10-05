@@ -270,6 +270,53 @@ def test_signals_from_events_engagement_types_still_strong() -> None:
     assert signals[0].signal_type == SignalType.ENGAGEMENT_EVENT
 
 
+@pytest.mark.parametrize(
+    "event_type",
+    ["hover", "scroll", "snapshot", "reshuffle", "pause", "seek"],
+)
+def test_context_only_collector_events_are_not_buffered(tmp_path: Path, event_type: str) -> None:
+    """Context-only collector events stay in the ledger but never become
+    profile evidence.
+
+    hover / scroll / snapshot / reshuffle / pause / seek are useful for the
+    activity feed and diagnostics, yet they must not buffer a ProfileSignal,
+    trigger a layer updater, or reach the speculators.
+    """
+    pipeline, _, _ = _make_low_threshold_pipeline(tmp_path)
+
+    result, accepted = pipeline._enqueue_batch_locked(
+        signals_from_events([{"event_type": event_type, "title": f"{event_type} 事件"}])
+    )
+
+    assert result.signals_accepted == 0
+    assert result.layers_buffered == []
+    assert accepted == []
+    assert pipeline._total_ingested == 0
+    assert all(not buf.signals for buf in pipeline._buffers.values())
+
+
+def test_search_and_view_are_still_profile_evidence(tmp_path: Path) -> None:
+    """The non-profile denylist must not swallow search or view.
+
+    ``search`` is satisfaction-neutral but is a real intent signal, and
+    ``view`` remains weak-to-medium profile evidence — both keep flowing.
+    """
+    pipeline, _, _ = _make_low_threshold_pipeline(tmp_path)
+
+    result, accepted = pipeline._enqueue_batch_locked(
+        signals_from_events(
+            [
+                {"event_type": "search", "title": "搜了 AI Agent"},
+                {"event_type": "view", "title": "AI Agent 教程"},
+            ]
+        )
+    )
+
+    assert result.signals_accepted == 2
+    assert len(accepted) == 2
+    assert OnionLayer.INTEREST.value in result.layers_buffered
+
+
 # ===========================================================================
 # 1. Control flow tests
 # ===========================================================================

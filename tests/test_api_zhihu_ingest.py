@@ -87,6 +87,7 @@ def zhihu_task_client(
                 daily_creator_budget=10,
                 task_interval_seconds=45,
             ),
+            zhihu=SimpleNamespace(enabled=True),
         ),
         scheduler=SimpleNamespace(pool_target_count=300, account_sync_interval_hours=24),
     )
@@ -101,6 +102,9 @@ def zhihu_task_client(
         runtime_controller=SimpleNamespace(memory_manager=memory),
         recommendation_engine=None,
     )
+    # Injection path intentionally leaves ctx.config unset; pin the fake config
+    # so endpoint source-enabled guards behave like the full runtime path.
+    app.state.runtime_context.config = fake_config
     return TestClient(app), db, memory, soul
 
 
@@ -194,3 +198,58 @@ def test_zhihu_bootstrap_result_with_profile_update_propagates_to_memory_and_pip
     assert event["title"] == "最近浏览回答"
     assert event["metadata"]["source_platform"] == "zhihu"  # type: ignore[index]
     assert soul.pipeline.signals == []
+
+
+def test_zhihu_next_task_cancels_scheduler_incremental_when_source_disabled(
+    zhihu_task_client: tuple[TestClient, Database, RecordingMemoryManager, RecordingSoulEngine],
+) -> None:
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    client, db, memory, soul = zhihu_task_client
+    ctx = client.app.state.runtime_context
+    queue = ZhihuTaskQueue(db)
+    task_id = queue.enqueue_with_id(
+        "bootstrap_events",
+        {"incremental": True, "incremental_owner": "scheduler"},
+        daily_budget=0,
+    )
+    assert task_id is not None
+
+    ctx.config.sources.zhihu.enabled = False
+    blocked = client.get("/api/sources/zhihu/next-task")
+
+    assert blocked.status_code == 204
+    stored = queue.get(task_id)
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert memory.events == []
+    assert soul.pipeline.signals == []
+
+
+def test_zhihu_next_task_disabled_source_keeps_manual_task_pending_and_resumes(
+    zhihu_task_client: tuple[TestClient, Database, RecordingMemoryManager, RecordingSoulEngine],
+) -> None:
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    client, db, memory, soul = zhihu_task_client
+    ctx = client.app.state.runtime_context
+    queue = ZhihuTaskQueue(db)
+    task_id = queue.enqueue_with_id(
+        "bootstrap_events",
+        {"scopes": ["zhihu_read_history"], "max_items_per_scope": 20},
+        daily_budget=0,
+    )
+    assert task_id is not None
+
+    ctx.config.sources.zhihu.enabled = False
+    blocked = client.get("/api/sources/zhihu/next-task")
+
+    assert blocked.status_code == 204
+    stored = queue.get(task_id)
+    assert stored is not None
+    assert stored["status"] == "pending"
+
+    ctx.config.sources.zhihu.enabled = True
+    resumed = client.get("/api/sources/zhihu/next-task")
+    assert resumed.status_code == 200
+    assert resumed.json()["id"] == task_id

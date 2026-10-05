@@ -10,8 +10,14 @@ from typing import Any, cast
 from openbiliclaw.api.runtime_context import build_youtube_discovery_producer
 from openbiliclaw.bilibili.api import BilibiliAPIClient
 from openbiliclaw.bilibili.auth import resolve_runtime_cookie
-from openbiliclaw.config import Config, load_config
-from openbiliclaw.config import llm_concurrency_from_config as _llm_concurrency_from_config
+from openbiliclaw.config import (
+    Config,
+    load_config,
+    source_date_preferences,
+)
+from openbiliclaw.config import (
+    llm_concurrency_from_config as _llm_concurrency_from_config,
+)
 from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 from openbiliclaw.discovery.strategies.strategies import (
@@ -103,6 +109,9 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
 
     database = Database(config.data_path / "openbiliclaw.db")
     database.initialize()
+    set_source_preferences = getattr(database, "set_source_publication_date_preferences", None)
+    if callable(set_source_preferences):
+        set_source_preferences(source_date_preferences(config))
 
     memory_manager = MemoryManager(config.data_path, database=database)
     memory_manager.initialize()
@@ -140,8 +149,13 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         preference_prompt_view=str(getattr(soul_cfg, "preference_prompt_view", "legacy")),
         awareness_prompt_view=str(getattr(soul_cfg, "awareness_prompt_view", "compact-v1")),
         insight_prompt_view=str(getattr(soul_cfg, "insight_prompt_view", "legacy")),
+        awareness_event_batch_size=int(getattr(soul_cfg, "awareness_event_batch_size", 300)),
+        insight_note_batch_size=int(getattr(soul_cfg, "insight_note_batch_size", 150)),
+        cognition_max_tokens=int(getattr(soul_cfg, "cognition_max_tokens", 32768)),
         posture_gate_mode=str(getattr(soul_cfg, "posture_gate_mode", "shadow")),
         posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
+        reply_style=str(getattr(soul_cfg, "reply_style", "")),
+        dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
         module_overrides=module_overrides,
         llm_concurrency=llm_concurrency,
         llm_concurrency_gate=llm_gate,
@@ -197,6 +211,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         module_overrides=module_overrides,
         concurrency=llm_concurrency,
         concurrency_gate=llm_gate,
+        reply_style=str(getattr(soul_cfg, "reply_style", "")),
+        dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
     )
     from openbiliclaw.llm.registry import build_embedding_service
     from openbiliclaw.recommendation.curator import PoolCurator
@@ -219,6 +235,9 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         configured_copy_target,
         max(0, int(getattr(config.scheduler, "pool_target_count", 0) or 0)),
     )
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
+
     recommendation_engine = RecommendationEngine(
         llm=llm_service,
         database=database,
@@ -237,6 +256,11 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         danmaku_fetch_limit=config.discovery.danmaku_fetch_limit,
         danmaku_max_chars=config.discovery.danmaku_max_chars,
         bilibili_client=bilibili_client,
+        serve_snapshot_store=ServeSnapshotStore(
+            config.data_path / "runtime" / "serve_snapshot.json"
+        ),
+        serve_outbox=ServeOutbox(config.data_path / "runtime" / "serve_outbox.jsonl"),
+        reply_style=str(getattr(soul_cfg, "reply_style", "")),
     )
 
     from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
@@ -254,6 +278,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         embedding_service=embedding_service,
         concurrency=concurrency,
         eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
+        eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,

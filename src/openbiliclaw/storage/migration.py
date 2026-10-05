@@ -99,10 +99,15 @@ _WINDOWS_RESERVED_NAMES = frozenset(
 # These are derived, historical, or tied to one operating-system installation.
 # The image cache is deliberately *not* excluded: some signed XHS image URLs
 # cannot be fetched again after they expire, so the cached bytes are user data.
-_EXCLUDED_DATA_ROOTS = frozenset({"backups", "cache", "eval", "autostart", "certs"})
+_EXCLUDED_DATA_ROOTS = frozenset(
+    {"backups", "bin", "cache", "eval", "autostart", "certs", "tailnet"}
+)
 _EXCLUDED_DATA_FILES = frozenset({"embedding_cache.db"})
 _TRANSIENT_SUFFIXES = ("-wal", "-shm", ".lock", ".tmp", ".part")
-_PRESERVED_TARGET_ROOTS = ("certs", "autostart")
+_PRESERVED_TARGET_ROOTS = ("certs", "autostart", "tailnet")
+_TAILNET_HELPER_BASENAME = (
+    "openbiliclaw-tailnet-helper.exe" if os.name == "nt" else "openbiliclaw-tailnet-helper"
+)
 _PROJECT_CODE_ROOTS = frozenset(
     {
         ".git",
@@ -340,6 +345,28 @@ def migration_recovery_data_dir(*, project_root: Path | None = None) -> Path | N
     return None
 
 
+def _windows_runtime_lock(handle: BinaryIO, msvcrt_module: Any) -> bool:
+    """Apply the Windows one-byte ``msvcrt.locking`` runtime lock.
+
+    锁已被别的实例持有时,Windows 在上锁前的 ``read`` 这一步就会直接抛
+    ``PermissionError``——所以整个 seek/read/write/lock 序列都按失败即
+    关闭句柄并返回 False 处理,让调用方走「已有实例在运行」的优雅分支
+    而不是带回溯崩溃。返回 False 时 ``handle`` 已被关闭。
+    """
+    try:
+        handle.seek(0)
+        if handle.read(1) == b"":
+            handle.seek(0)
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
+        return False
+    return True
+
+
 def _try_acquire_runtime_lock(path: Path) -> BinaryIO | None:
     """Acquire one non-blocking OS file lock, returning its live handle."""
     try:
@@ -394,17 +421,7 @@ def _try_acquire_runtime_lock(path: Path) -> BinaryIO | None:
         if os.name == "nt":
             import msvcrt
 
-            msvcrt_module = cast("Any", msvcrt)
-            handle.seek(0)
-            if handle.read(1) == b"":
-                handle.seek(0)
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
-            try:
-                msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_NBLCK, 1)
-            except OSError:
-                handle.close()
+            if not _windows_runtime_lock(handle, cast("Any", msvcrt)):
                 return None
         else:
             import fcntl
@@ -461,6 +478,8 @@ def create_migration_archive(
         "data/eval",
         "data/certs",
         "data/autostart",
+        "data/bin",
+        "data/tailnet",
         "browser-and-extension-sessions",
         "api-auth-password-and-signing-material",
         "external-cli-credentials",
@@ -974,7 +993,7 @@ def apply_pending_migration(
             _chmod_private(prepared_config)
             shutil.copytree(staged_data, prepared_data)
             _privatize_tree(prepared_data)
-            _preserve_target_machine_data(target_data, prepared_data)
+            tailnet_helper_preserved = _preserve_target_machine_data(target_data, prepared_data)
             active_auth_epoch = _smoke_test_prepared_database(prepared_data, target_data)
             _fsync_file(prepared_config)
             _fsync_tree(prepared_data)
@@ -1014,6 +1033,10 @@ def apply_pending_migration(
             _validate_imported_databases(target_data)
             _chmod_private(target_config)
             _privatize_tree(target_data)
+            _restore_tailnet_helper_mode(
+                target_data,
+                trusted_copy=tailnet_helper_preserved,
+            )
             applied_at = datetime.now(UTC).isoformat()
             result = MigrationApplyResult(
                 state="applied",
@@ -1165,11 +1188,15 @@ def _iter_portable_data_files(data_dir: Path) -> Iterator[tuple[Path, Path]]:
                 if child.is_symlink():
                     continue
                 if child.is_dir(follow_symlinks=False):
-                    if not relative_directory.parts and child.name in _EXCLUDED_DATA_ROOTS:
+                    if (
+                        not relative_directory.parts
+                        and child.name.casefold() in _EXCLUDED_DATA_ROOTS
+                    ):
                         continue
                     pending.append((Path(child.path), relative))
                     continue
-                if child.name in _EXCLUDED_DATA_FILES or child.name.endswith(_TRANSIENT_SUFFIXES):
+                folded_name = child.name.casefold()
+                if folded_name in _EXCLUDED_DATA_FILES or folded_name.endswith(_TRANSIENT_SUFFIXES):
                     continue
                 if ".broken." in child.name or ".repaired." in child.name:
                     continue
@@ -1579,9 +1606,11 @@ def _validate_logical_payload_path(value: object) -> str:
         return name
     if name.startswith("data/") and len(PurePosixPath(name).parts) >= 2:
         relative = Path(*PurePosixPath(name).parts[1:])
-        if relative.parts[0] in _EXCLUDED_DATA_ROOTS or relative.name in _EXCLUDED_DATA_FILES:
+        root_name = relative.parts[0].casefold()
+        leaf_name = relative.name.casefold()
+        if root_name in _EXCLUDED_DATA_ROOTS or leaf_name in _EXCLUDED_DATA_FILES:
             raise MigrationError(f"迁移包包含不允许的数据项：{name}", code="disallowed_entry")
-        if relative.name.endswith(_TRANSIENT_SUFFIXES):
+        if leaf_name.endswith(_TRANSIENT_SUFFIXES):
             raise MigrationError(f"迁移包包含临时文件：{name}", code="disallowed_entry")
         return name
     raise MigrationError(f"迁移包包含未知路径：{name}", code="disallowed_entry")
@@ -1716,6 +1745,7 @@ def _preserve_target_machine_config(
     candidate.logging.filename = current.logging.filename
     candidate.network = copy.deepcopy(current.network)
     candidate.tls_proxy = copy.deepcopy(current.tls_proxy)
+    candidate.tailnet = copy.deepcopy(current.tailnet)
     candidate.autostart = copy.deepcopy(current.autostart)
     candidate.sources.browser_cdp_url = current.sources.browser_cdp_url
     candidate.bilibili.proxy = current.bilibili.proxy
@@ -1739,6 +1769,7 @@ def _preserve_target_machine_config(
         "logging.filename",
         "network",
         "tls_proxy",
+        "tailnet",
         "autostart",
         "sources.browser_cdp_url",
         "bilibili.proxy",
@@ -2085,16 +2116,69 @@ def _is_openbiliclaw_data_directory(path: Path) -> bool:
     )
 
 
-def _preserve_target_machine_data(target_data: Path, prepared_data: Path) -> None:
+def _preserve_target_machine_data(target_data: Path, prepared_data: Path) -> bool:
+    """Preserve destination-bound state and report whether its helper was copied."""
     if not target_data.is_dir():
-        return
+        return False
     for name in _PRESERVED_TARGET_ROOTS:
         source = target_data / name
         destination = prepared_data / name
         if not source.is_dir() or source.is_symlink() or destination.exists():
             continue
-        shutil.copytree(source, destination)
+        # Never dereference machine-local links while preserving state. Besides
+        # escaping the data root, a link could make an import copy an unbounded
+        # external tree. Preserve links as links during the copy, detect them
+        # before chmod/rglob can follow them, and fail the staged transaction.
+        shutil.copytree(source, destination, symlinks=True)
+        if _tree_contains_symlink(destination):
+            shutil.rmtree(destination)
+            raise MigrationError(
+                f"目标机器的 data/{name} 包含符号链接；为避免复制目录外数据，迁移已拒绝。",
+                code="unsafe_target_state",
+            )
         _privatize_tree(destination)
+
+    # ``data/bin`` is never portable: accepting a helper from an archive would
+    # turn import into a cross-platform code-execution surface. Preserve only
+    # the exact, native helper already trusted by the destination machine.
+    source_bin = target_data / "bin"
+    source_helper = source_bin / _TAILNET_HELPER_BASENAME
+    destination_bin = prepared_data / "bin"
+    destination_helper = destination_bin / _TAILNET_HELPER_BASENAME
+    helper_mode = 0
+    with suppress(OSError):
+        helper_mode = source_helper.lstat().st_mode
+    helper_is_trusted = stat.S_ISREG(helper_mode) and (
+        os.name == "nt"
+        or (
+            bool(helper_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+            and os.access(source_helper, os.X_OK)
+        )
+    )
+    if (
+        source_bin.is_dir()
+        and not source_bin.is_symlink()
+        and helper_is_trusted
+        and not destination_bin.exists()
+        and not destination_bin.is_symlink()
+    ):
+        destination_bin.mkdir(mode=0o700)
+        shutil.copy2(source_helper, destination_helper)
+        _chmod_private(destination_helper)
+        _restore_tailnet_helper_mode(prepared_data, trusted_copy=True)
+        return True
+    return False
+
+
+def _tree_contains_symlink(root: Path) -> bool:
+    """Return whether a copied tree contains any link without following it."""
+    for current, directory_names, file_names in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        if any((current_path / name).is_symlink() for name in directory_names):
+            return True
+        if any((current_path / name).is_symlink() for name in file_names):
+            return True
+    return False
 
 
 def _read_auth_epoch(database_path: Path) -> int:
@@ -2233,6 +2317,16 @@ def _privatize_tree(root: Path) -> None:
     _chmod_private(root, directory=True)
     for path in root.rglob("*"):
         _chmod_private(path, directory=path.is_dir())
+
+
+def _restore_tailnet_helper_mode(data_root: Path, *, trusted_copy: bool) -> None:
+    """Restore execute permission only on the trusted target helper copy."""
+    if os.name == "nt" or not trusted_copy:
+        return
+    helper = data_root / "bin" / _TAILNET_HELPER_BASENAME
+    if helper.is_file() and not helper.is_symlink():
+        with suppress(OSError):
+            helper.chmod(0o700)
 
 
 def _fsync_file(path: Path) -> None:

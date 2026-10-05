@@ -93,7 +93,39 @@ async def test_rate_limit_serves_stale_cache_and_backs_off(tmp_path: Path) -> No
 
     assert first == {"github_stars": 123, "stale": True, "source": "cache"}
     assert second == first
-    assert requests == 1
+    # First call: API (403) + one HTML-scrape fallback (also 403) = 2 requests.
+    # Second call: the API is skipped inside its backoff window, but the
+    # HTML fallback is intentionally NOT gated by the API backoff, so it
+    # retries once more (+1) = 3 total.
+    assert requests == 3
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_falls_back_to_shields(tmp_path: Path) -> None:
+    cache_path = tmp_path / "github-stars.json"
+    cache_path.write_text(
+        json.dumps({"github_stars": 123, "fetched_at": 1_000.0, "retry_at": 0, "etag": ""}),
+        encoding="utf-8",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.github.com":
+            return httpx.Response(403, headers={"X-RateLimit-Reset": "3000"})
+        return httpx.Response(200, json={"value": "1.9k", "message": "1.9k"})
+
+    service = GitHubStarCountService(
+        cache_path=cache_path,
+        ttl_seconds=60,
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        clock=lambda: 2_000.0,
+    )
+
+    snapshot = await service.get_snapshot()
+
+    # shields.io rounds ("1.9k" -> 1900); the exact count isn't required here.
+    assert snapshot == {"github_stars": 1900, "stale": False, "source": "github"}
+    persisted = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert persisted["github_stars"] == 1900
 
 
 @pytest.mark.asyncio

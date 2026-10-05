@@ -36,28 +36,61 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
-export function inferBilibiliActionType(hint: ActionHint): string | null {
-  const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)} ${hint.className}`
-    .toLowerCase();
+// Action labels are only trusted when they look like control labels. Bilibili
+// video cards carry full descriptions in their textContent AND full video
+// titles in their `title` attributes (#205): a passing mention of "不感兴趣" /
+// "不喜欢" in either must not turn a card click into a dislike. Every real
+// Bilibili control label is tiny (不感兴趣 / 不喜欢 / 减少此类推荐 all ≤ 6 chars),
+// so 8 chars is the calibrated ceiling across all label surfaces (#200 used 20,
+// which short video-title cards still slipped through).
+const LABEL_MAX_CHARS = 8;
 
-  if (!text) return null;
+function shortLabel(value: string | null | undefined): string {
+  const text = normalizeText(value);
+  return text.length <= LABEL_MAX_CHARS ? text : "";
+}
+
+/** Lowercased class tokens, so keyword matches can't come from one long
+ *  concatenated class string that merely contains a keyword as a substring. */
+function classTokens(className: string): string[] {
+  return className.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+export function inferBilibiliActionType(hint: ActionHint): string | null {
+  const text = `${shortLabel(hint.text)} ${shortLabel(hint.ariaLabel)}`
+    .toLowerCase();
+  const classes = classTokens(hint.className);
+
+  if (!text.trim() && classes.length === 0) return null;
+  // English keywords may also live in class names (e.g. "video-dislike") or
+  // short control aria-labels ("dislike"); Chinese keywords are meaningful
+  // only in visible labels / tooltips.
+  const hasToken = (keyword: string): boolean =>
+    classes.some((token) => token.includes(keyword));
   if (
     text.includes("不感兴趣") ||
     text.includes("不喜欢") ||
     text.includes("减少此类推荐") ||
     text.includes("减少推荐") ||
-    text.includes("dislike")
+    text.includes("dislike") ||
+    hasToken("dislike")
   ) {
     return "dislike";
   }
-  if (text.includes("点赞") || text.includes("like")) return "like";
-  if (text.includes("投币") || text.includes("coin")) return "coin";
-  if (text.includes("收藏") || text.includes("collect") || text.includes("favorite")) {
+  if (text.includes("点赞") || text.includes("like") || hasToken("like")) return "like";
+  if (text.includes("投币") || text.includes("coin") || hasToken("coin")) return "coin";
+  if (
+    text.includes("收藏") ||
+    text.includes("collect") ||
+    text.includes("favorite") ||
+    hasToken("collect") ||
+    hasToken("favorite")
+  ) {
     return "favorite";
   }
-  if (text.includes("评论") || text.includes("comment")) return "comment";
-  if (text.includes("分享") || text.includes("share")) return "share";
-  if (text.includes("关注") || text.includes("follow")) return "follow";
+  if (text.includes("评论") || text.includes("comment") || hasToken("comment")) return "comment";
+  if (text.includes("分享") || text.includes("share") || hasToken("share")) return "share";
+  if (text.includes("关注") || text.includes("follow") || hasToken("follow")) return "follow";
   return null;
 }
 

@@ -15,6 +15,7 @@ from openbiliclaw.sources.event_format import (
     SOURCE_BILIBILI,
     SOURCE_WEIBO,
     SOURCE_XIAOHONGSHU,
+    SOURCE_YOUTUBE,
     build_event,
     default_signal_strength_for_event,
     format_event_context,
@@ -97,6 +98,9 @@ def test_build_event_emits_unified_shape() -> None:
     assert event["title"] == "某个 UP 主的视频"
     assert event["url"] == "https://www.bilibili.com/video/BVxxxx"
     assert event["context"]  # non-empty natural-language description
+    assert event["source_platform"] == SOURCE_BILIBILI
+    assert event["content_id"] == "BVxxxx"
+    assert event["source_confidence"] == "exact"
     # Metadata invariants
     assert event["metadata"]["source_platform"] == SOURCE_BILIBILI
     assert event["metadata"]["author"] == "某 UP 主"
@@ -128,17 +132,61 @@ def test_build_event_url_omitted_when_empty() -> None:
     assert "url" not in event
 
 
-def test_build_event_metadata_source_platform_explicit_wins() -> None:
-    """If a producer passes source_platform inside metadata, that value
-    wins over the parameter — supports edge cases where metadata is
-    pre-filled by an upstream layer."""
+def test_build_event_without_source_does_not_claim_exact_attribution() -> None:
+    event = build_event(event_type="view", source_platform="", title="未知来源")
+
+    assert event["source_platform"] == ""
+    assert event["source_confidence"] == "legacy_unknown"
+
+
+def test_build_event_top_level_source_platform_wins_over_metadata() -> None:
+    """The shared resolver uses one priority order at every ingestion layer."""
     event = build_event(
         event_type="view",
         source_platform=SOURCE_BILIBILI,
         title="...",
         metadata={"source_platform": "web"},
     )
-    assert event["metadata"]["source_platform"] == "web"
+    assert event["metadata"]["source_platform"] == SOURCE_BILIBILI
+    assert event["source_platform"] == SOURCE_BILIBILI
+
+
+def test_build_event_infers_url_before_legacy_fallback() -> None:
+    event = build_event(
+        event_type="view",
+        source_platform="",
+        legacy_platform=SOURCE_BILIBILI,
+        url="https://www.youtube.com/watch?v=video-42",
+        title="YouTube 视频",
+    )
+
+    assert event["source_platform"] == SOURCE_YOUTUBE
+    assert event["source_confidence"] == "inferred"
+
+
+def test_build_event_cannot_upgrade_url_inference_to_exact() -> None:
+    event = build_event(
+        event_type="view",
+        source_platform="",
+        source_confidence="exact",
+        url="https://x.com/example/status/123",
+        title="X 帖子",
+    )
+
+    assert event["source_platform"] == "twitter"
+    assert event["source_confidence"] == "inferred"
+
+
+def test_build_event_keeps_top_level_content_identity_in_sync() -> None:
+    event = build_event(
+        event_type="view",
+        source_platform=SOURCE_XIAOHONGSHU,
+        title="一条笔记",
+        metadata={"note_id": "note-42"},
+    )
+
+    assert event["content_id"] == "note-42"
+    assert event["metadata"]["note_id"] == "note-42"
 
 
 def test_build_event_adds_default_signal_strength_without_overriding_source_value() -> None:

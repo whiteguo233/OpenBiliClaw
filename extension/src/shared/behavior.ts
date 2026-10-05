@@ -20,6 +20,36 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
+/**
+ * Shared action-label guards for the platform adapters (#205).
+ *
+ * Click hints carry three surfaces: `textContent`, `aria-label`/`title`, and
+ * `className`. Video cards and containers put full copy into the first two
+ * and full video titles into the second, so keyword substring matching over
+ * unguarded surfaces turns ordinary card clicks into like/dislike signals.
+ * Every real control label on the Chinese platforms is tiny (不感兴趣 / 不喜欢 /
+ * 减少此类推荐 / 反对 all ≤ 6 chars), which is what ACTION_LABEL_MAX_CHARS is
+ * calibrated against. English-language platforms (YouTube, Reddit) use longer
+ * sentence-style aria-labels — use {@link matchesWord} there instead.
+ */
+export const ACTION_LABEL_MAX_CHARS = 8;
+
+export function shortActionLabel(value: string | null | undefined, maxChars: number = ACTION_LABEL_MAX_CHARS): string {
+  const text = normalizeText(value);
+  return text.length <= maxChars ? text : "";
+}
+
+/** Lowercased class tokens; prevents one long class string matching a keyword
+ *  as an incidental substring. */
+export function actionClassTokens(className: string): string[] {
+  return className.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** Whole-word match for English keywords ("like" must not hit "unlikely"). */
+export function matchesWord(text: string, word: string): boolean {
+  return new RegExp(`\\b${word}\\b`).test(text);
+}
+
 export function normalizeActionSignal(
   actionType: string,
   metadata: Record<string, unknown> = {},

@@ -125,6 +125,117 @@ test("Firefox manifest uses the project-owned AMO Gecko ID", () => {
   );
 });
 
+test("Safari manifest uses action popup instead of side panel", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(
+    readFileSync(join(root, "manifest.safari.json"), "utf8"),
+  ) as {
+    action?: { default_popup?: string };
+    permissions?: string[];
+    side_panel?: { default_path?: string };
+  };
+
+  assert.equal(manifest.permissions?.includes("sidePanel"), false);
+  assert.equal(manifest.permissions?.includes("notifications"), false);
+  assert.equal(manifest.side_panel, undefined);
+  assert.equal(manifest.action?.default_popup, "popup/popup.html");
+});
+
+test("Safari manifest keeps alarms/scripting and uses a service worker", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(
+    readFileSync(join(root, "manifest.safari.json"), "utf8"),
+  ) as {
+    permissions?: string[];
+    background?: { service_worker?: string; scripts?: string[] };
+    browser_specific_settings?: unknown;
+    content_scripts?: Array<{ world?: string }>;
+  };
+
+  assert.equal(manifest.permissions?.includes("alarms"), true);
+  assert.equal(manifest.permissions?.includes("scripting"), true);
+  assert.equal(manifest.permissions?.includes("cookies"), true);
+  assert.equal(manifest.background?.service_worker, "background/service-worker.js");
+  assert.equal(manifest.background?.scripts, undefined);
+  assert.equal(manifest.browser_specific_settings, undefined);
+  assert.equal(
+    manifest.content_scripts?.some((entry) => entry.world !== undefined),
+    false,
+  );
+});
+
+test("Safari manifest shares host-permission boundaries with Chrome/Firefox", () => {
+  const root = process.cwd();
+  const safari = JSON.parse(
+    readFileSync(join(root, "manifest.safari.json"), "utf8"),
+  ) as {
+    host_permissions?: string[];
+    optional_host_permissions?: string[];
+  };
+
+  assert.equal(safari.host_permissions?.includes("<all_urls>"), false);
+  assert.equal(safari.host_permissions?.includes("http://*/*"), false);
+  assert.equal(safari.host_permissions?.includes("https://*/*"), false);
+  assert.equal(safari.host_permissions?.includes("http://127.0.0.1/*"), true);
+  assert.equal(safari.host_permissions?.includes("http://localhost/*"), true);
+  assert.deepEqual(safari.optional_host_permissions, ["http://*/*", "https://*/*"]);
+  assert.equal(safari.host_permissions?.includes("*://*.bilibili.com/*"), true);
+});
+
+test("Safari manifest injects MAIN-world taps through a document_start bridge", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(
+    readFileSync(join(root, "manifest.safari.json"), "utf8"),
+  ) as {
+    content_scripts?: Array<{
+      matches?: string[];
+      js?: string[];
+      run_at?: string;
+      world?: string;
+    }>;
+    web_accessible_resources?: Array<{ resources?: string[]; matches?: string[] }>;
+  };
+
+  const mainContentScripts =
+    manifest.content_scripts?.filter((entry) =>
+      entry.js?.some((asset) => asset.startsWith("main/")),
+    ) ?? [];
+  assert.deepEqual(mainContentScripts, []);
+
+  const injector = manifest.content_scripts?.find((entry) =>
+    entry.js?.includes("content/safari-page-injector.js"),
+  );
+  assert.ok(injector, "missing Safari page-context injector content script");
+  assert.equal(injector.run_at, "document_start");
+  assert.equal(injector.world, undefined);
+  for (const host of [
+    "*://*.bilibili.com/*",
+    "*://*.xiaohongshu.com/*",
+    "*://*.douyin.com/*",
+    "*://*.x.com/*",
+    "*://*.twitter.com/*",
+    "*://*.bgm.tv/*",
+    "*://*.bangumi.tv/*",
+  ]) {
+    assert.ok(injector.matches?.includes(host), `injector missing match ${host}`);
+  }
+
+  const warResources = new Set(
+    (manifest.web_accessible_resources ?? []).flatMap((entry) => entry.resources ?? []),
+  );
+  for (const script of [
+    "main/bili-interact-tap.js",
+    "main/xhs-token-sniffer.js",
+    "main/xhs-state-bridge.js",
+    "main/xhs-action-tap.js",
+    "main/dy-fetch-tap.js",
+    "main/x-graphql-tap.js",
+    "main/bgm-identity-bridge.js",
+  ]) {
+    assert.ok(warResources.has(script), `missing Safari WAR resource ${script}`);
+  }
+});
+
 test("Chrome and Firefox manifests avoid all-sites host permission", () => {
   const root = process.cwd();
   const chromeManifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {

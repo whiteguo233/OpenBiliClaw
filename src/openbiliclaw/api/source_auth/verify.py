@@ -82,6 +82,7 @@ VERIFY_ACTIONS: dict[str, VerifyAction] = {
     # makes. With no token the probe returns ``has_credential=False`` and the
     # click resolves to ``indeterminate`` without going out.
     "bangumi": "live_probe",
+    "github": "live_probe",
     "linuxdo": "browser_heartbeat",
     "v2ex": "live_probe",
     "weibo": "browser_heartbeat",
@@ -591,6 +592,100 @@ async def _probe_bangumi(
     )
 
 
+async def _probe_github(
+    cfg: Config, probes: LiveProbeCache, *, cookie: str | None, record: bool
+) -> LiveProbeOutcome:
+    """Verify GitHub's optional PAT with the read-only ``GET /user`` endpoint."""
+
+    from openbiliclaw.api.source_auth.write import credential_fingerprint
+    from openbiliclaw.sources.github_client import (
+        GitHubAPIError,
+        GitHubClient,
+        github_user_id,
+        github_user_login,
+        resolve_github_access_token,
+    )
+
+    if cookie is None:
+        github_cfg = getattr(cfg.sources, "github", None)
+        cookie, _ = resolve_github_access_token(
+            config_token=str(getattr(github_cfg, "access_token", "") or ""),
+            token_env="OPENBILICLAW_GITHUB_TOKEN",
+        )
+    token = str(cookie or "").strip()
+    if not token:
+        if record:
+            probes.clear("github")
+        return LiveProbeOutcome(
+            slug="github",
+            has_credential=False,
+            authenticated=False,
+            network_error=False,
+            message=(
+                "GitHub 公开仓库来源无需 PAT；如需验证账号或提高 API 限额，请先配置可选 PAT。"
+            ),
+        )
+
+    fingerprint = credential_fingerprint("github", token)
+    try:
+        async with GitHubClient(token=token) as client:
+            payload = await client.get_user()
+        username = github_user_login(payload)
+        user_id = github_user_id(payload)
+    except GitHubAPIError as exc:
+        if exc.code == "unauthorized":
+            if record:
+                probes.record(
+                    "github",
+                    authenticated=False,
+                    detail=str(exc),
+                    network_error=False,
+                    fingerprint=fingerprint,
+                )
+            return LiveProbeOutcome(
+                slug="github",
+                has_credential=True,
+                authenticated=False,
+                network_error=False,
+                message="GitHub 拒绝了该 PAT（缺失、无效或已过期）。",
+            )
+        if record:
+            probes.record(
+                "github",
+                authenticated=False,
+                detail=str(exc),
+                network_error=True,
+                fingerprint=fingerprint,
+            )
+        return LiveProbeOutcome(
+            slug="github",
+            has_credential=True,
+            authenticated=False,
+            network_error=True,
+            message=f"GitHub PAT 验证未能完成（{exc}），暂时无法判定。",
+        )
+
+    if record:
+        probes.record(
+            "github",
+            authenticated=True,
+            detail=f"已识别 GitHub 账号（{username}）。",
+            network_error=False,
+            fingerprint=fingerprint,
+            username=username,
+            user_id=user_id,
+        )
+    return LiveProbeOutcome(
+        slug="github",
+        has_credential=True,
+        authenticated=True,
+        network_error=False,
+        message=f"GitHub PAT 有效，已识别账号（{username}）。",
+        username=username,
+        user_id=user_id,
+    )
+
+
 async def _probe_v2ex(
     cfg: Config, probes: LiveProbeCache, *, cookie: str | None, record: bool
 ) -> LiveProbeOutcome:
@@ -840,6 +935,8 @@ async def run_live_probe(
         )
     if slug == "bangumi":
         return await _probe_bangumi(cfg, probes, cookie=cookie, record=record)
+    if slug == "github":
+        return await _probe_github(cfg, probes, cookie=cookie, record=record)
     if slug == "v2ex":
         outcome = await _probe_v2ex(cfg, probes, cookie=cookie, record=record)
         token = str(cookie or "").strip()
@@ -1014,10 +1111,15 @@ async def verify_source(
     debounce.mark_started(slug)
     try:
         action = VERIFY_ACTIONS[slug]
+        probe_outcome: LiveProbeOutcome | None = None
         if action == "live_probe":
-            result = _action_from_probe(
-                await run_live_probe(slug, cfg=cfg, database=database, probes=probes)
+            probe_outcome = await run_live_probe(
+                slug,
+                cfg=cfg,
+                database=database,
+                probes=probes,
             )
+            result = _action_from_probe(probe_outcome)
         elif action == "passive_health":
             result = _ActionResult(
                 "该来源只能提供被动健康记录，当前没有可执行的主动验证。",
@@ -1035,6 +1137,16 @@ async def verify_source(
                 conclusive=False,
             )
 
+        if slug == "github" and probe_outcome is not None and probe_outcome.authenticated:
+            # A successful official GET /user supersedes a producer-side 401
+            # marker for the same configured PAT. Clear it before rebuilding
+            # the contract; otherwise the marker would override the fresh probe
+            # and make the recovery condition permanently unreachable.
+            from openbiliclaw.runtime.github_producer import (
+                clear_github_token_rejection,
+            )
+
+            clear_github_token_rejection(database)
         after = _contract_for(slug, cfg, database, probes)
         if action == "local_file":
             result = _verify_local_file(after)

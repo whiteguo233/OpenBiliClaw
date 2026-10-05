@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+import pytest
 
 from openbiliclaw.discovery.candidate_pool import (
     DiscoveryCandidateWrite,
@@ -127,7 +130,15 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
         "temporal_class": "versioned",
         "temporal_confidence": 0.84,
         "temporal_reason": "内容依赖产品版本",
-        "temporal_policy_version": "v1",
+        "temporal_policy_version": "v2",
+        "temporal_validity_mode": "version_state",
+        "temporal_valid_until": "",
+        "temporal_scope": "core",
+        "temporal_evidence": "产品版本",
+        "temporal_state": "active",
+        "temporal_next_review_at": "2026-12-10T00:00:00Z",
+        "temporal_evaluated_at": "2026-08-12T00:00:00Z",
+        "temporal_evidence_complete": 1,
     }
 
     item = row_to_discovered_content(row)
@@ -153,7 +164,15 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
     assert item.temporal_class == "versioned"
     assert item.temporal_confidence == 0.84
     assert item.temporal_reason == "内容依赖产品版本"
-    assert item.temporal_policy_version == "v1"
+    assert item.temporal_policy_version == "v2"
+    assert item.temporal_validity_mode == "version_state"
+    assert item.temporal_valid_until == ""
+    assert item.temporal_scope == "core"
+    assert item.temporal_evidence == "产品版本"
+    assert item.temporal_state == "active"
+    assert item.temporal_next_review_at == "2026-12-10T00:00:00Z"
+    assert item.temporal_evaluated_at == "2026-08-12T00:00:00Z"
+    assert item.temporal_evidence_complete is True
 
 
 def test_discovery_candidate_row_defaults_missing_platform_to_bilibili() -> None:
@@ -287,6 +306,645 @@ def test_terminal_candidate_rows_are_not_rewritten_by_stale_updates(tmp_path: Pa
     assert updated == 0
     assert final["status"] == "cached"
     assert final["eval_error"] == ""
+
+
+def test_malformed_rereview_preserves_due_v2_temporal_evidence(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVREVIEWV2",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVREVIEWV2",
+                title="这份教程所用产品版本 1.0 仍受支持",
+            )
+        ]
+    )
+    first_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(first_claim["id"])
+    old_evidence = {
+        "candidate_id": candidate_id,
+        "status": "evaluated",
+        "relevance_score": 0.9,
+        "temporal_class": "versioned",
+        "temporal_confidence": 0.95,
+        "temporal_reason": "核心步骤依赖该产品版本",
+        "temporal_policy_version": "v2",
+        "temporal_validity_mode": "version_state",
+        "temporal_valid_until": "",
+        "temporal_scope": "core",
+        "temporal_state": "active",
+        "temporal_evidence": "产品版本 1.0 仍受支持",
+        "temporal_next_review_at": "2000-05-01T00:00:00Z",
+        "temporal_evaluated_at": "2000-01-01T00:00:00Z",
+        "temporal_evidence_complete": 1,
+    }
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [old_evidence],
+        claim_token=str(first_claim["claim_token"]),
+    ) == {candidate_id}
+    assert db.count_discovery_candidates_by_status()["pending_eval"] == 1
+
+    assert db.claim_discovery_candidates_for_eval(limit=1) == []
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    second_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    # Simulate a slow model call that outlives the lease created at claim.
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    malformed_review = {
+        "candidate_id": candidate_id,
+        "status": "evaluated",
+        "relevance_score": 0.93,
+        "temporal_class": "versioned",
+        "temporal_confidence": 0.95,
+        "temporal_reason": "",
+        "temporal_policy_version": "v2",
+        "temporal_validity_mode": "version_state",
+        "temporal_valid_until": "",
+        "temporal_scope": "core",
+        "temporal_state": "active",
+        "temporal_evidence": "产品版本 1.0 仍受支持",
+        "temporal_next_review_at": "",
+        "temporal_evaluated_at": "",
+        "temporal_evidence_complete": 0,
+    }
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [malformed_review],
+        claim_token=str(second_claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        """
+        SELECT status, eval_error, relevance_score, temporal_class,
+               temporal_policy_version, temporal_validity_mode,
+               temporal_state, temporal_evidence, temporal_next_review_at,
+               temporal_evaluated_at, temporal_evidence_complete,
+               temporal_review_attempts, temporal_review_retry_at
+        FROM discovery_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    assert stored["status"] == "pending_eval"
+    assert str(stored["eval_error"]).startswith("temporal_review_due:")
+    assert stored["relevance_score"] == 0.93
+    assert stored["temporal_class"] == "versioned"
+    assert stored["temporal_policy_version"] == "v2"
+    assert stored["temporal_validity_mode"] == "version_state"
+    assert stored["temporal_state"] == "active"
+    assert stored["temporal_evidence"] == "产品版本 1.0 仍受支持"
+    assert stored["temporal_next_review_at"] == "2000-03-01T00:00:00Z"
+    assert stored["temporal_evaluated_at"] == "2000-01-01T00:00:00Z"
+    assert stored["temporal_evidence_complete"] == 1
+    assert stored["temporal_review_attempts"] == 2
+    assert stored["temporal_review_retry_at"]
+    assert db.get_evaluated_discovery_candidates_for_admission(limit=10) == []
+    assert db.count_discovery_candidates_by_status()["pending_eval_ready"] == 0
+    assert db.claim_discovery_candidates_for_eval(limit=1) == []
+    assert db.count_pool_raw_material_candidates() == 0
+
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    retry_claim = db.claim_discovery_candidates_for_eval(limit=1)
+    assert [int(row["id"]) for row in retry_claim] == [candidate_id]
+    assert int(retry_claim[0]["temporal_review_attempts"]) == 3
+    assert retry_claim[0]["temporal_review_retry_at"]
+
+
+def test_temporal_review_release_and_orphan_reset_preserve_retry_lease(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVREVIEWRELEASE",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVREVIEWRELEASE",
+                title="复审失败退避",
+            )
+        ]
+    )
+    candidate_id = int(
+        db.conn.execute(
+            "SELECT id FROM discovery_candidates WHERE candidate_key = ?",
+            ("bilibili:BVREVIEWRELEASE",),
+        ).fetchone()["id"]
+    )
+    db.conn.execute(
+        """
+        UPDATE discovery_candidates
+        SET eval_error = 'temporal_review_due:class=current',
+            temporal_review_attempts = 1,
+            temporal_review_retry_at = '2000-01-01T00:00:00Z'
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    )
+    db.conn.commit()
+
+    first_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    assert first_claim["temporal_review_attempts"] == 2
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    assert (
+        db.reset_claimed_discovery_candidates_to_pending(
+            [candidate_id],
+            claim_token=str(first_claim["claim_token"]),
+            reason="evaluation_response_missing",
+            increment_attempts=False,
+        )
+        == 1
+    )
+    released = db.conn.execute(
+        "SELECT status, eval_error, temporal_review_retry_at "
+        "FROM discovery_candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    assert released["status"] == "pending_eval"
+    assert str(released["eval_error"]).startswith("temporal_review_due:")
+    assert released["temporal_review_retry_at"]
+    assert db.claim_discovery_candidates_for_eval(limit=1) == []
+
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    second_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    assert second_claim["temporal_review_attempts"] == 3
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    assert db.reset_stale_discovery_candidate_evaluations(max_age_minutes=0) == 1
+    orphaned = db.conn.execute(
+        "SELECT status, eval_error, temporal_review_retry_at "
+        "FROM discovery_candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    assert orphaned["status"] == "pending_eval"
+    assert str(orphaned["eval_error"]).startswith("temporal_review_due:")
+    assert orphaned["temporal_review_retry_at"]
+    assert db.claim_discovery_candidates_for_eval(limit=1) == []
+
+
+def test_neutral_rereview_preserves_due_v1_temporal_evidence(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVREVIEWV1",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVREVIEWV1",
+                title="旧的突发内容",
+                published_at="2000-01-01T00:00:00Z",
+            )
+        ]
+    )
+    db.conn.execute(
+        """
+        UPDATE discovery_candidates
+        SET temporal_class = 'breaking',
+            temporal_confidence = 0.95,
+            temporal_reason = 'legacy classified evidence',
+            temporal_policy_version = 'v1'
+        WHERE candidate_key = 'bilibili:BVREVIEWV1'
+        """
+    )
+    db.conn.commit()
+    claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(claim["id"])
+
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.91,
+                "temporal_class": "unknown",
+                "temporal_confidence": 0.0,
+                "temporal_reason": "",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2001-01-01T00:00:00Z",
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        """
+        SELECT status, eval_error, temporal_class, temporal_confidence,
+               temporal_reason, temporal_policy_version
+        FROM discovery_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    assert stored["status"] == "pending_eval"
+    assert str(stored["eval_error"]).startswith("temporal_review_due:")
+    assert stored["temporal_class"] == "breaking"
+    assert stored["temporal_confidence"] == 0.95
+    assert stored["temporal_reason"] == "legacy classified evidence"
+    assert stored["temporal_policy_version"] == "v1"
+
+
+def test_ungrounded_terminal_rereview_cannot_replace_due_grounded_evidence(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVREVIEWUNGROUNDED",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVREVIEWUNGROUNDED",
+                title="这份教程所用产品版本 1.0 仍受支持",
+            )
+        ]
+    )
+    first_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(first_claim["id"])
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.9,
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心步骤依赖该产品版本",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "产品版本 1.0 仍受支持",
+                "temporal_next_review_at": "2000-05-01T00:00:00Z",
+                "temporal_evaluated_at": "2000-01-01T00:00:00Z",
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(first_claim["claim_token"]),
+    ) == {candidate_id}
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    review_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "rejected_temporal_stale",
+                "relevance_score": 0.94,
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.96,
+                "temporal_reason": "活动状态已经失效",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "event_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "expired",
+                # The excerpt is not present in this candidate's visible text.
+                "temporal_evidence": "活动已经结束",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": datetime.now(UTC).isoformat(),
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(review_claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        """
+        SELECT status, temporal_class, temporal_validity_mode, temporal_state,
+               temporal_evidence, temporal_evidence_complete
+        FROM discovery_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    assert stored["status"] == "pending_eval"
+    assert stored["temporal_class"] == "versioned"
+    assert stored["temporal_validity_mode"] == "version_state"
+    assert stored["temporal_state"] == "active"
+    assert stored["temporal_evidence"] == "产品版本 1.0 仍受支持"
+    assert stored["temporal_evidence_complete"] == 1
+    assert db.get_evaluated_discovery_candidates_for_admission(limit=10) == []
+
+
+@pytest.mark.parametrize(
+    "rereview_kind",
+    ["low_confidence", "hook_only", "ungrounded_freshness", "conditional_active"],
+)
+def test_weak_rereview_cannot_replace_due_candidate_evidence(
+    tmp_path: Path,
+    rereview_kind: str,
+) -> None:
+    db = Database(tmp_path / f"candidate-weak-{rereview_kind}.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVWEAKCANDIDATE",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVWEAKCANDIDATE",
+                title=(
+                    "活动仍在进行，报名入口仍然开放；标题写着今天最新；"
+                    "如果支持版本发生变化，本文的迁移命令和字段契约就必须重新核验"
+                ),
+            )
+        ]
+    )
+    first_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(first_claim["id"])
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.9,
+                "temporal_class": "current",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心状态需要复审",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "event_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "活动仍在进行，报名入口仍然开放",
+                "temporal_next_review_at": "2000-01-15T00:00:00Z",
+                "temporal_evaluated_at": "2000-01-01T00:00:00Z",
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(first_claim["claim_token"]),
+    ) == {candidate_id}
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    review_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    if rereview_kind == "low_confidence":
+        rereview = {
+            "temporal_class": "evergreen",
+            "temporal_confidence": 0.10,
+            "temporal_reason": "方法本身长期有效",
+            "temporal_validity_mode": "none",
+            "temporal_valid_until": "",
+            "temporal_scope": "none",
+            "temporal_state": "unknown",
+            "temporal_evidence": "",
+        }
+    elif rereview_kind == "hook_only":
+        rereview = {
+            "temporal_class": "current",
+            "temporal_confidence": 0.95,
+            "temporal_reason": "只有标题钩子依赖新鲜度",
+            "temporal_validity_mode": "freshness_only",
+            "temporal_valid_until": "",
+            "temporal_scope": "hook",
+            "temporal_state": "unknown",
+            "temporal_evidence": "标题写着今天最新",
+        }
+    elif rereview_kind == "ungrounded_freshness":
+        rereview = {
+            "temporal_class": "current",
+            "temporal_confidence": 0.95,
+            "temporal_reason": "价格依赖今天的状态",
+            "temporal_validity_mode": "freshness_only",
+            "temporal_valid_until": "",
+            "temporal_scope": "core",
+            "temporal_state": "unknown",
+            "temporal_evidence": "正文不存在的今日价格",
+        }
+    else:
+        rereview = {
+            "temporal_class": "versioned",
+            "temporal_confidence": 0.95,
+            "temporal_reason": "版本变化后需要重新核验",
+            "temporal_validity_mode": "version_state",
+            "temporal_valid_until": "",
+            "temporal_scope": "core",
+            "temporal_state": "active",
+            "temporal_evidence": ("如果支持版本发生变化，本文的迁移命令和字段契约就必须重新核验"),
+        }
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.94,
+                "temporal_policy_version": "v2",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": datetime.now(UTC).isoformat(),
+                "temporal_evidence_complete": 1,
+                **rereview,
+            }
+        ],
+        claim_token=str(review_claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        "SELECT status, temporal_class, temporal_scope, temporal_evidence "
+        "FROM discovery_candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    assert dict(stored) == {
+        "status": "pending_eval",
+        "temporal_class": "current",
+        "temporal_scope": "core",
+        "temporal_evidence": "活动仍在进行，报名入口仍然开放",
+    }
+    assert db.get_evaluated_discovery_candidates_for_admission(limit=10) == []
+
+
+def test_valid_v2_rereview_replaces_old_due_temporal_evidence(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVREVIEWFRESH",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVREVIEWFRESH",
+                title="这份教程所用产品版本 1.0 仍受支持",
+            )
+        ]
+    )
+    first_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(first_claim["id"])
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.9,
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心步骤依赖该产品版本",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "产品版本 1.0 仍受支持",
+                "temporal_next_review_at": "2000-05-01T00:00:00Z",
+                "temporal_evaluated_at": "2000-01-01T00:00:00Z",
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(first_claim["claim_token"]),
+    ) == {candidate_id}
+    assert db.claim_discovery_candidates_for_eval(limit=1) == []
+    db.conn.execute(
+        "UPDATE discovery_candidates SET temporal_review_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00Z", candidate_id),
+    )
+    db.conn.commit()
+    second_claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "evaluated",
+                "relevance_score": 0.94,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.92,
+                "temporal_reason": "核心方法不依赖当前版本",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2001-01-01T00:00:00Z",
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(second_claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        """
+        SELECT status, eval_error, temporal_class, temporal_confidence,
+               temporal_reason, temporal_policy_version,
+               temporal_validity_mode, temporal_evidence_complete
+        FROM discovery_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    assert stored["status"] == "evaluated"
+    assert stored["eval_error"] == ""
+    assert stored["temporal_class"] == "evergreen"
+    assert stored["temporal_confidence"] == 0.92
+    assert stored["temporal_reason"] == "核心方法不依赖当前版本"
+    assert stored["temporal_policy_version"] == "v2"
+    assert stored["temporal_validity_mode"] == "none"
+    assert stored["temporal_evidence_complete"] == 1
+    admitted = db.get_evaluated_discovery_candidates_for_admission(limit=10)
+    assert [row["id"] for row in admitted] == [candidate_id]
+
+
+def test_candidate_sink_grounds_terminal_evidence_before_status_decision(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVUNGROUNDED",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVUNGROUNDED",
+                title="普通教程正文，没有活动状态声明",
+                description=("甲" * 401) + "活动已经结束",
+            )
+        ]
+    )
+    claim = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    candidate_id = int(claim["id"])
+
+    assert db.persist_claimed_discovery_candidate_evaluations(
+        [
+            {
+                "candidate_id": candidate_id,
+                "status": "rejected_temporal_stale",
+                "eval_error": "caller asserted stale",
+                "relevance_score": 0.94,
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.96,
+                "temporal_reason": "声称活动已经结束",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "event_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "expired",
+                "temporal_evidence": "活动已经结束",
+                "temporal_next_review_at": "2099-01-01T00:00:00Z",
+                "temporal_evaluated_at": datetime.now(UTC).isoformat(),
+                "temporal_evidence_complete": 1,
+            }
+        ],
+        claim_token=str(claim["claim_token"]),
+    ) == {candidate_id}
+
+    stored = db.conn.execute(
+        """
+        SELECT status, eval_error, temporal_class, temporal_validity_mode,
+               temporal_state, temporal_next_review_at,
+               temporal_evidence_complete
+        FROM discovery_candidates
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    assert stored["status"] == "evaluated"
+    assert stored["eval_error"] == ""
+    assert stored["temporal_class"] == "breaking"
+    assert stored["temporal_validity_mode"] == "freshness_only"
+    assert stored["temporal_state"] == "unknown"
+    assert stored["temporal_next_review_at"] != "2099-01-01T00:00:00Z"
+    assert stored["temporal_evidence_complete"] == 1
 
 
 def test_enqueue_discovery_candidates_can_bound_pending_rows_per_source(

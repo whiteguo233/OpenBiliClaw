@@ -29,7 +29,7 @@ test("buildBiliTaskUrl encodes keyword search URL with page metadata", () => {
 
   assert.equal(
     buildBiliTaskUrl(task),
-    "https://search.bilibili.com/all?keyword=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98%20%E5%A3%B0%E9%9F%B3&page=2",
+    "https://search.bilibili.com/all?keyword=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98%20%E5%A3%B0%E9%9F%B3&page=2&openbiliclaw_bili_task=1",
   );
 });
 
@@ -47,7 +47,20 @@ test("buildBiliTaskUrl carries the bounded recent-lane sort", () => {
       order: "pubdate",
       discovery_lane: "recent",
     }),
-    "https://search.bilibili.com/all?keyword=%E5%A4%A7%E6%A8%A1%E5%9E%8B&order=pubdate",
+    "https://search.bilibili.com/all?keyword=%E5%A4%A7%E6%A8%A1%E5%9E%8B&order=pubdate&openbiliclaw_bili_task=1",
+  );
+});
+
+test("buildBiliTaskUrl carries strict publication timestamp bounds", () => {
+  assert.equal(
+    buildBiliTaskUrl({
+      id: "x",
+      type: "search",
+      query: "猫",
+      pubtime_begin: 1704067200,
+      pubtime_end: 1735689599,
+    }),
+    "https://search.bilibili.com/all?keyword=%E7%8C%AB&pubtime_begin=1704067200&pubtime_end=1735689599&openbiliclaw_bili_task=1",
   );
 });
 
@@ -72,6 +85,10 @@ test("isValidBiliTask rejects malformed payloads", () => {
   assert.equal(isValidBiliTask({ id: "x", type: "search", query: "猫", limit: 0 }), false);
   assert.equal(isValidBiliTask({ id: "x", type: "search", query: "猫", order: "click" }), false);
   assert.equal(isValidBiliTask({ id: "x", type: "creator", query: "猫" }), false);
+  assert.equal(
+    isValidBiliTask({ id: "x", type: "search", query: "猫", pubtime_begin: -1 }),
+    false,
+  );
 });
 
 test("computeBiliTaskTimeoutMs gives rendered search pages enough time", () => {
@@ -113,6 +130,7 @@ interface ChromeMock {
   tabs: {
     create: (opts: { url: string; active?: boolean }) => Promise<{ id: number }>;
     get: (tabId: number) => Promise<{ id: number; status?: string }>;
+    update: (tabId: number, opts: { muted?: boolean }) => Promise<void>;
     remove: (tabId: number) => Promise<void>;
     sendMessage: (tabId: number, message: unknown) => Promise<void>;
     onUpdated: {
@@ -131,6 +149,7 @@ interface MockState {
   sendMessageImpl: (tabId: number, message: unknown) => Promise<void>;
   fetchCalls: { url: string; body?: unknown }[];
   removedTabs: number[];
+  updatedTabs: { tabId: number; muted?: boolean }[];
   tabStatus: string;
 }
 
@@ -141,6 +160,7 @@ function installChromeMock(): MockState {
     sendMessageImpl: async () => {},
     fetchCalls: [],
     removedTabs: [],
+    updatedTabs: [],
     tabStatus: "loading",
   };
 
@@ -152,6 +172,9 @@ function installChromeMock(): MockState {
         return { id: 42 };
       },
       get: async (tabId) => ({ id: tabId, status: state.tabStatus }),
+      update: async (tabId, opts) => {
+        state.updatedTabs.push({ tabId, ...opts });
+      },
       remove: async (tabId) => {
         state.removedTabs.push(tabId);
       },
@@ -209,6 +232,8 @@ test("executeTask retries Bili sendMessage until the content script listener is 
 
   const task: BiliTask = { id: "bili-retry", type: "search", query: "机械键盘 声音" };
   await executeTask(task);
+
+  assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }], "task tab is muted before execution");
 
   state.tabStatus = "complete";
   chrome.tabs.onUpdated._emit(42, { status: "complete" });

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from openbiliclaw.api import app as app_module
 from openbiliclaw.api.app import create_app
+from openbiliclaw.llm.service import LLMProviderExecutionError
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
@@ -43,6 +44,29 @@ class BlockingDialogue:
     async def unblock(self) -> None:
         assert self._release is not None
         self._release.set()
+
+
+class NoProviderDialogue:
+    """Dialogue stub whose every respond fails with an empty-chain error.
+
+    Mirrors issue #213: the resolved module route references no registered
+    instance, so ``complete_with_core_memory`` fails fast before any HTTP
+    attempt with a classified ``no_provider`` failure.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def respond(
+        self,
+        _message: str,
+        *,
+        scope: str = "chat",
+        turn_id: str = "",
+    ) -> str:
+        del scope, turn_id
+        self.calls += 1
+        raise LLMProviderExecutionError("No provider was available to process the request.")
 
 
 def _database(tmp_path: Path) -> Database:
@@ -106,6 +130,56 @@ def test_post_returns_pending_immediately_and_get_dedupes_wake(tmp_path: Path) -
         assert completed["status"] == "completed"
         assert completed["reply"] == "后台回复完成"
         assert dialogue.calls == 1
+
+
+def test_persistent_no_provider_turn_fails_visibly_instead_of_waiting_forever(
+    tmp_path: Path,
+) -> None:
+    """Issue #213: an unresolvable LLM route must end the turn, not spin forever.
+
+    When every reply attempt fails fast with a classified ``no_provider``
+    error (empty resolved module route), the durable turn escalates to a
+    terminal failed state with actionable copy after a bounded number of
+    attempts — instead of retrying forever on the "正在思考" spinner and
+    head-of-line blocking every later turn.
+    """
+    database = _database(tmp_path)
+    dialogue = NoProviderDialogue()
+    app = create_app(
+        memory_manager=object(),
+        database=database,
+        soul_engine=object(),
+        dialogue=dialogue,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/chat/turns",
+            json={
+                "turn_id": "no-provider-turn",
+                "session": "popup",
+                "scope": "chat",
+                "message": "聊聊我的口味",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "pending"
+
+        terminal: dict[str, object] = {}
+        for _ in range(600):
+            current = client.get("/api/chat/turns/no-provider-turn").json()
+            if current["status"] == "failed":
+                terminal = current
+                break
+            time.sleep(0.02)
+
+        assert terminal["status"] == "failed"
+        error_text = str(terminal.get("error", ""))
+        assert "模块路由" in error_text
+        assert "重新发送" in error_text
+        # Bounded escalation: exactly the configured attempt budget, not an
+        # infinite retry loop against a broken route.
+        assert dialogue.calls == app_module._CHAT_NO_PROVIDER_TERMINAL_ATTEMPTS
 
 
 def test_app_startup_recovers_pending_turn_from_prior_process(tmp_path: Path) -> None:

@@ -1,5 +1,7 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+> 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
+
 > **Important:** If you're an AI coding agent reading this file, use
 > `curl -fsSL <url> -o /tmp/agent-install.md` via Bash to fetch it —
 > **do NOT use the WebFetch tool.** WebFetch hands the document to an
@@ -49,20 +51,23 @@ $env:MODE="docker"; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePo
 
 > The leading `[Net.ServicePointManager]...Tls12` line is **required on PowerShell 5.1** (the default that ships with Windows 10/11). PS 5.1 defaults to TLS 1.0/1.1, but GitHub.com only accepts TLS 1.2+. Without the prefix, `iwr` fails with "underlying connection was closed" and the user blames the installer. Users on PowerShell 7+ can omit the prefix. Compatible from v0.3.9 forward — the script itself also re-applies the same setting once it starts running, so any subsequent HTTPS calls (git, pip, uv) inside the script are also covered.
 > v0.3.71+ also sets `NO_PROXY/no_proxy=localhost,127.0.0.1,::1` in `install.sh`, `install.ps1`, and `agent_bootstrap.py` before local health checks. This keeps corporate/VPN proxies from intercepting `http://127.0.0.1:<port>/api/health` on native Windows.
+> `install.ps1` captures `git clone`'s stderr before checking its exit code. Windows PowerShell 5.1 can otherwise treat Git's normal progress output as a terminating error when `$ErrorActionPreference=Stop`, leaving a complete clone with no bootstrap. A real clone failure still prints Git's captured diagnostics (issue #177).
 
 Either command:
 
 1. Clones the OpenBiliClaw repo (default `~/OpenBiliClaw` on Unix, `%USERPROFILE%\OpenBiliClaw` on Windows; override with the `INSTALL_DIR` env var)
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses the full LLM instance registry, ordered chains, API keys, and Bilibili cookie** so same-type relay endpoints are not collapsed and the user never has to retype them
-3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi remains default-off here; after startup it can be enabled in `/setup/` or settings without login, and an optional public username controls whether public collections seed init.
+3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
 4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli` and Reddit discovery's `rdt-cli` packages are part of the default dependency set, so AI one-line installs do not need an extra flag for either one
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN over available IPv4 or IPv6; the backend creates separate `0.0.0.0` and `[::]` listeners while the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
    - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
+   - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and enable `openbiliclaw set-password` as defense in depth. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
    - **Optional public-domain HTTPS**: the installer intentionally keeps the default HTTP deployment. If the user explicitly asks for public HTTPS and already controls a DNS name pointing to the Docker host, use Compose `2.24.4+`, download / use `docker-compose.https.yml`, set `OPENBILICLAW_DOMAIN=<dns-name>`, and layer it over the selected source or prebuilt compose. Confirm TCP 80/443 reachability, then enable `set-password` and the remote extension `ext-key` flow and restart backend + Caddy; never expose bare `8420` publicly. The overlay pins Caddy, persists certificates, restricts `8420` to host loopback, and waits without binding public ports until `/api/auth/status` reports the password gate enabled. Follow [`docs/https-deployment.md`](https-deployment.md) exactly.
    - **Optional LAN/self-managed HTTPS**: the installer intentionally leaves the TLS proxy disabled and does not add the local-mode `[tls]` extra. Only enable it after asking which exact IP/hostname clients will use. Local source installs run `uv sync --extra tls`, then `uv run openbiliclaw tls-proxy enable --san <IP_OR_HOST>` and start with `uv run openbiliclaw serve-api`. Source Docker installs set comma-separated `OPENBILICLAW_TLS_SAN_NAMES` before `docker compose --profile tls up -d --build`. No remote SAN means localhost-only; this is not a public-Internet production proxy. Do not combine it with the public Caddy overlay. Follow [`docs/https-deployment.md`](https-deployment.md).
 6. Verifies the configured global LLM instance chain and embedding service with real lightweight calls before init; any healthy chat instance satisfies the chain check, while embedding remains an independent check. If either service is unavailable, bootstrap blocks init with `status=service_check_failed`.
    - The chat probe explicitly disables DeepSeek thinking. Every Ollama chat instance requires an explicit `model`; a Base URL or embedding-only `bge-m3` config never implies `llama3`.
+   - When a non-DeepSeek provider is selected, bootstrap automatically disables the shipped empty-key DeepSeek template instance and removes it from `default_chain`; a DeepSeek instance with a configured key remains available as a fallback.
 7. Automatically runs init after credentials, confirmations, and AI service checks are complete, then prints a self-contained **status block** at the very end of stdout:
 
 ```
@@ -124,7 +129,7 @@ re-run the printed `agent_bootstrap.py` command with explicit
 ### After init succeeds — relay the per-source signal counts
 
 When `openbiliclaw init` finishes, the CLI prints a "初始化摘要" key-
-value table with explicit B 站 + 小红书 + 抖音 + YouTube breakdowns. The
+value table with explicit per-source breakdowns. The
 agent **must summarise these numbers in the user-facing reply** so
 the user knows what fed their soul profile. Render approximately:
 
@@ -134,6 +139,7 @@ the user knows what fed their soul profile. Render approximately:
 >   - 🎵 抖音:发布 A 条 / 收藏 B 条 / 点赞 C 条 / 关注 D 人 → **入库 E 条事件**
 >   - 🌐 YouTube:观看历史 H 条 / 订阅 S 个 / 点赞 L 条 → **入库 T 条事件**
 >   - 📚 Bangumi:想看/想读/想玩 W 条 / 看过/读过/玩过 D 条 / 在看/在读/在玩 G 条 → **入库 U 条事件**（仅在本轮选择并填写公开用户名时）
+>   - 🐙 GitHub:公开 starred repositories V 条 → **入库 J 条 favorite 事件**（仅在本轮选择并解析出公开用户名时；PAT 可选）
 >   - 📊 画像建模总事件:Z 条
 >   - 🔍 首轮发现内容池:D 条
 > 现在可以打开扩展 popup 看推荐了。」
@@ -278,7 +284,7 @@ questions, then re-run bootstrap with those flags.
 
 v0.3.95+ embedding safety net (`should_auto_wire_embedding`): when
 `[llm.embedding].provider` would otherwise stay empty — e.g. the chat
-provider is Claude / DeepSeek / OpenRouter (which can't embed) and you
+provider is Claude / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference (which can't embed) and you
 never passed `--embedding-provider` — bootstrap auto-writes
 `provider=ollama, model=bge-m3` and pulls the model, so semantic dedup
 isn't silently disabled (the symptom is recommendations repeating
@@ -296,7 +302,7 @@ Tell the user, in plain Chinese (or the conversation's language):
 
 > 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
 
-Present **seven top-level options**. Keep Base URL / model-name details
+Present **ten top-level options**. Keep Base URL / model-name details
 inside option 2's submenu; do not ask those advanced fields unless the
 user chooses an OpenAI-compatible gateway / preset path.
 
@@ -305,18 +311,26 @@ user chooses an OpenAI-compatible gateway / preset path.
 | 选项 | 默认模型 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
 |---|---|---|---|---|
 | 1. **DeepSeek** ★第一推荐(极便宜 / 国内可直连) | `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat`/`deepseek-reasoner` **2026/07/24 弃用**) | 想几毛钱体验完整功能 | ✅ 需要 | ¥0.001 / 千 token,几乎免费 |
-| 2. **★ 中转站 / OpenAI 协议兼容服务** ★第二推荐 | 选 preset 后自动填 | **国内买中转站 / OneAPI Key 的人走这个**;也覆盖 Kimi / MiniMax / 通义 / 智谱 / Yi 官方 + Azure / vLLM / LMStudio | 看服务 | 看服务 |
+| 2. **★ 中转站 / OpenAI 协议兼容服务** ★第二推荐 | 选 preset 后自动填 | **国内买中转站 / OneAPI Key 的人走这个**;也覆盖 Kimi / MiniMax / 通义 / 智谱 / 商汤日日新 / Yi 官方 + Azure / vLLM / LMStudio | 看服务 | 看服务(日日新 / 智谱 GLM-4.7-Flash 有免费额度) |
 | 3. **OpenAI 官方** | `gpt-5-nano`(最便宜的 GPT-5;可选 gpt-5.4-nano / -mini / gpt-5.5 旗舰) | 已有 sk- 开头 Key | ✅ 需要 | $0.05/M(nano) ~ $30/M(5.5-pro) |
 | 4. **Gemini 官方** | `gemini-2.5-flash`(稳定;可选 gemini-3-flash-preview / gemini-3.1-pro-preview 旗舰 Public Preview 需付费项目) | Google AI Studio 申请 Key | ✅ 需要 | 免费档每天 1500 次 |
 | 5. **Claude 官方** | `claude-sonnet-4-6`(1M ctx;可选 claude-haiku-4-5 便宜 / claude-opus-4-7 旗舰) | Anthropic console | ✅ 需要 | $3-$75/M,按 token,质量高 |
 | 6. **OpenRouter** | `openai/gpt-5-nano`(格式 `<vendor>/<model>`) | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
-| 7. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | `qwen2.5:7b`(中文好;可选 llama3.2 / gemma2 / mistral / deepseek-r1) | 16GB+ 内存,能接受 1–3 分钟首次响应 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
+| 7. **OrcaRouter** | `openai/gpt-4o`(格式 `<vendor>/<model>`) | 一个 Key 跑 150+ 模型 / 网关级零信任安全 | ✅ 需要 | 按调用计费 |
+| 8. **Requesty** | `openai/gpt-4o-mini`(格式 `<vendor>/<model>`) | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+| 9. **API Route** | `gpt-5.5` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+| 10. **Cheaper Inference** | `gpt-5.4-mini` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+
+> **本地 Ollama 不在聊天 provider 菜单里**（v0.3.176+）：随装的 Ollama 只带
+> embedding 模型 `bge-m3`，小体积本地聊天模型达不到内容管线质量线。需要本地
+> 聊天模型时到桌面设置页手动配置，或显式 `--provider ollama --llm-model qwen2.5:7b`
+> 走完全离线路径（见下方「Hardware caveat for local Ollama」）。
 
 > ⚠️ **不要把选项 3 (OpenAI 官方) 和选项 2 (协议兼容) 混淆**:走 OpenAI API 官方端点选 3;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 2。
 
-**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;Ollama 仅在用户明确要求"本地 / 离线"时引导。
+**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;用户提到"OrcaRouter / 一个 Key 跑多家模型 + 安全网关"→ 引导 #7;用户提到"Requesty"→ 引导 #8；用户提到"API Route"→ 引导 #9；用户提到"Cheaper Inference"→ 引导 #10；Ollama 仅在用户明确要求"本地 / 离线"时用显式 `--provider ollama` 走离线路径。
 
-**选项 2 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 9 个 preset 中,**第 1 个就是中转站(默认)**:
+**选项 2 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 10 个 preset 中,**第 1 个就是中转站(默认)**:
 
 | 子菜单# | 服务 | Base URL | 默认模型 / 备选 |
 |---|---|---|---|
@@ -325,14 +339,15 @@ user chooses an OpenAI-compatible gateway / preset path.
 | 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M2.7`(4/2026 / 228K ctx / $0.30 ~ $1.20 per M) |
 | 4 | **通义千问 (阿里 DashScope) 官方** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`(自动跟最新快照,当前 → qwen3.6-plus) / `qwen-flash`(便宜) / `qwen-max`(旗舰) |
 | 5 | **智谱 ChatGLM 官方** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash`(1/2026 免费 / 200K ctx) / `glm-5`(2/2026 付费旗舰 / 745B MoE)。注意 base_url 用 `/api/paas/v4` 不是 `/v1` |
-| 6 | **零一万物 (Yi) 官方** | `https://api.lingyiwanwu.com/v1` | `yi-medium` / `yi-spark`(便宜) / `yi-lightning`(快) / `yi-large`(旗舰) |
-| 7 | **Azure OpenAI** | `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT` | 用户自填 deployment name(不是底层 gpt-5) |
-| 8 | **自建 vLLM / LMStudio / Ollama 网关** | `http://localhost:8000/v1` | 用户自填 HuggingFace 路径(如 `meta-llama/Llama-3.3-70B-Instruct`) |
-| 9 | **其它(完全手填)** | 用户自填 | 用户自填 |
+| 6 | **商汤日日新 (SenseNova) 官方** | `https://token.sensenova.cn/v1` | `deepseek-v4-flash`(已实测连通)。新用户免费额度，可零成本体验本项目(issue #193)；其它可用模型以控制台清单为准。token 端点未验证 embedding，Phase 3 默认推荐独立 Ollama bge-m3 |
+| 7 | **零一万物 (Yi) 官方** | `https://api.lingyiwanwu.com/v1` | `yi-medium` / `yi-spark`(便宜) / `yi-lightning`(快) / `yi-large`(旗舰) |
+| 8 | **Azure OpenAI** | `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT` | 用户自填 deployment name(不是底层 gpt-5) |
+| 9 | **自建 vLLM / LMStudio / Ollama 网关** | `http://localhost:8000/v1` | 用户自填 HuggingFace 路径(如 `meta-llama/Llama-3.3-70B-Instruct`) |
+| 10 | **其它(完全手填)** | 用户自填 | 用户自填 |
 
 > 💡 **AI agent 注意**:
 > - 用户说"我有中转站 / OneAPI / 团队网关 / 公司给的 Key"等(国内最常见)→ 选项 2 子菜单 #1 (relay)
-> - 用户说"我有 Kimi / 通义 / 智谱 / Yi / Moonshot / MiniMax / Qwen / GLM 官方 Key" → 选项 2 子菜单 #2-6 对应 preset
+> - 用户说"我有 Kimi / 通义 / 智谱 / 商汤日日新 / Yi / Moonshot / MiniMax / Qwen / GLM / SenseNova 官方 Key" → 选项 2 子菜单 #2-7 对应 preset
 > - 用户说"Azure OpenAI / 公司 Azure 部署" → 子菜单 #7 (azure)
 > - 用户说"自己跑的 vLLM / LMStudio / Ollama OpenAI 兼容 shim" → 子菜单 #8 (self-hosted)
 >
@@ -372,7 +387,7 @@ python3 scripts/agent_bootstrap.py --llm-preset self-hosted \
   --llm-model meta-llama/Llama-3.3-70B-Instruct ...
 ```
 
-`--llm-base-url` / `--llm-model` 单独传时会**覆盖**对应 preset 字段(per-field override),给你 escape hatch 而不强制走 preset 默认。`--llm-preset` 隐式锁 `--provider=openai`,显式传不同 provider 会冲突报错。
+`--llm-base-url` / `--llm-model` 单独传时会**覆盖**对应 preset 字段(per-field override),给你 escape hatch 而不强制走 preset 默认。`--llm-preset` 隐式锁 `--provider=openai_compatible`（这样中转站 DeepSeek 等模型会走“可关闭 thinking”的通用 OpenAI 兼容适配器，避免 `max_tokens` 被隐藏推理耗尽）；显式传不同 provider 会冲突报错，历史遗留的 `--provider openai` 会被自动 remap 为 `openai_compatible`。
 
 **Why DeepSeek default, not Ollama**: previous versions called Ollama
 "推荐新手 / 白嫖" but in practice CPU inference on a 16 GB Mac is slow
@@ -382,7 +397,7 @@ under ¥1 for most users. That's the actual zero-friction path. Ollama
 remains a first-class option for people who genuinely want offline /
 no-key setups, but should not be sold as "新手友好".
 
-**Hardware caveat for option 7 (Ollama)**: tell the user upfront —
+**Hardware caveat for local Ollama**: tell the user upfront —
 "本地模型的首次响应会比较慢（CPU 推理），内存建议 16GB 以上。如果你介意等待，
 选 1 或 2 更顺。" Don't wave them into Ollama if they have a 4-core
 Windows laptop with 8 GB.
@@ -428,7 +443,7 @@ flags from Step 3. DeepSeek has no embeddings endpoint, so recommend
 local Ollama bge-m3 unless the user explicitly wants Gemini / OpenAI
 embedding. `--embedding-provider ""` now means "do not enable embedding".
 
-#### Options 3-6 (OpenAI 官方 / Gemini / Claude / OpenRouter):
+#### Options 3-10 (OpenAI 官方 / Gemini / Claude / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference):
 
 Substitute the right vendor name and Key URL:
 
@@ -436,13 +451,17 @@ Substitute the right vendor name and Key URL:
 - Gemini: https://aistudio.google.com/apikey
 - Claude: https://console.anthropic.com/ → Settings → API Keys
 - OpenRouter: https://openrouter.ai/keys
+- OrcaRouter: https://www.orcarouter.ai/keys
+- Requesty: https://app.requesty.ai/api-keys
+- API Route: https://global.api-route.com/
+- Cheaper Inference: https://cheaperinference.com/signup
 
 Run with `--provider <name> --llm-api-key <KEY>` plus the Step 3
 embedding flags. Don't ask for Base URL. Embedding is independent from
 the primary LLM; if the user wants embedding, pass an explicit
 `--embedding-provider` and its model/key fields.
 
-#### Option 3 (Ollama, fully offline / no key):
+#### Ollama (fully offline / no key, via `--provider ollama`):
 
 **You don't need to ask the user to install Ollama themselves.** Since
 v0.3.10, `agent_bootstrap.py` auto-installs Ollama (macOS via `brew`,

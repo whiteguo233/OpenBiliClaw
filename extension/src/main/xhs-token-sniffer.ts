@@ -24,6 +24,10 @@ import {
   isXhsSearchApiUrl,
   type XhsSearchResponseNote,
 } from "../shared/xhs-search-response.ts";
+import {
+  extractPublishedTimesFromPayload,
+  type XhsPublishedTime,
+} from "../shared/xhs-published-at.ts";
 
 interface TokenPair {
   note_id: string;
@@ -91,9 +95,21 @@ export function extractTokenPairs(payload: unknown): TokenPair[] {
   return out;
 }
 
-function emit(pairs: TokenPair[], searchNotes?: XhsSearchResponseNote[]): void {
-  if (pairs.length === 0 && searchNotes === undefined) return;
-  window.postMessage({ source: POST_MESSAGE_SOURCE, pairs, search_notes: searchNotes }, "*");
+function emit(
+  pairs: TokenPair[],
+  searchNotes?: XhsSearchResponseNote[],
+  publishedNotes?: XhsPublishedTime[],
+): void {
+  if (pairs.length === 0 && searchNotes === undefined && !publishedNotes?.length) return;
+  window.postMessage(
+    {
+      source: POST_MESSAGE_SOURCE,
+      pairs,
+      search_notes: searchNotes,
+      published_notes: publishedNotes,
+    },
+    "*",
+  );
 }
 
 function isXhsApiUrl(url: string): boolean {
@@ -116,12 +132,13 @@ async function parseResponseSafely(res: Response): Promise<unknown> {
 
 function handleApiPayload(url: string, payload: unknown): void {
   const pairs = extractTokenPairs(payload);
+  const publishedNotes = extractPublishedTimesFromPayload(payload);
   if (isXhsSearchApiUrl(url)) {
     latestSearchNotes = extractXhsSearchResponseNotes(payload);
-    emit(pairs, latestSearchNotes);
+    emit(pairs, latestSearchNotes, publishedNotes);
     return;
   }
-  emit(pairs);
+  emit(pairs, undefined, publishedNotes);
 }
 
 type TaggedXhr = XMLHttpRequest & { __obcXhsUrl?: string };

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -172,6 +173,27 @@ def test_history_truncated_to_window_when_over_limit() -> None:
     # Oldest retained exchange is #5 (25 - 20).
     assert messages[0] == {"role": "user", "content": "[07-22 09:30] 用户消息5"}
     assert messages[-1] == {"role": "assistant", "content": "[07-22 09:30] 助手回复24"}
+
+
+def test_agent_transcript_keeps_window_roles_and_reply_context_without_mutation() -> None:
+    dialogue = _dialogue_with_history(25)
+    dialogue._history[-3].relation_prefix = "[回复卡片「喜欢安静的科普」]"
+    legacy_before = dialogue._history_to_messages()
+
+    messages = dialogue._history_to_messages(as_transcript=True)
+
+    assert len(messages) == 1 and messages[0]["role"] == "user"
+    records = json.loads(messages[0]["content"].split("\n", 1)[1])
+    assert len(records) == DIALOGUE_WINDOW_TURNS * 2
+    assert records[0] == {"role": "user", "content": "用户消息5", "local_time": "07-22 09:30"}
+    assert records[-1] == {
+        "role": "assistant",
+        "content": "助手回复24",
+        "local_time": "07-22 09:30",
+    }
+    assert records[-2]["reply_context"] == "[回复卡片「喜欢安静的科普」]"
+    assert "当前用户消息" not in messages[0]["content"]
+    assert dialogue._history_to_messages() == legacy_before
 
 
 def test_history_rendering_has_no_now_parameter() -> None:

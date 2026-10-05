@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -70,14 +71,20 @@ def test_inno_installer_sets_numeric_file_version_resource() -> None:
     assert "VersionInfoProductVersion={#MyAppVersionInfoVersion}" in script
 
 
-def test_inno_installer_always_restarts_freshly_installed_executable() -> None:
+def test_inno_installer_silent_upgrade_hands_off_to_fresh_executable() -> None:
+    """Silent installs/upgrades must still hand off to the freshly installed exe.
+
+    Interactive installs are now an opt-in Finish-page checkbox (covered by
+    tests/test_installer_script.py); /SILENT and /VERYSILENT have no wizard, so
+    the unconditional handoff v0.3.182 added must survive on that path.
+    """
     script = (Path(__file__).resolve().parent.parent / "packaging" / "openbiliclaw.iss").read_text(
         encoding="utf-8"
     )
     run_entry = next(
         line
         for line in script.splitlines()
-        if line.startswith('Filename: "{app}\\{#MyAppExeName}"')
+        if line.startswith('Filename: "{app}\\{#MyAppExeName}"') and "skipifnotsilent" in line
     )
 
     assert 'WorkingDir: "{app}"' in run_entry
@@ -137,6 +144,67 @@ def test_pyinstaller_spec_collects_reddit_dependency() -> None:
     assert "rdt_cli" in spec
     assert "browser_cookie3" in spec
     assert "_reddit_hiddenimports" in spec
+
+
+def test_tailnet_helper_filename_is_platform_specific() -> None:
+    assert build_module.tailnet_helper_filename("Darwin") == "openbiliclaw-tailnet-helper"
+    assert build_module.tailnet_helper_filename("Windows") == "openbiliclaw-tailnet-helper.exe"
+
+
+def test_build_tailnet_helper_uses_reproducible_pure_go_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "go.mod").write_text("module example.invalid/helper\n", encoding="utf-8")
+    (source / "build-tags.txt").write_text("ts_omit_logtail,ts_omit_webclient\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+    calls: list[list[str]] = []
+
+    def fake_check_call(command, *, cwd, env):
+        calls.append(command)
+        if "-o" in command:
+            captured.update(command=command, cwd=cwd, env=env)
+            Path(command[command.index("-o") + 1]).write_bytes(b"helper")
+
+    monkeypatch.setattr(build_module, "TAILNET_HELPER_SOURCE_DIR", source)
+    monkeypatch.setattr(build_module.subprocess, "check_call", fake_check_call)
+    output = build_module.build_tailnet_helper(
+        output_dir=tmp_path / "out",
+        go_executable="/toolchain/go",
+        platform_name="Darwin",
+    )
+
+    assert output.name == "openbiliclaw-tailnet-helper"
+    assert captured["cwd"] == str(source)
+    assert calls[0] == [
+        "/toolchain/go",
+        "build",
+        "-trimpath",
+        "-tags=ts_omit_logtail,ts_omit_webclient",
+        "-ldflags=-s -w",
+        "-o",
+        str(output),
+        ".",
+    ]
+    assert calls[1] == [str(output), "--self-test"]
+    assert calls[2] == [
+        sys.executable,
+        str(build_module.TAILNET_NOTICES_SCRIPT),
+        "--check",
+    ]
+    assert captured["env"]["CGO_ENABLED"] == "0"
+
+
+def test_pyinstaller_spec_bundles_tailnet_helper_binary() -> None:
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "openbiliclaw.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "OPENBILICLAW_TAILNET_HELPER_BINARY" in spec
+    assert "_tailnet_binaries" in spec
+    assert 'project_root / "LICENSE"' in spec
+    assert "THIRD_PARTY_NOTICES.md" in spec
 
 
 def test_pyinstaller_spec_collects_httpx_socks_dependency() -> None:
@@ -461,6 +529,43 @@ def test_macos_packaging_workflows_run_installer_handoff_e2e(workflow_name: str)
 
     assert 'pip install -e ".[packaging]" "pytest>=8"' in workflow
     assert "python -m pytest -q tests/test_macos_installer_e2e.py" in workflow
+
+
+@pytest.mark.parametrize(
+    "workflow_name",
+    ["release-desktop.yml", "build-installers.yml"],
+)
+def test_packaging_workflows_prefetch_tailnet_modules_before_every_build(
+    workflow_name: str,
+) -> None:
+    """Every PyInstaller job must warm the offline Go module cache first.
+
+    packaging/build.py invokes scripts/generate_tailnet_notices.py with
+    GOPROXY=off, so a job that only sets up Go fails with "module lookup
+    disabled by GOPROXY=off" before PyInstaller even starts.
+    """
+    lines = (
+        (Path(__file__).resolve().parent.parent / ".github" / "workflows" / workflow_name)
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+
+    builds = [index for index, line in enumerate(lines) if "packaging/build.py" in line]
+    prefetches = [
+        index
+        for index, line in enumerate(lines)
+        if "generate_tailnet_notices.py --prefetch" in line
+    ]
+
+    assert builds, f"{workflow_name} no longer invokes packaging/build.py"
+    remaining = list(prefetches)
+    for build in builds:
+        earlier = [index for index in remaining if index < build]
+        assert earlier, (
+            f"{workflow_name}: packaging/build.py at line {build + 1} has no "
+            "preceding Tailnet module prefetch step"
+        )
+        remaining.remove(earlier[-1])
 
 
 def test_manual_installer_workflow_uses_official_macos_ollama_bundle() -> None:

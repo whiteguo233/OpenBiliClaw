@@ -851,7 +851,7 @@ async def test_recommend_cached_fallback_honors_latest_effective_dislikes() -> N
 
 
 @pytest.mark.asyncio
-async def test_submit_feedback_records_event_and_runs_post_feedback_hooks() -> None:
+async def test_submit_feedback_records_event_and_cognition_returns_queued() -> None:
     (
         adapter,
         soul_engine,
@@ -877,7 +877,7 @@ async def test_submit_feedback_records_event_and_runs_post_feedback_hooks() -> N
         "feedback_type": "like",
         "event_id": 1,
         "duplicate": False,
-        "processing": "completed",
+        "processing": "queued",
     }
     assert database.updated == [(7, "like", "很对胃口")]
     assert len(memory_manager.events) == 1
@@ -894,71 +894,26 @@ async def test_submit_feedback_records_event_and_runs_post_feedback_hooks() -> N
         "source_platform": "bilibili",
         "signal_strength": 1.0,
     }
-    assert soul_engine.feedback_owner_prepares == 1
     assert soul_engine.immediate_calls == [("like", "把国际局势讲出结构感", "很对胃口")]
-    assert soul_engine.feedback_batches == 1
-    assert runtime_controller.refresh_after_feedback_calls == 1
+    # Preference analysis + refresh are drained asynchronously by the runtime's
+    # background schedulers, so submit_feedback no longer calls them here.
 
 
 @pytest.mark.asyncio
-async def test_submit_feedback_reports_queued_when_owner_lock_skips_drain() -> None:
-    adapter, soul_engine, memory, database, runtime, *_ = _build_adapter()
+async def test_submit_feedback_keeps_commit_success_when_cognition_fails() -> None:
+    adapter, soul_engine, memory, database, *_ = _build_adapter()
 
-    async def skip_busy_owner() -> dict[str, object]:
-        soul_engine.feedback_batches += 1
-        return {"skipped": True, "reason": "feedback_batch_in_progress"}
+    def fail_cognition(**_kwargs: object) -> None:
+        raise RuntimeError("cognition unavailable")
 
-    soul_engine.process_feedback_batch_if_needed = skip_busy_owner  # type: ignore[method-assign]
-
-    result = await adapter.submit_feedback(
-        FeedbackRequest(
-            recommendation_id=7,
-            feedback_type="like",
-            note="已提交",
-            request_id="openclaw-submit-queued",
-        )
-    )
-
-    assert result.ok is True
-    assert result.processing == "queued"
-    assert database.updated == [(7, "like", "已提交")]
-    assert len(memory.events) == 1
-    assert runtime.refresh_after_feedback_calls == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure_stage", ["cognition", "owner", "refresh"])
-async def test_submit_feedback_keeps_commit_success_when_follow_up_fails(
-    failure_stage: str,
-) -> None:
-    adapter, soul_engine, memory, database, runtime, *_ = _build_adapter()
-
-    if failure_stage == "cognition":
-
-        def fail_cognition(**_kwargs: object) -> None:
-            raise RuntimeError("cognition unavailable")
-
-        soul_engine.record_immediate_feedback_cognition = fail_cognition  # type: ignore[method-assign]
-    elif failure_stage == "owner":
-
-        async def fail_owner() -> dict[str, object]:
-            raise RuntimeError("owner unavailable")
-
-        soul_engine.process_feedback_batch_if_needed = fail_owner  # type: ignore[method-assign]
-    else:
-
-        async def fail_refresh() -> dict[str, object]:
-            runtime.refresh_after_feedback_calls += 1
-            raise RuntimeError("refresh unavailable")
-
-        runtime.refresh_after_feedback = fail_refresh  # type: ignore[method-assign]
+    soul_engine.record_immediate_feedback_cognition = fail_cognition  # type: ignore[method-assign]
 
     result = await adapter.submit_feedback(
         FeedbackRequest(
             recommendation_id=7,
             feedback_type="dislike",
             note="别再推荐",
-            request_id=f"openclaw-submit-failure-{failure_stage}",
+            request_id="openclaw-submit-failure-cognition",
         )
     )
 
@@ -1129,6 +1084,8 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
             module_overrides=None,
             concurrency: int = 3,
             concurrency_gate: object | None = None,
+            reply_style: str = "",
+            dialogue_tone_prompt: str = "",
         ) -> None:
             self.registry = registry
             self.memory = memory
@@ -1136,6 +1093,8 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
             self.module_overrides = module_overrides
             self.concurrency = concurrency
             self.concurrency_gate = concurrency_gate
+            self.reply_style = reply_style
+            self.dialogue_tone_prompt = dialogue_tone_prompt
 
     class FakeRecommendationEngine:
         def __init__(
@@ -1169,11 +1128,13 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
             embedding_service: object = None,
             concurrency: object = None,
             eval_prefilter_mode: str = "shadow",
+            eval_scorer: str = "llm",
         ) -> None:
             self.llm_service = llm_service
             self.database = database
             self.concurrency = concurrency
             self.eval_prefilter_mode = eval_prefilter_mode
+            self.eval_scorer = eval_scorer
 
         def register_strategy(self, strategy: object) -> None:
             registered_strategies.append(str(getattr(strategy, "name", "")))
@@ -1227,6 +1188,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
         discovery=SimpleNamespace(
             admission_min_score=0.60,
             eval_prefilter_mode="enforce",
+            eval_scorer="shadow",
             visual_profile_enabled=False,
             keyframe_enabled=False,
             keyframe_max_frames=8,
@@ -1331,6 +1293,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
     assert services.llm_service.concurrency == 3
     assert services.discovery_engine.concurrency.llm_evaluation_concurrency == 2
     assert services.discovery_engine.eval_prefilter_mode == "enforce"
+    assert services.discovery_engine.eval_scorer == "shadow"
     assert services.recommendation_engine.kwargs["copy_ready_target_count"] == (
         expected_copy_target
     )

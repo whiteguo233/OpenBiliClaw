@@ -86,8 +86,8 @@ async def test_ab_aligned_covers_flip_top_k() -> None:
     emb = _SyntheticEmb(anchor, key_map)
     bonus = _compute_bonus_map(specs, contents, emb)
     # Align gets a nonzero bonus; plain gets none.
-    assert bonus.get("BV1ALIGN", 0.0) > 0.0
-    assert bonus.get("BV1PLAIN", 0.0) == 0.0
+    assert bonus.get(contents[0].scoring_key, 0.0) > 0.0
+    assert bonus.get(contents[1].scoring_key, 0.0) == 0.0
     on = _rank(contents, 2, bonus)
     off = _rank(contents, 2, {})
     assert [c.bvid for c in off] == ["BV1PLAIN", "BV1ALIGN"]
@@ -111,7 +111,7 @@ async def test_ab_bonus_matches_real_formula() -> None:
     emb = _SyntheticEmb(anchor, key_map)
     bonus = _compute_bonus_map(specs, contents, emb)
     expected = RecommendationEngine._cover_bonus_from_vec(cover_vec, [anchor])
-    assert bonus.get("BVX", 0.0) == pytest.approx(expected, abs=1e-9)
+    assert bonus.get(contents[0].scoring_key, 0.0) == pytest.approx(expected, abs=1e-9)
     # And it's > 0 at cos=0.40 (above the production floor).
     assert expected > 0.0
 
@@ -169,7 +169,11 @@ def test_bonus_stats_excludes_zero_from_nonzero_and_minimum() -> None:
         CandidateSpec("BVSMALL", 0.8, 0.2, "topic_1"),
         CandidateSpec("BVMISS", 0.8, 0.4, "topic_2"),
     ]
-    stats = _bonus_stats({"BVZERO": 0.0, "BVSMALL": 0.02}, specs)
+    contents = [_spec_to_content(spec) for spec in specs]
+    stats = _bonus_stats(
+        {contents[0].scoring_key: 0.0, contents[1].scoring_key: 0.02},
+        specs,
+    )
 
     assert stats["n_nonzero"] == 1
     assert stats["frac_nonzero"] == pytest.approx(1 / 3, abs=0.0001)

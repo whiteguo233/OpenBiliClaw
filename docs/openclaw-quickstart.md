@@ -73,22 +73,27 @@ python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-fo
 
 1. **Phase 1 — LLM 服务选择(7 项菜单)**: DeepSeek 第一推荐,中转站 / OpenAI 协议兼容第二推荐。每项标注 2026-05 当前默认模型:
    - **1) DeepSeek 官方 ★默认推荐** —— 默认 `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat` / `deepseek-reasoner` 将于 2026/07/24 弃用)/ ¥0.001/千 token / 国内可直连。**最便宜 + 最容易,新人无脑选这个**
-   - **★ 2) 中转站 / OpenAI 协议兼容服务 ★第二推荐** —— **国内用户买中转站 / OneAPI Key 走这个**。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 + Azure / vLLM / LMStudio。选这个进**子菜单(9 个 preset)**:
+   - **★ 2) 中转站 / OpenAI 协议兼容服务 ★第二推荐** —— **国内用户买中转站 / OneAPI Key 走这个**。也覆盖 Kimi / 通义 / 智谱 / 商汤日日新 / Yi / MiniMax 官方 + Azure / vLLM / LMStudio。选这个进**子菜单(10 个 preset)**:
      - **★ a) 中转站 / OneAPI / 公司团队 LLM 网关(大多数人选这个)** —— Base URL 自填 / 默认 `gpt-5-nano`;按你充值的中转站给的模型清单填
      - **b) Kimi (Moonshot AI) 官方** —— `https://api.moonshot.ai/v1` / 默认 `kimi-k2.6`。⚠ 旧 K2-series 2026/05/25 停服
      - **c) MiniMax 官方** —— `https://api.minimax.io/v1` / 默认 `MiniMax-M2.7`(4/2026)
      - **d) 通义千问 (阿里 DashScope) 官方** —— `https://dashscope.aliyuncs.com/compatible-mode/v1` / 默认 `qwen-plus`
      - **e) 智谱 ChatGLM 官方** —— `https://open.bigmodel.cn/api/paas/v4` / 默认 `glm-4.7-flash`(免费档);旗舰 `glm-5`
-     - **f) 零一万物 (Yi) 官方** —— `https://api.lingyiwanwu.com/v1` / 默认 `yi-medium`
-     - **g) Azure OpenAI** —— `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEP`
-     - **h) 自建 vLLM / LMStudio / Ollama 网关** —— `http://localhost:8000/v1` / 模型 HuggingFace 路径,强制手填
-     - **i) 其它(完全手填)** —— escape hatch
+     - **f) 商汤日日新 (SenseNova) 官方** —— `https://token.sensenova.cn/v1` / 默认 `deepseek-v4-flash`(已实测连通)。新用户免费额度，零成本体验(issue #193);embedding 未验证，Phase 3 默认独立 Ollama bge-m3
+     - **g) 零一万物 (Yi) 官方** —— `https://api.lingyiwanwu.com/v1` / 默认 `yi-medium`
+     - **h) Azure OpenAI** —— `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEP`
+     - **i) 自建 vLLM / LMStudio / Ollama 网关** —— `http://localhost:8000/v1` / 模型 HuggingFace 路径,强制手填
+     - **j) 其它(完全手填)** —— escape hatch
    - **3) OpenAI 官方** —— 默认 `gpt-5-nano`(最便宜的 GPT-5);可选 gpt-5.4-nano / gpt-5.4-mini / gpt-5.5(旗舰) / gpt-5.5-pro
    - **4) Gemini 官方** —— 默认 `gemini-2.5-flash`(稳定);免费档每天 1500 次。可选 gemini-3-flash-preview / gemini-3.1-pro-preview(旗舰,Public Preview,需付费项目) / gemini-3.1-flash-lite-preview(最便宜)
    - **5) Claude 官方** —— 默认 `claude-sonnet-4-6`(1M ctx),按 token 付费,质量高。可选 claude-haiku-4-5(便宜) / claude-opus-4-7(旗舰)
    - **6) OpenRouter 聚合** —— 默认 `openai/gpt-5-nano`;格式 `<vendor>/<model>`(如 anthropic/claude-sonnet-4-6 / google/gemini-2.5-flash)
-   - **7) 本地 Ollama（完全离线）** —— 默认 `qwen2.5:7b`(中文好);可选 llama3.2 / gemma2 / mistral / deepseek-r1。无 Key / 16GB+ 内存
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,OpenAI 协议兼容子菜单见上 9 个 preset),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关 / 其它路径强制手填模型名(写错会 404)。
+   - **7) OrcaRouter 聚合** —— 默认 `openai/gpt-4o`;格式 `<vendor>/<model>`。一个 Key 跑 150+ 模型,网关级零信任安全
+   - **8) Requesty 聚合**：默认 `openai/gpt-4o-mini`;格式 `<vendor>/<model>`。一个 Key 跑多家模型,按调用计费
+   - **9) API Route 聚合**：默认 `gpt-5.5`；可填写其他受支持的模型 ID。一个 Key 跑多家模型
+   - **10) Cheaper Inference 聚合**：默认 `gpt-5.4-mini`；模型名不带厂商前缀（如 `claude-sonnet-5`）。一个 Key 跑多家模型
+   - **本地 Ollama（完全离线,不在交互菜单里）** —— 默认 `qwen2.5:7b`(中文好);可选 llama3.2 / gemma2 / mistral / deepseek-r1。无 Key / 16GB+ 内存。需要时用 `--provider ollama` 显式选择或到桌面设置页配置
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,OpenAI 协议兼容子菜单见上 10 个 preset),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关 / 其它路径强制手填模型名(写错会 404)。
 3. **Phase 3 — Embedding（向量化，3 选 1 + 高级）**：默认推荐 **本地 Ollama bge-m3**（免费、离线、效果够用），其次 Gemini（云端、效果最好但要 Key），也可以选择暂不启用。Embedding 与主 LLM 独立，不再默认跟随主 LLM。高级选项里有"自定义 OpenAI 兼容 endpoint"。
 4. **Phase 4 — Per-module 覆盖**（高级，默认跳过）：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
 

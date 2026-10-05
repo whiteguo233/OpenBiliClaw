@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 
 _BILI = "bilibili"
+_GITHUB = "github"
 _DIGEST = "digest-rich-profile"
 _AXIS_NOW = "2026-07-05T12:00:00Z"
 _AXIS_LATER = "2026-07-06T12:00:00Z"
@@ -1242,6 +1243,7 @@ def test_materialize_platform_keywords_applies_only_hard_gates_and_keeps_style_m
         item["reason"] != "platform_style_mismatch" for item in telemetry["hard_gate_rejects"]
     )
     assert platform_style_score("game design practical workflow", "reddit") > 0.0
+    assert platform_style_score("local agent framework repository", _GITHUB) > 0.0
 
 
 def test_materialize_platform_keywords_selects_coverage_before_soft_score() -> None:

@@ -699,8 +699,12 @@ class TestMobileWebViewModels:
         assert "new Image()" in recommend_js
         assert ".decode()" in recommend_js
         assert "waitForDecode" in recommend_js
-        assert "await warmRecommendationCovers(newItems," in recommend_js
-        assert "waitForDecode: true" in recommend_js
+        assert "CARD_EAGER_COVER_COUNT" in recommend_js
+        assert "eagerCount: CARD_EAGER_COVER_COUNT" in recommend_js
+        assert (
+            "void warmRecommendationCovers(newItems, { limit: CARD_EAGER_COVER_COUNT });"
+            in recommend_js
+        )
         assert 'loading="${esc(imageAttrs.loading)}"' in recommend_js
         assert 'fetchpriority="${esc(imageAttrs.fetchPriority)}"' in recommend_js
         assert "AUTO_APPEND_ROOT_MARGIN" in recommend_js

@@ -442,7 +442,7 @@ def test_external_search_provider_is_independent_of_keyword_generation_mode(
     captured: dict[str, object] = {}
     expected = object()
 
-    def build(backends: object) -> object:
+    def build(backends: object, **kwargs: object) -> object:
         captured["backends"] = backends
         return expected
 
@@ -461,6 +461,25 @@ def test_external_search_provider_is_independent_of_keyword_generation_mode(
 
     assert provider is expected
     assert captured["backends"] == ("exa", "you")
+
+
+def test_external_search_provider_includes_keyless_bing_rss_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    config = SimpleNamespace(
+        discovery=SimpleNamespace(
+            inspiration_search_enabled=True,
+            inspiration_search_backends=("local_cache", "bing_rss", "exa", "you"),
+            exa_api_key="",
+            you_api_key="",
+        )
+    )
+
+    provider = build_v2ex_external_search_provider(config)
+
+    assert provider is not None
+    assert provider.backend_alias == "bing_rss"
 
 
 def test_external_search_provider_is_absent_without_configured_external_backend() -> None:

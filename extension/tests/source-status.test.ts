@@ -15,7 +15,7 @@ const SourceStatus = (globalThis as Record<string, any>).OpenBiliClawSourceStatu
 test("the shared module publishes itself for classic-script consumers", () => {
   assert.ok(SourceStatus, "source-status.js did not define OpenBiliClawSourceStatus");
   assert.deepEqual([...SourceStatus.SOURCE_KEYS], [
-    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "zhihu", "reddit",
+    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",
     "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 });
@@ -480,7 +480,7 @@ test("a missing payload reads as offline rather than as a verdict", () => {
 });
 
 test("every emitted state resolves to a tone with a colour", () => {
-  // The eleven the backend can actually produce (spec D6's证伪 pass), plus the
+  // The twelve the backend can actually produce (spec D6's证伪 pass), plus the
   // four legacy keys the merged table still carries.
   for (const state of Object.keys(SourceStatus.SOURCE_ACCESS_STATE)) {
     const view = SourceStatus.describeAccess({ state, enabled: true });

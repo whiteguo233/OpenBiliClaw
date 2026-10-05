@@ -1,0 +1,58 @@
+{
+  "before": {
+    "total_available": 35,
+    "pool_status_version": 1788806986115,
+    "by_platform": {
+      "twitter": 31,
+      "douyin": 4
+    }
+  },
+  "after": {
+    "total_available": 28,
+    "pool_status_version": 1788806988115,
+    "by_platform": {
+      "twitter": 25,
+      "douyin": 3
+    }
+  },
+  "samples": [
+    {
+      "index": 1,
+      "action": "reshuffle",
+      "source": "all",
+      "ms": 858.0,
+      "items": 10,
+      "has_more": null,
+      "remaining": 28,
+      "sources": {
+        "twitter": 25,
+        "douyin": 3
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    }
+  ],
+  "unique_items": 10,
+  "latency_ms": {
+    "p50": 858.0,
+    "p95": 858.0,
+    "max": 858.0
+  },
+  "health_ms": {
+    "samples": 4,
+    "p95": 1345.5,
+    "max": 1345.5
+  },
+  "pool_events": 1,
+  "pool_event_snapshots": [
+    {
+      "pool_available_count": 28,
+      "platform_available_counts": {
+        "twitter": 25,
+        "douyin": 3
+      },
+      "pool_status_version": 1788806986814
+    }
+  ],
+  "failures": []
+}

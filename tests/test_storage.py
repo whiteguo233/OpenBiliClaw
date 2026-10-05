@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from openbiliclaw.discovery.candidate_pool import DiscoveryCandidateWrite
+from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.saved_sync.models import SavedItemInput
 from openbiliclaw.storage.database import Database
 
@@ -34,6 +35,56 @@ def _seed_visible(db: Database, bvid: str, **kwargs: Any) -> None:
     kwargs.setdefault("topic_group", "测试分组")
     kwargs.setdefault("relevance_score", 0.90)
     db.cache_content(bvid, **kwargs)
+
+
+def _v2_temporal(**overrides: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "temporal_class": "current",
+        "temporal_confidence": 0.95,
+        "temporal_reason": "状态变化会影响核心价值",
+        "temporal_policy_version": "v2",
+        "temporal_validity_mode": "event_state",
+        "temporal_valid_until": "",
+        "temporal_scope": "core",
+        "temporal_state": "active",
+        "temporal_evidence": "活动仍在进行，报名入口仍然开放",
+        "temporal_next_review_at": "2026-08-26T00:00:00Z",
+        "temporal_evaluated_at": "2026-08-12T00:00:00Z",
+        "temporal_evidence_complete": True,
+    }
+    fields.update(overrides)
+    return fields
+
+
+def _freeze_storage_clock(monkeypatch: Any, frozen: str = "2026-08-12T00:00:00+00:00") -> None:
+    """把 database 模块的墙钟冻结到固定时刻。
+
+    helper 默认 evaluated_at=2026-08-12，存储层重算 next_review=+14d
+    （2026-08-26）。真实时钟越过该日期后，依赖「重算后仍在未来 →
+    eligible」的测试会翻转成 review_due（2026-08-26 当天 CI 实测爆发）。
+    冻结到 evaluated_at 当天，重算结果永远在冻结时钟的 14 天后，
+    测试回归确定性。
+    """
+    import openbiliclaw.storage.database as database_module
+
+    frozen_dt = datetime.fromisoformat(frozen)
+
+    class _FrozenClock:
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            if tz is None:
+                return frozen_dt
+            return frozen_dt.astimezone(tz)  # type: ignore[arg-type]
+
+        @classmethod
+        def fromisoformat(cls, value: str) -> datetime:
+            return datetime.fromisoformat(value)
+
+        @classmethod
+        def strptime(cls, value: str, fmt: str) -> datetime:
+            return datetime.strptime(value, fmt)
+
+    monkeypatch.setattr(database_module, "datetime", _FrozenClock)
 
 
 class TestDatabase:
@@ -63,13 +114,28 @@ class TestDatabase:
             ]
         )
         for table_name in ("content_cache", "discovery_candidates"):
+            db.conn.execute(f"DROP INDEX IF EXISTS idx_{table_name}_temporal_review")
+            if table_name == "discovery_candidates":
+                db.conn.execute("DROP INDEX IF EXISTS idx_discovery_candidates_temporal_retry")
             for column_name in (
                 "temporal_class",
                 "temporal_confidence",
                 "temporal_reason",
                 "temporal_policy_version",
+                "temporal_validity_mode",
+                "temporal_valid_until",
+                "temporal_scope",
+                "temporal_state",
+                "temporal_evidence",
+                "temporal_next_review_at",
+                "temporal_evaluated_at",
+                "temporal_evidence_complete",
             ):
                 db.conn.execute(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
+        db.conn.execute("DROP INDEX IF EXISTS idx_content_cache_temporal_review_retry")
+        for column_name in ("temporal_review_attempts", "temporal_review_retry_at"):
+            db.conn.execute(f"ALTER TABLE content_cache DROP COLUMN {column_name}")
+            db.conn.execute(f"ALTER TABLE discovery_candidates DROP COLUMN {column_name}")
         db.conn.commit()
         db.close()
 
@@ -86,14 +152,1281 @@ class TestDatabase:
                 "temporal_confidence",
                 "temporal_reason",
                 "temporal_policy_version",
+                "temporal_validity_mode",
+                "temporal_valid_until",
+                "temporal_scope",
+                "temporal_state",
+                "temporal_evidence",
+                "temporal_next_review_at",
+                "temporal_evaluated_at",
+                "temporal_evidence_complete",
             } <= columns
+            if table_name == "content_cache":
+                assert {"temporal_review_attempts", "temporal_review_retry_at"} <= columns
+            else:
+                assert {"temporal_review_attempts", "temporal_review_retry_at"} <= columns
             row = migrated.conn.execute(f"SELECT * FROM {table_name} LIMIT 1").fetchone()
             assert row["temporal_class"] == "unknown"
             assert row["temporal_confidence"] == 0.0
             assert row["temporal_reason"] == ""
             assert row["temporal_policy_version"] == "v1"
+            assert row["temporal_validity_mode"] == "none"
+            assert row["temporal_valid_until"] == ""
+            assert row["temporal_scope"] == "none"
+            assert row["temporal_state"] == "unknown"
+            assert row["temporal_evidence"] == ""
+            assert row["temporal_next_review_at"] == ""
+            assert row["temporal_evaluated_at"] == ""
+            assert row["temporal_evidence_complete"] == 0
+            if table_name == "content_cache":
+                assert row["temporal_review_attempts"] == 0
+                assert row["temporal_review_retry_at"] == ""
+            else:
+                assert row["temporal_review_attempts"] == 0
+                assert row["temporal_review_retry_at"] == ""
 
         migrated.close()
+
+    def test_v2_deadline_hard_expires_at_cache_sink(self, tmp_path: Path) -> None:
+        db = Database(tmp_path / "v2-deadline.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVDEADLINE",
+            title="报名截止：2000-01-01 00:00 +00:00",
+            source="search",
+            relevance_score=0.9,
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="报名截止后核心价值失效",
+                temporal_validity_mode="explicit_deadline",
+                temporal_valid_until="2000-01-01T00:00:00Z",
+                temporal_state="unknown",
+                temporal_evidence="报名截止：2000-01-01 00:00 +00:00",
+                temporal_next_review_at="2000-01-01T00:00:00Z",
+            ),
+        )
+
+        row = db.conn.execute("SELECT * FROM content_cache WHERE bvid = 'BVDEADLINE'").fetchone()
+        assert result.temporal_decision.disposition == "expired"
+        assert result.pool_status == "stale"
+        assert row["temporal_validity_mode"] == "explicit_deadline"
+        assert row["temporal_evidence_complete"] == 1
+
+    def test_v2_storage_recomputes_caller_supplied_review_clock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _freeze_storage_clock(monkeypatch)
+        db = Database(tmp_path / "v2-policy-clock.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVCANONICALCLOCK",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            relevance_score=0.9,
+            **_v2_temporal(temporal_next_review_at="2099-01-01T00:00:00Z"),
+        )
+
+        row = db.conn.execute(
+            "SELECT temporal_evaluated_at, temporal_next_review_at "
+            "FROM content_cache WHERE bvid = 'BVCANONICALCLOCK'"
+        ).fetchone()
+        assert result.temporal_decision.disposition == "eligible"
+        assert dict(row) == {
+            "temporal_evaluated_at": "2026-08-12T00:00:00Z",
+            "temporal_next_review_at": "2026-08-26T00:00:00Z",
+        }
+
+    def test_v2_storage_does_not_trust_ungrounded_terminal_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-ungrounded-sink.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVUNGROUNDEDSTATE",
+            title="普通通用教程",
+            source="search",
+            relevance_score=0.9,
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="赛事已经结束",
+                temporal_validity_mode="event_state",
+                temporal_state="expired",
+                temporal_evidence="赛事已经结束",
+                temporal_next_review_at="",
+                temporal_evaluated_at=datetime.now().astimezone().isoformat(),
+            ),
+        )
+
+        row = db.conn.execute(
+            "SELECT pool_status, temporal_validity_mode, temporal_state "
+            "FROM content_cache WHERE bvid = 'BVUNGROUNDEDSTATE'"
+        ).fetchone()
+        assert result.temporal_decision.disposition == "eligible"
+        assert dict(row) == {
+            "pool_status": "fresh",
+            "temporal_validity_mode": "freshness_only",
+            "temporal_state": "unknown",
+        }
+
+    def test_ungrounded_rereview_cannot_erase_existing_grounded_hold(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-ungrounded-merge.db")
+        db.initialize()
+        due = _v2_temporal(
+            temporal_next_review_at="2000-01-01T00:00:00Z",
+            temporal_evaluated_at="1999-01-01T00:00:00Z",
+        )
+        first = db.cache_content(
+            "BVUNGROUNDEDMERGE",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            **due,
+        )
+        assert first.pool_status == "temporal_review_hold"
+
+        rereview = db.cache_content(
+            "BVUNGROUNDEDMERGE",
+            title="普通通用教程",
+            source="search",
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="赛事已经结束",
+                temporal_validity_mode="event_state",
+                temporal_state="expired",
+                temporal_evidence="赛事已经结束",
+                temporal_next_review_at="",
+            ),
+        )
+
+        stored = db.conn.execute(
+            """
+            SELECT pool_status, temporal_class, temporal_validity_mode,
+                   temporal_state, temporal_evidence
+            FROM content_cache
+            WHERE bvid = 'BVUNGROUNDEDMERGE'
+            """
+        ).fetchone()
+        assert rereview.pool_status == "temporal_review_hold"
+        assert dict(stored) == {
+            "pool_status": "temporal_review_hold",
+            "temporal_class": "current",
+            "temporal_validity_mode": "event_state",
+            "temporal_state": "active",
+            "temporal_evidence": "活动仍在进行，报名入口仍然开放",
+        }
+
+    @pytest.mark.parametrize(
+        "rereview_kind",
+        ["low_confidence", "hook_only", "ungrounded_freshness", "conditional_active"],
+    )
+    def test_weak_rereview_cannot_release_existing_grounded_hold(
+        self,
+        tmp_path: Path,
+        rereview_kind: str,
+    ) -> None:
+        db = Database(tmp_path / f"v2-weak-rereview-{rereview_kind}.db")
+        db.initialize()
+        due = _v2_temporal(
+            temporal_next_review_at="2000-01-01T00:00:00Z",
+            temporal_evaluated_at="1999-01-01T00:00:00Z",
+        )
+        db.cache_content(
+            "BVWEAKREVIEW",
+            title=(
+                "活动仍在进行，报名入口仍然开放；标题写着今天最新；"
+                "如果支持版本发生变化，本文的迁移命令和字段契约就必须重新核验"
+            ),
+            source="search",
+            **due,
+        )
+        if rereview_kind == "low_confidence":
+            rereview = _v2_temporal(
+                temporal_class="evergreen",
+                temporal_confidence=0.10,
+                temporal_reason="方法本身长期有效",
+                temporal_validity_mode="none",
+                temporal_scope="none",
+                temporal_state="unknown",
+                temporal_evidence="",
+                temporal_next_review_at="",
+            )
+        elif rereview_kind == "hook_only":
+            rereview = _v2_temporal(
+                temporal_class="current",
+                temporal_confidence=0.95,
+                temporal_reason="只有标题钩子依赖新鲜度",
+                temporal_validity_mode="freshness_only",
+                temporal_scope="hook",
+                temporal_state="unknown",
+                temporal_evidence="标题写着今天最新",
+            )
+        elif rereview_kind == "ungrounded_freshness":
+            rereview = _v2_temporal(
+                temporal_class="current",
+                temporal_confidence=0.95,
+                temporal_reason="价格依赖今天的状态",
+                temporal_validity_mode="freshness_only",
+                temporal_scope="core",
+                temporal_state="unknown",
+                temporal_evidence="正文不存在的今日价格",
+            )
+        else:
+            rereview = _v2_temporal(
+                temporal_class="versioned",
+                temporal_confidence=0.95,
+                temporal_reason="版本变化后需要重新核验",
+                temporal_validity_mode="version_state",
+                temporal_scope="core",
+                temporal_state="active",
+                temporal_evidence=("如果支持版本发生变化，本文的迁移命令和字段契约就必须重新核验"),
+            )
+
+        result = db.cache_content(
+            "BVWEAKREVIEW",
+            title=(
+                "活动仍在进行，报名入口仍然开放；标题写着今天最新；"
+                "如果支持版本发生变化，本文的迁移命令和字段契约就必须重新核验"
+            ),
+            source="search",
+            **rereview,
+        )
+
+        stored = db.conn.execute(
+            "SELECT pool_status, temporal_class, temporal_scope, temporal_evidence "
+            "FROM content_cache WHERE bvid = 'BVWEAKREVIEW'"
+        ).fetchone()
+        assert result.pool_status == "temporal_review_hold"
+        assert dict(stored) == {
+            "pool_status": "temporal_review_hold",
+            "temporal_class": "current",
+            "temporal_scope": "core",
+            "temporal_evidence": "活动仍在进行，报名入口仍然开放",
+        }
+
+    def test_textual_evidence_complete_marker_fails_neutral(self, tmp_path: Path) -> None:
+        db = Database(tmp_path / "v2-text-marker.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVTEXTMARKER",
+            title="活动已经结束",
+            source="search",
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="活动已经结束",
+                temporal_validity_mode="event_state",
+                temporal_state="expired",
+                temporal_evidence="活动已经结束",
+                temporal_next_review_at="",
+                temporal_evidence_complete="false",
+            ),
+        )
+
+        row = db.conn.execute(
+            "SELECT temporal_class, temporal_evidence_complete, pool_status "
+            "FROM content_cache WHERE bvid = 'BVTEXTMARKER'"
+        ).fetchone()
+        assert result.temporal_decision.disposition == "eligible"
+        assert dict(row) == {
+            "temporal_class": "unknown",
+            "temporal_evidence_complete": 0,
+            "pool_status": "fresh",
+        }
+
+    @pytest.mark.parametrize(
+        ("temporal_class", "mode", "state", "evidence"),
+        [
+            ("breaking", "event_state", "expired", "活动已经结束"),
+            ("versioned", "version_state", "superseded", "版本已经被替代"),
+        ],
+    )
+    def test_v2_terminal_state_hard_expires_without_next_review_clock(
+        self,
+        tmp_path: Path,
+        temporal_class: str,
+        mode: str,
+        state: str,
+        evidence: str,
+    ) -> None:
+        db = Database(tmp_path / f"v2-{state}.db")
+        db.initialize()
+
+        result = db.cache_content(
+            f"BV{state.upper()}",
+            title=evidence,
+            source="search",
+            relevance_score=0.9,
+            **_v2_temporal(
+                temporal_class=temporal_class,
+                temporal_reason="核心事件或版本已经终结",
+                temporal_validity_mode=mode,
+                temporal_state=state,
+                temporal_next_review_at="",
+                temporal_evidence=evidence,
+            ),
+        )
+
+        row = db.conn.execute(
+            "SELECT temporal_state, temporal_next_review_at, "
+            "temporal_evidence_complete, pool_status FROM content_cache"
+        ).fetchone()
+        assert result.temporal_decision.disposition == "expired"
+        assert dict(row) == {
+            "temporal_state": state,
+            "temporal_next_review_at": "",
+            "temporal_evidence_complete": 1,
+            "pool_status": "stale",
+        }
+
+    def test_v2_review_due_is_held_and_does_not_count_as_inventory(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-review-hold.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVREVIEWHOLD",
+            title="需要复核状态",
+            source="search",
+            relevance_score=0.9,
+            pool_expression="hold",
+            pool_topic_label="hold",
+            style_key="tutorial",
+            topic_group="hold",
+            **_v2_temporal(
+                temporal_next_review_at="2000-01-01T00:00:00Z",
+                temporal_evaluated_at="1999-01-01T00:00:00Z",
+            ),
+        )
+
+        assert result.temporal_decision.disposition == "review_due"
+        assert result.pool_status == "temporal_review_hold"
+        assert db.count_pool_candidates() == 0
+        assert db.get_pool_candidates(limit=10) == []
+        assert [row["bvid"] for row in db.get_pool_candidates_needing_evaluation(limit=10)] == [
+            "BVREVIEWHOLD"
+        ]
+
+    def test_only_complete_non_neutral_review_restores_hold_to_fresh(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _freeze_storage_clock(monkeypatch)
+        db = Database(tmp_path / "v2-review-restore.db")
+        db.initialize()
+        due = _v2_temporal(
+            temporal_next_review_at="2000-01-01T00:00:00Z",
+            temporal_evaluated_at="1999-01-01T00:00:00Z",
+        )
+        db.cache_content(
+            "BVRESTORE",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            **due,
+        )
+
+        raw = db.cache_content("BVRESTORE", title="raw rediscovery", source="search")
+        held = db.conn.execute("SELECT * FROM content_cache WHERE bvid = 'BVRESTORE'").fetchone()
+        assert raw.pool_status == "temporal_review_hold"
+        assert held["temporal_evidence"] == due["temporal_evidence"]
+        assert held["temporal_next_review_at"] == "1999-01-15T00:00:00Z"
+
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_review_attempts = 3, "
+            "temporal_review_retry_at = '2099-01-01T00:00:00Z' "
+            "WHERE bvid = 'BVRESTORE'"
+        )
+        db.conn.commit()
+
+        reviewed = db.cache_content(
+            "BVRESTORE",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            **_v2_temporal(temporal_next_review_at="2099-01-01T00:00:00Z"),
+        )
+        assert reviewed.temporal_decision.disposition == "eligible"
+        assert reviewed.pool_status == "fresh"
+        restored = db.conn.execute(
+            "SELECT temporal_review_attempts, temporal_review_retry_at "
+            "FROM content_cache WHERE bvid = 'BVRESTORE'"
+        ).fetchone()
+        assert dict(restored) == {
+            "temporal_review_attempts": 0,
+            "temporal_review_retry_at": "",
+        }
+
+    def test_review_hold_claim_uses_backoff_and_does_not_starve_next_row(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-review-backoff.db")
+        db.initialize()
+        due = _v2_temporal(
+            temporal_next_review_at="2000-01-01T00:00:00Z",
+            temporal_evaluated_at="1999-01-01T00:00:00Z",
+        )
+        for bvid in ("BVHOLD-A", "BVHOLD-B"):
+            db.cache_content(bvid, title=bvid, source="search", **due)
+        clock = datetime.fromisoformat("2026-08-13T00:00:00+00:00")
+
+        first = db.get_pool_candidates_needing_evaluation(limit=1, now=clock)
+        second = db.get_pool_candidates_needing_evaluation(limit=1, now=clock)
+        immediate_third = db.get_pool_candidates_needing_evaluation(limit=1, now=clock)
+
+        assert [row["bvid"] for row in first] == ["BVHOLD-A"]
+        assert [row["bvid"] for row in second] == ["BVHOLD-B"]
+        assert immediate_third == []
+        leases = {
+            str(row["bvid"]): (
+                int(row["temporal_review_attempts"]),
+                str(row["temporal_review_retry_at"]),
+            )
+            for row in db.conn.execute(
+                "SELECT bvid, temporal_review_attempts, temporal_review_retry_at "
+                "FROM content_cache ORDER BY bvid"
+            )
+        }
+        assert leases == {
+            "BVHOLD-A": (1, "2026-08-13T01:00:00Z"),
+            "BVHOLD-B": (1, "2026-08-13T01:00:00Z"),
+        }
+
+        retry = db.get_pool_candidates_needing_evaluation(
+            limit=1,
+            now=clock + timedelta(hours=1),
+        )
+        assert [row["bvid"] for row in retry] == ["BVHOLD-A"]
+        retried = db.conn.execute(
+            "SELECT temporal_review_attempts, temporal_review_retry_at "
+            "FROM content_cache WHERE bvid = 'BVHOLD-A'"
+        ).fetchone()
+        assert dict(retried) == {
+            "temporal_review_attempts": 2,
+            "temporal_review_retry_at": "2026-08-13T03:00:00Z",
+        }
+
+    def test_failed_slow_hold_review_renews_expired_retry_lease(self, tmp_path: Path) -> None:
+        db = Database(tmp_path / "v2-slow-review-lease.db")
+        db.initialize()
+        db.cache_content(
+            "BVSLOWHOLD",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            **_v2_temporal(
+                temporal_next_review_at="2000-01-01T00:00:00Z",
+                temporal_evaluated_at="1999-01-01T00:00:00Z",
+            ),
+        )
+        assert db.get_pool_candidates_needing_evaluation(limit=1)
+        # Simulate an evaluator that ran longer than its claim-time lease.
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_review_retry_at = ? WHERE bvid = ?",
+            ("2000-01-01T00:00:00Z", "BVSLOWHOLD"),
+        )
+        db.conn.commit()
+
+        result = db.cache_content(
+            "BVSLOWHOLD",
+            title="活动仍在进行，报名入口仍然开放",
+            source="search",
+            temporal_class="unknown",
+            temporal_confidence=0.0,
+            temporal_reason="",
+            temporal_policy_version="v2",
+            temporal_validity_mode="none",
+            temporal_valid_until="",
+            temporal_scope="none",
+            temporal_state="unknown",
+            temporal_evidence="",
+            temporal_next_review_at="",
+            temporal_evaluated_at=datetime.now().astimezone().isoformat(),
+            temporal_evidence_complete=False,
+            temporal_evaluated=False,
+        )
+
+        stored = db.conn.execute(
+            "SELECT pool_status, temporal_review_attempts, temporal_review_retry_at "
+            "FROM content_cache WHERE bvid = 'BVSLOWHOLD'"
+        ).fetchone()
+        assert result.pool_status == "temporal_review_hold"
+        assert stored["pool_status"] == "temporal_review_hold"
+        assert stored["temporal_review_attempts"] == 1
+        assert stored["temporal_review_retry_at"] != "2000-01-01T00:00:00Z"
+        assert db.get_pool_candidates_needing_evaluation(limit=1) == []
+
+    def test_legacy_age_boundary_moves_to_review_hold_not_stale(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "legacy-review-hold.db")
+        db.initialize()
+
+        result = db.cache_content(
+            "BVLEGACYDUE",
+            title="旧版时间分类",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.95,
+            temporal_reason="旧版 freshness 分类",
+        )
+
+        row = db.conn.execute(
+            "SELECT temporal_policy_version, pool_status FROM content_cache "
+            "WHERE bvid = 'BVLEGACYDUE'"
+        ).fetchone()
+        assert result.temporal_decision.disposition == "review_due"
+        assert dict(row) == {
+            "temporal_policy_version": "v1",
+            "pool_status": "temporal_review_hold",
+        }
+
+    def test_final_serve_commit_applies_all_three_temporal_states(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _freeze_storage_clock(monkeypatch)
+        db = Database(tmp_path / "v2-final-serve.db")
+        db.initialize()
+        common = {
+            "source": "search",
+            "relevance_score": 0.9,
+            "pool_expression": "serve",
+            "pool_topic_label": "serve",
+            "style_key": "tutorial",
+            "topic_group": "serve",
+        }
+        db.cache_content("BVFINALFRESH", title="fresh", **common, **_v2_temporal())
+        db.cache_content("BVFINALHOLD", title="hold", **common, **_v2_temporal())
+        db.cache_content(
+            "BVFINALEXPIRED",
+            title="截止：2099-01-01 00:00 +00:00",
+            **common,
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="截止后失效",
+                temporal_validity_mode="explicit_deadline",
+                temporal_valid_until="2099-01-01T00:00:00Z",
+                temporal_state="unknown",
+                temporal_evidence="截止：2099-01-01 00:00 +00:00",
+            ),
+        )
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_next_review_at = ?, "
+            "temporal_evaluated_at = ? WHERE bvid = ?",
+            (
+                "2000-01-01T00:00:00Z",
+                "1999-01-01T00:00:00Z",
+                "BVFINALHOLD",
+            ),
+        )
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_valid_until = ?, temporal_evidence = ? "
+            "WHERE bvid = ?",
+            (
+                "2000-01-01T00:00:00Z",
+                "截止：2000-01-01 00:00 +00:00",
+                "BVFINALEXPIRED",
+            ),
+        )
+        db.conn.commit()
+
+        result = db.batch_insert_eligible_recommendations_and_mark_shown(
+            [
+                {"bvid": "BVFINALFRESH", "confidence": 0.9},
+                {"bvid": "BVFINALHOLD", "confidence": 0.9},
+                {"bvid": "BVFINALEXPIRED", "confidence": 0.9},
+            ],
+            ["BVFINALFRESH", "BVFINALHOLD", "BVFINALEXPIRED"],
+        )
+
+        assert result.committed_bvids == ("BVFINALFRESH",)
+        assert result.skipped_bvids == ("BVFINALHOLD",)
+        assert result.temporally_stale_bvids == ("BVFINALEXPIRED",)
+        statuses = {
+            str(row["bvid"]): str(row["pool_status"])
+            for row in db.conn.execute("SELECT bvid, pool_status FROM content_cache ORDER BY bvid")
+        }
+        assert statuses == {
+            "BVFINALEXPIRED": "stale",
+            "BVFINALFRESH": "shown",
+            "BVFINALHOLD": "temporal_review_hold",
+        }
+
+    @pytest.mark.parametrize("invalid_marker", ["false", "not-complete", "0", 2])
+    def test_final_serve_fails_neutral_for_invalid_complete_marker(
+        self,
+        tmp_path: Path,
+        invalid_marker: object,
+    ) -> None:
+        db = Database(tmp_path / f"v2-final-marker-{invalid_marker}.db")
+        db.initialize()
+        evidence = "活动已经结束"
+        db.cache_content(
+            "BVFINALMARKER",
+            title=evidence,
+            source="search",
+            relevance_score=0.9,
+            pool_expression="serve",
+            pool_topic_label="serve",
+            style_key="tutorial",
+            topic_group="serve",
+            **_v2_temporal(
+                temporal_class="breaking",
+                temporal_reason="活动结束后核心价值失效",
+                temporal_validity_mode="event_state",
+                temporal_state="expired",
+                temporal_evidence=evidence,
+                temporal_next_review_at="",
+            ),
+        )
+        # Simulate a legacy/corrupt adapter that wrote a truthy non-marker.
+        db.conn.execute(
+            "UPDATE content_cache SET pool_status = 'fresh', "
+            "temporal_evidence_complete = ? WHERE bvid = 'BVFINALMARKER'",
+            (invalid_marker,),
+        )
+        db.conn.commit()
+
+        result = db.batch_insert_eligible_recommendations_and_mark_shown(
+            [{"bvid": "BVFINALMARKER", "confidence": 0.9}],
+            ["BVFINALMARKER"],
+        )
+
+        assert result.committed_bvids == ("BVFINALMARKER",)
+        assert result.temporally_stale_bvids == ()
+        assert (
+            db.conn.execute(
+                "SELECT pool_status FROM content_cache WHERE bvid = 'BVFINALMARKER'"
+            ).fetchone()["pool_status"]
+            == "shown"
+        )
+
+    def test_review_due_candidate_is_requeued_with_evidence_intact(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-candidate-review.db")
+        db.initialize()
+        db.enqueue_discovery_candidates(
+            [
+                DiscoveryCandidateWrite(
+                    candidate_key="bilibili:BVCANDIDATEREVIEW",
+                    source_platform="bilibili",
+                    source_strategy="search",
+                    content_id="BVCANDIDATEREVIEW",
+                    title="candidate review",
+                )
+            ]
+        )
+        claimed = db.claim_discovery_candidates_for_eval(
+            limit=1,
+            claim_token="temporal-review-token",
+        )[0]
+        evidence = _v2_temporal(
+            temporal_next_review_at="2000-01-01T00:00:00Z",
+            temporal_evaluated_at="1999-01-01T00:00:00Z",
+        )
+
+        assert db.persist_claimed_discovery_candidate_evaluations(
+            [
+                {
+                    "candidate_id": int(claimed["id"]),
+                    "status": "evaluated",
+                    "relevance_score": 0.9,
+                    "relevance_reason": "fit",
+                    **evidence,
+                }
+            ],
+            claim_token="temporal-review-token",
+        ) == {int(claimed["id"])}
+
+        row = db.conn.execute(
+            "SELECT * FROM discovery_candidates WHERE id = ?",
+            (int(claimed["id"]),),
+        ).fetchone()
+        assert row["status"] == "pending_eval"
+        assert row["claim_token"] is None
+        assert row["temporal_evidence"] == evidence["temporal_evidence"]
+        assert row["temporal_evidence_complete"] == 1
+
+    def test_temporally_stale_rows_are_excluded_and_retired_from_fresh_pool(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-retire.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVSTALE",
+            title="过期突发内容",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.95,
+            temporal_reason="价值依赖即时状态",
+        )
+        _seed_visible(
+            db,
+            "BVDURABLE",
+            title="长期有效内容",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="evergreen",
+            temporal_confidence=0.95,
+            temporal_reason="核心价值不依赖当前时间",
+        )
+
+        # Legacy age windows schedule a review rather than claiming expiry.
+        assert [row["bvid"] for row in db.get_pool_candidates(limit=10)] == ["BVDURABLE"]
+
+        initial_statuses = {
+            str(row["bvid"]): str(row["pool_status"])
+            for row in db.conn.execute(
+                "SELECT bvid, pool_status FROM content_cache ORDER BY bvid"
+            ).fetchall()
+        }
+        assert initial_statuses == {
+            "BVDURABLE": "fresh",
+            "BVSTALE": "temporal_review_hold",
+        }
+
+        retired = db.retire_temporally_stale_pool_items(
+            now=datetime.fromisoformat("2026-08-12T12:00:00+00:00")
+        )
+
+        assert retired == set()
+        statuses = {
+            str(row["bvid"]): str(row["pool_status"])
+            for row in db.conn.execute(
+                "SELECT bvid, pool_status FROM content_cache ORDER BY bvid"
+            ).fetchall()
+        }
+        assert statuses == {
+            "BVDURABLE": "fresh",
+            "BVSTALE": "temporal_review_hold",
+        }
+        assert db.retire_temporally_stale_pool_items() == set()
+        db.close()
+
+    def test_temporally_stale_evaluated_waiter_does_not_inflate_supply(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-evaluated-waiter.db")
+        db.initialize()
+        db.enqueue_discovery_candidates(
+            [
+                DiscoveryCandidateWrite(
+                    candidate_key="bilibili:BVSTALEWAIT",
+                    source_platform="bilibili",
+                    source_strategy="search",
+                    content_id="BVSTALEWAIT",
+                    title="过期等待项",
+                    published_at="2000-01-01T00:00:00Z",
+                ),
+                DiscoveryCandidateWrite(
+                    candidate_key="youtube:YTPENDING",
+                    source_platform="youtube",
+                    source_strategy="yt_search",
+                    content_id="YTPENDING",
+                    title="尚未评估项",
+                ),
+            ]
+        )
+        claimed = db.claim_discovery_candidates_for_eval(
+            limit=1,
+            claim_token="stale-wait-token",
+        )
+        assert db.persist_claimed_discovery_candidate_evaluations(
+            [
+                {
+                    "candidate_id": int(claimed[0]["id"]),
+                    "status": "evaluated",
+                    "relevance_score": 0.9,
+                    "relevance_reason": "fit",
+                    "temporal_class": "breaking",
+                    "temporal_confidence": 0.95,
+                    "temporal_reason": "价值依赖即时状态",
+                    "topic_group": "news",
+                    "style_key": "deep_dive",
+                }
+            ],
+            claim_token="stale-wait-token",
+        ) == {int(claimed[0]["id"])}
+
+        readiness = db.count_pool_readiness()
+
+        # The legacy breaking row is review-due and now has a future per-row
+        # retry lease, so only the genuinely ready YouTube row counts.
+        assert readiness["pending_eval"] == 1
+        assert readiness["evaluated_pending"] == 0
+        assert readiness["raw"] == 1
+        assert db.count_pool_raw_material_candidates() == 1
+        assert db.count_pool_raw_material_by_source() == {"youtube": 1}
+        assert db.count_evaluated_discovery_candidates_by_source() == {}
+        assert db.count_admission_waiting_discovery_candidates_by_source() == {
+            "youtube": 1,
+        }
+        db.close()
+
+    def test_admission_filters_temporally_stale_rows_before_applying_limit(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-admission-window.db")
+        db.initialize()
+        temporal_now = datetime.now().astimezone()
+        stale_published_at = (temporal_now - timedelta(days=10)).isoformat()
+        fresh_published_at = (temporal_now - timedelta(days=1)).isoformat()
+        db.conn.executemany(
+            """
+            INSERT INTO discovery_candidates (
+                candidate_key,
+                status,
+                source_platform,
+                source_strategy,
+                content_id,
+                title,
+                published_at,
+                temporal_class,
+                temporal_confidence,
+                evaluated_at
+            )
+            VALUES (?, 'evaluated', 'bilibili', 'search', ?, ?, ?, 'breaking', 0.95, ?)
+            """,
+            [
+                (
+                    f"bilibili:BVSTALE{index}",
+                    f"BVSTALE{index}",
+                    f"stale {index}",
+                    stale_published_at,
+                    "2026-01-01 00:00:00",
+                )
+                for index in range(501)
+            ]
+            + [
+                (
+                    "bilibili:BVFRESHAFTERBACKLOG",
+                    "BVFRESHAFTERBACKLOG",
+                    "fresh after stale backlog",
+                    fresh_published_at,
+                    "2026-01-02 00:00:00",
+                )
+            ],
+        )
+        db.conn.commit()
+
+        admitted = db.get_evaluated_discovery_candidates_for_admission(limit=500)
+
+        assert [row["candidate_key"] for row in admitted] == ["bilibili:BVFRESHAFTERBACKLOG"]
+        db.close()
+
+    def test_temporal_waiter_sweep_rereads_after_acquiring_writer_lock(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import openbiliclaw.storage.database as database_module
+
+        db = Database(tmp_path / "temporal-sweep-rediscovery-race.db")
+        db.initialize()
+        temporal_now = datetime.now().astimezone()
+        stale_published_at = (temporal_now - timedelta(days=10)).isoformat()
+        fresh_published_at = (temporal_now - timedelta(days=1)).isoformat()
+        db.conn.execute(
+            """
+            INSERT INTO discovery_candidates (
+                candidate_key,
+                status,
+                source_platform,
+                source_strategy,
+                content_id,
+                title,
+                published_at,
+                temporal_class,
+                temporal_confidence,
+                evaluated_at
+            )
+            VALUES (
+                'bilibili:BVREDISCOVERED',
+                'evaluated',
+                'bilibili',
+                'search',
+                'BVREDISCOVERED',
+                'rediscovered candidate',
+                ?,
+                'breaking',
+                0.95,
+                CURRENT_TIMESTAMP
+            )
+            """,
+            (stale_published_at,),
+        )
+        db.conn.commit()
+
+        rediscovery = db.open_connection()
+        rediscovery.execute("BEGIN IMMEDIATE")
+        rediscovery.execute(
+            """
+            UPDATE discovery_candidates
+            SET published_at = ?, last_seen_at = CURRENT_TIMESTAMP
+            WHERE candidate_key = 'bilibili:BVREDISCOVERED'
+            """,
+            (fresh_published_at,),
+        )
+
+        sweep_started = threading.Event()
+        eligibility_checked = threading.Event()
+        real_evaluate = database_module.evaluate_temporal_eligibility
+
+        def observe_eligibility(*args: Any, **kwargs: Any) -> Any:
+            eligibility_checked.set()
+            return real_evaluate(*args, **kwargs)
+
+        def sweep() -> int:
+            sweep_started.set()
+            return db.reject_temporally_stale_evaluated_candidates(now=temporal_now)
+
+        try:
+            with (
+                patch.object(
+                    database_module,
+                    "evaluate_temporal_eligibility",
+                    side_effect=observe_eligibility,
+                ),
+                ThreadPoolExecutor(max_workers=1) as executor,
+            ):
+                future = executor.submit(sweep)
+                assert sweep_started.wait(timeout=5)
+                try:
+                    # The sweep must wait at BEGIN IMMEDIATE. Evaluating the
+                    # old snapshot here would recreate the rediscovery race.
+                    assert not eligibility_checked.wait(timeout=0.5)
+                finally:
+                    rediscovery.commit()
+                assert future.result(timeout=5) == 0
+        finally:
+            if rediscovery.in_transaction:
+                rediscovery.rollback()
+            rediscovery.close()
+
+        stored = db.conn.execute(
+            """
+            SELECT status, published_at
+            FROM discovery_candidates
+            WHERE candidate_key = 'bilibili:BVREDISCOVERED'
+            """
+        ).fetchone()
+        assert dict(stored) == {
+            "status": "evaluated",
+            "published_at": fresh_published_at,
+        }
+        db.close()
+
+    def test_pool_snapshot_holds_legacy_content_due_for_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-snapshot.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVWAITEDTOOLONG",
+            title="入池后过期的即时内容",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.9,
+            temporal_reason="价值依赖即时状态",
+        )
+
+        snapshot = db.load_pool_serve_snapshot(limit=10)
+
+        assert snapshot.candidate_rows == ()
+        assert snapshot.readiness["available"] == 0
+        assert (
+            db.conn.execute(
+                "SELECT pool_status FROM content_cache WHERE bvid='BVWAITEDTOOLONG'"
+            ).fetchone()[0]
+            == "temporal_review_hold"
+        )
+        db.close()
+
+    def test_atomic_pool_serve_commit_rechecks_temporal_eligibility(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-final-commit.db")
+        db.initialize()
+        published = datetime.fromisoformat("2026-08-10T12:00:00+00:00")
+        _seed_visible(
+            db,
+            "BVEXPIRES",
+            title="提交前跨过期限",
+            source="search",
+            published_at=published.isoformat(),
+            temporal_class="breaking",
+            temporal_confidence=0.9,
+            temporal_reason="价值依赖即时状态",
+        )
+        _seed_visible(
+            db,
+            "BVEVERGREEN",
+            title="长期有效",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="evergreen",
+            temporal_confidence=0.9,
+            temporal_reason="核心价值不依赖当前时间",
+        )
+        items = [
+            {
+                "bvid": "BVEXPIRES",
+                "expression": "即时内容",
+                "topic": "事件",
+                "confidence": 0.9,
+            },
+            {
+                "bvid": "BVEVERGREEN",
+                "expression": "长期内容",
+                "topic": "知识",
+                "confidence": 0.9,
+            },
+        ]
+
+        result = db.batch_insert_eligible_recommendations_and_mark_shown(
+            items,
+            ["BVEXPIRES", "BVEVERGREEN"],
+            now=published + timedelta(days=3),
+        )
+
+        assert len(result.recommendation_ids) == 1
+        assert result.committed_bvids == ("BVEVERGREEN",)
+        assert result.temporally_stale_bvids == ()
+        assert result.skipped_bvids == ("BVEXPIRES",)
+        assert [
+            str(row["bvid"])
+            for row in db.conn.execute("SELECT bvid FROM recommendations").fetchall()
+        ] == ["BVEVERGREEN"]
+        statuses = {
+            str(row["bvid"]): str(row["pool_status"])
+            for row in db.conn.execute("SELECT bvid, pool_status FROM content_cache").fetchall()
+        }
+        assert statuses == {
+            "BVEXPIRES": "temporal_review_hold",
+            "BVEVERGREEN": "shown",
+        }
+        db.close()
+
+    def test_temporally_stale_rows_do_not_inflate_readiness_or_copy_backlog(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-readiness.db")
+        db.initialize()
+        common = {
+            "source": "search",
+            "style_key": "tutorial",
+            "relevance_score": 0.9,
+            "published_at": "2000-01-01T00:00:00Z",
+            "temporal_confidence": 0.95,
+        }
+        db.cache_content(
+            "BVSTALECOPY",
+            title="过期内容等待文案",
+            topic_group="过期主题",
+            temporal_class="breaking",
+            temporal_reason="价值依赖即时状态",
+            **common,
+        )
+        db.cache_content(
+            "BVDURABLECOPY",
+            title="长期内容等待文案",
+            topic_group="长期主题",
+            temporal_class="evergreen",
+            temporal_reason="核心价值长期有效",
+            **common,
+        )
+
+        readiness = db.count_pool_readiness()
+
+        assert readiness["available"] == 0
+        assert readiness["copy_ready"] == 0
+        assert readiness["raw"] == 1
+        assert readiness["pending"] == 1
+        assert readiness["admitted_pending_copy"] == 1
+        assert readiness["admitted_pending_available"] == 1
+        assert [row["bvid"] for row in db.get_pool_candidates_needing_copy(limit=1)] == [
+            "BVDURABLECOPY"
+        ]
+        db.close()
+
+    def test_v2_review_due_row_does_not_inflate_raw_or_pending_readiness(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "v2-review-due-readiness.db")
+        db.initialize()
+        evidence = "活动仍在进行，报名入口仍然开放"
+        db.cache_content(
+            "BVREVIEWDUERAW",
+            title=evidence,
+            source="search",
+            style_key="tutorial",
+            topic_group="活动",
+            relevance_score=0.9,
+            **_v2_temporal(temporal_evidence=evidence),
+        )
+        # Simulate an item that crossed its policy-owned review boundary after
+        # entering the pool but before the next maintenance sweep.
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_evaluated_at = ?, "
+            "temporal_next_review_at = ? WHERE bvid = ?",
+            ("1999-12-18T00:00:00Z", "2000-01-01T00:00:00Z", "BVREVIEWDUERAW"),
+        )
+        db.conn.commit()
+
+        readiness = db.count_pool_readiness()
+
+        assert readiness["raw"] == 0
+        assert readiness["pending"] == 0
+        assert db.count_pool_raw_material_candidates() == 0
+        assert db.count_pool_raw_material_by_source() == {}
+        db.close()
+
+    def test_temporally_stale_rows_do_not_influence_active_pool_taxonomy(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-taxonomy.db")
+        db.initialize()
+        common = {
+            "source": "search",
+            "source_platform": "bilibili",
+            "published_at": "2000-01-01T00:00:00Z",
+            "temporal_confidence": 0.95,
+        }
+        _seed_visible(
+            db,
+            "BVSTALETAXONOMY",
+            title="过期主题样本",
+            topic_group="过期主题",
+            franchise_key="stale-ip",
+            temporal_class="breaking",
+            temporal_reason="价值依赖即时状态",
+            **common,
+        )
+        _seed_visible(
+            db,
+            "BVDURABLETAXONOMY",
+            title="长期主题样本",
+            topic_group="长期主题",
+            franchise_key="durable-ip",
+            temporal_class="evergreen",
+            temporal_reason="核心价值长期有效",
+            **common,
+        )
+
+        assert db.get_distinct_topic_groups() == ["长期主题"]
+        assert db.get_active_pool_topic_groups(limit=10, min_count=1) == ["长期主题"]
+        assert db.get_topic_group_samples() == [("长期主题", ["长期主题样本"])]
+        assert db.count_pool_by_franchise() == {"durable-ip": 1}
+        assert db.get_pool_distribution_counts()["topic_group"] == {"长期主题": 1}
+        assert db.get_pool_topic_counts_by_platform() == {"bilibili": {"长期主题": 1}}
+        assert db.count_pool_candidates_by_source() == {"bilibili": 1}
+        db.close()
+
+    def test_temporally_stale_rows_do_not_consume_delight_limits(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-delight.db")
+        db.initialize()
+        common = {
+            "source": "search",
+            "published_at": "2000-01-01T00:00:00Z",
+            "temporal_confidence": 0.95,
+        }
+        _seed_visible(
+            db,
+            "BVSTALEDELIGHT",
+            title="过期惊喜",
+            temporal_class="breaking",
+            temporal_reason="价值依赖即时状态",
+            **common,
+        )
+        _seed_visible(
+            db,
+            "BVDURABLEDELIGHT",
+            title="长期惊喜",
+            temporal_class="evergreen",
+            temporal_reason="核心价值长期有效",
+            **common,
+        )
+        _seed_visible(
+            db,
+            "BVSTALESCORE",
+            title="过期高分待计算",
+            relevance_score=0.99,
+            temporal_class="breaking",
+            temporal_reason="价值依赖即时状态",
+            **common,
+        )
+        _seed_visible(
+            db,
+            "BVDURABLESCORE",
+            title="长期较低分待计算",
+            relevance_score=0.80,
+            temporal_class="evergreen",
+            temporal_reason="核心价值长期有效",
+            **common,
+        )
+        assert db.update_delight_score(
+            "BVSTALEDELIGHT",
+            delight_score=0.99,
+            delight_reason="测试推荐文案",
+            delight_hook="测试主题",
+        )
+        assert db.update_delight_score(
+            "BVDURABLEDELIGHT",
+            delight_score=0.90,
+            delight_reason="测试推荐文案",
+            delight_hook="测试主题",
+        )
+
+        assert db.count_delight_candidates(min_delight_score=0.85) == 1
+        assert [row["bvid"] for row in db.get_pool_candidates_needing_delight_score(limit=1)] == [
+            "BVDURABLESCORE"
+        ]
+        db.close()
+
+    def test_atomic_pool_serve_commit_reports_concurrent_skips(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-final-skip.db")
+        db.initialize()
+        _seed_visible(db, "BVCONSUMED", title="已被另一请求消费", source="search")
+        db.insert_recommendation("BVCONSUMED", confidence=0.9)
+
+        result = db.batch_insert_eligible_recommendations_and_mark_shown(
+            [{"bvid": "BVCONSUMED", "confidence": 0.9}],
+            ["BVCONSUMED"],
+        )
+
+        assert result.recommendation_ids == ()
+        assert result.committed_bvids == ()
+        assert result.skipped_bvids == ("BVCONSUMED",)
+        db.close()
 
     def test_thread_connections_preserve_existing_foreign_key_semantics(
         self,
@@ -593,12 +1926,7 @@ class TestDatabase:
             WHERE bvid = 'BVTEMPORAL'
             """
         ).fetchone()
-        assert dict(invalid_class) == {
-            "temporal_class": "unknown",
-            "temporal_confidence": 0.0,
-            "temporal_reason": "",
-            "temporal_policy_version": "v1",
-        }
+        assert dict(invalid_class) == dict(stored)
         assert any(
             "Invalid temporal metadata coerced to unknown" in record.message
             for record in caplog.records
@@ -620,8 +1948,8 @@ class TestDatabase:
             """
         ).fetchone()
         assert dict(invalid_confidence) == {
-            "temporal_class": "unknown",
-            "temporal_confidence": 0.0,
+            "temporal_class": "versioned",
+            "temporal_confidence": 0.75,
         }
 
         db.cache_content(
@@ -640,9 +1968,9 @@ class TestDatabase:
             """
         ).fetchone()
         assert dict(invalid_reason) == {
-            "temporal_class": "unknown",
-            "temporal_confidence": 0.0,
-            "temporal_reason": "",
+            "temporal_class": "versioned",
+            "temporal_confidence": 0.75,
+            "temporal_reason": "依赖软件版本",
         }
 
         db.cache_content(
@@ -661,9 +1989,9 @@ class TestDatabase:
             """
         ).fetchone()
         assert dict(huge_confidence) == {
-            "temporal_class": "unknown",
-            "temporal_confidence": 0.0,
-            "temporal_reason": "",
+            "temporal_class": "versioned",
+            "temporal_confidence": 0.75,
+            "temporal_reason": "依赖软件版本",
         }
 
         db.cache_content(
@@ -682,11 +2010,89 @@ class TestDatabase:
             """
         ).fetchone()
         assert dict(empty_reason) == {
+            "temporal_class": "versioned",
+            "temporal_confidence": 0.75,
+            "temporal_reason": "依赖软件版本",
+        }
+        db.close()
+
+    def test_cache_content_holds_legacy_age_due_rows_for_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-cache-sink.db")
+        db.initialize()
+
+        write_result = db.cache_content(
+            "BVSTALESINK",
+            title="已经过期的突发内容",
+            source="search",
+            relevance_score=0.95,
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.95,
+            temporal_reason="价值依赖即时状态",
+        )
+
+        row = db.conn.execute(
+            "SELECT pool_status, temporal_class FROM content_cache WHERE bvid='BVSTALESINK'"
+        ).fetchone()
+        assert row["pool_status"] == "temporal_review_hold"
+        assert row["temporal_class"] == "breaking"
+        assert write_result.created is True
+        assert write_result.admitted is False
+        assert write_result.temporal_decision.rejection_reason.startswith(
+            "temporal_review_due:class=breaking:"
+        )
+        assert db.count_pool_candidates() == 0
+        db.close()
+
+    def test_cache_content_repairs_malformed_legacy_temporal_evidence_fail_neutral(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "malformed-legacy-temporal.db")
+        db.initialize()
+        db.cache_content(
+            "BVMALFORMED",
+            title="legacy malformed",
+            source="search",
+            relevance_score=0.9,
+        )
+        db.conn.execute(
+            """
+            UPDATE content_cache
+            SET temporal_class='breaking', temporal_confidence=0.95,
+                temporal_reason='', published_at='2000-01-01T00:00:00Z',
+                pool_status='fresh'
+            WHERE bvid='BVMALFORMED'
+            """
+        )
+        db.conn.commit()
+
+        result = db.cache_content(
+            "BVMALFORMED",
+            **DiscoveredContent(
+                bvid="BVMALFORMED",
+                title="raw rediscovery",
+                source_strategy="search",
+                relevance_score=0.9,
+            ).to_cache_kwargs(),
+        )
+
+        row = db.conn.execute(
+            """
+            SELECT temporal_class, temporal_confidence, temporal_reason, pool_status
+            FROM content_cache WHERE bvid='BVMALFORMED'
+            """
+        ).fetchone()
+        assert dict(row) == {
             "temporal_class": "unknown",
             "temporal_confidence": 0.0,
             "temporal_reason": "",
+            "pool_status": "fresh",
         }
-        db.close()
+        assert result.admitted is True
 
     def test_cache_content_empty_cover_does_not_wipe_existing(self) -> None:
         """空封面的重摄入(如仅刷新互动数据)不得抹掉已有的好封面。"""
@@ -1399,6 +2805,21 @@ class TestDatabase:
                 "UPDATE content_cache SET pool_status = 'suppressed' WHERE bvid = ?",
                 ("BV1suppressed_low",),
             )
+            db.cache_content(
+                "BV1suppressed_expired",
+                title="expired breaking item",
+                up_name="UP",
+                source="trending",
+                relevance_score=0.8,
+                published_at="2000-01-01T00:00:00Z",
+                temporal_class="breaking",
+                temporal_confidence=0.95,
+                temporal_reason="价值依赖即时状态",
+            )
+            db._execute_write(
+                "UPDATE content_cache SET pool_status = 'suppressed' WHERE bvid = ?",
+                ("BV1suppressed_expired",),
+            )
 
             # Re-discover all three (simulates trending re-fetching same BVIDs)
             for status in ("suppressed", "shown", "purged_by_dislike"):
@@ -1416,6 +2837,30 @@ class TestDatabase:
                 source="trending",
                 relevance_score=0.20,
             )
+            db.cache_content(
+                "BV1suppressed_expired",
+                **DiscoveredContent(
+                    bvid="BV1suppressed_expired",
+                    title="expired breaking item",
+                    up_name="UP",
+                    source_strategy="trending",
+                    relevance_score=0.8,
+                    published_at="2026-08-11T00:00:00Z",
+                    published_label="刚刚",
+                ).to_cache_kwargs(),
+            )
+            db.cache_content(
+                "BV1suppressed_expired",
+                **DiscoveredContent(
+                    bvid="BV1suppressed_expired",
+                    title="expired breaking item",
+                    up_name="UP",
+                    source_strategy="trending",
+                    relevance_score=0.8,
+                    published_at="2026-11-20T00:00:00Z",
+                    published_label="未来",
+                ).to_cache_kwargs(),
+            )
 
             rows = db.get_cached_content(limit=10)
             by_bvid = {row["bvid"]: row for row in rows}
@@ -1423,6 +2868,10 @@ class TestDatabase:
             assert by_bvid["BV1suppressed"]["pool_status"] == "fresh"
             # Low-score suppression is admission, not just diversity trim.
             assert by_bvid["BV1suppressed_low"]["pool_status"] == "suppressed"
+            # A raw rediscovery cannot wash or revive legacy review evidence.
+            assert by_bvid["BV1suppressed_expired"]["pool_status"] == "temporal_review_hold"
+            assert by_bvid["BV1suppressed_expired"]["temporal_class"] == "breaking"
+            assert by_bvid["BV1suppressed_expired"]["published_at"] == "2000-01-01T00:00:00Z"
             # Shown stays shown (user already saw)
             assert by_bvid["BV1shown"]["pool_status"] == "shown"
             # Disliked stays purged
@@ -2236,6 +3685,37 @@ class TestDatabase:
             assert purged == 1
             db.close()
 
+    def test_purge_scan_filters_temporal_staleness_before_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+            _seed_visible(
+                db,
+                "BVSTALEPURGE",
+                title="已经过期但最近重抓",
+                source="search",
+                published_at="2000-01-01T00:00:00Z",
+                temporal_class="breaking",
+                temporal_confidence=0.95,
+                temporal_reason="价值依赖即时状态",
+            )
+            _seed_visible(
+                db,
+                "BVELIGIBLEPURGE",
+                title="仍应接受语义避雷扫描",
+                source="search",
+            )
+            db.conn.execute(
+                "UPDATE content_cache SET discovered_at = ? WHERE bvid = ?",
+                ("2099-01-01T00:00:00Z", "BVSTALEPURGE"),
+            )
+            db.conn.commit()
+
+            rows = db.get_fresh_pool_candidates_for_purge_scan(limit=1)
+
+            assert [row["bvid"] for row in rows] == ["BVELIGIBLEPURGE"]
+            db.close()
+
     def test_query_events_supports_type_keyword_and_time_filters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -2447,6 +3927,42 @@ class TestDatabase:
             assert [item["bvid"] for item in items] == ["BV1NEW", "BV1OLD", "BV1BACK"]
 
             db.close()
+
+    def test_get_unrecommended_content_filters_temporal_stale_before_limit(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-backfill.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVSTALEBACKFILL",
+            title="过期高分 backfill",
+            source="search",
+            relevance_score=0.99,
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.95,
+            temporal_reason="价值依赖即时状态",
+        )
+        _seed_visible(
+            db,
+            "BVDURABLEBACKFILL",
+            title="长期较低分 backfill",
+            source="search",
+            relevance_score=0.80,
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="evergreen",
+            temporal_confidence=0.95,
+            temporal_reason="核心价值长期有效",
+        )
+
+        items = db.get_unrecommended_content(limit=1)
+
+        assert [item["bvid"] for item in items] == ["BVDURABLEBACKFILL"]
+        assert items[0]["temporal_class"] == "evergreen"
+        assert float(items[0]["temporal_confidence"]) == pytest.approx(0.95)
+        db.close()
 
     def test_get_pool_candidates_skips_shown_and_feedbacked_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3702,6 +5218,40 @@ class TestDatabase:
             assert calls == 1
             db.close()
 
+    def test_pool_maintenance_holds_newly_due_fresh_rows_in_writer_transaction(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _freeze_storage_clock(monkeypatch)
+        db = Database(tmp_path / "maintenance-temporal-due.db")
+        db.initialize()
+        _seed_visible(db, "BVMAINTDUE", source="search", **_v2_temporal())
+        db.conn.execute(
+            "UPDATE content_cache SET temporal_next_review_at = ?, "
+            "temporal_evaluated_at = ? WHERE bvid = ?",
+            (
+                "2000-01-01T00:00:00Z",
+                "1999-01-01T00:00:00Z",
+                "BVMAINTDUE",
+            ),
+        )
+        db.conn.commit()
+
+        result = db.maintain_pool_inventory(
+            target=1,
+            raw_ceiling=2,
+            source_share_quotas={"bilibili": 1},
+            max_mutations=50,
+        )
+
+        row = db.conn.execute(
+            "SELECT pool_status FROM content_cache WHERE bvid = 'BVMAINTDUE'"
+        ).fetchone()
+        assert row["pool_status"] == "temporal_review_hold"
+        assert result.available_after == 0
+        assert result.mutation_count >= 1
+
     def test_count_pool_readiness_reports_only_canonical_admitted_pending_copy(
         self,
     ) -> None:
@@ -3931,6 +5481,18 @@ class TestDatabase:
                 url="https://www.zhihu.com/question/1/answer/42",
                 metadata={"source_platform": "zh", "content_id": "answer:42"},
             )
+            db.insert_event(
+                "view",
+                title="X 帖子",
+                url="https://x.com/example/status/123",
+                metadata={"source_platform": "twitter", "tweet_id": "123"},
+            )
+            db.insert_event(
+                "view",
+                title="知乎问题",
+                url="https://www.zhihu.com/question/99",
+                metadata={"source_platform": "zhihu", "question_id": "99"},
+            )
 
             keys = db.get_recent_viewed_content_keys()
 
@@ -3941,8 +5503,31 @@ class TestDatabase:
             assert "bilibili:BV1SEEN" in keys
             assert "BV1SEEN" in keys
             assert "zhihu:answer:42" in keys
+            assert "twitter:123" in keys
+            assert "zhihu:99" in keys
 
             db.close()
+
+    def test_view_event_uses_one_ordered_metadata_identity(self) -> None:
+        with_primary_and_fallback = Database._extract_content_keys_from_view_event(
+            {
+                "url": "https://linux.do/t/topic/4242",
+                "metadata": {
+                    "source_platform": "linuxdo",
+                    "content_id": "topic:4242",
+                    "topic_id": 4242,
+                },
+            }
+        )
+        fallback_only = Database._extract_content_keys_from_view_event(
+            {
+                "url": "https://linux.do/t/topic/4243",
+                "metadata": {"source_platform": "linuxdo", "topic_id": 4243},
+            }
+        )
+
+        assert with_primary_and_fallback == {"linuxdo:topic:4242"}
+        assert fallback_only == {"linuxdo:4243"}
 
     def test_seen_items_backfill_is_unbounded_and_excludes_oldest_legacy_view(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4265,6 +5850,94 @@ class TestDatabase:
             }
 
             db.close()
+
+    def test_actionable_recommendations_exclude_temporally_stale_history(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-actionable-history.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BVOLDACTION",
+            title="已经过期但仍保留在历史",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="breaking",
+            temporal_confidence=0.95,
+            temporal_reason="价值依赖即时状态",
+        )
+        _seed_visible(
+            db,
+            "BVNEWACTION",
+            title="仍可展示的长期内容",
+            source="search",
+            published_at="2000-01-01T00:00:00Z",
+            temporal_class="evergreen",
+            temporal_confidence=0.95,
+            temporal_reason="核心价值长期有效",
+        )
+        db.insert_recommendation("BVNEWACTION", confidence=0.90, presented=0)
+        db.insert_recommendation("BVOLDACTION", confidence=0.99, presented=0)
+
+        assert [row["bvid"] for row in db.get_recommendations(limit=1, exclude_processed=True)] == [
+            "BVNEWACTION"
+        ]
+        # Immutable history deliberately retains the expired entry.
+        assert [row["bvid"] for row in db.get_recommendations(limit=2)] == [
+            "BVOLDACTION",
+            "BVNEWACTION",
+        ]
+        assert db.count_unread_recommendations() == 1
+        notification = db.get_notification_candidate(min_confidence=0.82)
+        assert notification is not None
+        assert notification["bvid"] == "BVNEWACTION"
+        db.close()
+
+    def test_actionable_history_filters_v2_terminal_state_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db = Database(tmp_path / "temporal-v2-actionable-history.db")
+        db.initialize()
+        evidence = "赛事已经结束"
+        db.cache_content(
+            "BVSTATEEXPIRED",
+            title=evidence,
+            source="search",
+            relevance_score=0.9,
+            **_v2_temporal(
+                temporal_class="current",
+                temporal_reason="赛事终态会使核心信息失效",
+                temporal_validity_mode="event_state",
+                temporal_state="expired",
+                temporal_evidence=evidence,
+                temporal_next_review_at="",
+            ),
+        )
+        _seed_visible(
+            db,
+            "BVSTATEFRESH",
+            title="长期有效",
+            source="search",
+            temporal_class="evergreen",
+            temporal_confidence=0.95,
+            temporal_reason="核心价值长期有效",
+        )
+        db.insert_recommendation("BVSTATEFRESH", confidence=0.90, presented=0)
+        db.insert_recommendation("BVSTATEEXPIRED", confidence=0.99, presented=0)
+
+        assert [
+            row["bvid"] for row in db.get_recommendations(limit=10, exclude_processed=True)
+        ] == ["BVSTATEFRESH"]
+        assert db.count_unread_recommendations() == 1
+        notification = db.get_notification_candidate(min_confidence=0.82)
+        assert notification is not None
+        assert notification["bvid"] == "BVSTATEFRESH"
+        assert [row["bvid"] for row in db.get_recommendations(limit=2)] == [
+            "BVSTATEEXPIRED",
+            "BVSTATEFRESH",
+        ]
 
     def test_get_recommendations_joins_multi_source_fields(self) -> None:
         """Regression: get_recommendations must surface content_cache's
@@ -5258,3 +6931,122 @@ def test_feedback_signals_return_topic_key_and_group() -> None:
 
         assert rows[0]["topic_key"] == "动漫解说"
         assert rows[0]["topic_group"] == "动漫"
+
+
+def test_serve_snapshot_computes_delight_boundary_once_and_discards_it(tmp_path) -> None:
+    db = Database(tmp_path / "snapshot.db")
+    db.initialize()
+    _seed_visible(db, "BVBOUNDARY", title="current inventory", source="search")
+    original = Database._compute_dynamic_delight_threshold_on
+    calls = 0
+
+    def counted(database, conn, *, floor):
+        nonlocal calls
+        calls += 1
+        return original(database, conn, floor=floor)
+
+    try:
+        with patch.object(Database, "_compute_dynamic_delight_threshold_on", counted):
+            first = db.load_pool_serve_snapshot(limit=10)
+            assert first.readiness["available"] == 1
+            assert calls == 1
+            db.mark_pool_items_shown(["BVBOUNDARY"])
+            second = db.load_pool_serve_snapshot(limit=10)
+            assert second.readiness["available"] == 0
+            assert calls == 2, "a new transaction must recalculate against current inventory"
+    finally:
+        db.close()
+
+
+def test_serve_snapshot_reuses_sql_but_rechecks_filters_and_topic_windows(tmp_path) -> None:
+    db = Database(tmp_path / "snapshot-query.db")
+    db.initialize()
+    for i in range(4):
+        _seed_visible(db, f"BVQUERY{i}", title="query reuse", source="search")
+    original_open = db.open_connection
+    original_filter = Database._filter_available_pool_candidate_rows
+    queries: list[str] = []
+    filter_calls = 0
+
+    def traced_open():
+        conn = original_open()
+        conn.set_trace_callback(queries.append)
+        return conn
+
+    def counted_filter(database, rows, *, viewed_content_keys, now=None):
+        nonlocal filter_calls
+        filter_calls += 1
+        return original_filter(database, rows, viewed_content_keys=viewed_content_keys, now=now)
+
+    def available_queries() -> int:
+        return sum(
+            statement.lstrip().startswith("SELECT bvid, content_id, source, source_platform")
+            for statement in queries
+        )
+
+    try:
+        with (
+            patch.object(db, "open_connection", traced_open),
+            patch.object(Database, "_filter_available_pool_candidate_rows", counted_filter),
+        ):
+            first = db.load_pool_serve_snapshot(limit=10)
+            assert first.readiness["available"] == 3
+            assert first.readiness["copy_ready"] == 4
+            assert len(first.candidate_rows) == 3
+            assert available_queries() == 1
+            assert filter_calls == 4, "time/seen/linkability checks still run for each caller"
+            # A returned row cannot mutate a later request's cached SQL inputs.
+            first.candidate_rows[0]["title"] = "modified by caller"
+            db.mark_pool_items_shown(["BVQUERY0", "BVQUERY1"])
+            queries.clear()
+            second = db.load_pool_serve_snapshot(limit=10)
+            assert second.readiness["available"] == 2
+            assert all(row["title"] == "query reuse" for row in second.candidate_rows)
+            assert available_queries() == 1, "new transaction must read committed changes"
+            assert filter_calls == 8
+    finally:
+        db.close()
+
+
+def test_isolated_readiness_reuses_threshold_and_cleans_caches_on_failure(tmp_path) -> None:
+    db = Database(tmp_path / "readiness-cache.db")
+    db.initialize()
+    _seed_visible(db, "BVREADYQUERY", title="readiness", source="search")
+    wrappers: list[Database] = []
+    original_isolated = db._isolated_database
+    original_threshold = Database._compute_dynamic_delight_threshold_on
+
+    def capture(**kwargs):
+        isolated = original_isolated(**kwargs)
+        wrappers.append(isolated)
+        return isolated
+
+    try:
+        with (
+            patch.object(db, "_isolated_database", capture),
+            patch.object(
+                Database,
+                "_compute_dynamic_delight_threshold_on",
+                autospec=True,
+                side_effect=original_threshold,
+            ) as compute,
+        ):
+            assert db.count_pool_readiness_isolated()["available"] == 1
+            assert compute.call_count == 1
+        with (
+            patch.object(db, "_isolated_database", capture),
+            patch.object(
+                Database,
+                "_filter_available_pool_candidate_rows",
+                side_effect=RuntimeError("read failed"),
+            ),
+            pytest.raises(RuntimeError, match="read failed"),
+        ):
+            db.count_pool_readiness_isolated()
+        for isolated in wrappers:
+            assert isolated._snapshot_delight_thresholds is None
+            assert isolated._snapshot_available_query_rows is None
+            assert not isolated._preserve_read_transaction
+            assert isolated._conn is None
+    finally:
+        db.close()

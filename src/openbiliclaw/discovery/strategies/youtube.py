@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.discovery.engine import (
-    ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
@@ -37,6 +36,7 @@ from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.youtube.client import YtScraperClient, normalize_yt_video
 
 if TYPE_CHECKING:
+    from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
@@ -67,6 +67,44 @@ def _extract_llm_json_payload(raw: object) -> object:
     return raw
 
 
+async def _enrich_missing_published_at(
+    client: object,
+    raw_items: list[dict[str, Any]],
+    *,
+    date_preference: object | None,
+    context: str,
+) -> None:
+    """Fill exact dates from channel Atom feeds when a date preference is active.
+
+    Only runs for a non-``all`` source preference, so the default discovery
+    path pays no extra RSS request.  Enrichment is best-effort: the feed covers
+    a channel's latest ~15 uploads, and unmatched items keep their relative
+    label instead of receiving a fabricated timestamp.
+    """
+
+    if not raw_items or date_preference is None:
+        return
+    from openbiliclaw.recommendation.publication_preference import PRESET_ALL
+
+    if getattr(date_preference, "preset", PRESET_ALL) == PRESET_ALL:
+        return
+    enrich = getattr(client, "enrich_missing_published_at", None)
+    if not callable(enrich):
+        return
+    try:
+        enriched = int(await enrich(raw_items) or 0)
+    except Exception as exc:
+        logger.warning("%s: published_at RSS enrichment failed: %s", context, exc)
+        return
+    if enriched > 0:
+        logger.info(
+            "%s: enriched %d/%d raw candidate(s) with exact published_at from channel RSS",
+            context,
+            enriched,
+            len(raw_items),
+        )
+
+
 # ---------------------------------------------------------------------------
 # YoutubeSearchStrategy
 # ---------------------------------------------------------------------------
@@ -83,6 +121,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     queries_per_run: int = 6
     results_per_query: int = 15
     score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
     llm_evaluation: bool = True
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
@@ -114,6 +153,18 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
         raw_batches = await asyncio.gather(
             *[self.client.search_videos(q, limit=self.results_per_query) for q in queries],
             return_exceptions=True,
+        )
+        await _enrich_missing_published_at(
+            self.client,
+            [
+                raw
+                for batch in raw_batches
+                if not isinstance(batch, BaseException)
+                for raw in batch
+                if isinstance(raw, dict)
+            ],
+            date_preference=self.date_preference,
+            context=self.name,
         )
 
         seen: set[str] = set()
@@ -190,11 +241,8 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     async def _evaluate(
         self, candidates: list[DiscoveredContent], profile: SoulProfile, limit: int
     ) -> list[DiscoveredContent]:
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)
         results: list[DiscoveredContent] = []
@@ -222,6 +270,7 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
     database: Database | None = None
     fetch_limit: int = 50
     score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
     llm_evaluation: bool = True
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
@@ -235,6 +284,12 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
 
     async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
         raw = await self.client.get_trending(limit=self.fetch_limit)
+        await _enrich_missing_published_at(
+            self.client,
+            [item for item in raw if isinstance(item, dict)],
+            date_preference=self.date_preference,
+            context=self.name,
+        )
         self.last_intermediates = {"fetched": len(raw)}
 
         seen: set[str] = set()
@@ -253,11 +308,8 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
         if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)
         results: list[DiscoveredContent] = []
@@ -301,6 +353,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
     max_channels: int = 10
     videos_per_channel: int = 5
     score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
     llm_evaluation: bool = True
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
@@ -326,6 +379,22 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
             ],
             return_exceptions=True,
         )
+        flat_batch_items: list[dict[str, Any]] = []
+        for channel_id, batch in zip(channel_ids, batches, strict=True):
+            if isinstance(batch, BaseException):
+                continue
+            for raw in batch:
+                if isinstance(raw, dict):
+                    # The batch already belongs to a known channel; expose it so
+                    # RSS enrichment does not depend on renderer byline shape.
+                    raw.setdefault("channel_id", channel_id)
+                    flat_batch_items.append(raw)
+        await _enrich_missing_published_at(
+            self.client,
+            flat_batch_items,
+            date_preference=self.date_preference,
+            context=self.name,
+        )
 
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
@@ -347,11 +416,8 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
         if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)
         results: list[DiscoveredContent] = []

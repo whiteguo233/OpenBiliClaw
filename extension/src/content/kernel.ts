@@ -34,6 +34,20 @@ const SNAPSHOT_TYPES = new Set(["snapshot", "view", "like", "coin", "favorite", 
 /** Positive actions whose pressed-state click means a withdrawal (retraction). */
 const RETRACTABLE_ACTIONS = new Set(["like", "favorite", "follow"]);
 
+// Bilibili-style dislike controls don't expose aria-pressed, so the DOM path
+// cannot tell a fresh dislike from a cancel. Track click parity per control:
+// odd clicks are dislikes, even clicks are cancellations emitted as
+// retractions (#205). This also caps misfires: N rapid clicks on one control
+// can no longer produce N negative votes. State resets after the gap below,
+// so a much-later revisit counts as a fresh dislike again.
+const DISLIKE_TOGGLE_RESET_MS = 10 * 60_000;
+const DISLIKE_TOGGLE_STATE_MAX = 200;
+
+interface DislikeToggleState {
+  clicks: number;
+  lastAt: number;
+}
+
 /** Evidence strength for a retraction — matches the backend's 0.2 default. */
 const RETRACTION_SIGNAL_STRENGTH = 0.2;
 
@@ -55,6 +69,19 @@ export function startCollector(adapter: PlatformAdapter): void {
   let videoAttachRetryTimer: number | null = null;
   const hoverTimers = new WeakMap<Element, number>();
   const trackedVideos = new WeakSet<HTMLVideoElement>();
+  // Browser <video> elements also fire `seeked` for programmatic seeks
+  // (watch-progress restore on page load, Bilibili player switching
+  // episodes/parts). Those are not user behavior and must not be recorded
+  // as if the user had scrubbed. Only emit `seek` shortly after a real
+  // pointer/keyboard interaction, which is how users initiate seeks.
+  let lastSeekInputAt = 0;
+  const markSeekInput = (): void => {
+    lastSeekInputAt = Date.now();
+  };
+
+  document.addEventListener("pointerdown", markSeekInput, { capture: true });
+  document.addEventListener("pointerup", markSeekInput, { capture: true });
+  document.addEventListener("keydown", markSeekInput, { capture: true });
 
   // v0.3.x event-satisfaction signal: track video-page dwell so the
   // backend can tell meaningful_dwell vs quick_exit on every visit.
@@ -276,6 +303,7 @@ export function startCollector(adapter: PlatformAdapter): void {
   };
 
   const observeClicks = (): void => {
+    const dislikeToggles = new Map<string, DislikeToggleState>();
     document.addEventListener("click", (event) => {
       if (!(event.target instanceof Element)) return;
       const target = event.target;
@@ -331,6 +359,39 @@ export function startCollector(adapter: PlatformAdapter): void {
         href,
         actionLabel: actionHint.ariaLabel,
       });
+      // Dislike is the one strong signal with no tap-authoritative source and
+      // no pressed state on Bilibili, so parity-tracking here is the only way
+      // to distinguish "disliked" from "cancelled the dislike" (see comment
+      // at DISLIKE_TOGGLE_RESET_MS).
+      if (action.type === "feedback" && action.metadata.feedback_type === "dislike") {
+        const key = `${window.location.href.split("#")[0]}|${
+          (actionHint.text ?? "").trim().slice(0, 100)
+        }|${href ?? ""}`;
+        const state = dislikeToggles.get(key) ?? { clicks: 0, lastAt: 0 };
+        if (Date.now() - state.lastAt > DISLIKE_TOGGLE_RESET_MS) state.clicks = 0;
+        state.clicks += 1;
+        state.lastAt = Date.now();
+        dislikeToggles.delete(key); // refresh insertion order for pruning
+        dislikeToggles.set(key, state);
+        if (dislikeToggles.size > DISLIKE_TOGGLE_STATE_MAX) {
+          const oldest = dislikeToggles.keys().next().value;
+          if (oldest !== undefined && oldest !== key) dislikeToggles.delete(oldest);
+        }
+        if (state.clicks % 2 === 0) {
+          // Toggle off: a cancellation, not another negative vote.
+          sendEvent(
+            createEvent("feedback", {
+              ...action.metadata,
+              feedback_type: "retraction",
+              retracted_action: actionType,
+              signal_strength: RETRACTION_SIGNAL_STRENGTH,
+            }),
+          );
+          return;
+        }
+        sendEvent(createEvent(action.type, action.metadata));
+        return;
+      }
       sendEvent(createEvent(action.type, action.metadata));
     }, { capture: true });
   };
@@ -370,6 +431,11 @@ export function startCollector(adapter: PlatformAdapter): void {
       seekStartTime = video.currentTime;
     });
     video.addEventListener("seeked", () => {
+      // Programmatic seeks (watch-progress restore, episode/part switch)
+      // fire `seeked` without any preceding user pointer/keyboard input.
+      // Those are playback mechanics, not the user scrubbing, and would
+      // otherwise be recorded as "每隔 N 秒 seek" behavior.
+      if (lastSeekInputAt === 0 || Date.now() - lastSeekInputAt > 1500) return;
       sendEvent(
         createEvent("seek", {
           ...buildVideoMetadata(),
@@ -416,6 +482,9 @@ export function startCollector(adapter: PlatformAdapter): void {
 
   const rebindPageObservers = (reason: string): void => {
     cancelVideoAttachRetry();
+    // A stale gesture from a navigation click (e.g. "next episode") must
+    // not turn the next video's programmatic seek into a user scrub signal.
+    lastSeekInputAt = 0;
     const attached = attachVideoListeners();
     const url = window.location.href;
     if (!attached && isVideoPage(url)) {

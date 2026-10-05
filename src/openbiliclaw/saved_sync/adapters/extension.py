@@ -60,7 +60,7 @@ _EXTENSION_ADAPTER_DEFINITIONS = (
     ExtensionAdapterDefinition("xiaohongshu", "xhs", "小红书收藏"),
     ExtensionAdapterDefinition("douyin", "dy", "抖音收藏"),
     ExtensionAdapterDefinition("twitter", "x", "X Bookmarks"),
-    ExtensionAdapterDefinition("zhihu", "zhihu", "OpenBiliClaw", supports_named_collection=True),
+    ExtensionAdapterDefinition("zhihu", "zhihu", "知乎收藏"),
     ExtensionAdapterDefinition("reddit", "reddit", "Reddit Saved"),
 )
 

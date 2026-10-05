@@ -465,6 +465,11 @@ def test_bili_extension_search_producer_to_rendered_dom_result(tmp_path: Path) -
         assert str(videos[0].get("bvid", "")).startswith("BV")
         assert str(videos[0].get("title", "")).strip()
         print(f"completed task={task_id} videos={len(videos)} first={videos[0]}")
+        event_count = database.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        # The discover task tab may load and operate the page automatically, but it
+        # must not be recorded as if the user browsed it.
+        assert event_count == 0, f"discovery task tab leaked behavior events: {event_count}"
+        print(f"behavior_events_after_task={event_count}")
     finally:
         with suppress(Exception):
             asyncio.run(bili_client.close())

@@ -225,6 +225,25 @@ def test_legacy_duplicate_item_keys_consolidate_without_losing_recommendations(
     )
     database.conn.execute(
         """
+        UPDATE content_cache
+        SET temporal_class='breaking', temporal_confidence=0.95,
+            temporal_reason='价值依赖即时状态',
+            published_at='2000-01-01T00:00:00Z'
+        WHERE bvid='legacy-123'
+        """
+    )
+    database.conn.execute(
+        """
+        UPDATE content_cache
+        SET temporal_class='evergreen', temporal_confidence=0.99,
+            temporal_reason='长期价值不依赖当前时间',
+            published_at='2026-08-11T00:00:00Z',
+            published_label='刚刚'
+        WHERE bvid='twitter:123'
+        """
+    )
+    database.conn.execute(
+        """
         INSERT INTO recommendations (bvid, item_key, expression, confidence)
         VALUES ('legacy-123', '', 'legacy rec', 0.9)
         """
@@ -243,7 +262,10 @@ def test_legacy_duplicate_item_keys_consolidate_without_losing_recommendations(
 
     cached = migrated.conn.execute(
         """
-        SELECT bvid, item_key, title, content_url
+        SELECT bvid, item_key, title, content_url,
+               published_at, published_label,
+               temporal_class, temporal_confidence, temporal_reason,
+               pool_status
         FROM content_cache
         WHERE item_key = 'twitter:123'
         """
@@ -254,6 +276,12 @@ def test_legacy_duplicate_item_keys_consolidate_without_losing_recommendations(
             "twitter:123",
             "legacy title",
             "https://x.com/u/status/123",
+            "2000-01-01T00:00:00Z",
+            "",
+            "breaking",
+            0.95,
+            "价值依赖即时状态",
+            "temporal_review_hold",
         )
     ]
     recommendation = migrated.conn.execute(
@@ -277,6 +305,71 @@ def test_legacy_duplicate_item_keys_consolidate_without_losing_recommendations(
         ).fetchone()
         assert legacy is not None
         assert legacy["item_key"] == "twitter:123"
+
+
+def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "duplicate-temporal-group.db"
+    database = Database(path)
+    database.initialize()
+    database.conn.execute("DROP INDEX idx_content_cache_item_key")
+    database.conn.executemany(
+        """
+        INSERT INTO content_cache (
+            bvid, item_key, title, source_platform, content_id,
+            temporal_class, temporal_confidence, temporal_reason,
+            published_at, relevance_score, source, pool_status
+        ) VALUES (?, '', ?, 'twitter', '456', ?, ?, ?, ?, 0.9, 'search', 'fresh')
+        """,
+        [
+            (
+                "legacy-broken-456",
+                "不完整的旧时效行",
+                "breaking",
+                0.95,
+                "",
+                "1999-01-01T00:00:00Z",
+            ),
+            (
+                "legacy-456",
+                "旧的未知重复行",
+                "unknown",
+                0.0,
+                "",
+                "2000-01-01T00:00:00Z",
+            ),
+            (
+                "twitter:456",
+                "当前事件",
+                "current",
+                0.95,
+                "近期事件仍有效",
+                "2026-08-11T00:00:00Z",
+            ),
+        ],
+    )
+    database.conn.commit()
+    database.close()
+
+    migrated = Database(path)
+    migrated.initialize()
+
+    row = migrated.conn.execute(
+        """
+        SELECT temporal_class, temporal_confidence, temporal_reason,
+               published_at, pool_status
+        FROM content_cache
+        WHERE item_key='twitter:456'
+        """
+    ).fetchone()
+    assert dict(row) == {
+        "temporal_class": "current",
+        "temporal_confidence": 0.95,
+        "temporal_reason": "近期事件仍有效",
+        "published_at": "2026-08-11T00:00:00Z",
+        "pool_status": "fresh",
+    }
 
 
 def test_legacy_writer_can_omit_item_key_until_current_runtime_repairs_rows(

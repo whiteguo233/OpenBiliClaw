@@ -46,6 +46,7 @@ import {
   normalizeRuntimeStatus,
   platformDisplayName,
   resolveInitBangumiUsername,
+  resolveInitGitHubUsername,
   shouldFetchProfileSummary,
   shouldAutoLoadRecommendations,
   validateCommentInput,
@@ -94,6 +95,7 @@ test("platformDisplayName maps known platforms and passes through unknown", () =
   assert.equal(platformDisplayName("ZHIHU"), "知乎");
   assert.equal(platformDisplayName("reddit"), "Reddit");
   assert.equal(platformDisplayName("bgm"), "Bangumi");
+  assert.equal(platformDisplayName("gh"), "GitHub");
   assert.equal(platformDisplayName("linuxdo"), "Linux.do");
   assert.equal(platformDisplayName("newtube"), "newtube");
   assert.equal(platformDisplayName(""), "");
@@ -491,6 +493,30 @@ test("getRecommendationCardKind renders a text card for Zhihu text content", () 
   assert.equal(answer.kind, "text");
   assert.equal(answer.coverUrl, "");
   assert.equal(answer.text, "知乎回答正文");
+});
+
+test("GitHub repository recommendations keep canonical URLs and render text cards", () => {
+  const item = normalizeRecommendation({
+    source_platform: "gh",
+    content_id: "repository:1296269",
+    content_url: "https://github.com/octocat/Hello-World",
+    content_type: "repository",
+    title: "octocat/Hello-World",
+    body_text: "A public repository",
+    cover_url: "https://example.com/should-not-be-used.png",
+  });
+
+  assert.equal(item.source_platform, "github");
+  assert.equal(buildContentUrl(item), "https://github.com/octocat/Hello-World");
+  assert.deepEqual(getRecommendationCardKind(item), {
+    kind: "text",
+    coverUrl: "",
+    text: "A public repository",
+  });
+  assert.equal(buildContentUrl({
+    source_platform: "github",
+    content_id: "repository:1296269",
+  }), "");
 });
 
 test("getRecommendationCardKind renders a text card when cover_url is empty", () => {
@@ -2219,5 +2245,20 @@ test("resolveInitBangumiUsername still sends a typed name when prefill failed", 
   assert.equal(
     resolveInitBangumiUsername({ touched: true, prefilled: false, value: "kite" }),
     "kite",
+  );
+});
+
+test("resolveInitGitHubUsername preserves the write-only omit-vs-clear contract", () => {
+  assert.equal(
+    resolveInitGitHubUsername({ touched: false, prefilled: true, value: "octocat" }),
+    null,
+  );
+  assert.equal(
+    resolveInitGitHubUsername({ touched: true, prefilled: true, value: "" }),
+    "",
+  );
+  assert.equal(
+    resolveInitGitHubUsername({ touched: true, prefilled: false, value: " octocat " }),
+    "octocat",
   );
 });

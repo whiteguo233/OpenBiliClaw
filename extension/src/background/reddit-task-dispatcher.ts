@@ -10,6 +10,7 @@ import { authenticatedFetch } from "../shared/auth.ts";
 import { ASSET_PREFIX } from "../shared/asset-prefix.ts";
 import { isNativeSaveTask, type NativeSaveResult, type NativeSaveTask } from "../shared/native-save.ts";
 import { ensureNativeSaveTaskRecovery, runNativeSaveTask } from "./native-save-task-runner.ts";
+import { createTaskTab } from "./task-tab.ts";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const POLL_ALARM_NAME = "openbiliclaw-reddit-task-poll";
@@ -259,7 +260,7 @@ export async function executeTask(task: RedditTask): Promise<void> {
 
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({
+    tab = await createTaskTab({
       url: REDDIT_TASK_TAB_URL,
       active: shouldOpenRedditTaskActive(task),
     });

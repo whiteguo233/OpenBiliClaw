@@ -1,0 +1,219 @@
+{
+    "manifest_version": 3,
+    "name": "OpenBiliClaw",
+    "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
+    "permissions": [
+        "activeTab",
+        "alarms",
+        "cookies",
+        "scripting",
+        "storage"
+    ],
+    "host_permissions": [
+        "*://*.bilibili.com/*",
+        "*://*.xiaohongshu.com/*",
+        "*://*.douyin.com/*",
+        "*://*.youtube.com/*",
+        "*://*.zhihu.com/*",
+        "*://*.reddit.com/*",
+        "*://*.redd.it/*",
+        "https://linux.do/*",
+        "*://*.v2ex.com/*",
+        "*://*.weibo.com/*",
+        "*://*.weibo.cn/*",
+        "*://*.x.com/*",
+        "*://*.twitter.com/*",
+        "*://*.bgm.tv/*",
+        "*://*.bangumi.tv/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+    ],
+    "optional_host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
+    "background": {
+        "service_worker": "background/service-worker.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.bilibili.com/*"
+            ],
+            "js": [
+                "content/bilibili.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ],
+            "js": [
+                "content/xiaohongshu.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.douyin.com/*"
+            ],
+            "js": [
+                "content/douyin.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.youtube.com/*"
+            ],
+            "js": [
+                "content/youtube.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.zhihu.com/*"
+            ],
+            "js": [
+                "content/zhihu.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.weibo.com/*",
+                "*://*.weibo.cn/*"
+            ],
+            "js": [
+                "content/weibo.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.reddit.com/*",
+                "*://*.redd.it/*"
+            ],
+            "js": [
+                "content/reddit.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://linux.do/*"
+            ],
+            "js": [
+                "content/linuxdo.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.v2ex.com/*"
+            ],
+            "js": [
+                "content/v2ex.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.x.com/*",
+                "*://*.twitter.com/*"
+            ],
+            "js": [
+                "content/x.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.bgm.tv/*",
+                "*://*.bangumi.tv/*"
+            ],
+            "js": [
+                "content/bangumi.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.bilibili.com/*",
+                "*://*.xiaohongshu.com/*",
+                "*://*.douyin.com/*",
+                "*://*.x.com/*",
+                "*://*.twitter.com/*",
+                "*://*.bgm.tv/*",
+                "*://*.bangumi.tv/*"
+            ],
+            "js": [
+                "content/safari-page-injector.js"
+            ],
+            "run_at": "document_start"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "main/bili-interact-tap.js"
+            ],
+            "matches": [
+                "*://*.bilibili.com/*"
+            ]
+        },
+        {
+            "resources": [
+                "main/xhs-token-sniffer.js",
+                "main/xhs-state-bridge.js",
+                "main/xhs-action-tap.js"
+            ],
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ]
+        },
+        {
+            "resources": [
+                "main/dy-fetch-tap.js"
+            ],
+            "matches": [
+                "*://*.douyin.com/*"
+            ]
+        },
+        {
+            "resources": [
+                "main/x-graphql-tap.js"
+            ],
+            "matches": [
+                "*://*.x.com/*",
+                "*://*.twitter.com/*"
+            ]
+        },
+        {
+            "resources": [
+                "main/bgm-identity-bridge.js"
+            ],
+            "matches": [
+                "*://*.bgm.tv/*",
+                "*://*.bangumi.tv/*"
+            ]
+        }
+    ],
+    "action": {
+        "default_popup": "popup/popup.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "32": "icons/icon32.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "icons": {
+        "16": "icons/icon16.png",
+        "32": "icons/icon32.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    }
+}

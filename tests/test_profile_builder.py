@@ -788,3 +788,40 @@ class TestHistorySamplingIsRepresentative:
         assert midpoint >= len(indexes) // 4, (
             f"较早的一半只贡献了 {midpoint}/{len(indexes)} 条，分布不均"
         )
+
+
+@pytest.mark.asyncio
+async def test_profile_builder_forwards_reply_style_into_tone_block() -> None:
+    """issue #255: ProfileBuilder.reply_style reaches the profile prompt's tone block."""
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    service = FakeStructuredService(_VALID_PROFILE_PAYLOAD)
+    builder = ProfileBuilder(service, reply_style="像个老朋友一样直白")
+
+    await builder.build(
+        history=[{"title": "AI 视频", "author": "科技UP主"}],
+        preference={"interests": [{"name": "科技", "category": "知识"}]},
+        awareness_notes=[],
+        active_insights=[],
+    )
+
+    user_input = str(service.calls[0]["user_input"])
+    assert "- 回复风格: 像个老朋友一样直白" in user_input
+
+
+@pytest.mark.asyncio
+async def test_profile_builder_default_reply_style_leaves_prompt_untouched() -> None:
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    service = FakeStructuredService(_VALID_PROFILE_PAYLOAD)
+    builder = ProfileBuilder(service)
+
+    await builder.build(
+        history=[{"title": "AI 视频", "author": "科技UP主"}],
+        preference={"interests": [{"name": "科技", "category": "知识"}]},
+        awareness_notes=[],
+        active_insights=[],
+    )
+
+    user_input = str(service.calls[0]["user_input"])
+    assert "- 回复风格:" not in user_input

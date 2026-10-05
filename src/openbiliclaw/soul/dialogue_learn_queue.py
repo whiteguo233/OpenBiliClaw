@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _QUEUE_DEPTH_WARN = 10
+_QUEUE_MAX_DEPTH = 1000
 
 
 class DialogueJobKind(StrEnum):
@@ -811,12 +812,15 @@ class DialogueSettlementQueue:
         name: str = "dialogue_settlement_worker",
         anchor_provider: Callable[[], Mapping[str, object]] | None = None,
         guard: DialogueSettlementGuard | None = None,
+        max_depth: int = _QUEUE_MAX_DEPTH,
     ) -> None:
         self._dispatcher = dispatcher
         self._name = name
         self._guard = guard or default_dialogue_settlement_guard()
         self._registry = AnchorAdmissionRegistry(anchor_provider)
         self._queue: asyncio.Queue[DialogueJob] = asyncio.Queue()
+        self._max_depth = max(1, int(max_depth))
+        self._dropped_jobs = 0
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._worker: asyncio.Task[None] | None = None
         self._active_job: DialogueJob | None = None
@@ -861,6 +865,15 @@ class DialogueSettlementQueue:
     @property
     def depth(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def dropped_jobs(self) -> int:
+        """Number of low-priority background jobs dropped by the bound."""
+        return self._dropped_jobs
+
+    @property
+    def max_depth(self) -> int:
+        return self._max_depth
 
     @property
     def accepting(self) -> bool:
@@ -1012,6 +1025,15 @@ class DialogueSettlementQueue:
             sequence=sequence,
             completion=completion_future,
         )
+        if self._queue.qsize() >= self._max_depth and not completion:
+            self._dropped_jobs += 1
+            logger.warning(
+                "DialogueSettlementQueue reached max depth=%d; dropping "
+                "non-completion background job (kind=%s)",
+                self._max_depth,
+                parsed_kind.value,
+            )
+            return None
         self._queue.put_nowait(job)
         depth = self._queue.qsize()
         if depth >= _QUEUE_DEPTH_WARN:

@@ -147,6 +147,10 @@
           <option value="claude">Claude（Anthropic）</option>
           <option value="gemini">Gemini（Google）</option>
           <option value="openrouter">OpenRouter</option>
+          <option value="orcarouter">OrcaRouter</option>
+          <option value="requesty">Requesty</option>
+          <option value="api_route">API Route</option>
+          <option value="cheaperinference">Cheaper Inference</option>
           <option value="openai_compatible">OpenAI 兼容接口（自建 / 第三方）</option>
         </select>
 
@@ -154,6 +158,15 @@
           <label for="apiKey">API Key</label>
           <input id="apiKey" type="password" placeholder="粘贴你的 API Key" autocomplete="off">
           <div class="hint" id="keyHint"></div>
+        </div>
+
+        <div id="authWrap" style="display:none">
+          <label for="authMode">OpenAI 认证方式</label>
+          <select id="authMode">
+            <option value="api_key">API Key（OpenAI Platform）</option>
+            <option value="codex_oauth">Codex OAuth（实验性 · ChatGPT / Codex 订阅）</option>
+          </select>
+          <div class="hint">Codex OAuth 复用本机 Codex CLI 的 ChatGPT 登录态，走官方 Codex 传输通道，无需 Platform API Key；与 API Key 方式互斥。首次使用请先在终端运行 <code>openbiliclaw login codex --import</code>。</div>
         </div>
 
         <div id="baseWrap" style="display:none">
@@ -268,7 +281,12 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        return await fetch(url, { ...options, signal: controller.signal });
+        return await fetch(url, {
+          ...options,
+          credentials: "same-origin",
+          headers: { ...(options.headers || {}), "X-OBC-Auth": "1" },
+          signal: controller.signal,
+        });
       } catch (error) {
         if (error?.name === "AbortError") throw new Error(`请求等待超过 ${Math.ceil(timeoutMs / 1000)} 秒`);
         throw error;
@@ -282,6 +300,10 @@
       claude: ["https://console.anthropic.com/settings/keys", "Anthropic Console"],
       gemini: ["https://aistudio.google.com/app/apikey", "Google AI Studio"],
       openrouter: ["https://openrouter.ai/keys", "OpenRouter"],
+      orcarouter: ["https://www.orcarouter.ai/keys", "OrcaRouter"],
+      requesty: ["https://app.requesty.ai/api-keys", "Requesty"],
+      api_route: ["https://global.api-route.com/", "API Route"],
+      cheaperinference: ["https://cheaperinference.com/signup", "Cheaper Inference"],
       openai_compatible: ["", ""],
     };
     const DEFAULT_MODELS = {
@@ -290,12 +312,20 @@
       claude: "claude-sonnet-4-6",
       gemini: "gemini-2.5-flash",
       openrouter: "openai/gpt-5-nano",
+      orcarouter: "openai/gpt-4o",
+      requesty: "openai/gpt-4o-mini",
+      api_route: "gpt-5.5",
+      cheaperinference: "gpt-5.4-mini",
       openai_compatible: "",
     };
     const MODEL_DISCOVERY_PROVIDERS = new Set([
       "openai",
       "deepseek",
       "openrouter",
+      "orcarouter",
+      "requesty",
+      "api_route",
+      "cheaperinference",
       "ollama",
       "openai_compatible",
     ]);
@@ -330,11 +360,22 @@
       already_initialized: "已经初始化过了；如需重建，请到设置页。",
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
+      invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
       no_profile_signal_sources: "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
       linuxdo_bootstrap_not_ready: "Linux.do 公开发现无需登录；收藏、点赞和阅读记录初始化需要浏览器已登录 linux.do。",
       v2ex_bootstrap_not_ready: "V2EX 账号初始化尚未就绪。请在浏览器登录 v2ex.com，并保持 OpenBiliClaw 扩展已连接。",
       invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
       bangumi_token_check_failed: "校验 Bangumi 令牌时无法连接 Bangumi，请稍后重试。",
+      github_bootstrap_not_ready: "GitHub 公开仓库发现无需登录；导入 starred repositories 需要公开用户名或可用 PAT。",
+      github_identity_required: "GitHub 画像初始化需要公开用户名或可用 PAT；公开 repository 发现仍可匿名使用。",
+      github_identity_not_found: "没有找到填写的 GitHub 公开用户，请检查用户名后重试。",
+      invalid_github_access_token: "GitHub PAT 被拒绝。请检查令牌是否有效；它只用于身份确认和提高官方 API 限额。",
+      github_token_rejected: "GitHub PAT 被拒绝。请更新或清除 PAT 后重试。",
+      github_token_check_failed: "校验 GitHub PAT 时无法连接 GitHub，请稍后重试。",
+      github_identity_mismatch: "GitHub PAT 所属账号与填写的公开用户名不一致，请更正后重试。",
+      github_bootstrap_timeout: "GitHub starred repositories 导入超时；已保留此前完整取得的页面（如有），可稍后重试。",
+      github_bootstrap_failed: "GitHub starred repositories 导入失败；请检查网络、用户名与 API 状态后重试。",
+      github_partial: "GitHub starred repositories 仅完成部分导入；成功取得的数据已用于画像。",
       analyze_failed: "偏好分析未完成。",
       profile_failed: "画像生成未完成。",
       discovery_timeout: "画像已生成，但首轮内容池整理超时。",
@@ -347,7 +388,7 @@
       none: "",
     };
     const INIT_SOURCE_LOGIN_HINT =
-      "勾选要纳入初始化的平台，勾选会同时开启该来源。Bangumi 使用公开 API，不需登录；其他平台请先在当前浏览器登录。";
+      "勾选要纳入初始化的平台，勾选会同时开启该来源。Bangumi 使用公开 API，不需登录；GitHub 公开发现也无需浏览器登录。其他平台请先在当前浏览器登录。";
     const INIT_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
     const BILI_POLL_MS = Number(window.__OBC_TEST_BILI_POLL_MS) || 3000;
     const INIT_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
@@ -362,6 +403,10 @@
     let initPollInFlight = false, initPollPending = false, initOffline = false;
     let initBangumiUsername = "", initBangumiUsernameTouched = false, initBangumiUsernamePrefilled = false;
     let initBangumiToken = "";
+    let initGitHubUsername = "", initGitHubUsernameTouched = false, initGitHubUsernamePrefilled = false;
+    let initGitHubToken = "";
+    let initLlmConcurrency = 3;
+    let initTimeoutMinutes = 60;
     // Providers whose api_key is already persisted server-side (GET /api/config
     // returns it masked). Lets a relaunch save step 0 without re-pasting the
     // key: PUT /api/config only touches fields present in the payload.
@@ -399,6 +444,7 @@
         model: $("#model").value.trim(),
         base_url: $("#baseUrl").value.trim(),
         api_flavor: $("#apiFlavor").value,
+        auth_mode: $("#authMode").value,
         reasoning_effort: $("#reasoningEffort").value.trim(),
       };
     }
@@ -415,9 +461,15 @@
         providerDrafts.set(activeProvider, currentProviderFields());
       }
       const cfg = providerDrafts.get(next) || savedProviderConfigs.get(next) || {};
-      $("#model").value = String(cfg.model || DEFAULT_MODELS[next] || "");
+      const nextAuthMode = cfg.auth_mode === "codex_oauth" ? "codex_oauth" : "api_key";
+      const nextDefaultModel =
+        next === "openai" && nextAuthMode === "codex_oauth"
+          ? "gpt-5.4"
+          : DEFAULT_MODELS[next] || "";
+      $("#model").value = String(cfg.model || nextDefaultModel);
       $("#baseUrl").value = String(cfg.base_url || "");
       $("#apiFlavor").value = cfg.api_flavor === "responses" ? "responses" : "";
+      $("#authMode").value = nextAuthMode;
       $("#reasoningEffort").value = String(cfg.reasoning_effort || "");
       activeProvider = next;
       clearMsg("#msg0");
@@ -428,7 +480,12 @@
       const p = $("#provider").value;
       const isCompat = p === "openai_compatible";
       const isClaude = p === "claude";
+      const isOpenAI = p === "openai";
+      const codexMode = isOpenAI && $("#authMode").value === "codex_oauth";
       $("#apiKey").placeholder = savedKeyProviders.has(p) ? "已保存，留空则沿用当前 Key" : "粘贴你的 API Key";
+      // Codex OAuth 复用 ChatGPT 登录态，不填 Platform API Key（issue #170）。
+      $("#keyWrap").style.display = codexMode ? "none" : "block";
+      $("#authWrap").style.display = isOpenAI ? "block" : "none";
       // Claude 也开放 Base URL（可选，第三方 Anthropic 协议网关，见 issue #72）
       $("#baseWrap").style.display = (isCompat || isClaude) ? "block" : "none";
       $("#baseHint").style.display = isClaude ? "block" : "none";
@@ -437,7 +494,10 @@
       const [url, name] = KEY_LINKS[p] || ["", ""];
       $("#keyHint").innerHTML = url ? `还没有 key？去 <a href="${url}" target="_blank" rel="noopener">${name}</a> 免费申请,粘贴回来即可。` : "";
       const modelInput = $("#model");
-      const defaultModel = DEFAULT_MODELS[p] || "";
+      const defaultModel = codexMode ? "gpt-5.4" : DEFAULT_MODELS[p] || "";
+      if (isOpenAI) {
+        $("#authMode").onchange = () => renderProvider();
+      }
       if (!modelInput.value.trim()) {
         modelInput.value = defaultModel;
       }
@@ -471,16 +531,19 @@
     function resetModelDiscovery() {
       renderDatalist("#modelOptions", []);
       const provider = $("#provider").value;
-      const supported = MODEL_DISCOVERY_PROVIDERS.has(provider);
+      const codexMode = provider === "openai" && $("#authMode").value === "codex_oauth";
+      const supported = MODEL_DISCOVERY_PROVIDERS.has(provider) && !codexMode;
       const button = $("#refreshModels");
       button.hidden = !supported;
       button.disabled = false;
       button.textContent = "获取模型";
       setModelDiscoveryStatus(
         "neutral",
-        supported
-          ? "可从 OpenAI 兼容 /models 获取；接口不支持时仍可手填。"
-          : "该 Provider 没有 OpenAI /models 发现契约，模型名请手填。",
+        codexMode
+          ? "Codex OAuth 走 ChatGPT 订阅通道，不提供 /models 发现；模型名请手填（如 gpt-5.4）。"
+          : supported
+            ? "可从 OpenAI 兼容 /models 获取；接口不支持时仍可手填。"
+            : "该 Provider 没有 OpenAI /models 发现契约，模型名请手填。",
       );
     }
 
@@ -585,6 +648,7 @@
         model: $("#model").value.trim(),
         base_url: $("#baseUrl").value.trim(),
         api_flavor: provider === "openai_compatible" ? $("#apiFlavor").value : "",
+        auth_mode: provider === "openai" ? $("#authMode").value : "",
         reasoning_effort: $("#reasoningEffort").value.trim(),
       };
       const routing = buildSetupLlmRouting(instanceId, instance);
@@ -779,12 +843,15 @@
       const apiKey = $("#apiKey").value.trim();
       const baseUrl = $("#baseUrl").value.trim();
       const model = $("#model").value.trim();
-      if (!apiKey && !savedKeyProviders.has(provider)) { showMsg("#msg0", "请先填入 API Key。", "err"); return; }
+      const authMode = provider === "openai" ? $("#authMode").value : "";
+      const codexMode = provider === "openai" && authMode === "codex_oauth";
+      if (!apiKey && !savedKeyProviders.has(provider) && !codexMode) { showMsg("#msg0", "请先填入 API Key。", "err"); return; }
       if (provider === "openai_compatible" && !baseUrl) { showMsg("#msg0", "OpenAI 兼容接口需要填 Base URL。", "err"); return; }
       if (!model) { showMsg("#msg0", "请填写模型名。", "err"); return; }
 
       const pcfg = {};
       if (apiKey) pcfg.api_key = apiKey;
+      if (provider === "openai") pcfg.auth_mode = authMode;
       // 只有展示了 Base URL 输入框的 provider 才提交它,避免切换 provider 时
       // 把上一个 provider 残留的地址写进错误的配置段。
       if (baseUrl && (provider === "openai_compatible" || provider === "claude")) pcfg.base_url = baseUrl;
@@ -817,8 +884,10 @@
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>保存中…';
       clearMsg("#msg0");
       try {
-        const r = await fetch("/api/config", {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        const r = await fetchWithTimeout("/api/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         });
         if (r.status === 401) {
           // Remote browser + auth enabled: /api/config is session-gated (only
@@ -1049,6 +1118,42 @@
         label.append(input, text);
         root.append(label);
       }
+      const llmConcurrencyDetail = document.createElement("label");
+      llmConcurrencyDetail.className = "init-source-detail";
+      const llmConcurrencyText = document.createElement("span");
+      llmConcurrencyText.textContent = "初始化 LLM 并发（正整数，默认 3；越小越不容易限流）";
+      const llmConcurrencyInput = document.createElement("input");
+      llmConcurrencyInput.id = "initLlmConcurrency";
+      llmConcurrencyInput.type = "number";
+      llmConcurrencyInput.min = "1";
+      llmConcurrencyInput.step = "1";
+      llmConcurrencyInput.inputMode = "numeric";
+      llmConcurrencyInput.value = String(initLlmConcurrency);
+      llmConcurrencyInput.addEventListener("input", () => {
+        const value = Number(llmConcurrencyInput.value);
+        initLlmConcurrency = Number.isFinite(value) && value >= 1 ? value : 3;
+      });
+      llmConcurrencyDetail.append(llmConcurrencyText, llmConcurrencyInput);
+      root.append(llmConcurrencyDetail);
+        const initTimeoutDetail = document.createElement("label");
+        initTimeoutDetail.className = "init-source-detail";
+        const initTimeoutText = document.createElement("span");
+        initTimeoutText.textContent = "初始化总超时（分钟，1-1440，默认 60；越长越能容忍慢模型）";
+        const initTimeoutInput = document.createElement("input");
+        initTimeoutInput.id = "initTimeoutMinutes";
+        initTimeoutInput.type = "number";
+        initTimeoutInput.min = "1";
+        initTimeoutInput.max = "1440";
+        initTimeoutInput.step = "1";
+        initTimeoutInput.inputMode = "numeric";
+        initTimeoutInput.value = String(initTimeoutMinutes);
+        initTimeoutInput.addEventListener("input", () => {
+          const value = Number(initTimeoutInput.value);
+          initTimeoutMinutes = Number.isFinite(value) && value >= 1 && value <= 1440 ? value : 60;
+        });
+        initTimeoutDetail.append(initTimeoutText, initTimeoutInput);
+        root.append(initTimeoutDetail);
+
       const bangumiDetail = document.createElement("label");
       bangumiDetail.className = "init-source-detail";
       const bangumiText = document.createElement("span");
@@ -1094,6 +1199,50 @@
         bangumiInput.disabled = !checked;
         bangumiTokenInput.disabled = !checked;
       });
+      const githubDetail = document.createElement("label");
+      githubDetail.className = "init-source-detail";
+      const githubText = document.createElement("span");
+      githubText.textContent = "GitHub 公开用户名（可留空，仅启用公开仓库发现）";
+      const githubInput = document.createElement("input");
+      githubInput.id = "initGitHubUsername";
+      githubInput.maxLength = 39;
+      githubInput.autocomplete = "off";
+      githubInput.autocapitalize = "off";
+      githubInput.spellcheck = false;
+      githubInput.value = initGitHubUsername;
+      githubInput.disabled = !root.querySelector('input[data-init-source="github"]')?.checked;
+      githubInput.addEventListener("input", () => {
+        initGitHubUsername = githubInput.value || "";
+        initGitHubUsernameTouched = true;
+      });
+      githubDetail.append(githubText, githubInput);
+      root.append(githubDetail);
+
+      const githubTokenDetail = document.createElement("label");
+      githubTokenDetail.className = "init-source-detail";
+      const githubTokenText = document.createElement("span");
+      githubTokenText.textContent = "GitHub Personal Access Token（可选）";
+      const githubTokenInput = document.createElement("input");
+      githubTokenInput.id = "initGitHubToken";
+      githubTokenInput.type = "password";
+      githubTokenInput.maxLength = 512;
+      githubTokenInput.autocomplete = "off";
+      githubTokenInput.value = initGitHubToken;
+      githubTokenInput.disabled = githubInput.disabled;
+      githubTokenInput.addEventListener("input", () => {
+        initGitHubToken = githubTokenInput.value || "";
+      });
+      githubTokenDetail.append(githubTokenText, githubTokenInput);
+      root.append(githubTokenDetail);
+      const githubTokenHint = document.createElement("p");
+      githubTokenHint.className = "hint";
+      githubTokenHint.innerHTML = 'GitHub 仅导入公开 starred repositories。PAT 只用于确认账号身份和提高官方 API 限额，不读取私有仓库；留空仍可使用公开发现。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a>';
+      root.append(githubTokenHint);
+      root.querySelector('input[data-init-source="github"]')?.addEventListener("change", (event) => {
+        const checked = Boolean(event.currentTarget.checked);
+        githubInput.disabled = !checked;
+        githubTokenInput.disabled = !checked;
+      });
       const hint = document.createElement("p");
       hint.className = "hint";
       hint.textContent = INIT_SOURCE_LOGIN_HINT;
@@ -1105,6 +1254,19 @@
         .filter((input) => input.checked)
         .map((input) => input.value);
     }
+
+    function readInitLlmConcurrency() {
+      const input = $("#initLlmConcurrency");
+      const value = Number(input ? input.value : initLlmConcurrency);
+      return Number.isFinite(value) && value >= 1 ? value : 3;
+    }
+
+    function readInitTimeoutMinutes() {
+      const input = $("#initTimeoutMinutes");
+      const value = Number(input ? input.value : initTimeoutMinutes);
+      return Number.isFinite(value) && value >= 1 && value <= 1440 ? value : 60;
+    }
+
 
     function renderInitChecklist(status, selected = null) {
       const root = $("#initChecklist");
@@ -1621,6 +1783,16 @@
       const bangumiToken = String(
         bangumiTokenInput ? bangumiTokenInput.value : initBangumiToken
       ).trim();
+      const githubUsernameInput = $("#initGitHubUsername");
+      const githubUsername = String(
+        githubUsernameInput ? githubUsernameInput.value : initGitHubUsername
+      ).trim();
+      const sendGitHubUsername =
+        initGitHubUsernameTouched && (githubUsername !== "" || initGitHubUsernamePrefilled);
+      const githubTokenInput = $("#initGitHubToken");
+      const githubToken = String(
+        githubTokenInput ? githubTokenInput.value : initGitHubToken
+      ).trim();
       // No client-side Bangumi-only admission check here on purpose. The
       // backend owns a THREE-tier account ladder (token → explicit username →
       // browser-extension-reported identity); a local "username or token
@@ -1643,7 +1815,14 @@
             capabilityMatrix?.[source]?.bootstrap,
           ),
         }))
-        .find(({ view }) => view.known && view.required && !view.ready);
+        // Optional-credential sources remain usable for public discovery. Let
+        // POST /api/init own the account-signal admission so a mixed run can
+        // skip the personal bootstrap with an explicit warning, and a
+        // source-only run receives the backend's precise identity error.
+        .find(
+          ({ view }) =>
+            view.known && view.required && view.mode !== "optional-credential" && !view.ready,
+        );
       if (blockedCapability) {
         renderInitChecklist(status, selected);
         $("#startInit").disabled = false;
@@ -1664,15 +1843,23 @@
 
       let startBody = {};
       try {
-        const payload = { sources: selected };
+        const payload = { sources: selected, llm_concurrency: readInitLlmConcurrency(), init_timeout_minutes: readInitTimeoutMinutes() };
+        const sourceOptions = {};
         if (selected.includes("bangumi") && (sendBangumiUsername || bangumiToken)) {
           const bangumi = {};
           if (sendBangumiUsername) bangumi.username = bangumiUsername;
           // Only send a token the user actually typed; omit otherwise so the
           // backend keeps any configured token.
           if (bangumiToken) bangumi.access_token = bangumiToken;
-          payload.source_options = { bangumi };
+          sourceOptions.bangumi = bangumi;
         }
+        if (selected.includes("github") && (sendGitHubUsername || githubToken)) {
+          const github = {};
+          if (sendGitHubUsername) github.username = githubUsername;
+          if (githubToken) github.access_token = githubToken;
+          sourceOptions.github = github;
+        }
+        if (Object.keys(sourceOptions).length > 0) payload.source_options = sourceOptions;
         const r = await fetchWithTimeout("/api/init", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1790,6 +1977,15 @@
           const bangumiInput = $("#initBangumiUsername");
           if (bangumiInput && !initBangumiUsernameTouched) {
             bangumiInput.value = initBangumiUsername;
+          }
+          const githubUsername = currentConfig?.sources?.github?.username || "";
+          if (!initGitHubUsernameTouched) {
+            initGitHubUsername = String(githubUsername);
+            initGitHubUsernamePrefilled = true;
+          }
+          const githubInput = $("#initGitHubUsername");
+          if (githubInput && !initGitHubUsernameTouched) {
+            githubInput.value = initGitHubUsername;
           }
           // Read legacy projections for old configs, then let native instances
           // (global-chain order first) override them. This keeps relaunch

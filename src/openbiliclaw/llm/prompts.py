@@ -12,7 +12,10 @@ from openbiliclaw.soul.event_prompt_views import (
     build_cognition_event_view_v1,
     normalize_cognition_input_view,
 )
-from openbiliclaw.soul.profile_views import build_cognition_profile_view_v1
+from openbiliclaw.soul.profile_views import (
+    build_cognition_profile_view_v1,
+    preference_prompt_payload,
+)
 
 if TYPE_CHECKING:
     from openbiliclaw.soul.tone import ToneProfile
@@ -106,21 +109,32 @@ def _tone_context_line(source_platform_mix: dict[str, float] | None) -> str:
 def _render_tone_profile(
     tone_profile: ToneProfile | None,
     source_platform_mix: dict[str, float] | None = None,
+    reply_style: str = "",
 ) -> str:
-    """Render tone profile guidance for prompt builders."""
+    """Render tone profile guidance for prompt builders.
+
+    ``reply_style`` (issue #255) is a free-text user instruction from
+    ``soul.reply_style``. Empty (default) keeps the rendered block
+    byte-identical; non-empty appends one extra ``回复风格`` line.
+    """
     tone = tone_profile or {
         "density": "balanced",
         "warmth": "warm",
         "playfulness": "low",
         "directness": "direct",
     }
-    return (
+    rendered = (
         _tone_context_line(source_platform_mix) + "\n"
         f"- 信息密度: {tone['density']}\n"
         f"- 情绪温度: {tone['warmth']}\n"
         f"- 梗感强度: {tone['playfulness']}\n"
         f"- 直给程度: {tone['directness']}"
     )
+    # Collapse whitespace so the instruction always stays a single line.
+    style_line = " ".join(str(reply_style or "").split())
+    if style_line:
+        rendered += f"\n- 回复风格: {style_line}"
+    return rendered
 
 
 def _normalize_prompt_style_list(value: object) -> list[str]:
@@ -195,6 +209,19 @@ def _normalize_explore_domains_block(block: dict[str, object]) -> dict[str, obje
     return normalized
 
 
+_ADAPTIVE_DIALOGUE_STYLE = (
+    "按当前请求决定回应深度：简单问题直接用一两句话答清楚，简单事实直接给结果。"
+    "寒暄或致谢只用一句自然回应，不自我介绍、罗列功能或另起话题；"
+    "例如问候可答「你好呀！」，致谢可答「不客气。」。"
+    "用户指定长度或格式时照做，一句话只讲必要要点，不用长串逗号、括号堆成伪短答。"
+    "概括画像或工具结果时只提炼用户所需的重点，除非用户要求，不展示内部置信度、权重等数据；"
+    "仍需如实说明影响结论的不确定性。复杂任务按需要充分分析、使用工具并完成必要步骤。"
+    "只有缺少影响正确性或执行的关键信息，或当前访谈角色需要探索时，才聚焦澄清，"
+    "无需每次附带追问。自然友善，不嘲讽或评判问题难易。"
+    "历史对话的时间标签仅供理解上下文，不要复制为回复前缀；用户询问时间时正常回答。"
+)
+
+
 def build_socratic_dialogue_prompt(
     *,
     user_message: str,
@@ -202,6 +229,9 @@ def build_socratic_dialogue_prompt(
     tone_profile: ToneProfile | None,
     history: list[dict[str, str]],
     source_platform_mix: dict[str, float] | None = None,
+    reply_style: str = "",
+    dialogue_tone_prompt: str = "",
+    socratic: bool = True,
 ) -> list[dict[str, str]]:
     """Build chat messages for Socratic dialogue generation.
 
@@ -220,14 +250,29 @@ def build_socratic_dialogue_prompt(
     ``LLMService.complete_with_core_memory`` (and its ``complete_with_tools``
     sibling), not here. Do not resurrect any per-service core-memory-block
     getattr probe at the dialogue call site.
+
+    ``dialogue_tone_prompt`` (from ``soul.dialogue_tone_prompt``) is a
+    free-text full replacement for the tone-profile block: when non-empty
+    (after strip) it takes the place of ``_render_tone_profile(...)`` —
+    including any ``reply_style`` line — while every other system-prompt
+    segment stays byte-identical. Empty (default) changes nothing.
+
+    ``socratic=False`` lets the agent's selected skill own any interviewing
+    behavior. The shared style then scales depth to the current request;
+    legacy callers keep the original Socratic instruction by default.
     """
     friend_label = _friend_label_from_mix(source_platform_mix)
+    tone_block = dialogue_tone_prompt.strip() or _render_tone_profile(
+        tone_profile, source_platform_mix, reply_style
+    )
     system_prompt = "\n\n".join(
         [
             "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
             (
                 "请使用苏格拉底式对话风格：温和、追问动机、确认理解，"
                 f"但整体更像会接话的{friend_label}，不像客服，也不要像咨询师。"
+                if socratic
+                else _ADAPTIVE_DIALOGUE_STYLE
             ),
             (
                 "能力边界：系统会在回复后尝试把用户明确、稳定的兴趣和避雷写入"
@@ -235,7 +280,7 @@ def build_socratic_dialogue_prompt(
                 "不要声称这些信息只能留在当前聊天上下文。你不能修改 B 站或其他"
                 "内容平台自身的推荐算法，必须把本地推荐与平台推荐区分清楚。"
             ),
-            _render_tone_profile(tone_profile, source_platform_mix),
+            tone_block,
             "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
             core_memory_text,
         ]
@@ -250,7 +295,7 @@ def render_preference_summary(preference_summary: dict[str, object]) -> str:
     """Render preference summary into stable text."""
     if not preference_summary:
         return "（暂无偏好摘要）"
-    return json.dumps(preference_summary, ensure_ascii=False, indent=2)
+    return json.dumps(preference_prompt_payload(preference_summary), ensure_ascii=False, indent=2)
 
 
 def _category_vocab_line() -> str:
@@ -359,6 +404,10 @@ def build_preference_analysis_prompt(
     """
     from openbiliclaw.sources.event_format import render_retraction_marked_events
 
+    # Storage bookkeeping (the incremental decay cursor) is not model input:
+    # dropping it keeps the prompt byte-identical to the pre-cursor payload and
+    # out of the ``max_prompt_chars`` chunking decision.
+    existing_preference = preference_prompt_payload(existing_preference)
     system_prompt = _PREFERENCE_ANALYSIS_SYSTEM_PROMPT
     selected_view = normalize_cognition_input_view(input_view)
     rendered_events = render_retraction_marked_events(events)
@@ -456,8 +505,10 @@ def build_soul_profile_prompt(
     active_insights: list[dict[str, object]] | None = None,
     tone_profile: ToneProfile | None,
     source_platform_mix: dict[str, float] | None = None,
+    reply_style: str = "",
 ) -> list[dict[str, str]]:
     """Build a cache-friendly prompt for initial soul-profile generation."""
+    preference_summary = preference_prompt_payload(preference_summary)
     system_prompt = """
 <task>
 你要生成一份人格画像。你是用户的老朋友,正坐在 ta 对面,直接跟 ta 说"你是这样一个人"。
@@ -608,7 +659,7 @@ def build_soul_profile_prompt(
     user_prompt = "\n\n".join(
         [
             "<tone_profile>",
-            _render_tone_profile(tone_profile, source_platform_mix),
+            _render_tone_profile(tone_profile, source_platform_mix, reply_style),
             "</tone_profile>",
             "<preference_summary>",
             json.dumps(preference_summary, ensure_ascii=False, indent=2, sort_keys=True),
@@ -808,6 +859,7 @@ _AWARENESS_SYSTEM_PROMPT = """
 4. 如果证据不足，可以返回空数组。
 5. 每条事件自带 `context` 字段（v0.3.22+ 跨源统一），是中文自然语言摘要——优先以 context 来理解事件本身，配合 metadata.source_platform 区分平台。所有平台信号都参与觉察推断,不区别对待。
 6. 如果 recent_events 出现 `feedback_type=dislike`、`reaction=thumbs_down` 或 `inferred_satisfaction=negative`，把它当作用户最近开始避开某类内容的信号；可以生成“最近开始避开 X”这类保守观察，但不要把单次 dislike 上升成人格结论。
+7. 负反馈一致性：笔记中描述「点踩 / dislike / 不感兴趣」等明确负反馈行为时，recent_events 里必须真的存在这类事件（`feedback_type=dislike` 或 `inferred_satisfaction=negative`）；没有就绝不能在笔记中声称用户点踩了——只能描述实际观察到的浏览行为。
 </rules>
 
 <output_schema>
@@ -833,6 +885,7 @@ def build_awareness_prompt(
     """Build a structured prompt for recent awareness-note generation."""
     from openbiliclaw.sources.event_format import render_retraction_marked_events
 
+    preference_summary = preference_prompt_payload(preference_summary)
     selected_view = normalize_cognition_input_view(input_view)
     rendered_events = render_retraction_marked_events(events)
     if selected_view == "compact-v1":
@@ -939,7 +992,10 @@ _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT = """
    - evidence_refs：相关的事件线索（可为空数组）。
 4. 每条事件自带 `context` 字段（跨源统一中文摘要），优先据此理解事件，配合 metadata.source_platform 区分平台；所有平台信号一视同仁。
 5. 如果没有真正看不懂的地方，confusions 返回空数组——不要为凑数制造疑惑。
-6. 详细输入（画像 / 偏好摘要 / 近期事件）见 user message 的 X / Y / Z 各段。
+6. 如果 recent_events 出现 `feedback_type=dislike`、`reaction=thumbs_down` 或 `inferred_satisfaction=negative`，把它当作用户最近开始避开某类内容的信号；可以生成“最近开始避开 X”这类保守观察，但不要把单次 dislike 上升成人格结论。
+7. 负反馈一致性：笔记中描述「点踩 / dislike / 不感兴趣」等明确负反馈行为时，该条 source_event_ids 必须至少包含一条对应的事件（`feedback_type=dislike` 或 `inferred_satisfaction=negative`）；recent_events 里没有这类事件，就绝不能在笔记中声称用户点踩了——只能描述实际观察到的浏览行为。
+8. existing_confusions（如有）是已经存在或处理过的疑惑历史，仅作上下文参考。若本次观察与其中某条 `topic / observation` 近似重复，不要重新生成一条换措辞的疑惑；如果确实是在同一疑惑上新证据，也要让它继续留在历史里，而不是重复建新行。
+9. 详细输入（画像 / 偏好摘要 / 近期事件 / 已有疑惑）见 user message 的各段。
 </rules>
 
 <output_schema>
@@ -972,6 +1028,7 @@ def build_awareness_with_confusions_prompt(
     events: list[dict[str, object]],
     preference_summary: dict[str, object],
     soul_profile: dict[str, object],
+    existing_confusions: list[dict[str, object]] | None = None,
     input_view: str = "legacy",
 ) -> list[dict[str, str]]:
     """Build the awareness+confusions prompt (Phase 2).
@@ -985,6 +1042,7 @@ def build_awareness_with_confusions_prompt(
     """
     from openbiliclaw.sources.event_format import render_retraction_marked_events
 
+    preference_summary = preference_prompt_payload(preference_summary)
     selected_view = normalize_cognition_input_view(input_view)
     rendered_events = render_retraction_marked_events(events)
     if selected_view == "compact-v1":
@@ -1032,6 +1090,17 @@ def build_awareness_with_confusions_prompt(
                 ),
                 "</active_insights>",
             ]
+        if existing_confusions:
+            sections += [
+                "<existing_confusions>",
+                json.dumps(
+                    existing_confusions,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                "</existing_confusions>",
+            ]
         sections += [
             "<recent_events>",
             json.dumps(
@@ -1047,24 +1116,36 @@ def build_awareness_with_confusions_prompt(
             {"role": "user", "content": "\n\n".join(sections)},
         ]
 
-    user_prompt = "\n\n".join(
-        [
-            "<soul_profile>",
-            json.dumps(soul_profile, ensure_ascii=False, indent=2, sort_keys=True),
-            "</soul_profile>",
-            "<preference_summary>",
-            json.dumps(preference_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</preference_summary>",
-            "<recent_events>",
+    user_sections = [
+        "<soul_profile>",
+        json.dumps(soul_profile, ensure_ascii=False, indent=2, sort_keys=True),
+        "</soul_profile>",
+        "<preference_summary>",
+        json.dumps(preference_summary, ensure_ascii=False, indent=2, sort_keys=True),
+        "</preference_summary>",
+    ]
+    if existing_confusions:
+        user_sections += [
+            "<existing_confusions>",
             json.dumps(
-                rendered_events,
+                existing_confusions,
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
             ),
-            "</recent_events>",
+            "</existing_confusions>",
         ]
-    )
+    user_sections += [
+        "<recent_events>",
+        json.dumps(
+            rendered_events,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "</recent_events>",
+    ]
+    user_prompt = "\n\n".join(user_sections)
     return [
         {"role": "system", "content": _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -1081,7 +1162,7 @@ _INSIGHT_SYSTEM_PROMPT = """
 2. hypothesis 是假设，不是结论，措辞必须保守。
 3. 每条必须附 1~3 条 evidence。
 4. confidence 保持在 0~1，且不要过高。
-5. existing_hypotheses（如有）是当前已有的活跃假设，仅作上下文参考。本次新的觉察笔记若印证某条已有假设，可重述同一 hypothesis 文本以累积其证据/置信；若指向新方向，再生成新假设。不要为凑数而重复已有假设。
+5. existing_hypotheses（如有）是当前已有的活跃假设，仅作上下文参考。本次新的觉察笔记若印证某条已有假设，可重述同一 hypothesis 文本以累积其证据/置信；若指向新方向，再生成新假设。不要为凑数而重复已有假设；尤其不要生成与已有假设中 `validated=true` 或 `user_verdict=confirmed / rejected` 条目意思近似、仅换措辞的新假设。
 6. 只依据本次觉察笔记里的新信号下结论；existing_hypotheses 本身不是新证据。
 </rules>
 
@@ -1113,6 +1194,7 @@ def build_insight_prompt(
     instead of regenerating from the full awareness history every time.
     See rules 5 / 6 below.
     """
+    preference_summary = preference_prompt_payload(preference_summary)
     selected_view = normalize_cognition_input_view(input_view)
     if selected_view == "compact-v1":
         profile_view = build_cognition_profile_view_v1(
@@ -1556,22 +1638,47 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "不要因为来源不同特殊处理评分逻辑。\n"
     "10. score 只衡量内容与用户画像的相关性及内容本身价值，与发布时间和时效性完全解耦。"
     "不得因为内容较新而加分，也不得因为内容较旧或 published_at 缺失而减分；时效语义只写入下面"
-    "三个 temporal 字段，交给后续确定性排序策略处理。\n"
-    "11. temporal_class 判断内容的核心价值为何会随观看时间过期，必须六选一:\n"
+    "八个 temporal 字段，交给后续确定性推荐资格、复审与排序策略处理。\n"
+    "11. temporal_class 判断内容的核心价值为何会随观看时间过期，必须六选一。判断先问:内容指涉的对象(产品/技术/设备/事件/工具)是否仍在演进或迭代?\n"
     "   - breaking:价值依赖小时到数日内的即时状态，如突发新闻、实时赛果、即时行情或正在发生的事件;\n"
     "   - current:价值依赖近期语境，如政策变化、新品发布、热点讨论或近期评测;\n"
-    "   - versioned:知识依赖可识别的软件、产品、游戏或设备版本，但通常在一个版本周期内仍有价值;\n"
-    "   - evergreen:原理、通用知识、食谱、故事、纪录片、通用教程等，价值不显著依赖当前时间;\n"
-    "   - historical:核心价值正是回顾、考据、档案、经典作品或已过去事件的历史语境;\n"
+    "   - versioned:内容指涉可识别的具体对象(软件、产品、模型、工具、框架、游戏或设备版本)，这些对象本身在持续迭代，对象更新后内容价值随之衰减;不要求标题出现版本号。AI 工具/模型教程、硬件装机盘点、年度新品合集等指涉快速迭代对象的内容都归此类(若语境很新则归 current);\n"
+    "   - evergreen:原理、通用知识、食谱、故事、纪录片、通用教程等，价值不显著依赖当前时间;但若教程/科普具体指涉仍在快速迭代的工具或产品，应归 versioned 而非 evergreen;\n"
+    "   - historical:核心价值正是对已闭合、不再演进对象的回顾、考据、档案、经典作品或过去事件的历史语境。若指涉对象仍在演进或迭代，即使采用'盘点/回顾'框架，也不得判 historical;\n"
     "   - unknown:现有内容证据不足以可靠判断。\n"
     "12. 分类看核心价值，不按内容格式、平台或发现路径贴标签。标题里的“今天”“最新”、年份、"
     "日期词不能单独决定分类，trending/search/feed 也不能决定分类。例如 Python 概念讲解是 evergreen，"
     "Python 3.8 安装教程是 versioned，新手机发布评测是 current，刚结束赛事的赛果是 breaking，"
-    "多年后赛事复盘是 historical。\n"
+    "多年后赛事复盘是 historical。'盘点/回顾/年度总结/装机'框架本身不等于 historical:"
+    "「CES 2025 年度必看科技精品」「中国硬件都有啥?装机盘点」指涉仍在迭代的硬件产品，归 current 或 versioned;"
+    "「2020 疫情全纪录」指涉已闭合事件，才是 historical。\n"
     "13. temporal_confidence 是对 temporal_class 判断的置信度(0-1)，不是内容质量、相关性或新鲜度。"
+    "当 temporal_class=unknown 时必须输出 temporal_confidence=0 且 temporal_reason=空字符串；其余五类的 "
     "temporal_reason 用一句精炼中文说明核心价值为何会或不会过期。published_at 是来源提供的权威"
     "发布时间，evaluation_context.evaluated_at 是本次评估的权威时间基准；不得根据模型知识截止时间"
     "或标题年份推测发布时间。时间字段缺失或无效时仍可按内容语义分类，但不得猜测具体年龄。\n"
+    "14. temporal_validity_mode 必须五选一:none、explicit_deadline、event_state、version_state、"
+    "freshness_only。只有输入 title、description、body_text 或 published_label 明确写出截止日期、"
+    "具体时刻和时区，才可使用 explicit_deadline，并把规范化的带时区 RFC3339 时刻写入 "
+    "temporal_valid_until；日期-only、缺具体时刻或缺时区时不得使用 explicit_deadline；不得把"
+    "发布时间、评估时间、常识或模型知识当截止时间。其它 mode 的 temporal_valid_until 必须为空串。\n"
+    "15. temporal_scope 必须三选一:none、core、hook。core 表示过期会使内容核心价值失效，hook 表示"
+    "只让标题钩子/限时入口失效而正文仍有价值；没有具体时效主张时用 none。temporal_evidence 必须是"
+    "上述输入文本中的一段连续原文，不得改写或生成；所有非 none mode 都必须提供逐字证据，找不到时"
+    "只能输出 none。即使核心正文是 evergreen/historical，若标题中的‘今天/最新/限时’钩子会过期，"
+    "也可输出 freshness_only + hook 并引用该钩子；hook 永远不代表核心正文失效。\n"
+    "例如 evergreen 教程标题中的‘限时免费领取’，或 historical 纪录片标题中的‘今晚首播’，都可"
+    "输出 freshness_only + hook，逐字引用该标题钩子，并把 temporal_state 设为 unknown。\n"
+    "16. temporal_state 必须四选一:unknown、active、expired、superseded。none、"
+    "freshness_only、explicit_deadline 必须输出 unknown；event_state 只能输出 active 或 expired；"
+    "version_state 只能输出 active 或 superseded。expired/superseded 必须由 temporal_evidence 的"
+    "逐字原文明示事件已经结束或版本已被替代，不能根据发布时间、年龄、evaluation_context、常识或"
+    "模型知识推断；active 同样必须有逐字、无条件的当前状态证据。条件、假设、可能性或未来态句子"
+    "不能证明任何 state，例如‘如果支持版本发生变化就重新核验’不能作为 active 证据；应引用"
+    "‘Temporal V2 仍是当前受支持版本’这类直接陈述。\n"
+    "17. temporal_class=unknown 时，五个新字段必须严格为 temporal_validity_mode=none、"
+    "temporal_valid_until=空串、temporal_scope=none、temporal_evidence=空串、"
+    "temporal_state=unknown。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "{\n"
@@ -1582,7 +1689,12 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     '  "franchise_key": "",\n'
     '  "temporal_class": "evergreen",\n'
     '  "temporal_confidence": 0.91,\n'
-    '  "temporal_reason": "核心价值不依赖当前时间"\n'
+    '  "temporal_reason": "核心价值不依赖当前时间",\n'
+    '  "temporal_validity_mode": "none",\n'
+    '  "temporal_valid_until": "",\n'
+    '  "temporal_scope": "none",\n'
+    '  "temporal_evidence": "",\n'
+    '  "temporal_state": "unknown"\n'
     "}\n"
     "</output_schema>"
 )
@@ -1669,7 +1781,9 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "2. results 数组长度必须与输入内容数量一致,顺序一一对应。\n"
     "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
     "reason、topic_group(2-4词粗分类)、style_key(13选1)、"
-    "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason。\n"
+    "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason、"
+    "temporal_validity_mode、temporal_valid_until、temporal_scope、temporal_evidence、"
+    "temporal_state。\n"
     "3a. reason 仅供内部诊断,不是面向用户的推荐文案。写法(省 token):"
     "score 严格低于 0.5 的条目,reason 必须写成空串 "
     '""(这些条目达不到准入门槛、会被直接丢弃,写理由是纯浪费);'
@@ -1737,7 +1851,7 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "没有 cover_image_ref 的条目表示没有可用图片,只按文本字段判断,不要猜测缺失图片。\n"
     "10c. score 只衡量内容与用户画像的相关性及内容本身价值，与发布时间和时效性完全解耦。"
     "不得因为内容较新而加分，也不得因为内容较旧或 published_at 缺失而减分；时效语义只写入"
-    "三个 temporal 字段，交给后续确定性排序策略处理。\n"
+    "八个 temporal 字段，交给后续确定性推荐资格、复审与排序策略处理。\n"
     "11. 当 user 消息携带 `<negative_examples>` 时,把这些标题视为用户最近"
     "**明确不喜欢**的样本——理由可能是快速划走 (`quick_exit`) 或显式负反馈"
     " (`explicit_negative`)。\n"
@@ -1747,35 +1861,66 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "吸引而错给高分。比较的是**话术模式**,不是关键词重叠。\n"
     "13. profile_interests.disliked_topics 是长期避雷项;候选命中这些主题或话术模式时,"
     "score 必须下调,不要把它们当成 interests 的反向补充来加分。\n"
-    "14. temporal_class 判断内容的核心价值为何会随观看时间过期，必须六选一:"
+    "14. temporal_class 判断内容的核心价值为何会随观看时间过期，必须六选一。判断先问:内容指涉的对象(产品/技术/设备/事件/工具)是否仍在演进或迭代?"
     "breaking(突发新闻、实时赛果、即时行情或正在发生事件，价值通常以小时到数日计)、"
     "current(政策变化、新品发布、热点讨论或近期评测)、"
-    "versioned(依赖可识别的软件、产品、游戏或设备版本)、"
-    "evergreen(原理、通用知识、食谱、故事、纪录片或通用教程)、"
-    "historical(核心价值是回顾、考据、档案、经典作品或过去事件的历史语境)、"
+    "versioned(内容指涉可识别的具体对象——软件、产品、模型、工具、框架、游戏或设备版本——这些对象本身在持续迭代，对象更新后内容价值随之衰减;不要求标题出现版本号。AI 工具/模型教程、硬件装机盘点、年度新品合集等指涉快速迭代对象的内容都归此类，若语境很新则归 current)、"
+    "evergreen(原理、通用知识、食谱、故事、纪录片或通用教程;但若教程/科普具体指涉仍在快速迭代的工具或产品，应归 versioned 而非 evergreen)、"
+    "historical(核心价值是对已闭合、不再演进对象的回顾、考据、档案、经典作品或过去事件的历史语境;若指涉对象仍在演进或迭代，即使采用'盘点/回顾'框架，也不得判 historical)、"
     "unknown(证据不足)。\n"
     "15. 分类看核心价值，不按格式、平台或发现路径贴标签。标题里的“今天”“最新”、年份、日期词"
     "不能单独决定分类，trending/search/feed 也不能决定分类。例如 Python 概念讲解是 evergreen，"
     "Python 3.8 安装教程是 versioned，新手机发布评测是 current，刚结束赛事的赛果是 breaking，"
-    "多年后赛事复盘是 historical。\n"
+    "多年后赛事复盘是 historical。'盘点/回顾/年度总结/装机'框架本身不等于 historical:"
+    "「CES 2025 年度必看科技精品」「中国硬件都有啥?装机盘点」指涉仍在迭代的硬件产品，归 current 或 versioned;"
+    "「2020 疫情全纪录」指涉已闭合事件，才是 historical。\n"
     "16. temporal_confidence 是对 temporal_class 判断的置信度(0-1)，不是内容质量、相关性或新鲜度。"
+    "当 temporal_class=unknown 时必须输出 temporal_confidence=0 且 temporal_reason=空字符串；其余五类的 "
     "temporal_reason 用一句精炼中文说明核心价值为何会或不会过期。published_at 是来源提供的权威"
     "发布时间，evaluation_context.evaluated_at 是本次评估的权威时间基准；不得根据模型知识截止时间"
     "或标题年份推测发布时间。时间字段缺失或无效时仍可按内容语义分类，但不得猜测具体年龄。\n"
+    "17. temporal_validity_mode 必须五选一:none、explicit_deadline、event_state、version_state、"
+    "freshness_only。只有当前 item 的 title、description、body_text 或 published_label 明确写出截止"
+    "日期、具体时刻和时区，才可用 explicit_deadline，并把规范化的带时区 RFC3339 时刻写入"
+    "temporal_valid_until；不得从发布时间、评估时间、其它 item、常识或模型知识推断截止时间。"
+    "日期-only、缺具体时刻或缺时区时不得使用 explicit_deadline；其它 mode 的 "
+    "temporal_valid_until 必须为空串。\n"
+    "18. temporal_scope 必须三选一:none、core、hook。core 表示核心价值失效，hook 表示只有标题钩子/"
+    "限时入口失效而正文仍有价值。temporal_evidence 必须是当前 item 输入文本中的连续原文，不得改写、"
+    "跨 item 拼接或生成；所有非 none mode 都必须给逐字证据，找不到时只能输出 none。即使核心正文是"
+    "evergreen/historical，若标题里的‘今天/最新/限时’钩子会过期，也可输出 freshness_only + hook 并"
+    "引用该钩子；hook 永远不表示核心正文失效。\n"
+    "例如 evergreen 教程标题中的‘限时免费领取’，或 historical 纪录片标题中的‘今晚首播’，都可"
+    "输出 freshness_only + hook，逐字引用该标题钩子，并把 temporal_state 设为 unknown。\n"
+    "19. temporal_state 必须四选一:unknown、active、expired、superseded。none、freshness_only、"
+    "explicit_deadline 必须为 unknown；event_state 只能为 active/expired；version_state 只能为"
+    "active/superseded。expired/superseded 必须由当前 item 的 temporal_evidence 逐字明示事件已结束或"
+    "版本已替代，不能根据发布时间、年龄、evaluated_at、其它 item、常识或模型知识推断；active 也必须"
+    "有逐字、无条件的当前状态证据。条件、假设、可能性或未来态句子不能证明任何 state，例如"
+    "‘如果支持版本发生变化就重新核验’不能作为 active 证据；应引用‘Temporal V2 仍是当前受支持"
+    "版本’这类直接陈述。temporal_class=unknown 时五个新字段必须依次为 none、空串、none、空串、"
+    "unknown。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "{\n"
     '  "results": [\n'
     '    {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
     '"style_key": "deep_focus", "franchise_key": "", "temporal_class": "evergreen", '
-    '"temporal_confidence": 0.91, "temporal_reason": "核心价值不依赖当前时间"},\n'
+    '"temporal_confidence": 0.91, "temporal_reason": "核心价值不依赖当前时间", '
+    '"temporal_validity_mode": "none", "temporal_valid_until": "", '
+    '"temporal_scope": "none", "temporal_evidence": "", "temporal_state": "unknown"},\n'
     '    {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
     '"style_key": "aesthetic_browse", "franchise_key": "原神", '
     '"temporal_class": "versioned", "temporal_confidence": 0.82, '
-    '"temporal_reason": "内容依赖游戏版本"},\n'
+    '"temporal_reason": "内容依赖游戏版本", "temporal_validity_mode": "version_state", '
+    '"temporal_valid_until": "", "temporal_scope": "core", '
+    '"temporal_evidence": "当前游戏版本", "temporal_state": "active"},\n'
     '    {"bvid": "BV3xxx", "score": 0.45, "reason": "", "topic_group": "美食", '
     '"style_key": "social_chat", "franchise_key": "", "temporal_class": "current", '
-    '"temporal_confidence": 0.74, "temporal_reason": "讨论依赖近期语境"}\n'
+    '"temporal_confidence": 0.74, "temporal_reason": "讨论依赖近期语境", '
+    '"temporal_validity_mode": "freshness_only", "temporal_valid_until": "", '
+    '"temporal_scope": "core", "temporal_evidence": "近期讨论", '
+    '"temporal_state": "unknown"}\n'
     "  ]\n"
     "}\n"
     "</output_schema>"
@@ -1789,14 +1934,17 @@ def _build_sparse_batch_evaluation_system_prompt() -> str:
         (
             "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
             "reason、topic_group(2-4词粗分类)、style_key(13选1)、"
-            "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason。\n",
+            "franchise_key(可空)、temporal_class、temporal_confidence、temporal_reason、"
+            "temporal_validity_mode、temporal_valid_until、temporal_scope、temporal_evidence、"
+            "temporal_state。\n",
             "3. content_batch 编码一个 canonical batch,可能是含 defaults/items 的 JSON,"
             "也可能是 ROW-WIRE-V1 表；表中的 defaults、columns、row 与同名 canonical "
             "字段完全等价。defaults 是所有 items/rows 共享的默认值,每项同名字段优先。"
             "每项包含请求内局部 id、title、author,以及非空的内容/互动字段。"
             "每项必须原样带回输入里的 id,并包含 score(0-1)、reason、"
             "topic_group(2-4词粗分类)、style_key(13选1)、franchise_key(可空)、"
-            "temporal_class、temporal_confidence、temporal_reason。\n",
+            "temporal_class、temporal_confidence、temporal_reason、temporal_validity_mode、"
+            "temporal_valid_until、temporal_scope、temporal_evidence、temporal_state。\n",
         ),
         (
             "10. When content_batch items include source_platform/source_strategy/content_type, "
@@ -1816,34 +1964,9 @@ def _build_sparse_batch_evaluation_system_prompt() -> str:
             "它的值形如 cover:<id>,对应同一 user 消息中紧随文字锚点"
             " `Cover image cover:<id> ...` 后面的图片。评分时必须结合该头图 / 封面图",
         ),
-        (
-            '    {"bvid": "BV1xxx", "score": 0.78, "reason": "...", '
-            '"topic_group": "认知科学", '
-            '"style_key": "deep_focus", "franchise_key": "", "temporal_class": "evergreen", '
-            '"temporal_confidence": 0.91, "temporal_reason": "核心价值不依赖当前时间"},\n'
-            '    {"bvid": "BV2xxx", "score": 0.72, "reason": "...", '
-            '"topic_group": "游戏摄影", '
-            '"style_key": "aesthetic_browse", "franchise_key": "原神", '
-            '"temporal_class": "versioned", "temporal_confidence": 0.82, '
-            '"temporal_reason": "内容依赖游戏版本"},\n'
-            '    {"bvid": "BV3xxx", "score": 0.45, "reason": "", '
-            '"topic_group": "美食", '
-            '"style_key": "social_chat", "franchise_key": "", "temporal_class": "current", '
-            '"temporal_confidence": 0.74, "temporal_reason": "讨论依赖近期语境"}\n',
-            '    {"id": "0", "score": 0.78, "reason": "...", '
-            '"topic_group": "认知科学", '
-            '"style_key": "deep_focus", "franchise_key": "", "temporal_class": "evergreen", '
-            '"temporal_confidence": 0.91, "temporal_reason": "核心价值不依赖当前时间"},\n'
-            '    {"id": "1", "score": 0.72, "reason": "...", '
-            '"topic_group": "游戏摄影", '
-            '"style_key": "aesthetic_browse", "franchise_key": "原神", '
-            '"temporal_class": "versioned", "temporal_confidence": 0.82, '
-            '"temporal_reason": "内容依赖游戏版本"},\n'
-            '    {"id": "2", "score": 0.45, "reason": "", '
-            '"topic_group": "美食", '
-            '"style_key": "social_chat", "franchise_key": "", "temporal_class": "current", '
-            '"temporal_confidence": 0.74, "temporal_reason": "讨论依赖近期语境"}\n',
-        ),
+        ('{"bvid": "BV1xxx"', '{"id": "0"'),
+        ('{"bvid": "BV2xxx"', '{"id": "1"'),
+        ('{"bvid": "BV3xxx"', '{"id": "2"'),
     )
     prompt = _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
     for production_text, sparse_text in replacements:
@@ -2016,6 +2139,11 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 10. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。
 11. 避开 profile_summary.disliked_topics 中的主题或话术模式；如果候选明显命中这些避雷点,
     不要热情背书,只能保守说明差异化理由,且不得把 disliked topic 包装成用户偏好。
+12. content_summary.published_at / published_label 是这条内容的权威发布时间,
+    content_summary.evaluated_at 是评估这条内容时的权威当前时间。只能对照这两个字段判断
+    内容新旧;不得根据标题里的年份、"最新/今天"等词、模型自身知识截止时间或其它内容
+    字段推断发布时间或新鲜度。如果 evaluated_at 或 published_at 缺失、无效,不得使用
+    "最新、刚发布、近期、今天"等时效词,也不得猜测内容年龄,直接描述内容本身的长期价值。
 </rules>
 
 <output_schema>
@@ -2036,6 +2164,7 @@ def build_recommendation_expression_prompt(
     content_summary: dict[str, object],
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
+    reply_style: str = "",
 ) -> list[dict[str, str]]:
     """Build a structured prompt for friend-style recommendation expression.
 
@@ -2045,6 +2174,12 @@ def build_recommendation_expression_prompt(
     ``user_prompt``. Callers may pass pre-rendered layered profile blocks,
     which are placed before platform / tone / content so the provider cache
     can reuse the stable profile prefix across platform and copy changes.
+
+    Temporal grounding: ``content_summary`` should carry the source-owned
+    ``published_at`` / ``published_label`` plus ``evaluated_at`` — the exact
+    clock from when the item was evaluated.  The static rule forbids the
+    model from inferring freshness from title years, model knowledge, or any
+    other field when those values are missing.
     """
     user_blocks = [
         *_profile_prompt_blocks(profile_summary, profile_blocks),
@@ -2052,7 +2187,7 @@ def build_recommendation_expression_prompt(
         source_platform or "bilibili",
         "</source_platform>",
         "<tone_profile>",
-        _render_tone_profile(tone_profile, {source_platform: 1.0}),
+        _render_tone_profile(tone_profile, {source_platform: 1.0}, reply_style),
         "</tone_profile>",
         "<content_summary>",
         json.dumps(
@@ -2096,6 +2231,11 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "9. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。\n"
     "10. 避开 profile_summary.disliked_topics 中的主题或话术模式;如果候选明显命中这些避雷点,"
     "不要热情背书,只能保守说明差异化理由,且不得把 disliked topic 包装成用户偏好。\n"
+    "11. content_batch 中每条候选的 published_at / published_label 是该条内容的权威发布时间,"
+    "evaluated_at 是评估该条内容时的权威当前时间。只能对照该条自己的这两个字段判断内容新旧;"
+    "不得根据标题里的年份、'最新/今天'等词、模型知识截止时间或其它条目推断发布时间或新鲜度。"
+    "如果某条的 evaluated_at 或 published_at 缺失、无效,不得对该条使用'最新、刚发布、近期、"
+    "今天'等时效词,也不得猜测内容年龄,直接描述内容本身的长期价值。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "[\n"
@@ -2113,11 +2253,17 @@ def build_batch_expression_prompt(
     content_items: list[dict[str, object]],
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
+    reply_style: str = "",
 ) -> list[dict[str, str]]:
     """Build a prompt that generates expressions for multiple items in one call.
 
     v0.3.28+ cache-friendly: ``system_prompt`` is the module-level
     constant ``_BATCH_EXPRESSION_SYSTEM_PROMPT`` (100% static).
+
+    Temporal grounding: each item should carry its own ``published_at`` /
+    ``published_label`` plus ``evaluated_at`` (the exact clock from that
+    item's evaluation), because rows in one expression batch may have been
+    classified at different times.
     """
     user_blocks = [
         *_profile_prompt_blocks(profile_summary, profile_blocks),
@@ -2125,7 +2271,7 @@ def build_batch_expression_prompt(
         source_platform or "bilibili",
         "</source_platform>",
         "<tone_profile>",
-        _render_tone_profile(tone_profile, {source_platform: 1.0}),
+        _render_tone_profile(tone_profile, {source_platform: 1.0}, reply_style),
         "</tone_profile>",
         "<content_batch>",
         json.dumps(
@@ -2709,6 +2855,10 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
     "twitter": (
         "实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,华语圈话题可用中文。"
     ),
+    "github": (
+        "公开代码仓库 / 开源工具 / 框架 / SDK / 模板 / 工程实践。优先英文技术实体与"
+        "可直接命中 repository name、description 或 README 的 1-5 词短查询；避免社媒热词。"
+    ),
     "zhihu": (
         "知乎中文问答 / 深度回答 / 经验复盘 / 专业解释 / 观点辨析。适合"
         "问题式、场景式或概念 + 经验词的中文关键词。"
@@ -2782,7 +2932,8 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter / zhihu / reddit / bangumi / linuxdo / v2ex / weibo / instagram),"
+    "(bilibili / xiaohongshu / douyin / youtube / twitter / github / zhihu / reddit / "
+    "bangumi / linuxdo / v2ex / weibo / instagram),"
     "每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
     "唯一例外:只有 user 消息含 <explore_domains> 时,才可以额外输出"
@@ -2826,6 +2977,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "v2ex": ["本地运行 Agent 讨论", "家庭网络折腾 经验"],\n'
     '  "weibo": ["AI Agent 热议", "动画制作 业内回应"],\n'
     '  "instagram": ["urban photography", "indie game art"],\n'
+    '  "github": ["local llm agent framework", "self hosted knowledge base"],\n'
     '  "explore_domains": [\n'
     '    {"domain": "城市声音采样", "novelty_level": 0.84, '
     '"queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"]}\n'
@@ -2854,7 +3006,7 @@ Return ONLY a strict JSON object with exactly this shape:
     {
       "interest": "string",
       "axis_id_or_label": "existing axis_id or exact axis_label",
-      "platform": "bilibili|xiaohongshu|douyin|youtube|twitter|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
+      "platform": "bilibili|xiaohongshu|douyin|youtube|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
       "core_concept": "short searchable concept",
       "decoration": "optional style marker",
       "recency_sensitivity": "low|medium|high"

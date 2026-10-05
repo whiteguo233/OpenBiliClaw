@@ -26,9 +26,11 @@ connections by a partial unique index (the durable ask budget).
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -42,6 +44,9 @@ logger = logging.getLogger(__name__)
 # Confusion candidates per awareness round. Kept tiny so a chatty model cannot
 # flood the ask budget; first-round recalibration flagged (pitfall #3).
 MAX_CONFUSION_CANDIDATES_PER_ROUND = 2
+# Near-duplicate confusion detection at production time.
+_CONFUSION_DEDUP_SIMILARITY_THRESHOLD = 0.65
+_CONFUSION_DEDUP_MIN_TEXT_LENGTH = 20
 # Ask cooldown: once a confusion has been asked, do not re-ask for 72h. Persisted
 # in the row (``asked_at``) so it survives restarts. Calibrated to the single-user
 # interrupt budget (≤1 ask / 3 days); revisit after provider swap.
@@ -125,6 +130,7 @@ class Confusion:
     """In-memory view of a ``confusions`` row."""
 
     id: int
+    created_at: str = ""
     status: str = "open"
     source: str = ""
     topic: str = ""
@@ -152,6 +158,7 @@ class Confusion:
         refs = [str(r) for r in row.get("evidence_refs", []) if str(r)]
         return cls(
             id=int(row.get("id", 0)),
+            created_at=str(row.get("created_at", "") or ""),
             status=str(row.get("status", "open") or "open"),
             source=str(row.get("source", "") or ""),
             topic=str(row.get("topic", "") or ""),
@@ -204,6 +211,56 @@ class ConfusionManager:
 
     # -- Producing sources ----------------------------------------------------
 
+    @staticmethod
+    def _dedupe_norm_text(value: str) -> str:
+        return re.sub(r"[\W_]+", "", value).lower()
+
+    @classmethod
+    def _same_confusion(cls, left: dict[str, Any], right: dict[str, Any]) -> bool:
+        """Whether two confusion candidates refer to the same ambiguity.
+
+        Observation is the primary signal; matching on topic alone is too
+        coarse because a short topic like "解压视频" can cover several
+        genuinely different ambiguous behaviours.
+        """
+        left_observation = str(left.get("observation", "")).strip()
+        right_observation = str(right.get("observation", "")).strip()
+        left_topic = str(left.get("topic", "")).strip()
+        right_topic = str(right.get("topic", "")).strip()
+        if not left_observation or not right_observation:
+            return False
+        na = cls._dedupe_norm_text(left_observation)
+        nb = cls._dedupe_norm_text(right_observation)
+        if na == nb:
+            return True
+        if (
+            len(na) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
+            and len(nb) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
+            and SequenceMatcher(None, na, nb).ratio() >= _CONFUSION_DEDUP_SIMILARITY_THRESHOLD
+        ):
+            return True
+        # A long, specific topic plus similar observation is stronger evidence;
+        # short topics alone never decide by themselves.
+        if left_topic and right_topic:
+            ta = cls._dedupe_norm_text(left_topic)
+            tb = cls._dedupe_norm_text(right_topic)
+            if (
+                len(ta) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
+                and len(tb) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
+                and SequenceMatcher(None, ta, tb).ratio() >= _CONFUSION_DEDUP_SIMILARITY_THRESHOLD
+                and cls._dedupe_norm_text(left_observation)
+                == cls._dedupe_norm_text(right_observation)
+            ):
+                return True
+        return False
+
+    @classmethod
+    def _confusion_as_dict(cls, item: Confusion) -> dict[str, Any]:
+        return {
+            "topic": str(getattr(item, "topic", "") or ""),
+            "observation": str(getattr(item, "observation", "") or ""),
+        }
+
     def create_from_awareness_candidates(
         self,
         candidates: list[dict[str, Any]],
@@ -212,6 +269,8 @@ class ConfusionManager:
 
         Whitelist/clamp (pitfall #4): drop candidates without an ``observation``;
         cap the batch at ``MAX_CONFUSION_CANDIDATES_PER_ROUND`` (excess logged).
+        Duplicate open/clarifying confusions are skipped at production time so a
+        recurring ambiguous observation does not create a new row each cycle.
         """
         if self._db is None or not candidates:
             return []
@@ -225,8 +284,12 @@ class ConfusionManager:
                 MAX_CONFUSION_CANDIDATES_PER_ROUND,
             )
             valid = valid[:MAX_CONFUSION_CANDIDATES_PER_ROUND]
+        active = [self._confusion_as_dict(item) for item in self.list_active()]
+        seen: list[dict[str, Any]] = list(active)
         created: list[int] = []
         for cand in valid:
+            if any(self._same_confusion(cand, existing) for existing in seen):
+                continue
             cid = self._db.insert_confusion(
                 source="awareness",
                 topic=str(cand.get("topic", "")).strip(),
@@ -237,6 +300,12 @@ class ConfusionManager:
             )
             if cid:
                 created.append(cid)
+                seen.append(
+                    {
+                        "topic": str(cand.get("topic", "")).strip(),
+                        "observation": str(cand.get("observation", "")).strip(),
+                    }
+                )
                 self._record("confusion_open", topic=str(cand.get("topic", "")), after={"id": cid})
         return created
 
@@ -285,6 +354,31 @@ class ConfusionManager:
     def list_active(self) -> list[Confusion]:
         """Open + clarifying confusions (injected into the dialogue active list)."""
         return self._list(["open", "clarifying"])
+
+    def list_for_generation_context(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Recent confusion history for LLM generation prompts.
+
+        Returns a compact, deduplicated-by-row view of active plus already
+        resolved/dismissed confusions so the awareness model can avoid
+        recreating a similar objection/ambiguity from scratch.
+        """
+        if self._db is None:
+            return []
+        rows = self._db.list_confusions(
+            statuses=["open", "clarifying", "resolved", "dismissed"],
+            limit=max(1, int(limit)),
+        )
+        return [
+            {
+                "id": int(row.get("id", 0) or 0),
+                "status": str(row.get("status", "") or "").strip().lower(),
+                "topic": str(row.get("topic", "") or "").strip(),
+                "observation": str(row.get("observation", "") or "").strip(),
+                "interpretation": str(row.get("interpretation", "") or "").strip(),
+            }
+            for row in rows
+            if str(row.get("observation", "") or "").strip()
+        ]
 
     def _list(self, statuses: list[str]) -> list[Confusion]:
         if self._db is None:

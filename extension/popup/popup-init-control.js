@@ -19,10 +19,28 @@ const REASON_TEXT = {
   already_initialized: "已经初始化过了；如需重建，请到设置页。",
   local_only: "只能在本机发起初始化。",
   no_sources_selected: "至少勾选一个数据来源。",
+  invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
   no_profile_signal_sources:
     "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
   invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
   bangumi_token_check_failed: "校验 Bangumi 令牌时无法连接 Bangumi，请稍后重试。",
+  github_bootstrap_not_ready:
+    "GitHub 公开仓库发现无需登录；导入 starred repositories 需要公开用户名或可用 PAT。",
+  github_identity_required:
+    "GitHub 画像初始化需要公开用户名或可用 PAT；公开 repository 发现仍可匿名使用。",
+  github_identity_not_found: "没有找到填写的 GitHub 公开用户，请检查用户名后重试。",
+  invalid_github_access_token:
+    "GitHub PAT 被拒绝（可能无效或已过期）。请更新或清除 PAT 后重试。",
+  github_token_rejected:
+    "GitHub PAT 被拒绝（可能无效或已过期）。请更新或清除 PAT 后重试。",
+  github_token_check_failed: "校验 GitHub PAT 时无法连接 GitHub，请稍后重试。",
+  github_identity_mismatch:
+    "GitHub PAT 所属账号与填写的公开用户名不一致；已停止个人初始化，请确认账号后重试。",
+  github_bootstrap_timeout:
+    "GitHub starred repositories 导入超时；已保留此前完整取得的页面（如有），可稍后重试。",
+  github_bootstrap_failed:
+    "GitHub starred repositories 导入失败；请检查网络、用户名与 API 状态后重试。",
+  github_partial: "GitHub starred repositories 仅完成部分导入；成功取得的数据已用于画像。",
   analyze_failed: "偏好分析未完成。",
   profile_failed: "画像生成未完成。",
   discovery_timeout: "画像已生成，但首轮内容池整理超时。",
@@ -258,6 +276,7 @@ const INIT_SOURCE_LABEL_FALLBACK = {
   douyin: "抖音",
   youtube: "YouTube",
   twitter: "X",
+  github: "GitHub",
   zhihu: "知乎",
   reddit: "Reddit",
   bangumi: "Bangumi",
@@ -278,7 +297,7 @@ export const INIT_SOURCE_OPTIONS = INIT_SOURCE_KEYS.map((key) => ({
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH
 // this browser, so the user must be logged into it here.
 export const INIT_SOURCE_LOGIN_HINT =
-  "勾选要纳入初始化的平台。需要登录的平台请先在当前浏览器登录；Bangumi 使用公开 API，无需登录。勾选会同时开启该来源。";
+  "勾选要纳入初始化的平台。需要登录的平台请先在当前浏览器登录；Bangumi 与 GitHub 使用官方公开 API，无需登录。勾选会同时开启该来源。";
 
 // Human labels for a list of platform keys (unknown keys pass through).
 export function initSourceLabels(keys) {

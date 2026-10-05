@@ -11,6 +11,7 @@ import {
 } from "../content/v2ex/task-mode.ts";
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
+import { createTaskTab } from "./task-tab.ts";
 
 const MUTEX_STALE_MS = 6 * 60 * 1000;
 const POLL_INTERVAL_MS = 60_000;
@@ -678,7 +679,7 @@ export async function executeV2EXTask(
   tabId = null;
   try {
     await persistState();
-    const tab = await chrome.tabs.create({
+    const tab = await createTaskTab({
       url: v2exScopeUrl(scopes[0], progress.username, 1),
       active: false,
     });
@@ -884,7 +885,7 @@ async function recoverPersistedTask(): Promise<void> {
   if (tabId === null) {
     try {
       const scope = progress.scopes[progress.scopeIndex];
-      const tab = await chrome.tabs.create({
+      const tab = await createTaskTab({
         active: false,
         url: v2exScopeUrl(scope, progress.username, progress.page),
       });

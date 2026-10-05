@@ -61,6 +61,7 @@ _PLATFORM_SOURCE_FIELDS = (
     "douyin",
     "youtube",
     "twitter",
+    "github",
     "zhihu",
     "reddit",
     "bangumi",

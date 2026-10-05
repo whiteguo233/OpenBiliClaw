@@ -398,6 +398,14 @@ export async function fetchRuntimeStatus() {
   return requestJson("/runtime-status", { method: "GET" });
 }
 
+export async function fetchDiagnosticsAlerts({ limit = 50 } = {}) {
+  const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Math.trunc(limit), 500)) : 50;
+  return requestJson(`/diagnostics/alerts?limit=${boundedLimit}`, {
+    method: "GET",
+    timeoutMs: 12_000,
+  });
+}
+
 export async function fetchInitStatus() {
   return requestJson("/init-status", { method: "GET", timeoutMs: 45000 });
 }
@@ -439,17 +447,33 @@ export async function startInit({
   sources,
   bangumiUsername = null,
   bangumiToken = null,
+  githubUsername = null,
+  githubToken = null,
+  llmConcurrency = null,
+  initTimeoutMinutes = null,
+  // Accept snake_case keys for callers that build a raw request payload.
+  llm_concurrency: llmConcurrencyLegacy = null,
+  init_timeout_minutes: initTimeoutMinutesLegacy = null,
 } = {}) {
   const payload = { force };
+  const effectiveLlmConcurrency = llmConcurrency ?? llmConcurrencyLegacy;
+  if (Number.isFinite(Number(effectiveLlmConcurrency)) && Number(effectiveLlmConcurrency) >= 1) {
+    payload.llm_concurrency = Number(effectiveLlmConcurrency);
+  }
+  const effectiveInitTimeoutMinutes = initTimeoutMinutes ?? initTimeoutMinutesLegacy;
+  if (Number.isFinite(Number(effectiveInitTimeoutMinutes)) && Number(effectiveInitTimeoutMinutes) >= 1 && Number(effectiveInitTimeoutMinutes) <= 1440) {
+    payload.init_timeout_minutes = Number(effectiveInitTimeoutMinutes);
+  }
   // Only attach an explicit per-run platform selection when given; omitting it
   // lets the backend fall back to all config-enabled sources (legacy behaviour).
   if (Array.isArray(sources)) {
     payload.sources = sources;
   }
-  // Send explicit Bangumi options only when the caller has one to send.
+  // Send source-scoped options only when the caller has one to send.
   // `null`/`undefined` means "leave the configured value untouched" (the backend
-  // treats an omitted field as keep-existing); an empty string is a deliberate
-  // clear the user asked for. A token, when present, auto-resolves the account.
+  // treats an omitted field as keep-existing); an empty username is a deliberate
+  // clear. Tokens remain write-only and are only sent when explicitly typed.
+  const sourceOptions = {};
   if (Array.isArray(sources) && sources.includes("bangumi")) {
     const bangumi = {};
     if (bangumiUsername != null) {
@@ -459,9 +483,22 @@ export async function startInit({
       bangumi.access_token = String(bangumiToken).trim();
     }
     if (Object.keys(bangumi).length > 0) {
-      payload.source_options = { bangumi };
+      sourceOptions.bangumi = bangumi;
     }
   }
+  if (Array.isArray(sources) && sources.includes("github")) {
+    const github = {};
+    if (githubUsername != null) {
+      github.username = String(githubUsername).trim();
+    }
+    if (githubToken != null) {
+      github.access_token = String(githubToken).trim();
+    }
+    if (Object.keys(github).length > 0) {
+      sourceOptions.github = github;
+    }
+  }
+  if (Object.keys(sourceOptions).length > 0) payload.source_options = sourceOptions;
   return requestJson("/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -742,6 +779,9 @@ export async function startChatTurn({
   subjectId = "",
   subjectTitle = "",
   replyToTurnId = "",
+  sessionId = "",
+  skill = "",
+  streaming = false,
   message,
 }) {
   const payload = {
@@ -751,13 +791,100 @@ export async function startChatTurn({
     subject_id: subjectId,
     subject_title: subjectTitle,
     message,
+    streaming,
   };
   if (replyToTurnId) payload.reply_to_turn_id = replyToTurnId;
+  if (sessionId) payload.session_id = sessionId;
+  if (skill) payload.skill = skill;
   return requestJson("/chat/turns", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export async function streamChatTurn({
+  turnId = "",
+  message = "",
+  session = "popup",
+  scope = "chat",
+  subjectId = "",
+  subjectTitle = "",
+  replyToTurnId = "",
+  onPhase,
+  onToolCall,
+  onContent,
+  onDone,
+  watchdogMs,
+} = {}) {
+  const backendUrl = await getBackendBaseUrl();
+  const watchdog = agentChatShared().createSseReadWatchdog(
+    watchdogMs > 0 ? { timeoutMs: watchdogMs } : undefined,
+  );
+  const response = await globalThis.fetch(`${backendUrl}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      turn_id: turnId,
+      session,
+      scope,
+      subject_id: subjectId,
+      subject_title: subjectTitle,
+      reply_to_turn_id: replyToTurnId,
+      message,
+    }),
+    signal: watchdog.signal,
+  });
+  if (!response.ok) {
+    watchdog.cancel();
+    throw new Error(`chat stream failed: ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentEvent = "";
+  let currentData = "";
+  const dispatch = () => {
+    if (!currentEvent || !currentData) return;
+    try {
+      const data = JSON.parse(currentData);
+      if (currentEvent === "content" && typeof onContent === "function") {
+        onContent(String(data.delta || ""));
+      } else if (currentEvent === "tool_call" && typeof onToolCall === "function") {
+        onToolCall(data);
+      } else if (currentEvent === "done" && typeof onDone === "function") {
+        onDone(data);
+      } else if (currentEvent === "phase" && typeof onPhase === "function") {
+        onPhase(data);
+      }
+    } catch {
+      // Ignore malformed SSE lines; keep the stream alive.
+    }
+    currentEvent = "";
+    currentData = "";
+  };
+  try {
+    while (true) {
+      // 每轮读前重置看门狗：服务端心跳注释行也算字节，会喂活它。
+      watchdog.reset();
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (line.startsWith("event:")) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          currentData = line.slice(5).trim();
+          dispatch();
+        }
+      }
+    }
+  } finally {
+    watchdog.cancel();
+  }
 }
 
 export async function fetchChatTurn(turnId, { signal, timeoutMs = 10_000 } = {}) {
@@ -814,6 +941,222 @@ export async function actOnChatCard(turnId, action, { signal } = {}) {
     signal,
     timeoutMs: 60_000,
   });
+}
+
+// ── Chat agent loop (「聊一聊」 M9) ─────────────────────────────
+// SSE frame parsing and the process-flow run model are shared with the
+// mobile/desktop web via popup/shared/agent-chat.js (copied from
+// src/openbiliclaw/web/shared at build time).
+function agentChatShared() {
+  const shared = globalThis.OpenBiliClawAgentChat;
+  if (!shared) throw new Error("agent-chat shared helper did not load");
+  return shared;
+}
+
+async function postAuthenticatedSse(path, body, { signal } = {}) {
+  const fetchImpl = globalThis.fetch.bind(globalThis);
+  const backendUrl = await getBackendBaseUrl();
+  const sessionToken = await ensurePopupSession({ fetchImpl });
+  const response = await popupAuthenticatedFetch(
+    `${backendUrl}${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    },
+    fetchImpl,
+    { sessionToken },
+  );
+  if (!response.ok) {
+    let details = null;
+    try { details = await response.json(); } catch { details = null; }
+    const error = new Error(`${path} request failed: ${response.status}`);
+    error.status = response.status;
+    error.details = details;
+    throw error;
+  }
+  return response;
+}
+
+async function readAgentSseStream(response, onEvent, watchdog) {
+  const parser = agentChatShared().createAgentSseParser(onEvent);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      // Rearm on every read: any incoming byte (incl. server ``: ping``
+      // heartbeat comments) proves the connection is still alive.
+      watchdog?.reset();
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    watchdog?.cancel();
+  }
+  parser.end();
+}
+
+/**
+ * Stream one multi-hop agent turn (POST /api/chat/agent/stream).
+ * ``onEvent(eventName, data)`` receives every AgentEvent; resolves with the
+ * terminal ``done`` payload; EOF without it rejects as an interrupted stream.
+ * Throws with ``status === 503`` when the
+ * loop is disabled so callers can fall back to the legacy stream; an SSE
+ * ``error`` frame rejects with ``agentStreamError = true``. A read watchdog
+ * aborts the request when no byte arrives within the watchdog window.
+ */
+export async function streamAgentChatTurn({
+  turnId = "",
+  sessionId = "",
+  skill = "",
+  session = "popup",
+  message,
+  onEvent,
+  watchdogMs,
+} = {}) {
+  const body = { message };
+  if (turnId) body.turn_id = turnId;
+  if (sessionId) body.session_id = sessionId;
+  if (skill) body.skill = skill;
+  if (session) body.session = session;
+  let donePayload = null;
+  const watchdog = agentChatShared().createSseReadWatchdog(
+    watchdogMs > 0 ? { timeoutMs: watchdogMs } : undefined,
+  );
+  const response = await postAuthenticatedSse("/chat/agent/stream", body, { signal: watchdog.signal });
+  await readAgentSseStream(response, (name, data) => {
+    if (name === "done") donePayload = data;
+    if (name === "error") {
+      const error = new Error(String(data?.error || "对话失败了，请稍后重试。"));
+      error.agentStreamError = true;
+      onEvent?.(name, data);
+      throw error;
+    }
+    onEvent?.(name, data);
+  }, watchdog);
+  if (!donePayload) throw new Error("对话连接已中断，等待历史恢复。");
+  return donePayload;
+}
+
+export async function fetchChatSkills() {
+  const data = await requestJson("/chat/skills", { timeoutMs: 5_000 });
+  return agentChatShared().normalizeChatSkillList(data);
+}
+
+export async function fetchChatPersonas() {
+  const data = await requestJson("/chat/personas", { timeoutMs: 5_000 });
+  return {
+    personas: Array.isArray(data?.personas) ? data.personas : [],
+    examplePrompt: String(data?.example_prompt || ""),
+  };
+}
+
+export async function fetchChatSessions({ includeArchived = false, limit = 100 } = {}) {
+  const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(500, limit))) });
+  if (includeArchived) params.set("include_archived", "true");
+  const data = await requestJson(`/chat/sessions?${params.toString()}`);
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function createChatSession({ title = "", sessionId = "" } = {}) {
+  const body = {};
+  if (sessionId) body.session_id = sessionId;
+  if (title) body.title = title;
+  return requestJson("/chat/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateChatSession(sessionId, { title, archived, persona } = {}) {
+  const body = {};
+  if (typeof title === "string") body.title = title;
+  if (typeof archived === "boolean") body.archived = archived;
+  if (typeof persona === "string") body.persona = persona;
+  return requestJson(`/chat/sessions/${encodeURIComponent(String(sessionId || ""))}`, {
+    method: "PATCH",
+    timeoutMs: 10_000,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchChatSessionDetail(sessionId, { limit = 100, offset = 0 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+    offset: String(Math.max(0, offset)),
+  });
+  return requestJson(
+    `/chat/sessions/${encodeURIComponent(String(sessionId || "default"))}?${params.toString()}`,
+  );
+}
+
+export async function fetchChatApprovals({ status = "pending", limit = 50 } = {}) {
+  const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(200, limit))) });
+  if (status) params.set("status", status);
+  const data = await requestJson(`/chat/approvals?${params.toString()}`, { timeoutMs: 5_000 });
+  return agentChatShared().normalizeApprovalList(data);
+}
+
+export async function approveChatApproval(approvalId) {
+  return requestJson(
+    `/chat/approvals/${encodeURIComponent(String(approvalId || ""))}/approve`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+  );
+}
+
+export async function rejectChatApproval(approvalId, reason = "") {
+  return requestJson(
+    `/chat/approvals/${encodeURIComponent(String(approvalId || ""))}/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+  );
+}
+
+export async function createAgentTask({ prompt, sessionId = "", title = "", skill = "" } = {}) {
+  const body = { prompt: String(prompt || "") };
+  if (sessionId) body.session_id = sessionId;
+  if (title) body.title = title;
+  if (skill) body.skill = skill;
+  return requestJson("/chat/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchAgentTasks({ status = "", sessionId = "", limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+    offset: String(Math.max(0, offset)),
+  });
+  if (status) params.set("status", status);
+  if (sessionId) params.set("session_id", sessionId);
+  const data = await requestJson(`/chat/tasks?${params.toString()}`);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return {
+    items: items.map((item) => agentChatShared().normalizeAgentTask(item)).filter(Boolean),
+    total: Math.max(0, Number(data?.total) || 0),
+  };
+}
+
+export async function fetchAgentTask(taskId) {
+  const data = await requestJson(`/chat/tasks/${encodeURIComponent(String(taskId || ""))}`);
+  return agentChatShared().normalizeAgentTask(data);
+}
+
+export async function cancelAgentTask(taskId) {
+  const data = await requestJson(
+    `/chat/tasks/${encodeURIComponent(String(taskId || ""))}/cancel`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+  );
+  return agentChatShared().normalizeAgentTask(data);
 }
 
 export async function respondToInterestProbe(domain, responseType, message = "") {

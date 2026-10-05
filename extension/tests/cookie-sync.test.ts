@@ -1078,3 +1078,69 @@ test("onChanged on linux.do _t schedules boolean login-state sync", async () => 
   assert.deepEqual(call?.body, { logged_in: true });
   assert.equal(JSON.stringify(call).includes("secret-session"), false);
 });
+
+test("cookieDomainMatchesSite accepts bare, dotted, and subdomain cookie domains", async () => {
+  const { cookieDomainMatchesSite } = await importCookieSync();
+  assert.equal(cookieDomainMatchesSite("bilibili.com", "bilibili.com"), true);
+  assert.equal(cookieDomainMatchesSite(".bilibili.com", "bilibili.com"), true);
+  assert.equal(cookieDomainMatchesSite("www.bilibili.com", "bilibili.com"), true);
+  assert.equal(cookieDomainMatchesSite("passport.bilibili.com", "bilibili.com"), true);
+  assert.equal(cookieDomainMatchesSite("notbilibili.com", "bilibili.com"), false);
+  assert.equal(cookieDomainMatchesSite("bilibili.com.evil.com", "bilibili.com"), false);
+  assert.equal(cookieDomainMatchesSite("weibo.cn", "weibo.cn"), true);
+  assert.equal(cookieDomainMatchesSite("www.weibo.cn", "weibo.cn"), true);
+});
+
+test("readBilibiliCookieHeader reads subdomain cookies even when Safari domain filter is exact", async () => {
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  // Simulate Safari's exact-domain cookies.getAll({domain}) semantics: a
+  // domain-filtered call for "bilibili.com" would only return cookies whose
+  // domain equals "bilibili.com", missing the real .bilibili.com session jar.
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { domain?: string }) => {
+        if (!details?.domain) {
+          return [
+            { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+            { name: "buvid3", value: "anonymous", domain: "www.bilibili.com" },
+            { name: "SESSDATA", value: "sess", domain: "bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: "bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: "bilibili.com" },
+          ];
+        }
+        return [];
+      },
+    },
+  } as unknown as typeof chrome;
+  const header = await readBilibiliCookieHeader();
+  assert.ok(header);
+  assert.match(header, /SESSDATA=sess/);
+  assert.match(header, /bili_jct=csrf/);
+  assert.match(header, /DedeUserID=42/);
+});
+
+test("readCookiesForDomains falls back to per-domain getAll when unfiltered getAll throws", async () => {
+  const { readWeiboLoginState } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { domain?: string }) => {
+        if (!details?.domain) {
+          throw new Error("Safari rejects unfiltered getAll");
+        }
+        if (details.domain === "weibo.com") {
+          return [
+            { name: "SUBP", value: "subp", domain: ".weibo.com" },
+            { name: "ALF", value: "alf", domain: ".weibo.com" },
+          ];
+        }
+        if (details.domain === "weibo.cn") {
+          return [{ name: "SUBP", value: "subp", domain: ".weibo.cn" }];
+        }
+        return [];
+      },
+    },
+  } as unknown as typeof chrome;
+  assert.equal(await readWeiboLoginState(), true);
+});

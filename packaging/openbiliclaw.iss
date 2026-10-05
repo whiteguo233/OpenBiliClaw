@@ -1,9 +1,9 @@
 ; Inno Setup script for the OpenBiliClaw Windows installer.
 ;
 ; Compile on Windows (Inno Setup 6):
-;     iscc /DMyAppVersion=0.3.204 packaging\openbiliclaw.iss
+;     iscc /DMyAppVersion=0.3.226 packaging\openbiliclaw.iss
 ; Produces:
-;     dist\release\OpenBiliClaw-windows-0.3.204-Setup.exe
+;     dist\release\OpenBiliClaw-windows-0.3.226-Setup.exe
 ;
 ; Expects the PyInstaller onedir output at dist\OpenBiliClaw\ with a bundled
 ; ollama.exe + lib\ runners already staged inside it. The GitHub Actions
@@ -57,6 +57,15 @@ PrivilegesRequired=lowest
 ; (PyInstaller console apps don't always cooperate with RM).
 CloseApplications=force
 RestartApplications=no
+; Setup AND Uninstall open with the standard "application is running" dialog
+; when the packaged app holds the named mutex created by packaging/entry.py
+; (_acquire_installer_mutex). CloseApplications/Restart Manager above is
+; install-only, and the uninstaller treats locked-file delete errors as
+; non-fatal — without this gate it stranded the locked files, deleted itself,
+; and left no way to retry the uninstall. Older installed builds without the
+; mutex fall through to the CurUninstallStepChanged(usUninstall) taskkill in
+; [Code] (deliberately AFTER the gate — see the ordering note there).
+AppMutex=OpenBiliClaw-B4F3D2A1-7C6E-4A8B-9D1F-0E2A6C5B3D14
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Script lives in packaging\; resolve [Files] Source + OutputDir from repo root.
@@ -81,11 +90,19 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Always launch the executable we just installed. This is intentionally not a
-; postinstall checkbox and is not skipped for silent upgrades: PrepareToInstall
-; stopped the old process tree, so a successful setup must hand off to the
-; freshly written {app} binary instead of leaving the old version running.
-Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Flags: nowait
+; Interactive installs: a checked "Launch OpenBiliClaw" checkbox on the Finish
+; page. The app starts only when the user clicks Finish — never while the
+; wizard is still open — and the user may uncheck it to not launch at all.
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: postinstall nowait skipifsilent
+; Silent installs/upgrades (/SILENT, /VERYSILENT): no Finish page is shown, but
+; the postinstall entry above WOULD still run — the wizard auto-clicks through
+; the hidden Finished page — so skipifsilent holds it back and this mirror entry
+; takes over. PrepareToInstall stopped the old process tree, so a successful
+; silent setup must hand off to the freshly written {app} binary instead of
+; leaving nothing running (the upgrade regression that originally forced an
+; unconditional launch here). Both skip flags are load-bearing: an unscoped
+; entry would launch the app twice on a silent install.
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Flags: nowait skipifnotsilent
 
 ; NOTE: user data (config.toml, data\, logs\) lives under
 ; %USERPROFILE%\OpenBiliClaw, the same root used by the one-line / AI installers,
@@ -107,6 +124,26 @@ begin
        SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Give Windows a moment to release the handles before the file copy begins.
   Sleep(800);
+end;
+
+// Uninstall-side process handoff. PrepareToInstall above only runs in Setup,
+// and Uninstall cannot use Restart Manager (CloseApplications is install-only),
+// so without this the uninstaller hits "file in use" errors — which are
+// non-fatal there: it deletes itself and strands the leftovers.
+//
+// ORDERING IS LOAD-BEARING: Inno runs [Code] InitializeUninstall BEFORE its
+// internal AppMutex check (see RunSecondPhase in Setup.Uninstall.pas), so
+// killing the app there silently destroys the mutex and the "application is
+// running" gate never fires. The kill therefore lives in
+// CurUninstallStepChanged(usUninstall), which runs AFTER the AppMutex gate
+// passed and immediately before file deletion — cleaning up processes the
+// gate cannot see (mutex-less pre-AppMutex installs, orphaned worker/ollama
+// children outliving the tray parent). taskkill is a no-op (nonzero exit,
+// ignored) when nothing is running.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    StopRunningInstance;
 end;
 
 // Runs right before files are copied (both fresh installs and upgrades).

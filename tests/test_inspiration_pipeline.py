@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 _BILI = "bilibili"
 _BANGUMI = "bangumi"
+_GITHUB = "github"
 _LINUXDO = "linuxdo"
 _WEIBO = "weibo"
 _V2EX = "v2ex"
@@ -139,6 +140,32 @@ def _axis_payload() -> dict[str, object]:
     }
 
 
+def test_pipeline_carries_platform_partial_evidence_into_grounding_ledger() -> None:
+    provider = object()
+    ledger = InspirationKeywordPipeline._new_grounding_ledger(provider)
+
+    InspirationKeywordPipeline._merge_provider_grounding_ledger(
+        ledger,
+        {
+            "platforms": {"github": 1},
+            "platform_complete": {},
+            "platform_affirmative_empty": {},
+            "platform_partial": {"github": 1},
+            "platform_degraded": {"github": 1},
+            "platform_terminal_evidence": {"github": {"incomplete_results": 1}},
+            "provider_degraded": {"PlatformSourceInspirationProvider": 1},
+        },
+        provider,
+    )
+
+    assert ledger["platform_partial"] == {"github": 1}
+    assert ledger["platform_degraded"] == {"github": 1}
+    assert ledger["platform_complete"] == {}
+    assert ledger["platform_affirmative_empty"] == {}
+    assert ledger["platform_terminal_evidence"] == {"github": {"incomplete_results": 1}}
+    assert ledger["provider_degraded"] == {"PlatformSourceInspirationProvider": 1}
+
+
 def _make_pipeline(
     db: Database,
     *,
@@ -243,6 +270,29 @@ async def test_pipeline_materializes_linuxdo_inspiration_axis_keywords(db: Datab
 
     assert ledger == {_LINUXDO: 1}
     assert host.inserted == [(_LINUXDO, ["Linux 内核 eBPF 调优"])]
+
+
+async def test_pipeline_materializes_github_inspiration_axis_keywords(db: Database) -> None:
+    profile = _profile()
+    host = _FakeHost(profile=profile)
+    payload = _axis_payload()
+    keywords = payload["keywords"]
+    assert isinstance(keywords, list)
+    assert isinstance(keywords[0], dict)
+    keywords[0]["platform"] = _GITHUB
+    keywords[0]["core_concept"] = "local LLM agent framework"
+    keywords[0]["decoration"] = "open source"
+    pipeline = _make_pipeline(
+        db,
+        llm=_FakeLLM(payload=payload),
+        host=host,
+        provider=_FakeProvider(previews_by_query={}),
+    )
+
+    ledger = await pipeline._run_inspiration_stage([_GITHUB], profile=profile, digest="d1")
+
+    assert ledger == {_GITHUB: 1}
+    assert host.inserted == [(_GITHUB, ["local LLM agent framework open source"])]
 
 
 async def test_pipeline_materializes_weibo_axis_keywords(db: Database) -> None:

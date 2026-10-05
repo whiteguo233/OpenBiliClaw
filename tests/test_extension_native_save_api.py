@@ -41,7 +41,7 @@ _NATIVE_CASES = {
         SavedItemInput(
             "zhihu", "answer:123", "https://www.zhihu.com/question/1/answer/123", "answer"
         ),
-        NativeSaveRoute("favorite", "favorite", "Zhihu Favorites"),
+        NativeSaveRoute("favorite", "favorite", "知乎收藏"),
     ),
     "reddit": (
         SavedItemInput(
@@ -250,7 +250,7 @@ def test_owned_native_result_never_falls_through_to_legacy_queue(
     assert RedditTaskQueue(database).get(job_id)["status"] == "pending"
 
 
-def test_wrong_item_key_and_late_callback_return_conflict(
+def test_wrong_item_key_conflicts_but_exact_callback_replay_is_acknowledged(
     client: TestClient,
     broker: ExtensionNativeSaveBroker,
 ) -> None:
@@ -268,6 +268,9 @@ def test_wrong_item_key_and_late_callback_return_conflict(
 
     payload["item_key"] = claimed.item_key
     assert client.post("/api/sources/zhihu/task-result", json=payload).status_code == 200
+    assert client.post("/api/sources/zhihu/task-result", json=payload).status_code == 200
+
+    payload["status"] = "already_synced"
     assert client.post("/api/sources/zhihu/task-result", json=payload).status_code == 409
 
 
@@ -441,11 +444,11 @@ def test_native_save_source_api_is_documented() -> None:
         "docs/modules/runtime.md": "extension_native_save_broker",
         "docs/modules/saved-sync.md": "global native ownership",
         "docs/modules/init.md": "legacy discovery/bootstrap queues",
-        "docs/modules/api-auth.md": "ten state-changing GET `/next-task`",
+        "docs/modules/api-auth.md": "十一个 state-changing GET `/next-task`",
         "docs/architecture.md": "/api/sources/{xhs,dy,yt,x,zhihu,reddit}",
         "docs/spec.md": "native_save multiplex",
-        "README.md": "七源 source task multiplex",
-        "README_EN.md": "seven-source task multiplex",
+        "docs/architecture-overview.md": "八来源 source task multiplex",
+        "docs/architecture-overview.en.md": "eight-source task multiplex",
         "docs/changelog.md": "source task multiplex",
     }
     for path, marker in required.items():

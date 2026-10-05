@@ -142,14 +142,14 @@ test("buildDyTaskUrl routes bootstrap_profile to the douyin home", () => {
   // SDK + RENDER_DATA are available.
   assert.equal(
     buildDyTaskUrl({ id: "t", type: "bootstrap_profile" }),
-    "https://www.douyin.com/",
+    "https://www.douyin.com/?openbiliclaw_dy_task=1",
   );
 });
 
 test("buildDyTaskUrl routes search task to the douyin home", () => {
   assert.equal(
     buildDyTaskUrl({ id: "t-search", type: "search", keywords: ["猫"] }),
-    "https://www.douyin.com/",
+    "https://www.douyin.com/?openbiliclaw_dy_task=1",
   );
 });
 
@@ -160,21 +160,21 @@ test("buildDyTaskUrl routes hot task to the douyin home", () => {
       type: "hot",
       hot_items: [{ word: "热点词", sentence_id: "2495363" }],
     }),
-    "https://www.douyin.com/",
+    "https://www.douyin.com/?openbiliclaw_dy_task=1",
   );
 });
 
 test("buildDyTaskUrl routes feed task to the douyin home", () => {
   assert.equal(
     buildDyTaskUrl({ id: "t-feed", type: "feed", max_items: 10 }),
-    "https://www.douyin.com/",
+    "https://www.douyin.com/?openbiliclaw_dy_task=1",
   );
 });
 
 test("discovery task page URLs stay on douyin home", () => {
-  assert.equal(buildDyDiscoveryPageUrl("search", "猫"), "https://www.douyin.com/");
-  assert.equal(buildDyDiscoveryPageUrl("hot", "2495363"), "https://www.douyin.com/");
-  assert.equal(buildDyDiscoveryPageUrl("feed"), "https://www.douyin.com/");
+  assert.equal(buildDyDiscoveryPageUrl("search", "猫"), "https://www.douyin.com/?openbiliclaw_dy_task=1");
+  assert.equal(buildDyDiscoveryPageUrl("hot", "2495363"), "https://www.douyin.com/?openbiliclaw_dy_task=1");
+  assert.equal(buildDyDiscoveryPageUrl("feed"), "https://www.douyin.com/?openbiliclaw_dy_task=1");
 });
 
 test("search navigation resume only matches the requested Douyin result route", () => {

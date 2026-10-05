@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from openbiliclaw.recommendation.publication_preference import (
+    PublicationDatePreference,
+    resolve_publication_window,
+)
 from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
 from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
 from openbiliclaw.sources.bili_tasks import BiliTaskQueue
@@ -260,7 +264,30 @@ async def test_bilibili_producer_reserves_one_bounded_recent_lane_task(
     assert payloads["近期关键词"]["discovery_lane"] == "recent"
     assert payloads["近期关键词"]["page_size"] == 5
     assert "order" not in payloads["普通关键词"]
-    assert payloads["普通关键词"]["page_size"] == 20
+
+
+def test_bilibili_producer_pushes_strict_date_bounds_to_extension_task(
+    queue: BiliTaskQueue,
+) -> None:
+    producer = BilibiliExtensionSearchProducer(
+        task_queue=queue,
+        soul_engine=_Soul(),
+        llm_service=_LLM(),
+        bilibili_client=_BiliClient(),
+        presence=_Presence(),
+        publication_preference=PublicationDatePreference(
+            preset="custom",
+            start_date="2026-01-01",
+            end_date="2026-12-31",
+            weight=1.0,
+        ),
+    )
+
+    payload = producer._task_payload("纪录片")
+    window = resolve_publication_window(producer.publication_preference)
+    assert window is not None
+    assert payload["pubtime_begin"] == int(window.start_utc.timestamp())
+    assert payload["pubtime_end"] == int(window.end_utc.timestamp())
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,76 @@
+{
+  "before": {
+    "total_available": 69,
+    "pool_status_version": 1788792250980,
+    "by_platform": {
+      "bilibili": 59,
+      "twitter": 10
+    }
+  },
+  "after": {
+    "total_available": 59,
+    "pool_status_version": 1788792253970,
+    "by_platform": {
+      "bilibili": 59
+    }
+  },
+  "samples": [
+    {
+      "index": 1,
+      "action": "reshuffle",
+      "source": "twitter",
+      "ms": 608.6,
+      "items": 9,
+      "remaining": 60,
+      "sources": {
+        "bilibili": 59,
+        "twitter": 1
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    },
+    {
+      "index": 2,
+      "action": "append",
+      "source": "twitter",
+      "ms": 521.0,
+      "items": 1,
+      "remaining": 59,
+      "sources": {
+        "bilibili": 59
+      },
+      "inventory_matches_followup": true,
+      "websocket_matched": true
+    }
+  ],
+  "unique_items": 10,
+  "latency_ms": {
+    "p50": 521.0,
+    "p95": 608.6,
+    "max": 608.6
+  },
+  "health_ms": {
+    "samples": 1,
+    "p95": 2986.4,
+    "max": 2986.4
+  },
+  "pool_events": 2,
+  "pool_event_snapshots": [
+    {
+      "pool_available_count": 60,
+      "platform_available_counts": {
+        "bilibili": 59,
+        "twitter": 1
+      },
+      "pool_status_version": 1788792251434
+    },
+    {
+      "pool_available_count": 59,
+      "platform_available_counts": {
+        "bilibili": 59
+      },
+      "pool_status_version": 1788792252345
+    }
+  ],
+  "failures": []
+}

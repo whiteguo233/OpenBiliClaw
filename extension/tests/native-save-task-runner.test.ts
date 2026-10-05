@@ -9,6 +9,7 @@ import {
 import {
   ensureNativeSaveTaskRecovery,
   handleNativeSaveContentResult,
+  isNativeSaveTaskTabId,
   recoverRecordedNativeSaveTaskTab,
   resetNativeSaveTaskRecoveryForTest,
   runNativeSaveTask,
@@ -57,23 +58,57 @@ const douyinTask: NativeSaveTask = {
   target_label: "抖音收藏",
 };
 
+const youtubeWatchLaterTask: NativeSaveTask = {
+  ...task,
+  id: "123e4567-e89b-12d3-a456-426614174003",
+  platform: "youtube",
+  platform_slug: "yt",
+  item_key: "youtube:dQw4w9WgXcQ",
+  content_id: "dQw4w9WgXcQ",
+  content_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  content_type: "video",
+  requested_action: "watch_later",
+  resolved_action: "watch_later",
+  target_label: "YouTube Watch Later",
+};
+
+const zhihuTask: NativeSaveTask = {
+  ...task,
+  id: "123e4567-e89b-12d3-a456-426614174004",
+  platform: "zhihu",
+  platform_slug: "zhihu",
+  item_key: "zhihu:answer:2002",
+  content_id: "answer:2002",
+  content_url: "https://www.zhihu.com/question/101/answer/2002",
+  content_type: "answer",
+  target_label: "OpenBiliClaw",
+};
+
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function acknowledgeNativeSaveMessage(_tabId: number, message: unknown): Promise<unknown> {
+  return (message as { type?: unknown }).type === "NATIVE_SAVE_READY"
+    ? { ready: true, document_instance_id: "verification-document" }
+    : { ready: true };
 }
 
 test("native save runner opens an active allow-listed URL and posts one correlated result", async () => {
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const running = runNativeSaveTask(task, "reddit", async (result) => { posted.push(result); }, { timeoutMs: 100 });
     await tick();
-    assert.deepEqual(state.createdTabs, [{ active: true, url: redditExecutionUrl }]);
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "about:blank" }]);
+    assert.equal(await isNativeSaveTaskTabId(42), true);
     state.emitRuntimeMessage({ type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" }, { tab: { id: 42, url: task.content_url } });
     state.emitRuntimeMessage({ type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" }, { tab: { id: 42, url: task.content_url } });
     await running;
     assert.deepEqual(posted, [{ task_id: task.id, item_key: task.item_key, status: "synced", error_code: "", error_message: "" }]);
     assert.deepEqual(state.removedTabs, [42]);
+    assert.equal(await isNativeSaveTaskTabId(42), false);
     assert.equal(dispatcherMutexHolder(), null);
   } finally {
     state.restore();
@@ -84,16 +119,16 @@ test("native save runner opens the exact tokenized Xiaohongshu public-note URL",
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
   state.nextCreatedTabStatus = "loading";
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const running = runNativeSaveTask(
       tokenizedXhsTask,
       "xhs",
       async (result) => { posted.push(result); },
-      { timeoutMs: 100 },
+      { timeoutMs: 1_000 },
     );
     await tick();
-    assert.deepEqual(state.createdTabs, [{ active: true, url: tokenizedXhsTask.content_url }]);
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "about:blank" }]);
     assert.equal(state.sentMessages.length, 1);
     state.emitRuntimeMessage(
       {
@@ -114,12 +149,12 @@ test("native save runner opens the exact tokenized Xiaohongshu public-note URL",
 
 test("native save runner opens Douyin's exact modal route instead of the anti-bot video shell", async () => {
   const state = installChromeMock();
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const running = runNativeSaveTask(douyinTask, "dy", async () => {}, { timeoutMs: 100 });
     await tick();
     const executionUrl = "https://www.douyin.com/jingxuan?modal_id=7300000000000000000";
-    assert.deepEqual(state.createdTabs, [{ active: true, url: executionUrl }]);
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "about:blank" }]);
     state.emitRuntimeMessage(
       {
         type: "NATIVE_SAVE_RESULT",
@@ -139,13 +174,13 @@ test("native save runner opens Douyin's exact modal route instead of the anti-bo
 test("native save runner reloads Douyin once for read-only persisted confirmation", async () => {
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const running = runNativeSaveTask(
       douyinTask,
       "dy",
       async (result) => { posted.push(result); },
-      { timeoutMs: 100 },
+      { timeoutMs: 1_000 },
     );
     await tick();
     const executionUrl = "https://www.douyin.com/jingxuan?modal_id=7300000000000000000";
@@ -155,13 +190,18 @@ test("native save runner reloads Douyin once for read-only persisted confirmatio
         platform: "douyin",
         task_id: douyinTask.id,
         item_key: douyinTask.item_key,
+        document_instance_id: "mutation-document",
         status: "failed",
         error_code: "native_confirmation_not_observed",
       },
       { tab: { id: 42, url: executionUrl } },
     );
     await tick();
-    assert.deepEqual(state.updatedTabs, [{ tabId: 42, active: true, url: executionUrl }]);
+    assert.deepEqual(state.reloadedTabs, [42]);
+    assert.deepEqual(state.updatedTabs, [
+      { tabId: 42, muted: true },
+      { tabId: 42, active: true, url: executionUrl },
+    ]);
     assert.equal(
       (state.sentMessages.at(-1)?.message as { verification_only?: unknown }).verification_only,
       true,
@@ -172,6 +212,10 @@ test("native save runner reloads Douyin once for read-only persisted confirmatio
         platform: "douyin",
         task_id: douyinTask.id,
         item_key: douyinTask.item_key,
+        execution_id: (
+          state.sentMessages.at(-1)?.message as { execution_id?: unknown }
+        ).execution_id,
+        document_instance_id: "verification-document",
         status: "already_synced",
       },
       { tab: { id: 42, url: executionUrl } },
@@ -187,13 +231,13 @@ test("native save runner reloads Douyin once for read-only persisted confirmatio
 test("native save runner reloads Xiaohongshu once for read-only persisted confirmation", async () => {
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const running = runNativeSaveTask(
       tokenizedXhsTask,
       "xhs",
       async (result) => { posted.push(result); },
-      { timeoutMs: 100 },
+      { timeoutMs: 1_000 },
     );
     await tick();
     state.emitRuntimeMessage(
@@ -202,17 +246,22 @@ test("native save runner reloads Xiaohongshu once for read-only persisted confir
         platform: "xiaohongshu",
         task_id: tokenizedXhsTask.id,
         item_key: tokenizedXhsTask.item_key,
+        document_instance_id: "mutation-document",
         status: "failed",
         error_code: "native_confirmation_not_observed",
       },
       { tab: { id: 42, url: tokenizedXhsTask.content_url } },
     );
     await tick();
-    assert.deepEqual(state.updatedTabs, [{
-      tabId: 42,
-      active: true,
-      url: tokenizedXhsTask.content_url,
-    }]);
+    assert.deepEqual(state.reloadedTabs, [42]);
+    assert.deepEqual(state.updatedTabs, [
+      { tabId: 42, muted: true },
+      {
+        tabId: 42,
+        active: true,
+        url: tokenizedXhsTask.content_url,
+      },
+    ]);
     assert.equal(
       (state.sentMessages.at(-1)?.message as { verification_only?: unknown }).verification_only,
       true,
@@ -223,6 +272,10 @@ test("native save runner reloads Xiaohongshu once for read-only persisted confir
         platform: "xiaohongshu",
         task_id: tokenizedXhsTask.id,
         item_key: tokenizedXhsTask.item_key,
+        execution_id: (
+          state.sentMessages.at(-1)?.message as { execution_id?: unknown }
+        ).execution_id,
+        document_instance_id: "verification-document",
         status: "already_synced",
       },
       { tab: { id: 42, url: tokenizedXhsTask.content_url } },
@@ -231,6 +284,286 @@ test("native save runner reloads Xiaohongshu once for read-only persisted confir
     assert.equal(posted[0]?.status, "already_synced");
   } finally {
     state.restore();
+  }
+});
+
+test("native save runner read-only verifies uncertain YouTube and Zhihu writes", async () => {
+  for (const candidate of [
+    { task: youtubeWatchLaterTask, slug: "yt" as const },
+    { task: zhihuTask, slug: "zhihu" as const },
+  ]) {
+    const state = installChromeMock();
+    const posted: NativeSaveResult[] = [];
+    state.sendMessageImpl = acknowledgeNativeSaveMessage;
+    try {
+      const running = runNativeSaveTask(
+        candidate.task,
+        candidate.slug,
+        async (result) => { posted.push(result); },
+        { timeoutMs: 1_000 },
+      );
+      await tick();
+      state.emitRuntimeMessage(
+        {
+          type: "NATIVE_SAVE_RESULT",
+          platform: candidate.task.platform,
+          task_id: candidate.task.id,
+          item_key: candidate.task.item_key,
+          document_instance_id: "mutation-document",
+          status: "failed",
+          error_code: "native_confirmation_not_observed",
+        },
+        { tab: { id: 42, url: candidate.task.content_url } },
+      );
+      await tick();
+      assert.deepEqual(state.reloadedTabs, [42]);
+      assert.deepEqual(state.updatedTabs, [
+        { tabId: 42, muted: true },
+        { tabId: 42, active: true, url: candidate.task.content_url },
+      ]);
+      assert.equal(
+        (state.sentMessages.at(-1)?.message as { verification_only?: unknown }).verification_only,
+        true,
+      );
+      state.emitRuntimeMessage(
+        {
+          type: "NATIVE_SAVE_RESULT",
+          platform: candidate.task.platform,
+          task_id: candidate.task.id,
+          item_key: candidate.task.item_key,
+          execution_id: (
+            state.sentMessages.at(-1)?.message as { execution_id?: unknown }
+          ).execution_id,
+          document_instance_id: "verification-document",
+          status: "already_synced",
+        },
+        { tab: { id: 42, url: candidate.task.content_url } },
+      );
+      await running;
+      assert.equal(posted[0]?.status, "already_synced");
+      assert.deepEqual(state.removedTabs, [42]);
+    } finally {
+      state.restore();
+    }
+  }
+});
+
+test("native save runner cancels the mutation sender before read-only verification", async () => {
+  const state = installChromeMock();
+  const posted: NativeSaveResult[] = [];
+  let rejectMutationSend: ((reason?: unknown) => void) | undefined;
+  let mutationSendCount = 0;
+  state.sendMessageImpl = async (_tabId, message) => {
+    const envelope = message as { type?: unknown; verification_only?: unknown };
+    if (envelope.type === "NATIVE_SAVE_READY") {
+      return { ready: true, document_instance_id: "verification-document" };
+    }
+    if (envelope.verification_only === true) return { ready: true };
+    mutationSendCount += 1;
+    if (mutationSendCount === 1) {
+      return new Promise((_resolve, reject) => { rejectMutationSend = reject; });
+    }
+    return { ready: true };
+  };
+
+  try {
+    const running = runNativeSaveTask(
+      youtubeWatchLaterTask,
+      "yt",
+      async (result) => { posted.push(result); },
+      { timeoutMs: 1_000 },
+    );
+    await tick();
+    const mutationMessage = state.sentMessages[0]?.message as { execution_id?: unknown };
+    assert.equal(typeof mutationMessage.execution_id, "string");
+    state.emitRuntimeMessage(
+      {
+        type: "NATIVE_SAVE_RESULT",
+        platform: youtubeWatchLaterTask.platform,
+        task_id: youtubeWatchLaterTask.id,
+        item_key: youtubeWatchLaterTask.item_key,
+        execution_id: mutationMessage.execution_id,
+        document_instance_id: "mutation-document",
+        status: "failed",
+        error_code: "native_confirmation_not_observed",
+      },
+      { tab: { id: 42, url: youtubeWatchLaterTask.content_url } },
+    );
+    for (let attempt = 0; attempt < 100 && state.reloadedTabs.length === 0; attempt += 1) {
+      await tick();
+    }
+    assert.deepEqual(state.reloadedTabs, [42]);
+    for (
+      let attempt = 0;
+      attempt < 100 && state.sentMessages.filter(({ message }) =>
+        (message as { type?: unknown }).type === "NATIVE_SAVE_EXECUTE").length < 2;
+      attempt += 1
+    ) {
+      await tick();
+    }
+    const verificationMessage = state.sentMessages.at(-1)?.message as {
+      execution_id?: unknown;
+      verification_only?: unknown;
+    };
+    assert.equal(verificationMessage.verification_only, true);
+    assert.equal(typeof verificationMessage.execution_id, "string");
+    assert.notEqual(verificationMessage.execution_id, mutationMessage.execution_id);
+
+    rejectMutationSend?.(new Error("old document unloaded"));
+    await tick();
+    await tick();
+    assert.equal(mutationSendCount, 1);
+    assert.equal(state.sentMessages.filter(({ message }) =>
+      (message as { type?: unknown }).type === "NATIVE_SAVE_EXECUTE").length, 2);
+
+    let settled = false;
+    void running.then(() => { settled = true; });
+    state.emitRuntimeMessage(
+      {
+        type: "NATIVE_SAVE_RESULT",
+        platform: youtubeWatchLaterTask.platform,
+        task_id: youtubeWatchLaterTask.id,
+        item_key: youtubeWatchLaterTask.item_key,
+        execution_id: mutationMessage.execution_id,
+        status: "synced",
+      },
+      { tab: { id: 42, url: youtubeWatchLaterTask.content_url } },
+    );
+    await tick();
+    assert.equal(settled, false);
+
+    state.emitRuntimeMessage(
+      {
+        type: "NATIVE_SAVE_RESULT",
+        platform: youtubeWatchLaterTask.platform,
+        task_id: youtubeWatchLaterTask.id,
+        item_key: youtubeWatchLaterTask.item_key,
+        execution_id: verificationMessage.execution_id,
+        document_instance_id: "verification-document",
+        status: "already_synced",
+      },
+      { tab: { id: 42, url: youtubeWatchLaterTask.content_url } },
+    );
+    await running;
+    assert.equal(posted[0]?.status, "already_synced");
+  } finally {
+    state.restore();
+  }
+});
+
+test("native save runner waits for a new document before sending read-only verification", async () => {
+  const state = installChromeMock();
+  const posted: NativeSaveResult[] = [];
+  let readyCalls = 0;
+  let releaseNewDocument!: () => void;
+  state.sendMessageImpl = async (_tabId, message) => {
+    const envelope = message as { type?: unknown };
+    if (envelope.type !== "NATIVE_SAVE_READY") return { ready: true };
+    readyCalls += 1;
+    if (readyCalls === 1) return { ready: true, document_instance_id: "mutation-document" };
+    return await new Promise((resolve) => {
+      releaseNewDocument = () => resolve({
+        ready: true,
+        document_instance_id: "verification-document",
+      });
+    });
+  };
+
+  try {
+    const running = runNativeSaveTask(
+      youtubeWatchLaterTask,
+      "yt",
+      async (result) => { posted.push(result); },
+      { timeoutMs: 1_000, readinessRetryMs: 1 },
+    );
+    await tick();
+    const mutationMessage = state.sentMessages[0]?.message as { execution_id?: unknown };
+    state.emitRuntimeMessage({
+      type: "NATIVE_SAVE_RESULT",
+      platform: youtubeWatchLaterTask.platform,
+      task_id: youtubeWatchLaterTask.id,
+      item_key: youtubeWatchLaterTask.item_key,
+      execution_id: mutationMessage.execution_id,
+      document_instance_id: "mutation-document",
+      status: "failed",
+      error_code: "native_confirmation_not_observed",
+    }, { tab: { id: 42, url: youtubeWatchLaterTask.content_url } });
+    await tick();
+    await tick();
+    assert.equal(state.sentMessages.filter(({ message }) =>
+      (message as { type?: unknown }).type === "NATIVE_SAVE_EXECUTE").length, 1);
+
+    releaseNewDocument();
+    await tick();
+    const verificationMessage = state.sentMessages.filter(({ message }) =>
+      (message as { type?: unknown }).type === "NATIVE_SAVE_EXECUTE").at(-1)?.message as {
+        execution_id?: unknown;
+      };
+    state.emitRuntimeMessage({
+      type: "NATIVE_SAVE_RESULT",
+      platform: youtubeWatchLaterTask.platform,
+      task_id: youtubeWatchLaterTask.id,
+      item_key: youtubeWatchLaterTask.item_key,
+      execution_id: verificationMessage.execution_id,
+      document_instance_id: "verification-document",
+      status: "already_synced",
+    }, { tab: { id: 42, url: youtubeWatchLaterTask.content_url } });
+    await running;
+    assert.equal(posted[0]?.status, "already_synced");
+  } finally {
+    state.restore();
+  }
+});
+
+test("native save runner preserves uncertainty unless verification proves already synced", async () => {
+  const verificationOutcomes = [
+    { status: "synced" },
+    { status: "login_required" },
+    { status: "rate_limited" },
+    { status: "unsupported", error_code: "unsupported_content_type" },
+    { status: "failed", error_code: "native_control_not_found" },
+  ];
+  for (const verificationOutcome of verificationOutcomes) {
+    const state = installChromeMock();
+    const posted: NativeSaveResult[] = [];
+    state.sendMessageImpl = acknowledgeNativeSaveMessage;
+    try {
+      const running = runNativeSaveTask(
+        zhihuTask,
+        "zhihu",
+        async (result) => { posted.push(result); },
+        { timeoutMs: 1_000 },
+      );
+      await tick();
+      state.emitRuntimeMessage({
+        type: "NATIVE_SAVE_RESULT",
+        platform: zhihuTask.platform,
+        task_id: zhihuTask.id,
+        item_key: zhihuTask.item_key,
+        document_instance_id: "mutation-document",
+        status: "failed",
+        error_code: "native_confirmation_not_observed",
+      }, { tab: { id: 42, url: zhihuTask.content_url } });
+      await tick();
+      const verificationMessage = state.sentMessages.filter(({ message }) =>
+        (message as { verification_only?: unknown }).verification_only === true).at(-1)?.message as {
+          execution_id?: unknown;
+        };
+      state.emitRuntimeMessage({
+        type: "NATIVE_SAVE_RESULT",
+        platform: zhihuTask.platform,
+        task_id: zhihuTask.id,
+        item_key: zhihuTask.item_key,
+        execution_id: verificationMessage.execution_id,
+        document_instance_id: "verification-document",
+        ...verificationOutcome,
+      }, { tab: { id: 42, url: zhihuTask.content_url } });
+      await running;
+      assert.equal(posted[0]?.status, "failed");
+      assert.equal(posted[0]?.error_code, "native_confirmation_not_observed");
+    } finally {
+      state.restore();
+    }
   }
 });
 
@@ -244,7 +577,7 @@ test("native save runner reuses one exact Xiaohongshu note tab without closing i
   ];
   state.tabById.set(70, state.queryResult[0]);
   state.tabById.set(71, state.queryResult[1]);
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   assert.equal(tryAcquireDispatcherMutex("legacy-discovery"), true);
   try {
     const running = runNativeSaveTask(
@@ -280,7 +613,7 @@ test("native save runner reuses one exact Xiaohongshu note tab without closing i
 test("native save runner opens Xiaohongshu immediately while legacy discovery holds the mutex", async () => {
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   assert.equal(tryAcquireDispatcherMutex("legacy-discovery"), true);
   try {
     const running = runNativeSaveTask(
@@ -293,7 +626,7 @@ test("native save runner opens Xiaohongshu immediately while legacy discovery ho
     await tick();
     assert.deepEqual(state.createdTabs, [{
       active: true,
-      url: tokenizedXhsTask.content_url,
+      url: "about:blank",
     }]);
     state.emitRuntimeMessage(
       {
@@ -317,7 +650,7 @@ test("native save runner opens Xiaohongshu immediately while legacy discovery ho
 test("native save runner executes two platforms concurrently with independent correlation", async () => {
   const state = installChromeMock();
   const posted: NativeSaveResult[] = [];
-  state.sendMessageImpl = async () => ({ ready: true });
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
   try {
     const redditRun = runNativeSaveTask(
       task,
@@ -334,8 +667,8 @@ test("native save runner executes two platforms concurrently with independent co
     await tick();
     await tick();
     assert.deepEqual(state.createdTabs, [
-      { active: true, url: redditExecutionUrl },
-      { active: true, url: tokenizedXhsTask.content_url },
+      { active: true, url: "about:blank" },
+      { active: true, url: "about:blank" },
     ]);
     assert.deepEqual(state.sessionStorage, {
       openbiliclaw_native_save_task_tab_id: [42, 43],
@@ -681,22 +1014,117 @@ test("native save runner posts and cleans a safe failure when tab inspection thr
   }
 });
 
-test("native save runner cleans independently when result posting or tab removal fails", async () => {
+test("native save runner bounds result retries and preserves recovery state when tab removal fails", async () => {
   const state = installChromeMock();
   state.removeImpl = async () => { throw new Error("remove tab failed"); };
+  let postAttempts = 0;
   try {
-    const running = runNativeSaveTask(task, "reddit", async () => { throw new Error("post failed"); }, { timeoutMs: 50 });
+    const running = runNativeSaveTask(task, "reddit", async () => {
+      postAttempts += 1;
+      throw new Error("post failed");
+    }, {
+      timeoutMs: 1_000,
+      resultAttemptTimeoutMs: 20,
+      resultMaxAttempts: 3,
+      resultRetryMs: 1,
+      resultTimeoutMs: 1_000,
+    });
     await tick();
     state.emitRuntimeMessage(
       { type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" },
       { url: task.content_url, tab: { id: 42, url: task.content_url } },
     );
-    await assert.rejects(running, /post failed/);
+    await assert.rejects(running, /not acknowledged/);
+    assert.equal(postAttempts, 3);
     assert.equal(state.runtimeListenerCount(), 0);
     assert.equal(state.tabUpdatedListenerCount(), 0);
     assert.equal(dispatcherMutexHolder(), null);
+    assert.deepEqual(state.sessionStorage, { openbiliclaw_native_save_task_tab_id: 42 });
   } finally {
     releaseNativeMutexForTest();
+    state.restore();
+  }
+});
+
+test("native save runner clears recovery state when the owned tab is already absent", async () => {
+  const state = installChromeMock();
+  let removalStarted = false;
+  state.removeImpl = async () => {
+    removalStarted = true;
+    throw new Error("No tab with id: 42");
+  };
+  state.getImpl = async (tabId) => {
+    if (removalStarted) throw new Error(`No tab with id: ${tabId}`);
+    return state.tabById.get(tabId) ?? { id: tabId, status: "complete" };
+  };
+  try {
+    const running = runNativeSaveTask(task, "reddit", async () => {}, { timeoutMs: 1_000 });
+    await tick();
+    state.emitRuntimeMessage(
+      { type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" },
+      { url: task.content_url, tab: { id: 42, url: task.content_url } },
+    );
+    await running;
+    assert.deepEqual(state.sessionStorage, {});
+    assert.equal(await isNativeSaveTaskTabId(42), false);
+  } finally {
+    state.restore();
+  }
+});
+
+test("native save runner retries one exact result payload until acknowledged", async () => {
+  const state = installChromeMock();
+  const attempts: NativeSaveResult[] = [];
+  try {
+    const running = runNativeSaveTask(task, "reddit", async (result) => {
+      attempts.push(result);
+      if (attempts.length < 3) throw new Error("temporary callback failure");
+    }, {
+      timeoutMs: 1_000,
+      resultAttemptTimeoutMs: 20,
+      resultRetryMs: 1,
+      resultTimeoutMs: 1_000,
+    });
+    await tick();
+    state.emitRuntimeMessage(
+      { type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" },
+      { url: task.content_url, tab: { id: 42, url: task.content_url } },
+    );
+    await running;
+    assert.equal(attempts.length, 3);
+    assert.strictEqual(attempts[0], attempts[1]);
+    assert.strictEqual(attempts[1], attempts[2]);
+    assert.deepEqual(state.removedTabs, [42]);
+  } finally {
+    state.restore();
+  }
+});
+
+test("native save runner aborts a hung result callback and still cleans resources", async () => {
+  const state = installChromeMock();
+  const signals: AbortSignal[] = [];
+  try {
+    const running = runNativeSaveTask(task, "reddit", async (_result, signal) => {
+      if (signal) signals.push(signal);
+      await new Promise(() => {});
+    }, {
+      timeoutMs: 1_000,
+      resultAttemptTimeoutMs: 20,
+      resultMaxAttempts: 3,
+      resultRetryMs: 1,
+      resultTimeoutMs: 1_000,
+    });
+    await tick();
+    state.emitRuntimeMessage(
+      { type: "NATIVE_SAVE_RESULT", platform: "reddit", task_id: task.id, item_key: task.item_key, status: "synced" },
+      { url: task.content_url, tab: { id: 42, url: task.content_url } },
+    );
+    await assert.rejects(running, /not acknowledged/);
+    assert.ok(signals.length >= 2);
+    assert.equal(signals.every((signal) => signal.aborted), true);
+    assert.deepEqual(state.removedTabs, [42]);
+    assert.equal(state.runtimeListenerCount(), 0);
+  } finally {
     state.restore();
   }
 });

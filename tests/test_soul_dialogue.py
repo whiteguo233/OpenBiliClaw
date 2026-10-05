@@ -422,6 +422,70 @@ async def test_respond_with_tools_never_consults_phantom_core_memory_block() -> 
     assert consulted is False
 
 
+@pytest.mark.asyncio
+async def test_respond_with_tools_forwards_reply_style_into_tone_block() -> None:
+    """Issue #255: the tool path must forward ``service.reply_style`` into the
+    dialogue prompt's tone block, just like ``complete_socratic_dialogue``."""
+
+    captured: dict[str, object] = {}
+
+    class StyleAwareToolService:
+        reply_style = "请使用正式书面语"
+
+        async def complete_with_tools(self, **kwargs: object) -> LLMResponse:
+            captured.update(kwargs)
+            return LLMResponse(content="好的")
+
+    dialogue = SocraticDialogue(
+        llm=None,
+        soul_engine=SimpleNamespace(learn_from_dialogue=AsyncMock()),
+        llm_service=StyleAwareToolService(),
+        tools=[{"name": "noop"}],
+        tool_dispatcher=object(),
+        learning_mode=DialogueLearningMode.LEGACY_DIRECT,
+    )
+
+    reply = await dialogue.respond("你好")
+
+    assert reply == "好的"
+    system = str(captured.get("system_instruction", ""))
+    assert "- 回复风格: 请使用正式书面语" in system
+
+
+@pytest.mark.asyncio
+async def test_respond_with_tools_forwards_dialogue_tone_prompt_replacing_tone_block() -> None:
+    """The tool path must forward ``service.dialogue_tone_prompt`` so the whole
+    tone block is replaced, just like ``complete_socratic_dialogue``."""
+
+    captured: dict[str, object] = {}
+
+    class ToneReplacementToolService:
+        reply_style = "请使用正式书面语"
+        dialogue_tone_prompt = "像一个老朋友：\n- 多用短句"
+
+        async def complete_with_tools(self, **kwargs: object) -> LLMResponse:
+            captured.update(kwargs)
+            return LLMResponse(content="好的")
+
+    dialogue = SocraticDialogue(
+        llm=None,
+        soul_engine=SimpleNamespace(learn_from_dialogue=AsyncMock()),
+        llm_service=ToneReplacementToolService(),
+        tools=[{"name": "noop"}],
+        tool_dispatcher=object(),
+        learning_mode=DialogueLearningMode.LEGACY_DIRECT,
+    )
+
+    reply = await dialogue.respond("你好")
+
+    assert reply == "好的"
+    system = str(captured.get("system_instruction", ""))
+    assert "像一个老朋友：\n- 多用短句" in system
+    assert "- 信息密度" not in system
+    assert "- 回复风格:" not in system
+    assert "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。" in system
+
+
 def test_dialogue_reuses_soul_engine_service_identity() -> None:
     shared_service = FakeService(response="共享")
     soul_engine = FakeSoulEngine()

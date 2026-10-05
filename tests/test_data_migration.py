@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import sqlite3
+import stat
 import subprocess
 import zipfile
 from pathlib import Path
@@ -62,6 +64,8 @@ def _source_config(root: Path) -> Config:
     config.tls_proxy.port = 10443
     config.tls_proxy.cert_dir = "source-certs"
     config.tls_proxy.san_names = ["source.example"]
+    config.tailnet.enabled = True
+    config.tailnet.hostname = "source-openbiliclaw-host"
     config.autostart.enabled = True
     config.autostart.manage_ollama = True
     config.sources.browser_cdp_url = "http://127.0.0.1:19222"
@@ -97,6 +101,11 @@ def _populate_source_data(config: Config) -> sqlite3.Connection:
     _write_file(data_dir / "eval" / "report.json", "{}")
     _write_file(data_dir / "autostart" / "source.unit", "source service")
     _write_file(data_dir / "certs" / "source.pem", "source certificate")
+    _write_file(data_dir / "tailnet" / "source-identity.json", '{"node":"source"}\n')
+    source_helper = data_dir / "bin" / migration._TAILNET_HELPER_BASENAME
+    _write_file(source_helper, b"source helper must never migrate")
+    if os.name != "nt":
+        source_helper.chmod(0o700)
     _write_file(data_dir / "embedding_cache.db", b"derived-embedding-cache")
     _write_file(data_dir / "unfinished.part", b"partial")
     _write_file(config.data_path.parent / "logs" / "runtime.log", "runtime log")
@@ -146,6 +155,8 @@ def _target_config(root: Path) -> Config:
     config.tls_proxy.port = 20443
     config.tls_proxy.cert_dir = str(config.data_path / "certs")
     config.tls_proxy.san_names = ["target.example"]
+    config.tailnet.enabled = False
+    config.tailnet.hostname = "target-openbiliclaw-host"
     config.autostart.enabled = False
     config.autostart.manage_ollama = False
     config.sources.browser_cdp_url = "http://127.0.0.1:29222"
@@ -166,6 +177,11 @@ def _populate_target_data(config: Config) -> None:
     _write_file(data_dir / "old-only.txt", "old target data")
     _write_file(data_dir / "certs" / "device.pem", "target certificate")
     _write_file(data_dir / "autostart" / "openbiliclaw.service", "target service")
+    _write_file(data_dir / "tailnet" / "target-identity.json", '{"node":"target"}\n')
+    target_helper = data_dir / "bin" / migration._TAILNET_HELPER_BASENAME
+    _write_file(target_helper, b"trusted target helper")
+    if os.name != "nt":
+        target_helper.chmod(0o700)
 
 
 def _rewrite_manifest(
@@ -183,6 +199,99 @@ def _rewrite_manifest(
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for info, _payload in entries:
             archive.writestr(info, payloads[info.filename])
+
+
+def _append_archive_entry(source: Path, destination: Path, name: str, payload: bytes) -> None:
+    with zipfile.ZipFile(source) as archive:
+        entries = [(info, archive.read(info)) for info in archive.infolist()]
+    payloads = {info.filename: value for info, value in entries}
+    manifest = json.loads(payloads["manifest.json"])
+    manifest["entries"].append(
+        {
+            "kind": "data",
+            "path": name,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size": len(payload),
+        }
+    )
+    payloads["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for info, _value in entries:
+            archive.writestr(info, payloads[info.filename])
+        added = zipfile.ZipInfo(name)
+        added.create_system = 3
+        added.external_attr = (stat.S_IFREG | 0o600) << 16
+        archive.writestr(added, payload)
+
+
+def test_portable_data_scan_excludes_case_variants_of_machine_roots(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_file(data_dir / "TaIlNeT" / "identity.key", "must not migrate")
+    _write_file(data_dir / "BIN" / "helper", "must not migrate")
+    _write_file(data_dir / "portable" / "preference.json", "{}")
+
+    portable = {
+        relative.as_posix() for _source, relative in migration._iter_portable_data_files(data_dir)
+    }
+
+    assert portable == {"portable/preference.json"}
+
+
+def test_preserve_target_helper_rejects_symlink(tmp_path: Path) -> None:
+    target_data = tmp_path / "target"
+    prepared_data = tmp_path / "prepared"
+    target_bin = target_data / "bin"
+    target_bin.mkdir(parents=True)
+    prepared_data.mkdir()
+    outside = tmp_path / "outside-helper"
+    outside.write_bytes(b"untrusted")
+    try:
+        (target_bin / migration._TAILNET_HELPER_BASENAME).symlink_to(outside)
+    except OSError as exc:  # pragma: no cover - Windows policy dependent
+        pytest.skip(f"file symlinks unavailable: {exc}")
+
+    migration._preserve_target_machine_data(target_data, prepared_data)
+
+    assert not (prepared_data / "bin").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not use executable mode bits")
+def test_preserve_target_helper_rejects_non_executable_file(tmp_path: Path) -> None:
+    target_data = tmp_path / "target"
+    prepared_data = tmp_path / "prepared"
+    helper = target_data / "bin" / migration._TAILNET_HELPER_BASENAME
+    _write_file(helper, b"not an executable helper")
+    helper.chmod(0o600)
+    prepared_data.mkdir()
+
+    preserved = migration._preserve_target_machine_data(target_data, prepared_data)
+
+    assert preserved is False
+    assert not (prepared_data / "bin").exists()
+
+
+@pytest.mark.parametrize("preserved_root", migration._PRESERVED_TARGET_ROOTS)
+def test_preserve_target_machine_data_rejects_nested_symlink(
+    tmp_path: Path,
+    preserved_root: str,
+) -> None:
+    target_data = tmp_path / "target"
+    prepared_data = tmp_path / "prepared"
+    nested = target_data / preserved_root / "nested"
+    nested.mkdir(parents=True)
+    prepared_data.mkdir()
+    outside = tmp_path / f"outside-{preserved_root}.txt"
+    outside.write_text("must not be copied", encoding="utf-8")
+    try:
+        (nested / "escape").symlink_to(outside)
+    except OSError as exc:  # pragma: no cover - Windows policy dependent
+        pytest.skip(f"file symlinks unavailable: {exc}")
+
+    with pytest.raises(migration.MigrationError) as raised:
+        migration._preserve_target_machine_data(target_data, prepared_data)
+
+    assert raised.value.code == "unsafe_target_state"
+    assert not (prepared_data / preserved_root).exists()
 
 
 def test_export_snapshots_committed_wal_and_enforces_portable_inventory(
@@ -239,6 +348,8 @@ def test_export_snapshots_committed_wal_and_enforces_portable_inventory(
                     "data/eval/",
                     "data/autostart/",
                     "data/certs/",
+                    "data/bin/",
+                    "data/tailnet/",
                 )
             )
             for name in names
@@ -284,6 +395,8 @@ def test_export_snapshots_committed_wal_and_enforces_portable_inventory(
             "data/eval",
             "data/certs",
             "data/autostart",
+            "data/bin",
+            "data/tailnet",
             "browser-and-extension-sessions",
             "external-cli-credentials",
             "environment-variable-values",
@@ -343,6 +456,7 @@ def test_import_preserves_target_machine_fields_and_certificates_and_rotates_ses
         assert restored.logging.filename == target.logging.filename
         assert restored.network == target.network
         assert restored.tls_proxy == target.tls_proxy
+        assert restored.tailnet == target.tailnet
         assert restored.autostart == target.autostart
         assert restored.sources.browser_cdp_url == target.sources.browser_cdp_url
         assert restored.bilibili.proxy == target.bilibili.proxy
@@ -373,7 +487,15 @@ def test_import_preserves_target_machine_fields_and_certificates_and_rotates_ses
         assert (target.data_path / "autostart" / "openbiliclaw.service").read_text(
             encoding="utf-8"
         ) == "target service"
+        assert (target.data_path / "tailnet" / "target-identity.json").read_text(
+            encoding="utf-8"
+        ) == '{"node":"target"}\n'
         assert not (target.data_path / "certs" / "source.pem").exists()
+        assert not (target.data_path / "tailnet" / "source-identity.json").exists()
+        restored_helper = target.data_path / "bin" / migration._TAILNET_HELPER_BASENAME
+        assert restored_helper.read_bytes() == b"trusted target helper"
+        if os.name != "nt":
+            assert restored_helper.stat().st_mode & 0o777 == 0o700
 
         with sqlite3.connect(target.data_path / "openbiliclaw.db") as connection:
             assert connection.execute("SELECT value FROM portable_records").fetchall() == [
@@ -439,6 +561,30 @@ def test_stage_rejects_bad_hash_and_zip_path_traversal(
         assert traversal_error.value.code == "unsafe_path"
         assert not (tmp_path / "escaped.txt").exists()
         assert not (target_root / ".openbiliclaw-migration" / "pending.json").exists()
+    finally:
+        shutil.rmtree(exported.path.parent, ignore_errors=True)
+
+
+def test_stage_rejects_case_variants_of_machine_local_data_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_openbiliclaw_environment(monkeypatch)
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    exported, source_connection = _export_source(source_root)
+    source_connection.close()
+    target = _target_config(target_root)
+    try:
+        for index, name in enumerate(("data/TaIlNeT/node.key", "data/BIN/helper")):
+            malicious = tmp_path / f"case-variant-{index}.obcbackup"
+            _append_archive_entry(exported.path, malicious, name, b"must be rejected")
+
+            with pytest.raises(migration.MigrationError) as error:
+                migration.stage_migration_archive(malicious, target, project_root=target_root)
+
+            assert error.value.code == "disallowed_entry"
+            assert not (target_root / ".openbiliclaw-migration" / "pending.json").exists()
     finally:
         shutil.rmtree(exported.path.parent, ignore_errors=True)
 

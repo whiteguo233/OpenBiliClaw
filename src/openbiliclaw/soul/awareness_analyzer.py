@@ -143,6 +143,7 @@ class AwarenessAnalyzer:
         events: list[dict[str, object]],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        existing_confusions: list[dict[str, object]] | None = None,
         max_tokens: int = DEFAULT_STRUCTURED_MAX_TOKENS,
         source_event_ids: list[int] | None = None,
     ) -> tuple[list[AwarenessNote], list[dict[str, object]]]:
@@ -158,6 +159,7 @@ class AwarenessAnalyzer:
             events=events,
             preference_summary=preference,
             soul_profile=soul_profile,
+            existing_confusions=existing_confusions,
             input_view=self.confusions_prompt_view,
         )
         try:

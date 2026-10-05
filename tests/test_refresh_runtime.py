@@ -332,6 +332,7 @@ class _FakeDatabase:
         *,
         min_delight_score: float = 0.85,
         limit: int = 20,
+        **kwargs: object,
     ) -> list[dict[str, object]]:
         self.get_delight_thresholds.append(min_delight_score)
         if self.delight_candidate is None:
@@ -607,6 +608,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
     ("_loop_x_producer", ("_tick_x_producer",)),
+    ("_loop_github_producer", ("_tick_github_producer",)),
     ("_loop_reddit_producer", ("_tick_reddit_producer",)),
     ("_loop_linuxdo_producer", ("_tick_linuxdo_producer",)),
     (
@@ -782,6 +784,46 @@ def test_refresh_controller_llm_work_allowed_delegates_to_shared_gate() -> None:
     assert controller._llm_work_allowed() is False
 
 
+async def test_refresh_controller_pauses_when_background_llm_budget_exceeded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gate = LLMConcurrencyGate(4)
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=False,
+            llm_budget_max_calls=1,
+            llm_budget_window_seconds=3600,
+        ),
+    )
+    controller.llm_concurrency_gate = gate
+
+    assert controller._llm_work_allowed() is True
+
+    async with gate.slot(caller="soul.preference"):
+        pass
+
+    with caplog.at_level(logging.WARNING):
+        assert controller._llm_work_allowed() is False
+    assert "Background LLM calls reached 1" in caplog.text
+    assert "paused" in caplog.text
+
+
+def test_refresh_controller_budget_disabled_when_max_calls_zero() -> None:
+    gate = LLMConcurrencyGate(4)
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=False,
+            llm_budget_max_calls=0,
+            llm_budget_window_seconds=3600,
+        ),
+    )
+    controller.llm_concurrency_gate = gate
+
+    assert controller._llm_work_allowed() is True
+
+
 class _FakeSpeculation:
     def __init__(
         self,
@@ -861,7 +903,9 @@ async def test_refresh_controller_falls_back_to_full_plan_when_below_target() ->
     result = await controller.refresh_if_needed()
 
     assert result["refreshed"] is True
-    assert set(result["strategies"]) == {"search", "trending", "related_chain", "explore"}
+    # Trending/explore clocks are current (999-minute interval), so automatic
+    # replenishment only runs search + related_chain.
+    assert set(result["strategies"]) == {"search", "related_chain"}
 
 
 async def test_refresh_controller_publishes_refresh_lifecycle_events() -> None:
@@ -1149,6 +1193,90 @@ def test_pool_maintenance_mutation_notifies_expression_copy_refill() -> None:
     assert coordinator.reasons == ["pool_maintenance"]
 
 
+def _rolled_back_maintenance_result() -> PoolMaintenanceResult:
+    return PoolMaintenanceResult(
+        available_before=5,
+        available_after=5,
+        target=10,
+        protected_available=5,
+        recovered_suppressed=0,
+        trimmed_stale=2,
+        trimmed_explore_cluster=0,
+        trimmed_ready_reserve=0,
+        trimmed_evaluated=0,
+        trimmed_raw=2,
+        trimmed_by_source={"bilibili": 2},
+        deferred_topic_trim=0,
+        deferred_source_trim=0,
+        deferred_stale_trim=0,
+        deferred_explore_cluster_trim=0,
+        raw_before=20,
+        raw_after=20,
+        raw_ceiling=100,
+        untrimmed_raw_excess=0,
+        rolled_back=True,
+        reason="available inventory fell below protected floor: before=5 after=4 target=10",
+        mutation_count=2,
+    )
+
+
+def test_pool_maintenance_rollback_logs_warning_not_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rollback is the availability guard working, not an operational fault."""
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=5),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=10,
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert (
+            controller._record_pool_maintenance_result(_rolled_back_maintenance_result()) is False
+        )
+
+    records = [
+        record for record in caplog.records if "pool_maintenance available=" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    # The attempted (reverted) batch is labelled so the count cannot be read
+    # as committed work.
+    assert "mutations=2(attempted)" in records[0].getMessage()
+
+
+def test_pool_maintenance_commit_logs_info_without_attempted_label(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    database = _FakeDatabase([], pool_count=10)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=10,
+    )
+    result = database.maintain_pool_inventory(
+        target=10,
+        raw_ceiling=20,
+        source_share_quotas={"bilibili": 10},
+    )
+
+    with caplog.at_level(logging.INFO):
+        controller._record_pool_maintenance_result(result)
+
+    records = [
+        record for record in caplog.records if "pool_maintenance available=" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert "(attempted)" not in records[0].getMessage()
+
+
 def test_runtime_status_reports_pool_readiness_counts() -> None:
     gate = LLMConcurrencyGate(4)
     controller = ContinuousRefreshController(
@@ -1396,7 +1524,7 @@ async def test_refresh_controller_skips_when_pool_at_cap() -> None:
     result = await controller.refresh_if_needed()
 
     assert result["refreshed"] is False
-    assert result["reason"] == "pool_at_cap"
+    assert result["reason"] == "below_threshold"
     assert discovery.calls == []
     assert recommendations.calls == []
 
@@ -2253,6 +2381,74 @@ async def test_run_refresh_plan_uses_supply_loop_when_pipeline_supports_it() -> 
     assert result["supply_productive"] is True
 
 
+async def test_run_refresh_plan_stamps_explore_only_when_supply_attempted() -> None:
+    class NoAttemptExploreSupplyPipeline:
+        last_admitted_items: list[object] = []
+
+        async def ensure_pending_supply(self, **_kwargs: object) -> dict[str, int | str]:
+            return {
+                "inserted": 0,
+                "pending_eval": 0,
+                "evaluating": 0,
+                "attempts": 0,
+                "reason": "target_reached",
+            }
+
+        async def drain_pending(self, **_kwargs: object) -> dict[str, int]:
+            return {"evaluated": 0, "cached": 0, "rejected": 0}
+
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase([], pool_count=20, source_counts={"bilibili": 12}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=NoAttemptExploreSupplyPipeline(),
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=memory.load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["explore"], 10)],
+        reason="test",
+    )
+
+    assert not memory.state["last_explore_refresh_at"]
+
+
+async def test_run_refresh_plan_stamps_explore_when_supply_attempted() -> None:
+    class AttemptedExploreSupplyPipeline:
+        last_admitted_items: list[object] = []
+
+        async def ensure_pending_supply(self, **_kwargs: object) -> dict[str, int]:
+            return {"inserted": 0, "pending_eval": 0, "evaluating": 0, "attempts": 1}
+
+        async def drain_pending(self, **_kwargs: object) -> dict[str, int]:
+            return {"evaluated": 0, "cached": 0, "rejected": 0}
+
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase([], pool_count=20, source_counts={"bilibili": 12}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=AttemptedExploreSupplyPipeline(),
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=memory.load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["explore"], 10)],
+        reason="test",
+    )
+
+    assert memory.state["last_explore_refresh_at"]
+
+
 async def test_refresh_attempt_with_only_duplicate_supply_is_not_productive() -> None:
     class DuplicateOnlySupplyPipeline:
         last_admitted_items: list[object] = []
@@ -2447,14 +2643,9 @@ async def test_refresh_controller_small_gap_skips_expensive_bilibili_generators(
 
     await controller.refresh_if_needed()
 
-    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+    assert discovery.calls[0][1] == ["search", "related_chain"]
     assert discovery.calls[0][2] == 11
-    assert discovery.strategy_limit_calls[0] == {
-        "search": 6,
-        "related_chain": 5,
-        "trending": 0,
-        "explore": 0,
-    }
+    assert discovery.strategy_limit_calls[0] == {"search": 6, "related_chain": 5}
 
 
 async def test_refresh_controller_replenishes_until_pool_reaches_target() -> None:
@@ -2516,7 +2707,15 @@ async def test_refresh_controller_replenishes_until_pool_reaches_target() -> Non
 async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
     discovery = _FakeDiscoveryEngine()
     controller = ContinuousRefreshController(
-        memory_manager=_FakeMemoryManager(),
+        memory_manager=_FakeMemoryManager(
+            {
+                "last_event_refresh_at": "",
+                "last_trending_refresh_at": datetime.now().isoformat(),
+                "last_explore_refresh_at": datetime.now().isoformat(),
+                "last_processed_event_id": 0,
+                "last_notification_at": "",
+            }
+        ),
         database=_FakeDatabase(
             [
                 {"id": 1, "event_type": "view"},
@@ -2552,10 +2751,10 @@ async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
     assert len(discovery.calls) == 1
     call_profile, call_strategies, _call_limit = discovery.calls[0]
     assert call_profile == {"profile": "ok"}
-    assert call_strategies == ["search", "related_chain", "trending", "explore"]
+    assert call_strategies == ["search", "related_chain"]
 
 
-async def test_refresh_controller_skips_bilibili_when_only_small_sources_underfilled() -> None:
+async def test_refresh_controller_backfills_bilibili_when_only_small_sources_underfilled() -> None:
     discovery = _FakeDiscoveryEngine()
     controller = ContinuousRefreshController(
         memory_manager=_FakeMemoryManager(),
@@ -2587,8 +2786,14 @@ async def test_refresh_controller_skips_bilibili_when_only_small_sources_underfi
 
     result = await controller.refresh_if_needed()
 
-    assert result == {"refreshed": False, "strategies": [], "reason": "below_threshold"}
-    assert discovery.calls == []
+    assert result["refreshed"] is True
+    assert result["reason"] == "triggered"
+    assert set(result["strategies"]) == {"search", "related_chain", "trending", "explore"}
+    assert [call[1] for call in discovery.calls] == [
+        ["search", "related_chain"],
+        ["trending"],
+        ["explore"],
+    ]
 
 
 async def test_trigger_manual_refresh_sets_running_state() -> None:
@@ -3050,7 +3255,15 @@ async def test_proactive_probe_push_does_not_record_kind_when_publish_fails() ->
 async def test_refresh_if_needed_skips_when_pool_at_cap() -> None:
     discovery = _FakeDiscoveryEngine()
     controller = ContinuousRefreshController(
-        memory_manager=_FakeMemoryManager(),
+        memory_manager=_FakeMemoryManager(
+            {
+                "last_event_refresh_at": "",
+                "last_trending_refresh_at": datetime.now().isoformat(),
+                "last_explore_refresh_at": datetime.now().isoformat(),
+                "last_processed_event_id": 0,
+                "last_notification_at": "",
+            }
+        ),
         database=_FakeDatabase([], pool_count=30),
         soul_engine=_FakeSoulEngine(),
         discovery_engine=discovery,
@@ -3060,7 +3273,7 @@ async def test_refresh_if_needed_skips_when_pool_at_cap() -> None:
 
     result = await controller.refresh_if_needed()
 
-    assert result == {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
+    assert result == {"refreshed": False, "strategies": [], "reason": "below_threshold"}
     assert discovery.calls == []
 
 
@@ -3068,7 +3281,15 @@ async def test_refresh_if_needed_runs_pool_maintenance_off_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     controller = ContinuousRefreshController(
-        memory_manager=_FakeMemoryManager(),
+        memory_manager=_FakeMemoryManager(
+            {
+                "last_event_refresh_at": "",
+                "last_trending_refresh_at": datetime.now().isoformat(),
+                "last_explore_refresh_at": datetime.now().isoformat(),
+                "last_processed_event_id": 0,
+                "last_notification_at": "",
+            }
+        ),
         database=_FakeDatabase([], pool_count=30),
         soul_engine=_FakeSoulEngine(),
         discovery_engine=_FakeDiscoveryEngine(),
@@ -3086,7 +3307,7 @@ async def test_refresh_if_needed_runs_pool_maintenance_off_event_loop(
 
     result = await controller.refresh_if_needed()
 
-    assert result == {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
+    assert result == {"refreshed": False, "strategies": [], "reason": "below_threshold"}
     assert maintenance_thread_ids
     assert maintenance_thread_ids[0] != event_loop_thread_id
 
@@ -3260,8 +3481,17 @@ async def test_drain_discovery_candidates_skips_when_profile_lookup_raises() -> 
 
 async def test_refresh_skips_discovery_when_available_pool_is_at_target_floor() -> None:
     database = _FakeDatabase([], pool_count=50)
+    now = datetime.now().isoformat()
     controller = ContinuousRefreshController(
-        memory_manager=_FakeMemoryManager(),
+        memory_manager=_FakeMemoryManager(
+            {
+                "last_event_refresh_at": "",
+                "last_trending_refresh_at": now,
+                "last_explore_refresh_at": now,
+                "last_processed_event_id": 0,
+                "last_notification_at": "",
+            }
+        ),
         database=database,
         soul_engine=_FakeSoulEngine(),
         discovery_engine=_FakeDiscoveryEngine(),
@@ -3271,7 +3501,7 @@ async def test_refresh_skips_discovery_when_available_pool_is_at_target_floor() 
 
     result = await controller.refresh_if_needed()
 
-    assert result["reason"] == "pool_at_cap"
+    assert result["reason"] == "below_threshold"
     assert database.pool_count == 50
     assert database.maintenance_calls[0]["raw_ceiling"] == 150
 
@@ -3334,8 +3564,17 @@ def test_source_requested_count_uses_own_share_not_global_headroom() -> None:
 
 async def test_refresh_replenishes_when_raw_ceiling_is_full_but_available_pool_is_low() -> None:
     discovery = _FakeDiscoveryEngine()
+    now = datetime.now().isoformat()
     controller = ContinuousRefreshController(
-        memory_manager=_FakeMemoryManager(),
+        memory_manager=_FakeMemoryManager(
+            {
+                "last_event_refresh_at": "",
+                "last_trending_refresh_at": now,
+                "last_explore_refresh_at": now,
+                "last_processed_event_id": 0,
+                "last_notification_at": "",
+            }
+        ),
         database=_FakeDatabase(
             [],
             pool_count=104,
@@ -3355,7 +3594,7 @@ async def test_refresh_replenishes_when_raw_ceiling_is_full_but_available_pool_i
 
     assert result["refreshed"] is True
     assert discovery.calls, "raw-ceiling pressure must not strand a low available pool"
-    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+    assert discovery.calls[0][1] == ["search", "related_chain"]
 
 
 async def test_candidate_supply_wakes_all_under_quota_platform_producers() -> None:
@@ -3392,9 +3631,12 @@ async def test_candidate_supply_wakes_all_under_quota_platform_producers() -> No
 
     assert xhs.calls == [30]
     assert douyin.calls == [30]
-    assert discovery.calls == []
-    assert result["refreshed"] is False
-    assert result["supply_progress_count"] == 4
+    # Bilibili is at its own share, but the global pool is still below target
+    # and no discovery-candidate work is pending, so the periodic Bilibili
+    # backfill is allowed to run in addition to the under-quota producers.
+    assert [call[1] for call in discovery.calls] == [["trending"], ["explore"]]
+    assert result["refreshed"] is True
+    assert result["supply_progress_count"] == 6
     assert result["supply_productive"] is True
 
 
@@ -3611,12 +3853,15 @@ def test_source_replenishment_plan_escapes_raw_headroom_deadlock() -> None:
 
 
 def test_keyword_planner_explore_due_soon_requires_bili_deficit() -> None:
-    last_explore = (datetime.now() - timedelta(hours=12) + timedelta(seconds=30)).isoformat()
+    now = datetime.now()
+    last_planned = (now - timedelta(hours=12) + timedelta(seconds=30)).isoformat()
+    last_refreshed = now.isoformat()
     state = _FakeMemoryManager(
         {
             "last_event_refresh_at": "",
             "last_trending_refresh_at": "",
-            "last_explore_refresh_at": last_explore,
+            "last_explore_planned_at": last_planned,
+            "last_explore_refresh_at": last_refreshed,
             "last_processed_event_id": 0,
             "last_notification_at": "",
             "last_discovered_count": 0,
@@ -3673,7 +3918,8 @@ def test_keyword_planner_mark_explore_planned_updates_refresh_state() -> None:
 
     controller.keyword_planner_mark_explore_planned()
 
-    assert memory.state["last_explore_refresh_at"]
+    assert memory.state["last_explore_planned_at"]
+    assert not memory.state["last_explore_refresh_at"]
 
 
 def test_real_database_enforce_then_replenish_reaches_available_target(
@@ -3789,6 +4035,116 @@ def test_refresh_plan_logs_diagnostics_when_pool_below_target_but_no_plan(
         assert key in caplog.text
 
 
+def test_build_refresh_plan_falls_back_to_periodic_bilibili_plan_when_no_source_deficit() -> None:
+    # Global pool is below target and below the replenishment watermark, but
+    # Bilibili is already at its own share. Other sources are under-share;
+    # their producers are ticked separately. The source-replenishment plan is
+    # empty because it only knows Bilibili strategy fan-out, so the refresh
+    # plan must fall back to the periodic Bilibili plan instead of returning
+    # empty and stalling the pool below target forever.
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=237,
+            source_available_counts={
+                "bilibili": 100,
+                "youtube": 100,
+                "weibo": 37,
+            },
+            source_raw_counts={
+                "bilibili": 100,
+                "youtube": 100,
+                "weibo": 37,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        pool_source_shares={"bilibili": 1, "youtube": 1, "weibo": 1},
+        trending_refresh_minutes=3,
+        explore_refresh_minutes=3,
+    )
+
+    plan = controller._build_refresh_plan(_FakeMemoryManager().load_discovery_runtime_state())
+
+    assert plan == [
+        (["trending"], controller.discovery_limit),
+        (["explore"], controller.discovery_limit),
+    ]
+
+
+def test_build_refresh_plan_above_watermark_keeps_due_explore_only() -> None:
+    """270-299 band must not replenish, but due explore must still run."""
+    now = datetime.now()
+    old_explore = (now - timedelta(minutes=5)).isoformat()
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": now.isoformat(),
+            "last_explore_refresh_at": old_explore,
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+        }
+    )
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase([], pool_count=285),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        trending_refresh_minutes=999,
+        explore_refresh_minutes=3,
+    )
+
+    plan = controller._build_refresh_plan(memory.load_discovery_runtime_state())
+
+    assert plan == [(["explore"], controller.discovery_limit)]
+
+
+def test_build_refresh_plan_splits_replenishment_and_appends_due_periodic() -> None:
+    """Below-watermark replenishment only fills with search + related_chain;
+    due trending / explore join as their own plan entries.
+    """
+    now = datetime.now()
+    old_trending = (now - timedelta(minutes=5)).isoformat()
+    old_explore = (now - timedelta(minutes=5)).isoformat()
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": old_trending,
+            "last_explore_refresh_at": old_explore,
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+        }
+    )
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(
+            [],
+            pool_count=237,
+            source_available_counts={"bilibili": 237},
+            source_raw_counts={"bilibili": 237},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        pool_source_shares={"bilibili": 1},
+        trending_refresh_minutes=3,
+        explore_refresh_minutes=3,
+    )
+
+    plan = controller._build_refresh_plan(memory.load_discovery_runtime_state())
+
+    assert len(plan) == 3
+    assert plan[0][0] == ["search", "related_chain"]
+    assert plan[1] == (["trending"], controller.discovery_limit)
+    assert plan[2] == (["explore"], controller.discovery_limit)
+
+
 async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() -> None:
     discovery = _FakeDiscoveryEngine()
     controller = ContinuousRefreshController(
@@ -3812,14 +4168,9 @@ async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() ->
 
     await controller.refresh_if_needed()
 
-    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+    assert discovery.calls[0][1] == ["search", "related_chain"]
     assert discovery.calls[0][2] == 5
-    assert discovery.strategy_limit_calls[0] == {
-        "search": 3,
-        "related_chain": 2,
-        "trending": 0,
-        "explore": 0,
-    }
+    assert discovery.strategy_limit_calls[0] == {"search": 3, "related_chain": 2}
 
 
 def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
@@ -3890,6 +4241,42 @@ def test_warn_on_stranded_source_shares_checks_youtube_producer(
     controller._warn_on_stranded_source_shares()
 
     assert "youtube" in caplog.text
+
+
+def test_refresh_source_order_reuses_canonical_policy_order() -> None:
+    from openbiliclaw.runtime import refresh
+    from openbiliclaw.runtime.source_policy import SOURCE_ORDER
+
+    assert refresh._PLATFORM_SOURCE_ORDER is SOURCE_ORDER
+
+
+def test_warn_on_stranded_source_shares_checks_github_producer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("WARNING")
+
+    def _controller(github_producer: object | None) -> ContinuousRefreshController:
+        return ContinuousRefreshController(
+            memory_manager=_FakeMemoryManager(),
+            database=_FakeDatabase(
+                [],
+                pool_count=80,
+                source_counts={"bilibili": 80, "github": 0},
+            ),
+            soul_engine=_FakeSoulEngine(),
+            discovery_engine=_FakeDiscoveryEngine(),
+            recommendation_engine=_FakeRecommendationEngine(),
+            pool_target_count=100,
+            pool_source_shares={"bilibili": 8, "github": 2},
+            github_producer=github_producer,
+        )
+
+    _controller(None)._warn_on_stranded_source_shares()
+    assert "github" in caplog.text
+
+    caplog.clear()
+    _controller(object())._warn_on_stranded_source_shares()
+    assert "without an active producer" not in caplog.text
 
 
 async def test_xhs_producer_receives_source_deficit_limit() -> None:
@@ -5414,3 +5801,60 @@ async def test_bili_search_does_not_claim_when_eval_supply_is_full(tmp_path: Pat
 
     assert all("keywords" not in kwargs for kwargs in pipeline.produce_kwargs)
     assert _bili_kw_statuses(kw_db) == {"kw1": "pending"}
+
+
+class _IdleExpressionCopyCoordinator:
+    """The API process's never-started coordinator: perpetual idle payload."""
+
+    def status_payload(self) -> dict[str, object]:
+        return {
+            "expression_pending_count": 0,
+            "expression_batch_state": "idle",
+            "expression_last_completed": 0,
+        }
+
+
+def test_delegated_coordinator_status_overlays_local_idle_payload() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        expression_copy_coordinator=_IdleExpressionCopyCoordinator(),
+        delegated_coordinator_status_reader=lambda: {
+            "expression_copy": {
+                "expression_pending_count": 19,
+                "expression_batch_state": "backoff",
+                "expression_last_completed": 0,
+            },
+            "candidate_eval": {
+                "candidate_eval_state": "backoff",
+                "candidate_eval_pending": 10,
+            },
+        },
+    )
+
+    status = controller.get_runtime_status()
+
+    assert status["expression_pending_count"] == 19
+    assert status["expression_batch_state"] == "backoff"
+    assert status["candidate_eval_state"] == "backoff"
+    assert status["candidate_eval_pending"] == 10
+
+
+def test_missing_delegated_status_keeps_local_coordinator_payload() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        expression_copy_coordinator=_IdleExpressionCopyCoordinator(),
+        delegated_coordinator_status_reader=lambda: None,
+    )
+
+    status = controller.get_runtime_status()
+
+    assert status["expression_pending_count"] == 0
+    assert status["expression_batch_state"] == "idle"

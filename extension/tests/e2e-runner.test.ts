@@ -113,6 +113,25 @@ test("native-save e2e result collapses to the exact safe six-field schema", () =
     })?.error_code,
     "extension_unavailable",
   );
+  assert.deepEqual(
+    buildSafeNativeSaveE2EResult(request, {
+      task_status: "failed",
+      error_code: "native_confirmation_not_observed",
+    })?.error_code,
+    "native_confirmation_not_observed",
+  );
+  for (const errorCode of [
+    "native_content_not_ready",
+    "native_control_not_found",
+    "native_dialog_not_opened",
+    "native_request_rejected",
+    "native_target_not_found",
+  ]) {
+    assert.equal(buildSafeNativeSaveE2EResult(request, {
+      task_status: "failed",
+      error_code: errorCode,
+    })?.error_code, errorCode);
+  }
 });
 
 test("e2e background runner rejects native-save mutation without exact authorization", async () => {
@@ -284,6 +303,75 @@ test("dedicated native-save e2e invokes one durable broker item and posts only s
   }
 });
 
+test("dedicated native-save e2e preserves an uncertain confirmation terminal", async () => {
+  const state = installChromeMock();
+  state.fetchImpl = async (input, init) => {
+    const url = String(input);
+    state.fetchCalls.push({
+      url,
+      method: init?.method,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+    if (url.endsWith("/api/saved/favorite/sync")) {
+      return new Response(JSON.stringify({
+        task_id: "12121212-1212-4121-8121-121212121212",
+        items: [{
+          item_key: "zhihu:answer:2002",
+          status: "pending",
+          resolved_action: "favorite",
+          resolved_target: "",
+          error_code: "",
+        }],
+      }), { status: 200 });
+    }
+    if (url.endsWith("/api/saved-sync/tasks/12121212-1212-4121-8121-121212121212")) {
+      return new Response(JSON.stringify({
+        task_id: "12121212-1212-4121-8121-121212121212",
+        items: [{
+          item_key: "zhihu:answer:2002",
+          status: "failed",
+          resolved_action: "favorite",
+          resolved_target: "知乎收藏",
+          error_code: "native_confirmation_not_observed",
+        }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  try {
+    await handleE2ERuntimeEvent({
+      type: "extension_e2e_run",
+      run_id: "e2e-native-save-uncertain",
+      token: "callback-token",
+      platforms: [],
+      actions: {},
+      allow_state_changing: true,
+      timeout_seconds: 5,
+      native_save_execution_deadline_ms: Date.now() + 4_000,
+      native_save_callback_deadline_ms: Date.now() + 5_000,
+      native_save_authorization: {
+        allow_state_changing: true,
+        platform: "zhihu",
+        action: "favorite",
+        content_id: "answer:2002",
+        expected_target: "知乎收藏",
+      },
+    });
+
+    assert.deepEqual(state.fetchCalls.at(-1)?.body?.native_save_result, {
+      platform: "zhihu",
+      action: "favorite",
+      content_id: "answer:2002",
+      expected_target: "知乎收藏",
+      task_status: "failed",
+      error_code: "native_confirmation_not_observed",
+    });
+  } finally {
+    state.restore();
+  }
+});
+
 test("dedicated native-save e2e fails closed when broker returns a different item", async () => {
   const state = installChromeMock();
   state.fetchImpl = async (input, init) => {
@@ -356,6 +444,7 @@ test("dedicated native-save e2e bounds a hung saved-sync request", async () => {
   };
 
   try {
+    let hungTimer: ReturnType<typeof setTimeout> | undefined;
     const outcome = await Promise.race([
       handleE2ERuntimeEvent({
         type: "extension_e2e_run",
@@ -364,9 +453,9 @@ test("dedicated native-save e2e bounds a hung saved-sync request", async () => {
         platforms: [],
         actions: {},
         allow_state_changing: true,
-        timeout_seconds: 0.01,
-        native_save_execution_deadline_ms: Date.now() + 10,
-        native_save_callback_deadline_ms: Date.now() + 100,
+        timeout_seconds: 0.2,
+        native_save_execution_deadline_ms: Date.now() + 200,
+        native_save_callback_deadline_ms: Date.now() + 2_000,
         native_save_authorization: {
           allow_state_changing: true,
           platform: "reddit",
@@ -375,8 +464,11 @@ test("dedicated native-save e2e bounds a hung saved-sync request", async () => {
           expected_target: "Reddit Saved",
         },
       }).then(() => "resolved"),
-      delay(150).then(() => "hung"),
+      new Promise<"hung">((resolveHung) => {
+        hungTimer = setTimeout(() => resolveHung("hung"), 3_000);
+      }),
     ]);
+    if (hungTimer !== undefined) clearTimeout(hungTimer);
 
     assert.equal(outcome, "resolved");
     assert.deepEqual(state.fetchCalls.at(-1)?.body?.native_save_result, {

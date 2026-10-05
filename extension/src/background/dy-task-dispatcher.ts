@@ -18,6 +18,15 @@
  *      or on timeout.
  *   5. Waits ``DEFAULT_POLL_INTERVAL_MS`` before asking for the next.
  *
+ * Firefox MV3 background scripts are event pages and Chrome MV3 service
+ * workers are recycled when idle, so the in-flight task snapshot (task,
+ * tab, per-kind progress, deadline) is mirrored into
+ * ``chrome.storage.session`` on every transition and the timeout is
+ * backed by a ``chrome.alarms`` one-shot. A fresh worker restores the
+ * snapshot via ``ensureDyTaskRecovery`` so late results still post, the
+ * deadline backstop still closes the task tab, and orphaned marker tabs
+ * are swept on wake.
+ *
  * Only one task is in flight at a time (mutex). Bootstrap tasks get a
  * generous timeout because each scope can scroll up to 15 rounds and
  * we navigate through 4 scopes serially.
@@ -31,8 +40,12 @@ import type {
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
 import { isNativeSaveTask, type NativeSaveResult, type NativeSaveTask } from "../shared/native-save.ts";
+import { withTaskTabMarker } from "../shared/task-tab.ts";
 import { ensureNativeSaveTaskRecovery, runNativeSaveTask } from "./native-save-task-runner.ts";
 import { runtimeAssetCandidates } from "../shared/asset-prefix.ts";
+import { createTaskTab } from "./task-tab.ts";
+
+const DY_TASK_MARKER = "openbiliclaw_dy_task";
 // Cross-source mutex via globalThis. Mirror of the helper inlined
 // in xhs-task-dispatcher; both dispatchers coordinate by writing to
 // the same field on globalThis. See dispatcher-mutex.ts for the
@@ -88,6 +101,8 @@ const FEED_TASK_TIMEOUT_MS = 120_000;
 const BOOTSTRAP_PER_ROUND_TIMEOUT_MS = 3_000;
 const BOOTSTRAP_MAX_TASK_TIMEOUT_MS = 360_000;
 const POLL_ALARM_NAME = "openbiliclaw-dy-task-poll";
+const TASK_TIMEOUT_ALARM_NAME = "openbiliclaw-dy-task-timeout";
+export const DY_TASK_STATE_SESSION_KEY = "openbiliclaw_dy_active_task";
 const KNOWN_SCOPES: readonly DouyinScope[] = [
   "dy_post",
   "dy_collect",
@@ -136,6 +151,7 @@ let pollInFlight: Promise<void> | null = null;
 let taskTabId: number | null = null;
 let ownsTaskTab = false;
 let taskTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let taskDeadlineMs: number | null = null;
 let currentTask: DyTask | null = null;
 
 // Per-scope state machine. Bootstrap visits 4 profile sub-tabs
@@ -201,16 +217,16 @@ let feedProgress: FeedProgress | null = null;
 export function buildDyTaskUrl(task: DyTask): string | null {
   if (task.type === "native_save") return task.content_url;
   if (task.type === "bootstrap_profile") {
-    return "https://www.douyin.com/";
+    return withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER);
   }
   if (task.type === "search") {
-    return "https://www.douyin.com/";
+    return withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER);
   }
   if (task.type === "hot") {
-    return "https://www.douyin.com/";
+    return withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER);
   }
   if (task.type === "feed") {
-    return "https://www.douyin.com/";
+    return withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER);
   }
   return null;
 }
@@ -219,7 +235,7 @@ export function buildDyDiscoveryPageUrl(
   _type: "search" | "hot" | "feed",
   _target?: string,
 ): string {
-  return "https://www.douyin.com/";
+  return withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER);
 }
 
 export function isValidDyTask(task: unknown): task is DyTask {
@@ -382,8 +398,9 @@ export function dyScopeDegradedReason(result: DyScopeResult): string {
 }
 
 // ---------------------------------------------------------------------------
-// Chrome lifecycle (not unit-tested — Task 4's chrome-devtools MCP probe
-// already exercised the highest-risk seam against real douyin.com).
+// Chrome lifecycle (Task 4's chrome-devtools MCP probe already exercised the
+// highest-risk seam against real douyin.com; the event-page persistence /
+// recovery paths are unit-tested in tests/dy-task-recovery.test.ts).
 // ---------------------------------------------------------------------------
 
 async function fetchNextTask(): Promise<DyTask | null> {
@@ -547,11 +564,275 @@ function clearSearchNavigationWatcher(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Active-task persistence (event page / service-worker recycling)
+// ---------------------------------------------------------------------------
+
+export interface PersistedDyTaskState {
+  task: DyLegacyTask;
+  task_tab_id: number | null;
+  owns_task_tab: boolean;
+  deadline_ms: number;
+  progress: TaskProgress | null;
+  search_progress: SearchProgress | null;
+  hot_progress: HotProgress | null;
+  feed_progress: FeedProgress | null;
+}
+
+let sessionStateMutation: Promise<void> = Promise.resolve();
+let dyTaskRecoveryPromise: Promise<void> | null = null;
+
+function sessionStorageArea(): chrome.storage.StorageArea | null {
+  try {
+    return typeof chrome === "undefined" ? null : chrome.storage?.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function serializedSessionMutation(mutation: () => Promise<void>): Promise<void> {
+  const current = sessionStateMutation.then(mutation, mutation);
+  sessionStateMutation = current.catch(() => {});
+  return current;
+}
+
+function persistActiveTaskState(): Promise<void> {
+  return serializedSessionMutation(async () => {
+    const storage = sessionStorageArea();
+    if (!storage || !currentTask || currentTask.type === "native_save") return;
+    const record: PersistedDyTaskState = {
+      task: currentTask,
+      task_tab_id: taskTabId,
+      owns_task_tab: ownsTaskTab,
+      deadline_ms: taskDeadlineMs ?? 0,
+      progress,
+      search_progress: searchProgress,
+      hot_progress: hotProgress,
+      feed_progress: feedProgress,
+    };
+    try {
+      await storage.set({ [DY_TASK_STATE_SESSION_KEY]: record });
+    } catch {
+      // Session persistence is an optional recovery enhancement, not an execution prerequisite.
+    }
+  });
+}
+
+function clearPersistedTaskState(): Promise<void> {
+  return serializedSessionMutation(async () => {
+    const storage = sessionStorageArea();
+    if (!storage) return;
+    try {
+      await storage.remove(DY_TASK_STATE_SESSION_KEY);
+    } catch {
+      // The in-memory lifecycle is already terminal for this worker.
+    }
+  });
+}
+
+function parsePersistedTaskState(value: unknown): PersistedDyTaskState | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (!isValidDyTask(record.task) || record.task.type === "native_save") return null;
+  const task = record.task;
+  if (typeof record.deadline_ms !== "number" || !Number.isFinite(record.deadline_ms)) return null;
+  const tabId = record.task_tab_id ?? null;
+  if (tabId !== null && (typeof tabId !== "number" || !Number.isInteger(tabId))) return null;
+  const parsed: PersistedDyTaskState = {
+    task,
+    task_tab_id: tabId,
+    owns_task_tab: record.owns_task_tab === true,
+    deadline_ms: record.deadline_ms,
+    progress: null,
+    search_progress: null,
+    hot_progress: null,
+    feed_progress: null,
+  };
+  const progressFields = [
+    ["progress", "bootstrap_profile"],
+    ["search_progress", "search"],
+    ["hot_progress", "hot"],
+    ["feed_progress", "feed"],
+  ] as const;
+  let hasProgress = false;
+  for (const [key, type] of progressFields) {
+    const candidate = record[key];
+    if (candidate === null || candidate === undefined) continue;
+    if (task.type !== type) return null;
+    if (
+      typeof candidate !== "object" ||
+      (candidate as { task_id?: unknown }).task_id !== task.id
+    ) {
+      return null;
+    }
+    if (key === "progress") parsed.progress = candidate as TaskProgress;
+    if (key === "search_progress") parsed.search_progress = candidate as SearchProgress;
+    if (key === "hot_progress") parsed.hot_progress = candidate as HotProgress;
+    if (key === "feed_progress") parsed.feed_progress = candidate as FeedProgress;
+    hasProgress = true;
+  }
+  return hasProgress ? parsed : null;
+}
+
+function scheduleTaskTimeoutAlarm(deadlineMs: number): void {
+  if (typeof chrome === "undefined" || !chrome.alarms?.create) return;
+  try {
+    void chrome.alarms.create(TASK_TIMEOUT_ALARM_NAME, { when: deadlineMs });
+  } catch {
+    // The in-process timer still covers a live worker.
+  }
+}
+
+function armTaskDeadline(deadlineMs: number): void {
+  taskDeadlineMs = deadlineMs;
+  // The one-shot alarm is the authoritative backstop: it survives the
+  // event page / service worker being unloaded. The setTimeout below is
+  // only the exact-timing fast path while this worker stays alive.
+  scheduleTaskTimeoutAlarm(deadlineMs);
+  if (taskTimeoutId !== null) {
+    clearTimeout(taskTimeoutId);
+    taskTimeoutId = null;
+  }
+  taskTimeoutId = setTimeout(() => {
+    taskTimeoutId = null;
+    void failActiveTask("task_timeout");
+  }, Math.max(0, deadlineMs - Date.now()));
+}
+
+async function failActiveTask(error: string): Promise<void> {
+  const task = currentTask;
+  if (!task || task.type === "native_save") return;
+  try {
+    await postTaskResult({
+      task_id: task.id,
+      status: "failed",
+      error,
+    });
+    cleanupTask();
+  } catch {
+    // Keep the local task state intact after an unacknowledged terminal
+    // callback. The persisted record and the timeout alarm retry the
+    // callback on the next wake instead of pretending the task was
+    // durably failed and claiming more.
+  }
+}
+
+async function recordedTabAlive(tabId: number | null): Promise<boolean> {
+  if (tabId === null) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function restorePersistedTaskState(record: PersistedDyTaskState): Promise<void> {
+  const tabAlive = await recordedTabAlive(record.task_tab_id);
+  currentTask = record.task;
+  taskTabId = tabAlive ? record.task_tab_id : null;
+  ownsTaskTab = record.owns_task_tab && tabAlive;
+  progress = record.progress;
+  searchProgress = record.search_progress;
+  hotProgress = record.hot_progress;
+  feedProgress = record.feed_progress;
+  taskInFlight = true;
+  tryAcquireDispatcherMutex("dy");
+  armTaskDeadline(record.deadline_ms);
+  if (Date.now() >= record.deadline_ms) {
+    await failActiveTask("task_timeout");
+    return;
+  }
+  if (record.owns_task_tab && !tabAlive) {
+    // The task tab is gone (user closed it or the browser discarded it);
+    // nothing can deliver further results, so settle immediately instead
+    // of burning the remaining deadline budget.
+    await failActiveTask("task_tab_closed");
+  }
+}
+
+async function sweepOrphanDyTaskTabs(activeTabId: number | null): Promise<void> {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.tabs?.remove) return;
+  let tabs: chrome.tabs.Tab[];
+  try {
+    tabs = await chrome.tabs.query({ url: ["*://*.douyin.com/*"] });
+  } catch {
+    return;
+  }
+  const queryMarker = `${DY_TASK_MARKER}=1`;
+  for (const tab of tabs) {
+    if (tab.id === undefined || tab.id === activeTabId) continue;
+    const url = tab.url ?? tab.pendingUrl ?? "";
+    if (!url.includes(queryMarker)) continue;
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch {
+      // Orphan sweep is best-effort; the recorded-tab path stays authoritative.
+    }
+  }
+}
+
+async function recoverDyTaskState(): Promise<void> {
+  const storage = sessionStorageArea();
+  if (storage && !taskInFlight && currentTask === null) {
+    let record: PersistedDyTaskState | null = null;
+    try {
+      record = parsePersistedTaskState(
+        (await storage.get(DY_TASK_STATE_SESSION_KEY))[DY_TASK_STATE_SESSION_KEY],
+      );
+    } catch {
+      record = null;
+    }
+    if (record) await restorePersistedTaskState(record);
+  }
+  await sweepOrphanDyTaskTabs(taskTabId);
+}
+
+/**
+ * One MV3-lifetime barrier shared by startup, poll wakes, timeout alarms,
+ * and the DY_*_RESULT message handlers. A freshly woken worker restores
+ * the persisted in-flight task before any of those paths inspect the
+ * module state, so late results keep flowing and the deadline backstop
+ * keeps ownership of the task tab.
+ */
+export function ensureDyTaskRecovery(): Promise<void> {
+  dyTaskRecoveryPromise ??= recoverDyTaskState().catch(() => {});
+  return dyTaskRecoveryPromise;
+}
+
+export function resetDyTaskStateForTest(): void {
+  clearSearchNavigationWatcher();
+  if (taskTimeoutId !== null) {
+    clearTimeout(taskTimeoutId);
+    taskTimeoutId = null;
+  }
+  taskDeadlineMs = null;
+  taskTabId = null;
+  ownsTaskTab = false;
+  currentTask = null;
+  progress = null;
+  searchProgress = null;
+  hotProgress = null;
+  feedProgress = null;
+  taskInFlight = false;
+  dyTaskRecoveryPromise = null;
+  sessionStateMutation = Promise.resolve();
+  releaseDispatcherMutex("dy");
+}
+
 function cleanupTask(): void {
   clearSearchNavigationWatcher();
   if (taskTimeoutId !== null) {
     clearTimeout(taskTimeoutId);
     taskTimeoutId = null;
+  }
+  taskDeadlineMs = null;
+  if (typeof chrome !== "undefined" && chrome.alarms?.clear) {
+    try {
+      void chrome.alarms.clear(TASK_TIMEOUT_ALARM_NAME);
+    } catch {
+      // The alarm may already have fired; clearing stays best-effort.
+    }
   }
   if (ownsTaskTab && taskTabId !== null) {
     try {
@@ -569,6 +850,7 @@ function cleanupTask(): void {
   feedProgress = null;
   taskInFlight = false;
   releaseDispatcherMutex("dy");
+  void clearPersistedTaskState();
 }
 
 function emptyScopeCounts(): Record<DouyinScope, number> {
@@ -576,22 +858,8 @@ function emptyScopeCounts(): Record<DouyinScope, number> {
 }
 
 function armTaskTimeout(task: DyLegacyTask): void {
-  const timeoutMs = computeDyTaskTimeoutMs(task);
-  taskTimeoutId = setTimeout(async () => {
-    taskTimeoutId = null;
-    try {
-      await postTaskResult({
-        task_id: task.id,
-        status: "failed",
-        error: "task_timeout",
-      });
-      cleanupTask();
-    } catch {
-      // Keep the local task state intact after an unacknowledged terminal
-      // callback. A later worker recovery/backend stale-claim path remains
-      // safer than pretending the task was durably failed and claiming more.
-    }
-  }, timeoutMs);
+  armTaskDeadline(Date.now() + computeDyTaskTimeoutMs(task));
+  void persistActiveTaskState();
 }
 
 // ---------------------------------------------------------------------------
@@ -870,7 +1138,7 @@ async function replaceSearchTabForNextKeyword(): Promise<void> {
 
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: false });
+    tab = await createTaskTab({ url: withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER), active: false });
   } catch (err) {
     await postTaskResult({
       task_id: searchProgress.task_id,
@@ -893,6 +1161,7 @@ async function replaceSearchTabForNextKeyword(): Promise<void> {
     cleanupTask();
     return;
   }
+  void persistActiveTaskState();
   const newTabId = taskTabId;
   onTabReady(
     newTabId,
@@ -1052,8 +1321,8 @@ export async function executeTask(
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({
-        url: "https://www.douyin.com/",
+      tab = await createTaskTab({
+        url: withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER),
         active: shouldOpenDyTaskActive(task),
       });
     } catch (err) {
@@ -1102,8 +1371,8 @@ export async function executeTask(
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({
-        url: "https://www.douyin.com/",
+      tab = await createTaskTab({
+        url: withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER),
         active: shouldOpenDyTaskActive(task),
       });
     } catch (err) {
@@ -1145,8 +1414,8 @@ export async function executeTask(
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({
-        url: "https://www.douyin.com/",
+      tab = await createTaskTab({
+        url: withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER),
         active: shouldOpenDyTaskActive(task),
       });
     } catch (err) {
@@ -1204,8 +1473,8 @@ export async function executeTask(
   // profile, not empty tab → /user/self).
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({
-      url: "https://www.douyin.com/",
+    tab = await createTaskTab({
+      url: withTaskTabMarker("https://www.douyin.com/", DY_TASK_MARKER),
       active: shouldOpenDyTaskActive(task),
     });
   } catch (err) {
@@ -1254,6 +1523,7 @@ export async function executeTask(
  * next scope or finalises the task with status=ok.
  */
 export async function handleDyScopeResult(result: DyScopeResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!progress || result.task_id !== progress.task_id) return;
   // Reject results from outside the current scope (defensive; the
   // content script should only emit for the scope we asked it to).
@@ -1284,6 +1554,7 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
 
   progress.current_scope_idx += 1;
   if (progress.current_scope_idx < progress.scopes.length) {
+    void persistActiveTaskState();
     navigateToCurrentScope();
     return;
   }
@@ -1303,6 +1574,7 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
 }
 
 export async function handleDySearchResult(result: DySearchResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!searchProgress || result.task_id !== searchProgress.task_id) return;
   const expectedKeyword = searchProgress.keywords[searchProgress.current_keyword_idx];
   if (result.keyword !== expectedKeyword) return;
@@ -1342,6 +1614,7 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
   searchProgress.current_keyword_idx += 1;
   if (searchProgress.current_keyword_idx < searchProgress.keywords.length) {
     searchProgress.navigation_resume_dispatched = false;
+    void persistActiveTaskState();
     await replaceSearchTabForNextKeyword();
     return;
   }
@@ -1356,6 +1629,7 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
 }
 
 export async function handleDyHotResult(result: DyHotResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!hotProgress || result.task_id !== hotProgress.task_id) return;
   const expected = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!expected || result.sentence_id !== expected.sentence_id) return;
@@ -1402,6 +1676,7 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
 
   hotProgress.current_hot_idx += 1;
   if (hotProgress.current_hot_idx < hotProgress.hot_items.length) {
+    void persistActiveTaskState();
     navigateToCurrentHot();
     return;
   }
@@ -1416,11 +1691,13 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
 }
 
 export async function handleDyFeedResult(result: DyFeedResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!feedProgress || result.task_id !== feedProgress.task_id) return;
 
   if (result.status === "failed") {
     if (shouldRetryDyFeedCapture(result, feedProgress.capture_retry_count)) {
       feedProgress.capture_retry_count += 1;
+      void persistActiveTaskState();
       try {
         await reloadFeedForCaptureRetry();
         return;
@@ -1482,6 +1759,7 @@ export async function handleDyFeedResult(result: DyFeedResult): Promise<void> {
  * handleDyScopeResult instead.
  */
 export async function handleTaskResult(result: DyTaskResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!currentTask || result.task_id !== currentTask.id) return;
   await postTaskResult(result);
   if (result.status === "partial") return;
@@ -1569,7 +1847,10 @@ async function reportDeclinedTask(task: DyTask): Promise<void> {
 }
 
 const DY_TASK_POLL_DEPENDENCIES: DyTaskPollDependencies = {
-  ensureRecovery: ensureNativeSaveTaskRecovery,
+  ensureRecovery: async () => {
+    await ensureNativeSaveTaskRecovery();
+    await ensureDyTaskRecovery();
+  },
   canExecute: () => {
     try {
       return typeof globalThis.chrome?.tabs?.create === "function";
@@ -1652,13 +1933,28 @@ export function startDyTaskPolling(): void {
 
 /**
  * Service-worker.ts's chrome.alarms.onAlarm dispatcher routes every
- * fired alarm through this. We only act on our own alarm name; other
- * alarms (xhs poll, cookie sync, event flush) are handled by their
- * respective modules.
+ * fired alarm through this. We only act on our own alarm names (the
+ * poll tick and the per-task timeout backstop); other alarms (xhs
+ * poll, cookie sync, event flush) are handled by their respective
+ * modules.
  */
 export function handleDyTaskAlarm(alarmName: string): void {
   if (alarmName === POLL_ALARM_NAME) {
     void pollDyTaskOnce().catch(() => {});
+    return;
+  }
+  if (alarmName === TASK_TIMEOUT_ALARM_NAME) {
+    void (async () => {
+      await ensureDyTaskRecovery();
+      if (!currentTask || currentTask.type === "native_save" || taskDeadlineMs === null) return;
+      if (Date.now() < taskDeadlineMs) {
+        // The browser clamped the one-shot alarm to its minimum delay;
+        // re-arm the in-process fast path for the remaining budget.
+        armTaskDeadline(taskDeadlineMs);
+        return;
+      }
+      await failActiveTask("task_timeout");
+    })().catch(() => {});
   }
 }
 

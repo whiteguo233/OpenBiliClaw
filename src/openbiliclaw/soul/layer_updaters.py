@@ -187,13 +187,15 @@ def _apply_topic_lifecycle_evidence(
     recommendation weight, and the 12h ``scan_lifecycle`` never backfilled
     them (it treats a stateless interest as already active).
 
+    Only topics whose ``last_seen`` changed count as evidence; a retained item
+    in the analyzer's full merged snapshot merely keeps its lifecycle fields.
     Mirrors ``SoulEngine._apply_topic_lifecycle_evidence``; ``source`` is
     ``pipeline`` so the ledger still shows which path stamped the transition.
     Best-effort: any failure is logged at DEBUG and never breaks the update.
     """
     try:
         from openbiliclaw.soul.ledger import ProfileLedger
-        from openbiliclaw.soul.topic_lifecycle import apply_evidence
+        from openbiliclaw.soul.topic_lifecycle import apply_evidence, changed_interest_keys
 
         existing_interests = [
             item for item in existing_preference.get("interests", []) if isinstance(item, dict)
@@ -201,7 +203,12 @@ def _apply_topic_lifecycle_evidence(
         updated_interests = updated_preference.get("interests")
         if not isinstance(updated_interests, list):
             return
-        merged, transitions = apply_evidence(existing_interests, updated_interests)
+        evidence_keys = changed_interest_keys(existing_interests, updated_interests)
+        merged, transitions = apply_evidence(
+            existing_interests,
+            updated_interests,
+            evidence_keys=evidence_keys,
+        )
         updated_preference["interests"] = merged
         if not transitions:
             return

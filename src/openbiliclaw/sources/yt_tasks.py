@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _RECENT_TASK_STATUSES = ("pending", "in_progress", "completed", "failed")
+
+# MV3 service workers can lose setTimeout callbacks when they sleep, so a
+# claimed YouTube bootstrap task can outlive the extension-side timeout. The
+# queue fails such leases after this many seconds (env-tunable for tests and
+# operators). Deliberately above the extension's max per-task timeout (360s)
+# so a healthy long task is never expired while it is still running.
+DEFAULT_STALE_IN_PROGRESS_SECONDS = 600.0
+
+
+def _yt_stale_in_progress_seconds() -> float:
+    """Return the YouTube stale in-progress lease threshold in seconds."""
+    raw = os.environ.get(
+        "OPENBILICLAW_YT_STALE_IN_PROGRESS_SECONDS",
+        str(DEFAULT_STALE_IN_PROGRESS_SECONDS),
+    )
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return DEFAULT_STALE_IN_PROGRESS_SECONDS
+
 
 # Map each YouTube bootstrap scope to the canonical event_type.
 YT_BOOTSTRAP_SCOPE_EVENT_TYPES: dict[str, str] = {
@@ -265,7 +286,10 @@ class YtTaskQueue:
         # active init only init-owned bootstrap tasks are handed out). None = all.
         # Staged results remain stale-reclaimable so a lost result response
         # gets a fresh dispatcher callback that repairs canonical projections.
-        where = "(status = 'pending' OR (status = 'in_progress' AND claimed_at <= ?))"
+        where = (
+            "(status = 'pending' OR "
+            "(status = 'in_progress' AND (claimed_at IS NULL OR claimed_at <= ?)))"
+        )
         params: list[Any] = [stale_before]
         if only_ids is not None:
             ids = [str(i) for i in only_ids]
@@ -363,6 +387,50 @@ class YtTaskQueue:
             (result_payload, *normalized_types, cutoff_text),
         )
         self._db.conn.commit()
+        return int(cursor.rowcount or 0)
+
+    def expire_stale_in_progress(
+        self,
+        task_types: Iterable[str],
+        *,
+        older_than_seconds: float | None = None,
+        error: str = "stale_in_progress",
+    ) -> int:
+        """Fail in-progress tasks whose claim lease exceeded the threshold.
+
+        MV3 service workers lose ``setTimeout`` callbacks while asleep, so a
+        claimed task can outlive the extension-side timeout and wedge the
+        queue forever. Failing the stale lease (instead of re-claiming it)
+        releases the durable slot. Staged canonical results are preserved and
+        stay re-claimable through ``next_pending`` for projection repair.
+        """
+        normalized_types = tuple(str(t).strip() for t in task_types if str(t).strip())
+        if not normalized_types:
+            return 0
+        if older_than_seconds is None:
+            older_than_seconds = _yt_stale_in_progress_seconds()
+        cutoff_ts = datetime.now(UTC).timestamp() - max(0.0, float(older_than_seconds))
+        cutoff_text = datetime.fromtimestamp(cutoff_ts, UTC).strftime("%Y-%m-%d %H:%M:%S")
+        placeholders = ",".join("?" for _ in normalized_types)
+        result_payload = json.dumps({"error": error}, ensure_ascii=False)
+        conn = self._db.conn
+        participating_in_transaction = bool(conn.in_transaction)
+        cursor = conn.execute(
+            f"""
+            UPDATE yt_tasks
+            SET status = 'failed',
+                result_json = ?,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE status = 'in_progress'
+              AND type IN ({placeholders})
+              AND (claimed_at IS NULL OR claimed_at < ?)
+              AND COALESCE(result_json, '') NOT LIKE
+                  '%"_openbiliclaw_terminal_status"%'
+            """,
+            (result_payload, *normalized_types, cutoff_text),
+        )
+        if not participating_in_transaction:
+            conn.commit()
         return int(cursor.rowcount or 0)
 
     def get(self, task_id: str) -> dict[str, Any] | None:

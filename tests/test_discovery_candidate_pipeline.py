@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -10,6 +11,7 @@ from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.candidate_pool import (
     REJECTED_FRANCHISE_QUOTA,
     REJECTED_LOW_SCORE,
+    REJECTED_TEMPORAL_STALE,
     DiscoveryCandidateWrite,
     discovered_content_to_candidate_write,
     row_to_discovered_content,
@@ -339,6 +341,11 @@ async def test_staged_claim_evaluate_complete_matches_legacy_drain(tmp_path: Pat
                 "temporal_class": "evergreen",
                 "temporal_confidence": 0.92,
                 "temporal_reason": "核心价值不依赖当前时间",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
             }
             for i in range(3)
         ]
@@ -360,17 +367,31 @@ async def test_staged_claim_evaluate_complete_matches_legacy_drain(tmp_path: Pat
     assert db.count_discovery_candidates_by_status()["cached"] == 3
     persisted_candidates = db.conn.execute(
         "SELECT temporal_class, temporal_confidence, temporal_reason, "
-        "temporal_policy_version FROM discovery_candidates ORDER BY id"
+        "temporal_policy_version, temporal_validity_mode, temporal_valid_until, "
+        "temporal_scope, temporal_evidence, temporal_state, temporal_next_review_at, "
+        "temporal_evaluated_at, temporal_evidence_complete "
+        "FROM discovery_candidates ORDER BY id"
     ).fetchall()
     persisted_cache = db.conn.execute(
         "SELECT temporal_class, temporal_confidence, temporal_reason, "
-        "temporal_policy_version FROM content_cache ORDER BY bvid"
+        "temporal_policy_version, temporal_validity_mode, temporal_valid_until, "
+        "temporal_scope, temporal_evidence, temporal_state, temporal_next_review_at, "
+        "temporal_evaluated_at, temporal_evidence_complete "
+        "FROM content_cache ORDER BY bvid"
     ).fetchall()
     for persisted in (persisted_candidates, persisted_cache):
         assert [row["temporal_class"] for row in persisted] == ["evergreen"] * 3
         assert all(row["temporal_confidence"] == pytest.approx(0.92) for row in persisted)
         assert [row["temporal_reason"] for row in persisted] == ["核心价值不依赖当前时间"] * 3
-        assert [row["temporal_policy_version"] for row in persisted] == ["v1"] * 3
+        assert [row["temporal_policy_version"] for row in persisted] == ["v2"] * 3
+        assert [row["temporal_validity_mode"] for row in persisted] == ["none"] * 3
+        assert [row["temporal_valid_until"] for row in persisted] == [""] * 3
+        assert [row["temporal_scope"] for row in persisted] == ["none"] * 3
+        assert [row["temporal_evidence"] for row in persisted] == [""] * 3
+        assert [row["temporal_state"] for row in persisted] == ["unknown"] * 3
+        assert [row["temporal_next_review_at"] for row in persisted] == [""] * 3
+        assert all(row["temporal_evaluated_at"] for row in persisted)
+        assert [row["temporal_evidence_complete"] for row in persisted] == [1] * 3
 
 
 @pytest.mark.asyncio
@@ -506,6 +527,144 @@ async def test_complete_claim_zero_admission_still_persists_token_owned_scores(
     assert db.count_discovery_candidates_by_status()["evaluated"] == 1
 
 
+@pytest.mark.asyncio
+async def test_complete_claim_zero_admission_counts_temporal_terminal_rejection(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVSTALEZERO",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVSTALEZERO",
+                title="截止 2000-01-01 00:00 +00:00 已经过期的突发内容",
+                published_at="2000-01-01T00:00:00Z",
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "BVSTALEZERO",
+                "score": 0.95,
+                "reason": "fit",
+                "topic_group": "news",
+                "style_key": "deep_dive",
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心价值依赖即时状态",
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2000-01-01T00:00:00Z",
+                "temporal_scope": "core",
+                "temporal_evidence": "截止 2000-01-01 00:00 +00:00",
+                "temporal_state": "unknown",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+    claim = pipeline.claim_batch(limit=1)
+    assert claim is not None
+    outcome = await pipeline.evaluate_claim(claim, _build_profile())
+
+    result = await pipeline.complete_claim(outcome, admission_limit=0)
+
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1, "stale": 0}
+    assert db.count_discovery_candidates_by_status()[REJECTED_TEMPORAL_STALE] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_complete_claim_withholds_malformed_rereview_kept_pending_by_storage(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVDURABLEREVIEW",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVDURABLEREVIEW",
+                title="这份教程所用产品版本 1.0 仍受支持",
+            )
+        ]
+    )
+    db.conn.execute(
+        """
+        UPDATE discovery_candidates
+        SET status = 'pending_eval',
+            eval_error = 'temporal_review_due:seed',
+            temporal_class = 'versioned',
+            temporal_confidence = 0.95,
+            temporal_reason = '核心步骤依赖该产品版本',
+            temporal_policy_version = 'v2',
+            temporal_validity_mode = 'version_state',
+            temporal_valid_until = '',
+            temporal_scope = 'core',
+            temporal_state = 'active',
+            temporal_evidence = '产品版本 1.0 仍受支持',
+            temporal_next_review_at = '2000-04-30T00:00:00Z',
+            temporal_evaluated_at = '2000-01-01T00:00:00Z',
+            temporal_evidence_complete = 1
+        WHERE candidate_key = 'bilibili:BVDURABLEREVIEW'
+        """
+    )
+    db.conn.commit()
+    # Relevance is valid, but the temporal group is missing. The engine's
+    # in-memory item becomes neutral/incomplete while storage conservatively
+    # retains the old, due version evidence and its pending review lease.
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "BVDURABLEREVIEW",
+                "score": 0.95,
+                "reason": "fit",
+                "topic_group": "tech",
+                "style_key": "deep_dive",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    claim = pipeline.claim_batch(limit=1)
+    assert claim is not None
+    outcome = await pipeline.evaluate_claim(claim, _build_profile())
+    result = await pipeline.complete_claim(outcome, admission_limit=10)
+
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1, "stale": 0}
+    stored = db.conn.execute(
+        """
+        SELECT status, eval_error, temporal_class, temporal_validity_mode,
+               temporal_state, temporal_evidence, temporal_evidence_complete,
+               temporal_review_attempts, temporal_review_retry_at
+        FROM discovery_candidates
+        WHERE candidate_key = 'bilibili:BVDURABLEREVIEW'
+        """
+    ).fetchone()
+    assert stored["status"] == "pending_eval"
+    assert str(stored["eval_error"]).startswith("temporal_review_due:")
+    assert stored["temporal_class"] == "versioned"
+    assert stored["temporal_validity_mode"] == "version_state"
+    assert stored["temporal_state"] == "active"
+    assert stored["temporal_evidence"] == "产品版本 1.0 仍受支持"
+    assert stored["temporal_evidence_complete"] == 1
+    assert stored["temporal_review_attempts"] == 1
+    assert stored["temporal_review_retry_at"]
+    assert db.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0] == 0
+
+
 def test_candidate_roundtrip_preserves_publication_time(tmp_path: Path) -> None:
     db = Database(tmp_path / "test.db")
     db.initialize()
@@ -568,6 +727,53 @@ def test_candidate_rediscovery_preserves_each_empty_publication_field_independen
     assert row["published_at"] == expected_at
     assert row["published_label"] == expected_label
     db.close()
+
+
+@pytest.mark.parametrize("status", ["evaluating", "evaluated"])
+def test_candidate_rediscovery_freezes_publication_after_evaluation_ownership(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    db = Database(tmp_path / f"publication-freeze-{status}.db")
+    db.initialize()
+    original = discovered_content_to_candidate_write(
+        DiscoveredContent(
+            bvid="BVFREEZETIME",
+            title="快照时间",
+            published_at="2026-08-11T06:30:00Z",
+            published_label="原始时间",
+        )
+    )
+    rediscovered = discovered_content_to_candidate_write(
+        DiscoveredContent(
+            bvid="BVFREEZETIME",
+            title="快照时间",
+            published_at="2000-01-01T00:00:00Z",
+            published_label="并发纠正",
+        )
+    )
+    db.enqueue_discovery_candidates([original])
+    if status == "evaluating":
+        assert db.claim_discovery_candidates_for_eval(limit=1)
+    else:
+        db.conn.execute(
+            "UPDATE discovery_candidates SET status='evaluated' WHERE candidate_key=?",
+            (original.candidate_key,),
+        )
+        db.conn.commit()
+
+    db.enqueue_discovery_candidates([rediscovered])
+
+    row = db.conn.execute(
+        "SELECT status, published_at, published_label FROM discovery_candidates "
+        "WHERE candidate_key=?",
+        (original.candidate_key,),
+    ).fetchone()
+    assert dict(row) == {
+        "status": status,
+        "published_at": "2026-08-11T06:30:00Z",
+        "published_label": "原始时间",
+    }
 
 
 def test_pipeline_pool_count_uses_dynamic_xhs_self_nickname() -> None:
@@ -671,6 +877,158 @@ async def test_pipeline_evaluates_mixed_pending_and_caches_accepted(tmp_path: Pa
     counts = db.count_discovery_candidates_by_status()
     assert counts["cached"] == 1
     assert counts["rejected_low_score"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_high_confidence_expired_breaking_before_cache(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BV1STALE",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BV1STALE",
+                content_url="https://www.bilibili.com/video/BV1STALE",
+                title="已经失效的突发信息",
+                published_at="2000-01-01T00:00:00Z",
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "BV1STALE",
+                "score": 0.95,
+                "reason": "内容高度相关",
+                "topic_group": "科技",
+                "style_key": "deep_dive",
+                "franchise_key": "",
+                "temporal_class": "breaking",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心价值依赖即时状态",
+                "temporal_validity_mode": "event_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_evidence": "已经失效的突发信息",
+                "temporal_state": "expired",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1}
+    assert db.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0] == 0
+    row = db.conn.execute(
+        """
+        SELECT status, eval_error, temporal_class, temporal_confidence
+        FROM discovery_candidates
+        WHERE content_id = 'BV1STALE'
+        """
+    ).fetchone()
+    assert row["status"] == REJECTED_TEMPORAL_STALE
+    assert "temporal_expired:class=breaking:mode=event_state:state=expired" in row["eval_error"]
+    assert row["temporal_class"] == "breaking"
+    assert row["temporal_confidence"] == 0.95
+
+
+def test_pipeline_uses_storage_lock_temporal_outcome_when_item_expires_during_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openbiliclaw.storage.database as database_module
+
+    db = Database(tmp_path / "cross-ttl-write.db")
+    db.initialize()
+    real_now = datetime.now(UTC)
+    published_at = real_now - timedelta(days=3) + timedelta(hours=1)
+    deadline = (real_now + timedelta(hours=1)).replace(second=0, microsecond=0)
+    deadline_evidence = f"活动截止时间 {deadline.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} +00:00"
+    candidate = DiscoveryCandidateWrite(
+        candidate_key="bilibili:BVCROSSTTL",
+        source_platform="bilibili",
+        source_strategy="search",
+        content_id="BVCROSSTTL",
+        title=deadline_evidence,
+        published_at=published_at.isoformat(),
+    )
+    db.enqueue_discovery_candidates([candidate])
+    db.conn.execute(
+        """
+        UPDATE discovery_candidates
+        SET status='evaluated', relevance_score=0.95,
+            relevance_reason='fit', topic_group='news', style_key='deep_dive',
+            temporal_class='breaking', temporal_confidence=0.95,
+            temporal_reason='核心价值依赖即时状态',
+            temporal_policy_version='v2',
+            temporal_validity_mode='explicit_deadline',
+            temporal_valid_until=?, temporal_scope='core',
+            temporal_evidence=?, temporal_state='unknown', temporal_next_review_at=?,
+            temporal_evaluated_at=?, temporal_evidence_complete=1
+        WHERE candidate_key=?
+        """,
+        (
+            deadline.isoformat(),
+            deadline_evidence,
+            deadline.isoformat(),
+            real_now.isoformat(),
+            candidate.candidate_key,
+        ),
+    )
+    db.conn.commit()
+    row = dict(
+        db.conn.execute(
+            "SELECT * FROM discovery_candidates WHERE candidate_key=?",
+            (candidate.candidate_key,),
+        ).fetchone()
+    )
+    item = row_to_discovered_content(row)
+    admitted_items: list[DiscoveredContent] = []
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(database=db),
+        pool_target_count=30,
+    )
+
+    class _WriterClock:
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            del tz
+            return real_now + timedelta(hours=2)
+
+        @classmethod
+        def fromisoformat(cls, value: str) -> datetime:
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(database_module, "datetime", _WriterClock)
+    outcome = pipeline._admit_one(  # noqa: SLF001
+        row,
+        item,
+        recently_viewed=set(),
+        admitted_items=admitted_items,
+    )
+
+    candidate_row = db.conn.execute(
+        "SELECT status, eval_error FROM discovery_candidates WHERE candidate_key=?",
+        (candidate.candidate_key,),
+    ).fetchone()
+    cache_row = db.conn.execute(
+        "SELECT pool_status FROM content_cache WHERE bvid='BVCROSSTTL'"
+    ).fetchone()
+    assert outcome == "rejected"
+    assert candidate_row["status"] == REJECTED_TEMPORAL_STALE
+    assert "temporal_expired:class=breaking" in candidate_row["eval_error"]
+    assert cache_row["pool_status"] == "stale"
+    assert admitted_items == []
 
 
 @pytest.mark.asyncio

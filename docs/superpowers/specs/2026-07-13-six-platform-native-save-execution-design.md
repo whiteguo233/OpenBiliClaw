@@ -1,5 +1,9 @@
 # Six-Platform Native Save Execution Design
 
+> **Current-state correction (2026-08-31):** Zhihu now exposes an item-level global
+> `收藏 / 已收藏` toggle. Production uses target `知乎收藏`, does not claim named-collection
+> support, and never clicks an initially `已收藏` control or any control during verification.
+
 ## Goal
 
 Complete issue #56 for the six non-Bilibili formal sources: YouTube,
@@ -34,7 +38,7 @@ sync. Bilibili's existing direct adapter remains unchanged.
 | Xiaohongshu | native favorite | native favorite fallback | logged-in extension |
 | Douyin | native favorite | native favorite fallback | logged-in extension |
 | X/Twitter | native Bookmark | native Bookmark fallback | logged-in extension |
-| Zhihu | `OpenBiliClaw` collection | same collection fallback | logged-in extension |
+| Zhihu | global `知乎收藏` | same favorite fallback | logged-in extension |
 | Reddit | native Saved | native Saved fallback | logged-in extension |
 
 The extension executor first performs a platform-scoped same-origin request

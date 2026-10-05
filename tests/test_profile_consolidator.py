@@ -618,6 +618,162 @@ async def test_likes_judge_payload_carries_category(tmp_path: Path) -> None:
     assert '"category": "科技"' in llm.last_user_input
 
 
+async def test_ordinary_cluster_accepts_object_member_references(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI工具", 0.91, "科技"),
+                _interest("人工智能工具", 0.86, "科技"),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": [
+                        {"name": "AI工具", "category": "科技"},
+                        {"name": "人工智能工具", "category": "科技"},
+                    ],
+                    "canonical": "AI工具",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["AI工具", "人工智能工具"]]),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    assert report.rejected_clusters == []
+    assert len(report.merges) == 1
+    assert [item["name"] for item in memory.get_layer("preference").data["interests"]] == ["AI工具"]
+    # Object refs from an ordinary cluster are normalized to names before
+    # rename bookkeeping / run-record persistence.
+    assert report.merges[0]["members"] == ["AI工具", "人工智能工具"]
+    run_record = json.loads(
+        (tmp_path / "consolidation_runs" / f"{report.run_id}.json").read_text(encoding="utf-8")
+    )
+    assert run_record["rename_map"] == {"人工智能工具": "AI工具"}
+    assert run_record["keyword_interest_rename_map"] == {"人工智能工具": "AI工具"}
+    assert run_record["merges"][0]["members"] == ["AI工具", "人工智能工具"]
+
+
+async def test_ordinary_cluster_object_references_revert_pins_pair(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI工具", 0.91, "科技"),
+                _interest("人工智能工具", 0.86, "科技"),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": [
+                        {"name": "AI工具", "category": "科技"},
+                        {"name": "人工智能工具", "category": "科技"},
+                    ],
+                    "canonical": "AI工具",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["AI工具", "人工智能工具"]]),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+    assert len(memory.get_layer("preference").data["interests"]) == 1
+
+    assert consolidator.revert(report.run_id)
+    reverted = [item["name"] for item in memory.get_layer("preference").data["interests"]]
+    assert reverted == ["AI工具", "人工智能工具"]
+
+    # The rolled-back object-ref merge must stay pinned distinct: a fresh run
+    # re-clusters the pair but finds it protected and does not ask the LLM.
+    second = await consolidator.run(dry_run=False)
+    state = json.loads((tmp_path / "consolidation_state.json").read_text(encoding="utf-8"))
+    assert second.clusters_sent == 0
+    assert llm.calls == 1
+    assert state["protected_no_merge_pairs"] == ["AI工具||人工智能工具"]
+
+
+async def test_ordinary_cluster_object_references_migrate_keyword_labels(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("智能体开发", 0.97),
+                _interest("智能体开发与实现", 0.88),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    db = Database(tmp_path / "keywords.db")
+    db.initialize()
+    db.insert_pending_keywords(
+        "bilibili",
+        ["智能体开发 经验", "智能体开发与实现 实战"],
+        "digest",
+        metadata_by_keyword={
+            "智能体开发 经验": {"source_interest": "智能体开发"},
+            "智能体开发与实现 实战": {"source_interest": "智能体开发与实现"},
+        },
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": [
+                        {"name": "智能体开发", "category": "科技"},
+                        {"name": "智能体开发与实现", "category": "科技"},
+                    ],
+                    "canonical": "智能体开发",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["智能体开发", "智能体开发与实现"]]),
+        data_dir=tmp_path,
+        database=db,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    snapshot = db.get_keyword_interest_coverage_snapshot()
+    assert "智能体开发与实现" not in snapshot
+    assert snapshot["智能体开发"]["generated_keyword_count"] == 2
+    record_path = tmp_path / "consolidation_runs" / f"{report.run_id}.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["keyword_interest_rename_map"] == {"智能体开发与实现": "智能体开发"}
+
+
 async def test_forced_homonym_payload_distinguishes_by_category(tmp_path: Path) -> None:
     memory = _FakeMemory(
         {

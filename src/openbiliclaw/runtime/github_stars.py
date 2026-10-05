@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Literal
@@ -40,6 +41,7 @@ class GitHubStarCountService:
         failure_backoff_seconds: float = 15 * 60,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         clock: Callable[[], float] = time.time,
+        token: str | None = None,
     ) -> None:
         self._repository = repository
         self._cache_path = cache_path
@@ -47,6 +49,13 @@ class GitHubStarCountService:
         self._failure_backoff_seconds = failure_backoff_seconds
         self._client_factory = client_factory or self._make_client
         self._clock = clock
+        if token is not None:
+            self._token = token.strip()
+        else:
+            self._token = os.environ.get(
+                "OPENBILICLAW_GITHUB_TOKEN",
+                os.environ.get("GITHUB_TOKEN", ""),
+            ).strip()
         self._count: int | None = None
         self._etag = ""
         self._fetched_at = 0.0
@@ -129,58 +138,109 @@ class GitHubStarCountService:
         self._retry_at = min(retry_at, now + 24 * 60 * 60)
         self._save_cache()
 
+    async def _try_shields_star_count(self, now: float) -> int | None:
+        """Fallback to the shields.io badge service for an approximate count.
+
+        GitHub's unauthenticated REST API is per-IP rate limited; shields.io's
+        badge JSON is a stable, cached endpoint that isn't subject to that
+        budget.  The count is rounded (e.g. ``"1.9k"``), which is fine for a
+        star counter.  Returns the parsed count, or ``None`` on any failure so
+        callers keep the cached snapshot.
+        """
+        try:
+            async with self._client_factory() as client:
+                response = await client.get(
+                    f"https://img.shields.io/github/stars/{self._repository}.json"
+                )
+            if response.status_code != 200:
+                return None
+            value = str((response.json() or {}).get("value", "")).strip()
+            count = self._parse_shields_value(value)
+            if count is None or count < 0:
+                return None
+        except (httpx.HTTPError, OSError, ValueError, AttributeError):
+            logger.debug("shields.io star count fallback failed", exc_info=True)
+            return None
+        self._count = count
+        self._fetched_at = now
+        self._retry_at = 0.0
+        self._save_cache()
+        return count
+
+    @staticmethod
+    def _parse_shields_value(value: str) -> int | None:
+        """Parse a shields.io badge value like ``"1.9k"`` / ``"16.7k"`` / ``"1673"``."""
+        text = value.strip().lower().replace(",", "")
+        if not text:
+            return None
+        try:
+            if text.endswith("k"):
+                return int(float(text[:-1]) * 1_000)
+            if text.endswith("m"):
+                return int(float(text[:-1]) * 1_000_000)
+            return int(float(text))
+        except ValueError:
+            return None
+
     async def get_snapshot(self) -> dict[str, object]:
         """Return the freshest available count without surfacing upstream errors."""
         self._load_cache()
         now = self._clock()
         if self._count is not None and now - self._fetched_at < self._ttl_seconds:
             return self._cached_snapshot(now)
-        if now < self._retry_at:
-            return self._cached_snapshot(now)
 
         async with self._lock:
             now = self._clock()
             if self._count is not None and now - self._fetched_at < self._ttl_seconds:
                 return self._cached_snapshot(now)
-            if now < self._retry_at:
-                return self._cached_snapshot(now)
 
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "OpenBiliClaw",
-            }
-            if self._etag:
-                headers["If-None-Match"] = self._etag
-            try:
-                async with self._client_factory() as client:
-                    response = await client.get(
-                        f"https://api.github.com/repos/{self._repository}",
-                        headers=headers,
-                    )
-            except (httpx.HTTPError, OSError):
-                logger.debug("GitHub star count request failed", exc_info=True)
-                self._defer_retry(None, now)
-                return self._cached_snapshot(now)
+            # Primary: GitHub REST API (exact, ETag, token-aware). Skip it while
+            # inside a rate-limit backoff window — the shields.io fallback below
+            # still runs, so a token isn't required for freshness.
+            if now >= self._retry_at:
+                headers = {
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "OpenBiliClaw",
+                }
+                if self._token:
+                    headers["Authorization"] = f"Bearer {self._token}"
+                if self._etag:
+                    headers["If-None-Match"] = self._etag
+                try:
+                    async with self._client_factory() as client:
+                        response = await client.get(
+                            f"https://api.github.com/repos/{self._repository}",
+                            headers=headers,
+                        )
+                except (httpx.HTTPError, OSError):
+                    logger.debug("GitHub star count request failed", exc_info=True)
+                    self._defer_retry(None, now)
+                else:
+                    if response.status_code == 304 and self._count is not None:
+                        self._fetched_at = now
+                        self._retry_at = 0.0
+                        self._save_cache()
+                        return self._snapshot(source="github", stale=False)
 
-            if response.status_code == 304 and self._count is not None:
-                self._fetched_at = now
-                self._retry_at = 0.0
-                self._save_cache()
+                    if response.status_code == 200:
+                        try:
+                            count: Any = response.json().get("stargazers_count")
+                        except (ValueError, AttributeError):
+                            count = None
+                        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                            self._count = count
+                            self._etag = response.headers.get("ETag", "")
+                            self._fetched_at = now
+                            self._retry_at = 0.0
+                            self._save_cache()
+                            return self._snapshot(source="github", stale=False)
+
+                    self._defer_retry(response, now)
+
+            # Fallback: shields.io badge (not subject to the API's per-IP rate
+            # limit), so a token isn't required for freshness.
+            if await self._try_shields_star_count(now) is not None:
                 return self._snapshot(source="github", stale=False)
 
-            if response.status_code == 200:
-                try:
-                    count: Any = response.json().get("stargazers_count")
-                except (ValueError, AttributeError):
-                    count = None
-                if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
-                    self._count = count
-                    self._etag = response.headers.get("ETag", "")
-                    self._fetched_at = now
-                    self._retry_at = 0.0
-                    self._save_cache()
-                    return self._snapshot(source="github", stale=False)
-
-            self._defer_retry(response, now)
             return self._cached_snapshot(now)

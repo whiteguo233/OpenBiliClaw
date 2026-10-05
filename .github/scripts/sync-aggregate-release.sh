@@ -48,6 +48,7 @@ extension_line="Not published yet."
 chrome_extension_asset_line="not available yet for this version"
 firefox_signed_asset_line="no signed XPI in this release — load the temporary zip below instead"
 firefox_dev_asset_line="not available yet for this version"
+safari_extension_asset_line="not available yet for this version"
 if [ -n "$extension_tag" ]; then
   extension_version="${extension_tag#extension-v}"
   extension_line="[${extension_tag}](https://github.com/${repo}/releases/tag/${extension_tag})"
@@ -175,13 +176,17 @@ download_release_assets() {
   done < <(find "$target_dir" -maxdepth 1 -type f -print0)
 }
 
-download_release_assets "$extension_tag" "openbiliclaw-extension-v*.zip" "openbiliclaw-extension-v*.xpi"
+download_release_assets "$extension_tag" "openbiliclaw-extension-v*.zip" "openbiliclaw-extension-v*.xpi" "openbiliclaw-extension-v*-safari.dmg"
 download_release_assets "$desktop_tag" "*.dmg" "*.exe"
 
 if [ -n "$extension_tag" ]; then
   firefox_xpi_asset_name="openbiliclaw-extension-v${extension_version}-firefox.xpi"
   if asset_name_seen "$firefox_xpi_asset_name"; then
     firefox_signed_asset_line="use \`$firefox_xpi_asset_name\`"
+  fi
+  safari_extension_asset_name="openbiliclaw-extension-v${extension_version}-safari.dmg"
+  if asset_name_seen "$safari_extension_asset_name"; then
+    safari_extension_asset_line="use \`$safari_extension_asset_name\` (macOS 14+, Safari 18+)"
   fi
 fi
 
@@ -209,6 +214,7 @@ This is the user-facing aggregate release. It keeps the current backend source t
 - Chrome / Edge / Brave extension: ${chrome_extension_asset_line}
 - Firefox 140+ extension: ${firefox_signed_asset_line}
 - Firefox temporary debugging package: ${firefox_dev_asset_line}
+- Safari 18+ extension: ${safari_extension_asset_line}
 - macOS / Windows desktop app: use the attached \`.dmg\` / \`.exe\` installer when present
 ${docker_download_line}
 
@@ -218,6 +224,7 @@ ${asset_list}
 ## Notes
 
 - Chrome Web Store updates can lag GitHub releases because Google review is asynchronous.
+- The Safari \`.dmg\` is signed and notarized when Apple credentials are configured in CI; otherwise it is an unsigned experimental build and requires Safari Settings → Developer → Allow Unsigned Extensions after first launch.
 - The desktop app is still unsigned and experimental; first launch may need the README bypass steps.
 - Automation channel releases remain available as \`backend-v*\`, \`extension-v*\`, and \`desktop-v*\`; Docker images ride \`backend-v*\` tags to GHCR automatically.
 
@@ -283,7 +290,7 @@ is_aggregate_package_asset() {
   local asset_name="$1"
 
   case "$asset_name" in
-    openbiliclaw-extension-v*.zip | openbiliclaw-extension-v*.xpi | OpenBiliClaw-macos-v*.dmg | OpenBiliClaw-windows-*-Setup.exe)
+    openbiliclaw-extension-v*.zip | openbiliclaw-extension-v*.xpi | openbiliclaw-extension-v*-safari.dmg | OpenBiliClaw-macos-v*.dmg | OpenBiliClaw-windows-*-Setup.exe)
       return 0
       ;;
     *)

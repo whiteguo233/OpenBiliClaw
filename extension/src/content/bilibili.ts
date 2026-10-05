@@ -18,6 +18,7 @@
  */
 
 import { bilibiliAdapter } from "../shared/platforms/bilibili.ts";
+import { shouldStartPassiveCollector } from "./native-save/task-mode.ts";
 import type { BehaviorEvent } from "../shared/types.js";
 import type { BiliInteraction } from "../main/bili-interact-tap.js";
 import { COMMENT_TEXT_MAX_CHARS, sanitizeUserText } from "../shared/text-sanitize.ts";
@@ -107,8 +108,11 @@ function sendEvent(event: BehaviorEvent): void {
 // node --test (mirrors content/x.ts). Dynamic imports keep the DOM-heavy
 // kernel graph out of node:test's static analysis.
 if (typeof window !== "undefined" && typeof chrome !== "undefined") {
-  void import("./kernel.js").then(({ startCollector }) => {
-    startCollector(bilibiliAdapter);
+  void shouldStartPassiveCollector().then((shouldStart) => {
+    if (!shouldStart) return;
+    void import("./kernel.js").then(({ startCollector }) => {
+      startCollector(bilibiliAdapter);
+    });
   });
   void import("./bili/task-executor.js").then(({ installBiliMessageListener }) => {
     installBiliMessageListener();

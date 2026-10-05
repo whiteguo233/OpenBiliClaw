@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
+import json
 import logging
 import math
 import re
@@ -27,6 +28,13 @@ from openbiliclaw.discovery.eval_payload import (
     resolve_local_evaluation_results,
 )
 from openbiliclaw.discovery.eval_reason import normalize_evaluation_reason
+from openbiliclaw.discovery.eval_scorer_audit import (
+    LearnedShadowDecision,
+    classify_learned_context,
+    hash_learned_candidate_identity,
+    sanitize_learned_platform,
+)
+from openbiliclaw.discovery.learned_scorer import LearnedBatchResult, LearnedRelevanceScorer
 from openbiliclaw.discovery.prefilter_audit import (
     PREFILTER_EXPLORE_EXEMPT_STATUS,
     PREFILTER_NO_INTERESTS_STATUS,
@@ -48,8 +56,13 @@ from openbiliclaw.discovery.style_keys import normalize_style_key
 from openbiliclaw.discovery.temporal import (
     TEMPORAL_POLICY_VERSION,
     TemporalEvaluation,
+    evaluate_temporal_eligibility,
+    ground_temporal_evaluation,
+    is_complete_temporal_evidence_marker,
     parse_temporal_evaluation,
+    schedule_temporal_evaluation,
 )
+from openbiliclaw.llm.base import is_reasoning_budget_exhausted
 from openbiliclaw.llm.evaluation_wire import encode_evaluation_row_wire
 from openbiliclaw.llm.json_utils import (
     extract_llm_json_list,
@@ -67,7 +80,7 @@ from openbiliclaw.saved_sync.identity import (
     content_storage_key,
     make_item_key,
 )
-from openbiliclaw.sources.platforms import normalize_source_platform
+from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES, normalize_source_platform
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Mapping, Sequence
@@ -79,22 +92,52 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 _EvalCacheEntryV4 = tuple[float, str, str, str, str, str, float, str, str]
-_EvalCacheEntry = tuple[float, str, str, str] | tuple[float, str, str, str, str] | _EvalCacheEntryV4
-_BILIBILI_CONTENT_ID_PATTERN = re.compile(r"^BV[0-9A-Za-z]+$")
-_CANONICAL_STORAGE_KEY_PLATFORMS = frozenset(
-    {
-        "bilibili",
-        "xiaohongshu",
-        "douyin",
-        "youtube",
-        "twitter",
-        "zhihu",
-        "reddit",
-        "bangumi",
-        "v2ex",
-        "web",
-    }
+_EvalCacheEntryV5Legacy = tuple[
+    float,
+    str,
+    str,
+    str,
+    str,
+    str,
+    float,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    bool,
+]
+_EvalCacheEntryV5 = tuple[
+    float,
+    str,
+    str,
+    str,
+    str,
+    str,
+    float,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    bool,
+]
+_EvalCacheEntry = (
+    tuple[float, str, str, str]
+    | tuple[float, str, str, str, str]
+    | _EvalCacheEntryV4
+    | _EvalCacheEntryV5Legacy
+    | _EvalCacheEntryV5
 )
+_BILIBILI_CONTENT_ID_PATTERN = re.compile(r"^BV[0-9A-Za-z]+$")
+_CANONICAL_STORAGE_KEY_PLATFORMS = frozenset((*CANONICAL_SOURCE_FAMILIES, "web"))
 _EVALUATE_BATCH_HARD_CAP_DEFAULT: int = 90
 _DEFAULT_EVAL_BATCH_SIZE: int = 45
 _DEFAULT_EVAL_BATCH_CONCURRENCY: int = 2
@@ -120,9 +163,12 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-_EVAL_BATCH_CACHE_VERSION = "content-eval-v4"
+_EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_EVAL_SCORER_DEFAULT = "llm"
+_EVAL_SCORER_MODES = frozenset({"llm", "shadow", "learned"})
+_LEARNED_SCORER_REASON = "learned relevance scorer"
 _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT = "sparse-json"
 _EVALUATION_CANDIDATE_TRANSPORTS = frozenset({"production", "row-wire-v1", "sparse-json"})
 _EMBEDDING_PREFILTER_MIN_SIMILARITY = 0.2
@@ -355,6 +401,32 @@ def trim_candidates_for_llm(
     return list(candidates[:eval_limit])
 
 
+def _stored_json_list(value: object) -> list[str]:
+    """Decode a stored JSON string list without stringifying nested values."""
+
+    payload: object = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(payload, list):
+        return []
+    return [item.strip() for item in payload if isinstance(item, str) and item.strip()]
+
+
+def _stored_json_object(value: object) -> dict[str, object]:
+    """Decode a stored source-metadata object fail closed."""
+
+    payload: object = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
     """Extract the scored result array from a provider response."""
     payload = extract_llm_json_list(
@@ -386,39 +458,89 @@ def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
 def _apply_temporal_evaluation(
     content: DiscoveredContent,
     temporal: TemporalEvaluation,
+    *,
+    evaluated_at: str,
+    evidence_text: str,
 ) -> None:
-    """Copy validated evaluator-owned temporal metadata onto one candidate."""
+    """Ground, schedule, and copy one atomic temporal result onto a candidate."""
+
+    # Current cache tuples already carry the original evaluation/review clocks.
+    # Fresh model results do not: ground their explicit evidence against only
+    # prompt-visible content, then let the deterministic policy own scheduling.
+    if not temporal.temporal_evaluated_at:
+        temporal = ground_temporal_evaluation(temporal, content_text=evidence_text)
+        temporal = schedule_temporal_evaluation(temporal, evaluated_at=evaluated_at)
 
     content.temporal_class = temporal.temporal_class
     content.temporal_confidence = temporal.temporal_confidence
     content.temporal_reason = temporal.temporal_reason
-    content.temporal_policy_version = TEMPORAL_POLICY_VERSION
+    content.temporal_policy_version = temporal.temporal_policy_version
+    content.temporal_validity_mode = temporal.temporal_validity_mode
+    content.temporal_valid_until = temporal.temporal_valid_until
+    content.temporal_scope = temporal.temporal_scope
+    content.temporal_evidence = temporal.temporal_evidence
+    content.temporal_state = temporal.temporal_state
+    content.temporal_next_review_at = temporal.temporal_next_review_at
+    content.temporal_evaluated_at = temporal.temporal_evaluated_at
+    content.temporal_evidence_complete = temporal.evidence_complete
+    # Legacy storage adapters still consume this runtime overwrite marker.
+    content.temporal_evaluated = temporal.evidence_complete and temporal.temporal_class != "unknown"
 
 
 def _decode_eval_cache_entry(
     cached: _EvalCacheEntry,
 ) -> tuple[float, str, str, str, str, TemporalEvaluation]:
-    """Decode current evaluator cache tuples and legacy 4/5-field entries."""
+    """Decode v5 evaluator cache tuples and legacy 4/5/9-field entries."""
 
     score, reason, topic_group, style_key = cached[:4]
     franchise_key = cached[4] if len(cached) >= 5 else ""
     temporal = TemporalEvaluation()
-    if len(cached) >= 9:
-        current = cast("_EvalCacheEntryV4", cached)
-        temporal = parse_temporal_evaluation(
-            {
-                "temporal_class": current[5],
-                "temporal_confidence": current[6],
-                "temporal_reason": current[7],
-            }
+    if len(cached) >= 17:
+        cached_v5 = cast("_EvalCacheEntryV5", cached)
+        temporal = TemporalEvaluation(
+            temporal_class=cached_v5[5],
+            temporal_confidence=cached_v5[6],
+            temporal_reason=cached_v5[7],
+            temporal_policy_version=cached_v5[8],
+            temporal_validity_mode=cached_v5[9],
+            temporal_valid_until=cached_v5[10],
+            temporal_scope=cached_v5[11],
+            temporal_evidence=cached_v5[12],
+            temporal_state=cached_v5[13],
+            temporal_next_review_at=cached_v5[14],
+            temporal_evaluated_at=cached_v5[15],
+            evidence_complete=cached_v5[16],
+        )
+    elif len(cached) >= 16:
+        cached_v5_legacy = cast("_EvalCacheEntryV5Legacy", cached)
+        temporal = TemporalEvaluation(
+            temporal_class=cached_v5_legacy[5],
+            temporal_confidence=cached_v5_legacy[6],
+            temporal_reason=cached_v5_legacy[7],
+            temporal_policy_version=cached_v5_legacy[8],
+            temporal_validity_mode=cached_v5_legacy[9],
+            temporal_valid_until=cached_v5_legacy[10],
+            temporal_scope=cached_v5_legacy[11],
+            temporal_evidence=cached_v5_legacy[12],
+            temporal_next_review_at=cached_v5_legacy[13],
+            temporal_evaluated_at=cached_v5_legacy[14],
+            evidence_complete=cached_v5_legacy[15],
+        )
+    elif len(cached) >= 9:
+        cached_v4 = cast("_EvalCacheEntryV4", cached)
+        temporal = TemporalEvaluation(
+            temporal_class=cached_v4[5],
+            temporal_confidence=cached_v4[6],
+            temporal_reason=cached_v4[7],
+            temporal_policy_version=cached_v4[8],
         )
     return score, reason, topic_group, style_key, franchise_key, temporal
 
 
 def _eval_cache_entry_for_content(
     content: DiscoveredContent,
-) -> _EvalCacheEntryV4:
-    """Build the v4 in-memory cache shape from an evaluated candidate."""
+) -> _EvalCacheEntryV5:
+    """Build the v5 in-memory cache shape from an evaluated candidate."""
 
     return (
         content.relevance_score,
@@ -429,7 +551,45 @@ def _eval_cache_entry_for_content(
         content.temporal_class,
         content.temporal_confidence,
         content.temporal_reason,
-        TEMPORAL_POLICY_VERSION,
+        content.temporal_policy_version,
+        content.temporal_validity_mode,
+        content.temporal_valid_until,
+        content.temporal_scope,
+        content.temporal_evidence,
+        content.temporal_state,
+        content.temporal_next_review_at,
+        content.temporal_evaluated_at,
+        content.temporal_evidence_complete,
+    )
+
+
+def _temporal_evidence_text(content: DiscoveredContent) -> str:
+    """Return only candidate text that was eligible to ground model evidence."""
+
+    return "\n".join(
+        value
+        for value in (
+            content.title,
+            content.description,
+            content.body_text,
+            content.published_label,
+        )
+        if value
+    )
+
+
+def _temporal_evidence_text_from_prompt_item(item: Mapping[str, object]) -> str:
+    """Return exactly the text fields rendered for one evaluator item.
+
+    Batch transports may truncate or omit fields. Grounding against this
+    projection prevents text outside the actual model request from upgrading
+    a state claim into a hard eligibility decision.
+    """
+
+    return "\n".join(
+        value
+        for field_name in ("title", "description", "body_text", "published_label")
+        if isinstance((value := item.get(field_name)), str) and value
     )
 
 
@@ -510,6 +670,7 @@ def _single_evaluation_content_summary(content: DiscoveredContent) -> dict[str, 
         "author_name": content.author_name or content.up_name,
         "description": _prompt_description_for_content(content),
         "published_at": content.published_at,
+        "published_label": content.published_label,
         "duration": content.duration,
         "source_strategy": content.source_strategy,
         **_prompt_visible_content_fields(content),
@@ -553,6 +714,7 @@ def _batch_evaluation_content_item(
         "author_name": content.author_name or content.up_name,
         "description": _prompt_description_for_content(content, limit=400),
         "published_at": content.published_at,
+        "published_label": content.published_label,
         "cover_url": content.cover_url,
         "duration": content.duration,
         **_prompt_visible_content_fields(content),
@@ -648,6 +810,18 @@ class DiscoveredContent:
     temporal_confidence: float = 0.0  # Evaluator confidence in temporal_class
     temporal_reason: str = ""  # Short diagnostic for the temporal classification
     temporal_policy_version: str = TEMPORAL_POLICY_VERSION  # Code-owned policy schema
+    temporal_validity_mode: str = "none"
+    temporal_valid_until: str = ""
+    temporal_scope: str = "none"
+    temporal_evidence: str = ""
+    temporal_state: str = "unknown"
+    temporal_next_review_at: str = ""  # Deterministically scheduled, never model-owned
+    temporal_evaluated_at: str = ""  # Exact UTC clock used for this evaluation
+    temporal_evidence_complete: bool = False
+    # True only for complete, non-neutral evaluator evidence that may replace
+    # a durable classification. Raw/default/unknown results stay false so a
+    # re-ingest cannot wash a high-confidence hard-gate decision to unknown.
+    temporal_evaluated: bool = False
     pool_expression: str = ""  # Precomputed recommendation copy for fast popup paths
     pool_topic_label: str = ""  # Precomputed personalized topic label for fast popup paths
     candidate_tier: str = "primary"  # Primary discovery vs backfill supply
@@ -663,6 +837,11 @@ class DiscoveredContent:
     score_threshold: float = 0.0  # Strategy-specific admission floor for raw candidates
     body_text: str = ""  # tweet/thread full text; empty for video sources
     content_type: str = "video"  # shape: "video" | "note" | "tweet" | "thread"
+    # Bounded, normalizer-owned source provenance.  Raw upstream rows must
+    # never be assigned here; adapters expose an explicit allowlist so stable
+    # identifiers and source-specific card metadata can survive the candidate
+    # and content-cache pipeline without widening the shared schema per source.
+    source_metadata: dict[str, object] = field(default_factory=dict)
     # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
     # that produced this item (unified keyword planner). ``None`` for every
     # non-search / legacy / flag-off path — the admit-time yield backfill is a
@@ -697,6 +876,18 @@ class DiscoveredContent:
                 self.content_id,
                 self.content_url,
             )
+
+    @property
+    def scoring_key(self) -> str:
+        """Stable, unique identity for scoring dicts.
+
+        ``item_key`` is always populated for well-formed content (Bilibili and
+        cross-platform alike).  Falls back to ``bvid`` only for legacy rows
+        that predate the multi-source ``item_key`` field.  Using ``bvid``
+        directly causes all non-Bilibili items to collide at ``scores[""]``
+        because ``bvid`` defaults to the empty string for those platforms.
+        """
+        return self.item_key or self.bvid
 
     def to_cache_kwargs(self) -> dict[str, object]:
         """Build the kwargs dict for ``Database.cache_content()``.
@@ -738,6 +929,15 @@ class DiscoveredContent:
             "temporal_confidence": self.temporal_confidence,
             "temporal_reason": self.temporal_reason,
             "temporal_policy_version": self.temporal_policy_version,
+            "temporal_validity_mode": self.temporal_validity_mode,
+            "temporal_valid_until": self.temporal_valid_until,
+            "temporal_scope": self.temporal_scope,
+            "temporal_evidence": self.temporal_evidence,
+            "temporal_state": self.temporal_state,
+            "temporal_next_review_at": self.temporal_next_review_at,
+            "temporal_evaluated_at": self.temporal_evaluated_at,
+            "temporal_evidence_complete": self.temporal_evidence_complete,
+            "temporal_evaluated": self.temporal_evaluated,
             "candidate_tier": self.candidate_tier,
             "source": self.source_strategy,
             "item_key": self.item_key,
@@ -747,8 +947,30 @@ class DiscoveredContent:
             "author_name": self.author_name or self.up_name,
             "body_text": self.body_text,
             "content_type": self.content_type,
+            "source_metadata": self.source_metadata,
             "source_keyword_id": self.source_keyword_id,
         }
+
+
+@dataclass(frozen=True)
+class CacheEvaluatedItemOutcome:
+    """Authoritative cache-admission outcome for one evaluated item."""
+
+    bvid: str
+    admitted: bool
+    # ``None`` means a legacy database adapter did not expose a lock-held
+    # result, so the batch falls back to its historical row-count delta.
+    newly_cached: bool | None = None
+    temporal_rejection_reason: str = ""
+    temporal_review_reason: str = ""
+
+
+@dataclass(frozen=True)
+class CacheEvaluatedBatchOutcome:
+    """Detailed admission result used by the durable candidate state machine."""
+
+    newly_cached: int = 0
+    items: tuple[CacheEvaluatedItemOutcome, ...] = ()
 
 
 # v0.3.50+: per-batch franchise cap for ``_evaluate_batch``. The LLM
@@ -785,6 +1007,31 @@ _RELATED_CHAIN_PER_UP_CAP: int = 3
 class DiscoveryStrategy(ABC):
     """Base class for content discovery strategies."""
 
+    _bound_content_evaluator: ContentDiscoveryEngine | None = None
+
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Use the owning engine for strategy-level candidate evaluation.
+
+        Strategies may also run independently in tests and integrations. Those
+        calls keep the historical, locally constructed default evaluator; once
+        registered, however, evaluation must inherit the owning engine's scorer,
+        embedding, multimodal, cache, and concurrency configuration.
+        """
+
+        self._bound_content_evaluator = evaluator
+
+    def content_evaluator(self) -> ContentDiscoveryEngine:
+        """Return the owning evaluator or a compatible standalone fallback."""
+
+        if self._bound_content_evaluator is not None:
+            return self._bound_content_evaluator
+        return ContentDiscoveryEngine(
+            llm_service=getattr(self, "llm_service", None),
+            database=getattr(self, "database", None),
+            concurrency=getattr(self, "concurrency", None),
+            embedding_service=getattr(self, "embedding_service", None),
+        )
+
     @property
     def source_platform(self) -> str:
         """Canonical platform produced by this strategy.
@@ -800,6 +1047,47 @@ class DiscoveryStrategy(ABC):
     def name(self) -> str:
         """Strategy name."""
         ...
+
+    def filter_candidates_for_eval(
+        self,
+        candidates: list[DiscoveredContent],
+        *,
+        now: Any | None = None,
+    ) -> list[DiscoveredContent]:
+        """Apply this source's date preference before LLM evaluation.
+
+        ``eligible`` mirrors the raw-candidate enqueue gate: strict mode
+        (``weight == 1``) drops out-of-window and unparseable timestamps so the
+        evaluator never spends tokens on content the user explicitly excluded,
+        while soft mode keeps them so a source is never silently starved by a
+        preference it cannot satisfy.
+        """
+
+        preference = getattr(self, "date_preference", None) or getattr(
+            self, "publication_preference", None
+        )
+        if preference is None:
+            return candidates
+        from datetime import UTC, datetime
+
+        from openbiliclaw.recommendation.publication_preference import (
+            PRESET_ALL,
+            evaluate_source_publication_preference,
+        )
+
+        if getattr(preference, "preset", PRESET_ALL) == PRESET_ALL:
+            return candidates
+
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        return [
+            item
+            for item in candidates
+            if evaluate_source_publication_preference(
+                published_at=getattr(item, "published_at", ""),
+                preference=preference,
+                now=current,
+            ).eligible
+        ]
 
     @abstractmethod
     async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
@@ -937,6 +1225,8 @@ class ContentDiscoveryEngine:
         multimodal_vision_supported: bool | None = None,
         eval_batch_concurrency: int = _DEFAULT_EVAL_BATCH_CONCURRENCY,
         eval_prefilter_mode: str = _EMBEDDING_PREFILTER_DEFAULT_MODE,
+        eval_scorer: str = _EVAL_SCORER_DEFAULT,
+        learned_scorer: LearnedRelevanceScorer | None = None,
         compact_evaluation_json: bool = False,
         evaluation_candidate_transport: str = _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT,
     ) -> None:
@@ -957,6 +1247,10 @@ class ContentDiscoveryEngine:
         )
         self.eval_batch_concurrency = max(1, min(16, int(eval_batch_concurrency)))
         self.eval_prefilter_mode = self._normalize_eval_prefilter_mode(eval_prefilter_mode)
+        self._eval_scorer = self._normalize_eval_scorer(eval_scorer)
+        if self._eval_scorer != "llm" and learned_scorer is None:
+            learned_scorer = LearnedRelevanceScorer(embedding_service=embedding_service)
+        self._learned_scorer = learned_scorer
         # Replay-only unless and until the real provider quality/token gate
         # approves compact deterministic evaluator JSON.
         self.compact_evaluation_json = bool(compact_evaluation_json)
@@ -1012,6 +1306,13 @@ class ContentDiscoveryEngine:
         if normalized in _EMBEDDING_PREFILTER_MODES:
             return normalized
         return _EMBEDDING_PREFILTER_DEFAULT_MODE
+
+    @staticmethod
+    def _normalize_eval_scorer(scorer: str) -> str:
+        normalized = str(scorer or "").strip().lower()
+        if normalized in _EVAL_SCORER_MODES:
+            return normalized
+        return _EVAL_SCORER_DEFAULT
 
     @staticmethod
     def _embedding_prefilter_content_text(content: DiscoveredContent) -> str:
@@ -1462,6 +1763,66 @@ class ContentDiscoveryEngine:
                 updated,
             )
 
+    def _persist_learned_scorer_shadow_audit(
+        self,
+        contents: Sequence[DiscoveredContent],
+        *,
+        learned_scores: Mapping[int, float],
+        llm_scores: Mapping[int, float],
+        features_digest: str,
+        source_context: str,
+    ) -> bool:
+        """Persist complete privacy-safe scorer pairs and report full success."""
+
+        paired_indices = sorted(set(learned_scores) & set(llm_scores))
+        if not paired_indices or not re.fullmatch(r"[0-9a-f]{64}", features_digest):
+            return False
+        database = getattr(self, "_database", None)
+        recorder = getattr(database, "record_learned_scorer_shadow_audit", None)
+        if not callable(recorder):
+            return False
+        records: list[dict[str, object]] = []
+        try:
+            for content_index in paired_indices:
+                if not 0 <= content_index < len(contents):
+                    continue
+                content = contents[content_index]
+                learned_score = self._clamp_score(learned_scores[content_index])
+                llm_score = self._clamp_score(llm_scores[content_index])
+                threshold = self._admission_threshold_for_item(content)
+                decision = LearnedShadowDecision(
+                    content_index=content_index,
+                    candidate_hash=hash_learned_candidate_identity(self._content_identity(content)),
+                    platform_class=sanitize_learned_platform(content.source_platform or "bilibili"),
+                    context_class=classify_learned_context(
+                        source_context,
+                        content.source_strategy,
+                    ),
+                    learned_score=learned_score,
+                    llm_score=llm_score,
+                    admission_threshold=threshold,
+                    admission_result=llm_score >= threshold,
+                    features_digest=features_digest,
+                )
+                records.append(decision.as_storage_record())
+            if not records:
+                return False
+            inserted = int(recorder(records) or 0)
+        except Exception:
+            logger.warning(
+                "learned scorer shadow telemetry insert failed; learned result remains disabled",
+                exc_info=True,
+            )
+            return False
+        if inserted != len(records):
+            logger.warning(
+                "learned scorer shadow telemetry insert incomplete: expected=%d inserted=%d",
+                len(records),
+                inserted,
+            )
+            return False
+        return True
+
     def _supports_multimodal_evaluation(self) -> bool:
         override = getattr(self, "_multimodal_vision_supported_override", None)
         if override is not None:
@@ -1511,6 +1872,9 @@ class ContentDiscoveryEngine:
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
+        bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+        if callable(bind_evaluator):
+            bind_evaluator(self)
         self._strategies = [item for item in self._strategies if item.name != strategy.name]
         self._strategies.append(strategy)
         logger.info("Registered discovery strategy: %s", strategy.name)
@@ -1890,6 +2254,21 @@ class ContentDiscoveryEngine:
         if self._llm_service is None:
             return 0.0
 
+        # Shadow/learned calibration requires a complete learned-vs-LLM pair
+        # and uses LLM batch metadata even for one candidate. Route the single
+        # API through that same audited path instead of silently reverting to
+        # the default Agent-only evaluator.
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        if eval_scorer != "llm":
+            scores = await self.evaluate_content_batch(
+                [content],
+                profile,
+                source_context=source_context or content.source_strategy,
+            )
+            return scores[0] if scores else 0.0
+
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
         evaluated_at, evaluation_bucket = content_evaluation_clock()
@@ -1916,7 +2295,12 @@ class ContentDiscoveryEngine:
                 content.topic_group = topic_group
                 content.style_key = normalize_style_key(style_key)
                 content.franchise_key = franchise_key
-                _apply_temporal_evaluation(content, temporal)
+                _apply_temporal_evaluation(
+                    content,
+                    temporal,
+                    evaluated_at=evaluated_at,
+                    evidence_text=_temporal_evidence_text(content),
+                )
                 return score
 
         prefilter_mode = self._normalize_eval_prefilter_mode(
@@ -1960,7 +2344,12 @@ class ContentDiscoveryEngine:
                     content.topic_group = ""
                     content.style_key = ""
                     content.franchise_key = ""
-                    _apply_temporal_evaluation(content, TemporalEvaluation())
+                    _apply_temporal_evaluation(
+                        content,
+                        TemporalEvaluation(),
+                        evaluated_at=evaluated_at,
+                        evidence_text=_temporal_evidence_text(content),
+                    )
                     self._set_eval_cache_entry(
                         cache_key,
                         _eval_cache_entry_for_content(content),
@@ -2030,7 +2419,12 @@ class ContentDiscoveryEngine:
         content.topic_group = topic_group
         content.style_key = style_key
         content.franchise_key = franchise_key
-        _apply_temporal_evaluation(content, temporal)
+        _apply_temporal_evaluation(
+            content,
+            temporal,
+            evaluated_at=evaluated_at,
+            evidence_text=_temporal_evidence_text_from_prompt_item(content_summary),
+        )
         if recall.complete:
             self._set_eval_cache_entry(
                 cache_key,
@@ -2129,7 +2523,13 @@ class ContentDiscoveryEngine:
 
         eval_indices = [index for index, _content in eval_pairs]
         eval_contents = [content for _index, content in eval_pairs]
-        normal_cache_enabled = self._batch_normal_cache_eligible(
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        # Calibration modes need one complete learned-vs-LLM pair per candidate.
+        # Do not let an old per-item LLM cache hit suppress either side of that
+        # comparison; the default ``llm`` mode keeps the existing cache behavior.
+        normal_cache_enabled = eval_scorer == "llm" and self._batch_normal_cache_eligible(
             eval_contents,
             source_context=source_context,
         )
@@ -2194,7 +2594,12 @@ class ContentDiscoveryEngine:
                 content.topic_group = topic_group
                 content.style_key = style_key
                 content.franchise_key = franchise_key
-                _apply_temporal_evaluation(content, temporal)
+                _apply_temporal_evaluation(
+                    content,
+                    temporal,
+                    evaluated_at=evaluated_at,
+                    evidence_text=_temporal_evidence_text(content),
+                )
                 scores[eval_indices[i]] = score
                 cache_hit_count += 1
             else:
@@ -2210,6 +2615,9 @@ class ContentDiscoveryEngine:
         prefilter_mode = self._normalize_eval_prefilter_mode(
             getattr(self, "eval_prefilter_mode", _EMBEDDING_PREFILTER_DEFAULT_MODE)
         )
+        if eval_scorer != "llm" and prefilter_mode == "enforce":
+            logger.info("eval prefilter enforce treated as shadow during learned calibration")
+            prefilter_mode = "shadow"
         filtered_local_indices: set[int] = set()
         shadow_decisions: list[PrefilterShadowDecision] = []
         shadow_contents: list[DiscoveredContent] = []
@@ -2287,7 +2695,12 @@ class ContentDiscoveryEngine:
                         content.topic_group = ""
                         content.style_key = ""
                         content.franchise_key = ""
-                        _apply_temporal_evaluation(content, TemporalEvaluation())
+                        _apply_temporal_evaluation(
+                            content,
+                            TemporalEvaluation(),
+                            evaluated_at=evaluated_at,
+                            evidence_text=_temporal_evidence_text(content),
+                        )
                         scores[eval_indices[eval_content_index]] = prefilter_score
                         if normal_cache_enabled:
                             cache_key = self._batch_eval_cache_key(
@@ -2340,6 +2753,68 @@ class ContentDiscoveryEngine:
         )
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
+
+        # Calibration modes always continue through the full LLM evaluator. It
+        # remains the source of temporal/topic/style/franchise metadata and the
+        # comparison label written to the learned-scorer audit table. ``shadow``
+        # keeps its relevance score authoritative; ``learned`` replaces only the
+        # relevance score after a complete LLM result is available.
+        learned_model_scores: dict[int, float] = {}
+        learned_features_digest = ""
+        if eval_scorer != "llm" and self._learned_scorer is not None:
+            learned_contents = [eval_contents[i] for i in uncached_indices]
+            learned_result: LearnedBatchResult | None = None
+            try:
+                learned_result = await self._learned_scorer.score_batch(
+                    [content.to_cache_kwargs() for content in learned_contents],
+                    profile,
+                    source_context=source_context,
+                )
+            except Exception:
+                logger.exception(
+                    "eval_batch learned scorer failed; falling back to LLM (source=%s)",
+                    source_context or "mixed",
+                )
+            if learned_result is not None and learned_result.available:
+                if len(learned_result.scores) != len(learned_contents):
+                    logger.warning(
+                        "eval_batch learned scorer length mismatch; falling back to LLM "
+                        "(expected=%d actual=%d)",
+                        len(learned_contents),
+                        len(learned_result.scores),
+                    )
+                else:
+                    validated_scores = [
+                        self._validated_model_score(raw_score)
+                        for raw_score in learned_result.scores
+                    ]
+                    if any(score is None for score in validated_scores):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid score; "
+                            "falling back to LLM"
+                        )
+                    elif not re.fullmatch(
+                        r"[0-9a-f]{64}", str(learned_result.features_digest or "")
+                    ):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid features digest; "
+                            "falling back to LLM"
+                        )
+                    else:
+                        learned_model_scores = {
+                            local_index: cast("float", score)
+                            for local_index, score in zip(
+                                uncached_indices,
+                                validated_scores,
+                                strict=True,
+                            )
+                        }
+                        learned_features_digest = str(learned_result.features_digest)
+                        if eval_scorer == "learned":
+                            # Relevance caps must run after the LLM has supplied
+                            # its diversity metadata and learned scores replace
+                            # raw LLM relevance values.
+                            caller_recap_needed = True
         eval_batch_concurrency = self._effective_eval_batch_concurrency()
         logger.info(
             "eval_batch start: source=%s items=%d batches=%d concurrency=%d (cached=%d)",
@@ -2463,6 +2938,35 @@ class ContentDiscoveryEngine:
             batch_indices, batch_scores = result
             for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
                 scores[eval_indices[idx]] = batch_score
+
+        learned_audit_persisted = self._persist_learned_scorer_shadow_audit(
+            eval_contents,
+            learned_scores=learned_model_scores,
+            llm_scores=raw_model_scores,
+            features_digest=learned_features_digest,
+            source_context=source_context,
+        )
+        if eval_scorer == "learned" and learned_model_scores and learned_audit_persisted:
+            applied = 0
+            for local_index, learned_score in learned_model_scores.items():
+                # A valid LLM member proves that temporal and diversity fields
+                # were parsed and applied. Missing/malformed LLM members retain
+                # their conservative 0.0 product result.
+                if local_index not in raw_model_scores:
+                    continue
+                content = eval_contents[local_index]
+                content.relevance_score = learned_score
+                content.relevance_reason = (
+                    normalize_evaluation_reason(learned_score, _LEARNED_SCORER_REASON) or ""
+                )
+                scores[eval_indices[local_index]] = learned_score
+                applied += 1
+            logger.info(
+                "eval_batch learned relevance applied: source=%s items=%d paired=%d",
+                source_context or "mixed",
+                len(learned_model_scores),
+                applied,
+            )
 
         # Cache entries hold raw model scores. Reapply batch-dependent caps
         # against the stable caller grouping whenever a hit or a cached
@@ -3160,8 +3664,8 @@ class ContentDiscoveryEngine:
                     "system_instruction": messages[0]["content"],
                     "user_input": messages[1]["content"],
                     "image_inputs": image_inputs,
-                    "max_tokens": 4096,
-                    "reasoning_effort": "",
+                    "max_tokens": 8192,
+                    "reasoning_effort": None,
                     "caller": "discovery.evaluate_batch",
                 }
                 kwargs.update(without_core_memory_kwargs(multimodal_call))
@@ -3170,14 +3674,11 @@ class ContentDiscoveryEngine:
                 kwargs = {
                     "system_instruction": messages[0]["content"],
                     "user_input": messages[1]["content"],
-                    # v0.3.51+: explicitly disable provider thinking. This
-                    # task is structured scoring (return JSON array), not
-                    # reasoning — production logs showed 8-16 min/batch
-                    # with reasoning enabled, dropping to ~30s without.
-                    # 4096 max_tokens covers the observed 1500-3000 token
-                    # output of a 30-item JSON array without making providers
-                    # reserve an unnecessarily large per-request quota.
-                    "max_tokens": 4096,
+                    # Structured scoring is a JSON-returning task, not open-ended
+                    # reasoning. Disable thinking where the adapter supports it and
+                    # give the structured output enough budget to avoid
+                    # "reasoning but no final content (finish_reason=length)".
+                    "max_tokens": 16384,
                     "caller": "discovery.evaluate_batch",
                 }
                 from openbiliclaw.llm.task_options import call_accepts_keyword
@@ -3275,7 +3776,14 @@ class ContentDiscoveryEngine:
             content.topic_group = topic_group
             content.style_key = style_key
             content.franchise_key = franchise_key
-            _apply_temporal_evaluation(content, temporal)
+            _apply_temporal_evaluation(
+                content,
+                temporal,
+                evaluated_at=evaluated_at,
+                evidence_text=_temporal_evidence_text_from_prompt_item(
+                    canonical_batch.items[i] if canonical_batch is not None else content_items[i]
+                ),
+            )
 
             cache_key = self._batch_eval_cache_key(
                 content,
@@ -3415,15 +3923,31 @@ class ContentDiscoveryEngine:
 
         async def run(indices: list[int], depth: int) -> None:
             subset = [batch[index] for index in indices]
-            subset_results = await self._evaluate_batch_once(
-                subset,
-                profile,
-                source_context=source_context,
-                negative_examples=negative_examples,
-                evaluated_at=evaluated_at,
-                evaluation_bucket=evaluation_bucket,
-                normal_cache_enabled=normal_cache_enabled,
-            )
+            try:
+                subset_results = await self._evaluate_batch_once(
+                    subset,
+                    profile,
+                    source_context=source_context,
+                    negative_examples=negative_examples,
+                    evaluated_at=evaluated_at,
+                    evaluation_bucket=evaluation_bucket,
+                    normal_cache_enabled=normal_cache_enabled,
+                )
+            except Exception as exc:
+                if not is_reasoning_budget_exhausted(exc):
+                    raise
+                # A reasoning-first model burned the whole output budget on
+                # invisible thinking and returned no final content. Unlike a
+                # timeout, the failure is size-dependent: mark every member
+                # missing so the recursive split below retries the same work
+                # in smaller batches until it fits. Rate limits / auth /
+                # transport failures keep propagating unchanged.
+                logger.warning(
+                    "Batch evaluation exhausted the output budget on %d item(s); "
+                    "splitting the batch",
+                    len(subset),
+                )
+                subset_results = [None] * len(subset)
             missing: list[int] = []
             for index, score in zip(indices, subset_results, strict=True):
                 results[index] = score
@@ -3520,6 +4044,13 @@ class ContentDiscoveryEngine:
         keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
+        # Backfill variants are normally dataclass replacements and therefore
+        # do not retain dynamic instance attributes. Binding at every dispatch
+        # makes both primary and backfill strategies inherit the global scorer.
+        for strategy in strategies:
+            bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+            if callable(bind_evaluator):
+                bind_evaluator(self)
         run_entries = [
             (strategy, self._strategy_run_limit(strategy, limit, strategy_limits))
             for strategy in strategies
@@ -3773,7 +4304,7 @@ class ContentDiscoveryEngine:
                     up_name=str(row.get("up_name", "")),
                     up_mid=int(row.get("up_mid", 0) or 0),
                     duration=int(row.get("duration", 0) or 0),
-                    tags=[],
+                    tags=_stored_json_list(row.get("tags", "[]")),
                     topic_key=str(row.get("topic_key", "")),
                     topic_group=str(row.get("topic_group", "")),
                     style_key=str(row.get("style_key", "")),
@@ -3783,15 +4314,49 @@ class ContentDiscoveryEngine:
                     cover_url=str(row.get("cover_url", "")),
                     view_count=int(row.get("view_count", 0) or 0),
                     like_count=int(row.get("like_count", 0) or 0),
+                    favorite_count=int(row.get("favorite_count", 0) or 0),
+                    collect_count=int(row.get("collect_count", 0) or 0),
+                    comment_count=int(row.get("comment_count", 0) or 0),
+                    share_count=int(row.get("share_count", 0) or 0),
+                    danmaku_count=int(row.get("danmaku_count", 0) or 0),
+                    reply_count=int(row.get("reply_count", 0) or 0),
+                    retweet_count=int(row.get("retweet_count", 0) or 0),
+                    bookmark_count=int(row.get("bookmark_count", 0) or 0),
+                    rating_score=float(row.get("rating_score", 0.0) or 0.0),
+                    rating_count=int(row.get("rating_count", 0) or 0),
+                    source_rank=int(row.get("source_rank", 0) or 0),
                     source_strategy=str(row.get("source", "")),
                     relevance_score=self._clamp_score(row.get("relevance_score", 0.0)),
                     relevance_reason=str(row.get("relevance_reason", "")),
+                    temporal_class=str(row.get("temporal_class", "unknown") or "unknown"),
+                    temporal_confidence=float(row.get("temporal_confidence", 0.0) or 0.0),
+                    temporal_reason=str(row.get("temporal_reason", "") or ""),
+                    temporal_policy_version=str(
+                        row.get("temporal_policy_version", TEMPORAL_POLICY_VERSION)
+                        or TEMPORAL_POLICY_VERSION
+                    ),
+                    temporal_validity_mode=str(row.get("temporal_validity_mode", "none") or "none"),
+                    temporal_valid_until=str(row.get("temporal_valid_until", "") or ""),
+                    temporal_scope=str(row.get("temporal_scope", "none") or "none"),
+                    temporal_evidence=str(row.get("temporal_evidence", "") or ""),
+                    temporal_state=str(row.get("temporal_state", "unknown") or "unknown"),
+                    temporal_next_review_at=str(row.get("temporal_next_review_at", "") or ""),
+                    temporal_evaluated_at=str(row.get("temporal_evaluated_at", "") or ""),
+                    temporal_evidence_complete=is_complete_temporal_evidence_marker(
+                        row.get("temporal_evidence_complete")
+                    ),
+                    pool_expression=str(row.get("pool_expression", "") or ""),
+                    pool_topic_label=str(row.get("pool_topic_label", "") or ""),
                     candidate_tier="backfill",
                     discovered_at=str(row.get("discovered_at", "")),
                     last_scored_at=str(row.get("last_scored_at", "")),
                     content_id=str(row.get("content_id", "") or bvid),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    author_name=str(row.get("author_name", "") or ""),
+                    body_text=str(row.get("body_text", "") or ""),
+                    content_type=str(row.get("content_type", "") or "video"),
+                    source_metadata=_stored_json_object(row.get("source_metadata", "{}")),
                 )
             )
             if len(candidates) >= limit:
@@ -4254,15 +4819,30 @@ class ContentDiscoveryEngine:
             return 0
         return int(row["count"] if isinstance(row, dict) else row[0])
 
-    def cache_evaluated_results(self, results: list[DiscoveredContent]) -> int:
-        """Persist evaluated discovery results and return newly cached row count."""
+    def cache_evaluated_results_detailed(
+        self,
+        results: list[DiscoveredContent],
+    ) -> CacheEvaluatedBatchOutcome:
+        """Persist evaluated results with the storage lock's final decision."""
 
         if self._database is None or not results:
-            return 0
+            return CacheEvaluatedBatchOutcome()
         before = self._cached_result_count(results)
-        self._cache_results(results)
-        after = self._cached_result_count(results)
-        return max(0, after - before)
+        outcomes = self._cache_results(results)
+        if outcomes and all(outcome.newly_cached is not None for outcome in outcomes):
+            newly_cached = sum(bool(outcome.newly_cached) for outcome in outcomes)
+        else:
+            after = self._cached_result_count(results)
+            newly_cached = max(0, after - before)
+        return CacheEvaluatedBatchOutcome(
+            newly_cached=newly_cached,
+            items=outcomes,
+        )
+
+    def cache_evaluated_results(self, results: list[DiscoveredContent]) -> int:
+        """Persist evaluated results and return newly cached row count."""
+
+        return self.cache_evaluated_results_detailed(results).newly_cached
 
     async def normalize_evaluated_results(self, results: list[DiscoveredContent]) -> None:
         """Apply discovery topic normalization before evaluated candidates are cached."""
@@ -4272,6 +4852,25 @@ class ContentDiscoveryEngine:
 
     def cache_admission_block_reason(self, item: DiscoveredContent) -> str:
         """Return why an evaluated item should not be written to ``content_cache``."""
+
+        temporal = evaluate_temporal_eligibility(
+            temporal_class=item.temporal_class,
+            temporal_confidence=item.temporal_confidence,
+            published_at=item.published_at,
+            temporal_validity_mode=item.temporal_validity_mode,
+            temporal_valid_until=item.temporal_valid_until,
+            temporal_scope=item.temporal_scope,
+            temporal_evidence=item.temporal_evidence,
+            temporal_state=item.temporal_state,
+            temporal_next_review_at=item.temporal_next_review_at,
+            temporal_evaluated_at=item.temporal_evaluated_at,
+            temporal_policy_version=item.temporal_policy_version,
+            evidence_complete=item.temporal_evidence_complete,
+        )
+        if temporal.hard_expired:
+            return "temporal_stale"
+        if temporal.needs_review:
+            return "temporal_review_due"
 
         if self._database is None:
             return ""
@@ -4307,9 +4906,12 @@ class ContentDiscoveryEngine:
             requested_threshold=item.score_threshold or None,
         )
 
-    def _cache_results(self, results: list[DiscoveredContent]) -> None:
+    def _cache_results(
+        self,
+        results: list[DiscoveredContent],
+    ) -> tuple[CacheEvaluatedItemOutcome, ...]:
         if self._database is None or not results:
-            return
+            return ()
 
         # v0.3.50+: pool-wide franchise quota. Without this, multiple
         # discovery rounds can each pass the per-batch cap (4 张雪机车
@@ -4330,16 +4932,60 @@ class ContentDiscoveryEngine:
         skipped_franchise: dict[str, int] = {}
         skipped_viewed = 0
         skipped_low_score = 0
+        skipped_temporal_stale = 0
+        outcomes: list[CacheEvaluatedItemOutcome] = []
         round_franchise_counts: dict[str, int] = {}
         viewed_content_keys = self._recent_viewed_content_keys()
         for item in results:
+            temporal = evaluate_temporal_eligibility(
+                temporal_class=item.temporal_class,
+                temporal_confidence=item.temporal_confidence,
+                published_at=item.published_at,
+                temporal_validity_mode=item.temporal_validity_mode,
+                temporal_valid_until=item.temporal_valid_until,
+                temporal_scope=item.temporal_scope,
+                temporal_evidence=item.temporal_evidence,
+                temporal_state=item.temporal_state,
+                temporal_next_review_at=item.temporal_next_review_at,
+                temporal_evaluated_at=item.temporal_evaluated_at,
+                temporal_policy_version=item.temporal_policy_version,
+                evidence_complete=item.temporal_evidence_complete,
+            )
+            if not temporal.eligible:
+                skipped_temporal_stale += 1
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=False,
+                        newly_cached=False,
+                        temporal_rejection_reason=(
+                            temporal.rejection_reason if temporal.hard_expired else ""
+                        ),
+                        temporal_review_reason=(temporal.reason if temporal.needs_review else ""),
+                    )
+                )
+                continue
             if viewed_content_keys and not self._candidate_view_keys(item).isdisjoint(
                 viewed_content_keys
             ):
                 skipped_viewed += 1
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=False,
+                        newly_cached=False,
+                    )
+                )
                 continue
             if float(item.relevance_score or 0.0) < self._admission_threshold_for_item(item):
                 skipped_low_score += 1
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=False,
+                        newly_cached=False,
+                    )
+                )
                 continue
             franchise_key = (item.franchise_key or "").strip().lower()
             if franchise_key and _POOL_FRANCHISE_QUOTA > 0:
@@ -4347,6 +4993,13 @@ class ContentDiscoveryEngine:
                 round_existing = round_franchise_counts.get(franchise_key, 0)
                 if pool_existing + round_existing >= _POOL_FRANCHISE_QUOTA:
                     skipped_franchise[franchise_key] = skipped_franchise.get(franchise_key, 0) + 1
+                    outcomes.append(
+                        CacheEvaluatedItemOutcome(
+                            bvid=item.bvid,
+                            admitted=False,
+                            newly_cached=False,
+                        )
+                    )
                     continue
             try:
                 storage_key = content_storage_key(
@@ -4354,7 +5007,47 @@ class ContentDiscoveryEngine:
                     item.content_id or item.bvid,
                     item.content_url,
                 )
-                self._database.cache_content(storage_key, **item.to_cache_kwargs())
+                write_result = self._database.cache_content(
+                    storage_key,
+                    **item.to_cache_kwargs(),
+                )
+                if hasattr(write_result, "admitted"):
+                    admitted = bool(write_result.admitted)
+                    newly_cached: bool | None = bool(write_result.created and admitted)
+                    write_decision = getattr(write_result, "temporal_decision", None)
+                    write_hard_expired = bool(getattr(write_decision, "hard_expired", False))
+                    write_needs_review = bool(getattr(write_decision, "needs_review", False))
+                    temporal_rejection_reason = (
+                        str(getattr(write_decision, "rejection_reason", "") or "")
+                        if write_hard_expired
+                        else ""
+                    )
+                    temporal_review_reason = (
+                        str(getattr(write_decision, "reason", "") or "")
+                        if write_needs_review
+                        else ""
+                    )
+                else:
+                    # Compatibility for old/test/third-party adapters whose
+                    # cache sink returns ``None``. The batch-level count delta
+                    # remains the authority for ``newly_cached``.
+                    admitted = True
+                    newly_cached = None
+                    temporal_rejection_reason = ""
+                    temporal_review_reason = ""
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=admitted,
+                        newly_cached=newly_cached,
+                        temporal_rejection_reason=temporal_rejection_reason,
+                        temporal_review_reason=temporal_review_reason,
+                    )
+                )
+                if not admitted:
+                    if temporal_rejection_reason:
+                        skipped_temporal_stale += 1
+                    continue
                 persisted.append(item)
                 if franchise_key:
                     round_franchise_counts[franchise_key] = (
@@ -4370,6 +5063,13 @@ class ContentDiscoveryEngine:
                 self._backfill_keyword_yield(item)
             except Exception:
                 logger.exception("Failed to cache discovered content: %s", item.bvid)
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=False,
+                        newly_cached=False,
+                    )
+                )
 
         if skipped_viewed:
             logger.info(
@@ -4381,6 +5081,12 @@ class ContentDiscoveryEngine:
             logger.info(
                 "pool cache skipped %d item(s) below effective admission threshold",
                 skipped_low_score,
+            )
+
+        if skipped_temporal_stale:
+            logger.info(
+                "pool cache skipped %d temporally stale item(s) before writing content_cache",
+                skipped_temporal_stale,
             )
 
         if skipped_franchise:
@@ -4403,9 +5109,10 @@ class ContentDiscoveryEngine:
             except RuntimeError:
                 # _cache_results is sometimes called from sync test paths;
                 # fall through silently rather than raise.
-                return
+                return tuple(outcomes)
             loop.create_task(self._warm_mmr_embeddings(persisted))
             loop.create_task(self._warm_cover_embeddings(persisted))
+        return tuple(outcomes)
 
     def _backfill_keyword_yield(self, item: DiscoveredContent) -> None:
         """Credit one admitted item to its producing keyword (P1.8), if any.

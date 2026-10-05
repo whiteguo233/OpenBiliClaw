@@ -113,12 +113,12 @@ async def _snapshot(limit: int, out_override: str, full: bool = False) -> dict[s
     # misrepresent the cross-platform ranking.
     combined_bonus_raw: dict[str, float] = {}
     for c in candidates:
-        bvid = c.bvid
-        combined_bonus_raw[bvid] = (
-            cover_bonus.get(bvid, 0.0)
-            + visual_profile_bonus.get(bvid, 0.0)
-            + keyframe_bonus.get(bvid, 0.0)
-            + danmaku_bonus.get(bvid, 0.0)
+        scoring_key = c.scoring_key
+        combined_bonus_raw[scoring_key] = (
+            cover_bonus.get(scoring_key, 0.0)
+            + visual_profile_bonus.get(scoring_key, 0.0)
+            + keyframe_bonus.get(scoring_key, 0.0)
+            + danmaku_bonus.get(scoring_key, 0.0)
         )
     combined_bonus_norm = engine._normalize_bonus_per_platform(  # type: ignore[attr-defined]
         candidates, combined_bonus_raw
@@ -127,11 +127,12 @@ async def _snapshot(limit: int, out_override: str, full: bool = False) -> dict[s
     rows: list[dict[str, Any]] = []
     for c in candidates:
         bvid = c.bvid
-        cb = cover_bonus.get(bvid, 0.0)
-        vp = visual_profile_bonus.get(bvid, 0.0)
-        kf = keyframe_bonus.get(bvid, 0.0)
-        dm = danmaku_bonus.get(bvid, 0.0)
-        combined = combined_bonus_norm.get(bvid, 0.0)
+        scoring_key = c.scoring_key
+        cb = cover_bonus.get(scoring_key, 0.0)
+        vp = visual_profile_bonus.get(scoring_key, 0.0)
+        kf = keyframe_bonus.get(scoring_key, 0.0)
+        dm = danmaku_bonus.get(scoring_key, 0.0)
+        combined = combined_bonus_norm.get(scoring_key, 0.0)
         rows.append(
             {
                 "bvid": bvid,

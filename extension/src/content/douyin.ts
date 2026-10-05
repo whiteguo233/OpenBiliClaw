@@ -29,6 +29,7 @@ import { runtimeAssetCandidates } from "../shared/asset-prefix.ts";
 import { douyinAdapter } from "../shared/platforms/douyin.ts";
 import { registerE2EExecutor } from "./e2e-executor.ts";
 import { installNativeSaveExecutor } from "./native-save/runtime.ts";
+import { shouldStartPassiveCollector } from "./native-save/task-mode.ts";
 import { saveDouyin, verifyDouyin } from "./native-save/douyin.ts";
 
 const PASSIVE_DISCOVERY_REPLAY_LIMIT = 256;
@@ -184,8 +185,11 @@ function startDouyinBehaviorCollector(): void {
   const start = (): void => {
     if (behaviorCollectorStarted) return;
     behaviorCollectorStarted = true;
-    void import("./kernel.js").then(({ startCollector }) => {
-      startCollector(douyinAdapter);
+    void shouldStartPassiveCollector().then((shouldStart) => {
+      if (!shouldStart) return;
+      void import("./kernel.js").then(({ startCollector }) => {
+        startCollector(douyinAdapter);
+      });
     });
   };
 

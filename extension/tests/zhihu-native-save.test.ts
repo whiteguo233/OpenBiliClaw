@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   createZhihuBrowserEnvironment,
   saveZhihu,
-  type ZhihuCollectionRow,
+  verifyZhihu,
+  type ZhihuFavoriteState,
   type ZhihuNativeSaveEnvironment,
 } from "../src/content/native-save/zhihu.ts";
 import type { NativeSaveTask } from "../src/shared/native-save.ts";
@@ -32,96 +33,57 @@ function taskFor(
     content_type: contentType,
     requested_action: "favorite",
     resolved_action: "favorite",
-    target_label: "OpenBiliClaw",
+    target_label: "知乎收藏",
   };
 }
 
 interface FixtureOptions {
   currentUrl?: string;
   loginOverlay?: boolean;
+  loginAfterClick?: boolean;
   unavailable?: boolean;
-  dialogAvailable?: boolean;
-  initialRows?: Array<{ title: string; checked?: boolean }>;
-  createSucceeds?: boolean;
-  createdTitle?: string;
-  createdChecked?: boolean;
+  initialState?: ZhihuFavoriteState;
   confirmAfterClick?: boolean;
+  clickThrows?: boolean;
+  readyAfterSleeps?: number;
+  savedAfterSleeps?: number;
   rateFingerprints?: string[];
-  createdVisibleAfterLookups?: number;
-  dialogReadyAfterSleeps?: number;
 }
 
 function fixture(
   task: NativeSaveTask,
   options: FixtureOptions = {},
-): ZhihuNativeSaveEnvironment & {
-  actions: string[];
-  hasCollectionControl(): boolean;
-  mutations: number;
-} {
-  let open = false;
-  let postCreateLookups = 0;
-  let created = false;
+): ZhihuNativeSaveEnvironment & { clicks: number; sleeps: number } {
+  let state = options.initialState === undefined ? "not_saved" : options.initialState;
+  let loginOverlay = options.loginOverlay ?? false;
   let rateIndex = 0;
-  let sleeps = 0;
-  const rows = (options.initialRows ?? [{ title: "OpenBiliClaw" }]).map((row) => ({ ...row }));
   const env = {
-    actions: [] as string[],
     currentUrl: options.currentUrl ?? task.content_url,
-    mutations: 0,
-    hasVisibleLoginOverlay: () => options.loginOverlay ?? false,
+    clicks: 0,
+    sleeps: 0,
+    hasVisibleLoginOverlay: () => loginOverlay,
     isUnavailable: () => options.unavailable ?? false,
-    hasCollectionControl: () => sleeps >= (options.dialogReadyAfterSleeps ?? 0),
+    favoriteState() {
+      if (env.sleeps < (options.readyAfterSleeps ?? 0)) return null;
+      if (options.savedAfterSleeps !== undefined && env.sleeps >= options.savedAfterSleeps) {
+        state = "saved";
+      }
+      return state;
+    },
+    clickFavorite() {
+      env.clicks += 1;
+      if (options.clickThrows) throw new Error("rejected");
+      if (options.loginAfterClick) loginOverlay = true;
+      if (options.confirmAfterClick ?? true) state = "saved";
+    },
     rateLimitFingerprint() {
       const values = options.rateFingerprints ?? [""];
       const value = values[Math.min(rateIndex, values.length - 1)] ?? "";
       rateIndex += 1;
       return value;
     },
-    async openCollectionDialog() {
-      env.actions.push("open");
-      open = sleeps >= (options.dialogReadyAfterSleeps ?? 0) && (options.dialogAvailable ?? true);
-      return open;
-    },
-    async closeCollectionDialog() {
-      env.actions.push("close");
-      open = false;
-    },
-    findNamedCollections(title: string) {
-      if (!open) return [];
-      if (created) postCreateLookups += 1;
-      return rows.filter((candidate) => candidate.title === title).map((row): ZhihuCollectionRow => ({
-        isChecked: () => row.checked ?? false,
-        click() {
-          env.actions.push(`select:${row.title}`);
-          env.mutations += 1;
-          if (options.confirmAfterClick ?? true) row.checked = true;
-        },
-      }));
-    },
-    async createCollection(title: string) {
-      env.actions.push(`create:${title}`);
-      env.mutations += 1;
-      if (!(options.createSucceeds ?? true)) return false;
-      created = true;
-      const visibleAfter = options.createdVisibleAfterLookups ?? 0;
-      const createdRow = { title: options.createdTitle ?? title, checked: options.createdChecked ?? false };
-      if (visibleAfter === 0) rows.push(createdRow);
-      else {
-        const originalFind = env.findNamedCollections.bind(env);
-        env.findNamedCollections = (lookupTitle: string) => {
-          const found = originalFind(lookupTitle);
-          if (postCreateLookups >= visibleAfter && !rows.includes(createdRow)) rows.push(createdRow);
-          return found.length > 0 ? found : originalFind(lookupTitle);
-        };
-      }
-      return true;
-    },
-    sleep: async () => { sleeps += 1; },
-  } satisfies ZhihuNativeSaveEnvironment & {
-    hasCollectionControl(): boolean;
-    mutations: number;
-  };
+    sleep: async () => { env.sleeps += 1; },
+  } satisfies ZhihuNativeSaveEnvironment & { clicks: number; sleeps: number };
   return env;
 }
 
@@ -134,172 +96,125 @@ test("Zhihu native save accepts exact typed question, answer, and article identi
     const task = taskFor(type, id);
     const env = fixture(task);
     assert.deepEqual(await saveZhihu(task, env), { status: "synced" });
-    assert.equal(env.mutations, 1);
+    assert.equal(env.clicks, 1);
   }
 });
 
-test("Zhihu native save waits for the collection trigger before mutation", async () => {
+test("Zhihu native save waits for one exact favorite control before mutation", async () => {
   const task = taskFor("answer", "2002");
-  const env = fixture(task, { dialogReadyAfterSleeps: 2 });
+  const env = fixture(task, { readyAfterSleeps: 3 });
   assert.deepEqual(await saveZhihu(task, env), { status: "synced" });
-  assert.equal(env.mutations, 1);
-  assert.equal(env.actions.filter((action) => action === "open").length, 1);
+  assert.equal(env.sleeps, 3);
+  assert.equal(env.clicks, 1);
 });
 
-test("Zhihu native save reports the exact control, dialog, target, and confirmation stage", async () => {
+test("Zhihu native save reports exact control, request, and confirmation failures", async () => {
   const task = taskFor("answer", "2002");
-  const cases: Array<[ZhihuNativeSaveEnvironment, string]> = [
-    [fixture(task, { dialogReadyAfterSleeps: 100 }), "native_control_not_found"],
-    [fixture(task, { dialogAvailable: false }), "native_dialog_not_opened"],
+  const cases: Array<[ZhihuNativeSaveEnvironment & { clicks: number }, string]> = [
+    [fixture(task, { initialState: null }), "native_control_not_found"],
+    [fixture(task, { clickThrows: true }), "native_request_rejected"],
     [fixture(task, { confirmAfterClick: false }), "native_confirmation_not_observed"],
-    [
-      fixture(task, { initialRows: [{ title: "Other" }], createSucceeds: false }),
-      "native_request_rejected",
-    ],
   ];
-
-  for (const [env, errorCode] of cases) {
-    assert.deepEqual(await saveZhihu(task, env), {
-      status: "failed",
-      error_code: errorCode,
-    });
+  for (const [env, code] of cases) {
+    assert.deepEqual(await saveZhihu(task, env), { status: "failed", error_code: code });
   }
+  assert.equal(cases[0][0].clicks, 0);
+  assert.equal(cases[1][0].clicks, 1);
+  assert.equal(cases[2][0].clicks, 1);
+});
+
+test("Zhihu persisted verification is strictly read-only", async () => {
+  const task = taskFor("answer", "2002");
+  const saved = fixture(task, { initialState: "saved" });
+  assert.deepEqual(await verifyZhihu(task, saved), { status: "already_synced" });
+  assert.equal(saved.clicks, 0);
+
+  const missing = fixture(task, { initialState: "not_saved" });
+  assert.deepEqual(await verifyZhihu(task, missing), {
+    status: "failed",
+    error_code: "native_confirmation_not_observed",
+  });
+  assert.equal(missing.clicks, 0);
 });
 
 test("Zhihu native save rejects task, page, item, and content-type mismatches before mutation", async () => {
   const task = taskFor("answer", "2002");
-  const cases: Array<[NativeSaveTask, string | undefined]> = [
-    [{ ...task, item_key: "zhihu:answer:9999" }, undefined],
-    [{ ...task, content_type: "question" }, undefined],
-    [{ ...task, content_url: "https://www.zhihu.com/question/101/answer/9999" }, undefined],
-    [task, "https://www.zhihu.com/question/101/answer/9999"],
-    [task, "https://www.zhihu.com/question/999/answer/2002"],
-    [task, "https://www.zhihu.com/people/demo"],
+  const cases = [
+    { ...task, platform: "reddit" as const },
+    { ...task, platform_slug: "reddit" as const },
+    { ...task, item_key: "zhihu:answer:9999" },
+    { ...task, content_type: "question" },
+    { ...task, content_url: "https://www.zhihu.com/question/999/answer/2002" },
   ];
-  for (const [candidate, currentUrl] of cases) {
-    const env = fixture(task, { currentUrl });
+  for (const candidate of cases) {
+    const env = fixture(task);
     assert.deepEqual(await saveZhihu(candidate, env), {
       status: "unsupported",
       error_code: "unsupported_content_type",
     });
-    assert.equal(env.mutations, 0);
-    assert.deepEqual(env.actions, []);
+    assert.equal(env.clicks, 0);
   }
 });
 
-test("Zhihu native save rejects unavailable or deleted content before opening the dialog", async () => {
-  const task = taskFor("question", "1001");
-  const env = fixture(task, { unavailable: true });
-  assert.deepEqual(await saveZhihu(task, env), {
+test("Zhihu native save handles unavailable and login states without mutation", async () => {
+  const task = taskFor("answer", "2002");
+  const unavailable = fixture(task, { unavailable: true });
+  assert.deepEqual(await saveZhihu(task, unavailable), {
     status: "unsupported",
     error_code: "unsupported_content_type",
   });
-  assert.deepEqual(env.actions, []);
+  assert.equal(unavailable.clicks, 0);
+
+  const login = fixture(task, { loginOverlay: true });
+  assert.deepEqual(await saveZhihu(task, login), { status: "login_required" });
+  assert.equal(login.clicks, 0);
+
+  const prompted = fixture(task, { loginAfterClick: true, confirmAfterClick: false });
+  assert.deepEqual(await saveZhihu(task, prompted), { status: "login_required" });
+  assert.equal(prompted.clicks, 1);
 });
 
-test("Zhihu native save returns login_required for a visible overlay before mutation", async () => {
-  const task = taskFor("article", "3003");
-  const env = fixture(task, { loginOverlay: true });
-  assert.deepEqual(await saveZhihu(task, env), { status: "login_required" });
-  assert.equal(env.mutations, 0);
-  assert.deepEqual(env.actions, []);
-});
-
-test("Zhihu favorite and watch_later both resolve only to exact OpenBiliClaw favorite", async () => {
+test("Zhihu favorite and watch_later resolve only to the exact global favorite target", async () => {
   const task = taskFor("answer", "2002");
-  for (const requested_action of ["favorite", "watch_later"] as const) {
+  for (const requestedAction of ["favorite", "watch_later"] as const) {
     const env = fixture(task);
-    assert.deepEqual(await saveZhihu({ ...task, requested_action }, env), { status: "synced" });
+    assert.deepEqual(await saveZhihu({ ...task, requested_action: requestedAction }, env), {
+      status: "synced",
+    });
   }
-  for (const mismatch of [
-    { ...task, target_label: "openbiliclaw" },
-    { ...task, requested_action: "watch_later" as const, resolved_action: "watch_later" as const },
-  ]) {
+  for (const target of ["OpenBiliClaw", "Zhihu Favorites", " 知乎收藏", "知乎收藏 "]) {
     const env = fixture(task);
-    assert.deepEqual(await saveZhihu(mismatch, env), {
+    assert.deepEqual(await saveZhihu({ ...task, target_label: target }, env), {
       status: "failed",
       error_code: "native_save_failed",
     });
-    assert.equal(env.mutations, 0);
+    assert.equal(env.clicks, 0);
   }
 });
 
-test("Zhihu native save uses exact case-sensitive Unicode title and resolves exact duplicates deterministically", async () => {
-  const task = taskFor("question", "1001");
-  const caseEnv = fixture(task, { initialRows: [{ title: "openbiliclaw" }] });
-  assert.deepEqual(await saveZhihu(task, caseEnv), { status: "synced" });
-  assert.deepEqual(caseEnv.actions, ["open", "create:OpenBiliClaw", "select:OpenBiliClaw"]);
-
-  const duplicateEnv = fixture(task, {
-    initialRows: [{ title: "OpenBiliClaw" }, { title: "OpenBiliClaw" }],
-  });
-  assert.deepEqual(await saveZhihu(task, duplicateEnv), { status: "synced" });
-  assert.equal(duplicateEnv.mutations, 1);
-});
-
-test("Zhihu native save creates exactly once, reuses the refreshed dialog, and selects unchecked row", async () => {
-  const task = taskFor("article", "3003");
-  const env = fixture(task, { initialRows: [], createdChecked: false });
-  assert.deepEqual(await saveZhihu(task, env), { status: "synced" });
-  assert.deepEqual(env.actions, ["open", "create:OpenBiliClaw", "select:OpenBiliClaw"]);
-  assert.equal(env.mutations, 2);
-});
-
-test("Zhihu native save polls the refreshed dialog until the created exact row materializes", async () => {
-  const task = taskFor("article", "3003");
-  const env = fixture(task, {
-    initialRows: [],
-    createdVisibleAfterLookups: 3,
-  });
-  assert.deepEqual(await saveZhihu(task, env), { status: "synced" });
-  assert.equal(env.actions.filter((action) => action === "create:OpenBiliClaw").length, 1);
-});
-
-test("Zhihu native save never falls back after create failure or re-query mismatch", async () => {
+test("Zhihu native save never clicks an already-saved control", async () => {
   const task = taskFor("answer", "2002");
-  for (const [env, errorCode] of [
-    [fixture(task, { initialRows: [{ title: "Other" }], createSucceeds: false }), "native_request_rejected"],
-    [fixture(task, { initialRows: [{ title: "Other" }], createdTitle: "openbiliclaw" }), "native_target_not_found"],
-  ] as const) {
-    assert.deepEqual(await saveZhihu(task, env), {
-      status: "failed",
-      error_code: errorCode,
-    });
-    assert.equal(env.actions.some((action) => action === "select:Other"), false);
-    assert.equal(env.actions.some((action) => action === "select:openbiliclaw"), false);
-  }
-});
-
-test("Zhihu native save is idempotent and gives selected proof precedence", async () => {
-  const task = taskFor("question", "1001");
-  const existing = fixture(task, {
-    initialRows: [{ title: "OpenBiliClaw", checked: true }],
-    rateFingerprints: ["stale-rate", "stale-rate\nnew-rate"],
-  });
-  assert.deepEqual(await saveZhihu(task, existing), { status: "already_synced" });
-  assert.equal(existing.mutations, 0);
-
-  const selectedAfterClick = fixture(task, {
-    rateFingerprints: ["", "new-rate"],
-  });
-  assert.deepEqual(await saveZhihu(task, selectedAfterClick), { status: "synced" });
+  const env = fixture(task, { initialState: "saved" });
+  assert.deepEqual(await saveZhihu(task, env), { status: "already_synced" });
+  assert.equal(env.clicks, 0);
 });
 
 test("Zhihu native save detects only directional new action-local rate evidence", async () => {
   const task = taskFor("answer", "2002");
-  const newRate = fixture(task, {
+  const rateLimited = fixture(task, {
     confirmAfterClick: false,
-    rateFingerprints: ["stale", "stale\nnew"],
+    rateFingerprints: ["1:stale", "1:stale\n2:操作频繁"],
   });
-  assert.deepEqual(await saveZhihu(task, newRate), { status: "rate_limited" });
+  assert.deepEqual(await saveZhihu(task, rateLimited), { status: "rate_limited" });
 
-  for (const rateFingerprints of [["stale", "stale"], ["a\nb", "b\na"]]) {
-    const stale = fixture(task, { confirmAfterClick: false, rateFingerprints });
-    assert.deepEqual(await saveZhihu(task, stale), {
-      status: "failed",
-      error_code: "native_confirmation_not_observed",
-    });
-  }
+  const stale = fixture(task, {
+    confirmAfterClick: false,
+    rateFingerprints: ["1:stale", "1:stale"],
+  });
+  assert.deepEqual(await saveZhihu(task, stale), {
+    status: "failed",
+    error_code: "native_confirmation_not_observed",
+  });
 });
 
 test("Zhihu native save rejects extra-colon typed identities before mutation", async () => {
@@ -320,12 +235,13 @@ test("Zhihu native save rejects extra-colon typed identities before mutation", a
       status: "unsupported",
       error_code: "unsupported_content_type",
     });
-    assert.equal(env.mutations, 0);
+    assert.equal(env.clicks, 0);
   }
 });
 
 function domElement(options: {
   attrs?: Record<string, string>;
+  getAttr?: (name: string) => string | null;
   hidden?: boolean;
   parent?: unknown;
   text?: string;
@@ -339,11 +255,9 @@ function domElement(options: {
     parentElement: options.parent ?? null,
     textContent: options.text ?? "",
     hasAttribute(name: string) { return attrs.has(name); },
-    getAttribute(name: string) { return attrs.get(name) ?? null; },
+    getAttribute(name: string) { return options.getAttr?.(name) ?? attrs.get(name) ?? null; },
     querySelectorAll(selector: string) { return options.query?.(selector) ?? []; },
-    querySelector(selector: string) { return options.query?.(selector)?.[0] ?? null; },
     click() { options.click?.(); },
-    dispatchEvent() { return true; },
   } as unknown as HTMLElement;
 }
 
@@ -368,391 +282,109 @@ test("Zhihu browser environment applies full ancestor visibility to login and un
   assert.equal(env.hasVisibleLoginOverlay(), true);
 });
 
-test("Zhihu browser environment binds control, dialog, and row to the exact closest identity", async () => {
+test("Zhihu browser environment binds the global toggle to the exact closest identity", async () => {
   const task = taskFor("answer", "2002");
+  let targetLabel = "收藏";
   let targetClicks = 0;
   let relatedClicks = 0;
-  let rowChecked = false;
-  let dialogsOpen = false;
-
   let targetContainer: HTMLElement;
-  let nestedRelatedContainer: HTMLElement;
+  let relatedContainer: HTMLElement;
   const targetButton = domElement({
-    attrs: { "aria-label": "收藏" },
-    click: () => { targetClicks += 1; dialogsOpen = true; },
+    getAttr: (name) => name === "aria-label" ? targetLabel : null,
+    text: "\u200b 209",
+    click: () => { targetClicks += 1; targetLabel = "已收藏"; },
   });
   const relatedButton = domElement({
     attrs: { "aria-label": "收藏" },
     click: () => { relatedClicks += 1; },
   });
-  nestedRelatedContainer = domElement({
-    attrs: { "data-answer-id": "9999" },
-    query: (selector) => selector.includes("button") ? [relatedButton] : [],
-  });
+  relatedContainer = domElement({ attrs: { "data-answer-id": "9999" } });
   targetContainer = domElement({
     attrs: { "data-answer-id": "2002" },
-    query: (selector) => selector.includes("button")
-      ? [targetButton, relatedButton]
-      : [],
+    query: (selector) => selector.includes("button") ? [targetButton, relatedButton] : [],
   });
   (targetButton as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
-  (nestedRelatedContainer as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
-  (relatedButton as unknown as { parentElement: HTMLElement }).parentElement = nestedRelatedContainer;
-
-  let exactDialog: HTMLElement;
-  const checkbox = domElement({
-    attrs: { role: "checkbox", "aria-checked": "false" },
-    click: () => {
-      rowChecked = true;
-      (checkbox as unknown as { getAttribute(name: string): string | null }).getAttribute =
-        (name) => name === "aria-checked" ? "true" : name === "role" ? "checkbox" : null;
-    },
-  });
-  const row = domElement({
-    attrs: { "data-collection-id": "88" },
-    text: "OpenBiliClaw",
-    query: (selector) => selector.includes("checkbox") ? [checkbox] : [],
-  });
-  let spacedClicks = 0;
-  const spacedRow = domElement({
-    attrs: { "data-collection-id": "89" },
-    text: " OpenBiliClaw ",
-    click: () => { spacedClicks += 1; },
-  });
-  let nestedRowContainer: HTMLElement;
-  const nestedRow = domElement({
-    attrs: { "data-collection-id": "90" },
-    text: "OpenBiliClaw",
-  });
-  nestedRowContainer = domElement({ attrs: { "data-answer-id": "9999" } });
-  exactDialog = domElement({
-    attrs: { role: "dialog", "data-answer-id": "2002" },
-    query: (selector) => selector.includes("collection") || selector.includes("favlist")
-      ? [row, spacedRow, nestedRow]
-      : [],
-  });
-  (row as unknown as { parentElement: HTMLElement }).parentElement = exactDialog;
-  (checkbox as unknown as { parentElement: HTMLElement }).parentElement = row;
-  (spacedRow as unknown as { parentElement: HTMLElement }).parentElement = exactDialog;
-  (nestedRowContainer as unknown as { parentElement: HTMLElement }).parentElement = exactDialog;
-  (nestedRow as unknown as { parentElement: HTMLElement }).parentElement = nestedRowContainer;
-  const relatedDialog = domElement({
-    attrs: { role: "dialog" },
-    parent: nestedRelatedContainer,
-  });
-  const hiddenAncestor = domElement({ hidden: true });
-  const hiddenExactDialog = domElement({
-    attrs: { role: "dialog", "data-answer-id": "2002" },
-    parent: hiddenAncestor,
-  });
-
+  (relatedContainer as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
+  (relatedButton as unknown as { parentElement: HTMLElement }).parentElement = relatedContainer;
   const root = {
     defaultView: null,
     querySelectorAll(selector: string) {
-      if (selector.includes("data-zop") || selector.includes("data-answer-id")) {
-        return [targetContainer, nestedRelatedContainer];
-      }
-      if (selector.includes("[role='dialog']")) {
-        return dialogsOpen ? [relatedDialog, hiddenExactDialog, exactDialog] : [];
-      }
-      return [];
+      return selector.includes("data-answer-id") || selector.includes("data-zop")
+        ? [targetContainer, relatedContainer]
+        : [];
     },
   } as unknown as Document;
   const env = createZhihuBrowserEnvironment(root, task.content_url);
+  assert.equal(env.favoriteState(), "not_saved");
   assert.deepEqual(await saveZhihu(task, env), { status: "synced" });
+  assert.equal(env.favoriteState(), "saved");
   assert.equal(targetClicks, 1);
   assert.equal(relatedClicks, 0);
-  assert.equal(rowChecked, true);
-  assert.equal(spacedClicks, 0);
+  assert.deepEqual(await verifyZhihu(task, env), { status: "already_synced" });
+  assert.equal(targetClicks, 1);
 });
 
-test("Zhihu browser environment accepts one exact semantic collection row", async () => {
+test("Zhihu browser environment rejects cancel labels and ambiguous exact controls", () => {
   const task = taskFor("answer", "2002");
-  let dialogOpen = false;
+  let clicks = 0;
   const container = domElement({ attrs: { "data-answer-id": "2002" } });
-  const openButton = domElement({
-    attrs: { "aria-label": "收藏" },
+  const cancel = domElement({
+    attrs: { "aria-label": "取消收藏" },
     parent: container,
-    click: () => { dialogOpen = true; },
+    click: () => { clicks += 1; },
   });
+  let controls = [cancel];
   (container as unknown as { querySelectorAll(selector: string): unknown[] }).querySelectorAll =
-    (selector: string) => selector.includes("button") ? [openButton] : [];
-  const semanticRow = domElement({ text: "OpenBiliClaw" });
-  const dialog = domElement({
-    attrs: { role: "dialog" },
-    query: (selector) => selector === "div, span" ? [semanticRow] : [],
-  });
-  (semanticRow as unknown as { parentElement: HTMLElement }).parentElement = dialog;
+    (selector: string) => selector.includes("button") ? controls : [];
   const root = {
     defaultView: null,
     querySelectorAll(selector: string) {
-      if (selector.includes("data-zop") || selector.includes("data-answer-id")) return [container];
-      if (selector.includes("[role='dialog']")) return dialogOpen ? [dialog] : [];
-      return [];
+      return selector.includes("data-answer-id") || selector.includes("data-zop")
+        ? [container]
+        : [];
     },
   } as unknown as Document;
   const env = createZhihuBrowserEnvironment(root, task.content_url);
-  assert.equal(await env.openCollectionDialog(), true);
-  assert.equal(env.findNamedCollections("OpenBiliClaw").length, 1);
+  assert.equal(env.favoriteState(), null);
+  assert.throws(() => env.clickFavorite());
+  assert.equal(clicks, 0);
+
+  const first = domElement({ attrs: { "aria-label": "收藏" }, parent: container });
+  const second = domElement({ attrs: { "aria-label": "收藏" }, parent: container });
+  controls = [first, second];
+  assert.equal(env.favoriteState(), null);
+  assert.throws(() => env.clickFavorite());
 });
 
-test("Zhihu browser environment recognizes current Favlists row markup", async () => {
-  const task = taskFor("answer", "2002");
-  let dialogOpen = false;
-  const container = domElement({ attrs: { "data-answer-id": "2002" } });
-  const openButton = domElement({
-    attrs: { "aria-label": "收藏" },
-    parent: container,
-    click: () => { dialogOpen = true; },
-  });
-  (container as unknown as { querySelectorAll(selector: string): unknown[] }).querySelectorAll =
-    (selector: string) => selector.includes("button") ? [openButton] : [];
-  const title = domElement({ text: "OpenBiliClaw" });
-  let actionText = "收藏";
-  const action = domElement({ click: () => { actionText = "已收藏"; } });
-  (action as unknown as { textContent: string }).textContent = actionText;
-  (action as unknown as { getAttribute(name: string): string | null }).getAttribute =
-    (name) => name === "aria-label" ? actionText : null;
-  const row = domElement({
-    attrs: { class: "Favlists-item" },
-    text: "OpenBiliClaw0 条内容收藏",
-    query: (selector) => selector.includes("Favlists-itemName")
-      ? [title]
-      : selector.includes("Favlists-updateButton") ? [action] : [],
-  });
-  const dialog = domElement({
-    attrs: { role: "dialog" },
-    query: (selector) => selector.includes(".Favlists-item") ? [row] : [],
-  });
-  (title as unknown as { parentElement: HTMLElement }).parentElement = row;
-  (row as unknown as { parentElement: HTMLElement }).parentElement = dialog;
-  const root = {
-    defaultView: null,
-    querySelectorAll(selector: string) {
-      if (selector.includes("data-zop") || selector.includes("data-answer-id")) return [container];
-      if (selector.includes("[role='dialog']")) return dialogOpen ? [dialog] : [];
-      return [];
-    },
-  } as unknown as Document;
-  const env = createZhihuBrowserEnvironment(root, task.content_url);
-  assert.equal(await env.openCollectionDialog(), true);
-  const rows = env.findNamedCollections("OpenBiliClaw");
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].isChecked(), false);
-  rows[0].click();
-  assert.equal(rows[0].isChecked(), true);
-});
-
-test("Zhihu browser rate evidence ignores stale, unrelated, and nested recommendation alerts but detects reused action alert", () => {
+test("Zhihu browser rate evidence ignores stale nested alerts and detects a newly visible target alert", () => {
   const task = taskFor("question", "1001");
-  let targetContainer: HTMLElement;
-  let nestedRecommendation: HTMLElement;
   const stale = domElement({ text: "操作频繁，请稍后再试" });
-  const reused = domElement({ hidden: true, text: "操作频繁，请稍后再试" });
+  const fresh = domElement({ hidden: true, text: "操作频繁，请稍后再试" });
   const nested = domElement({ text: "操作频繁，请稍后再试" });
-  nestedRecommendation = domElement({ attrs: { "data-answer-id": "9999" } });
+  let targetContainer: HTMLElement;
+  const nestedRecommendation = domElement({ attrs: { "data-answer-id": "9999" } });
   targetContainer = domElement({
     attrs: { "data-question-id": "1001" },
-    query: (selector) => selector.includes("role='alert'") ? [stale, reused, nested] : [],
+    query: (selector) => selector.includes("role='alert'") ? [stale, fresh, nested] : [],
   });
-  for (const alert of [stale, reused]) {
-    (alert as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
-  }
+  (stale as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
+  (fresh as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
   (nestedRecommendation as unknown as { parentElement: HTMLElement }).parentElement = targetContainer;
   (nested as unknown as { parentElement: HTMLElement }).parentElement = nestedRecommendation;
-  const unrelated = domElement({ text: "操作频繁，请稍后再试" });
   const root = {
     defaultView: null,
     querySelectorAll(selector: string) {
-      if (selector.includes("data-zop") || selector.includes("data-question-id")) {
-        return [targetContainer, nestedRecommendation];
-      }
-      if (selector.includes("role='alert'")) return [unrelated];
-      return [];
+      return selector.includes("data-question-id") || selector.includes("data-zop")
+        ? [targetContainer, nestedRecommendation]
+        : [];
     },
   } as unknown as Document;
   const env = createZhihuBrowserEnvironment(root, task.content_url);
   const before = env.rateLimitFingerprint();
   assert.match(before, /^1:操作频繁/);
   assert.equal(before.split("\n").length, 1);
-  reused.hidden = false;
+  fresh.hidden = false;
   const after = env.rateLimitFingerprint();
   assert.equal(after.split("\n").length, 2);
   assert.notEqual(after, before);
-});
-
-test("Zhihu browser creation waits for async form and deterministic confirmation proof exactly once", async () => {
-  const originalInput = (globalThis as { HTMLInputElement?: unknown }).HTMLInputElement;
-  class FakeInputElement {
-    _value = "";
-    set value(value: string) { this._value = value; }
-    get value(): string { return this._value; }
-  }
-  (globalThis as { HTMLInputElement?: unknown }).HTMLInputElement = FakeInputElement;
-
-  const makeEnvironment = (
-    proofAppears: boolean,
-    detachedForm = false,
-    confirmAvailable = true,
-    markerOnlyCreate = false,
-    nestedCreateControl = false,
-    semanticOnlyCreate = false,
-    ariaOnlyCreate = false,
-    createReadyAfterQueries = 0,
-  ) => {
-    const task = taskFor("question", "1001");
-    let dialogOpen = false;
-    let newClicked = false;
-    let confirmClicks = 0;
-    let inputQueries = 0;
-    let createQueries = 0;
-    let container: HTMLElement;
-    let dialog: HTMLElement;
-    let formDialog: HTMLElement;
-    let nestedDialog: HTMLElement;
-    const openButton = domElement({
-      attrs: { "aria-label": "收藏" },
-      click: () => { dialogOpen = true; },
-    });
-    const newButton = domElement({
-      attrs: markerOnlyCreate
-        ? { "data-testid": "create-collection" }
-        : ariaOnlyCreate ? { "aria-label": "创建新收藏夹" } : undefined,
-      text: markerOnlyCreate || ariaOnlyCreate
-        ? ""
-        : detachedForm ? "+ 新建收藏夹" : "新建收藏夹",
-      click: () => { newClicked = true; },
-    });
-    const confirmButton = domElement({
-      text: detachedForm ? "确认创建" : "创建",
-      click: () => { confirmClicks += 1; },
-    });
-    const input = domElement() as HTMLInputElement & { _value?: string };
-    dialog = domElement({
-      attrs: { role: "dialog" },
-      query(selector) {
-        if (selector.includes("[aria-label]") && ariaOnlyCreate) return [newButton];
-        if (selector === "div, span") return semanticOnlyCreate && !ariaOnlyCreate ? [newButton] : [];
-        if (selector.includes("button")) {
-          if (!newClicked) {
-            createQueries += 1;
-            if (createQueries <= createReadyAfterQueries) return [];
-          }
-          if (semanticOnlyCreate || ariaOnlyCreate) {
-            return newClicked && confirmAvailable ? [confirmButton] : [];
-          }
-          return newClicked && !detachedForm && confirmAvailable
-            ? [newButton, confirmButton]
-            : [newButton];
-        }
-        if (selector.includes("input")) {
-          if (detachedForm) return [];
-          inputQueries += 1;
-          if (!newClicked || inputQueries === 1) return [];
-          if (confirmClicks > 0 && proofAppears) return [];
-          return [input];
-        }
-        return [];
-      },
-    });
-    nestedDialog = domElement({ attrs: { role: "dialog" }, parent: dialog });
-    formDialog = domElement({
-      attrs: { role: "dialog" },
-      query(selector) {
-        if (!newClicked || !detachedForm) return [];
-        if (selector.includes("button")) return confirmAvailable ? [confirmButton] : [];
-        if (selector.includes("input")) {
-          inputQueries += 1;
-          if (inputQueries === 1) return [];
-          if (confirmClicks > 0 && proofAppears) return [];
-          return [input];
-        }
-        return [];
-      },
-    });
-    container = domElement({
-      attrs: { "data-question-id": "1001" },
-      query: (selector) => selector.includes("button") ? [openButton] : [],
-    });
-    for (const element of [openButton]) {
-      (element as unknown as { parentElement: HTMLElement }).parentElement = container;
-    }
-    (newButton as unknown as { parentElement: HTMLElement }).parentElement = nestedCreateControl
-      ? nestedDialog
-      : dialog;
-    for (const element of [confirmButton, input]) {
-      (element as unknown as { parentElement: HTMLElement }).parentElement = detachedForm
-        ? formDialog
-        : dialog;
-    }
-    const root = {
-      defaultView: null,
-      querySelectorAll(selector: string) {
-        if (selector.includes("data-zop") || selector.includes("data-question-id")) return [container];
-        if (selector.includes("[role='dialog']")) {
-          return dialogOpen ? [dialog, ...(newClicked && detachedForm ? [formDialog] : [])] : [];
-        }
-        return [];
-      },
-    } as unknown as Document;
-    return {
-      env: createZhihuBrowserEnvironment(root, task.content_url),
-      confirmClicks: () => confirmClicks,
-      input,
-    };
-  };
-
-  try {
-    const confirmed = makeEnvironment(true);
-    assert.equal(await confirmed.env.openCollectionDialog(), true);
-    assert.equal(await confirmed.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(confirmed.confirmClicks(), 1);
-    assert.equal(confirmed.input._value, "OpenBiliClaw");
-
-    const detached = makeEnvironment(true, true);
-    assert.equal(await detached.env.openCollectionDialog(), true);
-    assert.equal(await detached.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(detached.confirmClicks(), 1);
-    assert.equal(detached.input._value, "OpenBiliClaw");
-
-    const markerOnly = makeEnvironment(true, false, true, true);
-    assert.equal(await markerOnly.env.openCollectionDialog(), true);
-    assert.equal(await markerOnly.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(markerOnly.confirmClicks(), 1);
-
-    const nestedControl = makeEnvironment(true, false, true, false, true);
-    assert.equal(await nestedControl.env.openCollectionDialog(), true);
-    assert.equal(await nestedControl.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(nestedControl.confirmClicks(), 1);
-
-    const semanticControl = makeEnvironment(true, false, true, false, false, true);
-    assert.equal(await semanticControl.env.openCollectionDialog(), true);
-    assert.equal(await semanticControl.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(semanticControl.confirmClicks(), 1);
-
-    const ariaControl = makeEnvironment(true, false, true, false, false, false, true);
-    assert.equal(await ariaControl.env.openCollectionDialog(), true);
-    assert.equal(await ariaControl.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(ariaControl.confirmClicks(), 1);
-
-    const delayedCreateControl = makeEnvironment(
-      true, false, true, false, false, false, false, 2,
-    );
-    assert.equal(await delayedCreateControl.env.openCollectionDialog(), true);
-    assert.equal(await delayedCreateControl.env.createCollection("OpenBiliClaw"), true);
-    assert.equal(delayedCreateControl.confirmClicks(), 1);
-
-    const noConfirm = makeEnvironment(true, true, false);
-    assert.equal(await noConfirm.env.openCollectionDialog(), true);
-    assert.equal(await noConfirm.env.createCollection("OpenBiliClaw"), false);
-    assert.equal(noConfirm.env.creationFailureCode?.(), "native_request_rejected");
-
-    const uncertain = makeEnvironment(false);
-    assert.equal(await uncertain.env.openCollectionDialog(), true);
-    assert.equal(await uncertain.env.createCollection("OpenBiliClaw"), false);
-    assert.equal(uncertain.env.creationFailureCode?.(), "native_confirmation_not_observed");
-    assert.equal(uncertain.confirmClicks(), 1);
-  } finally {
-    (globalThis as { HTMLInputElement?: unknown }).HTMLInputElement = originalInput;
-  }
 });

@@ -1,0 +1,40 @@
+{
+  "load_pool_serve_snapshot": {
+    "before_median_ms": 241.9,
+    "after_median_ms": 204.24,
+    "identical": true
+  },
+  "count_pool_readiness_isolated": {
+    "before_median_ms": 362.9,
+    "after_median_ms": 165.18,
+    "identical": true
+  },
+  "load_pool_platform_availability": {
+    "before_median_ms": 115.92,
+    "after_median_ms": 116.31,
+    "identical": true
+  },
+  "selector_40": {
+    "candidates": 40,
+    "embedding_coverage": 40,
+    "dimensions": [
+      768
+    ],
+    "selected": 10,
+    "before_median_ms": 199.6,
+    "after_median_ms": 32.13,
+    "identical_order": true
+  },
+  "selector_80": {
+    "candidates": 80,
+    "embedding_coverage": 80,
+    "dimensions": [
+      768
+    ],
+    "selected": 10,
+    "before_median_ms": 513.75,
+    "after_median_ms": 68.45,
+    "identical_order": true
+  },
+  "edge_scenarios_identical": 48
+}

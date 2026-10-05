@@ -24,6 +24,9 @@ DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = DIST_DIR / "release"
 PYPROJECT_FILE = PROJECT_ROOT / "pyproject.toml"
 SPEC_FILE = PROJECT_ROOT / "packaging" / "openbiliclaw.spec"
+TAILNET_HELPER_SOURCE_DIR = PROJECT_ROOT / "cmd" / "openbiliclaw-tailnet"
+TAILNET_HELPER_BUILD_DIR = PROJECT_ROOT / "build" / "tailnet"
+TAILNET_NOTICES_SCRIPT = PROJECT_ROOT / "scripts" / "generate_tailnet_notices.py"
 MACOS_FIRST_LAUNCH_GUIDE_NAME = "首次打开说明 First Launch.html"
 MACOS_FIRST_LAUNCH_IMAGE_NAME = "首次打开提示 First Launch.png"
 MACOS_DMG_BACKGROUND_NAME = "openbiliclaw-dmg-guide.png"
@@ -49,6 +52,83 @@ def clean() -> None:
         if d.exists():
             print(f"[build] Removing {d}")
             shutil.rmtree(d)
+
+
+def tailnet_helper_filename(platform_name: str | None = None) -> str:
+    """Return the native helper filename for *platform_name*."""
+
+    resolved = platform_name or platform.system()
+    suffix = ".exe" if resolved == "Windows" else ""
+    return f"openbiliclaw-tailnet-helper{suffix}"
+
+
+def tailnet_go_build_tags() -> str:
+    """Read the canonical privacy/size build tags for the embedded helper."""
+    path = TAILNET_HELPER_SOURCE_DIR / "build-tags.txt"
+    try:
+        tags = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Tailnet helper build tags are missing: {path}") from exc
+    if not re.fullmatch(r"[a-z0-9_]+(?:,[a-z0-9_]+)*", tags):
+        raise RuntimeError(f"Tailnet helper build tags are invalid: {path}")
+    return tags
+
+
+def build_tailnet_helper(
+    *,
+    output_dir: Path | None = None,
+    go_executable: str | None = None,
+    platform_name: str | None = None,
+) -> Path:
+    """Build the app-scoped tsnet helper for the current desktop target.
+
+    Desktop jobs are native per-architecture builds, so the Go compiler and
+    PyInstaller always target the same OS/architecture. Keeping the helper as
+    a separate process lets the Python app own its lifecycle without requiring
+    a system ``tailscaled`` daemon or a privileged network interface.
+    """
+
+    go = go_executable or shutil.which("go")
+    if not go:
+        raise RuntimeError(
+            "Go 1.26.6+ is required to build the embedded Tailnet helper "
+            "(or pass --no-bundle-tailnet)."
+        )
+    if not (TAILNET_HELPER_SOURCE_DIR / "go.mod").is_file():
+        raise RuntimeError(f"Tailnet helper source is missing: {TAILNET_HELPER_SOURCE_DIR}")
+
+    destination_dir = output_dir or TAILNET_HELPER_BUILD_DIR
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / tailnet_helper_filename(platform_name)
+    env = os.environ.copy()
+    env["CGO_ENABLED"] = "0"
+    command = [
+        go,
+        "build",
+        "-trimpath",
+        f"-tags={tailnet_go_build_tags()}",
+        "-ldflags=-s -w",
+        "-o",
+        str(destination),
+        ".",
+    ]
+    print(f"[build] Building embedded Tailnet helper: {' '.join(command)}")
+    subprocess.check_call(command, cwd=str(TAILNET_HELPER_SOURCE_DIR), env=env)
+    if platform.system() != "Windows":
+        destination.chmod(destination.stat().st_mode | 0o111)
+    subprocess.check_call(
+        [str(destination), "--self-test"],
+        cwd=str(TAILNET_HELPER_SOURCE_DIR),
+        env=env,
+    )
+    if not TAILNET_NOTICES_SCRIPT.is_file():
+        raise RuntimeError(f"Tailnet notice generator is missing: {TAILNET_NOTICES_SCRIPT}")
+    subprocess.check_call(
+        [sys.executable, str(TAILNET_NOTICES_SCRIPT), "--check"],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+    )
+    return destination
 
 
 def build_x_extra_install_command(*, pip_available: bool | None = None) -> list[str]:
@@ -808,6 +888,7 @@ def build(
     ollama_bin: str | None = None,
     bundle_x: bool = True,
     bundle_reddit: bool = True,
+    bundle_tailnet: bool = True,
     bundle_embedding: bool = False,
     model_seed_dir: str | None = None,
 ) -> None:
@@ -823,6 +904,7 @@ def build(
     # otherwise hide from the analyzer.
     bundle_x_resolved = bundle_x and ensure_x_extra()
     bundle_reddit_resolved = bundle_reddit and ensure_reddit_dependency()
+    tailnet_helper = build_tailnet_helper() if bundle_tailnet else None
 
     cmd = [
         sys.executable,
@@ -840,6 +922,9 @@ def build(
     env["OPENBILICLAW_BUNDLE_VERSION"] = bundle_version
     env["OPENBILICLAW_BUNDLE_X"] = "1" if bundle_x_resolved else "0"
     env["OPENBILICLAW_BUNDLE_REDDIT"] = "1" if bundle_reddit_resolved else "0"
+    env["OPENBILICLAW_TAILNET_HELPER_BINARY"] = (
+        str(tailnet_helper) if tailnet_helper is not None else ""
+    )
     if platform.system() == "Windows":
         version_file = write_windows_version_file(
             PROJECT_ROOT / "build" / "openbiliclaw_version_info.txt",
@@ -969,6 +1054,11 @@ def main() -> None:
         help="Do not bundle the Reddit discovery dependency (rdt-cli)",
     )
     parser.add_argument(
+        "--no-bundle-tailnet",
+        action="store_true",
+        help="Do not build/bundle the app-scoped Tailnet helper",
+    )
+    parser.add_argument(
         "--bundle-embedding",
         action="store_true",
         help="Ship the bge-m3 embedding model in the installer (the 'with-embedding' "
@@ -994,6 +1084,7 @@ def main() -> None:
         ollama_bin=args.ollama_bin,
         bundle_x=not args.no_bundle_x,
         bundle_reddit=not args.no_bundle_reddit,
+        bundle_tailnet=not args.no_bundle_tailnet,
         bundle_embedding=bundle_embedding,
         model_seed_dir=args.model_seed_dir,
     )

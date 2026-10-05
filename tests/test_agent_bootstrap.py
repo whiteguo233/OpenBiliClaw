@@ -387,7 +387,8 @@ def test_v2_template_provider_writes_target_one_instance_and_default_chain(
     instance = llm["instances"]["openai-compatible"]
 
     assert llm["routing_version"] == 2
-    assert llm["default_chain"][0] == "openai-compatible"
+    assert llm["default_chain"] == ["openai-compatible"]
+    assert llm["instances"]["deepseek"]["enabled"] is False
     assert instance["provider_type"] == "openai_compatible"
     assert instance["enabled"] is True
     assert instance["api_key"] == "sk-relay"
@@ -396,6 +397,25 @@ def test_v2_template_provider_writes_target_one_instance_and_default_chain(
     assert status["provider"] == "openai_compatible"
     assert status["instance_id"] == "openai-compatible"
     assert status["missing"] == ["bilibili.cookie"]
+
+
+def test_v2_provider_override_preserves_configured_deepseek_fallback(
+    tmp_path: Path,
+) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    (tmp_path / "config.toml").write_text(
+        (project_root / "config.example.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    bootstrap.apply_llm_api_key(tmp_path, "deepseek", "sk-deepseek")
+    bootstrap.apply_provider_override(tmp_path, "openai")
+
+    llm = bootstrap.read_simple_toml(tmp_path / "config.toml")["llm"]
+
+    assert llm["default_chain"] == ["openai", "deepseek"]
+    assert llm["instances"]["deepseek"]["enabled"] is True
+    assert llm["instances"]["deepseek"]["api_key"] == "sk-deepseek"
 
 
 def test_v2_bootstrap_module_override_creates_complete_derived_instance(
@@ -721,6 +741,12 @@ def test_human_install_choice_parser_accepts_numbers_and_aliases() -> None:
     assert bootstrap.resolve_human_llm_choice("") == "deepseek"
     assert bootstrap.resolve_human_llm_choice("1") == "deepseek"
     assert bootstrap.resolve_human_llm_choice("2") == "openai_compatible"
+    assert bootstrap.resolve_human_llm_choice("9") == "api_route"
+    assert bootstrap.resolve_human_llm_choice("api_route") == "api_route"
+    assert bootstrap.PROVIDER_MODEL_DEFAULTS["api_route"] == "gpt-5.5"
+    assert bootstrap.resolve_human_llm_choice("10") == "cheaperinference"
+    assert bootstrap.resolve_human_llm_choice("cheaperinference") == "cheaperinference"
+    assert bootstrap.PROVIDER_MODEL_DEFAULTS["cheaperinference"] == "gpt-5.4-mini"
     assert bootstrap.resolve_human_llm_choice("relay") == "openai_compatible"
     assert bootstrap.resolve_human_llm_choice("ollama") == "ollama"
     assert bootstrap.resolve_human_llm_choice("bad") is None
@@ -1644,3 +1670,84 @@ def test_stale_entry_is_not_duplicated_on_refold() -> None:
         init_status=_init_status("failed"),
     )
     assert twice["missing"].count(bootstrap.STALE_COOKIE_MISSING_ENTRY) == 1
+
+
+def test_set_toml_raw_value_matches_quoted_instance_section() -> None:
+    import tomllib
+
+    content = '[llm.instances."openai"]\nenabled = true\napi_key = "sk-old"\n'
+    updated = bootstrap.set_toml_raw_value(content, "llm.instances.openai", "enabled", "false")
+    updated = bootstrap.set_toml_string_value(updated, "llm.instances.openai", "api_key", "sk-new")
+    assert updated.count("[llm.instances") == 1
+    parsed = tomllib.loads(updated)
+    assert parsed["llm"]["instances"]["openai"]["enabled"] is False
+    assert parsed["llm"]["instances"]["openai"]["api_key"] == "sk-new"
+
+
+def test_clear_toml_string_value_matches_quoted_section() -> None:
+    import tomllib
+
+    content = '[llm.instances."openai"]\nbase_url = "https://relay.example/v1"\n'
+    updated, changed = bootstrap.clear_toml_string_value(
+        content, "llm.instances.openai", "base_url"
+    )
+    assert changed
+    assert updated.count("[llm.instances") == 1
+    assert tomllib.loads(updated)["llm"]["instances"]["openai"]["base_url"] == ""
+
+
+def test_toml_table_path_equates_bare_and_quoted_keys() -> None:
+    assert bootstrap._toml_table_path("[llm.instances.openai]") == (
+        "llm",
+        "instances",
+        "openai",
+    )
+    assert bootstrap._toml_table_path('[llm.instances."openai"]') == (
+        "llm",
+        "instances",
+        "openai",
+    )
+    assert bootstrap._toml_table_path('[llm.instances."openai-compatible"]') == (
+        "llm",
+        "instances",
+        "openai-compatible",
+    )
+
+
+def test_llm_preset_relay_uses_openai_compatible_provider(tmp_path: Path) -> None:
+    args = bootstrap.build_arg_parser().parse_args(
+        ["--project-dir", str(tmp_path), "--llm-preset", "relay"]
+    )
+    assert bootstrap.apply_llm_preset_args(args) is None
+    assert args.provider == "openai_compatible"
+
+
+def test_llm_preset_relay_remaps_historical_openai_provider(tmp_path: Path) -> None:
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--llm-preset",
+            "relay",
+            "--provider",
+            "openai",
+        ]
+    )
+    assert bootstrap.apply_llm_preset_args(args) is None
+    assert args.provider == "openai_compatible"
+
+
+def test_llm_preset_keeps_explicit_non_compat_provider_as_conflict(
+    tmp_path: Path,
+) -> None:
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--llm-preset",
+            "relay",
+            "--provider",
+            "deepseek",
+        ]
+    )
+    assert bootstrap.apply_llm_preset_args(args) == 2

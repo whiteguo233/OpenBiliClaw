@@ -927,6 +927,34 @@ class TestXhsTaskApi:
         assert second.status_code == 200
         assert second.json()["keyword"] == "second"
 
+    def test_next_task_default_does_not_request_published_at(
+        self,
+        api_client: TestClient,
+    ) -> None:
+        ctx = api_client.app.state.runtime_context
+        queue = XhsTaskQueue(ctx.database)
+        assert queue.enqueue("search", {"keyword": "default-dates"})
+
+        claimed = api_client.get("/api/sources/xhs/next-task")
+
+        assert claimed.status_code == 200
+        assert claimed.json()["need_published_at"] is False
+
+    def test_next_task_requests_published_at_when_date_preference_active(
+        self,
+        api_client: TestClient,
+    ) -> None:
+        ctx = api_client.app.state.runtime_context
+        ctx.config.sources.xiaohongshu.recommendation_date_preset = "last_7_days"
+        ctx.config.sources.xiaohongshu.recommendation_date_weight = 1.0
+        queue = XhsTaskQueue(ctx.database)
+        assert queue.enqueue("search", {"keyword": "recent-dates"})
+
+        claimed = api_client.get("/api/sources/xhs/next-task")
+
+        assert claimed.status_code == 200
+        assert claimed.json()["need_published_at"] is True
+
     def test_search_empty_result_records_explicit_error_and_safe_debug(
         self,
         api_client: TestClient,

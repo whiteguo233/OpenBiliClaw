@@ -82,6 +82,16 @@ if os.environ.get("OPENBILICLAW_BUNDLE_REDDIT", "") == "1":
         f"+{len(_reddit_datas)} datas, +{len(_reddit_hiddenimports)} hiddenimports"
     )
 
+# --- App-scoped Tailnet helper ---
+# packaging/build.py compiles the pinned Go tsnet sidecar for the same native
+# target as this PyInstaller run. It is owned by the desktop process, not a
+# system Tailscale installation or VPN service.
+_tailnet_binaries = []
+_tailnet_helper = os.environ.get("OPENBILICLAW_TAILNET_HELPER_BINARY", "").strip()
+if _tailnet_helper:
+    _tailnet_binaries.append((_tailnet_helper, "."))
+    print(f"[spec] Embedded Tailnet helper bundled: {_tailnet_helper}")
+
 # System-tray desktop mode (packaging/entry.py): the app runs as a tray icon
 # (Windows system tray / macOS menu bar) with no console window. Bundle pystray
 # + Pillow on both; the macOS backend additionally needs pyobjc (Foundation /
@@ -108,14 +118,22 @@ else:
 a = Analysis(
     [str(project_root / "packaging" / "entry.py")],
     pathex=[str(project_root / "src")],
-    binaries=[] + _x_binaries + _reddit_binaries,
+    binaries=[] + _tailnet_binaries + _x_binaries + _reddit_binaries,
     datas=[
         (str(project_root / "config.example.toml"), "."),
+        (str(project_root / "LICENSE"), "."),
+        (str(project_root / "THIRD_PARTY_NOTICES.md"), "."),
         # Web UI + first-run setup wizard. app.py serves these via StaticFiles
         # at /web, /m, /setup; without bundling them those routes 404 in the
         # packaged app. Dest mirrors the import path so __file__-relative
         # resolution (web_dir = .../openbiliclaw/web) works when frozen.
         (str(project_root / "src" / "openbiliclaw" / "web"), "openbiliclaw/web"),
+        # Builtin chat skills (M4): SKILL.md files loaded via
+        # agent/skill.py's __file__-relative builtin_skills_dir().
+        (
+            str(project_root / "src" / "openbiliclaw" / "agent" / "skills_builtin"),
+            "openbiliclaw/agent/skills_builtin",
+        ),
     ]
     + _x_datas
     + _reddit_datas,
@@ -178,6 +196,15 @@ a = Analysis(
         "openbiliclaw.api.models",
         "openbiliclaw.config",
         "openbiliclaw.cli",
+        # --- Backend child processes (four-process desktop mode) ---
+        "openbiliclaw.worker",
+        "openbiliclaw.worker.__main__",
+        "openbiliclaw.worker.main",
+        "openbiliclaw.discovery_worker",
+        "openbiliclaw.recommendation_runtime",
+        "openbiliclaw.recommendation_server",
+        "openbiliclaw.image_service",
+        # --- LLM / platform modules ---
         "openbiliclaw.llm",
         "openbiliclaw.soul",
         "openbiliclaw.soul.engine",

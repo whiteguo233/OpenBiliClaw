@@ -123,6 +123,14 @@ def _build_parser() -> argparse.ArgumentParser:
     recommend_parser.add_argument("--limit", type=int, default=5)
     recommend_parser.add_argument("--source-platform", default="")
     recommend_parser.add_argument("--exclude-item-id", action="append", default=[])
+    recommend_parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help=(
+            "Generate fresh per-item LLM expressions at request time (slow). "
+            "Default serves precomputed pool copy (fast)."
+        ),
+    )
     refresh_group = recommend_parser.add_mutually_exclusive_group()
     refresh_group.add_argument(
         "--refresh-if-needed",
@@ -288,6 +296,8 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
                 recommend_kwargs["source_platform"] = args.source_platform
             if args.exclude_item_id:
                 recommend_kwargs["excluded_item_ids"] = args.exclude_item_id
+            if getattr(args, "realtime", False):
+                recommend_kwargs["realtime"] = True
             result = await adapter.recommend(**recommend_kwargs)
         elif args.command in {"reshuffle", "append"}:
             method_name = "reshuffle" if args.command == "reshuffle" else "append_recommendations"

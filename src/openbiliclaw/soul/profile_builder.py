@@ -204,6 +204,9 @@ class ProfileBuilder:
     """Generate an initial soul profile from history and preference context."""
 
     registry: SupportsCoreMemoryTask
+    # Free-text reply-style instruction (issue #255), injected into the
+    # profile prompt's tone block. Empty (default) is byte-identical.
+    reply_style: str = ""
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
@@ -263,6 +266,7 @@ class ProfileBuilder:
                 recent_feedback=[],
             ),
             source_platform_mix=source_mix,
+            reply_style=self.reply_style,
         )
         try:
             complete_structured = self.registry.complete_structured_task

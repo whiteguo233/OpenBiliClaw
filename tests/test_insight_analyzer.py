@@ -124,6 +124,53 @@ def test_merge_insights_combines_matching_hypotheses() -> None:
     assert merged[0].validated is False
 
 
+def test_merge_insights_collapses_near_duplicate_wording() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    analyzer = InsightAnalyzer(FakeStructuredService("[]"))
+    existing = [
+        InsightHypothesis(
+            hypothesis="用户很可能将抖音作为习惯性界面操作而非内容消费渠道，用于消遣或等待状态",
+            evidence=["旧证据"],
+            confidence=0.90,
+            validated=False,
+            created_at="2026-08-18",
+        )
+    ]
+    incoming = [
+        InsightHypothesis(
+            hypothesis="用户很可能将抖音作为习惯性界面操作而非内容消费渠道，用于消遣、等待间隙或低能量状态",
+            evidence=["新一轮又提出相近结论"],
+            confidence=0.89,
+            validated=False,
+            created_at="2026-08-22",
+        )
+    ]
+
+    merged = analyzer.merge_insights(existing, incoming)
+
+    assert len(merged) == 1
+    assert merged[0].confidence == 0.89
+    assert "新一轮又提出相近结论" in merged[0].evidence
+    assert merged[0].created_at == "2026-08-18"
+
+
+def test_hypothesis_context_includes_user_verdict_and_validated() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    context = InsightAnalyzer._hypothesis_to_context_dict(
+        InsightHypothesis(
+            hypothesis="用户可能更在意工具是否真能落地",
+            confidence=0.8,
+            validated=True,
+            user_verdict="confirmed",
+        )
+    )
+
+    assert context["validated"] is True
+    assert context["user_verdict"] == "confirmed"
+
+
 @pytest.mark.asyncio
 async def test_insight_analyzer_can_use_unified_service() -> None:
     from openbiliclaw.soul.insight_analyzer import InsightAnalyzer

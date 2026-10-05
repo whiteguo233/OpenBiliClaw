@@ -9,8 +9,8 @@ export interface ChromeMockTab {
 }
 
 export interface ChromeMockState {
-  createdTabs: Array<{ active?: boolean; url: string }>;
-  updatedTabs: Array<{ active?: boolean; tabId: number; url?: string }>;
+  createdTabs: Array<{ active?: boolean; muted?: boolean; url: string }>;
+  updatedTabs: Array<{ active?: boolean; muted?: boolean; tabId: number; url?: string }>;
   reloadedTabs: number[];
   sentMessages: Array<{ message: unknown; tabId: number }>;
   removedTabs: number[];
@@ -24,7 +24,7 @@ export interface ChromeMockState {
   sessionRemoveImpl: (key: string) => Promise<void>;
   tabById: Map<number, ChromeMockTab>;
   nextCreatedTabStatus: string;
-  createImpl: (opts: { active?: boolean; url: string }) => Promise<ChromeMockTab>;
+  createImpl: (opts: { active?: boolean; muted?: boolean; url: string }) => Promise<ChromeMockTab>;
   getImpl: (tabId: number) => Promise<ChromeMockTab>;
   sendMessageImpl: (tabId: number, message: unknown) => Promise<unknown>;
   removeImpl: (tabId: number) => Promise<void>;
@@ -183,7 +183,7 @@ export function installChromeMock(): ChromeMockState {
       },
     },
     tabs: {
-      async create(opts: { active?: boolean; url: string }) {
+      async create(opts: { active?: boolean; muted?: boolean; url: string }) {
         return state.createImpl(opts);
       },
       async query() {
@@ -192,7 +192,7 @@ export function installChromeMock(): ChromeMockState {
       async get(tabId: number) {
         return state.getImpl(tabId);
       },
-      async update(tabId: number, opts: { active?: boolean; url?: string }) {
+      async update(tabId: number, opts: { active?: boolean; muted?: boolean; url?: string }) {
         state.updatedTabs.push({ tabId, ...opts });
         const current = state.tabById.get(tabId) ?? { id: tabId };
         const updated = {

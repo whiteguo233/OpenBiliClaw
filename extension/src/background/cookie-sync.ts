@@ -146,6 +146,70 @@ function scheduleHourlyCookieSync(alarmName: string): void {
 }
 
 /**
+ * Safari's ``cookies.getAll`` domain filter historically matches the exact
+ * domain rather than all subdomains the way Chrome/Firefox do. Because the
+ * login cookies we need live on ``.bilibili.com`` / ``.douyin.com`` (the
+ * bare registrable domain with a leading dot, not the current host), relying
+ * on the domain filter can silently miss every session cookie on Safari.
+ *
+ * To keep one code path across browsers we read the full accessible jar
+ * with ``getAll({})`` and filter in JS with the same "domain or subdomain"
+ * rule Chrome documents. If a browser rejects the unfiltered call, fall
+ * back to one domain-filtered call per site so the sync still works.
+ */
+function stripLeadingDot(domain: string): string {
+  return domain.startsWith(".") ? domain.slice(1) : domain;
+}
+
+export function cookieDomainMatchesSite(cookieDomain: string, siteDomain: string): boolean {
+  const normalizedCookieDomain = stripLeadingDot(cookieDomain.toLowerCase());
+  const normalizedSiteDomain = stripLeadingDot(siteDomain.toLowerCase());
+  return (
+    normalizedCookieDomain === normalizedSiteDomain ||
+    normalizedCookieDomain.endsWith(`.${normalizedSiteDomain}`)
+  );
+}
+
+async function readCookiesForDomains(
+  siteDomains: string[],
+): Promise<chrome.cookies.Cookie[]> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) {
+    return [];
+  }
+  try {
+    const allCookies = await chromeApi.cookies.getAll({});
+    return allCookies.filter(
+      (cookie) =>
+        !cookie.domain ||
+        siteDomains.some((siteDomain) =>
+          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
+        ),
+    );
+  } catch {
+    // Defensive fallback for engines that reject an unfiltered getAll.
+    const merged = new Map<string, chrome.cookies.Cookie>();
+    for (const siteDomain of siteDomains) {
+      try {
+        const cookies = await chromeApi.cookies.getAll({ domain: siteDomain });
+        for (const cookie of cookies) {
+          merged.set(`${cookie.domain}|${cookie.name}|${cookie.path}`, cookie);
+        }
+      } catch {
+        // Ignore a single failed domain filter and try the remaining sites.
+      }
+    }
+    return [...merged.values()].filter(
+      (cookie) =>
+        !cookie.domain ||
+        siteDomains.some((siteDomain) =>
+          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
+        ),
+    );
+  }
+}
+
+/**
  * Read all bilibili.com cookies and return them as a single Cookie
  * header value (`SESSDATA=...; bili_jct=...; DedeUserID=...`).
  *
@@ -155,13 +219,7 @@ function scheduleHourlyCookieSync(alarmName: string): void {
  * round trip.
  */
 export async function readBilibiliCookieHeader(): Promise<string | null> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return null;
-  }
-  // domain="bilibili.com" matches both the bare domain and any
-  // subdomain (passport.bilibili.com, www.bilibili.com, etc).
-  const cookies = await chromeApi.cookies.getAll({ domain: "bilibili.com" });
+  const cookies = await readCookiesForDomains(["bilibili.com"]);
   const have = new Set(cookies.map((c) => c.name));
   for (const required of REQUIRED_COOKIE_NAMES) {
     if (!have.has(required)) {
@@ -184,11 +242,7 @@ export async function readBilibiliCookieHeader(): Promise<string | null> {
  * of truth for whether the current jar can actually fetch candidates.
  */
 export async function readDouyinCookieHeader(): Promise<string | null> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return null;
-  }
-  const cookies = (await chromeApi.cookies.getAll({ domain: "douyin.com" })).filter(
+  const cookies = (await readCookiesForDomains(["douyin.com"])).filter(
     (cookie) => cookie.name && cookie.value,
   );
   const have = new Set(cookies.map((c) => c.name));
@@ -207,11 +261,7 @@ export async function readDouyinCookieHeader(): Promise<string | null> {
  * required names so we never push a useless logged-out jar.
  */
 export async function readXCookieHeader(): Promise<string | null> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return null;
-  }
-  const cookies = (await chromeApi.cookies.getAll({ domain: "x.com" })).filter(
+  const cookies = (await readCookiesForDomains(["x.com"])).filter(
     (cookie) => cookie.name && cookie.value,
   );
   const have = new Set(cookies.map((c) => c.name));
@@ -231,11 +281,7 @@ export async function readXCookieHeader(): Promise<string | null> {
  * can use whatever the browser already has.
  */
 export async function readRedditCookieHeader(): Promise<string | null> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return null;
-  }
-  const cookies = (await chromeApi.cookies.getAll({ domain: "reddit.com" })).filter(
+  const cookies = (await readCookiesForDomains(["reddit.com"])).filter(
     (cookie) => cookie.name && cookie.value,
   );
   const have = new Set(cookies.map((c) => c.name));
@@ -255,11 +301,7 @@ export async function readRedditCookieHeader(): Promise<string | null> {
  * present when logged out.
  */
 export async function readXhsLoginState(): Promise<boolean> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return false;
-  }
-  const cookies = await chromeApi.cookies.getAll({ domain: "xiaohongshu.com" });
+  const cookies = await readCookiesForDomains(["xiaohongshu.com"]);
   return cookies.some(
     (cookie) => cookie.name === XHS_LOGIN_COOKIE_NAME && String(cookie.value || "").trim() !== "",
   );
@@ -273,11 +315,7 @@ export async function readXhsLoginState(): Promise<boolean> {
  * visitors too.
  */
 export async function readZhihuLoginState(): Promise<boolean> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return false;
-  }
-  const cookies = await chromeApi.cookies.getAll({ domain: "zhihu.com" });
+  const cookies = await readCookiesForDomains(["zhihu.com"]);
   return cookies.some(
     (cookie) => cookie.name === ZHIHU_LOGIN_COOKIE_NAME && String(cookie.value || "").trim() !== "",
   );
@@ -285,9 +323,7 @@ export async function readZhihuLoginState(): Promise<boolean> {
 
 /** Return whether linux.do has the authenticated `_t` cookie. */
 export async function readLinuxdoLoginState(): Promise<boolean> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) return false;
-  const cookies = await chromeApi.cookies.getAll({ domain: "linux.do" });
+  const cookies = await readCookiesForDomains(["linux.do"]);
   return cookies.some(
     (cookie) => cookie.name === LINUXDO_LOGIN_COOKIE_NAME && String(cookie.value || "").trim() !== "",
   );
@@ -295,9 +331,7 @@ export async function readLinuxdoLoginState(): Promise<boolean> {
 
 /** Return whether the V2EX session-cookie name is present without reading its value. */
 export async function readV2EXLoginState(): Promise<boolean> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) return false;
-  const cookies = await chromeApi.cookies.getAll({ domain: "v2ex.com" });
+  const cookies = await readCookiesForDomains(["v2ex.com"]);
   return cookies.some((cookie) => cookie.name === V2EX_LOGIN_COOKIE_NAME);
 }
 
@@ -311,12 +345,9 @@ export async function readInstagramLoginState(): Promise<boolean> {
 
 /** Return whether Weibo has an account session, excluding anonymous SUB. */
 export async function readWeiboLoginState(): Promise<boolean> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) return false;
-  const cookies = [
-    ...(await chromeApi.cookies.getAll({ domain: "weibo.com" })),
-    ...(await chromeApi.cookies.getAll({ domain: "weibo.cn" })),
-  ].filter((cookie) => String(cookie.value || "").trim() !== "");
+  const cookies = (await readCookiesForDomains(["weibo.com", "weibo.cn"])).filter(
+    (cookie) => String(cookie.value || "").trim() !== "",
+  );
   const names = new Set(cookies.map((cookie) => cookie.name));
   return WEIBO_LOGIN_COOKIE_NAMES.every((name) => names.has(name));
 }

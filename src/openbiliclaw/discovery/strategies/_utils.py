@@ -86,6 +86,9 @@ class SupportsSearchClient(Protocol):
         page: int = 1,
         page_size: int = 20,
         order: str = "totalrank",
+        *,
+        pubtime_begin: int | None = None,
+        pubtime_end: int | None = None,
     ) -> list[dict[str, object]]: ...
 
 

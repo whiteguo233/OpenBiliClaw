@@ -26,6 +26,38 @@ class TerminalChatReplyError(Exception):
         self.code = code
 
 
+class DialogueLeaseTimeoutError(TimeoutError):
+    """The dialogue execution lease was not admitted within the budget.
+
+    Raised when a caller passes ``timeout`` to
+    :meth:`DialogueExecutionCoordinator.lease` and the lane stays paused
+    (config hot reload) or busy past the deadline. ``safe_message`` is
+    user-displayable.
+    """
+
+    def __init__(self, safe_message: str = "系统正在重载配置，请稍后再试。") -> None:
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+
+
+async def _bounded_condition_wait(
+    condition: asyncio.Condition,
+    predicate: Callable[[], bool],
+    timeout: float,
+) -> bool:
+    """``condition.wait_for`` with an overall deadline; False on timeout.
+
+    Assumes the caller already holds ``condition``. The predicate is
+    re-evaluated once after a timeout so a notification landing exactly at
+    the deadline still counts as admitted.
+    """
+    try:
+        await asyncio.wait_for(condition.wait_for(predicate), timeout=max(0.0, float(timeout)))
+    except TimeoutError:
+        return predicate()
+    return True
+
+
 @dataclass
 class DialogueExecutionCoordinator:
     """Serialize every production dialogue execution across runtime swaps.
@@ -50,10 +82,31 @@ class DialogueExecutionCoordinator:
         return self._paused
 
     @asynccontextmanager
-    async def lease(self) -> AsyncIterator[None]:
-        """Wait for admission and hold the process-wide dialogue write lease."""
+    async def lease(self, *, timeout: float | None = None) -> AsyncIterator[None]:
+        """Wait for admission and hold the process-wide dialogue write lease.
+
+        With ``timeout`` (seconds), admission is bounded: when the lane
+        stays paused (hot reload) or busy past the deadline a
+        :class:`DialogueLeaseTimeoutError` is raised instead of waiting
+        indefinitely. ``None`` (default) preserves the unbounded wait used
+        by the durable worker, which retries with its own backoff.
+        """
         async with self._condition:
-            await self._condition.wait_for(lambda: not self._paused and not self._active)
+            if timeout is None:
+                await self._condition.wait_for(lambda: not self._paused and not self._active)
+            else:
+                admitted = await _bounded_condition_wait(
+                    self._condition,
+                    lambda: not self._paused and not self._active,
+                    timeout,
+                )
+                if not admitted:
+                    message = (
+                        "系统正在重载配置，请稍后再试。"
+                        if self._paused
+                        else "对话通道正忙，请稍后查看回复。"
+                    )
+                    raise DialogueLeaseTimeoutError(message)
             self._active = True
         try:
             yield

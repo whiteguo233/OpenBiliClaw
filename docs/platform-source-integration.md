@@ -1,6 +1,6 @@
 # 新平台来源接入指南
 
-> 这份指南从 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi 等首次接入及其后续修复中提炼而来，并持续吸收 Linux.do、V2EX、微博等在途接入的反例。目标不是复制某个平台，而是让后续新增来源按能力契约完整交付，并在首版前挡住历史上反复出现的任务竞态、身份误判、假空结果、注册漂移和构建产物错位。
+> 这份指南从 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi 等首次接入及其后续修复中提炼而来，并持续吸收 Linux.do、V2EX、微博、GitHub 的后续修复，以及 Instagram、微信公众号在途分支的反例。历史分支不等于 main 已支持的能力。目标不是复制某个平台，而是让后续新增来源按能力契约完整交付，并在首版前挡住历史上反复出现的任务竞态、身份误判、假空结果、注册漂移和构建产物错位。
 
 ## 导航
 
@@ -49,15 +49,15 @@
 
 ## Skill 执行协议
 
-调用 `add-platform-source` 时，不要把本指南当成读完即算执行过的百科。按下面阶段门推进；每一门都记录 `PASS / FAIL / NOT_RUN / BLOCKED`，适用性另记为 `required / N/A`。能力型 `N/A` 必须写明产品/架构证据并有契约测试；未获请求的 commit、发布或上游写操作用 scope/authorization 证据证明 `N/A`，不伪造测试。`deferred`、`暂未真测` 和 `以后再做` 都是 `NOT_RUN`，不是 `N/A`。
+先按本轮请求选择适用阶段：新来源走完整契约；已有来源修复复用契约，只更新受影响门及跨层依赖；只读调研/审计不创建实现分支、不执行生产变更；只优化 skill/文档不新建平台契约、不跑真实账号 E2E。全量接入扫描本指南所有能力标题查漏，小修复按能力阅读，不强制重新完成无关链路。按适用阶段门推进；每一门都记录 `PASS / FAIL / NOT_RUN / BLOCKED`，适用性另记为 `required / N/A`。能力型 `N/A` 必须写明产品/架构证据并有契约测试；未获请求的 commit、发布或上游写操作用 scope/authorization 证据证明 `N/A`，不伪造测试。`deferred`、`暂未真测` 和 `以后再做` 都是 `NOT_RUN`，不是 `N/A`。
 
-1. **范围与隔离门**：先声明 `full`、`discovery-only`、`capability-increment` 或 `audit-only`。用户只说“新增一个来源”时默认是 `full`；不能把少做的链路改名成“完整”。建立独立 worktree，记录 HEAD、既有 diff、测试基线、Python import 路径、后端 config/data root 和实际安装的扩展 build。
-2. **历史取证门**：按能力分别选择前例；每项至少记录一个可比的首次接入和一个后续修复，确实没有本地前例则记录检索范围与 `no precedent found`，不能静默跳过。检查 `git log --all`、PR/issue、当前代码与可用的本地 Codex session。session 只提供线索，任何结论都要回到当前代码、测试、提交或脱敏真站证据；不得复制 Cookie、token、账号标识或其它秘密。
-3. **来源契约门**：动代码前填写 `docs/platform-source-contract.example.toml` 的副本，冻结 slug/alias、身份、schema、transport、auth、discover、init、incremental、surface、E2E 和排除项，并从 `docs/platform-source-acceptance.example.md` 建立验收 ledger。用项目 Python 3.11+（下文 `$SOURCE_SKILL_PYTHON`）运行 audit 生成注册缺口基线；一个尚未写入 canonical registry 的全新 slug 应得到 JSON `MISSING`，不是 contract error。它只证明接线痕迹，不证明语义或 E2E。audit 的普通实现 `MISSING` 映射 ledger `FAIL`；明确指出“必须先扩共享契约才能安全开始来源实现”的 prerequisite `MISSING` 映射 `BLOCKED`。`MANUAL` 在补证据前映射 `NOT_RUN`，`N/A` 仍需 contract exclusion 与测试，不能把 audit `PASS` 直接当整门完成。audit 只确认 exclusion nodeid 可解析；验收报告还必须记录这些 nodeid 实际执行为 PASS，skip/xfail/未执行都不是 N/A 证据。
-4. **上游 spike 门**：至少保存一组脱敏真实 envelope 和一个反例，验证内容类型、ID、分页/cursor、终止证据、限流和错误体。登录凭据做完整态 / 剥登录字段游客态对照；服务端、子进程和浏览器 fallback 分开证明。拿不到稳定只读路径时停止，不要用臆造 fixture 进入实现。
-5. **纵向实现门**：按「canonical registry / contract → transport / normalizer → task / event / bootstrap → formal discover / eval → config / status / init → 三端 surface → docs / release-readiness」逐层落地，每层先写会失败的契约测试，再接下一层。
-6. **漏项审查门**：重新运行 audit，按参考平台能力做 `rg -l '<reference-slug>'` 与 `<slug>` 的差集分类，并让独立 reviewer 只看原始契约、diff、测试和真实 artifact 做遗漏审查；不要把预期答案或已知怀疑喂给 reviewer。
-7. **验收门**：交付表逐项给出代码、单测、构建产物、安全真机 E2E、需要额外授权的状态变更 E2E、明确排除和阻塞。只有所有 `required` 行都是 `PASS` 才能写 `complete`；已有界、安全、可用的切片但 required 行仍有 `FAIL/NOT_RUN` 时写 `incremental only`；因缺真实上游、账号/浏览器、必要授权、共享架构前置能力或其它安全前提而无法继续时写 `blocked`。文档与 release-readiness 必查，但 version/tag/push/marketplace 等发布动作只有用户明确要求时才执行。
+1. **范围与隔离门**：先声明 `full`、`discovery-only`、`capability-increment` 或 `audit-only`。用户只说“新增一个来源”时默认是 `full`；不能把少做的链路改名成“完整”。实现遵循仓库独立 worktree 规则，记录 HEAD、既有 diff 和相关测试基线；运行测试或 E2E 前再核对 Python import、CLI、后端 config/data root 与实际安装的扩展 build。只读审计记录所审 checkout 即可。
+2. **历史取证门**：先查 [历史索引](platform-source-history-lessons.md) 中相关能力的首次接入和后续修复，再核对当前代码/测试；已有可移植证据足够时，不必每次遍历全部 session/PR。有具体缺口时补查 `git log --all`、PR/issue、可用的项目 Codex/Claude session；找不到前例就记录检索范围。session 只作线索，区分主会话请求、子代理审查、main 已合入与在途分支；历史授权不延续到新任务。不得复制 Cookie、token、账号标识或原始 transcript。
+3. **来源契约门**：新来源动代码前填写 `docs/platform-source-contract.example.toml` 的副本；已有来源复用并更新原契约，不为小修复复制整份台账。冻结 slug/alias、身份、schema、transport、auth、discover、init、incremental、surface、E2E 和排除项，并从 `docs/platform-source-acceptance.example.md` 建立验收 ledger。用项目 Python 3.11+（下文 `$SOURCE_SKILL_PYTHON`）运行 audit 生成注册缺口基线；一个尚未写入 canonical registry 的全新 slug 应得到 JSON `MISSING`，不是 contract error。它只证明接线痕迹，不证明语义或 E2E。audit 的普通实现 `MISSING` 映射 ledger `FAIL`；明确指出“必须先扩共享契约才能安全开始来源实现”的 prerequisite `MISSING` 映射 `BLOCKED`。`MANUAL` 在补证据前映射 `NOT_RUN`，`N/A` 仍需 contract exclusion 与测试，不能把 audit `PASS` 直接当整门完成。audit 只确认 exclusion nodeid 可解析；验收报告还必须记录这些 nodeid 实际执行为 PASS，skip/xfail/未执行都不是 N/A 证据。
+4. **上游 spike 门**：至少保存一组脱敏真实 envelope 和一个反例，验证内容类型、ID、分页/cursor、终止证据、限流和错误体。登录凭据做完整态 / 剥登录字段游客态对照；服务端、子进程和浏览器 fallback 分开证明。拿不到真实只读路径时，该能力记 `BLOCKED`，不要用臆造 fixture 证明它；继续完成其它不依赖该前提且已授权的工作。不要因缺可选凭据而阻塞已可证明的公开路径。
+5. **纵向实现门**：按「canonical registry / contract → transport / normalizer → task / event / bootstrap → formal discover / eval → config / status / init → 三端 surface → docs / release-readiness」逐层落地，用失败复现或行为测试锁住每个改变的契约，再验证相邻链路。
+6. **漏项审查门**：重新运行 audit，按参考平台能力做 `rg -l '<reference-slug>'` 与 `<slug>` 的差集分类，做遗漏审查。用户要求独立审查，或完整接入/高风险改动适合且允许独立审查时，让 reviewer 只看原始契约、diff、测试和真实 artifact；不要喂预期答案。小修复不自动扩成多轮对抗审查。
+7. **验收门**：交付表逐项给出代码、单测、构建产物、安全真机 E2E、需要额外授权的状态变更 E2E、明确排除和阻塞。只有所声明范围的所有 `required` 行都是 `PASS` 才能写 `complete`，修复/审计完成不代表整个来源完成；已有界、安全、可用的切片但 required 行仍有 `FAIL/NOT_RUN` 时写 `incremental only`；因缺真实上游、账号/浏览器、必要授权、共享架构前置能力或其它安全前提而无法继续时写 `blocked`。文档与 release-readiness 必查，但 version/tag/push/marketplace 等发布动作只有用户明确要求时才执行。
 
 ### 能力矩阵与跨链路注册地图
 
@@ -102,7 +102,7 @@
 - 统一字段和文案：跨平台作者写 `author_name`，稳定 ID 写通用内容 ID；`UP主`、`BV号` 等平台专属术语只能在对应平台展示。
 - 网络所有权：注明请求实际由项目 HTTP client、第三方子进程还是浏览器发出；配置提示只能推荐真正影响这条传输路径的代理设置。
 - 完整性与终态：分别定义 `ok / empty / degraded / login_required / rate_limited / failed`，`scope_complete` 的证明，以及 partial rows、cursor、retraction 如何处理。只有确实观察到合法空响应才可写 `empty`。
-- 画像刷新生命周期：`incremental / init-and-on-demand / on-demand / init-only / none`；`discovery-only` 是 integration level，不是把未实现刷新换个名字。账号 bootstrap 信号若会进入画像，默认要接共享 incremental，除非契约明确且测试证明其它生命周期。
+- 画像刷新生命周期：`incremental / init-and-on-demand / on-demand / init-only / none`；`discovery-only` 是 integration level，不是把未实现刷新换个名字。账号 bootstrap 信号若会进入画像，必须选择并测试刷新生命周期；`init-and-on-demand` 等明确生命周期是有效产品选择。实现 incremental 能力不代表默认启用周期任务，须保持 `source_incremental_enabled=false`。
 - smoke 写入预算：`[smoke] storage_scope` 必须是 `isolated-only`，并在 `[smoke.sinks]` 对 `task / task_result / seen / affinity / snapshot / schedule / event_ingress / memory / profile` 九项逐一写 `allowed / forbidden`；“不写 memory”不等于无副作用，笼统的“临时数据库可写”也不能替代逐 sink 冻结。
 - 浏览器执行模型：是否支持 inactive/hidden tab、是否依赖渲染、SPA/full-navigation 恢复、任务 marker 的存活范围和必要的用户前台切换。
 - engagement 计数逐项声明：`view / like / favorite / comment / share / danmaku` 六项，逐项写清「平台可提供并映射」还是「平台结构性缺失」。结构性缺失（如非 B 站的 `danmaku`、Reddit 的 `view`）合法留 0，前端不渲染、不做占位，不当 bug 修。可映射的计数必须在该平台**所有** fetch 子路径（feed / search / bootstrap / creator …）一致填充——同一内容在 A 路径有计数、B 路径全 0 是真实缺陷（参考 `docs/plans/2026-07-07-engagement-stats-completeness-spec.md` 的跨平台矩阵和三类成因）。
@@ -119,7 +119,7 @@
 - 全部 required capability 都匿名，写 `auth.mode="anonymous"`，运行时 `auth_required=false`。
 - 同一批公开能力匿名可用、凭据只增强配额或私有字段，写 `auth.mode="anonymous-with-optional-credentials"`，运行时仍是 `auth_required=false`，但 optional credential 的验证结论必须常驻展示。
 - 全部 required capability 都必须登录，写 `auth.mode="login-required"`，运行时 `auth_required=true`。
-- public discover 匿名、browser bootstrap/incremental 必须登录等混合情形，写 `auth.mode="capability-specific"`，并在 `[auth.capability_modes]` 对每项 active capability 使用 `anonymous / optional-credential / login-required`。当前 `SourceAuthContract.auth_required` 只有全源布尔，无法诚实表达这种组合；**在共享后端契约、status/setup/init 投影和参数化测试支持逐能力 readiness 之前，本门是 `BLOCKED`，不得任选 true/false 开工，也不得让前端各自补 guard**。
+- public discover 匿名、browser bootstrap/incremental 必须登录等混合情形，写 `auth.mode="capability-specific"`，并在 `[auth.capability_modes]` 对每项 active capability 使用 `anonymous / optional-credential / login-required`。共享后端现已提供 `SourceCapabilityAuth` 与 `SourceAuthContract.capabilities`，V2EX、Linux.do、微博已有逐能力实现。复用 `mode / required / ready / state`，让 status、setup、init 读取本次能力；旧 `auth_required` 只作兼容投影。**只有当前 checkout 的共享契约或消费者确实无法表达目标能力时，本门是 `BLOCKED`；先补共享前置能力，不要把历史的“共享模型尚不存在”当作今天必须重建模型的理由，也不得让前端各自补 guard**。新来源自身的 provider/roster/投影漏项是本次实现待办，不构成外部阻塞。
 
 `capability_modes` 与 `capability_required` 的键必须覆盖契约实际启用的 `discover / profile / bootstrap / incremental / identity` 等能力；自由文案只能放在说明字段里，不能用一段看似完整的字符串代替机器语义。仅作为另一条账号解析 fallback 的登录 identity 可以标 `required=false`，不会单独把整个来源升级成 capability-specific；匿名 discover 与必交付的登录 bootstrap/incremental 则必须升级。
 
@@ -292,7 +292,7 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 
 ## 1. 调研和架构选择
 
-1. 查是否有稳定官方 API 能拿到目标信号。需要联网时优先官方文档 / 一手资料。
+1. 查是否有稳定官方 API 能拿到目标信号。需要联网时优先官方文档 / 一手资料。区分产品想读取的主体：当前读者、公开账号、内容发布者；发布者 AppID/AppSecret 能读取的自有内容，不等于当前读者的收藏或任意账号历史。缺凭据时先完成不依赖它的路径，不擅自将用户要求的完整来源缩成官方 API 子集。
 2. 没有稳定 API 时，参考 XHS / 抖音 / YouTube / 知乎 / Reddit / V2EX 的浏览器插件任务模式：
    - 后端入队任务；
    - 插件打开或复用真实平台 tab；
@@ -325,7 +325,9 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 - 解析前先判 status、content-type 和 magic bytes。`200 text/html` 的登录页/验证码不能交给 JSON normalizer，更不能转成 `ok + 0`；JSON 外层 error/status 也不能只因为 HTTP 200 就视为成功。
 - JSONP 只接受严格 callback 包裹并用 JSON parser，禁止 `eval`；XML/RSS 要限制大小并禁 DTD/外部实体。任何 parser fallback 都要有明确边界和反例。
 - fixture 只能锁住已经观察到的协议，不能自己造一个 client 和一个 fixture 相互证明。至少一次真站采样要断言真实 envelope、分页/终止和 normalized row 同时成立；上游变更后先更新取证，再更新 fixture。
-- 对 login-required/optional-credential 路径做同条件完整凭据与剥离凭据对照；对 public anonymous 路径反向证明没有隐式携带开发机凭据。
+- 对 login-required/optional-credential 路径做同条件完整凭据与剥离凭据对照；对 public anonymous 路径反向证明没有隐式携带开发机凭据。项目专用凭据与开发工具凭据分开；例如 GitHub 来源不能顺手继承 `GH_TOKEN`、`GITHUB_TOKEN` 或 `gh` 登录来掩盖未配置状态。
+- 分页目的地按实际 auth 模式验证：GitHub PAT 的 starred Link 曾从 `/users/<username>/starred` 变成 `/user/<id>/starred`。既不能因首个路径固定而拒绝同资源合法别名，也不能为兼容放开任意 host/path；回归覆盖精确安全变体、跨源跳转、非单调 cursor 和循环 Link。
+- 用户可配置 Feed/URL 时，网络边界覆盖 Feed 本身、redirect 和 enclosure/image；沿每一跳校验地址并明确 DNS rebinding 策略。XML 安全检查要覆盖实际编码（包括 UTF-16）、DTD/实体、大小与解压上限。静态字符串扫描不是安全 parser；微信在途分支的反例见历史索引，先核对当前实现再复用。
 
 ## 2. 后端事件和任务链路
 
@@ -384,7 +386,11 @@ Bangumi 暴露了一个容易被忽略的边界：页面上看到 uid / 用户�
 
 ### 2.3 Bootstrap 与周期增量同步
 
-只要账号信号会进入 event/profile，首版就要为刷新生命周期做明确选择。选择 `incremental` 时必须同步注册：
+只要账号信号会进入 event/profile，首版就要为刷新生命周期做明确选择。当前周期账号同步总开关 `source_incremental_enabled` 默认 `false`；旧配置缺该字段时也关闭。`054cd16a` 是用户在真实使用中反馈抢焦点后形成的产品决定，不能因为“完整接入”重新默认开启。
+
+区分四条调用链：手动 init/fetch、formal discover、scheduler 周期 bootstrap、native-save。`asyncio` 后台协程不意味着浏览器后台 tab，discover 后台成功也不能证明周期 bootstrap 不抢焦点。选择 `incremental` 只表示能力存在；必须验证总开关关闭时不检测/唤醒扩展、不新建任务，并在 claim 前终止升级遗留的周期队列；手动任务和正常 discover 仍可用。验证前台行为时，记录任务目的、触发者、tab 是否激活和 focus 变化；无人值守路径不可从“手动 init 可前台”继承权限。任务结束只在用户未自行切换的情况下恢复原焦点，避免收尾再次抢焦点。
+
+选择 `incremental` 时必须同步注册：
 
 - `sources/source_bootstrap.py` 的 `_BOOTSTRAP_TASK_TABLES`、enqueue/seed evidence；`sources/bootstrap_state.py` 的 state key/default；`sources/task_result_protocol.py` 的 staged cases。
 - `runtime/source_incremental_sync.py` 的 `SOURCE_ORDER`、`_TASK_SPECS`、`_SOURCE_CONFIG_ALIASES`、`_SOURCE_INTERVAL_FIELDS`，以及 config/API/docs 的 interval 字段。
@@ -540,6 +546,8 @@ CLI：
 - 正式 producer 与 smoke 命令的终端文案要描述真实后端；默认走插件时不要残留“命令后端”之类旧提示。
 - discovery 入池后至少抽查 DB：`source_platform`、`source_strategy`、`source_keyword_id`、内容 URL、body_text / content_type 等字段能被 evaluator 和推荐卡消费。
 
+formal producer 与 inspiration/direct helper 如果共享同一上游配额，必须复用持久 cooldown 和公开 query sanitizer，不能各自重试绕过 429。状态只聚合当前启用 modes；credential 拒绝标记只作用于当前指纹，不能让已关闭模式或旧 token 的错误永久拖坏来源。分别记录 fetched、去重后 retained、enqueued、evaluated、admitted；`incomplete_results`、筛掉全部非法/私有行、page/item cap 和后页 timeout 都不能冒充完整空结果。参见 `tests/test_github_producer.py` 与 inspiration 测试中的相关回归。
+
 ## 6.5 Eval / 推荐链路接入
 
 新来源不只是能抓到候选，还要能走完推荐闭环。
@@ -575,7 +583,7 @@ CLI：
 - 桌面、移动、插件侧栏都做截图或视觉检查。
 - 推荐页平台过滤 / source badge / source label 要包含新平台。
 - 四个产品面（setup、桌面、移动、插件）逐一实现，或在规格中逐面写明有意排除、理由和契约测试；「这个场景大概用不到」不算完成。
-- engagement 契约包含 `view / like / favorite / comment / share / danmaku` 六项，但当前展示链路尚未补齐六项：`DiscoveredContent` 有六个字段，`RecommendationOut` 与移动 / 桌面两个 `recommendationStats()` 目前只有 `view / like / favorite / comment / danmaku`，没有 `share_count` / `🔁 share`（缺口见 `docs/plans/2026-07-07-engagement-stats-completeness-spec.md`）；插件侧栏也要单独核对。契约里声明为「结构性缺失」的字段不渲染、不占位；声明可映射的字段要用真实候选验证实际已透传到当前 DTO 与卡片，未落地的 `share` 不得宣称端到端完成。
+- engagement 契约包含 `view / like / favorite / comment / share / danmaku` 六项。当前 `RecommendationOut` 已有 `share_count`，不要沿用旧 plan 的“DTO 缺失”结论；逐字段追踪 normalizer → storage → DTO → 桌面/移动/插件实际 renderer。契约里声明结构性缺失的字段不渲染、不占位；声明可映射的字段用真实候选验证。`source_metadata` 写库或通过 API 返回不代表前端已展示：GitHub 当前文字卡的 owner/name、description、stars 与仍只保存在后端的 topics/language/license 等须分开报告。
 - 如果源主要是文字内容，要确认 text-card 在 PC、移动、插件三端都不是断图 fallback，按钮不会被正文遮挡。
 - 封面链路要显式决定：走后端 `/api/image-proxy` 缓存代理，还是浏览器直连。走代理必须把封面 CDN 域名加进 `runtime/image_cache.py` 的 `ALLOWED_IMAGE_HOST_SUFFIXES`（否则一律 403 Domain not in whitelist）；CN CDN 域名还要同时加 `_DIRECT_FETCH_HOST_SUFFIXES` 绕过系统代理（风控会封代理出口 IP，抖音 / B 站 / XHS 都踩过）。这个 suffix 表同时是 SSRF 边界：contract 只接受具体 DNS host 并拒绝 wildcard/public-suffix/local/IP/已知 wildcard-DNS，但静态语法仍不能证明安全；每次请求和每个 redirect hop 还必须解析并拒绝 loopback/private/link-local/reserved 地址，记录 DNS rebinding/地址固定策略。没有这份 runtime 证据时 `media.image-network-boundary` 保持 `NOT_RUN/BLOCKED`，不能凭 allow-list 接线 PASS 宣称安全。浏览器直连则要先确认该 CDN 无防盗链 / referer 限制。
 - 移动 Web 的「去看看」会尝试拉起平台原生 App：`src/openbiliclaw/web/js/app-launch.js` 的 `buildAppDeepLink(url)` 按内容 URL 的 host / path 分支解析并返回 URL scheme。新平台有可靠官方 scheme 就加对应解析分支；没有就返回空串，由 `openContentUrl()` 走浏览器 fallback，不要硬造 scheme。
@@ -621,9 +629,11 @@ Bangumi 复盘后新增的必测矩阵：
 - popup/settings/init 相关测试
 - Chrome/Firefox 两份 manifest 的 referenced asset/WAR 存在性；active/background/hidden、SPA/full-nav、response-before/after-listener、DOM/API 按契约覆盖。
 
+原生保存的不确定结果必须与重新执行分开：点击后没观察到选中态，不证明上游未写入。先停止并等待原 mutation sender，重载精确 item，等待新 `document_instance_id` READY，用独立 execution 的 `verification_only` 只读核对持久状态；只有正面证据才升级成功，不能重试 toggle 反向取消。容器/按钮语义先经真站核对，平台可能已从命名收藏夹改为全局收藏开关。复用 `c14f38f9` 的 runner/transport/平台 verifier 回归。
+
 原生保存 executor 还必须覆盖 strict task/page/item/type 关联、full ancestor visibility、closest identity fence、hidden/related dialog、同名 ambiguity、checked idempotency，以及 directional action-local risk。需要命名容器的平台必须在创建后 close/reopen/re-query；创建失败或重查不一致不得 fallback 到其它容器。fixture 接线完成不等于真实账号验证，文档和 PR 必须分别报告两种状态。
 
-完成前至少跑：
+实现变更完成前按仓库要求跑对应检查；完整接入用以下全量清单。纯 skill/文档更新运行 skill validator、现有 skill/文档契约测试与链接/镜像检查，不以平台 E2E 作为文档修改的完成条件：
 
 ```bash
 SOURCE_SKILL_PYTHON=/absolute/path/to/project-venv/bin/python
@@ -645,7 +655,7 @@ npm run verify:assets:firefox
 npm run verify:assets
 ```
 
-`SOURCE_SKILL_PYTHON` 必须是已有开发依赖的 Python 绝对路径；第一条输出必须位于当前 worktree。共享 editable venv 很可能仍指向 main，只有显式 `PYTHONPATH="$PWD/src"` 和 import 证明后才可复用；若不在，不得继续拿该 venv 的绿灯当本分支证据。对大改动，最终还要跑一次全量 pytest 和 `npm test`。如果全量检查发现旧测试断言漏了新合法状态（如插件源 `unverified`），修测试；如果 `ruff format --check src tests` 命中历史无关文件，不要顺手格式化，先用 `origin/main:<path>` 验证是否已在 main 修复，并在交付说明里说明。
+`SOURCE_SKILL_PYTHON` 必须是已有开发依赖的 Python 绝对路径；第一条输出必须位于当前 worktree。共享 editable venv 很可能仍指向 main，只有显式 `PYTHONPATH="$PWD/src"` 和 import 证明后才可复用；若不在，不得继续拿该 venv 的绿灯当本分支证据。全量门禁在最终树通过后，无新增修改或失败无需重复；若分批运行，要汇总全部批次退出码与用例数。超时/取消不是通过，进程存活也不是进度证据，按实际结果记 `NOT_RUN/FAIL`。如果全量检查发现旧测试断言漏了新合法状态（如插件源 `unverified`），修测试；如果 `ruff format --check src tests` 命中历史无关文件，不要顺手格式化，先用 `origin/main:<path>` 验证是否已在 main 修复，并在交付说明里说明。
 
 发布前插件包验证：
 
@@ -662,6 +672,8 @@ npm run package:firefox:only -- --archive-version <extension-version>
 ## 9. 真实端到端验证
 
 登录态相关来源必须用真实扩展浏览器验证。
+
+**先做 E2E 预检，再启动昂贵流程**：核对运行代码/端口、浏览器安装目录/权限/登录态、隔离 DB/data/config、实际配置的 LLM 与 embedding provider/model/base URL（不输出 key）。配置读取应沿用项目 loader 和覆盖优先级，不要临时造一份默认配置，把用户的云模型换成 Ollama 后再因慢而判平台失败。将缺 PAT、未登录、扩展装错 checkout 等前提与代码缺陷分开；有 blocker 仍继续其它独立链路。对生产服务的切换按本轮授权处理；若临时接管已有端口，记录恢复方式，结束后核对原服务、配置、扩展连接、task tab 与本次临时数据，不能只说“测试通过”。
 
 验证阶梯：
 
@@ -686,6 +698,8 @@ npm run package:firefox:only -- --archive-version <extension-version>
 3. 断言稳定 ID、URL、`author_name`、事件类型、scope/status、metadata 等 canonical 字段，而不只看数量大于 0。
 4. 将同一批事件写两次，验证 `(inserted=N, duplicate=0) → (inserted=0, duplicate=N)`。
 5. 原始浏览 / 收藏记录没有正负反馈证据时，`satisfaction` 保持 unknown；不要为了断言方便伪造成 positive/neutral/negative。
+
+证据层级分别记 `unit/static`、`build/assets`、`live-transport`、`installed-app`、`full-pipeline`；PASS 只属于实际验证的那层。每条链都有独立终态和 artifact：公开 transport、当前账号 → event → init/profile、discover → real LLM → recommendation、安装版 UI。不允许在汇总行写 full backend PASS、附注却说 suite 超时；也不允许把手工直接调用浏览器 API 后 POST 结果算作已安装 dispatcher 的往返证明。partial init 后另跑推荐成功，不补齐原 init 终态。
 
 真实 E2E 要分层报告：
 
@@ -722,7 +736,7 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - 新增扩展 host permission / 身份通道时，还要更新隐私声明、Chrome/Firefox 商店 listing 与人工审核说明。
 - 凭据获取步骤写到稳定文档锚点，所有 UI 只链接该锚点；不要在三端复制容易随上游变化的发令牌步骤。
 
-Release-readiness 每次都检查；commit、version bump、push、tag、GitHub Release、商店上传和发布后操作只在用户明确要求时执行。用户未要求时，这些 mutation 行以 scope/authorization 证据记 `N/A (not requested)`，不要求虚构 contract test，也不阻塞代码接入 complete；用户已要求但尚未执行才是 `NOT_RUN`。不要为了“完整接入”擅自提交或发布。
+新增来源检查完整 release-readiness；窄修复按影响范围检查，纯文档更新只做相应文档交付检查。commit、version bump、push、tag、GitHub Release、商店上传和生产服务切换依据当前任务的授权执行；用户已授权的动作不重复问，旧 session 中的授权不算本轮授权。用户未要求时，这些 mutation 行以 scope/authorization 证据记 `N/A (not requested)`，不要求虚构 contract test，也不阻塞代码接入 complete；用户已要求但尚未执行才是 `NOT_RUN`。不要为了“完整接入”擅自提交或发布。
 
 Release-readiness 检查：
 
@@ -748,7 +762,7 @@ Release-readiness 检查：
 
 ## 11. 完成判定
 
-验收报告至少包含：integration level、worktree/commit、contract 路径、每个 gate 的适用性与执行状态、primary/fallback transport、auth/account evidence、命令/exit code、build/package provenance、真实 E2E 计数与幂等样本、LLM provider/model、四端证据、实际执行的状态变更动作（默认 none）、risks/deferred，以及最终 verdict `complete / incremental only / blocked`。只有全部 required 行 `PASS` 才能写 `complete`。
+验收报告至少包含：integration level、worktree/commit、contract 路径、每个 gate 的适用性与执行状态、primary/fallback transport、auth/account evidence、命令/exit code、build/package provenance、真实 E2E 计数与幂等样本、LLM provider/model、四端证据、实际执行的状态变更动作（默认 none）、risks/deferred，以及最终 verdict `complete / incremental only / blocked`。只有全部 required 行 `PASS` 才能写 `complete`。`required` 以本轮声明范围为准，不能通过缩小用户要求规避缺口；capability-increment 或 audit-only 的 complete 不等于 full source complete。代码存在、已提交、已合 main、当前进程加载、扩展已安装、已发布分别报告；任一状态都不能推出下一项。
 
 ## 常见失败模式
 

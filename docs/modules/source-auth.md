@@ -4,7 +4,7 @@
 
 `src/openbiliclaw/api/source_auth/` 回答一个问题：**每个平台来源的凭据现在能不能用，以及这个结论有多可信。**
 
-它存在的原因是旧实现把四个互相独立的问题挤进了一个 `state` 字符串。结果是多个平台在设置页并排显示同一个「凭据已就绪」，而背后的证据强度天差地别——B 站只做本地 Cookie 结构检查，小红书、知乎与 Linux.do 使用浏览器心跳，Reddit 读取本地凭据文件，X 既有被动健康记录也能显式只读探测，Bangumi 与 V2EX 则匿名可用但支持可选令牌。用户无从分辨「真的能用」和「只是填了个值」，这份契约因此把凭据存在、验证结论与证据强度拆开表达。
+它存在的原因是旧实现把四个互相独立的问题挤进了一个 `state` 字符串。结果是多个平台在设置页并排显示同一个「凭据已就绪」，而背后的证据强度天差地别——B 站只做本地 Cookie 结构检查，小红书、知乎与 Linux.do 使用浏览器心跳，Reddit 读取本地凭据文件，X 既有被动健康记录也能显式只读探测，Bangumi、GitHub 与 V2EX 则匿名可用但支持可选令牌。用户无从分辨「真的能用」和「只是填了个值」，这份契约因此把凭据存在、验证结论与证据强度拆开表达。
 
 完整诊断与设计见 [`docs/plans/2026-07-18-source-auth-contract-spec.md`](../plans/2026-07-18-source-auth-contract-spec.md)。
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 正交契约 `SourceAuthContract` | 四个维度互不覆盖：要不要凭据 / 凭据在不在 / 验证结论 / **结论有多硬** | ✅ |
 | 每平台 provider | `providers.py` 的纯函数 provider 取代旧 if/elif 聚合器 | ✅ |
-| Bangumi / Linux.do / V2EX 接入契约 | 三者公开能力均可匿名；Bangumi / V2EX 支持可选令牌，Linux.do 个人能力使用浏览器心跳与任务历史 | ✅ 见下方各来源说明 |
+| Bangumi / GitHub / Linux.do / V2EX 接入契约 | 四者公开能力均可匿名；Bangumi / GitHub / V2EX 支持可选令牌，Linux.do 个人能力使用浏览器心跳与任务历史 | ✅ 见下方各来源说明 |
 | 显式验证动作 | `POST /api/sources/{slug}/verify`，所有已注册来源共享三态结果 | ✅ |
 | 并发安全的本地状态读取 | X 健康表首建单飞，读写使用短生命周期 SQLite connection；状态轮询不共享 connection | ✅ |
 | 统一凭据写入 | `POST /api/sources/{slug}/credential`，写入即校验，7 条老端点转发 | ✅ |
@@ -46,12 +46,12 @@ class SourceAuthContract(BaseModel):
 
 | 取值 | 含义 | 当前平台 |
 | --- | --- | --- |
-| `live_probe` | 当场出网问平台 | bilibili、douyin、twitter、bangumi、v2ex（配置了个人令牌时） |
+| `live_probe` | 当场出网问平台 | bilibili、douyin、twitter、bangumi、github、v2ex（后三者配置了个人令牌时） |
 | `passive_health` | 由真实流量的错误反推 | 暂无当前平台（保留能力） |
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、bangumi（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
@@ -66,7 +66,7 @@ class SourceAuthContract(BaseModel):
 | `rate_limited` | 频率受限 | pending |
 | `blocked` | 接入受阻 | danger |
 
-`auth_required=false` 且没有可验证凭据或个人能力时单独落在**无需登录**档（public 灰），既非已验证也非待验证。匿名可用但带 optional credential / identity 的来源不能走这个短路：Bangumi / V2EX 配置令牌后显示 `live_probe` 证据；Linux.do 把 `/session/current.json` 个人任务终态作为最强证据，缺少任务证据时使用 `_t` 布尔 `browser_heartbeat`，两者都没有时才回落公开 discovery。共享 UI 因而不会把匿名发现成功伪装成个人登录成功。
+`auth_required=false` 且没有可验证凭据或个人能力时单独落在**无需登录**档（public 灰），既非已验证也非待验证。匿名可用但带 optional credential / identity 的来源不能走这个短路：Bangumi / GitHub / V2EX 配置令牌后显示 `live_probe` 证据；Linux.do 把 `/session/current.json` 个人任务终态作为最强证据，缺少任务证据时使用 `_t` 布尔 `browser_heartbeat`，两者都没有时才回落公开 discovery。共享 UI 因而不会把匿名发现成功伪装成个人登录成功。
 
 证据强度是**独立于结论**的第二维度，同时用三种方式编码，其中没有一种是颜色（色觉障碍用户读不到颜色）：
 
@@ -101,13 +101,17 @@ class SourceAuthContract(BaseModel):
 | `POST /api/sources/{slug}/verify` | 显式验证，返回契约 + `outcome` / `replayed` / `retry_after_seconds` |
 | `POST /api/sources/{slug}/credential` | 统一写入：结构校验 → 活体校验 → 落盘 → 广播 → 返回重算契约 |
 
+GitHub 与 Bangumi 的 optional token 是明确的 config-only 兼容路径：二者在
+`CREDENTIAL_SPECS` 中登记 `kinds=()`，统一 `/credential` 不接收 token；设置页与
+guided init 通过 `PUT /api/config` 的 write-only 字段保存并复用同一只读活体验证门。
+GitHub 还可只从固定的 `OPENBILICLAW_GITHUB_TOKEN` 读取，不接受可改名的环境变量、
+`GITHUB_TOKEN` 或 `GH_TOKEN`。
+
 8 条老写入端点（`/api/bilibili/cookie`、`/api/sources/{dy,x,reddit}/cookie`、`/api/sources/xhs/tokens`、`/api/sources/{xhs,zhihu,linuxdo}/login-state`）保留为 `deprecated=True` 的内部转发，响应结构**逐字段冻结（值，不只是键集）**——它们有浏览器扩展在调用，而一个键还在、值被掏空的响应对只比对键集的测试是隐形的。`PUT /api/config` 的四处凭据写入同样委托统一校验门。
 `state / logged_in` 是给旧客户端和 Agent 宿主的兼容视图，但仍由各平台 provider 负责，不能与
 同一响应里的 `auth` 自相矛盾。抖音读取最近一次匹配当前凭据的活体探针：`verified` 同步映射为
 `ready / true`，`stale` 映射为 `stale / false`，其余结论映射为 `unverified / false`。状态端点
 仍只读 probe cache、绝不因轮询出网。
-
-7 条老写入端点（`/api/bilibili/cookie`、`/api/sources/{dy,x,reddit}/cookie`、`/api/sources/xhs/tokens`、`/api/sources/{xhs,zhihu}/login-state`）保留为 `deprecated=True` 的内部转发，响应结构**逐字段冻结（值，不只是键集）**——它们有浏览器扩展在调用，而一个键还在、值被掏空的响应对只比对键集的测试是隐形的。`PUT /api/config` 的四处凭据写入同样委托统一校验门。
 
 **凭据读取是状态查询，不是秘密导出。** `GET /api/sources/credentials` 的 `available`、掩码预览、`summary` 与非敏感 Cookie 名称用于回答“是否已保存/由哪里管理”；秘密原值永不返回。历史 `reveal_keys` query 保留为 no-op，`form.actions` 不再包含 `copy`，桌面页面也不渲染复制按钮。新值只能走统一 credential 写入或配置 PUT；空值与掩码回显不会覆盖现有值。
 
@@ -220,6 +224,36 @@ discovery 健康串落到 `detail`，`token_state` 单独成轴）。Bangumi 的
 端点，所以它的 `CredentialSpec` 是 `kinds=()` + `form_kind='none'`——表单只给「测试连接」
 和「去获取令牌」链接，不给会写到空处的粘贴框。探针缓存要区分不同令牌，故 `CredentialSpec`
 新增 `opaque_credential=True`，指纹覆盖整串令牌而非 cookie 字段名。
+
+## GitHub 的接入
+
+GitHub 与 Bangumi 一样属于「匿名公开能力 + 可选可验证凭据」，但首版范围更窄：只读取
+公开 repository。无 PAT 时，repository discovery 与显式公开用户名的 starred collection
+都可用；provider 返回 `auth_required=false`、`credential=none`、`verify_method=none`。
+提供 PAT 后，固定验证动作调用只读 `GET /user`，成功才得到 `verified` token identity；401
+记录明确失败，限流或网络错误保持 indeterminate，不把传输故障写成令牌失效。
+
+账号范围与所有权证据分开：`GET /user` 的 numeric user id 是 PAT 的 verified identity；
+`GET /users/{username}` 只能确认公开账号存在，状态是 accepted scope，不证明当前用户拥有它。
+同时给出 PAT 和用户名时，后端分别取两边 durable numeric id；不一致就返回稳定的
+`github_identity_mismatch` 并停止 starred bootstrap，匿名 public discovery 继续工作。客户端
+只提交用户名 / token 草稿并展示结论，不复制这套 admission。
+
+凭据解析顺序固定为 `OPENBILICLAW_GITHUB_TOKEN` → `[sources.github].access_token`。
+`sources.github.token_env` 只为配置/API shape 兼容保留，解析器不会采用任意改名，更不会借用
+开发工具常见的 `GITHUB_TOKEN` / `GH_TOKEN`。PAT 即使拥有私有仓库权限也不会扩大内容范围：
+服务端查询固定添加 `is:public`，normalizer 再拒绝 `private=true` 行。
+
+正式 discovery 若收到 PAT 401，会在本地 GitHub discovery state 写入短指纹而非令牌正文。
+provider 只在标记与当前 PAT 指纹一致时把凭据 verdict 设为 failed，并让 status / init-status
+的 profile 与 bootstrap 轴显示 unavailable；anonymous discovery 轴仍保持独立。令牌轮换或清除后
+旧指纹不匹配，状态会恢复到新凭据对应的未验证 / 匿名能力，不需要手工删除数据库行。
+
+GitHub PAT 不经统一 `/credential` 写入；其 `CredentialSpec` 使用 `kinds=()`、
+`opaque_credential=true` 与 `form_kind="none"`，防止三端生成一个写不到任何地方的通用粘贴框。
+桌面 / popup 的 GitHub 来源卡仍可通过配置保存语义维护 token：字段省略或 masked 表示保留，
+显式空字符串表示清除，明文从不出现在配置 GET、状态响应或日志中。完整来源边界见
+[GitHub 来源文档](github.md)。
 
 ## V2EX 的接入
 

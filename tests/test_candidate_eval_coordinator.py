@@ -200,6 +200,34 @@ async def test_coordinator_caps_worker_claims_at_three_batches_and_ninety_raw() 
     await task
 
 
+@pytest.mark.asyncio
+async def test_run_forever_can_be_reentered_after_stop() -> None:
+    pipeline = _FakeStagedPipeline(candidate_count=90)
+    coordinator = _coordinator(pipeline)
+
+    first = asyncio.create_task(coordinator.run_forever())
+    coordinator.notify("first-run")
+    await pipeline.wait_for_started(3)
+    assert len(pipeline.started) == 3
+
+    await coordinator.stop()
+    await first
+    assert coordinator._stopping is True  # noqa: SLF001
+
+    # Re-entering the same coordinator after a stop must self-heal instead of
+    # exiting immediately at the first ``while not self._stopping`` check.
+    second = asyncio.create_task(coordinator.run_forever())
+    coordinator.notify("second-run")
+    await pipeline.wait_for_started(6)
+
+    assert len(pipeline.started) == 6
+    assert coordinator._stopping is False  # noqa: SLF001
+    assert coordinator.state != "stopping"
+
+    await coordinator.stop()
+    await second
+
+
 def test_projected_inventory_excludes_unscored_raw() -> None:
     snapshot = CandidateEvalSnapshot(
         available=2,
@@ -244,6 +272,24 @@ def test_admission_headroom_counts_only_pending_copy_that_can_become_available()
     coordinator._admit_evaluated(snapshot)  # noqa: SLF001
 
     assert pipeline.admit_limits == [4]
+
+
+def test_stale_evaluated_waiters_trigger_cleanup_without_inventory_headroom() -> None:
+    pipeline = _FakeStagedPipeline(candidate_count=0)
+    coordinator = _coordinator(pipeline, target=10)
+    snapshot = CandidateEvalSnapshot(
+        available=10,
+        target=10,
+        pending_eval=0,
+        evaluating=0,
+        evaluated_pending_admission=0,
+        admitted_pending_copy=0,
+        evaluated_waiting_total=1,
+    )
+
+    coordinator._admit_evaluated(snapshot)  # noqa: SLF001
+
+    assert pipeline.admit_limits == [0]
 
 
 @pytest.mark.asyncio
@@ -995,4 +1041,36 @@ async def test_sqlite_random_completion_soak(tmp_path: Any) -> None:
             "SELECT COUNT(*) FROM discovery_candidates WHERE claim_token IS NOT NULL"
         ).fetchone()[0]
         == 0
+    )
+
+
+def test_rate_limit_backoff_and_pause_transitions_are_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pipeline = _FakeStagedPipeline(candidate_count=0)
+    coordinator = _coordinator(pipeline)
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.runtime.candidate_eval"):
+        coordinator._record_failure(LLMRateLimitError("429 slow down"))
+        coordinator._record_failure(
+            LLMFallbackError("No provider was available to process the request.")
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "candidate evaluation rate limited; backing off 15s (streak=1)" in message
+        for message in warnings
+    )
+    assert any("candidate evaluation paused on no_provider" in message for message in warnings)
+    assert coordinator._paused is True
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.runtime.candidate_eval"):
+        coordinator.notify("config_reloaded")
+
+    assert coordinator._paused is False
+    assert any(
+        "candidate evaluation resumed on config_reloaded" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO
     )

@@ -43,6 +43,10 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgSourcesBrowserCdp",
     "cfgSourcesBrowserHeaded",
     "cfgBilibiliEnabled",
+    "cfgBiliDatePreset",
+    "cfgBiliDateStart",
+    "cfgBiliDateEnd",
+    "cfgBiliDateWeight",
     "cfgXhsEnabled",
     "cfgXhsDailySearchBudget",
     "cfgXhsDailyCreatorBudget",
@@ -71,6 +75,20 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgYoutubeDailyChannelBudget",
     "cfgYoutubeRequestInterval",
     "cfgYoutubeMinInterval",
+    "cfgGithubEnabled",
+    "cfgGithubUsername",
+    "cfgGithubAccessToken",
+    "cfgGithubClearToken",
+    "cfgGithubModeSearch",
+    "cfgGithubModeRanked",
+    "cfgGithubModeLatest",
+    "cfgGithubDailySearchBudget",
+    "cfgGithubDailyRankedBudget",
+    "cfgGithubDailyLatestBudget",
+    "cfgGithubRequestInterval",
+    "cfgGithubMinInterval",
+    "cfgGithubBootstrapLimit",
+    "cfgGithubBootstrapMaxPages",
     "cfgRedditEnabled",
     "cfgRedditBackend",
     "cfgRedditCookie",
@@ -90,6 +108,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgTrendingRefreshMinutes",
     "cfgExploreRefreshMinutes",
     "cfgDiscoveryLimit",
+    "cfgEvalScorer",
     "cfgVisualProfileEnabled",
     "cfgKeyframeEnabled",
     "cfgKeyframeMaxFrames",
@@ -119,6 +138,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgPoolShareDouyin",
     "cfgPoolShareWeibo",
     "cfgPoolShareYoutube",
+    "cfgPoolShareGithub",
     "cfgPoolShareReddit",
     "cfgSuggestPoolShares",
     "cfgSpeculationInterval",
@@ -128,6 +148,9 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgSpeculationMaxActive",
     "cfgSpeculationMaxPrimary",
     "cfgSpeculationMaxSecondary",
+    "cfgReplyStyle",
+    "cfgDialogueTonePrompt",
+    "cfgTestTone",
     "cfgStorageDbPath",
     "cfgLogFileLevel",
     "cfgLogPath",
@@ -154,6 +177,12 @@ test("settings page exposes advanced config fields from backend schema", () => {
     popupJs,
     /refresh_check_interval_seconds: getInt\("cfgRefreshCheckInterval", 60\)/,
   );
+  assert.match(popupJs, /setVal\("cfgReplyStyle", cfg\.soul\?\.reply_style \?\? ""\)/);
+  assert.match(popupJs, /setVal\("cfgDialogueTonePrompt", cfg\.soul\?\.dialogue_tone_prompt \?\? ""\)/);
+  assert.match(popupJs, /reply_style: getVal\("cfgReplyStyle"\)/);
+  assert.match(popupJs, /dialogue_tone_prompt: getVal\("cfgDialogueTonePrompt"\)/);
+  assert.match(popupHtml, /id="cfgReplyStyle"[^>]*maxlength="200"/);
+  assert.match(popupHtml, /id="cfgDialogueTonePrompt"[^>]*maxlength="1000"/);
   assert.match(popupJs, /function formatBackendUpdateError/);
   assert.match(popupJs, /github_rate_limited:\s*"GitHub API 限流，请稍后再试"/);
 });
@@ -172,6 +201,7 @@ test("settings source tab separates every platform into its own block", () => {
     "weibo",
     "youtube",
     "twitter",
+    "github",
     "zhihu",
     "reddit",
     "bangumi",
@@ -187,6 +217,30 @@ test("settings source tab separates every platform into its own block", () => {
   }
   assert.match(sourcesPanel, /id="cfgBilibiliEnabled"/);
   assert.match(sourcesPanel, />启用 Bilibili discovery</);
+  assert.match(sourcesPanel, /id="cfgBiliDatePreset"/);
+  assert.match(sourcesPanel, />B站发布日期范围</);
+  assert.match(popupJs, /recommendation_date_preset: getVal\("cfgBiliDatePreset"\) \|\| "all"/);
+  assert.match(popupJs, /recommendation_date_weight: Math\.min\(/);
+  assert.match(popupJs, /ensurePopupSourceDateFields/);
+  assert.match(popupJs, /popupSourceDateFieldsForUpdate/);
+  for (const slug of [
+    "xiaohongshu",
+    "douyin",
+    "weibo",
+    "youtube",
+    "twitter",
+    "github",
+    "zhihu",
+    "reddit",
+    "bangumi",
+    "linuxdo",
+    "v2ex",
+  ]) {
+    assert.ok(
+      popupJs.includes(`popupSourceDateFieldsForUpdate("${slug}")`),
+      `${slug} date fields should be wired`,
+    );
+  }
   assert.match(sourcesPanel, />调试：B 站登录时显示浏览器窗口</);
 
   // Keep the Linux.do card closed before the V2EX card starts. If either
@@ -496,6 +550,48 @@ test("settings page round-trips Bangumi discovery config", () => {
   assert.match(popupJs, /if \(shares\.bangumi !== undefined\) setVal\("cfgPoolShareBangumi", shares\.bangumi\)/);
 });
 
+test("settings page round-trips GitHub public-repository config with a write-only PAT", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const githubCard =
+    popupHtml.match(/data-source-card="github"[\s\S]*?data-source-card="zhihu"/)?.[0] ?? "";
+
+  for (const id of [
+    "cfgGithubEnabled",
+    "cfgGithubUsername",
+    "cfgGithubAccessToken",
+    "cfgGithubClearToken",
+    "cfgGithubModeSearch",
+    "cfgGithubModeRanked",
+    "cfgGithubModeLatest",
+    "cfgGithubDailySearchBudget",
+    "cfgGithubDailyRankedBudget",
+    "cfgGithubDailyLatestBudget",
+    "cfgGithubRequestInterval",
+    "cfgGithubMinInterval",
+    "cfgGithubBootstrapLimit",
+    "cfgGithubBootstrapMaxPages",
+    "cfgPoolShareGithub",
+  ]) {
+    assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
+    assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
+  }
+
+  assert.match(githubCard, /官方 REST API/);
+  assert.match(githubCard, /公开 repository/);
+  assert.match(githubCard, /不会开放私有仓库/);
+  assert.doesNotMatch(githubCard, /incremental|Cookie 输入|任务页打开/);
+  assert.match(popupJs, /setCheckedValues\(GITHUB_SOURCE_MODE_FIELDS, cfg\.sources\?\.github\?\.source_modes\)/);
+  assert.match(popupJs, /github:\s*\{\s*enabled: checked\("cfgGithubEnabled"\)/);
+  assert.match(popupJs, /username: getVal\("cfgGithubUsername"\)/);
+  assert.match(popupJs, /daily_search_budget: getInt\("cfgGithubDailySearchBudget", 120\)/);
+  assert.match(popupJs, /bootstrap_max_pages: getInt\("cfgGithubBootstrapMaxPages", 10\)/);
+  assert.match(popupJs, /cfg\.sources\?\.github\?\.access_token_set/);
+  assert.match(popupJs, /checked\("cfgGithubClearToken"\)[\s\S]*?access_token: ""/);
+  assert.match(popupJs, /github: getInt\("cfgPoolShareGithub", 1\)/);
+  assert.match(popupJs, /if \(shares\.github !== undefined\) setVal\("cfgPoolShareGithub", shares\.github\)/);
+});
+
 test("settings page round-trips Linux.do config without a cookie field", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
@@ -610,8 +706,8 @@ test("settings page round-trips multimodal discovery evaluation controls", () =>
     popupJs,
     /candidate_eval_concurrency: getInt\("cfgCandidateEvalConcurrency", 3\)/,
   );
-  assert.match(popupJs, /setVal\("cfgLlmConcurrencyV2", cfg\.llm\?\.concurrency \?\? 4\)/);
-  assert.match(popupJs, /concurrency: getInt\("cfgLlmConcurrencyV2", 4\)/);
+  assert.match(popupJs, /setVal\("cfgLlmConcurrencyV2", cfg\.llm\?\.concurrency \?\? 3\)/);
+  assert.match(popupJs, /concurrency: getInt\("cfgLlmConcurrencyV2", 3\)/);
   assert.match(popupJs, /multimodal_batch_size: getInt\("cfgMultimodalBatchSize", 8\)/);
   assert.match(popupJs, /multimodal_image_max_px: getInt\("cfgMultimodalImageMaxPx", 384\)/);
   assert.match(popupJs, /multimodal_image_quality: getInt\("cfgMultimodalImageQuality", 72\)/);
@@ -631,8 +727,9 @@ test("advanced settings keep recommendation signals together and preserve disabl
   const modelsPanel =
     popupHtml.match(/<div id="settingsPanelModels"[\s\S]*?<div id="settingsPanelSources"/)?.[0] ?? "";
 
-  assert.equal((advancedPanel.match(/<div class="settings-section">/g) ?? []).length, 3);
+  assert.equal((advancedPanel.match(/<div class="settings-section">/g) ?? []).length, 6);
   for (const id of [
+    "cfgEvalScorer",
     "cfgVisualProfileEnabled",
     "cfgKeyframeEnabled",
     "cfgKeyframeMaxFrames",
@@ -662,6 +759,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
     assert.doesNotMatch(control, /checked/, `${id} must default off`);
   }
   for (const id of [
+    "cfgEvalScorer",
     "cfgKeywordGenerationMode",
     "cfgCandidateEvalConcurrency",
     "cfgMultimodalEvaluationEnabled",
@@ -673,6 +771,14 @@ test("advanced settings keep recommendation signals together and preserve disabl
     assert.doesNotMatch(schedulerPanel, new RegExp(`id="${id}"`), `${id} moved out of scheduler`);
   }
   assert.doesNotMatch(modelsPanel, /id="cfgEmbeddingMultimodalEnabled"/);
+
+  assert.match(
+    advancedPanel,
+    /<select id="cfgEvalScorer" aria-describedby="cfgEvalScorerHint">[\s\S]*?<option value="llm" selected>Agent（默认）<\/option>[\s\S]*?<option value="shadow">Shadow（校准观察）<\/option>[\s\S]*?<option value="learned">Learned（仅相关性，实验性）<\/option>[\s\S]*?<\/select>/,
+  );
+  assert.match(advancedPanel, /id="cfgEvalScorerHint"/);
+  assert.match(advancedPanel, /人工运行质量门禁并确认通过/);
+  assert.match(advancedPanel, /切换不会重算已有推荐/);
 
   for (const [id, min, max, placeholder] of [
     ["cfgKeyframeMaxFrames", "1", "12", "4"],
@@ -687,6 +793,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
   }
 
   for (const field of [
+    'setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm")',
     'visualProfile.checked = cfg.discovery?.visual_profile_enabled === true',
     'keyframe.checked = cfg.discovery?.keyframe_enabled === true',
     'setVal("cfgKeyframeMaxFrames", cfg.discovery?.keyframe_max_frames ?? 4)',
@@ -700,6 +807,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
   const spread = "...(state.runtimeConfig?.discovery || {})";
   assert.ok(popupJs.indexOf(spread) < popupJs.indexOf("visual_profile_enabled:"));
   for (const field of [
+    'eval_scorer: getVal("cfgEvalScorer") || "llm"',
     'visual_profile_enabled: checked("cfgVisualProfileEnabled")',
     'keyframe_enabled: checked("cfgKeyframeEnabled")',
     'keyframe_max_frames: getInt("cfgKeyframeMaxFrames", 4)',
@@ -931,6 +1039,7 @@ test("source-share suggestion button uses settings-scope helpers and form switch
   assert.match(suggestionBlock, /bilibili:\s*checked\("cfgBilibiliEnabled", true\)/);
   assert.match(suggestionBlock, /xiaohongshu:\s*checked\("cfgXhsEnabled"\)/);
   assert.match(suggestionBlock, /youtube:\s*checked\("cfgYoutubeEnabled"\)/);
+  assert.match(suggestionBlock, /github:\s*checked\("cfgGithubEnabled"\)/);
   assert.match(suggestionBlock, /configured_shares:\s*\{/);
 });
 

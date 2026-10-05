@@ -38,6 +38,25 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Go for embedded Tailnet helper
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
+
+      - name: Test embedded Tailnet helper
+        working-directory: cmd/openbiliclaw-tailnet
+        run: |
+          TAILNET_BUILD_TAGS="$(tr -d '\r\n' < build-tags.txt)"
+          go test -tags="$TAILNET_BUILD_TAGS" ./...
+          go vet -tags="$TAILNET_BUILD_TAGS" ./...
+
+      - name: Prefetch embedded Tailnet modules for every target
+        run: python scripts/generate_tailnet_notices.py --prefetch
+
+      - name: Verify embedded Tailnet third-party notices
+        run: python scripts/generate_tailnet_notices.py --check
+
       # stdlib-only, runs before dependency install for fast fail on
       # inconsistent version fields (see scripts/release.py VERSION_FILES)
       - name: Check release version consistency

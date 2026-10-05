@@ -9,6 +9,21 @@ import {
   fetchChatContext,
   fetchChatTurn,
   fetchChatTurns,
+  fetchChatSessionDetail,
+  fetchChatSessions,
+  createChatSession,
+  updateChatSession,
+  fetchChatSkills,
+  fetchChatPersonas,
+  streamAgentChatTurn,
+  streamChatTurnLegacy,
+  fetchChatApprovals,
+  approveChatApproval,
+  rejectChatApproval,
+  createAgentTask,
+  fetchAgentTasks,
+  fetchAgentTask,
+  cancelAgentTask,
   fetchPendingConfirmations,
   openPendingConfirmation,
   actOnChatCard,
@@ -43,12 +58,13 @@ import {
   getProbeMessageActions,
   getAvoidanceProbeMessageActions,
   getMobileChatSession,
+  getChatHistoryViewState,
   getCoverImageAttrs,
   getSourceLabel,
   buildContentUrl,
 } from "../view-models.js";
 import { openContentUrl } from "../app-launch.js";
-import { state, patchState } from "../state.js";
+import { state, patchState, subscribe } from "../state.js";
 
 const dialogueConfirmation = globalThis.OpenBiliClawDialogueConfirmation;
 if (!dialogueConfirmation) {
@@ -76,9 +92,34 @@ const {
   writeContextSelection,
 } = dialogueConfirmation;
 
+const agentChat = globalThis.OpenBiliClawAgentChat;
+if (!agentChat) {
+  throw new Error("agent-chat shared helper did not load");
+}
+const {
+  applyAgentEvent,
+  applyApprovalRecordToRun,
+  agentEventsFromTurn,
+  agentRunFromEvents,
+  createAgentRun,
+  captureApprovalDrafts,
+  restoreApprovalDrafts,
+  isAgentTaskActive,
+  isAgentTaskSummaryTurn,
+  isApprovalTerminalStatus,
+  normalizeApproveResponse,
+  renderAgentRunMarkup,
+  renderAgentTaskDetailMarkup,
+  renderAgentTaskRowMarkup,
+  renderAgentTaskSummaryMarkup,
+  renderApprovalCardMarkup,
+  skillDisplayTitle,
+} = agentChat;
+
 let $root = null;
 let loaded = false;
 let turns = [];
+let historyLoaded = false;
 let sending = false;
 let pendingTurnId = null;
 let pollTimer = null;
@@ -86,6 +127,9 @@ let userScrolledUp = false;
 const CHAT_HISTORY_REFRESH_INTERVAL_MS = 2500;
 let historyRefreshTimer = null;
 let historyRefreshInFlight = false;
+let historyRefreshGeneration = 0;
+let visibilityResumeBound = false;
+let chatViewportBound = false;
 let lastHistorySignature = null;
 let pendingConfirmationRefreshTimer = null;
 let dialogueStatus = { message: "", tone: "info" };
@@ -103,6 +147,87 @@ let pendingConfirmations = {
   items: [],
   expanded: false,
 };
+
+// ── Agent loop state (M9) ────────────────────────────────────
+// Live process-flow runs keyed by turn_id. Replayed turns reduce
+// payload.agent_events on the fly; settled live runs stay here until the
+// durable history snapshot replaces them.
+let agentLoopAvailable = true;
+const agentRunsByTurnId = new Map();
+const streamingTurnIds = new Set();
+const legacyStreamReplies = new Map();
+// Live token deltas of the current agent-stream hop, keyed by turn_id.
+// Deltas render into the turn's thinking bubble as they arrive; a
+// ``thinking`` event (intermediate hop done) resets the buffer, and the
+// authoritative ``final`` / ``done`` text replaces it.
+const agentDeltaBuffers = new Map();
+
+const CHAT_SESSION_STORAGE_KEY = "openbiliclaw.mobile.chatSessionId";
+const CHAT_SESSION_SKILLS_STORAGE_KEY = "openbiliclaw.mobile.chatSessionSkills";
+
+function readStoredJson(key, fallback) {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(key) || "");
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(value));
+  } catch { /* storage unavailable */ }
+}
+
+let activeSessionId = (() => {
+  try {
+    return String(globalThis.localStorage?.getItem(CHAT_SESSION_STORAGE_KEY) || "") || "default";
+  } catch {
+    return "default";
+  }
+})();
+let chatSessions = [];
+const sessionDrafts = new Map();
+let sessionsDrawerOpen = false;
+let sessionRenameId = "";
+let sessionSkillMap = (() => {
+  const stored = readStoredJson(CHAT_SESSION_SKILLS_STORAGE_KEY, {});
+  return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+})();
+let chatSkills = [];
+let skillsSheetOpen = false;
+let chatPreferenceTab = "persona";
+let chatPersonas = [];
+let chatPersonaExamplePrompt = "";
+let personaCatalogLoading = false;
+let personaCatalogError = "";
+let personaRevision = 0;
+const personaSaveRequests = new Map();
+const personaSaveErrors = new Map();
+let pendingApprovals = [];
+let approvalsExpanded = false;
+// 异步审批执行（approve 只入队）：本页批准、等待终态的审批（id → turnId），
+// 以及后端 executing 记录（刷新/回放时把 pending 卡恢复成「执行中…」）。
+const executingApprovals = new Map();
+let approvalExecutingOverrides = new Map();
+// 本页已观察到终态的记录：approval_result 事件落进 turn 回放前，
+// 轮询重渲染也用这份快照保持终态展示。
+const approvalTerminalOverrides = new Map();
+let tasksOverlayOpen = false;
+let agentTasks = [];
+let agentTaskDetail = null;
+let tasksPollTimer = null;
+
+function currentSkillName() {
+  return String(sessionSkillMap[activeSessionId] || "");
+}
+
+function setSessionSkill(sessionId, skillName) {
+  if (skillName) sessionSkillMap[sessionId] = skillName;
+  else delete sessionSkillMap[sessionId];
+  writeStoredJson(CHAT_SESSION_SKILLS_STORAGE_KEY, sessionSkillMap);
+}
 
 // Messages overlay state
 let overlayOpen = false;
@@ -268,8 +393,913 @@ function createPendingPanel(previousScrollTop = 0) {
   return panel;
 }
 
+// ── Agent loop UI builders (M9) ──────────────────────────────
+function agentRunForTurn(turn) {
+  if (!turn?.turn_id) return null;
+  const live = agentRunsByTurnId.get(turn.turn_id);
+  const events = agentEventsFromTurn(turn);
+  const run = live || (events.length > 0 ? agentRunFromEvents(events) : null);
+  // 回放只归约 approval_request → pending；用 executing 列表恢复中间态，
+  // 避免刷新后露出可重复点击的批准按钮。
+  if (run) {
+    for (const record of approvalTerminalOverrides.values()) applyApprovalRecordToRun(run, record);
+    for (const record of approvalExecutingOverrides.values()) applyApprovalRecordToRun(run, record);
+  }
+  return run;
+}
+
+function agentRunHasContent(run) {
+  return Boolean(
+    run && (run.steps.length > 0 || run.error || run.skillSuggestion || run.taskProposal),
+  );
+}
+
+function createChatTopbar() {
+  const bar = document.createElement("div");
+  bar.className = "chat-agent-topbar";
+
+  const sessionsBtn = document.createElement("button");
+  sessionsBtn.type = "button";
+  sessionsBtn.className = "chat-agent-topbar-btn";
+  sessionsBtn.setAttribute("aria-label", "会话列表");
+  sessionsBtn.textContent = "☰";
+  sessionsBtn.addEventListener("click", () => {
+    sessionsDrawerOpen = !sessionsDrawerOpen;
+    if (sessionsDrawerOpen) void refreshSessions();
+    renderAgentOverlays();
+  });
+
+  const skillBtn = document.createElement("button");
+  skillBtn.type = "button";
+  skillBtn.className = "chat-agent-skill-chip";
+  skillBtn.setAttribute("aria-label", "选择角色与聊天风格");
+  const skillName = currentSkillName();
+  skillBtn.innerHTML = `<span>🎭 ${esc(skillDisplayTitle(skillName, chatSkills))}</span>
+    <span class="chat-agent-persona-label">${esc(currentPersonaTitle())}</span>`;
+  skillBtn.addEventListener("click", () => {
+    skillsSheetOpen = !skillsSheetOpen;
+    if (skillsSheetOpen) {
+      void refreshSkills();
+      void refreshPersonas();
+      void loadHistory();
+    }
+    renderAgentOverlays();
+  });
+
+  const session = chatSessions.find((item) => item?.session_id === activeSessionId);
+  const title = document.createElement("span");
+  title.className = "chat-agent-session-title";
+  title.textContent = session?.title || (activeSessionId === "default" ? "默认会话" : "当前会话");
+
+  const tasksBtn = document.createElement("button");
+  tasksBtn.type = "button";
+  tasksBtn.className = "chat-agent-topbar-btn chat-agent-tasks-btn";
+  tasksBtn.textContent = "任务";
+  const activeTaskCount = agentTasks.filter((task) => isAgentTaskActive(task?.status)).length;
+  if (activeTaskCount > 0) {
+    const badge = document.createElement("span");
+    badge.className = "chat-agent-badge";
+    badge.textContent = String(activeTaskCount);
+    tasksBtn.appendChild(badge);
+  }
+  tasksBtn.addEventListener("click", () => {
+    tasksOverlayOpen = !tasksOverlayOpen;
+    if (tasksOverlayOpen) void refreshAgentTasks();
+    renderAgentOverlays();
+    syncTasksPolling();
+  });
+
+  bar.append(sessionsBtn, skillBtn, title, tasksBtn);
+  return bar;
+}
+
+function createApprovalsPanel() {
+  const panel = document.createElement("section");
+  panel.className = "chat-pending chat-approvals";
+  panel.setAttribute("aria-label", "待审批操作");
+  // 面板同时列出执行中的审批（无按钮，只显示「执行中…」状态）。
+  const visibleApprovals = [...pendingApprovals, ...approvalExecutingOverrides.values()];
+  panel.hidden = visibleApprovals.length === 0 && !approvalsExpanded;
+
+  const toggle = document.createElement("button");
+  toggle.className = `chat-pending-toggle${approvalsExpanded ? " is-expanded" : ""}`;
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", String(approvalsExpanded));
+  toggle.setAttribute("aria-controls", "mobile-chat-approvals-list");
+  toggle.innerHTML = `<span>待审批操作 <span class="chat-pending-count">${pendingApprovals.length}</span></span>`;
+  toggle.addEventListener("click", () => {
+    approvalsExpanded = !approvalsExpanded;
+    render();
+    if (approvalsExpanded) void refreshApprovals();
+  });
+
+  const list = document.createElement("div");
+  list.id = "mobile-chat-approvals-list";
+  list.className = "chat-pending-list chat-approvals-list";
+  list.hidden = !approvalsExpanded;
+  list.setAttribute("aria-label", "待审批操作列表");
+  list.innerHTML = visibleApprovals
+    .map((approval) => renderApprovalCardMarkup(approval))
+    .join("");
+  list.addEventListener("click", (event) => {
+    handleAgentActionClick(event);
+  });
+
+  panel.append(toggle, list);
+  return panel;
+}
+
+// Targeted DOM update for the live process flow of one streaming turn, so
+// streaming updates never rebuild the whole shell (input focus survives).
+function updateAgentRunDom(turnId) {
+  const messages = document.getElementById("chat-messages");
+  if (!(messages instanceof HTMLElement)) return;
+  const container = messages.querySelector(
+    `[data-dialogue-turn-container="${CSS.escape(turnId)}"]`,
+  );
+  if (!(container instanceof HTMLElement)) return;
+  const run = agentRunsByTurnId.get(turnId);
+  let slot = container.querySelector(":scope > .agent-run-live-slot");
+  if (!agentRunHasContent(run)) {
+    slot?.remove();
+    return;
+  }
+  if (!(slot instanceof HTMLElement)) {
+    slot = document.createElement("div");
+    slot.className = "agent-run-live-slot";
+    const thinkingBubble = container.querySelector(".chat-bubble.thinking");
+    container.insertBefore(slot, thinkingBubble || null);
+  }
+  const approvalDrafts = captureApprovalDrafts(slot);
+  slot.innerHTML = renderAgentRunMarkup(run, { collapsed: run.settled });
+  restoreApprovalDrafts(slot, approvalDrafts);
+  if (!userScrolledUp || isNearChatBottom(messages)) {
+    requestAnimationFrame(() => {
+      messages.scrollTop = messages.scrollHeight;
+    });
+  }
+}
+
+// Delegated handler for all shared agent markup action hooks.
+function handleAgentActionClick(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  const approvalBtn = target.closest("[data-agent-approval-action]");
+  if (approvalBtn instanceof HTMLElement) {
+    void handleApprovalAction(approvalBtn);
+    return;
+  }
+  const skillSwitch = target.closest("[data-agent-skill-switch]");
+  if (skillSwitch instanceof HTMLElement) {
+    handleSkillSwitchCard(skillSwitch);
+    return;
+  }
+  if (target.closest("[data-agent-skill-dismiss]")) {
+    target.closest(".agent-skill-card")?.remove();
+    return;
+  }
+  const taskConfirm = target.closest("[data-agent-task-confirm]");
+  if (taskConfirm instanceof HTMLElement) {
+    void handleTaskProposalConfirm(taskConfirm);
+    return;
+  }
+  if (target.closest("[data-agent-task-dismiss]")) {
+    target.closest(".agent-task-proposal")?.remove();
+    return;
+  }
+  const taskOpen = target.closest("[data-agent-task-open]");
+  if (taskOpen instanceof HTMLElement) {
+    void openTaskDetail(taskOpen.dataset.agentTaskOpen || taskOpen.getAttribute("data-agent-task-open") || "");
+    return;
+  }
+  const taskCancel = target.closest("[data-agent-task-cancel]");
+  if (taskCancel instanceof HTMLElement) {
+    void handleTaskCancel(taskCancel);
+    return;
+  }
+  const suggestionUse = target.closest("[data-agent-suggestion-use]");
+  if (suggestionUse instanceof HTMLElement) {
+    const summary = suggestionUse.dataset.summary || "";
+    if (summary) {
+      retainedDraft = summary;
+      tasksOverlayOpen = false;
+      renderAgentOverlays();
+      render();
+      $root?.querySelector("#chat-input")?.focus({ preventScroll: true });
+      setDialogueStatus("建议已带入输入框，补充一句再发出去。", "info");
+    }
+  }
+}
+
+async function handleApprovalAction(button) {
+  const card = button.closest("[data-approval-id]");
+  const approvalId = card?.dataset.approvalId || "";
+  const action = button.dataset.agentApprovalAction || "";
+  if (!approvalId || !action) return;
+  if (action === "reject") {
+    card.querySelector(".agent-approval-reject")?.removeAttribute("hidden");
+    card.querySelector(".agent-approval-actions")?.setAttribute("hidden", "");
+    card.querySelector("input.agent-approval-reason")?.focus();
+    return;
+  }
+  if (action === "reject-cancel") {
+    card.querySelector(".agent-approval-reject")?.setAttribute("hidden", "");
+    card.querySelector(".agent-approval-actions")?.removeAttribute("hidden");
+    return;
+  }
+  for (const btn of card.querySelectorAll("button")) btn.disabled = true;
+  try {
+    if (action === "approve") {
+      const response = normalizeApproveResponse(await approveChatApproval(approvalId));
+      if (response.kind === "queued") {
+        // 异步执行协议：批准只入队，卡片进「执行中…」，终态交给
+        // refreshApprovals 的 2.5s 轮询落到 executed/failed。
+        markApprovalCardExecuting(card);
+        executingApprovals.set(approvalId, findApprovalTurnId(approvalId));
+        setRunApprovalStatus(approvalId, "executing");
+        setDialogueStatus(
+          response.alreadyQueued ? "这项改动已在执行中。" : "已批准，正在执行…",
+          "info",
+        );
+      } else {
+        // 旧协议（同步返回 ok/result）或幂等终态应答：直接显示结果。
+        const ok = response.ok !== false;
+        markApprovalCardSettled(card, ok ? "已批准并执行" : `批准了但执行失败：${response.resultText || ""}`, ok);
+        setRunApprovalStatus(approvalId, ok ? "executed" : "failed", response.resultText);
+        setDialogueStatus(ok ? "已批准并执行。" : "批准了，但执行失败。", ok ? "success" : "error");
+      }
+    } else if (action === "reject-submit") {
+      const reason = card.querySelector("input.agent-approval-reason")?.value?.trim() || "";
+      await rejectChatApproval(approvalId, reason);
+      markApprovalCardSettled(card, "已拒绝，不会执行。", true);
+      setRunApprovalStatus(approvalId, "rejected");
+      setDialogueStatus("已拒绝这个操作。", "info");
+    }
+    void refreshApprovals();
+  } catch (error) {
+    for (const btn of card.querySelectorAll("button")) btn.disabled = false;
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+}
+
+function findApprovalTurnId(approvalId) {
+  for (const [turnId, run] of agentRunsByTurnId) {
+    if (run.approvals.some((item) => item.approval_id === approvalId)) return turnId;
+  }
+  return "";
+}
+
+function setRunApprovalStatus(approvalId, status, resultText = "") {
+  for (const run of agentRunsByTurnId.values()) {
+    const approval = run.approvals.find((item) => item.approval_id === approvalId);
+    if (approval) {
+      approval.status = status;
+      if (resultText) approval.resultText = resultText;
+    }
+  }
+}
+
+function markApprovalCardExecuting(card) {
+  card.dataset.status = "executing";
+  const status = card.querySelector(".agent-approval-status");
+  if (status instanceof HTMLElement) {
+    status.textContent = "执行中…";
+    status.dataset.tone = "executing";
+  }
+  card.querySelector(".agent-approval-actions")?.remove();
+  card.querySelector(".agent-approval-reject")?.remove();
+}
+
+function markApprovalCardSettled(card, message, ok) {
+  card.dataset.status = ok ? "executed" : "failed";
+  const status = card.querySelector(".agent-approval-status");
+  if (status instanceof HTMLElement) {
+    status.textContent = message;
+    status.dataset.tone = ok ? "executed" : "failed";
+  }
+  card.querySelector(".agent-approval-actions")?.remove();
+  card.querySelector(".agent-approval-reject")?.remove();
+}
+
+// 轮询发现本页批准的审批到达终态：更新 run 模型、重绘过程流并提示结果。
+function settleTrackedApproval(approvalId, turnId, record) {
+  const ok = record.status === "executed";
+  approvalTerminalOverrides.set(approvalId, record);
+  setRunApprovalStatus(approvalId, record.status, record.resultText || "");
+  if (turnId) updateAgentRunDom(turnId);
+  setDialogueStatus(
+    ok ? "已批准并执行。" : `批准了，但执行失败${record.resultText ? `：${record.resultText}` : "。"}`,
+    ok ? "success" : "error",
+  );
+  return true;
+}
+
+function handleSkillSwitchCard(button) {
+  const skill = button.dataset.agentSkillSwitch || "";
+  if (!skill) return;
+  setSessionSkill(activeSessionId, skill);
+  button.closest(".agent-skill-card")?.remove();
+  setDialogueStatus(`已切换到「${skillDisplayTitle(skill, chatSkills)}」，从下一句开始生效。`, "success");
+  render();
+}
+
+async function handleTaskProposalConfirm(button) {
+  const card = button.closest("[data-agent-task-proposal]");
+  if (!card || button.disabled) return;
+  const prompt = card.dataset.taskPrompt || "";
+  const title = card.dataset.taskTitle || "";
+  const skill = card.dataset.taskSkill || "";
+  if (!prompt) return;
+  button.disabled = true;
+  button.textContent = "发起中…";
+  try {
+    const task = await createAgentTask({
+      prompt,
+      title,
+      skill,
+      sessionId: activeSessionId === "default" ? "" : activeSessionId,
+    });
+    card.innerHTML = `<p class="agent-task-proposal-text">后台任务已发起${task?.title ? `「${esc(task.title)}」` : ""}，完成后会把结果带回这里。</p>`;
+    setDialogueStatus("后台任务已开始，可在「任务」里查看进度。", "success");
+    void refreshAgentTasks();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "确认发起";
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+}
+
+async function handleTaskCancel(button) {
+  const taskId = button.dataset.agentTaskCancel || "";
+  if (!taskId || button.disabled) return;
+  button.disabled = true;
+  try {
+    await cancelAgentTask(taskId);
+    setDialogueStatus("任务已取消。", "info");
+  } catch (error) {
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+  await refreshAgentTasks();
+  if (agentTaskDetail?.task_id === taskId) await openTaskDetail(taskId, { silent: true });
+}
+
+// ── Agent data loading ───────────────────────────────────────
+function currentPersonaId() {
+  const session = chatSessions.find((item) => item?.session_id === activeSessionId);
+  return session ? String(session.metadata?.persona || "natural") : "";
+}
+
+function currentPersonaTitle() {
+  const id = currentPersonaId();
+  if (!id) return "风格加载中…";
+  return chatPersonas.find((persona) => persona.id === id)?.title
+    || (id === "natural" ? "自然朋友" : "已保存的风格");
+}
+
+function personaRequestError(error) {
+  const detail = error?.details?.detail;
+  const message = typeof detail === "string" ? detail : detail?.message || error?.details?.message;
+  if (message) return String(message).replace(/[。！!]+$/, "");
+  if (/[\u3400-\u9fff]/.test(error?.message || "")) return error.message.replace(/[。！!]+$/, "");
+  if (error?.name === "AbortError" || /timed?\s*out/i.test(error?.message || "")) return "请求超时";
+  if (Number(error?.status) === 401) return "登录已过期";
+  if ([404, 405].includes(Number(error?.status))) return "当前服务尚不支持聊天风格";
+  return error?.status ? `服务暂不可用（${error.status}）` : "连接中断或服务器未响应";
+}
+
+// Keep the server session as the only persona source. A read started before
+// a save, or answered while that save is pending, cannot roll back its choice.
+function mergeChatSessionSnapshot(session, requestRevision = personaRevision) {
+  const previous = chatSessions.find((item) => item?.session_id === session?.session_id);
+  if (requestRevision === personaRevision && !personaSaveRequests.has(session?.session_id)) {
+    return session;
+  }
+  const metadata = { ...session.metadata };
+  if (previous?.metadata?.persona) metadata.persona = previous.metadata.persona;
+  else delete metadata.persona;
+  return { ...session, metadata };
+}
+
+function applyChatSessionSnapshot(session) {
+  if (!session?.session_id) return false;
+  const previous = chatSessions.find((item) => item?.session_id === session.session_id);
+  const next = mergeChatSessionSnapshot(session);
+  chatSessions = previous
+    ? chatSessions.map((item) => item.session_id === session.session_id ? next : item)
+    : [...chatSessions, next];
+  if (previous?.metadata?.persona !== next.metadata?.persona) personaSaveErrors.delete(session.session_id);
+  return previous?.metadata?.persona !== next.metadata?.persona || previous?.title !== next.title;
+}
+
+async function refreshPersonas() {
+  if (personaCatalogLoading) return;
+  if (!state.online) {
+    personaCatalogError = "当前离线，恢复连接后可重新加载。";
+    if (skillsSheetOpen) renderAgentOverlays();
+    return;
+  }
+  personaCatalogLoading = true;
+  personaCatalogError = "";
+  if (skillsSheetOpen) renderAgentOverlays();
+  try {
+    const catalog = await fetchChatPersonas();
+    chatPersonas = catalog.personas;
+    chatPersonaExamplePrompt = catalog.examplePrompt;
+    if (!chatPersonas.length) throw new Error("聊天风格暂不可用，请稍后重试。");
+  } catch (error) {
+    personaCatalogError = personaRequestError(error);
+  } finally {
+    personaCatalogLoading = false;
+    if (skillsSheetOpen) renderAgentOverlays();
+  }
+}
+
+function invalidatePersonaReads(sessionId) {
+  personaRevision += 1;
+  if (sessionId === activeSessionId) {
+    historyRefreshGeneration += 1;
+    historyRefreshInFlight = false;
+  }
+}
+
+async function saveChatPersona(personaId) {
+  const sessionId = activeSessionId;
+  if (!chatPersonas.some((persona) => persona.id === personaId)
+    || !currentPersonaId() || personaSaveRequests.has(sessionId)) return;
+  if (personaId === currentPersonaId()) {
+    closeChatPreferences();
+    return;
+  }
+  personaSaveRequests.set(sessionId, personaId);
+  personaSaveErrors.delete(sessionId);
+  invalidatePersonaReads(sessionId);
+  renderAgentOverlays();
+  try {
+    const session = await updateChatSession(sessionId, { persona: personaId });
+    if (session?.session_id !== sessionId || session.metadata?.persona !== personaId) {
+      throw new Error("服务端未确认聊天风格，请重试。");
+    }
+    personaSaveRequests.delete(sessionId);
+    invalidatePersonaReads(sessionId);
+    applyChatSessionSnapshot(session);
+    if (sessionId !== activeSessionId) return;
+    render();
+    closeChatPreferences();
+    setDialogueStatus(`本会话已切换为「${currentPersonaTitle()}」，从下一句开始生效。`, "success");
+  } catch (error) {
+    personaSaveRequests.delete(sessionId);
+    invalidatePersonaReads(sessionId);
+    personaSaveErrors.set(sessionId, personaRequestError(error));
+    if (sessionId !== activeSessionId) return;
+    renderAgentOverlays();
+    setDialogueStatus("未能确认聊天风格已保存，请重试。", "error");
+  }
+}
+
+async function refreshSkills() {
+  if (!state.online) return;
+  try {
+    chatSkills = await fetchChatSkills();
+  } catch {
+    // Skill list is cosmetic; keep the last snapshot.
+  }
+  if (skillsSheetOpen) renderAgentOverlays();
+}
+
+async function refreshSessions() {
+  if (!state.online) return;
+  const requestRevision = personaRevision;
+  try {
+    const sessions = await fetchChatSessions();
+    chatSessions = sessions.map((session) => mergeChatSessionSnapshot(session, requestRevision));
+  } catch {
+    // Keep the last list while offline.
+  }
+  if (sessionsDrawerOpen || skillsSheetOpen) renderAgentOverlays();
+}
+
+async function refreshApprovals() {
+  if (!state.online) return false;
+  try {
+    // pending 之外同时拉 executing（回放恢复中间态），并在有本页批准的
+    // 审批时拉全量快照跟踪到终态；挂在既有 2.5s 历史刷新节奏上。
+    const [next, executing] = await Promise.all([
+      fetchChatApprovals({ status: "pending" }),
+      fetchChatApprovals({ status: "executing" }),
+    ]);
+    let changed = JSON.stringify(next) !== JSON.stringify(pendingApprovals);
+    pendingApprovals = next;
+    approvalExecutingOverrides = new Map(executing.map((record) => [record.approval_id, record]));
+    if (executingApprovals.size) {
+      const all = await fetchChatApprovals({ status: "", limit: 100 });
+      for (const [approvalId, turnId] of [...executingApprovals]) {
+        const record = all.find((item) => item.approval_id === approvalId);
+        if (!record || !isApprovalTerminalStatus(record.status)) continue;
+        executingApprovals.delete(approvalId);
+        changed = settleTrackedApproval(approvalId, turnId, record) || changed;
+      }
+    }
+    return changed;
+  } catch {
+    // 503 (approval gate unwired) or offline: keep the last snapshot.
+    return false;
+  }
+}
+
+async function refreshAgentTasks() {
+  if (!state.online) return;
+  try {
+    const { items } = await fetchAgentTasks({ limit: 50 });
+    agentTasks = items;
+  } catch {
+    // Keep the last list.
+  }
+  if (tasksOverlayOpen) renderAgentOverlays();
+}
+
+async function openTaskDetail(taskId, { silent = false } = {}) {
+  if (!taskId) return;
+  if (!silent) {
+    tasksOverlayOpen = true;
+    renderAgentOverlays();
+  }
+  try {
+    agentTaskDetail = await fetchAgentTask(taskId);
+  } catch (error) {
+    if (!silent) setDialogueStatus(contextErrorMessage(error), "error");
+  }
+  if (tasksOverlayOpen) renderAgentOverlays();
+  syncTasksPolling();
+}
+
+function syncTasksPolling() {
+  const shouldPoll = tasksOverlayOpen
+    && (agentTasks.some((task) => isAgentTaskActive(task?.status))
+      || (agentTaskDetail && isAgentTaskActive(agentTaskDetail.status)));
+  if (shouldPoll && tasksPollTimer === null) {
+    tasksPollTimer = window.setInterval(() => {
+      void refreshAgentTasks();
+      if (agentTaskDetail && isAgentTaskActive(agentTaskDetail.status)) {
+        void openTaskDetail(agentTaskDetail.task_id, { silent: true });
+      }
+      syncTasksPolling();
+    }, 4000);
+  } else if (!shouldPoll && tasksPollTimer !== null) {
+    window.clearInterval(tasksPollTimer);
+    tasksPollTimer = null;
+  }
+}
+
+async function switchSession(sessionId) {
+  if (!sessionId || sessionId === activeSessionId) {
+    sessionsDrawerOpen = false;
+    renderAgentOverlays();
+    return;
+  }
+  const input = $root?.querySelector("#chat-input");
+  sessionDrafts.set(activeSessionId, input?.value ?? retainedDraft);
+  retainedDraft = sessionDrafts.get(sessionId) || "";
+  if (input) input.value = retainedDraft;
+  activeSessionId = sessionId;
+  historyRefreshGeneration += 1;
+  historyRefreshInFlight = false;
+  try {
+    globalThis.localStorage?.setItem(CHAT_SESSION_STORAGE_KEY, sessionId);
+  } catch { /* storage unavailable */ }
+  turns = [];
+  historyLoaded = false;
+  lastHistorySignature = null;
+  pendingTurnId = null;
+  sending = [...streamingTurnIds].some((id) => agentRunsByTurnId.get(id)?.sessionId === sessionId);
+  sessionsDrawerOpen = false;
+  renderAgentOverlays();
+  render();
+  await loadHistory();
+}
+
+async function handleCreateSession() {
+  try {
+    const session = await createChatSession({});
+    await refreshSessions();
+    await switchSession(session?.session_id || "");
+    setDialogueStatus("新会话已建好，说点什么吧。", "success");
+  } catch (error) {
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+}
+
+async function handleArchiveSession(sessionId) {
+  try {
+    await updateChatSession(sessionId, { archived: true });
+    if (sessionId === activeSessionId) await switchSession("default");
+    await refreshSessions();
+    setDialogueStatus("会话已归档。", "info");
+  } catch (error) {
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+}
+
+async function handleRenameSession(sessionId, title) {
+  const trimmed = String(title || "").trim();
+  if (!trimmed) return;
+  try {
+    await updateChatSession(sessionId, { title: trimmed });
+    sessionRenameId = "";
+    await refreshSessions();
+    renderAgentOverlays();
+    setDialogueStatus("会话已改名。", "success");
+  } catch (error) {
+    setDialogueStatus(contextErrorMessage(error), "error");
+  }
+}
+
+// ── Agent overlays (sessions drawer / skills sheet / task center) ──
+function ensureAgentOverlayHost() {
+  let host = document.querySelector(".agent-overlay-host");
+  if (!(host instanceof HTMLElement)) {
+    host = document.createElement("div");
+    host.className = "agent-overlay-host";
+    document.body.appendChild(host);
+  }
+  return host;
+}
+
+function closeChatPreferences() {
+  skillsSheetOpen = false;
+  renderAgentOverlays();
+  $root?.querySelector(".chat-agent-skill-chip")?.focus();
+}
+
+function renderAgentOverlays() {
+  const host = ensureAgentOverlayHost();
+  const previousRenameInput = host.querySelector(".agent-session-rename-input");
+  const renameHadFocus = previousRenameInput === document.activeElement;
+  const renameSelection = previousRenameInput
+    ? [previousRenameInput.selectionStart, previousRenameInput.selectionEnd] : null;
+  const previousPreferenceFocus = host.querySelector(".agent-preferences-panel :focus");
+  const previousPreferenceScroll = host.querySelector(".agent-preferences-panel .agent-drawer-list")?.scrollTop || 0;
+  host.innerHTML = "";
+
+  if (sessionsDrawerOpen) {
+    const drawer = document.createElement("div");
+    drawer.className = "agent-drawer-overlay";
+    drawer.innerHTML = `
+      <div class="agent-drawer" role="dialog" aria-modal="true" aria-label="会话列表">
+        <div class="agent-drawer-head">
+          <span class="agent-drawer-title">会话</span>
+          <button type="button" class="agent-btn agent-btn-secondary" data-drawer-new>新建会话</button>
+          <button type="button" class="agent-drawer-close" data-drawer-close aria-label="关闭">✕</button>
+        </div>
+        <div class="agent-drawer-list">
+          ${chatSessions.length === 0 ? '<p class="agent-drawer-empty">还没有会话，新建一个开始。</p>' : ""}
+          ${chatSessions.map((session) => `
+            <div class="agent-session-row${session.session_id === activeSessionId ? " is-active" : ""}" data-session-id="${esc(session.session_id)}">
+              <button type="button" class="agent-session-main" data-session-switch="${esc(session.session_id)}">
+                <span class="agent-session-title">${esc(session.title || "新会话")}</span>
+                <span class="agent-session-preview">${esc(session.last_message_preview || "")}</span>
+              </button>
+              ${Number(session.active_turns) > 0 ? '<span class="agent-session-active" title="正在回复">●</span>' : ""}
+              <button type="button" class="agent-btn agent-btn-ghost" data-session-rename="${esc(session.session_id)}">改名</button>
+              ${session.session_id !== "default" ? `<button type="button" class="agent-btn agent-btn-ghost" data-session-archive="${esc(session.session_id)}">归档</button>` : ""}
+            </div>
+            ${sessionRenameId === session.session_id ? `
+              <div class="agent-session-rename">
+                <input type="text" class="agent-session-rename-input" data-session-rename-input="${esc(session.session_id)}" value="${esc(session.title || "")}" maxlength="60" placeholder="会话名">
+                <button type="button" class="agent-btn agent-btn-primary" data-session-rename-submit="${esc(session.session_id)}">保存</button>
+              </div>` : ""}
+          `).join("")}
+        </div>
+      </div>`;
+    drawer.addEventListener("click", (event) => {
+      if (event.target === drawer) {
+        sessionsDrawerOpen = false;
+        renderAgentOverlays();
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest("[data-drawer-close]")) {
+        sessionsDrawerOpen = false;
+        renderAgentOverlays();
+      } else if (target.closest("[data-drawer-new]")) {
+        void handleCreateSession();
+      } else {
+        const switchBtn = target.closest("[data-session-switch]");
+        const renameBtn = target.closest("[data-session-rename]");
+        const renameSubmit = target.closest("[data-session-rename-submit]");
+        const archiveBtn = target.closest("[data-session-archive]");
+        if (renameSubmit instanceof HTMLElement) {
+          const input = drawer.querySelector(".agent-session-rename-input");
+          void handleRenameSession(renameSubmit.dataset.sessionRenameSubmit || "", input?.value || "");
+        } else if (renameBtn instanceof HTMLElement) {
+          sessionRenameId = renameBtn.dataset.sessionRename || "";
+          renderAgentOverlays();
+          host.querySelector(".agent-session-rename-input")?.focus();
+        } else if (archiveBtn instanceof HTMLElement) {
+          void handleArchiveSession(archiveBtn.dataset.sessionArchive || "");
+        } else if (switchBtn instanceof HTMLElement) {
+          void switchSession(switchBtn.dataset.sessionSwitch || "");
+        }
+      }
+    });
+    host.appendChild(drawer);
+    const renameInput = drawer.querySelector(".agent-session-rename-input");
+    if (renameInput && previousRenameInput?.dataset.sessionRenameInput === sessionRenameId) {
+      // Background session/history refreshes must not replace an unfinished edit.
+      renameInput.value = previousRenameInput.value;
+      if (renameHadFocus) {
+        renameInput.focus({ preventScroll: true });
+        renameInput.setSelectionRange(...renameSelection);
+      }
+    }
+  }
+
+  if (skillsSheetOpen) {
+    const sheet = document.createElement("div");
+    sheet.className = "agent-drawer-overlay";
+    const skillName = currentSkillName();
+    const personaId = currentPersonaId();
+    const savingPersona = personaSaveRequests.get(activeSessionId);
+    const personaError = personaSaveErrors.get(activeSessionId);
+    sheet.innerHTML = `
+      <div class="agent-drawer agent-preferences-panel" role="dialog" aria-modal="true" aria-label="角色与聊天风格">
+        <div class="agent-drawer-head">
+          <span class="agent-drawer-title">角色与聊天风格</span>
+          <button type="button" class="agent-drawer-close" data-sheet-close aria-label="关闭">✕</button>
+        </div>
+        <div class="agent-preference-tabs" role="tablist" aria-label="设置类型">
+          <button type="button" id="chat-persona-tab" role="tab" aria-selected="${chatPreferenceTab === "persona"}" aria-controls="chat-persona-options" data-preference-tab="persona">聊天风格</button>
+          <button type="button" id="chat-skill-tab" role="tab" aria-selected="${chatPreferenceTab === "skill"}" aria-controls="chat-skill-options" data-preference-tab="skill">功能角色</button>
+        </div>
+        ${chatPreferenceTab === "persona" ? `
+        <div class="agent-drawer-list" id="chat-persona-options" role="tabpanel" aria-labelledby="chat-persona-tab" aria-busy="${Boolean(savingPersona)}">
+          <p class="agent-preference-hint">选择阿B说话的方式。保存后仅对本会话的下一句起生效，功能角色保持不变。</p>
+          ${chatPersonaExamplePrompt ? `<p class="agent-preference-hint">示例回应：${esc(chatPersonaExamplePrompt)}</p>` : ""}
+          ${savingPersona ? '<p class="agent-preference-status" role="status">正在保存聊天风格…</p>' : ""}
+          ${personaError ? `<p class="agent-preference-error" role="alert">尚未确认保存：${esc(personaError)}。请刷新或重试。</p>` : ""}
+          ${personaCatalogError ? `<p class="agent-preference-error" role="alert">聊天风格暂不可用：${esc(personaCatalogError)}</p><button type="button" class="agent-btn agent-btn-secondary agent-persona-retry" data-persona-retry>重新加载</button>` : ""}
+          ${!personaCatalogError && chatPersonas.length === 0 ? '<p class="agent-drawer-empty" role="status">聊天风格加载中…</p>' : ""}
+          ${!personaId && chatPersonas.length > 0 ? '<p class="agent-preference-hint" role="status">正在读取本会话的风格…</p>' : ""}
+          ${chatPersonas.map((persona) => `
+            <button type="button" class="agent-skill-row agent-persona-row${persona.id === personaId ? " is-active" : ""}" data-persona-pick="${esc(persona.id)}" aria-pressed="${persona.id === personaId}" ${savingPersona || !personaId || personaCatalogError ? "disabled" : ""}>
+              <span class="agent-skill-row-title">${esc(persona.title)}${persona.id === personaId ? " · 当前" : persona.default ? "（默认）" : ""}</span>
+              <span class="agent-skill-row-desc">${esc(persona.description || "")}</span>
+              <span class="agent-persona-example">例如：${esc(persona.example || "")}</span>
+            </button>
+          `).join("")}
+        </div>` : `
+        <div class="agent-drawer-list" id="chat-skill-options" role="tabpanel" aria-labelledby="chat-skill-tab">
+          <p class="agent-preference-hint">选择阿B能帮你做什么，聊天风格保持不变。</p>
+          ${chatSkills.length === 0 ? '<p class="agent-drawer-empty">角色列表加载中…</p>' : ""}
+          ${chatSkills.map((skill) => `
+            <button type="button" class="agent-skill-row${skill.name === skillName || (!skillName && skill.isDefault) ? " is-active" : ""}" data-skill-pick="${esc(skill.name)}">
+              <span class="agent-skill-row-title">${esc(skill.title)}${skill.isDefault ? "（默认）" : ""}</span>
+              <span class="agent-skill-row-desc">${esc(skill.description)}</span>
+            </button>
+          `).join("")}
+        </div>`}
+      </div>`;
+    sheet.addEventListener("click", (event) => {
+      if (event.target === sheet || (event.target instanceof Element && event.target.closest("[data-sheet-close]"))) {
+        closeChatPreferences();
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const tab = target?.closest("[data-preference-tab]");
+      if (tab instanceof HTMLElement) {
+        chatPreferenceTab = tab.dataset.preferenceTab === "skill" ? "skill" : "persona";
+        renderAgentOverlays();
+        host.querySelector(`[data-preference-tab="${chatPreferenceTab}"]`)?.focus();
+        return;
+      }
+      if (target?.closest("[data-persona-retry]")) {
+        void refreshPersonas();
+        return;
+      }
+      const personaPick = target?.closest("[data-persona-pick]");
+      if (personaPick instanceof HTMLElement) {
+        void saveChatPersona(personaPick.dataset.personaPick || "");
+        return;
+      }
+      const pick = event.target instanceof Element ? event.target.closest("[data-skill-pick]") : null;
+      if (pick instanceof HTMLElement) {
+        setSessionSkill(activeSessionId, pick.dataset.skillPick || "");
+        render();
+        closeChatPreferences();
+        setDialogueStatus(`已切换到「${skillDisplayTitle(pick.dataset.skillPick || "", chatSkills)}」。`, "success");
+      }
+    });
+    sheet.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeChatPreferences();
+        return;
+      }
+      if (event.key === "Tab") {
+        const buttons = [...sheet.querySelectorAll("button:not(:disabled)")];
+        const first = buttons[0];
+        const last = buttons.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+        return;
+      }
+      const tab = event.target instanceof Element ? event.target.closest("[data-preference-tab]") : null;
+      if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      chatPreferenceTab = event.key === "Home" ? "persona" : event.key === "End" ? "skill"
+        : chatPreferenceTab === "persona" ? "skill" : "persona";
+      renderAgentOverlays();
+      host.querySelector(`[data-preference-tab="${chatPreferenceTab}"]`)?.focus();
+    });
+    host.appendChild(sheet);
+    // Refreshes can replace the sheet while the catalog or session arrives.
+    // Retain its focused control and reading position; first open enters the
+    // active tab so keyboard users stay inside the modal immediately.
+    const restoredFocus = previousPreferenceFocus && [...sheet.querySelectorAll("button:not(:disabled)")].find((button) =>
+      ["personaPick", "preferenceTab", "skillPick"].some((key) => previousPreferenceFocus.dataset[key]
+        && previousPreferenceFocus.dataset[key] === button.dataset[key])
+      || (previousPreferenceFocus.hasAttribute("data-sheet-close") && button.hasAttribute("data-sheet-close"))
+      || (previousPreferenceFocus.hasAttribute("data-persona-retry") && button.hasAttribute("data-persona-retry")));
+    (restoredFocus || sheet.querySelector(`[data-preference-tab="${chatPreferenceTab}"]`))?.focus({ preventScroll: true });
+    const list = sheet.querySelector(".agent-drawer-list");
+    if (list) list.scrollTop = previousPreferenceScroll;
+  }
+
+  if (tasksOverlayOpen) {
+    const overlay = document.createElement("div");
+    overlay.className = "agent-drawer-overlay";
+    const detail = agentTaskDetail;
+    overlay.innerHTML = `
+      <div class="agent-drawer agent-tasks-panel" role="dialog" aria-modal="true" aria-label="任务中心">
+        <div class="agent-drawer-head">
+          ${detail ? '<button type="button" class="agent-btn agent-btn-ghost" data-tasks-back>← 列表</button>' : ""}
+          <span class="agent-drawer-title">${detail ? "任务详情" : "任务中心"}</span>
+          <button type="button" class="agent-drawer-close" data-tasks-close aria-label="关闭">✕</button>
+        </div>
+        <div class="agent-drawer-list" data-tasks-list>
+          ${detail
+            ? renderAgentTaskDetailMarkup(detail, { markdown: renderMarkdown })
+            : agentTasks.length === 0
+              ? '<p class="agent-drawer-empty">还没有后台任务。对话中阿B 会建议把长任务放到这里。</p>'
+              : agentTasks.map((task) => renderAgentTaskRowMarkup(task)).join("")}
+        </div>
+      </div>`;
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay || (event.target instanceof Element && event.target.closest("[data-tasks-close]"))) {
+        tasksOverlayOpen = false;
+        agentTaskDetail = null;
+        renderAgentOverlays();
+        syncTasksPolling();
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest("[data-tasks-back]")) {
+        agentTaskDetail = null;
+        renderAgentOverlays();
+        return;
+      }
+      handleAgentActionClick(event);
+    });
+    host.appendChild(overlay);
+  }
+}
+
+// Keep the live composer attached while rebuilding history and cards. Removing
+// a focused textarea resets selection, scroll and IME composition on mobile.
+function mountChatShell(root, shell) {
+  const previousShell = root.querySelector(".chat-shell");
+  const previousRow = previousShell?.querySelector(".chat-input-row");
+  const previousInput = previousRow?.querySelector("#chat-input");
+  const nextRow = shell.querySelector(".chat-input-row");
+  const nextInput = nextRow?.querySelector("#chat-input");
+  if (!previousShell || !previousRow || !previousInput || !nextInput) {
+    root.replaceChildren(shell);
+    return nextInput;
+  }
+  if (previousInput.value !== nextInput.value) previousInput.value = nextInput.value;
+  previousInput.placeholder = nextInput.placeholder;
+  previousRow.querySelector("#chat-send").disabled = nextRow.querySelector("#chat-send").disabled;
+  for (const child of [...previousShell.children]) {
+    if (child !== previousRow) child.remove();
+  }
+  let afterComposer = false;
+  for (const child of [...shell.children]) {
+    if (child === nextRow) afterComposer = true;
+    else if (afterComposer) previousShell.appendChild(child);
+    else previousShell.insertBefore(child, previousRow);
+  }
+  return previousInput;
+}
+
 function render() {
   if (!$root) return;
+  const approvalDrafts = captureApprovalDrafts($root);
   const previousMessages = $root.querySelector("#chat-messages");
   const previousPendingList = $root.querySelector("#mobile-chat-pending-list");
   const previousInput = $root.querySelector("#chat-input");
@@ -281,12 +1311,13 @@ function render() {
     ? previousInput.value || retainedDraft
     : retainedDraft;
   const restoreInputFocus = document.activeElement === previousInput;
-  $root.innerHTML = "";
 
   const shell = document.createElement("div");
   shell.className = "chat-shell";
 
+  shell.appendChild(createChatTopbar());
   shell.appendChild(createPendingPanel(previousPendingScrollTop));
+  shell.appendChild(createApprovalsPanel());
 
   // Messages area
   const messages = document.createElement("div");
@@ -298,7 +1329,14 @@ function render() {
 
   const dialogueTurns = selectDialogueTurns(turns);
   dialogueTurnsById.clear();
-  if (dialogueTurns.length === 0 && !sending) {
+  const historyViewState = getChatHistoryViewState({
+    historyLoaded,
+    turnCount: dialogueTurns.length,
+    sending,
+  });
+  if (historyViewState === "loading") {
+    messages.innerHTML = `<div class="chat-history-loading" role="status"><div class="spinner"></div><div class="chat-history-loading-text">正在加载聊天记录…</div></div>`;
+  } else if (historyViewState === "empty") {
     messages.innerHTML = `<div class="empty-state"><div class="empty-state-icon">\u{1F4AC}</div><div class="empty-state-text">\u548C AI \u804A\u804A\u4F60\u7684\u5174\u8DA3\u548C\u60F3\u6CD5</div></div>`;
   }
 
@@ -308,6 +1346,21 @@ function render() {
     container.className = "dialogue-turn";
     container.dataset.dialogueTurnContainer = turn?.turn_id || "";
     container.innerHTML = `${replyQuoteMarkup(turn, dialogueTurns)}${renderTurnMarkup(turn, { surface: "desktop" })}`;
+    // Agent loop process flow: live runs stream expanded; completed turns
+    // replay payload.agent_events as a collapsed, expandable summary.
+    const agentRun = agentRunForTurn(turn);
+    if (agentRunHasContent(agentRun)) {
+      const runSlot = document.createElement("div");
+      runSlot.className = "agent-run-live-slot";
+      runSlot.innerHTML = renderAgentRunMarkup(agentRun, { collapsed: agentRun.settled });
+      const assistantBubble = container.querySelector('[data-part="assistant"]');
+      container.insertBefore(runSlot, assistantBubble || null);
+    }
+    if (isAgentTaskSummaryTurn(turn)) {
+      const summarySlot = document.createElement("div");
+      summarySlot.innerHTML = renderAgentTaskSummaryMarkup(turn.payload, { markdown: renderMarkdown });
+      container.appendChild(summarySlot);
+    }
     if (
       !isCardTurn(turn) &&
       !isQuestionTurn(turn) &&
@@ -340,6 +1393,7 @@ function render() {
   });
   messages.addEventListener("click", (event) => {
     activateReplyQuote(event, messages);
+    handleAgentActionClick(event);
     const button = event.target instanceof Element
       ? event.target.closest("[data-card-action]")
       : null;
@@ -365,7 +1419,7 @@ function render() {
   const inputRow = document.createElement("div");
   inputRow.className = "chat-input-row";
 
-  const textarea = document.createElement("textarea");
+  let textarea = document.createElement("textarea");
   textarea.className = "chat-input";
   textarea.id = "chat-input";
   textarea.placeholder = PLACEHOLDERS[placeholderIdx];
@@ -409,7 +1463,9 @@ function render() {
   status.hidden = !dialogueStatus.message;
   shell.appendChild(status);
 
-  $root.appendChild(shell);
+  textarea = mountChatShell($root, shell);
+  autoGrow({ target: textarea });
+  restoreApprovalDrafts($root, approvalDrafts);
 
   for (const details of messages.querySelectorAll(".dialogue-evidence")) {
     const turnId = details.closest("[data-dialogue-turn-id]")?.dataset.dialogueTurnId || "";
@@ -427,7 +1483,7 @@ function render() {
       Math.max(0, messages.scrollHeight - messages.clientHeight),
     );
   }
-  if (restoreInputFocus) {
+  if (restoreInputFocus && document.activeElement !== textarea) {
     requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
   }
 
@@ -436,6 +1492,7 @@ function render() {
 
   // Render overlay if open
   renderOverlay();
+  renderAgentOverlays();
 }
 
 function autoGrow(e) {
@@ -456,10 +1513,6 @@ function startPlaceholderCarousel() {
   }, 4000);
 }
 
-function isChatMessagesNearBottom(messages) {
-  return messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 48;
-}
-
 function chatHistorySignature(nextTurns) {
   return JSON.stringify(nextTurns);
 }
@@ -467,10 +1520,160 @@ function chatHistorySignature(nextTurns) {
 function trackPendingHistoryTurn(nextTurns) {
   const last = [...nextTurns].reverse().find((turn) => turn.scope === "chat");
   if (!last || (last.status !== "pending" && last.status !== "processing")) return;
-  if (pendingTurnId === last.turn_id) return;
+  if (pendingTurnId === last.turn_id || streamingTurnIds.has(last.turn_id)) return;
+  // Agent loop turns are re-driven through the streaming endpoint (a pending
+  // streaming turn means the previous stream died with the page); the
+  // durable scheduler skips them, so polling alone would never settle.
+  if (agentLoopAvailable) {
+    void driveAgentStream(last.turn_id, last.message || "", last);
+    return;
+  }
   pendingTurnId = last.turn_id;
   sending = true;
   pollForResponse();
+}
+
+// ── Agent loop send path (M9) ────────────────────────────────
+function finalizeAgentTurn(turnId, { reply = "", error = "" } = {}) {
+  const t = turns.find((item) => item.turn_id === turnId);
+  if (t) {
+    if (error) {
+      t.status = "failed";
+      t.error = error;
+    } else {
+      t.status = "completed";
+      t.reply = reply;
+      t.response = reply;
+    }
+  }
+  streamingTurnIds.delete(turnId);
+  sending = [...streamingTurnIds].some((id) => agentRunsByTurnId.get(id)?.sessionId === activeSessionId);
+}
+
+async function finalizeAgentTurnSuccess(turnId, reply) {
+  const sessionId = agentRunsByTurnId.get(turnId)?.sessionId;
+  finalizeAgentTurn(turnId, { reply });
+  if (sessionId && sessionId !== activeSessionId) return;
+  setDialogueStatus("这句已经记下了。", "success");
+  render();
+  void Promise.allSettled([
+    refreshAfterChatTurn(),
+    refreshPendingConfirmations(),
+    refreshApprovals(),
+  ]);
+  // Session titles generate asynchronously on the first message; refresh the
+  // drawer once shortly after the reply lands.
+  window.setTimeout(() => void refreshSessions(), 4000);
+  await loadHistory();
+}
+
+async function driveAgentStream(turnId, message, sourceTurn = null) {
+  if (streamingTurnIds.has(turnId)) return;
+  streamingTurnIds.add(turnId);
+  const run = createAgentRun();
+  const turn = sourceTurn || turns.find((item) => item.turn_id === turnId);
+  const sessionId = turn?.session_id || activeSessionId;
+  if (sessionId === activeSessionId) sending = true;
+  run.sessionId = sessionId;
+  agentRunsByTurnId.set(turnId, run);
+  agentDeltaBuffers.set(turnId, "");
+  try {
+    const done = await streamAgentChatTurn({
+      turnId,
+      sessionId,
+      skill: turn?.payload?.agent_skill || "",
+      session: "popup",
+      message,
+      onEvent(name, data) {
+        if (name === "delta") {
+          // Token-level reply streaming: render fragments into the live
+          // bubble immediately; ``final``/``done`` replace it wholesale.
+          const next = (agentDeltaBuffers.get(turnId) || "") + String(data?.text || "");
+          agentDeltaBuffers.set(turnId, next);
+          updateLegacyReplyDom(turnId, next);
+          return;
+        }
+        if (name === "thinking") {
+          // The streamed hop text was intermediate reasoning, not the
+          // reply: it moves into the process flow; reset the live bubble.
+          agentDeltaBuffers.set(turnId, "");
+          updateLegacyReplyDom(turnId, "");
+        }
+        applyAgentEvent(run, name, data);
+        updateAgentRunDom(turnId);
+        if (name === "approval_request") void refreshApprovals().then(render);
+      },
+    });
+    await finalizeAgentTurnSuccess(turnId, run.finalText || done?.reply || "");
+  } catch (error) {
+    if (Number(error?.status) === 503) {
+      // loop_enabled=false: permanent for this page load; fall back to the
+      // legacy single-hop stream so the pending turn still completes.
+      agentLoopAvailable = false;
+      agentRunsByTurnId.delete(turnId);
+      agentDeltaBuffers.delete(turnId);
+      await driveLegacyStream(turnId, message);
+      return;
+    }
+    const messageText = error?.agentStreamError
+      ? String(error.message || "对话失败了，请稍后重试。")
+      : "连接中断了，可以重试。";
+    finalizeAgentTurn(turnId, { error: messageText });
+    if (sessionId !== activeSessionId) return;
+    setDialogueStatus(messageText, "error");
+    render();
+  } finally {
+    agentDeltaBuffers.delete(turnId);
+  }
+}
+
+async function driveLegacyStream(turnId, message) {
+  legacyStreamReplies.set(turnId, "");
+  try {
+    const done = await streamChatTurnLegacy({
+      turnId,
+      ...chatSession(),
+      message,
+      onContent(delta) {
+        legacyStreamReplies.set(turnId, (legacyStreamReplies.get(turnId) || "") + delta);
+        const t = turns.find((item) => item.turn_id === turnId);
+        if (t) {
+          t.response = legacyStreamReplies.get(turnId);
+          updateLegacyReplyDom(turnId, t.response);
+        }
+      },
+    });
+    legacyStreamReplies.delete(turnId);
+    await finalizeAgentTurnSuccess(turnId, String(done?.reply || turns.find((item) => item.turn_id === turnId)?.response || ""));
+  } catch {
+    legacyStreamReplies.delete(turnId);
+    // Last resort: the background reply worker does not pick up streaming
+    // turns, so surface a retryable error instead of polling forever.
+    finalizeAgentTurn(turnId, { error: "发送失败了，可以重试。" });
+    setDialogueStatus("发送失败了，可以重试。", "error");
+    render();
+  }
+}
+
+function updateLegacyReplyDom(turnId, text) {
+  const messages = document.getElementById("chat-messages");
+  if (!(messages instanceof HTMLElement)) return;
+  const container = messages.querySelector(
+    `[data-dialogue-turn-container="${CSS.escape(turnId)}"]`,
+  );
+  if (!(container instanceof HTMLElement)) return;
+  let bubble = container.querySelector(".chat-bubble.thinking");
+  if (!(bubble instanceof HTMLElement)) {
+    bubble = document.createElement("div");
+    bubble.className = "chat-bubble thinking";
+    container.appendChild(bubble);
+  }
+  bubble.innerHTML = renderMarkdown(text || "…");
+  if (!userScrolledUp || isNearChatBottom(messages)) {
+    requestAnimationFrame(() => {
+      messages.scrollTop = messages.scrollHeight;
+    });
+  }
 }
 
 // ── Send ─────────────────────────────────────────────────────
@@ -480,6 +1683,8 @@ async function handleSend() {
   if (!text || sending) return;
 
   sending = true;
+  const sessionId = activeSessionId;
+  const skill = currentSkillName();
   const turnId = `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const replyToTurnId = dialogueContextSelection?.reply_to_turn_id || "";
 
@@ -487,6 +1692,9 @@ async function handleSend() {
   input.value = "";
   turns.push({
     turn_id: turnId,
+    session_id: sessionId,
+    scope: "chat",
+    created_at: new Date().toISOString(),
     message: text,
     response: null,
     status: "pending",
@@ -497,10 +1705,23 @@ async function handleSend() {
   render();
 
   try {
-    await startChatTurn({ turnId, ...chatSession(), replyToTurnId, message: text });
-    pendingTurnId = turnId;
-    pollForResponse();
+    const turn = await startChatTurn({
+      turnId,
+      ...chatSession(),
+      replyToTurnId,
+      message: text,
+      sessionId,
+      skill,
+      streaming: agentLoopAvailable,
+    });
+    if (agentLoopAvailable) {
+      await driveAgentStream(turnId, text, turn);
+    } else if (sessionId === activeSessionId) {
+      pendingTurnId = turnId;
+      pollForResponse();
+    }
   } catch (error) {
+    if (sessionId !== activeSessionId) return;
     const t = turns.find((t) => t.turn_id === turnId);
     if (t) { t.status = "error"; t.error = "\u53D1\u9001\u5931\u8D25"; }
     retainedDraft = text;
@@ -512,6 +1733,7 @@ async function handleSend() {
 
 async function retryTurn(failedTurn) {
   if (sending) return;
+  const sessionId = failedTurn.session_id || activeSessionId;
   failedTurn.status = "pending";
   failedTurn.error = "";
   retainedDraft = "";
@@ -521,15 +1743,18 @@ async function retryTurn(failedTurn) {
   try {
     await startChatTurn({
       turnId: failedTurn.turn_id,
+      sessionId,
       ...chatSession(failedTurn.scope || "chat"),
       message: failedTurn.message,
       subjectId: failedTurn.subject_id || "",
       subjectTitle: failedTurn.subject_title || "",
       replyToTurnId: failedTurn.reply_to_turn_id || "",
     });
+    if (sessionId !== activeSessionId) return;
     pendingTurnId = failedTurn.turn_id;
     pollForResponse();
   } catch (error) {
+    if (sessionId !== activeSessionId) return;
     failedTurn.status = "error";
     failedTurn.error = "\u91CD\u8BD5\u5931\u8D25";
     sending = false;
@@ -541,6 +1766,7 @@ async function retryTurn(failedTurn) {
 
 function updateDialogueTurn(turn) {
   if (!turn?.turn_id) return;
+  if (turn.session_id && turn.session_id !== activeSessionId) return;
   const normalized = normalizeChatTurn(turn);
   const index = turns.findIndex((item) => item?.turn_id === normalized.turn_id);
   if (index >= 0) turns[index] = normalized;
@@ -555,7 +1781,7 @@ export async function refreshPendingConfirmations({ renderNow = true } = {}) {
   }
   try {
     const payload = await fetchPendingConfirmations({ session: "popup" });
-    const count = Math.max(0, Number(payload?.count) || 0);
+    const count = Math.max(0, Number(payload?.total ?? payload?.count) || 0);
     pendingConfirmations = {
       ...pendingConfirmations,
       count,
@@ -666,11 +1892,15 @@ async function handlePendingConfirmationOpen(button) {
 
 function pollForResponse() {
   if (!pendingTurnId) return;
+  const turnId = pendingTurnId;
+  const sessionId = activeSessionId;
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
+    if (turnId !== pendingTurnId || sessionId !== activeSessionId) return;
     try {
-      const turn = normalizeChatTurn(await fetchChatTurn(pendingTurnId));
-      const idx = turns.findIndex((t) => t.turn_id === pendingTurnId);
+      const turn = normalizeChatTurn(await fetchChatTurn(turnId));
+      if (turnId !== pendingTurnId || sessionId !== activeSessionId) return;
+      const idx = turns.findIndex((t) => t.turn_id === turnId);
       if (idx >= 0) turns[idx] = turn;
 
       if (turn.status === "done" || turn.status === "completed" || turn.response) {
@@ -690,7 +1920,7 @@ function pollForResponse() {
         pollForResponse();
       }
     } catch {
-      pollForResponse();
+      if (turnId === pendingTurnId && sessionId === activeSessionId) pollForResponse();
     }
   }, 1500);
 }
@@ -885,20 +2115,39 @@ function updateBadgeCount() {
 
 // ── Load ─────────────────────────────────────────────────────
 async function loadHistory() {
-  if (!state.online || historyRefreshInFlight) return;
+  if (!state.online || historyRefreshInFlight) {
+    // Offline before the first snapshot: stop showing the loading indicator
+    // instead of spinning forever; the next online sync refetches anyway.
+    if (!state.online && !historyLoaded) {
+      historyLoaded = true;
+      render();
+    }
+    return;
+  }
   historyRefreshInFlight = true;
-  const existingMessages = document.getElementById("chat-messages");
-  const shouldStickToBottom =
-    !(existingMessages instanceof HTMLElement) || isChatMessagesNearBottom(existingMessages);
-  const previousScrollTop = existingMessages instanceof HTMLElement ? existingMessages.scrollTop : 0;
+  const sessionId = activeSessionId;
+  const generation = ++historyRefreshGeneration;
   try {
-    const [historyResult, pendingResult] = await Promise.allSettled([
-      fetchChatTurns({ session: "popup", limit: 100 }),
+    const [historyResult, pendingResult, approvalsResult] = await Promise.allSettled([
+      fetchChatSessionDetail(sessionId, { limit: 100 }).catch(async (error) => {
+        // Pre-M5 backends have no session detail endpoint; fall back to the
+        // legacy flat history so the tab keeps working against older builds.
+        if (Number(error?.status) === 404 || Number(error?.status) === 405) {
+          return fetchChatTurns({ session: "popup", limit: 100 });
+        }
+        throw error;
+      }),
       fetchPendingConfirmations({ session: "popup" }),
+      refreshApprovals(),
     ]);
+    if (generation !== historyRefreshGeneration || sessionId !== activeSessionId) return;
     let changed = false;
     if (historyResult.status === "fulfilled") {
       const data = historyResult.value;
+      if (data?.session && applyChatSessionSnapshot(data.session)) {
+        changed = true;
+        if (skillsSheetOpen) renderAgentOverlays();
+      }
       const nextTurns = Array.isArray(data?.items || data?.turns)
         ? (data.items || data.turns).map(normalizeChatTurn)
         : [];
@@ -907,13 +2156,23 @@ async function loadHistory() {
       if (signature !== lastHistorySignature) {
         lastHistorySignature = signature;
         turns = nextTurns;
+        // Durable history is now authoritative: drop settled live runs whose
+        // turn replay is available from payload.agent_events.
+        for (const [turnId, run] of agentRunsByTurnId) {
+          if (run.settled && nextTurns.some((item) => item?.turn_id === turnId)) {
+            agentRunsByTurnId.delete(turnId);
+          }
+        }
         changed = true;
       }
+    }
+    if (approvalsResult.status === "fulfilled" && approvalsResult.value === true) {
+      changed = true;
     }
     if (pendingResult.status === "fulfilled") {
       const payload = pendingResult.value;
       const nextPending = {
-        count: Math.max(0, Number(payload?.count) || 0),
+        count: Math.max(0, Number(payload?.total ?? payload?.count) || 0),
         items: Array.isArray(payload?.items) ? payload.items : [],
       };
       if (
@@ -932,22 +2191,23 @@ async function loadHistory() {
     if ((dialogueContextSelection?.reply_to_turn_id || "") !== contextBefore) {
       changed = true;
     }
-    if (!changed) return;
+    const firstLoad = !historyLoaded;
+    historyLoaded = true;
+    if (!changed && !firstLoad) return;
+    // render captures the current reading position. A snapshot taken before
+    // awaiting history would undo any scrolling or Send action during fetch.
     render();
-    if (!shouldStickToBottom) {
-      window.requestAnimationFrame(() => {
-        const messages = document.getElementById("chat-messages");
-        if (!(messages instanceof HTMLElement)) return;
-        messages.scrollTop = Math.min(
-          previousScrollTop,
-          Math.max(0, messages.scrollHeight - messages.clientHeight),
-        );
-      });
-    }
   } catch {
     // Keep the last durable snapshot while offline.
   } finally {
+    if (generation !== historyRefreshGeneration || sessionId !== activeSessionId) return;
     historyRefreshInFlight = false;
+    // Even a failed first fetch must clear the loading indicator; the
+    // periodic sync repaints with real data once the backend responds.
+    if (!historyLoaded) {
+      historyLoaded = true;
+      render();
+    }
   }
 }
 
@@ -957,6 +2217,50 @@ function startChatHistorySync() {
     if (state.activeTab !== "chat" || document.hidden || !state.online) return;
     void loadHistory();
   }, CHAT_HISTORY_REFRESH_INTERVAL_MS);
+}
+
+// iOS suspends JS while locked/backgrounded and the OS may kill the SSE
+// connection without ever settling reader.read(); on resume, immediately
+// re-check history so a turn stuck in ``streamingTurnIds`` is re-driven by
+// the durable polling path instead of waiting for the next interval tick.
+function bindVisibilityResume() {
+  if (visibilityResumeBound) return;
+  visibilityResumeBound = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    if (state.activeTab !== "chat" || !state.online) return;
+    void loadHistory();
+  });
+}
+
+function syncChatViewport() {
+  const viewport = window.visualViewport;
+  const height = viewport?.height || window.innerHeight;
+  const focused = Boolean(document.activeElement?.matches(
+    ".chat-input, .agent-overlay-host input, .agent-overlay-host textarea",
+  ));
+  // A 400px viewport left only 14px for history in the mobile acceptance run.
+  // Compact focused small windows too; a >100px visual/layout gap also covers
+  // Safari keyboards that resize visualViewport without resizing the layout.
+  const occluded = document.documentElement.clientHeight - height > 100;
+  const compact = state.activeTab === "chat" && (viewport?.scale || 1) === 1
+    && (occluded || (focused && height <= 500));
+  document.body.classList.toggle("chat-keyboard-active", compact);
+  document.body.style.setProperty("--chat-visible-height", `${height}px`);
+  document.body.style.setProperty("--chat-visible-top", `${viewport?.offsetTop || 0}px`);
+}
+
+function bindChatViewport() {
+  if (chatViewportBound) return;
+  chatViewportBound = true;
+  window.visualViewport?.addEventListener("resize", syncChatViewport);
+  window.visualViewport?.addEventListener("scroll", syncChatViewport);
+  window.addEventListener("resize", syncChatViewport);
+  document.addEventListener("focusin", syncChatViewport);
+  document.addEventListener("focusout", () => requestAnimationFrame(syncChatViewport));
+  subscribe((_state, changed) => {
+    if ("activeTab" in changed) syncChatViewport();
+  });
 }
 
 async function refreshAfterChatTurn() {
@@ -1005,10 +2309,20 @@ export async function loadNotifications({ includeDelights = false } = {}) {
 export function initChatView(root) {
   $root = root;
   startChatHistorySync();
+  bindVisibilityResume();
+  bindChatViewport();
+  syncChatViewport();
   if (!loaded) {
     loaded = true;
     loadNotifications();
+    void refreshSkills().then(render);
+    void refreshPersonas().then(render);
+    void refreshSessions().then(render);
+    void refreshAgentTasks().then(render);
   }
+  // Paint immediately so the first entry shows the history loading indicator
+  // instead of an empty message list while the fetch is in flight.
+  render();
   loadHistory();
 }
 

@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -464,6 +465,80 @@ def _walk(node: Any, out: list[dict[str, Any]], limit: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Exact publication time enrichment (channel Atom feed)
+# ---------------------------------------------------------------------------
+
+_RSS_ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL)
+_RSS_VIDEO_ID_RE = re.compile(r"<yt:videoId>([^<]+)</yt:videoId>")
+_RSS_PUBLISHED_RE = re.compile(r"<published>([^<]+)</published>")
+_CHANNEL_ID_IN_URL_RE = re.compile(r"/channel/(UC[\w-]+)")
+
+
+def _extract_channel_id(raw: dict[str, Any]) -> str:
+    """Return the ``UC...`` channel id exposed by a renderer or yt-dlp entry.
+
+    scrapetube / InnerTube renderers carry it in ``ownerText`` (or the short /
+    long byline variants) inside the browse endpoint; yt-dlp flat entries put
+    it in ``channel_id`` / ``channel_url``.
+    """
+    for key in ("channel_id", "channelId"):
+        direct = str(raw.get(key) or "").strip()
+        if direct.startswith("UC"):
+            return direct
+    for key in ("ownerText", "shortBylineText", "longBylineText", "bylineText"):
+        container = raw.get(key)
+        if not isinstance(container, dict):
+            continue
+        for run in container.get("runs") or []:
+            if not isinstance(run, dict):
+                continue
+            endpoint = ((run.get("navigationEndpoint") or {}).get("browseEndpoint")) or {}
+            candidate = str(endpoint.get("browseId") or "").strip()
+            if candidate.startswith("UC"):
+                return candidate
+    for key in ("channel_url", "uploader_url"):
+        match = _CHANNEL_ID_IN_URL_RE.search(str(raw.get(key) or ""))
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _parse_channel_rss(text: str) -> dict[str, str]:
+    """Map ``videoId -> exact RFC3339 published`` from a channel Atom feed."""
+
+    published: dict[str, str] = {}
+    for entry in _RSS_ENTRY_RE.findall(text):
+        video_id = _RSS_VIDEO_ID_RE.search(entry)
+        published_at = _RSS_PUBLISHED_RE.search(entry)
+        if video_id and published_at:
+            published[video_id.group(1).strip()] = published_at.group(1).strip()
+    return published
+
+
+def _fetch_channel_rss(channel_id: str) -> dict[str, str]:
+    """Fetch and parse one channel's public Atom feed (exact ``published``)."""
+
+    from openbiliclaw.network import outbound_httpx_kwargs
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    with httpx.Client(timeout=20, **outbound_httpx_kwargs()) as client:
+        response = client.get(
+            "https://www.youtube.com/feeds/videos.xml",
+            params={"channel_id": channel_id},
+            headers=headers,
+        )
+        response.raise_for_status()
+        return _parse_channel_rss(response.text)
+
+
+# ---------------------------------------------------------------------------
 # Normalization — handles both scrapetube and InnerTube renderer shapes
 # ---------------------------------------------------------------------------
 
@@ -624,7 +699,18 @@ class YtScraperClient:
     """Async YouTube discovery client backed by scrapetube + InnerTube API."""
 
     region_code: str = _DEFAULT_REGION
+    # Exact-published enrichment budget. The Atom feed only lists a channel's
+    # latest ~15 uploads, so this is a best-effort recent-date source, not a
+    # history backfill: one bounded feed per channel, cached across strategies.
+    channel_rss_ttl_seconds: float = 600.0
+    channel_rss_max_feeds: int = 12
+    channel_rss_concurrency: int = 4
     _executor: Any = field(default=None, init=False, repr=False)
+    _channel_rss_cache: dict[str, tuple[float, dict[str, str]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     async def search_videos(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         loop = asyncio.get_running_loop()
@@ -639,3 +725,71 @@ class YtScraperClient:
     async def get_channel_videos(self, channel_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, partial(_scrapetube_channel, channel_id, limit))
+
+    async def enrich_missing_published_at(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        max_feeds: int | None = None,
+    ) -> int:
+        """Fill exact ``publishedAt`` from channel Atom feeds when available.
+
+        Only raw items without a machine-readable timestamp and with a
+        resolvable ``UC...`` channel id are considered.  The feed exposes the
+        channel's latest ~15 uploads, so an older or unresolvable video keeps
+        its relative ``publishedTimeText`` label only — a fabricated date is
+        never written into ``published_at``.
+        """
+
+        if not items:
+            return 0
+        limit = self.channel_rss_max_feeds if max_feeds is None else int(max_feeds)
+        if limit <= 0:
+            return 0
+
+        pending: dict[str, list[dict[str, Any]]] = {}
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            if any(
+                raw.get(key)
+                for key in ("timestamp", "release_timestamp", "upload_date", "publishedAt")
+            ):
+                continue
+            channel_id = _extract_channel_id(raw)
+            if not channel_id:
+                continue
+            pending.setdefault(channel_id, []).append(raw)
+        if not pending:
+            return 0
+
+        loop = asyncio.get_running_loop()
+        semaphore = asyncio.Semaphore(max(1, int(self.channel_rss_concurrency)))
+
+        async def load(channel_id: str) -> tuple[str, dict[str, str]]:
+            async with semaphore:
+                cached = self._channel_rss_cache.get(channel_id)
+                if cached is not None and time.monotonic() - cached[0] < float(
+                    self.channel_rss_ttl_seconds
+                ):
+                    return channel_id, cached[1]
+                try:
+                    published = await loop.run_in_executor(
+                        None, partial(_fetch_channel_rss, channel_id)
+                    )
+                except Exception as exc:
+                    logger.debug("YouTube RSS enrichment failed for %s: %s", channel_id, exc)
+                    return channel_id, {}
+                self._channel_rss_cache[channel_id] = (time.monotonic(), published)
+                return channel_id, published
+
+        loaded = await asyncio.gather(*(load(cid) for cid in list(pending)[:limit]))
+        enriched = 0
+        for channel_id, published in loaded:
+            for raw in pending.get(channel_id, []):
+                video_id = str(raw.get("videoId") or raw.get("id") or "").strip()
+                exact = published.get(video_id)
+                if exact and not raw.get("publishedAt"):
+                    raw["publishedAt"] = exact
+                    enriched += 1
+        return enriched

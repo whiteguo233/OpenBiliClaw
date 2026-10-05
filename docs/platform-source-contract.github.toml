@@ -1,0 +1,184 @@
+# Frozen source contract for the first-class GitHub integration.
+#
+# Inventory command:
+#   PYTHONPATH="$PWD/src" "$SOURCE_SKILL_PYTHON" scripts/audit_platform_source.py \
+#     --contract docs/platform-source-contract.github.toml --check --json
+
+schema_version = 1
+canonical_slug = "github"
+display_name = "GitHub"
+integration_level = "full"
+aliases = ["gh"]
+hosts = ["github.com"]
+content_types = ["repository"]
+
+[transport]
+kind = "official-api"
+owner = "backend"
+entrypoints = [
+  "src/openbiliclaw/sources/github_client.py",
+  "src/openbiliclaw/sources/github.py",
+]
+route_aliases = []
+fallback_owner = "none"
+requires_overseas_network = true
+routed_by_network_mode = true
+network_policy = "Backend httpx requests to api.github.com follow the shared overseas network mode; no browser or subprocess transport is used."
+
+[transport.capability_routes]
+discover = "backend:official-rest-api:anonymous-or-token"
+profile = "backend:official-rest-api:public-starred-repositories"
+bootstrap = "backend:official-rest-api:init-and-on-demand"
+
+[identity]
+item_id = "GitHub repository numeric id, stored as github:repository:<id>; node_id is preserved as global provenance"
+url = "The public repository html_url returned by GitHub; redirects may refresh the URL without changing item identity"
+dedupe = "Canonical source family plus typed repository id; gh/github aliases collapse before storage"
+account_scope = "Verified token /user identity first; otherwise an explicitly configured public username, which is accepted scope but not proof of ownership"
+
+[auth]
+mode = "anonymous-with-optional-credentials"
+credential_kinds = ["token"]
+verify_action = "live_probe"
+write_path = "config-only"
+account_resolution = "OPENBILICLAW_GITHUB_TOKEN or configured PAT via GET /user, then explicit/configured public username; conflicting durable user ids stop bootstrap"
+identity_evidence = "GET /user is verified token identity; GET /users/{username} only verifies that a public account exists and never proves ownership"
+login_cookie_names = []
+login_state_path = "credential"
+
+[auth.capability_modes]
+discover = "optional-credential"
+profile = "optional-credential"
+bootstrap = "optional-credential"
+
+[auth.capability_required]
+discover = true
+profile = true
+bootstrap = true
+
+[upstream]
+success_content_types = ["application/json"]
+pagination = "GitHub REST page/per_page with RFC Link next/last relations; search is capped at 1,000 results and starred pages stop only on Link exhaustion"
+terminal_evidence = "HTTP 200 plus the expected JSON object/list envelope; 200 [] or total_count=0 with incomplete_results=false is affirmative empty"
+terminal_policy = "401 is rejected credential, 403/429 may be rate limit, 422 is invalid search/page, 503 is transient, 304 is unchanged rather than empty, and incomplete_results=true is degraded"
+partial_policy = "Keep accepted repository rows when a later page/query is partial or rate-limited; never advance completeness, cursor, or missing-item inference from partial data"
+publication_time_policy = "Repository created_at is the authoritative publication instant; updated_at/pushed_at remain provenance and discovered_at is never substituted"
+
+[discover]
+modes = ["search", "ranked", "latest"]
+search_generation = "Both merged KeywordPlanner generation and inspiration-axis generation feed GitHub repository-search claims"
+budget = "Independent daily per-mode budgets are charged only after canonical dedupe and final retention"
+cursor = "Per-mode/query page cursor follows Link evidence, is bounded by the 1,000-result search ceiling, and gets one reset after an invalid stale page"
+
+[profile]
+signals = true
+incremental = false
+refresh_mode = "init-and-on-demand"
+
+[extension]
+task = "none"
+hosts = []
+task_marker = false
+background = false
+early_response = false
+cookie_sync = false
+
+[surfaces]
+cli = true
+setup = true
+desktop = true
+mobile = true
+extension_popup = true
+source_status = true
+credentials = true
+recommendation = true
+
+[engagement]
+view = "unavailable"
+like = "unavailable"
+favorite = "mapped"
+comment = "unavailable"
+share = "unavailable"
+danmaku = "unavailable"
+
+[media]
+image = "none"
+image_hosts = []
+deep_link = "browser-fallback"
+native_save = false
+
+[e2e]
+safe_actions = ["read-identity", "fetch-public-collection", "search", "ranked", "latest"]
+mutating_actions = []
+
+[e2e.safe_assertions]
+read-identity = "upstream-state-unchanged"
+fetch-public-collection = "upstream-state-unchanged"
+search = "upstream-state-unchanged"
+ranked = "upstream-state-unchanged"
+latest = "upstream-state-unchanged"
+
+[e2e.safe_postconditions]
+read-identity = "Only GitHub GET /user or GET /users/{username} is called; no account setting, repository, star, or follow state changes."
+fetch-public-collection = "Only the public starred-repositories collection is read into an isolated acceptance database; private repositories are rejected."
+search = "Only GitHub repository search GET requests occur; no upstream account or repository state changes."
+ranked = "Only GitHub repository search GET requests sorted by stars occur; no upstream state changes."
+latest = "Only GitHub repository search GET requests constrained by creation time occur; no upstream state changes."
+
+[events]
+strategy_prefixes = ["github-", "github_", "gh-"]
+mappings = "A public starred repository becomes a canonical favorite event at authoritative starred_at; discovery rows remain recommendation evidence"
+scope_caps = "Bootstrap item/page caps are backend-owned, private repositories are rejected, and repository ids are deduplicated before the global limit"
+
+[task]
+lease = "N/A: the backend official-API path uses bounded request lifetimes and creates no browser task"
+idle_deadline = "N/A: paced API requests have explicit connect/read timeouts"
+absolute_deadline = "N/A: page, item, and retry caps bound every init/discover operation"
+retry = "Transient retries, rate-limit cooldown, and one stale-page reset are bounded; accepted partial rows survive"
+buffer = "N/A: no MAIN-world response tap or browser replay buffer exists"
+
+[smoke]
+storage_scope = "isolated-only"
+
+[smoke.sinks]
+task = "forbidden"
+task_result = "forbidden"
+seen = "forbidden"
+affinity = "forbidden"
+snapshot = "forbidden"
+schedule = "forbidden"
+event_ingress = "forbidden"
+memory = "forbidden"
+profile = "forbidden"
+
+[exclusions]
+"profile.incremental" = "GitHub starred signals refresh only during explicit init/fetch in this contract; no post-init account polling is claimed."
+"extension.task" = "The official backend REST API covers discovery, identity, and public starred bootstrap without opening or observing github.com tabs."
+"extension.task-marker" = "No GitHub browser task exists, so there is no task-mode tab marker."
+"extension.background" = "No GitHub browser dispatcher or service-worker execution path exists."
+"extension.early-response" = "The backend REST client receives responses directly and needs no MAIN-world early-response capture."
+"extension.cookie-sync" = "GitHub authentication uses an optional PAT; OpenBiliClaw never reads GitHub browser cookies."
+"media.image" = "Repository recommendations are intentional text cards; owner avatars are identity images, not content covers."
+"media.deep-link" = "No GitHub-private URL scheme is claimed; mobile opens the canonical HTTPS URL and may rely on universal links."
+"media.native-save" = "The GitHub source is read-only and never stars, watches, follows, or mutates a repository."
+"engagement.view" = "GitHub's selected repository APIs expose no canonical repository view count."
+"engagement.like" = "Repository stars are canonical favorites, not likes; reactions are outside the repository-only content contract."
+"engagement.comment" = "Open issue counts are not comments, and repository comments are not a single canonical aggregate."
+"engagement.share" = "Forks are code lineage, not shares, and remain repository metadata only."
+"engagement.danmaku" = "GitHub has no Bilibili-style danmaku metric."
+
+[exclusion_tests]
+"profile.incremental" = ["tests/test_github_contract.py::test_github_profile_incremental_is_explicit_only"]
+"extension.task" = ["tests/test_github_contract.py::test_github_extension_task_is_not_required"]
+"extension.task-marker" = ["tests/test_github_contract.py::test_github_extension_task_marker_is_absent"]
+"extension.background" = ["tests/test_github_contract.py::test_github_extension_background_is_absent"]
+"extension.early-response" = ["tests/test_github_contract.py::test_github_extension_early_response_is_absent"]
+"extension.cookie-sync" = ["tests/test_github_contract.py::test_github_extension_cookie_sync_is_absent"]
+"media.image" = ["tests/test_github_contract.py::test_github_media_image_is_text_only"]
+"media.deep-link" = ["tests/test_github_contract.py::test_github_media_deep_link_uses_browser_fallback"]
+"media.native-save" = ["tests/test_github_contract.py::test_github_media_native_save_is_read_only"]
+"engagement.view" = ["tests/test_github_contract.py::test_github_engagement_view_is_unavailable"]
+"engagement.like" = ["tests/test_github_contract.py::test_github_engagement_like_is_unavailable"]
+"engagement.comment" = ["tests/test_github_contract.py::test_github_engagement_comment_is_unavailable"]
+"engagement.share" = ["tests/test_github_contract.py::test_github_engagement_share_is_unavailable"]
+"engagement.danmaku" = ["tests/test_github_contract.py::test_github_engagement_danmaku_is_unavailable"]

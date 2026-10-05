@@ -31,6 +31,7 @@ _SUSPICIOUS_BUDGET_LOW = 1
 _SUSPICIOUS_BUDGET_HIGH = 4
 # Guards the once-per-process warning so repeated config reloads don't spam.
 _warned_budget_keys: set[str] = set()
+_warned_legacy_empty_model_providers: set[str] = set()
 
 # Default config search paths
 _CONFIG_FILENAMES = ["config.toml", "config.local.toml"]
@@ -68,9 +69,15 @@ _SUPPORTED_CHAT_PROVIDERS = {
     "deepseek",
     "ollama",
     "openrouter",
+    "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 }
 _LLM_INSTANCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_TAILNET_HOSTNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_DEFAULT_TAILNET_HOSTNAME = "openbiliclaw-host"
 _LLM_PROVIDER_DISPLAY_NAMES = {
     "openai": "OpenAI",
     "claude": "Claude",
@@ -78,7 +85,11 @@ _LLM_PROVIDER_DISPLAY_NAMES = {
     "deepseek": "DeepSeek",
     "ollama": "Ollama",
     "openrouter": "OpenRouter",
+    "orcarouter": "OrcaRouter",
     "openai_compatible": "OpenAI-compatible",
+    "requesty": "Requesty",
+    "api_route": "API Route",
+    "cheaperinference": "Cheaper Inference",
 }
 _MIN_POOL_TARGET_COUNT = 1
 _MAX_POOL_TARGET_COUNT = 600
@@ -109,7 +120,29 @@ _DEFAULT_DISCOVERY_LIMIT = 30
 _DEFAULT_DELIGHT_QUEUE_LIMIT = 20
 _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS = 120
 _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
+# Self-imposed daemon LLM budget (issue #188). The scheduler counts background
+# LLM requests through LLMConcurrencyGate and pauses automatic loops when the
+# fixed window is exhausted. ``0`` disables the budget. 120 calls/hour is a
+# conservative engineering ceiling: it stops runaway multi-platform refresh
+# loops from burning paid quota while leaving normal single-user discovery
+# enough headroom (a full all-platform refresh wave is typically tens of calls).
+_DEFAULT_LLM_BUDGET_MAX_CALLS = 120
+_DEFAULT_LLM_BUDGET_WINDOW_SECONDS = 3600
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
+# Cognition-cycle context knobs (issue #169). Keep the defaults in sync with
+# the module constants in ``openbiliclaw/soul/cognition_cycle.py``:
+# _AWARENESS_EVENT_BATCH_SIZE, _INSIGHT_NOTE_BATCH_SIZE, _COGNITION_MAX_TOKENS.
+# Small-context local models (e.g. qwen3.8-27B on a 24G card with 80-100K
+# context) should lower these instead of patching the module constants.
+_DEFAULT_COGNITION_AWARENESS_EVENT_BATCH_SIZE = 300
+_MIN_COGNITION_AWARENESS_EVENT_BATCH_SIZE = 10
+_MAX_COGNITION_AWARENESS_EVENT_BATCH_SIZE = 900
+_DEFAULT_COGNITION_INSIGHT_NOTE_BATCH_SIZE = 150
+_MIN_COGNITION_INSIGHT_NOTE_BATCH_SIZE = 10
+_MAX_COGNITION_INSIGHT_NOTE_BATCH_SIZE = 450
+_DEFAULT_COGNITION_MAX_TOKENS = 32768
+_MIN_COGNITION_MAX_TOKENS = 1024
+_MAX_COGNITION_MAX_TOKENS = 128000
 _MIN_AUTO_UPDATE_CHECK_INTERVAL_HOURS = 1
 _DEFAULT_AUTO_UPDATE_CHECK_INTERVAL_HOURS = 6
 # Unified keyword planner (Discover backpressure refactor P1, spec §6).
@@ -143,14 +176,17 @@ _DEFAULT_INSPIRATION_BREADTH = "high"
 _DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = (
     "local_cache",
     "platform_sources",
+    "bing_rss",
     "exa",
     "you",
+    "serply",
 )
 _DEFAULT_ADMISSION_MIN_SCORE = 0.60
 _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -159,9 +195,8 @@ _DEFAULT_KEYFRAME_MAX_FRAMES = 4
 _DEFAULT_KEYFRAME_FETCH_LIMIT = 50
 _DEFAULT_DANMAKU_FETCH_LIMIT = 50
 _DEFAULT_DANMAKU_MAX_CHARS = 500
-DEFAULT_LLM_CONCURRENCY = 4
+DEFAULT_LLM_CONCURRENCY = 3
 _MIN_LLM_CONCURRENCY = 1
-_MAX_LLM_CONCURRENCY = 16
 # Slow reasoning / OpenAI-compatible relays can legitimately take well over
 # five minutes for one long response; 20 minutes is the product request ceiling.
 _DEFAULT_LLM_TIMEOUT = 1200
@@ -180,6 +215,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "v2ex": 1,
     "weibo": 1,
     "instagram": 1,
+    "github": 1,
 }
 
 _SOURCE_INCREMENTAL_ENV_FIELDS = {
@@ -203,6 +239,10 @@ _REMOTE_PROVIDER_FIELDS = {
     "gemini": "llm.gemini.api_key",
     "deepseek": "llm.deepseek.api_key",
     "openrouter": "llm.openrouter.api_key",
+    "orcarouter": "llm.orcarouter.api_key",
+    "requesty": "llm.requesty.api_key",
+    "api_route": "llm.api_route.api_key",
+    "cheaperinference": "llm.cheaperinference.api_key",
     # v0.3.32+ — generic OpenAI-protocol-compatible provider (Groq /
     # Together / Azure OpenAI / vLLM / self-hosted, etc.). Distinct from
     # ``openai`` so users can run both in parallel (chat = openai for
@@ -431,6 +471,14 @@ class EmbeddingConfig:
     # gemini-embedding-2 or dashscope qwen3-vl-embedding. Default off so
     # local bge-m3 / text-only paths pay zero extra cost.
     multimodal_enabled: bool = False
+    # L2 persistent cache byte budget (0 = unlimited). When set, the cache
+    # evicts inactive/legacy namespaces first, then oldest active rows, once
+    # usage crosses high_watermark, and stops at low_watermark. Vectors are
+    # stored as compact float32 blobs regardless; this bounds disk growth for
+    # long-running discovery/warmup cycles.
+    cache_max_bytes: int = 0
+    cache_high_watermark: float = 0.9
+    cache_low_watermark: float = 0.7
 
 
 @dataclass
@@ -474,6 +522,14 @@ class LLMConfig:
     # v0.3.32+ generic OpenAI-protocol-compatible provider. Always
     # requires an explicit base_url (otherwise it would just be ``openai``).
     openai_compatible: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # OrcaRouter model-routing gateway (OpenAI-compatible, ``sk-orca-`` key).
+    orcarouter: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # Requesty LLM gateway (OpenAI-compatible).
+    requesty: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # API Route multi-model gateway (OpenAI-compatible).
+    api_route: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # Cheaper Inference LLM gateway (OpenAI-compatible, ``ci_live_`` key).
+    cheaperinference: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     # Per-module overrides (empty = use global default)
     soul: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
@@ -530,17 +586,34 @@ def _legacy_provider_is_visible(
         referenced.add(str(route.provider or "").strip().lower())
     if provider_type in referenced:
         return True
+
+    model = str(provider.model or "").strip()
     if str(provider.api_key or "").strip():
-        return True
+        if model:
+            return True
+        if provider_type not in _warned_legacy_empty_model_providers:
+            _warned_legacy_empty_model_providers.add(provider_type)
+            logger.warning(
+                "config: [llm.%s] has api_key but empty model; "
+                "not projecting it as a legacy instance",
+                provider_type,
+            )
+        return False
     if provider_type == "openai" and str(provider.auth_mode or "").strip().lower() == "codex_oauth":
         return True
     if provider_type == "gemini" and bool(
         os.environ.get("GOOGLE_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     ):
-        return True
-    return provider_type == "ollama" and bool(
-        str(provider.model or "").strip() or str(provider.base_url or "").strip()
-    )
+        if model:
+            return True
+        if provider_type not in _warned_legacy_empty_model_providers:
+            _warned_legacy_empty_model_providers.add(provider_type)
+            logger.warning(
+                "config: [llm.gemini] has environment API key but empty model; "
+                "not projecting it as a legacy instance",
+            )
+        return False
+    return provider_type == "ollama" and bool(model or str(provider.base_url or "").strip())
 
 
 def effective_llm_instances(llm: LLMConfig) -> dict[str, LLMInstanceConfig]:
@@ -935,6 +1008,12 @@ class SchedulerConfig:
     enabled: bool = True
     pause_on_extension_disconnect: bool = False
     extension_disconnect_grace_seconds: int = _DEFAULT_EXTENSION_DISCONNECT_GRACE_SECONDS
+    # Self-imposed per-window cap on daemon-owned background LLM calls. When
+    # the cap is reached, ``ContinuousRefreshController`` pauses automatic
+    # LLM/embedding loops until the window rolls over (or the user raises/clears
+    # the cap / restarts the daemon). ``0`` disables the guard.
+    llm_budget_max_calls: int = _DEFAULT_LLM_BUDGET_MAX_CALLS
+    llm_budget_window_seconds: int = _DEFAULT_LLM_BUDGET_WINDOW_SECONDS
     discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 300
     copy_ready_target_count: int = _DEFAULT_COPY_READY_TARGET_COUNT
@@ -1055,6 +1134,13 @@ class DiscoveryConfig:
     # grounded adjacent concepts and metadata-bearing keywords.
     inspiration_search_enabled: bool = True
     inspiration_search_backends: tuple[str, ...] = _DEFAULT_INSPIRATION_SEARCH_BACKENDS
+    # Direct API credentials for the Exa / You.com inspiration backends. When
+    # present, the runtime calls the provider HTTP APIs directly instead of
+    # shelling out to the optional ``mcporter`` Node CLI. Keep empty to use the
+    # mcporter CLI fallback (or skip the backend when neither is available).
+    exa_api_key: str = ""
+    you_api_key: str = ""
+    serply_api_key: str = ""
     # Optional experiment mode: when true and inspiration search is available,
     # due platforms skip the legacy merged keyword planner and are filled only
     # through the search-inspired flow.
@@ -1072,6 +1158,9 @@ class DiscoveryConfig:
     # Embedding pre-filter rollout for discovery evaluation. ``shadow`` logs
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
+    # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
+    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    eval_scorer: str = "llm"
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -1109,7 +1198,23 @@ class AutostartConfig:
 
 
 @dataclass
-class XiaohongshuSourceConfig:
+class SourceDatePreferenceConfig:
+    """Per-source recommendation publication-date filter fields.
+
+    ``recommendation_date_preset = "all"`` keeps the legacy behavior for
+    that source. Date strings use YYYY-MM-DD and the weight is the penalty
+    applied to out-of-window candidates (kept for pool scoring/serving;
+    discovery filters out-of-window candidates before LLM evaluation).
+    """
+
+    recommendation_date_preset: str = "all"
+    recommendation_date_start: str = ""
+    recommendation_date_end: str = ""
+    recommendation_date_weight: float = 0.5
+
+
+@dataclass
+class XiaohongshuSourceConfig(SourceDatePreferenceConfig):
     """Xiaohongshu source-specific configuration.
 
     Content discovery and metadata extraction happens entirely in the
@@ -1120,6 +1225,10 @@ class XiaohongshuSourceConfig:
     # XHS is opt-in because it requires the browser extension and a logged-in
     # browser session. Init --yes-xhs or the settings page can enable it later.
     enabled: bool = False
+    # Extension-online periodic account bootstrap is opt-in per source. It may
+    # open a foreground browser tab, so it defaults to off even when the global
+    # scheduler.source_incremental_enabled master switch is on.
+    incremental_enabled: bool = False
     # Max Soul-driven search tasks the backend may enqueue per day.
     daily_search_budget: int = 20
     # Max creator-subscription fetch tasks per day.
@@ -1135,7 +1244,7 @@ class XiaohongshuSourceConfig:
 
 
 @dataclass
-class DouyinSourceConfig:
+class DouyinSourceConfig(SourceDatePreferenceConfig):
     """Douyin direct-cookie discovery configuration.
 
     Initialization bootstrap still uses the browser extension. These
@@ -1144,6 +1253,9 @@ class DouyinSourceConfig:
     """
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     mode: str = "direct"
     cookie_env: str = "OPENBILICLAW_DOUYIN_COOKIE"
     daily_search_budget: int = 0
@@ -1158,7 +1270,7 @@ class DouyinSourceConfig:
 
 
 @dataclass
-class YoutubeSourceConfig:
+class YoutubeSourceConfig(SourceDatePreferenceConfig):
     """YouTube source-specific configuration.
 
     YouTube steady-state discovery runs through a backend-direct runtime
@@ -1167,6 +1279,9 @@ class YoutubeSourceConfig:
     """
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     daily_search_budget: int = 0
     daily_trending_budget: int = 0
     daily_channel_budget: int = 0
@@ -1175,7 +1290,7 @@ class YoutubeSourceConfig:
 
 
 @dataclass
-class TwitterSourceConfig:
+class TwitterSourceConfig(SourceDatePreferenceConfig):
     """X (Twitter) direct-cookie discovery configuration.
 
     Steady-state discovery is server-side cookie replay (search / For-You /
@@ -1197,7 +1312,7 @@ class TwitterSourceConfig:
 
 
 @dataclass
-class ZhihuSourceConfig:
+class ZhihuSourceConfig(SourceDatePreferenceConfig):
     """Zhihu plugin-backed discovery configuration.
 
     Zhihu discovery runs in the browser extension so it can reuse the user's
@@ -1206,6 +1321,9 @@ class ZhihuSourceConfig:
     """
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     source_modes: tuple[str, ...] = ("search", "hot", "feed", "creator", "related")
     daily_search_budget: int = 0
     daily_hot_budget: int = 0
@@ -1217,7 +1335,7 @@ class ZhihuSourceConfig:
 
 
 @dataclass
-class RedditSourceConfig:
+class RedditSourceConfig(SourceDatePreferenceConfig):
     """Reddit discovery configuration.
 
     Reddit currently depends on a logged-in session instead of a reliable
@@ -1228,6 +1346,9 @@ class RedditSourceConfig:
     """
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     backend: str = "rdt"
     source_modes: tuple[str, ...] = ("search", "hot", "subreddit", "related")
     daily_search_budget: int = 300
@@ -1239,7 +1360,7 @@ class RedditSourceConfig:
 
 
 @dataclass
-class BangumiSourceConfig:
+class BangumiSourceConfig(SourceDatePreferenceConfig):
     """Bangumi official anonymous API discovery configuration."""
 
     enabled: bool = False
@@ -1260,10 +1381,42 @@ class BangumiSourceConfig:
 
 
 @dataclass
-class LinuxdoSourceConfig:
+class GitHubSourceConfig(SourceDatePreferenceConfig):
+    """GitHub public-repository discovery with an optional personal token.
+
+    Anonymous repository search is always available. ``username`` scopes the
+    public starred-repository bootstrap without proving ownership, while an
+    optional PAT can identify the current account through ``GET /user`` and
+    raise GitHub's public API rate limits. The integration is deliberately
+    public-only: neither the token nor this config unlock private repositories.
+    """
+
+    enabled: bool = False
+    username: str = ""
+    access_token: str = ""
+    # Security boundary: GitHub credentials may come from this one explicitly
+    # namespaced variable only. Generic GITHUB_TOKEN / GH_TOKEN variables often
+    # belong to unrelated developer tooling and must never be captured.
+    token_env: str = "OPENBILICLAW_GITHUB_TOKEN"
+    source_modes: tuple[str, ...] = ("search", "ranked", "latest")
+    daily_search_budget: int = 120
+    daily_ranked_budget: int = 60
+    daily_latest_budget: int = 60
+    # Anonymous repository search is limited to 10 requests/minute.
+    request_interval_seconds: int = 6
+    min_interval_minutes: int = 10
+    bootstrap_limit: int = 300
+    bootstrap_max_pages: int = 10
+
+
+@dataclass
+class LinuxdoSourceConfig(SourceDatePreferenceConfig):
     """Linux.do browser-extension discovery and account-signal configuration."""
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     source_modes: tuple[str, ...] = ("search", "hot", "feed", "creator", "related")
     daily_search_budget: int = 0
     daily_hot_budget: int = 0
@@ -1276,10 +1429,13 @@ class LinuxdoSourceConfig:
 
 
 @dataclass
-class V2EXSourceConfig:
+class V2EXSourceConfig(SourceDatePreferenceConfig):
     """V2EX public discovery configuration with an optional PAT."""
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     username: str = ""
     access_token: str = ""
     token_env: str = "OPENBILICLAW_V2EX_TOKEN"
@@ -1307,7 +1463,7 @@ class V2EXSourceConfig:
 
 
 @dataclass
-class WeiboSourceConfig:
+class WeiboSourceConfig(SourceDatePreferenceConfig):
     """Weibo public discovery and init-only browser bootstrap configuration."""
 
     enabled: bool = False
@@ -1320,7 +1476,7 @@ class WeiboSourceConfig:
 
 
 @dataclass
-class InstagramSourceConfig:
+class InstagramSourceConfig(SourceDatePreferenceConfig):
     """Instagram browser-task discovery and personal-signal configuration."""
 
     enabled: bool = False
@@ -1367,9 +1523,21 @@ _V2EX_LIST_MAX_LENGTH = {
 }
 _V2EX_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
+GITHUB_ALLOWED_SOURCE_MODES = frozenset({"search", "ranked", "latest"})
+GITHUB_TOKEN_ENV = "OPENBILICLAW_GITHUB_TOKEN"
+GITHUB_CONFIG_INTEGER_LIMITS: dict[str, tuple[int, int]] = {
+    "daily_search_budget": (0, 100_000),
+    "daily_ranked_budget": (0, 100_000),
+    "daily_latest_budget": (0, 100_000),
+    "request_interval_seconds": (0, 60),
+    "min_interval_minutes": (0, 1440),
+    "bootstrap_limit": (1, 1000),
+    "bootstrap_max_pages": (1, 100),
+}
+
 
 @dataclass
-class BilibiliSourceConfig:
+class BilibiliSourceConfig(SourceDatePreferenceConfig):
     """Bilibili discovery source switch."""
 
     enabled: bool = True
@@ -1405,6 +1573,7 @@ class SourcesConfig:
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
     reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
     bangumi: BangumiSourceConfig = field(default_factory=BangumiSourceConfig)
+    github: GitHubSourceConfig = field(default_factory=GitHubSourceConfig)
     linuxdo: LinuxdoSourceConfig = field(default_factory=LinuxdoSourceConfig)
     v2ex: V2EXSourceConfig = field(default_factory=V2EXSourceConfig)
     weibo: WeiboSourceConfig = field(default_factory=WeiboSourceConfig)
@@ -1492,6 +1661,12 @@ POSTURE_GATE_ENFORCE_MIN_RECENT_COUNT = 1
 _POSTURE_GATE_MODES = frozenset({"shadow", "enforce", "off"})
 _TOPIC_LIFECYCLE_SERIALIZATION_MODES = frozenset({"off", "on"})
 _COGNITION_PROMPT_VIEW_MODES = frozenset({"legacy", "compact-v1"})
+# Free-text reply-style instruction (issue #255). Capped so a paste accident
+# cannot blow up the user-facing prompt budgets.
+MAX_SOUL_REPLY_STYLE_CHARS = 200
+# Free-text full replacement for the dialogue prompt's tone block. Larger cap
+# than reply_style because multi-line instructions are legitimate input.
+MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS = 1000
 
 
 @dataclass
@@ -1521,6 +1696,49 @@ class SoulConfig:
     # (回放门); ``on`` excludes archived topics from that serialization. This is
     # the only "minimal consumption" of the topic state machine in this version.
     topic_lifecycle_serialization: str = "off"
+    # Cognition-cycle prompt/output budgets (issue #169). These are the runtime
+    # knobs for ``openbiliclaw.soul.cognition_cycle``'s module constants and let
+    # small-context local models (qwen3.8-27B etc.) run without patching code.
+    awareness_event_batch_size: int = _DEFAULT_COGNITION_AWARENESS_EVENT_BATCH_SIZE
+    insight_note_batch_size: int = _DEFAULT_COGNITION_INSIGHT_NOTE_BATCH_SIZE
+    cognition_max_tokens: int = _DEFAULT_COGNITION_MAX_TOKENS
+    # Free-text reply-style instruction (issue #255). Empty (default) keeps
+    # every user-facing prompt byte-identical; non-empty is appended as one
+    # extra line to the tone block of the dialogue / recommendation-copy /
+    # soul-profile prompts. Capped at MAX_SOUL_REPLY_STYLE_CHARS.
+    reply_style: str = ""
+    # Free-text full replacement for the Socratic-dialogue prompt's tone
+    # block. Empty (default) keeps the dialogue prompt byte-identical;
+    # non-empty (after strip) replaces the whole rendered tone block —
+    # including any ``reply_style`` line — in the dialogue prompt only.
+    # Newlines are preserved (multi-line is valid input). Capped at
+    # MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS.
+    dialogue_tone_prompt: str = ""
+
+
+@dataclass
+class AgentConfig:
+    """Chat agent-loop knobs (「聊一聊」 multi-hop tool calling).
+
+    ``loop_enabled`` gates the streaming agent chat endpoint
+    (``POST /api/chat/agent/stream``); the legacy single-hop endpoints stay
+    available either way. ``loop_max_steps`` caps the think → tool → observe
+    hops per user turn; when exhausted the model is asked to wrap up and
+    report progress. ``tool_result_max_chars`` bounds each tool result fed
+    back into the prompt (longer results are truncated with a marker).
+    ``session_title_enabled`` (M5) lets the backend auto-title new chat
+    sessions from their first message via the LLM (falling back to a
+    truncated message prefix); when false the truncated prefix is used
+    directly.  ``task_max_steps`` (M6) caps the hops of one durable
+    background task run — background tasks get a smaller budget than
+    interactive turns since they run unattended.
+    """
+
+    loop_enabled: bool = True
+    loop_max_steps: int = 64
+    tool_result_max_chars: int = 4000
+    session_title_enabled: bool = True
+    task_max_steps: int = 32
 
 
 @dataclass
@@ -1565,6 +1783,19 @@ class TlsProxyConfig:
 
 
 @dataclass
+class TailnetConfig:
+    """Application-owned tailnet listener configuration.
+
+    Persistent identity lives in the machine-local ``data/tailnet`` state
+    directory. Enrollment keys are accepted only as a runtime bootstrap secret;
+    neither belongs in the configuration file.
+    """
+
+    enabled: bool = False
+    hostname: str = _DEFAULT_TAILNET_HOSTNAME
+
+
+@dataclass
 class ApiConfig:
     """Backend API server settings.
 
@@ -1603,7 +1834,10 @@ class Config:
     # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
     # provider override): this carries soul-engine behavior toggles.
     soul: SoulConfig = field(default_factory=SoulConfig)
+    # Top-level `[agent]` carries the chat agent-loop budgets (M1).
+    agent: AgentConfig = field(default_factory=AgentConfig)
     tls_proxy: TlsProxyConfig = field(default_factory=TlsProxyConfig)
+    tailnet: TailnetConfig = field(default_factory=TailnetConfig)
 
     @property
     def data_path(self) -> Path:
@@ -1695,7 +1929,12 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         # TypeError when an on-disk plaintext `password` string is descended into.
         # `_build_api_auth` reads every API_AUTH_ENV_VARS var explicitly, so skip
         # them here entirely (review r7#1).
-        if env_key in API_AUTH_ENV_VARS or env_key in TLS_PROXY_ENV_VARS:
+        if (
+            env_key in API_AUTH_ENV_VARS
+            or env_key in TLS_PROXY_ENV_VARS
+            or env_key in TAILNET_ENV_VARS
+            or env_key in _TAILNET_RUNTIME_ENV_VARS
+        ):
             continue
         incremental_field = _SOURCE_INCREMENTAL_ENV_FIELDS.get(env_key)
         if incremental_field is not None:
@@ -1753,6 +1992,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("zhihu", sources.zhihu),
         ("reddit", sources.reddit),
         ("bangumi", sources.bangumi),
+        ("github", sources.github),
         ("linuxdo", sources.linuxdo),
         ("weibo", sources.weibo),
         ("instagram", sources.instagram),
@@ -1816,6 +2056,26 @@ def normalize_outbound_proxy(value: str) -> str:
         raise ValueError("代理地址缺少主机名,请填写形如 socks5://127.0.0.1:1080 的地址")
     # Preserve userinfo/host/port/path verbatim; only the scheme is lowercased.
     return f"{scheme}{text[len(parsed.scheme) :]}"
+
+
+def normalize_tailnet_hostname(value: object) -> str:
+    """Return a canonical DNS label for the embedded tailnet node.
+
+    Tailscale accepts a hostname rather than a fully-qualified domain name.
+    Keeping this to one strict 1..63-character DNS label prevents dots,
+    underscores, control characters, and ambiguous leading/trailing hyphens
+    from reaching the helper process.
+    """
+
+    if not isinstance(value, str):
+        raise ConfigError("tailnet.hostname: 必须是 1..63 字符的 DNS label")
+    hostname = value.strip().lower()
+    if not _TAILNET_HOSTNAME_RE.fullmatch(hostname):
+        raise ConfigError(
+            "tailnet.hostname: 必须是 1..63 字符的 DNS label，"
+            "首尾只能是字母或数字，中间只能包含字母、数字或连字符"
+        )
+    return hostname
 
 
 def _build_network_config(raw: dict[str, Any]) -> NetworkConfig:
@@ -2046,6 +2306,10 @@ def _build_config(
         ollama=_provider_config("ollama"),
         openrouter=_provider_config("openrouter"),
         openai_compatible=_provider_config("openai_compatible"),
+        orcarouter=_provider_config("orcarouter"),
+        requesty=_provider_config("requesty"),
+        api_route=_provider_config("api_route"),
+        cheaperinference=_provider_config("cheaperinference"),
         embedding=EmbeddingConfig(
             **_filter_dataclass_kwargs(
                 EmbeddingConfig,
@@ -2109,6 +2373,7 @@ def _build_config(
     zhihu_raw = sources_raw.get("zhihu", {})
     reddit_raw = sources_raw.get("reddit", {})
     bangumi_raw = sources_raw.get("bangumi", {})
+    github_raw = sources_raw.get("github", {})
     linuxdo_raw = sources_raw.get("linuxdo", {})
     v2ex_raw = sources_raw.get("v2ex", {})
     weibo_raw = sources_raw.get("weibo", {})
@@ -2122,6 +2387,7 @@ def _build_config(
         ),
         xiaohongshu=XiaohongshuSourceConfig(
             enabled=bool(xhs_raw.get("enabled", False)),
+            incremental_enabled=bool(xhs_raw.get("incremental_enabled", False)),
             daily_search_budget=int(xhs_raw.get("daily_search_budget", 20)),
             daily_creator_budget=int(xhs_raw.get("daily_creator_budget", 0)),
             task_interval_seconds=int(xhs_raw.get("task_interval_seconds", 1200)),
@@ -2129,6 +2395,7 @@ def _build_config(
         ),
         douyin=DouyinSourceConfig(
             enabled=bool(douyin_raw.get("enabled", False)),
+            incremental_enabled=bool(douyin_raw.get("incremental_enabled", False)),
             mode=str(douyin_raw.get("mode", "direct")),
             cookie_env=str(douyin_raw.get("cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")),
             daily_search_budget=int(douyin_raw.get("daily_search_budget", 0)),
@@ -2139,6 +2406,7 @@ def _build_config(
         ),
         youtube=YoutubeSourceConfig(
             enabled=bool(youtube_raw.get("enabled", False)),
+            incremental_enabled=bool(youtube_raw.get("incremental_enabled", False)),
             daily_search_budget=int(youtube_raw.get("daily_search_budget", 0)),
             daily_trending_budget=int(youtube_raw.get("daily_trending_budget", 0)),
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
@@ -2157,6 +2425,7 @@ def _build_config(
         ),
         zhihu=ZhihuSourceConfig(
             enabled=bool(zhihu_raw.get("enabled", False)),
+            incremental_enabled=bool(zhihu_raw.get("incremental_enabled", False)),
             source_modes=tuple(
                 mode
                 for mode in _coerce_str_list(
@@ -2175,6 +2444,7 @@ def _build_config(
         ),
         reddit=RedditSourceConfig(
             enabled=bool(reddit_raw.get("enabled", False)),
+            incremental_enabled=bool(reddit_raw.get("incremental_enabled", False)),
             backend=str(reddit_raw.get("backend", "rdt") or "rdt"),
             source_modes=tuple(
                 mode
@@ -2218,8 +2488,32 @@ def _build_config(
             min_interval_minutes=max(0, int(bangumi_raw.get("min_interval_minutes", 3))),
             bootstrap_limit=min(1000, max(1, int(bangumi_raw.get("bootstrap_limit", 300)))),
         ),
+        github=GitHubSourceConfig(
+            enabled=bool(github_raw.get("enabled", False)),
+            username=str(github_raw.get("username", "") or "").strip(),
+            access_token=str(github_raw.get("access_token", "") or "").strip(),
+            token_env=str(github_raw.get("token_env", GITHUB_TOKEN_ENV) or "").strip(),
+            source_modes=tuple(
+                value
+                for value in _coerce_str_list(
+                    github_raw.get("source_modes", ["search", "ranked", "latest"])
+                )
+                if value in GITHUB_ALLOWED_SOURCE_MODES
+            )
+            or ("search", "ranked", "latest"),
+            daily_search_budget=max(0, int(github_raw.get("daily_search_budget", 120))),
+            daily_ranked_budget=max(0, int(github_raw.get("daily_ranked_budget", 60))),
+            daily_latest_budget=max(0, int(github_raw.get("daily_latest_budget", 60))),
+            request_interval_seconds=max(
+                0, min(60, int(github_raw.get("request_interval_seconds", 6)))
+            ),
+            min_interval_minutes=max(0, min(1440, int(github_raw.get("min_interval_minutes", 10)))),
+            bootstrap_limit=min(1000, max(1, int(github_raw.get("bootstrap_limit", 300)))),
+            bootstrap_max_pages=min(100, max(1, int(github_raw.get("bootstrap_max_pages", 10)))),
+        ),
         linuxdo=LinuxdoSourceConfig(
             enabled=bool(linuxdo_raw.get("enabled", False)),
+            incremental_enabled=bool(linuxdo_raw.get("incremental_enabled", False)),
             source_modes=tuple(
                 mode
                 for mode in _coerce_str_list(
@@ -2241,6 +2535,7 @@ def _build_config(
         ),
         v2ex=V2EXSourceConfig(
             enabled=bool(v2ex_raw.get("enabled", False)),
+            incremental_enabled=bool(v2ex_raw.get("incremental_enabled", False)),
             username=str(v2ex_raw.get("username", "") or "").strip(),
             access_token=str(v2ex_raw.get("access_token", "") or "").strip(),
             token_env=str(v2ex_raw.get("token_env", "OPENBILICLAW_V2EX_TOKEN") or "").strip()
@@ -2364,7 +2659,25 @@ def _build_config(
             ),
         ),
     )
+    normalize_github_source_config(sources.github, strict=False)
     normalize_v2ex_source_config(sources.v2ex, strict=False)
+    _apply_source_date_preferences_from_raw(
+        sources,
+        bilibili=bilibili_source_raw,
+        legacy_bilibili=bili_raw,
+        xiaohongshu=xhs_raw,
+        douyin=douyin_raw,
+        youtube=youtube_raw,
+        twitter=twitter_raw,
+        zhihu=zhihu_raw,
+        reddit=reddit_raw,
+        bangumi=bangumi_raw,
+        github=github_raw,
+        linuxdo=linuxdo_raw,
+        v2ex=v2ex_raw,
+        weibo=weibo_raw,
+        instagram=instagram_raw,
+    )
     _warn_suspicious_budgets(sources)
 
     soul_raw = raw.get("soul", {}) if isinstance(raw.get("soul"), dict) else {}
@@ -2384,6 +2697,14 @@ def _build_config(
     raw_lifecycle = (
         str(soul_raw.get("topic_lifecycle_serialization", "off") or "off").strip().lower()
     )
+    # Free-text tone instruction (issue #255). Collapse all whitespace runs so
+    # the value stays a single line — it is injected as one extra tone-block
+    # line and must survive the save-time TOML render.
+    raw_reply_style = " ".join(str(soul_raw.get("reply_style", "") or "").split())
+    # Free-text replacement for the dialogue tone block. Only strip the outer
+    # whitespace — interior newlines/indentation are meaningful (multi-line
+    # instructions are legal input) and must survive the save-time render.
+    raw_dialogue_tone_prompt = str(soul_raw.get("dialogue_tone_prompt", "") or "").strip()
     soul = SoulConfig(
         preference=SoulPreferenceConfig(
             satisfaction_filter_enabled=bool(
@@ -2397,6 +2718,50 @@ def _build_config(
         posture_gate_force_enforce=bool(soul_raw.get("posture_gate_force_enforce", False)),
         topic_lifecycle_serialization=(
             raw_lifecycle if raw_lifecycle in _TOPIC_LIFECYCLE_SERIALIZATION_MODES else "off"
+        ),
+        awareness_event_batch_size=_normalize_scheduler_int(
+            soul_raw.get("awareness_event_batch_size"),
+            default=_DEFAULT_COGNITION_AWARENESS_EVENT_BATCH_SIZE,
+            min_value=_MIN_COGNITION_AWARENESS_EVENT_BATCH_SIZE,
+            max_value=_MAX_COGNITION_AWARENESS_EVENT_BATCH_SIZE,
+        ),
+        insight_note_batch_size=_normalize_scheduler_int(
+            soul_raw.get("insight_note_batch_size"),
+            default=_DEFAULT_COGNITION_INSIGHT_NOTE_BATCH_SIZE,
+            min_value=_MIN_COGNITION_INSIGHT_NOTE_BATCH_SIZE,
+            max_value=_MAX_COGNITION_INSIGHT_NOTE_BATCH_SIZE,
+        ),
+        cognition_max_tokens=_normalize_scheduler_int(
+            soul_raw.get("cognition_max_tokens"),
+            default=_DEFAULT_COGNITION_MAX_TOKENS,
+            min_value=_MIN_COGNITION_MAX_TOKENS,
+            max_value=_MAX_COGNITION_MAX_TOKENS,
+        ),
+        reply_style=raw_reply_style,
+        dialogue_tone_prompt=raw_dialogue_tone_prompt,
+    )
+
+    agent_raw = raw.get("agent", {}) if isinstance(raw.get("agent"), dict) else {}
+    agent = AgentConfig(
+        loop_enabled=bool(agent_raw.get("loop_enabled", True)),
+        loop_max_steps=_normalize_scheduler_int(
+            agent_raw.get("loop_max_steps"),
+            default=64,
+            min_value=1,
+            max_value=256,
+        ),
+        tool_result_max_chars=_normalize_scheduler_int(
+            agent_raw.get("tool_result_max_chars"),
+            default=4000,
+            min_value=200,
+            max_value=100000,
+        ),
+        session_title_enabled=bool(agent_raw.get("session_title_enabled", True)),
+        task_max_steps=_normalize_scheduler_int(
+            agent_raw.get("task_max_steps"),
+            default=32,
+            min_value=1,
+            max_value=256,
         ),
     )
 
@@ -2428,6 +2793,16 @@ def _build_config(
                     "pause_on_extension_disconnect": _coerce_bool(
                         sched_raw.get("pause_on_extension_disconnect"),
                         default=False,
+                    ),
+                    "llm_budget_max_calls": _normalize_scheduler_int(
+                        sched_raw.get("llm_budget_max_calls"),
+                        default=_DEFAULT_LLM_BUDGET_MAX_CALLS,
+                        min_value=0,
+                    ),
+                    "llm_budget_window_seconds": _normalize_scheduler_int(
+                        sched_raw.get("llm_budget_window_seconds"),
+                        default=_DEFAULT_LLM_BUDGET_WINDOW_SECONDS,
+                        min_value=60,
                     ),
                     "profile_consolidation_enabled": _coerce_bool(
                         sched_raw.get("profile_consolidation_enabled"),
@@ -2643,7 +3018,9 @@ def _build_config(
             )
         ),
         soul=soul,
+        agent=agent,
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
+        tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
 
 
@@ -2719,6 +3096,9 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
         inspiration_search_backends=_normalize_inspiration_search_backends(
             discovery_raw.get("inspiration_search_backends")
         ),
+        exa_api_key=str(discovery_raw.get("exa_api_key", "") or "").strip(),
+        you_api_key=str(discovery_raw.get("you_api_key", "") or "").strip(),
+        serply_api_key=str(discovery_raw.get("serply_api_key", "") or "").strip(),
         inspiration_replace_merged_keywords=_coerce_bool(
             discovery_raw.get("inspiration_replace_merged_keywords"),
             default=False,
@@ -2739,6 +3119,7 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
         eval_prefilter_mode=_normalize_eval_prefilter_mode(
             discovery_raw.get("eval_prefilter_mode")
         ),
+        eval_scorer=_normalize_eval_scorer(discovery_raw.get("eval_scorer")),
         multimodal_evaluation_enabled=_coerce_bool(
             discovery_raw.get("multimodal_evaluation_enabled"),
             default=False,
@@ -2826,6 +3207,13 @@ def _normalize_eval_prefilter_mode(value: object) -> str:
         return _DEFAULT_EVAL_PREFILTER_MODE
     mode = value.strip().lower()
     return mode or _DEFAULT_EVAL_PREFILTER_MODE
+
+
+def _normalize_eval_scorer(value: object) -> str:
+    if not isinstance(value, str):
+        return "llm"
+    mode = value.strip().lower()
+    return mode if mode in _SUPPORTED_EVAL_SCORER_MODES else "llm"
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -3043,6 +3431,64 @@ def normalize_v2ex_source_config(
     return source
 
 
+def normalize_github_source_config(
+    source: GitHubSourceConfig,
+    *,
+    strict: bool = True,
+) -> GitHubSourceConfig:
+    """Validate GitHub config at read and write boundaries.
+
+    The forgiving read path drops unknown discovery modes and clamps legacy
+    numeric values. The write path is strict. In both cases ``token_env`` is
+    pinned to the OpenBiliClaw-specific variable so a GitHub adapter can never
+    consume a generic CI/developer credential by accident.
+    """
+
+    defaults = GitHubSourceConfig()
+    normalized_modes: list[str] = []
+    for raw in _coerce_str_list(source.source_modes):
+        mode = raw.strip().lower()
+        if mode not in GITHUB_ALLOWED_SOURCE_MODES:
+            if strict:
+                raise ValueError("sources.github.source_modes 包含不支持的值")
+            continue
+        if mode not in normalized_modes:
+            normalized_modes.append(mode)
+    if not normalized_modes:
+        if strict:
+            raise ValueError("sources.github.source_modes 不能为空")
+        normalized_modes = list(defaults.source_modes)
+
+    normalized_ints: dict[str, int] = {}
+    for field_name, (minimum, maximum) in GITHUB_CONFIG_INTEGER_LIMITS.items():
+        raw = getattr(source, field_name)
+        try:
+            if isinstance(raw, bool):
+                raise ValueError
+            number = int(raw)
+        except (TypeError, ValueError):
+            if strict:
+                raise ValueError(f"sources.github.{field_name} 必须是整数") from None
+            number = int(getattr(defaults, field_name))
+        if number < minimum or number > maximum:
+            if strict:
+                raise ValueError(f"sources.github.{field_name} 必须在 {minimum}..{maximum} 之间")
+            number = min(maximum, max(minimum, number))
+        normalized_ints[field_name] = number
+
+    token_env = str(source.token_env or "").strip()
+    if token_env != GITHUB_TOKEN_ENV:
+        if strict:
+            raise ValueError("sources.github.token_env 只允许 OPENBILICLAW_GITHUB_TOKEN")
+        token_env = GITHUB_TOKEN_ENV
+
+    source.source_modes = tuple(normalized_modes)
+    for field_name, value in normalized_ints.items():
+        setattr(source, field_name, value)
+    source.token_env = token_env
+    return source
+
+
 def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
     """Normalize inspiration search backend names for the mcporter provider chain."""
 
@@ -3050,6 +3496,9 @@ def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
         list(_DEFAULT_INSPIRATION_SEARCH_BACKENDS) if value is None else _coerce_str_list(value)
     )
     aliases = {
+        "bing": "bing_rss",
+        "bing_rss": "bing_rss",
+        "bing-rss": "bing_rss",
         "exa": "exa",
         "local": "local_cache",
         "cache": "local_cache",
@@ -3063,6 +3512,8 @@ def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
         "youcom": "you",
         "you-search": "you",
         "you_search": "you",
+        "serply": "serply",
+        "serply.io": "serply",
     }
     normalized: list[str] = []
     seen: set[str] = set()
@@ -3107,6 +3558,27 @@ _TLS_PROXY_ENV_TO_FIELD: dict[str, str] = {
     "OPENBILICLAW_TLS_PROXY_CERT_DIR": "cert_dir",
     "OPENBILICLAW_TLS_SAN_NAMES": "san_names",
 }
+
+# Tailnet config overrides are explicit so whole-file saves can preserve the
+# lower-precedence TOML values instead of baking environment-managed state into
+# ``config.toml``. Runtime-only bootstrap/discovery variables are skipped by the
+# generic env loader as well: they are process controls, never config fields.
+TAILNET_ENV_VARS: tuple[str, ...] = (
+    "OPENBILICLAW_TAILNET_ENABLED",
+    "OPENBILICLAW_TAILNET_HOSTNAME",
+)
+
+_TAILNET_ENV_TO_FIELD: dict[str, str] = {
+    "OPENBILICLAW_TAILNET_ENABLED": "enabled",
+    "OPENBILICLAW_TAILNET_HOSTNAME": "hostname",
+}
+
+_TAILNET_RUNTIME_ENV_VARS: frozenset[str] = frozenset(
+    {
+        "OPENBILICLAW_TAILNET_AUTH_KEY",
+        "OPENBILICLAW_TAILNET_HELPER",
+    }
+)
 
 
 def _build_api_auth(
@@ -3324,6 +3796,55 @@ def tls_proxy_enabled_override_source() -> str | None:
     return None
 
 
+def tailnet_override_source(field: str) -> str | None:
+    """Return the higher-precedence source shadowing one Tailnet field, if any."""
+    if field not in {"enabled", "hostname"}:
+        raise ValueError(f"unsupported tailnet field: {field}")
+    for env_name, env_field in _TAILNET_ENV_TO_FIELD.items():
+        if env_field == field and (os.environ.get(env_name) or "").strip():
+            return env_name
+    local = _project_root() / "config.local.toml"
+    try:
+        with local.open("rb") as handle:
+            raw = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    table = raw.get("tailnet")
+    if isinstance(table, dict) and field in table:
+        return f"config.local.toml [tailnet].{field}"
+    return None
+
+
+def _build_tailnet(
+    raw: dict[str, Any],
+    *,
+    consult_environment: bool = True,
+) -> TailnetConfig:
+    """Build app-owned Tailnet settings from TOML plus explicit env overrides."""
+    raw_value = raw.get("tailnet")
+    tailnet_raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
+
+    def env_or_disk(name: str, key: str, default: object) -> object:
+        env_value = os.environ.get(name) if consult_environment else None
+        if env_value is not None and env_value.strip():
+            return env_value
+        return tailnet_raw.get(key, default)
+
+    return TailnetConfig(
+        enabled=_coerce_bool(
+            env_or_disk("OPENBILICLAW_TAILNET_ENABLED", "enabled", False),
+            default=False,
+        ),
+        hostname=normalize_tailnet_hostname(
+            env_or_disk(
+                "OPENBILICLAW_TAILNET_HOSTNAME",
+                "hostname",
+                _DEFAULT_TAILNET_HOSTNAME,
+            )
+        ),
+    )
+
+
 def _build_tls_proxy(
     raw: dict[str, Any],
     *,
@@ -3422,7 +3943,7 @@ def _normalize_llm_concurrency(value: object) -> int:
     else:
         return DEFAULT_LLM_CONCURRENCY
 
-    if not (_MIN_LLM_CONCURRENCY <= normalized <= _MAX_LLM_CONCURRENCY):
+    if normalized < _MIN_LLM_CONCURRENCY:
         return DEFAULT_LLM_CONCURRENCY
     return normalized
 
@@ -3715,15 +4236,26 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                 )
             )
         if provider_type == "openai" and auth_mode == "codex_oauth":
-            if not _is_openai_official_base_url(instance.base_url):
+            if not _is_codex_oauth_base_url(instance.base_url):
                 issues.append(
                     ConfigIssue(
                         field=f"{field_prefix}.base_url",
                         message=(
-                            "Codex OAuth 只允许留空 base_url 或使用 OpenAI 官方 API 域名，"
-                            "避免把 ChatGPT token 发送给第三方。"
+                            "Codex OAuth 只允许留空 base_url 或使用官方 Codex 传输端点 "
+                            "`https://chatgpt.com/backend-api`，避免把 ChatGPT token "
+                            "发送给第三方中转站或 OpenAI Platform API。"
                         ),
                         severity="blocking",
+                    )
+                )
+            if flavor and flavor != "responses":
+                issues.append(
+                    ConfigIssue(
+                        field=f"{field_prefix}.api_flavor",
+                        message=(
+                            '`auth_mode = "codex_oauth"` 使用独立的 Codex ChatGPT '
+                            "传输通道，`api_flavor` 会被忽略；无需设置。"
+                        ),
                     )
                 )
             try:
@@ -3829,9 +4361,116 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
     return issues
 
 
+_SOURCE_DATE_PREFERENCE_KEYS = (
+    "recommendation_date_preset",
+    "recommendation_date_start",
+    "recommendation_date_end",
+    "recommendation_date_weight",
+)
+
+_SOURCE_DATE_PREFERENCE_SLUGS = (
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+    "bangumi",
+    "github",
+    "linuxdo",
+    "v2ex",
+    "weibo",
+    "instagram",
+)
+
+
+def _apply_source_date_preferences_from_raw(sources: SourcesConfig, **raws: object) -> None:
+    """Populate per-source publication-date fields from raw TOML sections."""
+
+    legacy_bilibili_raw = raws.get("legacy_bilibili")
+    for slug in _SOURCE_DATE_PREFERENCE_SLUGS:
+        source_cfg = getattr(sources, slug)
+        raw_value = raws.get(slug)
+        raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
+        # 兼容旧 PR 草案里的 `[bilibili].recommendation_date_*` 位置：保存时
+        # 会统一写到 `[sources.bilibili]`，但加载时仍读取旧字段避免配置丢失。
+        if (
+            slug == "bilibili"
+            and isinstance(legacy_bilibili_raw, dict)
+            and "recommendation_date_preset" not in raw
+        ):
+            raw = {**legacy_bilibili_raw, **raw}
+        source_cfg.recommendation_date_preset = str(
+            raw.get("recommendation_date_preset", "all") or "all"
+        )
+        source_cfg.recommendation_date_start = str(raw.get("recommendation_date_start", "") or "")
+        source_cfg.recommendation_date_end = str(raw.get("recommendation_date_end", "") or "")
+        source_cfg.recommendation_date_weight = raw.get("recommendation_date_weight", 0.5)
+
+
+def publication_date_preference_for_source(source_cfg: object) -> Any:
+    """Build a ``PublicationDatePreference`` from a source config object."""
+
+    from openbiliclaw.recommendation.publication_preference import (
+        PublicationDatePreference,
+    )
+
+    return PublicationDatePreference(
+        preset=getattr(source_cfg, "recommendation_date_preset", "all"),
+        start_date=getattr(source_cfg, "recommendation_date_start", ""),
+        end_date=getattr(source_cfg, "recommendation_date_end", ""),
+        weight=getattr(source_cfg, "recommendation_date_weight", 0.5),
+    )
+
+
+def source_date_preferences(config: Config) -> dict[str, Any]:
+    """Build the per-source publication-date preference map used by discovery."""
+
+    sources = getattr(config, "sources", None)
+    if sources is None:
+        return {}
+    return {
+        slug: publication_date_preference_for_source(getattr(sources, slug, None))
+        for slug in _SOURCE_DATE_PREFERENCE_SLUGS
+    }
+
+
+def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
+    """Return blocking issues for malformed per-source date preferences."""
+
+    issues: list[ConfigIssue] = []
+    for slug in _SOURCE_DATE_PREFERENCE_SLUGS:
+        source_cfg = getattr(config.sources, slug, None)
+        if source_cfg is None:
+            continue
+        try:
+            publication_date_preference_for_source(source_cfg)
+        except (TypeError, ValueError) as exc:
+            issues.append(
+                ConfigIssue(
+                    field=f"sources.{slug}.recommendation_date",
+                    message=f"{slug} 推荐发布日期配置无效: {exc}",
+                    severity="blocking",
+                )
+            )
+    return issues
+
+
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
     issues: list[ConfigIssue] = []
+
+    try:
+        normalize_tailnet_hostname(config.tailnet.hostname)
+    except ConfigError as exc:
+        issues.append(
+            ConfigIssue(
+                field="tailnet.hostname",
+                message=str(exc).removeprefix("tailnet.hostname: "),
+                severity="blocking",
+            )
+        )
 
     incremental_intervals = (
         ("source_incremental_hours", config.scheduler.source_incremental_hours, False),
@@ -3886,6 +4525,42 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
+    from openbiliclaw.sources.github_client import (
+        validate_github_access_token,
+        validate_github_username,
+    )
+
+    try:
+        validate_github_username(config.sources.github.username)
+    except ValueError as exc:
+        issues.append(
+            ConfigIssue(
+                field="sources.github.username",
+                message=str(exc),
+                severity="blocking",
+            )
+        )
+    try:
+        validate_github_access_token(config.sources.github.access_token)
+    except ValueError as exc:
+        issues.append(
+            ConfigIssue(
+                field="sources.github.access_token",
+                message=str(exc),
+                severity="blocking",
+            )
+        )
+    try:
+        normalize_github_source_config(deepcopy(config.sources.github), strict=True)
+    except ValueError as exc:
+        issues.append(
+            ConfigIssue(
+                field="sources.github",
+                message=str(exc),
+                severity="blocking",
+            )
+        )
+
     from openbiliclaw.sources.v2ex_client import (
         validate_v2ex_access_token,
         validate_v2ex_username,
@@ -3934,6 +4609,8 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
+    issues.extend(_source_date_preference_issues(config))
+
     if config.bilibili.auth_method not in _SUPPORTED_AUTH_METHODS:
         supported = ", ".join(sorted(_SUPPORTED_AUTH_METHODS))
         issues.append(
@@ -3972,6 +4649,31 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 )
             )
 
+    if len(config.soul.reply_style) > MAX_SOUL_REPLY_STYLE_CHARS:
+        issues.append(
+            ConfigIssue(
+                field="soul.reply_style",
+                message=(
+                    f"reply_style 过长: {len(config.soul.reply_style)} 字符,"
+                    f"上限 {MAX_SOUL_REPLY_STYLE_CHARS}。"
+                ),
+                severity="blocking",
+            )
+        )
+
+    if len(config.soul.dialogue_tone_prompt) > MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS:
+        issues.append(
+            ConfigIssue(
+                field="soul.dialogue_tone_prompt",
+                message=(
+                    f"dialogue_tone_prompt 过长: "
+                    f"{len(config.soul.dialogue_tone_prompt)} 字符,"
+                    f"上限 {MAX_SOUL_DIALOGUE_TONE_PROMPT_CHARS}。"
+                ),
+                severity="blocking",
+            )
+        )
+
     if (
         str(config.soul.topic_lifecycle_serialization or "").strip().lower()
         not in _TOPIC_LIFECYCLE_SERIALIZATION_MODES
@@ -3986,6 +4688,29 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 severity="blocking",
             )
         )
+
+    for soul_field, min_value, max_value in (
+        (
+            "awareness_event_batch_size",
+            _MIN_COGNITION_AWARENESS_EVENT_BATCH_SIZE,
+            _MAX_COGNITION_AWARENESS_EVENT_BATCH_SIZE,
+        ),
+        (
+            "insight_note_batch_size",
+            _MIN_COGNITION_INSIGHT_NOTE_BATCH_SIZE,
+            _MAX_COGNITION_INSIGHT_NOTE_BATCH_SIZE,
+        ),
+        ("cognition_max_tokens", _MIN_COGNITION_MAX_TOKENS, _MAX_COGNITION_MAX_TOKENS),
+    ):
+        raw_value = getattr(config.soul, soul_field)
+        if not min_value <= int(raw_value) <= max_value:
+            issues.append(
+                ConfigIssue(
+                    field=f"soul.{soul_field}",
+                    message=(f"`soul.{soul_field}` 必须在 {min_value}..{max_value} 之间。"),
+                    severity="blocking",
+                )
+            )
 
     # Before the default-provider early return: embedding validation must run
     # even when default_provider itself is broken.
@@ -4143,6 +4868,10 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         "ollama": config.llm.ollama,
         "openrouter": config.llm.openrouter,
         "openai_compatible": config.llm.openai_compatible,
+        "orcarouter": config.llm.orcarouter,
+        "requesty": config.llm.requesty,
+        "api_route": config.llm.api_route,
+        "cheaperinference": config.llm.cheaperinference,
     }
 
     provider_config = provider_configs.get(provider_name)
@@ -4187,15 +4916,26 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                     message='`auth_mode = "codex_oauth"` 时 `api_key` 会被忽略。',
                 )
             )
-        if not _is_openai_official_base_url(config.llm.openai.base_url):
+        if not _is_codex_oauth_base_url(config.llm.openai.base_url):
             issues.append(
                 ConfigIssue(
                     field="llm.openai.base_url",
                     message=(
-                        '`auth_mode = "codex_oauth"` 只允许留空 base_url '
-                        "或使用 OpenAI 官方 API 域名，避免泄露 ChatGPT token。"
+                        '`auth_mode = "codex_oauth"` 只允许留空 base_url 或使用官方 '
+                        "Codex 传输端点 `https://chatgpt.com/backend-api`，避免把 "
+                        "ChatGPT token 发送给第三方中转站或 OpenAI Platform API。"
                     ),
                     severity="blocking",
+                )
+            )
+        if config.llm.openai.api_flavor.strip().lower() not in {"", "responses"}:
+            issues.append(
+                ConfigIssue(
+                    field="llm.openai.api_flavor",
+                    message=(
+                        '`auth_mode = "codex_oauth"` 使用独立的 Codex ChatGPT '
+                        "传输通道，`api_flavor` 会被忽略；无需设置。"
+                    ),
                 )
             )
         try:
@@ -4306,6 +5046,16 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
+    eval_scorer = str(config.discovery.eval_scorer or "").strip().lower()
+    if eval_scorer not in _SUPPORTED_EVAL_SCORER_MODES:
+        issues.append(
+            ConfigIssue(
+                field="discovery.eval_scorer",
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
+                severity="blocking",
+            )
+        )
+
     return issues
 
 
@@ -4367,12 +5117,36 @@ def posture_gate_enforce_readiness_issue(
     )
 
 
-def _is_openai_official_base_url(base_url: str) -> bool:
+_CODEX_OAUTH_ALLOWED_BASE_URL_PATHS = {
+    "",
+    "/backend-api",
+    "/backend-api/v1",
+    "/backend-api/codex",
+    "/backend-api/codex/v1",
+    "/backend-api/codex/responses",
+}
+
+
+def _is_codex_oauth_base_url(base_url: str) -> bool:
+    """Return whether *base_url* is a legal Codex OAuth target.
+
+    Codex OAuth (ChatGPT subscription) tokens MUST only go to the official
+    ``chatgpt.com/backend-api`` Codex transport. The old implementation
+    allowed ``api.openai.com``, where ChatGPT tokens fail with ``Missing
+    scopes: api.responses.write`` — that is intentionally rejected here.
+    """
     raw = base_url.strip()
     if not raw:
         return True
     parsed = urlparse(raw if "://" in raw else f"https://{raw}")
-    return parsed.scheme == "https" and (parsed.hostname or "").lower() == "api.openai.com"
+    path = (parsed.path or "").rstrip("/").lower()
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower() == "chatgpt.com"
+        and path in _CODEX_OAUTH_ALLOWED_BASE_URL_PATHS
+        and not parsed.query
+        and not parsed.fragment
+    )
 
 
 def load_config_with_diagnostics(
@@ -4549,6 +5323,39 @@ def _config_local_tls_proxy_keys() -> set[str]:
     return set(tls_proxy) if isinstance(tls_proxy, dict) else set()
 
 
+def _config_local_tailnet_keys() -> set[str]:
+    """Return ``[tailnet]`` keys shadowed by project-root config.local.toml."""
+    local = _project_root() / "config.local.toml"
+    try:
+        with local.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return set()
+    tailnet = data.get("tailnet")
+    return set(tailnet) if isinstance(tailnet, dict) else set()
+
+
+def _tailnet_env_overridden_fields() -> set[str]:
+    """Return ``[tailnet]`` fields currently governed by explicit env vars."""
+    return {
+        field
+        for env_name, field in _TAILNET_ENV_TO_FIELD.items()
+        if (os.environ.get(env_name) or "").strip()
+    }
+
+
+def _tailnet_overridden_fields(
+    *,
+    consult_local: bool,
+    consult_environment: bool = True,
+) -> set[str]:
+    """Return Tailnet fields whose values come from a higher-precedence layer."""
+    overridden = _tailnet_env_overridden_fields() if consult_environment else set()
+    if consult_local:
+        overridden.update(_config_local_tailnet_keys())
+    return overridden
+
+
 def _tls_proxy_overridden_fields(
     *,
     consult_local: bool,
@@ -4570,6 +5377,17 @@ def _read_on_disk_tls_proxy(path: Path) -> dict[str, Any]:
         return {}
     tls_proxy = data.get("tls_proxy")
     return tls_proxy if isinstance(tls_proxy, dict) else {}
+
+
+def _read_on_disk_tailnet(path: Path) -> dict[str, Any]:
+    """Return the raw base-file ``[tailnet]`` table at ``path`` ({} if absent)."""
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    tailnet = data.get("tailnet")
+    return tailnet if isinstance(tailnet, dict) else {}
 
 
 def _read_on_disk_autostart(path: Path) -> dict[str, Any]:
@@ -4820,6 +5638,35 @@ def _tls_proxy_lines(
     return lines
 
 
+def _tailnet_lines(
+    config: Config,
+    on_disk_tailnet: dict[str, Any] | None,
+    *,
+    consult_local: bool,
+    consult_environment: bool = True,
+) -> list[str]:
+    """Render Tailnet fields without baking override-layer values into the base."""
+    overridden = _tailnet_overridden_fields(
+        consult_local=consult_local,
+        consult_environment=consult_environment,
+    )
+    disk = on_disk_tailnet or {}
+    lines = ["[tailnet]"]
+
+    if "enabled" in overridden:
+        if "enabled" in disk:
+            lines.append(f"enabled = {_toml_bool(_coerce_bool(disk['enabled'], default=False))}")
+    else:
+        lines.append(f"enabled = {_toml_bool(config.tailnet.enabled)}")
+
+    if "hostname" in overridden:
+        if "hostname" in disk:
+            lines.append(f"hostname = {_toml_string(normalize_tailnet_hostname(disk['hostname']))}")
+    else:
+        lines.append(f"hostname = {_toml_string(config.tailnet.hostname)}")
+    return lines
+
+
 def _autostart_lines(
     config: Config,
     on_disk_autostart: dict[str, Any] | None,
@@ -4862,6 +5709,11 @@ def save_config(
         validate_bangumi_username,
     )
 
+    date_preference_issues = _source_date_preference_issues(config)
+    if date_preference_issues:
+        first_issue = date_preference_issues[0]
+        raise ConfigError(f"{first_issue.field}: {first_issue.message}")
+
     _validate_auto_update_check_interval(config.scheduler.auto_update_check_interval_hours)
     for field_name, allow_none in (
         ("source_incremental_hours", False),
@@ -4883,6 +5735,16 @@ def save_config(
     config.sources.bangumi.access_token = validate_bangumi_access_token(
         config.sources.bangumi.access_token
     )
+    from openbiliclaw.sources.github_client import (
+        validate_github_access_token,
+        validate_github_username,
+    )
+
+    config.sources.github.username = validate_github_username(config.sources.github.username)
+    config.sources.github.access_token = validate_github_access_token(
+        config.sources.github.access_token
+    )
+    normalize_github_source_config(config.sources.github, strict=True)
     from openbiliclaw.sources.v2ex_client import (
         validate_v2ex_access_token,
         validate_v2ex_username,
@@ -4898,6 +5760,7 @@ def save_config(
     config.tls_proxy.enabled = normalize_tls_enabled(config.tls_proxy.enabled)
     config.tls_proxy.cert_dir = normalize_tls_cert_dir(config.tls_proxy.cert_dir)
     config.tls_proxy.san_names = normalize_tls_san_names(config.tls_proxy.san_names)
+    config.tailnet.hostname = normalize_tailnet_hostname(config.tailnet.hostname)
     path = Path(config_path) if config_path is not None else _default_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # Capture the on-disk [api.auth] table so the renderer can preserve credential
@@ -4907,6 +5770,7 @@ def save_config(
     # password and flip the reconcile fingerprint basis.
     on_disk_auth = _read_on_disk_auth(path) if path.exists() else None
     on_disk_tls_proxy = _read_on_disk_tls_proxy(path) if path.exists() else None
+    on_disk_tailnet = _read_on_disk_tailnet(path) if path.exists() else None
     on_disk_autostart = _read_on_disk_autostart(path) if path.exists() else None
     # config.local.toml is merged ONLY when load_config runs with no explicit
     # path. Match that invocation contract exactly: even an explicit path that
@@ -4917,6 +5781,7 @@ def save_config(
         config,
         on_disk_auth=on_disk_auth,
         on_disk_tls_proxy=on_disk_tls_proxy,
+        on_disk_tailnet=on_disk_tailnet,
         on_disk_autostart=on_disk_autostart,
         autostart_authoritative=autostart_authoritative,
         consult_local=consult_local,
@@ -4929,11 +5794,33 @@ def save_config(
     return path
 
 
+def _render_source_date_preference_lines(source_cfg: object) -> list[str]:
+    """Render per-source recommendation date fields when non-default."""
+
+    preset = str(getattr(source_cfg, "recommendation_date_preset", "all") or "all")
+    start = str(getattr(source_cfg, "recommendation_date_start", "") or "")
+    end = str(getattr(source_cfg, "recommendation_date_end", "") or "")
+    weight = getattr(source_cfg, "recommendation_date_weight", 0.5)
+    try:
+        weight_value = float(weight)
+    except (TypeError, ValueError):
+        weight_value = 0.5
+    if preset == "all" and not start and not end and weight_value == 0.5:
+        return []
+    return [
+        "recommendation_date_preset = " + _toml_string(preset),
+        "recommendation_date_start = " + _toml_string(start),
+        "recommendation_date_end = " + _toml_string(end),
+        f"recommendation_date_weight = {weight_value:g}",
+    ]
+
+
 def _render_config_toml(
     config: Config,
     *,
     on_disk_auth: dict[str, Any] | None = None,
     on_disk_tls_proxy: dict[str, Any] | None = None,
+    on_disk_tailnet: dict[str, Any] | None = None,
     on_disk_autostart: dict[str, Any] | None = None,
     autostart_authoritative: bool = False,
     consult_local: bool = False,
@@ -4969,6 +5856,13 @@ def _render_config_toml(
             consult_environment=consult_environment,
         ),
         "",
+        *_tailnet_lines(
+            config,
+            on_disk_tailnet,
+            consult_local=consult_local,
+            consult_environment=consult_environment,
+        ),
+        "",
     ]
     if config.llm.instance_routing:
         lines.extend(
@@ -5000,7 +5894,11 @@ def _render_config_toml(
         lines.extend(_render_provider_section("deepseek", config.llm.deepseek))
         lines.extend(_render_provider_section("ollama", config.llm.ollama))
         lines.extend(_render_provider_section("openrouter", config.llm.openrouter))
+        lines.extend(_render_provider_section("orcarouter", config.llm.orcarouter))
         lines.extend(_render_provider_section("openai_compatible", config.llm.openai_compatible))
+        lines.extend(_render_provider_section("requesty", config.llm.requesty))
+        lines.extend(_render_provider_section("api_route", config.llm.api_route))
+        lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
     lines.extend(
         [
             "[llm.embedding]",
@@ -5013,6 +5911,9 @@ def _render_config_toml(
             f"fallback_enabled = {_toml_bool(config.llm.embedding.fallback_enabled)}",
             f"fallback_provider = {_toml_string(config.llm.embedding.fallback_provider)}",
             f"multimodal_enabled = {_toml_bool(config.llm.embedding.multimodal_enabled)}",
+            f"cache_max_bytes = {max(0, int(config.llm.embedding.cache_max_bytes))}",
+            f"cache_high_watermark = {config.llm.embedding.cache_high_watermark}",
+            f"cache_low_watermark = {config.llm.embedding.cache_low_watermark}",
             "",
         ]
     )
@@ -5078,16 +5979,20 @@ def _render_config_toml(
             "[sources.bilibili]",
             f"enabled = {_toml_bool(config.sources.bilibili.enabled)}",
             f"min_interval_minutes = {config.sources.bilibili.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.bilibili),
             "",
             "[sources.xiaohongshu]",
             f"enabled = {_toml_bool(config.sources.xiaohongshu.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.xiaohongshu.incremental_enabled)}",
             f"daily_search_budget = {config.sources.xiaohongshu.daily_search_budget}",
             f"daily_creator_budget = {config.sources.xiaohongshu.daily_creator_budget}",
             f"task_interval_seconds = {config.sources.xiaohongshu.task_interval_seconds}",
             f"min_interval_minutes = {config.sources.xiaohongshu.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.xiaohongshu),
             "",
             "[sources.douyin]",
             f"enabled = {_toml_bool(config.sources.douyin.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.douyin.incremental_enabled)}",
             f"mode = {_toml_string(config.sources.douyin.mode)}",
             f"cookie_env = {_toml_string(config.sources.douyin.cookie_env)}",
             f"daily_search_budget = {config.sources.douyin.daily_search_budget}",
@@ -5095,14 +6000,17 @@ def _render_config_toml(
             f"daily_feed_budget = {config.sources.douyin.daily_feed_budget}",
             f"request_interval_seconds = {config.sources.douyin.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.douyin.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.douyin),
             "",
             "[sources.youtube]",
             f"enabled = {_toml_bool(config.sources.youtube.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.youtube.incremental_enabled)}",
             f"daily_search_budget = {config.sources.youtube.daily_search_budget}",
             f"daily_trending_budget = {config.sources.youtube.daily_trending_budget}",
             f"daily_channel_budget = {config.sources.youtube.daily_channel_budget}",
             f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.youtube),
             "",
             "[sources.twitter]",
             f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
@@ -5113,9 +6021,11 @@ def _render_config_toml(
             f"daily_creator_budget = {config.sources.twitter.daily_creator_budget}",
             f"request_interval_seconds = {config.sources.twitter.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.twitter.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.twitter),
             "",
             "[sources.zhihu]",
             f"enabled = {_toml_bool(config.sources.zhihu.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.zhihu.incremental_enabled)}",
             f"source_modes = {_toml_str_list(list(config.sources.zhihu.source_modes))}",
             f"daily_search_budget = {config.sources.zhihu.daily_search_budget}",
             f"daily_hot_budget = {config.sources.zhihu.daily_hot_budget}",
@@ -5124,9 +6034,11 @@ def _render_config_toml(
             f"daily_related_budget = {config.sources.zhihu.daily_related_budget}",
             f"request_interval_seconds = {config.sources.zhihu.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.zhihu.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.zhihu),
             "",
             "[sources.reddit]",
             f"enabled = {_toml_bool(config.sources.reddit.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.reddit.incremental_enabled)}",
             f"backend = {_toml_string(config.sources.reddit.backend)}",
             f"source_modes = {_toml_str_list(list(config.sources.reddit.source_modes))}",
             f"daily_search_budget = {config.sources.reddit.daily_search_budget}",
@@ -5135,6 +6047,7 @@ def _render_config_toml(
             f"daily_related_budget = {config.sources.reddit.daily_related_budget}",
             f"request_interval_seconds = {config.sources.reddit.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.reddit.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.reddit),
             "",
             "[sources.bangumi]",
             f"enabled = {_toml_bool(config.sources.bangumi.enabled)}",
@@ -5148,9 +6061,26 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.bangumi.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.bangumi.min_interval_minutes}",
             f"bootstrap_limit = {config.sources.bangumi.bootstrap_limit}",
+            *_render_source_date_preference_lines(config.sources.bangumi),
+            "",
+            "[sources.github]",
+            f"enabled = {_toml_bool(config.sources.github.enabled)}",
+            f"username = {_toml_string(config.sources.github.username)}",
+            f"access_token = {_toml_string(config.sources.github.access_token)}",
+            f"token_env = {_toml_string(config.sources.github.token_env)}",
+            f"source_modes = {_toml_str_list(list(config.sources.github.source_modes))}",
+            f"daily_search_budget = {config.sources.github.daily_search_budget}",
+            f"daily_ranked_budget = {config.sources.github.daily_ranked_budget}",
+            f"daily_latest_budget = {config.sources.github.daily_latest_budget}",
+            f"request_interval_seconds = {config.sources.github.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.github.min_interval_minutes}",
+            f"bootstrap_limit = {config.sources.github.bootstrap_limit}",
+            f"bootstrap_max_pages = {config.sources.github.bootstrap_max_pages}",
+            *_render_source_date_preference_lines(config.sources.github),
             "",
             "[sources.linuxdo]",
             f"enabled = {_toml_bool(config.sources.linuxdo.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.linuxdo.incremental_enabled)}",
             f"source_modes = {_toml_str_list(list(config.sources.linuxdo.source_modes))}",
             f"daily_search_budget = {config.sources.linuxdo.daily_search_budget}",
             f"daily_hot_budget = {config.sources.linuxdo.daily_hot_budget}",
@@ -5160,8 +6090,10 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.linuxdo.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.linuxdo.min_interval_minutes}",
             f"bootstrap_limit = {config.sources.linuxdo.bootstrap_limit}",
+            *_render_source_date_preference_lines(config.sources.linuxdo),
             "[sources.v2ex]",
             f"enabled = {_toml_bool(config.sources.v2ex.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.v2ex.incremental_enabled)}",
             f"username = {_toml_string(config.sources.v2ex.username)}",
             f"access_token = {_toml_string(config.sources.v2ex.access_token)}",
             f"token_env = {_toml_string(config.sources.v2ex.token_env)}",
@@ -5186,6 +6118,7 @@ def _render_config_toml(
             f"bootstrap_replies_limit = {config.sources.v2ex.bootstrap_replies_limit}",
             f"bootstrap_favorites_limit = {config.sources.v2ex.bootstrap_favorites_limit}",
             f"bootstrap_max_pages_per_scope = {config.sources.v2ex.bootstrap_max_pages_per_scope}",
+            *_render_source_date_preference_lines(config.sources.v2ex),
             "",
             "[sources.weibo]",
             f"enabled = {_toml_bool(config.sources.weibo.enabled)}",
@@ -5195,6 +6128,7 @@ def _render_config_toml(
             f"daily_creator_budget = {config.sources.weibo.daily_creator_budget}",
             f"request_interval_seconds = {config.sources.weibo.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.weibo.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.weibo),
             "",
             "[sources.instagram]",
             f"enabled = {_toml_bool(config.sources.instagram.enabled)}",
@@ -5204,9 +6138,12 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.instagram.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.instagram.min_interval_minutes}",
             f"bootstrap_limit = {config.sources.instagram.bootstrap_limit}",
+            *_render_source_date_preference_lines(config.sources.instagram),
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
+            f"llm_budget_max_calls = {config.scheduler.llm_budget_max_calls}",
+            f"llm_budget_window_seconds = {config.scheduler.llm_budget_window_seconds}",
             "pause_on_extension_disconnect = "
             f"{_toml_bool(config.scheduler.pause_on_extension_disconnect)}",
             "extension_disconnect_grace_seconds = "
@@ -5316,6 +6253,7 @@ def _render_config_toml(
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",
             f"bangumi = {int(config.scheduler.pool_source_shares.get('bangumi', 1))}",
+            f"github = {int(config.scheduler.pool_source_shares.get('github', 1))}",
             f"linuxdo = {int(config.scheduler.pool_source_shares.get('linuxdo', 1))}",
             f"v2ex = {int(config.scheduler.pool_source_shares.get('v2ex', 1))}",
             f"weibo = {int(config.scheduler.pool_source_shares.get('weibo', 1))}",
@@ -5340,10 +6278,14 @@ def _render_config_toml(
             f"{_toml_bool(config.discovery.inspiration_search_enabled)}",
             "inspiration_search_backends = "
             f"{_toml_str_list(list(config.discovery.inspiration_search_backends))}",
+            f"exa_api_key = {_toml_string(config.discovery.exa_api_key)}",
+            f"you_api_key = {_toml_string(config.discovery.you_api_key)}",
+            f"serply_api_key = {_toml_string(config.discovery.serply_api_key)}",
             "inspiration_replace_merged_keywords = "
             f"{_toml_bool(config.discovery.inspiration_replace_merged_keywords)}",
             f"inspiration_breadth = {_toml_string(config.discovery.inspiration_breadth)}",
             f"eval_prefilter_mode = {_toml_string(config.discovery.eval_prefilter_mode)}",
+            f"eval_scorer = {_toml_string(config.discovery.eval_scorer)}",
             "multimodal_evaluation_enabled = "
             f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
             f"visual_profile_enabled = {_toml_bool(config.discovery.visual_profile_enabled)}",
@@ -5400,6 +6342,21 @@ def _render_config_toml(
             "# the LLM-facing profile byte-identical; on excludes archived topics.",
             f"topic_lifecycle_serialization = "
             f"{_toml_string(config.soul.topic_lifecycle_serialization)}",
+            "# Cognition-cycle prompt/output budgets (issue #169). Lower these",
+            "# for small-context local models (qwen3.8-27B etc.); defaults are",
+            "# sized for 256k-class providers.",
+            f"awareness_event_batch_size = {max(0, int(config.soul.awareness_event_batch_size))}",
+            f"insight_note_batch_size = {max(0, int(config.soul.insight_note_batch_size))}",
+            f"cognition_max_tokens = {max(0, int(config.soul.cognition_max_tokens))}",
+            "# Free-text reply-style instruction (issue #255). Empty (default)",
+            "# leaves every prompt byte-identical; non-empty appends one tone-",
+            "# block line to dialogue / recommendation-copy / profile prompts.",
+            f"reply_style = {_toml_string(config.soul.reply_style)}",
+            "# Free-text full replacement for the dialogue prompt's tone",
+            "# block. Empty (default) leaves the dialogue prompt byte-",
+            "# identical; non-empty swaps the whole tone block in the",
+            "# Socratic-dialogue prompt only (multi-line is allowed).",
+            f"dialogue_tone_prompt = {_toml_multiline_string(config.soul.dialogue_tone_prompt)}",
             "",
             "[soul.preference]",
             "# v0.3.x event-satisfaction signal. When true, preference",
@@ -5408,6 +6365,28 @@ def _render_config_toml(
             "# evidence instead of being learned as a positive interest.",
             "satisfaction_filter_enabled = "
             f"{_toml_bool(config.soul.preference.satisfaction_filter_enabled)}",
+            "",
+            "[agent]",
+            "# 「聊一聊」 agent loop switch (M2). When false, the streaming",
+            "# agent endpoint POST /api/chat/agent/stream is disabled; the",
+            "# legacy single-hop chat endpoints stay available.",
+            f"loop_enabled = {_toml_bool(config.agent.loop_enabled)}",
+            "# 「聊一聊」 agent loop budgets (M1). loop_max_steps caps the",
+            "# think -> tool -> observe hops per user turn; when exhausted",
+            "# the model is asked to wrap up and report progress.",
+            f"loop_max_steps = {max(1, int(config.agent.loop_max_steps))}",
+            "# Per-tool-result character budget fed back into the prompt;",
+            "# longer results are truncated with a marker.",
+            f"tool_result_max_chars = {max(200, int(config.agent.tool_result_max_chars))}",
+            "# 「聊一聊」 multi-session auto-titling (M5). When true, a new",
+            "# session's first message gets an LLM-generated short title",
+            "# (falling back to a truncated message prefix); when false the",
+            "# truncated prefix is used directly without an LLM call.",
+            f"session_title_enabled = {_toml_bool(config.agent.session_title_enabled)}",
+            "# 「聊一聊」 background task budget (M6). One durable background",
+            "# task run gets a smaller hop budget than interactive turns",
+            "# since it runs unattended with read-only tools.",
+            f"task_max_steps = {max(1, int(config.agent.task_max_steps))}",
             "",
         ]
     )
@@ -5442,13 +6421,24 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
     lines = [f"[llm.{name}]"]
     lines.append(f"api_key = {_toml_string(provider.api_key)}")
     lines.append(f"model = {_toml_string(provider.model)}")
-    if name in {"openai", "claude", "deepseek", "ollama", "openrouter", "openai_compatible"}:
+    if name in {
+        "openai",
+        "claude",
+        "deepseek",
+        "ollama",
+        "openrouter",
+        "orcarouter",
+        "openai_compatible",
+        "requesty",
+        "api_route",
+        "cheaperinference",
+    }:
         lines.append(f"base_url = {_toml_string(provider.base_url)}")
     if name == "openai":
         lines.append(f"auth_mode = {_toml_string(provider.auth_mode)}")
     if name in {"openai", "openai_compatible"}:
         lines.append(f"api_flavor = {_toml_string(provider.api_flavor)}")
-    if name in {"openai", "claude", "gemini", "deepseek", "openrouter"}:
+    if name in {"openai", "claude", "gemini", "deepseek", "openrouter", "orcarouter"}:
         lines.append(f"reasoning_effort = {_toml_string(provider.reasoning_effort)}")
     if name == "openrouter":
         lines.append(f"http_referer = {_toml_string(provider.http_referer)}")
@@ -5460,6 +6450,23 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
 def _toml_string(value: str) -> str:
     """Render a TOML string literal."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_multiline_string(value: str) -> str:
+    """Render a TOML basic string that survives embedded newlines.
+
+    Unlike ``_toml_string`` this escapes ``\\n``/``\\r``/``\\t`` so multi-line
+    values (e.g. ``soul.dialogue_tone_prompt``) stay on one physical line and
+    round-trip byte-identically through ``tomllib``.
+    """
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
     return f'"{escaped}"'
 
 

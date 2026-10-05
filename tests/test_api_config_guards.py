@@ -114,6 +114,259 @@ def test_put_config_writes_real_new_chat_provider_model(monkeypatch, tmp_path) -
     assert load_config_from_path(config_path).llm.openai.model == "gpt-4.1-mini"
 
 
+def test_bilibili_publication_preference_round_trips_through_config_api(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={
+            "sources": {
+                "bilibili": {
+                    "recommendation_date_preset": "custom",
+                    "recommendation_date_start": "2023-01-01",
+                    "recommendation_date_end": "2023-12-31",
+                    "recommendation_date_weight": 0.5,
+                }
+            }
+        },
+    )
+
+    assert response.status_code == 202
+    saved = load_config_from_path(config_path).sources.bilibili
+    assert saved.recommendation_date_preset == "custom"
+    assert saved.recommendation_date_start == "2023-01-01"
+    assert saved.recommendation_date_end == "2023-12-31"
+    assert saved.recommendation_date_weight == 0.5
+
+    visible = client.get("/api/config").json()["sources"]["bilibili"]
+    assert visible["recommendation_date_preset"] == "custom"
+    assert visible["recommendation_date_start"] == "2023-01-01"
+    assert visible["recommendation_date_end"] == "2023-12-31"
+    assert visible["recommendation_date_weight"] == 0.5
+
+
+def test_bilibili_publication_preference_rejects_invalid_update(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+    before = load_config_from_path(config_path).sources.bilibili
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"bilibili": {"recommendation_date_weight": 1.5}}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "invalid_bilibili_recommendation_date"
+    after = load_config_from_path(config_path).sources.bilibili
+    assert after.recommendation_date_preset == before.recommendation_date_preset
+    assert after.recommendation_date_weight == before.recommendation_date_weight
+
+
+def _install_github_config_probe(
+    monkeypatch,
+    *,
+    payload=None,
+    profile_payload=None,
+    error=None,
+) -> list[str]:
+    calls: list[str] = []
+
+    class _FakeGitHubClient:
+        def __init__(self, *, token: str | None = None, **_kwargs) -> None:
+            self.token = token
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+        async def get_user(self):
+            calls.append(str(self.token or ""))
+            if error is not None:
+                raise error
+            return payload
+
+        async def get_user_profile(self, username: str):
+            return profile_payload or {"login": username, "id": payload["id"]}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.github_client.GitHubClient",
+        _FakeGitHubClient,
+    )
+    return calls
+
+
+def test_github_config_pat_is_write_only_and_live_checked(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+    token = "github-secret-pat"
+    calls = _install_github_config_probe(
+        monkeypatch,
+        payload={"login": "octocat", "id": 583231},
+    )
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"github": {"enabled": True, "access_token": token}}},
+    )
+
+    assert response.status_code == 202, response.text
+    assert calls == [token]
+    saved = load_config_from_path(config_path).sources.github
+    assert saved.access_token == token
+    assert saved.username == "octocat"
+    visible = client.get("/api/config").json()["sources"]["github"]
+    assert visible["access_token_set"] is True
+    assert token not in str(visible)
+    credentials = client.get("/api/sources/credentials").json()["github"]
+    assert credentials["available"] is True
+    assert credentials["value"] == ""
+    assert token not in str(credentials)
+
+
+def test_github_pat_update_clears_old_producer_rejection_marker(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from openbiliclaw.runtime.github_producer import (
+        GitHubDiscoveryProducer,
+        _persist_token_rejection,
+        _token_fingerprint,
+    )
+    from openbiliclaw.storage.database import Database
+
+    config = _base_config()
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
+    monkeypatch.setattr(
+        "openbiliclaw.config.save_config",
+        lambda cfg, path=None: save_config(cfg, config_path),
+    )
+    database = Database(tmp_path / "github-config-marker.db")
+    database.initialize()
+    GitHubDiscoveryProducer(
+        database=database,
+        soul_engine=object(),
+        client=object(),
+    )._ensure_tables()
+    _persist_token_rejection(database, _token_fingerprint("old-pat"))
+    _install_github_config_probe(
+        monkeypatch,
+        payload={"login": "octocat", "id": 583231},
+    )
+    client = TestClient(
+        create_app(memory_manager=object(), database=database, soul_engine=object())
+    )
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"github": {"access_token": "new-pat"}}},
+    )
+
+    assert response.status_code == 202, response.text
+    marker = database.conn.execute(
+        "SELECT 1 FROM github_discovery_state WHERE state_key = 'token_rejected'"
+    ).fetchone()
+    assert marker is None
+
+
+def test_github_config_rejects_generic_token_env(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"github": {"token_env": "GITHUB_TOKEN"}}},
+    )
+
+    assert response.status_code == 400
+    assert load_config_from_path(config_path).sources.github.token_env == (
+        "OPENBILICLAW_GITHUB_TOKEN"
+    )
+
+
+def test_github_username_only_update_must_match_existing_pat_identity(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    config = _base_config()
+    config.sources.github.access_token = "existing-pat"
+    config.sources.github.username = "octocat"
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, config)
+    calls = _install_github_config_probe(
+        monkeypatch,
+        payload={"login": "octocat", "id": 583231},
+        profile_payload={"login": "someone-else", "id": 999999},
+    )
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"github": {"username": "someone-else"}}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "github_identity_mismatch"
+    assert calls == ["existing-pat"]
+    saved = load_config_from_path(config_path).sources.github
+    assert saved.username == "octocat"
+    assert saved.access_token == "existing-pat"
+
+
+def test_unchanged_github_username_does_not_probe_or_block_unrelated_save(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    config = _base_config()
+    config.sources.github.access_token = "existing-pat"
+    config.sources.github.username = "octocat"
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, config)
+
+    class _MustNotConstruct:
+        def __init__(self, **kwargs) -> None:
+            del kwargs
+            raise AssertionError("unchanged GitHub identity must not trigger network I/O")
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.github_client.GitHubClient",
+        _MustNotConstruct,
+    )
+
+    response = client.put(
+        "/api/config",
+        json={
+            "sources": {"github": {"username": "OctoCat"}},
+            "scheduler": {"pool_target_count": 77},
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    saved = load_config_from_path(config_path)
+    assert saved.sources.github.username == "OctoCat"
+    assert saved.scheduler.pool_target_count == 77
+
+
+def test_github_pat_is_not_writable_through_unified_credential_route(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.post(
+        "/api/sources/github/credential",
+        json={"kind": "token", "value": "must-not-land"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is False
+    assert response.json()["error_code"] == "credential_not_writable"
+    assert load_config_from_path(config_path).sources.github.access_token == ""
+
+
 def test_put_config_persists_data_dir_as_restart_only(monkeypatch, tmp_path) -> None:
     config = _base_config()
     active_data = tmp_path / "active-data"

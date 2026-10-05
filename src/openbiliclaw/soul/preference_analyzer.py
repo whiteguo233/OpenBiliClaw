@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import (
+    LLMProviderError,
+    LLMResponse,
+    is_llm_moderation_error,
+    is_reasoning_budget_exhausted,
+)
 from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
     format_parse_failure,
@@ -53,6 +58,9 @@ PREFERENCE_CHUNK_MAX_TOKENS = 4096
 PREFERENCE_REASONING_FALLBACK_MAX_TOKENS = DEFAULT_STRUCTURED_MAX_TOKENS
 PREFERENCE_RATE_LIMIT_MAX_RETRIES = 2
 PREFERENCE_RATE_LIMIT_RETRY_SECONDS = 65.0
+# Fallback only when no registry concurrency is available. Explicit values are
+# honored without a hard upper cap so users can push fan-out as high as their
+# provider / local state permit.
 MAX_CONCURRENT_PREFERENCE_CHUNKS = 16
 INIT_COGNITION_CONTEXT_KEY = "_init_cognition_context"
 _INIT_AWARENESS_CANDIDATES_CAP = 12
@@ -167,6 +175,7 @@ class PreferenceAnalyzer:
         progress_callback: ProgressCallback | None = None,
         awareness_notes: list[dict[str, object]] | None = None,
         active_insights: list[dict[str, object]] | None = None,
+        llm_concurrency: int | None = None,
     ) -> dict[str, object]:
         """Run structured extraction and merge the result with existing preference state.
 
@@ -189,6 +198,7 @@ class PreferenceAnalyzer:
                 progress_callback=progress_callback,
                 awareness_notes=awareness_notes,
                 active_insights=active_insights,
+                llm_concurrency=llm_concurrency,
             )
 
         whole_batch_prompt = build_preference_analysis_prompt(
@@ -214,6 +224,7 @@ class PreferenceAnalyzer:
                 progress_callback=progress_callback,
                 awareness_notes=awareness_notes,
                 active_insights=active_insights,
+                llm_concurrency=llm_concurrency,
             )
         result = await self._analyze_events_single(
             events=events,
@@ -292,6 +303,21 @@ class PreferenceAnalyzer:
                 caller="soul.preference",
             )
         except (LLMProviderError, LLMServiceError) as exc:
+            if is_llm_moderation_error(exc):
+                logger.warning(
+                    "preference analysis blocked by provider content moderation; "
+                    "falling back to chunked isolation: events=%d error=%s",
+                    len(events),
+                    exc,
+                )
+                if len(events) > 0:
+                    return await self._analyze_events_chunked(
+                        events=events,
+                        existing_preference=existing_preference,
+                        chunk_size=max(1, len(events) // 2),
+                        awareness_notes=awareness_notes,
+                        active_insights=active_insights,
+                    )
             raise PreferenceAnalysisError(str(exc)) from exc
 
         raw_preference = self._parse_response(response.content)
@@ -514,6 +540,7 @@ class PreferenceAnalyzer:
         progress_callback: ProgressCallback | None = None,
         awareness_notes: list[dict[str, object]] | None = None,
         active_insights: list[dict[str, object]] | None = None,
+        llm_concurrency: int | None = None,
     ) -> dict[str, object]:
         """Split events into bounded concurrent chunk batches, then fold."""
         import asyncio as _asyncio
@@ -562,17 +589,13 @@ class PreferenceAnalyzer:
                         # provider reasoning can add thousands of invisible
                         # tokens, latency and TPM pressure without improving the
                         # schema. Final profile prose keeps provider defaults.
-                        reasoning_effort="",
+                        reasoning_effort=None,
                     )
                     break
                 except (LLMProviderError, LLMServiceError) as exc:
                     message = str(exc).lower()
-                    reasoning_exhausted = (
-                        "returned reasoning but no final content" in message
-                        and "finish_reason=length" in message
-                    )
                     if (
-                        reasoning_exhausted
+                        is_reasoning_budget_exhausted(exc)
                         and not reasoning_budget_retried
                         and max_tokens < PREFERENCE_REASONING_FALLBACK_MAX_TOKENS
                     ):
@@ -645,8 +668,10 @@ class PreferenceAnalyzer:
             try:
                 return await _run_chunk_once([safe_event])
             except PreferenceAnalysisError as retry_exc:
-                if retry_exc.__cause__ is not None and not self._is_context_overflow_error(
-                    retry_exc
+                if (
+                    retry_exc.__cause__ is not None
+                    and not self._is_context_overflow_error(retry_exc)
+                    and not is_llm_moderation_error(retry_exc)
                 ):
                     raise
                 logger.warning(
@@ -678,7 +703,19 @@ class PreferenceAnalyzer:
                         self.max_prompt_chars,
                     )
                     return []
-                return [await _run_chunk_once([compact])]
+                try:
+                    return [await _run_chunk_once([compact])]
+                except PreferenceAnalysisError as compact_exc:
+                    if is_llm_moderation_error(compact_exc):
+                        logger.warning(
+                            "preference event skipped after provider content moderation "
+                            "refused the compact prompt: title=%r",
+                            str(chunk[0].get("title", ""))
+                            if chunk and isinstance(chunk[0], dict)
+                            else "",
+                        )
+                        return []
+                    raise
             midpoint = max(1, len(chunk) // 2)
             # Recovery must not fan out again underneath the bounded top-level
             # scheduler. Concurrent recursive halves used to queue 4/8/… calls
@@ -712,7 +749,14 @@ class PreferenceAnalyzer:
                             exc,
                         )
                         return await _split_or_compact_chunk(chunk)
-                    raise
+                    if not is_llm_moderation_error(exc):
+                        raise
+                    logger.warning(
+                        "preference chunk refused by provider content moderation; "
+                        "isolating the offending event: events=%d error=%s",
+                        len(chunk),
+                        exc,
+                    )
                 # Invalid JSON / model refusal is often content-local: split
                 # the batch to isolate the offending event, then skip only
                 # that final single event if a title/source-only retry still
@@ -786,7 +830,11 @@ class PreferenceAnalyzer:
             await self._emit_progress(progress_callback, done_chunks, total_chunks)
             return result
 
-        configured_concurrency = getattr(self.registry, "concurrency", None)
+        configured_concurrency = (
+            llm_concurrency
+            if llm_concurrency is not None
+            else getattr(self.registry, "concurrency", None)
+        )
         try:
             configured_chunk_limit = (
                 int(configured_concurrency)
@@ -795,11 +843,12 @@ class PreferenceAnalyzer:
             )
         except (TypeError, ValueError):
             configured_chunk_limit = MAX_CONCURRENT_PREFERENCE_CHUNKS
-        chunk_limit = max(1, min(MAX_CONCURRENT_PREFERENCE_CHUNKS, configured_chunk_limit))
+        chunk_limit = max(1, configured_chunk_limit)
         logger.info(
-            "preference chunk fanout bounded at %d (configured LLM concurrency=%r)",
+            "preference chunk fanout bounded at %d (configured LLM concurrency=%r%s)",
             chunk_limit,
             configured_concurrency,
+            " [init override]" if llm_concurrency is not None else "",
         )
         outcome_groups: list[list[tuple[dict[str, object], dict[str, object]]]] = []
         for batch_start in range(0, len(chunks), chunk_limit):
@@ -1127,6 +1176,7 @@ class PreferenceAnalyzer:
                     **item,
                     "first_seen": now.isoformat(),
                     "last_seen": now.isoformat(),
+                    "last_decay_at": now.isoformat(),
                 }
                 active_aliases = self._alias_key_map(merged_interests.values())
                 continue
@@ -1215,18 +1265,22 @@ class PreferenceAnalyzer:
             if not isinstance(raw_item, dict):
                 continue
             item = self._normalize_interest(raw_item)
-            last_seen_text = str(item.get("last_seen") or "")
+            decay_reference_text = str(item.get("last_decay_at") or item.get("last_seen") or "")
             try:
-                last_seen = datetime.fromisoformat(last_seen_text) if last_seen_text else now
+                decay_reference = (
+                    datetime.fromisoformat(decay_reference_text) if decay_reference_text else now
+                )
             except ValueError:
-                last_seen = now
-            weeks = max((now - last_seen).days, 0) / 7
+                decay_reference = now
+            weeks = max((now - decay_reference).total_seconds(), 0.0) / (7 * 24 * 60 * 60)
             decayed_weight = self._clamp_weight(
                 self._to_float(item.get("weight", 0.0)) * (self.decay_factor_per_week**weeks)
             )
             if decayed_weight < self.min_interest_weight:
                 continue
             item["weight"] = decayed_weight
+            if now >= decay_reference:
+                item["last_decay_at"] = now.isoformat()
             decayed.append(item)
         return decayed
 
@@ -1311,6 +1365,9 @@ class PreferenceAnalyzer:
         aliases = self._interest_aliases(raw_item, canonical_name=name)
         if aliases:
             normalized["aliases"] = aliases
+        last_decay_at = raw_item.get("last_decay_at")
+        if last_decay_at:
+            normalized["last_decay_at"] = last_decay_at
         return normalized
 
     def _merge_interest_record(
@@ -1329,6 +1386,7 @@ class PreferenceAnalyzer:
             "category": canonical_category,
             "first_seen": existing.get("first_seen") or now.isoformat(),
             "last_seen": now.isoformat(),
+            "last_decay_at": now.isoformat(),
             "weight": self._clamp_weight(
                 max(
                     self._to_float(existing.get("weight", 0.0)),

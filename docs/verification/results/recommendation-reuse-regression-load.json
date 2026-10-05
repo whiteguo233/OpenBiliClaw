@@ -1,0 +1,42 @@
+{
+  "load_pool_serve_snapshot": {
+    "before_median_ms": 274.57,
+    "after_median_ms": 236.57,
+    "identical": true
+  },
+  "count_pool_readiness_isolated": {
+    "before_median_ms": 388.8,
+    "after_median_ms": 180.47,
+    "identical": true
+  },
+  "load_pool_platform_availability": {
+    "before_median_ms": 148.66,
+    "after_median_ms": 144.33,
+    "identical": true
+  },
+  "selector_40": {
+    "candidates": 40,
+    "embedding_coverage": 40,
+    "dimensions": [
+      768
+    ],
+    "selected": 10,
+    "before_median_ms": 278.72,
+    "after_median_ms": 46.8,
+    "identical_order": true
+  },
+  "selector_80": {
+    "candidates": 80,
+    "embedding_coverage": 80,
+    "dimensions": [
+      768
+    ],
+    "selected": 10,
+    "before_median_ms": 694.55,
+    "after_median_ms": 92.67,
+    "identical_order": true
+  },
+  "edge_scenarios_identical": 48,
+  "baseline_commit": "ac942817a52d0a34b8900a75ff4072d6e958637c",
+  "mode": "offline_replay"
+}

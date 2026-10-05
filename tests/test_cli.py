@@ -1047,6 +1047,38 @@ def test_config_show_displays_runtime_pause_fields(
     assert "开启（宽限 45s）" in result.stdout
 
 
+def test_config_show_displays_bilibili_publication_preference(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    cfg = config_module.Config()
+    cfg.sources.bilibili.recommendation_date_preset = "custom"
+    cfg.sources.bilibili.recommendation_date_start = "2023-01-01"
+    cfg.sources.bilibili.recommendation_date_end = "2023-12-31"
+    cfg.sources.bilibili.recommendation_date_weight = 0.5
+
+    class FakeRegistry:
+        default_provider = "openai"
+        available_providers = ["openai"]
+
+    monkeypatch.setattr(
+        config_module,
+        "load_config_with_diagnostics",
+        lambda: (cfg, config_module.ConfigDiagnostics()),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["config-show"])
+
+    assert result.exit_code == 0
+    assert "B站发布日期范围" in result.stdout
+    assert "自定义：2023-01-01 至 2023-12-31" in result.stdout
+    assert "B站发布日期权重" in result.stdout
+    assert "0.5" in result.stdout
+
+
 def test_config_show_displays_saved_auto_sync_status(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
@@ -1939,6 +1971,95 @@ def test_config_show_displays_autostart_status(
     assert "已注册" in result.stdout
 
 
+def test_embedding_cache_stats_reports_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cfg = config_module.Config()
+    cfg.data_dir = str(tmp_path)
+    monkeypatch.setattr(
+        config_module,
+        "load_config_with_diagnostics",
+        lambda: (cfg, config_module.ConfigDiagnostics()),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    cache = EmbeddingCache(tmp_path / "embedding_cache.db")
+    cache.initialize()
+    cache.put("k1", [0.1, 0.2, 0.3], model="bge-m3#namespace=abc123")
+    cache.conn.execute(
+        "INSERT INTO embedding_cache (text_key, model, vector, encoding) "
+        "VALUES ('k2', 'bge-m3', ?, 0)",
+        ("[0.4, 0.5, 0.6]",),
+    )
+    cache.conn.commit()
+    cache.close()
+
+    result = runner.invoke(app, ["embedding-cache-stats"])
+
+    assert result.exit_code == 0, result.output
+    assert "Embedding L2 缓存诊断" in result.stdout
+    assert "bge-m3#namespace=abc123" in result.stdout
+    assert "legacy" in result.stdout
+    assert "总行数" in result.stdout
+
+
+def test_embedding_cache_clean_dry_run_then_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cfg = config_module.Config()
+    cfg.data_dir = str(tmp_path)
+    monkeypatch.setattr(
+        config_module,
+        "load_config_with_diagnostics",
+        lambda: (cfg, config_module.ConfigDiagnostics()),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    cache = EmbeddingCache(tmp_path / "embedding_cache.db")
+    cache.initialize()
+    cache.put("k1", [0.1, 0.2, 0.3], model="m#namespace=live")
+    cache.conn.execute(
+        "INSERT INTO embedding_cache (text_key, model, vector, encoding) "
+        "VALUES ('k2', 'bge-m3', ?, 0)",
+        ("[0.4, 0.5, 0.6]",),
+    )
+    cache.conn.commit()
+    cache.close()
+
+    # Default dry-run: reports what would change, touches nothing.
+    result = runner.invoke(app, ["embedding-cache-clean"])
+    assert result.exit_code == 0, result.output
+    assert "dry-run" in result.stdout
+    reopen = EmbeddingCache(tmp_path / "embedding_cache.db")
+    reopen.initialize()
+    assert reopen.count() == 2
+    reopen.close()
+
+    # --apply: migrates the JSON row, deletes the unprotected legacy row and
+    # physically compacts the file.
+    result = runner.invoke(
+        app, ["embedding-cache-clean", "--apply", "--keep-model", "m#namespace=live"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "迁移 1 行" in result.stdout
+    assert "删除 1 行" in result.stdout
+    reopen = EmbeddingCache(tmp_path / "embedding_cache.db")
+    reopen.initialize()
+    assert reopen.count() == 1
+    assert reopen.get("k1", model="m#namespace=live") is not None
+    row = reopen.conn.execute(
+        "SELECT encoding FROM embedding_cache WHERE text_key = 'k1'"
+    ).fetchone()
+    assert row[0] == 1
+    reopen.close()
+
+
 def test_run_api_server_prints_degraded_mode_panel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1959,6 +2080,9 @@ def test_run_api_server_prints_degraded_mode_panel(
         )
     )
     run_calls: list[dict[str, object]] = []
+    # This unit test exercises the API server body only; the default
+    # four-process worker mode is covered by startup integration tests.
+    monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
 
     monkeypatch.setattr(
         cli_module,
@@ -2125,6 +2249,8 @@ def test_runtime_builders_share_database_instance(
             module_overrides: object | None = None,
             concurrency: int = 1,
             concurrency_gate: object | None = None,
+            reply_style: str = "",
+            dialogue_tone_prompt: str = "",
         ) -> None:
             self.registry = registry
             self.memory = memory
@@ -2132,6 +2258,8 @@ def test_runtime_builders_share_database_instance(
             self.module_overrides = module_overrides
             self.concurrency = concurrency
             self.concurrency_gate = concurrency_gate
+            self.reply_style = reply_style
+            self.dialogue_tone_prompt = dialogue_tone_prompt
 
     class FakeRecommendationEngine:
         def __init__(
@@ -3894,7 +4022,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   7-9. "" — accept Bili history/favorite/follow init limits
     #   10+. "n" — skip optional source prompts
     #               (xhs / douyin / youtube / X / zhihu / reddit /
-    #                Linux.do / v2ex / weibo / Instagram / bangumi)
+    #                Linux.do / v2ex / weibo / bangumi / GitHub / Instagram)
     wizard_input = (
         "\n".join(
             [
@@ -3922,7 +4050,7 @@ def test_init_guides_missing_runtime_config_interactively(
         )
         + "\n"
     )
-    result = runner.invoke(app, ["init"], input=wizard_input)
+    result = runner.invoke(app, ["init"], input=wizard_input + "n\n")
 
     assert result.exit_code == 1
     assert captured["provider"] == "gemini"
@@ -3999,12 +4127,12 @@ def test_init_guides_missing_auth_interactively(
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
     # to XHS / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX /
-    # Weibo / Instagram / Bangumi so this test stays focused on the
-    # cookie-prompt path.
+    # Weibo / Bangumi / GitHub / Instagram so this test stays focused on the cookie-prompt
+    # path.
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\n",
+        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 12,
     )
 
     assert result.exit_code == 1
@@ -5228,6 +5356,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "zhihu": 1,
         "reddit": 1,
         "bangumi": 1,
+        "github": 1,
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
@@ -5275,6 +5404,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "zhihu": 1,
         "reddit": 1,
         "bangumi": 1,
+        "github": 1,
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
@@ -5903,6 +6033,53 @@ def test_save_embedding_config_custom_openai_compat(
     assert reloaded.llm.embedding.model == "bge-m3"
     assert reloaded.llm.embedding.base_url == "http://localhost:8000/v1"
     assert reloaded.llm.embedding.api_key == "sk-local"
+
+
+def test_interactive_embedding_setup_option4_allows_empty_no_auth_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option 4 tells users a no-auth gateway may leave the API key blank.
+
+    The wizard must pass that empty key through (the registry injects an
+    internal placeholder for the OpenAI SDK) instead of inventing a fake key
+    or writing a config that the backend silently refuses to build."""
+    answers = iter(["4", "http://127.0.0.1:8000/v1", "", "bge-m3"])
+    monkeypatch.setattr(typer, "prompt", lambda *args, **kwargs: next(answers))
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli_module,
+        "_save_embedding_config",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    cli_module._interactive_embedding_setup("openai")
+
+    assert captured == {
+        "provider": "openai",
+        "model": "bge-m3",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "api_key": "",
+    }
+
+
+def test_interactive_embedding_setup_option4_rejects_empty_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option 4 is the custom-endpoint branch, so an empty base_url cannot
+    produce a usable provider. Refuse to save instead of writing a config
+    that silently disables embedding."""
+    answers = iter(["4", "", "sk-ignored", "bge-m3"])
+    monkeypatch.setattr(typer, "prompt", lambda *args, **kwargs: next(answers))
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli_module,
+        "_save_embedding_config",
+        lambda **kwargs: saved.append(kwargs),
+    )
+
+    cli_module._interactive_embedding_setup("openai")
+
+    assert saved == []
 
 
 def test_save_module_overrides_writes_per_module_blocks(
