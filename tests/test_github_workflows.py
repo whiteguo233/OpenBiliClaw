@@ -51,6 +51,25 @@ def test_windows_installer_workflow_tests_the_installed_executable() -> None:
     assert "-k real_frozen_bundle" in workflow
 
 
+def test_windows_workflows_verify_bundled_ollama_signatures() -> None:
+    """#281: staged ollama exes must ship with Ollama's intact Authenticode signature.
+
+    The removed PE-subsystem patch invalidated the signatures and got the
+    installer flagged by Kaspersky; the verify step fails the build if any
+    post-download mutation ever sneaks back in.
+    """
+    for name in ("build-installers.yml", "release-desktop.yml"):
+        workflow = Path(f".github/workflows/{name}").read_text(encoding="utf-8")
+
+        stage_step = workflow.index("- name: Stage bundled Ollama")
+        verify_step = workflow.index("- name: Verify bundled ollama Authenticode signatures")
+        compile_step = workflow.index("- name: Compile installer")
+
+        assert stage_step < verify_step < compile_step, name
+        assert "Get-AuthenticodeSignature" in workflow, name
+        assert "patch_pe_subsystem" not in workflow, name
+
+
 def test_chrome_webstore_publish_can_explicitly_replace_a_pending_review() -> None:
     """A newer release can replace an older package that is still in review."""
     workflow = Path(".github/workflows/publish-chrome-webstore.yml").read_text(encoding="utf-8")

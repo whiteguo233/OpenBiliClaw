@@ -256,6 +256,22 @@ jobs:
       # runner with CREATE_NO_WINDOW (upstream PR #8668) and our supervisor
       # launches `ollama serve` with CREATE_NO_WINDOW too.
 
+      - name: Verify bundled ollama Authenticode signatures
+        shell: pwsh
+        run: |
+          # Guard for #281: every staged ollama exe must keep Ollama's original
+          # Authenticode signature. Any post-download mutation (like the removed
+          # PE-subsystem patch) breaks it and gets the installer flagged by AV.
+          $exes = @("dist\OpenBiliClaw\ollama.exe")
+          $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+          $bad = @()
+          foreach ($f in $exes) {
+            $status = (Get-AuthenticodeSignature $f).Status
+            Write-Host "$f => $status"
+            if ($status -ne 'Valid') { $bad += "$f ($status)" }
+          }
+          if ($bad.Count -gt 0) { throw "Broken Authenticode signatures (AV will flag these): $($bad -join '; ')" }
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
