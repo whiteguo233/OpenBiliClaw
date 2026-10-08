@@ -187,6 +187,76 @@ def test_canonical_sparse_batch_rejects_empty_routing_semantics(field: str) -> N
         build_canonical_evaluation_batch([item])
 
 
+def test_canonical_sparse_batch_sanitizes_wire_rejected_control_characters() -> None:
+    """One dirty upstream item must not fail the whole batch (#284)."""
+
+    batch = build_canonical_evaluation_batch(
+        [
+            {
+                "source_platform": "bilibili",
+                "content_type": "video",
+                "title": "正常标题",
+                "author_name": "UP 主",
+            },
+            {
+                "source_platform": "bilibili",
+                "content_type": "video",
+                "title": "标题\x0b含\x7f控制符",
+                "author_name": "UP 主\x00",
+                "description": "简介\x00夹带 NUL\t保留制表\n保留换行",
+                "body_text": "正文\x1f unit separator",
+                "tags": ["正常", "\x00", "标\x0b签"],
+                "related_interests": ["兴\x7f趣"],
+            },
+        ]
+    )
+
+    assert len(batch.items) == 2
+    dirty = batch.items[1]
+    assert dirty["title"] == "标题含控制符"
+    assert dirty["author"] == "UP 主"
+    assert dirty["description"] == "简介夹带 NUL\t保留制表\n保留换行"
+    assert dirty["body_text"] == "正文 unit separator"
+    assert dirty["tags"] == ["正常", "标签"]
+    assert dirty["related_interests"] == ["兴趣"]
+    # The sanitized batch passes wire validation end to end.
+    assert decode_sparse_evaluation_json(render_sparse_evaluation_json(batch)) == batch
+
+
+def test_canonical_sparse_batch_omits_list_field_when_all_entries_sanitize_empty() -> None:
+    batch = build_canonical_evaluation_batch(
+        [
+            {
+                "source_platform": "bilibili",
+                "content_type": "video",
+                "title": "candidate",
+                "author_name": "author",
+                "tags": ["\x00", "\x0b\x7f"],
+            }
+        ]
+    )
+
+    assert "tags" not in batch.items[0]
+
+
+def test_canonical_sparse_batch_replaces_lone_surrogates() -> None:
+    batch = build_canonical_evaluation_batch(
+        [
+            {
+                "source_platform": "bilibili",
+                "content_type": "video",
+                "title": "标题\ud800孤立代理",
+                "author_name": "author",
+            }
+        ]
+    )
+
+    title = batch.items[0]["title"]
+    assert isinstance(title, str)
+    assert "\ud800" not in title
+    title.encode("utf-8")
+
+
 def test_sparse_json_is_deterministic_and_strictly_round_trips() -> None:
     left = build_canonical_evaluation_batch(
         [
