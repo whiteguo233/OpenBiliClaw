@@ -5,6 +5,8 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+Instagram opt-in → optional host grant → dynamic isolated + MAIN scripts → task tabs
+                 └ revoke → unregister; no static Instagram site access
 local embedding provider / diagnosis → automatic acceleration → valid vector
                                      └ runner failure → shared CPU mode → validated vector / failure
 recommendation request → main API → optional Unix-socket recommendation process

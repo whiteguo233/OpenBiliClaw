@@ -6,24 +6,13 @@ async function text(path: string): Promise<string> {
   return readFile(new URL(path, import.meta.url), "utf8");
 }
 
-test("Chrome and Firefox install isolated listener before MAIN response tap at document_start", async () => {
+test("optional Instagram does not expand required manifest access", async () => {
   for (const name of ["../manifest.json", "../manifest.firefox.json"]) {
-    const manifest = JSON.parse(await text(name)) as {
-      host_permissions: string[];
-      optional_host_permissions: string[];
-      content_scripts: Array<{ js: string[]; run_at?: string; world?: string }>;
-    };
+    const manifest = JSON.parse(await text(name));
     assert.equal(manifest.host_permissions.includes("https://*.instagram.com/*"), false);
     assert.ok(manifest.optional_host_permissions.includes("https://*.instagram.com/*"));
-    const isolatedIndex = manifest.content_scripts.findIndex((entry) =>
-      entry.js.some((file) => file.endsWith("content/instagram.js")));
-    const mainIndex = manifest.content_scripts.findIndex((entry) =>
-      entry.js.some((file) => file.endsWith("main/instagram-response-tap.js")));
-    assert.ok(isolatedIndex >= 0 && mainIndex > isolatedIndex);
-    assert.equal(manifest.content_scripts[isolatedIndex].run_at, "document_start");
-    assert.equal(manifest.content_scripts[isolatedIndex].world, undefined);
-    assert.equal(manifest.content_scripts[mainIndex].run_at, "document_start");
-    assert.equal(manifest.content_scripts[mainIndex].world, "MAIN");
+    assert.equal(manifest.content_scripts.some((entry: { matches: string[] }) =>
+      entry.matches.some((match) => match.includes("instagram.com"))), false);
   }
 });
 

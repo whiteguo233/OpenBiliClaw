@@ -577,6 +577,9 @@ CLI 入口：
 
 ### Instagram 任务桥
 
+Instagram 不在 Chrome / Firefox 的静态 content_scripts 中声明。`startInstagramContentScripts()` 在 worker 加载时绑定权限事件并恢复注册；`syncInstagramContentScripts()` 在领取任务前等待权限与脚本注册收敛。用户在 popup 主动开启并授权后，注册 ISOLATED receiver 和 MAIN tap（document_start）；撤销权限时移除两者。操作串行化，重启幂等，注册失败阻止领取新任务且可重试；Firefox 使用其根目录资源路径。注销不主动卸载已注入当前文档的 JavaScript，后续导航不再注入，任务领取仍检查权限。
+
+
 匿名 creator 还接受已实际观察的 `ScheduledServerJS.handle → __bbox.require → RelayPrefetchedStreamCache.next → __bbox.result.data.xig_user_by_username` 原生 SSR。只读取这条白名单包装（不执行模块表达式），要求路径/username、数字账号/媒体作者一致、明确 `is_private=false`。身份优先用正整数 `pk`，仅缺失时回退 `id`；真实 Relay 的两字段可能是不同命名空间，不要求彼此相同。无效 `pk` 不得靠 `id` 放行；作者不匹配、未知/私密、viewer、建议账号或其他模块不能提供公开证明。已观察的同路径无效/未知/私密状态会撤销缓存证明。扫描有4层、256模块和16个profile上限，截断时拒绝复用旧证明；Cookie/原始SSR不跨桥。
 
 profile 与 media author 共用严格用户主键校验，不接受复合媒体 ID、小数或不安全数字；只比较同字段身份。两侧都有 `pk` 时必须一致，不能靠相同备用 `id` 掩盖冲突；已证明的 `id→pk` 对应可归一 canonical author。一个 payload 的所有 matching profile 都必须明确公开且身份一致；同账号的弱证明仅合并，不丢失已知 `pk`。SSR 扫描禁止重入，最多初扫加一次补扫，兼容媒体先到而不会因强弱证明交替无限递归。

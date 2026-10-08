@@ -4,6 +4,8 @@
 
 ## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
 
+- 修复 Instagram 可选来源静态脚本导致的插件升级权限扩大：Chrome / Firefox 改为授权后动态注册、撤权移除，任务领取等待注册完成，并覆盖重启和并发事件回归。
+
 - 修复 Windows 安装包被 Kaspersky 查杀（#281）：移除打包流程中对随包 `ollama.exe` 及 `lib/ollama` runner 的 PE 子系统改写步骤（`release-desktop.yml` / `build-installers.yml`），并删除 `packaging/patch_pe_subsystem.py` 及其测试。该改写使 Ollama 官方 Authenticode 签名失效（`TRUST_E_BAD_DIGEST`），被杀软按「已签名但被篡改」报 `HEUR:Trojan.Win64.Generic`；上游 ollama 自 PR #8668 起已用 `CREATE_NO_WINDOW` 启动 runner，配合 supervisor 启动 `ollama serve` 时的 `CREATE_NO_WINDOW`，不再弹控制台窗口，无需改二进制。两个 workflow 在编译安装包前新增 `Get-AuthenticodeSignature` 验签门禁，随包 exe 签名失效即构建失败，防止同类回归。同时将 `packaging/openbiliclaw.spec` 的 UPX 压缩关闭（`upx=False`），避免本地构建产出更易被误报的 UPX 壳 bootloader。
 
 - v0.3.227 发布回执已归档：Chrome / Firefox 已提交待审核，正式签名的 Mac 与 Safari 安装包、Windows 安装包和双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。详见 [发布记录](testing/2026-10-06-release-0.3.227.md)。
