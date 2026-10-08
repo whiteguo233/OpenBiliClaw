@@ -19,6 +19,7 @@ from .gemini_provider import GeminiProvider, gemini_sdk_available
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
+from .opper_provider import OpperProvider
 from .orcarouter_provider import OrcaRouterProvider
 from .requesty_provider import RequestyProvider
 
@@ -72,6 +73,7 @@ def build_llm_registry(
         ("requesty", _maybe_requesty_provider(config, overrides)),
         ("api_route", _maybe_api_route_provider(config, overrides)),
         ("cheaperinference", _maybe_cheaperinference_provider(config, overrides)),
+        ("opper", _maybe_opper_provider(config, overrides)),
     ]
 
     for _name, provider in provider_specs:
@@ -230,6 +232,7 @@ def _build_instance_provider(
         "requesty": _maybe_requesty_provider,
         "api_route": _maybe_api_route_provider,
         "cheaperinference": _maybe_cheaperinference_provider,
+        "opper": _maybe_opper_provider,
         "openai_compatible": _maybe_openai_compatible_provider,
     }
     factory = factories.get(provider_type)
@@ -1026,6 +1029,24 @@ def _maybe_cheaperinference_provider(
     return CheaperInferenceProvider(
         api_key=cfg.api_key,
         model=cfg.model or "gpt-5.4-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
+    )
+
+
+def _maybe_opper_provider(config: Config, overrides: dict[str, LLMProvider]) -> LLMProvider | None:
+    if "opper" in overrides:
+        return overrides["opper"]
+    cfg = config.llm.opper
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://api.opper.ai/v3/compat"
+    return OpperProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "claude-sonnet-4-6",
         base_url=base_url,
         timeout=float(config.llm.timeout),
         proxy=_outbound_proxy(base_url),

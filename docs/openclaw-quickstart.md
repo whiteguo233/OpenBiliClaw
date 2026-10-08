@@ -92,6 +92,7 @@ python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-fo
    - **8) Requesty 聚合**：默认 `openai/gpt-4o-mini`;格式 `<vendor>/<model>`。一个 Key 跑多家模型,按调用计费
    - **9) API Route 聚合**：默认 `gpt-5.5`；可填写其他受支持的模型 ID。一个 Key 跑多家模型
    - **10) Cheaper Inference 聚合**：默认 `gpt-5.4-mini`；模型名不带厂商前缀（如 `claude-sonnet-5`）。一个 Key 跑多家模型
+   - **11) Opper 聚合**：默认 `claude-sonnet-4-6`；模型名不带厂商前缀（如 `gpt-5.5`）。一个 Key 跑多家模型
    - **本地 Ollama（完全离线,不在交互菜单里）** —— 默认 `qwen2.5:7b`(中文好);可选 llama3.2 / gemma2 / mistral / deepseek-r1。无 Key / 16GB+ 内存。需要时用 `--provider ollama` 显式选择或到桌面设置页配置
 2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,OpenAI 协议兼容子菜单见上 10 个 preset),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关 / 其它路径强制手填模型名(写错会 404)。
 3. **Phase 3 — Embedding（向量化，3 选 1 + 高级）**：默认推荐 **本地 Ollama bge-m3**（免费、离线、效果够用），其次 Gemini（云端、效果最好但要 Key），也可以选择暂不启用。Embedding 与主 LLM 独立，不再默认跟随主 LLM。高级选项里有"自定义 OpenAI 兼容 endpoint"。

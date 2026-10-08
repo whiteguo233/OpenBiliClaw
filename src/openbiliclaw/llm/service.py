@@ -859,6 +859,7 @@ class LLMService:
             "requesty",
             "api_route",
             "cheaperinference",
+            "opper",
         }:
             return False
 

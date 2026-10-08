@@ -690,6 +690,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ OpenRouter / OrcaRouter  │  │ Ollama bge-m3 兜底可选  │   │
 │  │ Requesty / API Route     │  │                        │   │
 │  │ Cheaper Inference        │  │                        │   │
+│  │ Opper                    │  │                        │   │
 │  └──────────────────────────┘  └────────────────────────┘   │
 │  可选视觉 / 弹幕预热：质心、关键帧、完整 document embedding；endpoint provenance + stable slot retry │
 │  Local embedding: auto GPU → runner failure → CPU → validated vector      │

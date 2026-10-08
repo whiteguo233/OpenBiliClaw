@@ -302,7 +302,7 @@ Tell the user, in plain Chinese (or the conversation's language):
 
 > 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
 
-Present **ten top-level options**. Keep Base URL / model-name details
+Present **eleven top-level options**. Keep Base URL / model-name details
 inside option 2's submenu; do not ask those advanced fields unless the
 user chooses an OpenAI-compatible gateway / preset path.
 
@@ -320,6 +320,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 | 8. **Requesty** | `openai/gpt-4o-mini`(格式 `<vendor>/<model>`) | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
 | 9. **API Route** | `gpt-5.5` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
 | 10. **Cheaper Inference** | `gpt-5.4-mini` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+| 11. **Opper** | `claude-sonnet-4-6` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
 
 > **本地 Ollama 不在聊天 provider 菜单里**（v0.3.176+）：随装的 Ollama 只带
 > embedding 模型 `bge-m3`，小体积本地聊天模型达不到内容管线质量线。需要本地
@@ -328,7 +329,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 
 > ⚠️ **不要把选项 3 (OpenAI 官方) 和选项 2 (协议兼容) 混淆**:走 OpenAI API 官方端点选 3;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 2。
 
-**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;用户提到"OrcaRouter / 一个 Key 跑多家模型 + 安全网关"→ 引导 #7;用户提到"Requesty"→ 引导 #8；用户提到"API Route"→ 引导 #9；用户提到"Cheaper Inference"→ 引导 #10；Ollama 仅在用户明确要求"本地 / 离线"时用显式 `--provider ollama` 走离线路径。
+**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;用户提到"OrcaRouter / 一个 Key 跑多家模型 + 安全网关"→ 引导 #7;用户提到"Requesty"→ 引导 #8；用户提到"API Route"→ 引导 #9；用户提到"Cheaper Inference"→ 引导 #10；用户提到"Opper"→ 引导 #11；Ollama 仅在用户明确要求"本地 / 离线"时用显式 `--provider ollama` 走离线路径。
 
 **选项 2 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 10 个 preset 中,**第 1 个就是中转站(默认)**:
 
@@ -443,7 +444,7 @@ flags from Step 3. DeepSeek has no embeddings endpoint, so recommend
 local Ollama bge-m3 unless the user explicitly wants Gemini / OpenAI
 embedding. `--embedding-provider ""` now means "do not enable embedding".
 
-#### Options 3-10 (OpenAI 官方 / Gemini / Claude / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference):
+#### Options 3-11 (OpenAI 官方 / Gemini / Claude / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper):
 
 Substitute the right vendor name and Key URL:
 
@@ -455,6 +456,7 @@ Substitute the right vendor name and Key URL:
 - Requesty: https://app.requesty.ai/api-keys
 - API Route: https://global.api-route.com/
 - Cheaper Inference: https://cheaperinference.com/signup
+- Opper: https://platform.opper.ai
 
 Run with `--provider <name> --llm-api-key <KEY>` plus the Step 3
 embedding flags. Don't ask for Base URL. Embedding is independent from

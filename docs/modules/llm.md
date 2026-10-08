@@ -21,12 +21,13 @@
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
-| 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
+| 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper / OpenAI-compatible，带 retry + 超时 |
 | Responses JSON 输入契约（issue #265） | ✅ | 拆分 system 后检查 `input`，缺少 JSON 标记时追加最小 user 指令，避免偏好分析 HTTP 400。 |
 | v0.3.x OrcaRouter Provider 支持 | ✅ | 新增 `OrcaRouterProvider`（OpenAI 兼容协议）：一个 Key 跑 150+ 模型，默认 `openai/gpt-4o`，默认端点 `https://api.orcarouter.ai/v1`；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖。网关把 `reasoning_effort` 与嵌套 `reasoning` 对象都原样转发给上游路由，非推理模型会以 HTTP 400 拒绝（已对 `openai/gpt-4o` 实测），因此适配器**不发送任何推理参数**，推理模型使用自身默认档位 |
 | v0.3.x Requesty Provider 支持 | ✅ | 新增 `RequestyProvider`（OpenAI 兼容协议）：一个 Key 跑多家模型，默认 `openai/gpt-4o-mini`，默认端点 `https://router.requesty.ai/v1`（欧盟区可改 `https://router.eu.requesty.ai/v1`）；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；适配器不发送任何推理参数；`list_models()` 先列出 `GET /models/managed` 的托管策略（失败时只记 WARNING），再合并 `GET /models` 目录。不参与自动排序，只有用户显式配置实例或调用链时才会使用 |
 | API Route Provider 支持 | ✅ | `ApiRouteProvider` 使用 OpenAI 兼容协议，默认模型 `gpt-5.5`，默认端点 `https://global.api-route.com/v1`；沿用统一超时、重试、错误归一化、JSON mode、模型发现与 per-call model 覆盖。多模型网关不发送 `reasoning_effort`；embedding 需另配。仅在显式配置 API Key 和调用链时使用。 |
 | Cheaper Inference Provider 支持 | ✅ | `CheaperInferenceProvider` 使用 OpenAI 兼容协议，默认模型 `gpt-5.4-mini`，默认端点 `https://api.cheaperinference.com/v1`，模型名不带厂商前缀；沿用统一超时、重试、错误归一化、JSON mode、模型发现与 per-call model 覆盖。多模型网关不发送 `reasoning_effort`；`list_models()` 丢弃 `type` 不是 `text` 的图像 / 视频模型；embedding 需另配。仅在显式配置 API Key 和调用链时使用。 |
+| Opper Provider 支持 | ✅ | `OpperProvider` 使用 OpenAI 兼容协议，默认模型 `claude-sonnet-4-6`，默认端点 `https://api.opper.ai/v3/compat`，模型名为不带厂商前缀的池名；沿用统一超时、重试、错误归一化、JSON mode、模型发现与 per-call model 覆盖。多模型网关不发送 `reasoning_effort`；embedding 需另配。仅在显式配置 API Key 和调用链时使用。 |
 | 2.2 Provider Registry | ✅ | 多端点实例注册 + 全局 / 模块有序链 + 实例级 cooldown + health check |
 | v0.3.x 原生 function calling（M1） | ✅ | `OpenAIProvider.complete_with_tools()` 走 OpenAI `tools=[{"type":"function",...}]` 原生 FC，支持单次响应多个 `tool_calls` 并行解析；`api_flavor="responses"` 实例与 Ollama 显式标 `supports_tool_calling=False`，由 service 层 prompt 模拟兜底；DeepSeek 继承原生 FC 并保留 thinking max_tokens 下限；`LLMRegistry.complete_with_tools*()` 复用 fallback 链 cooldown / 限流语义，链内跳过无 FC 能力的实例 |
 | token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()` 产出 `LLMStreamChunk`（`delta` 增量 + 终止块聚合 `LLMResponse`）；基类默认实现 = 调 `complete()` / `complete_with_tools()` 后一次性吐全文，所有现存 provider 零改动兼容。真流式只在 `OpenAIProvider`（chat-completions flavor，`stream=True` + `stream_options.include_usage`，tool_calls 增量静默聚合到终止块）实现，DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / ApiRoute / openai_compatible 子类自动继承；responses flavor 与 `json_mode` 保持一次性回退（结构化调用依赖格式拒绝重试梯），Claude / Gemini / CodexChatGPT 走基类回退。`LLMRegistry.stream_*()` 镜像 six 个非流式入口（fallback 链 / 显式链 / 精确路由 × 普通 / FC），流式专属语义：**只在首个 delta 之前允许 fallback**，已吐字后失败直接上抛避免重复文本。`LLMService.stream_complete_with_core_memory()` / `stream_socratic_dialogue()` / `stream_complete_with_native_tools()` 复用同一套路由 / provider slot / 记账；prompt 模拟工具路由保持一次性（回复是否为 tool_call JSON 要等全文才知道） |
@@ -54,12 +55,12 @@
 | 渠道 caller 默认跟随模型 effort | ✅ | `LLMService` 将 `discovery.*` / `recommendation.*` / `sources.*` / `yt_search.*` / `runtime.bilibili_extension_search.*` 以及三类轻量 eval caller 的未指定 effort 解析为 `None`，即跟随各实例配置的 `reasoning_effort`（可手动设为 `low` / `medium` / `high` 或留空跟随模型）；显式 caller 参数始终优先。这样既避免强制空值导致部分 reasoning-first OpenAI-compatible 模型返回 `code 1210`，也让用户能按模型能力自行选择 effort。Soul / 画像与长场景继续使用 provider 的 `medium`（或用户配置值） |
 | v0.3.150+ reasoning-only 诊断与兼容端点自愈 | ✅ | OpenAI-compatible / DeepSeek / OpenRouter / Ollama native 返回 HTTP 200 且含 `reasoning_content` / `reasoning` / `thinking`、但最终 `content` 为空时，错误会明确提示 `returned reasoning but no final content` 并带 `finish_reason`，避免和完全空响应混淆。泛 OpenAI-compatible 首请求仍保持标准兼容：空 effort 不发送非标准字段；若调用方明确传 `reasoning_effort=""`，端点却在去掉 `response_format` 后仍返回 reasoning-only，provider 才追加一次 `thinking={"type":"disabled"}` 重试，修复 SenseNova/DeepSeek relay 把输出预算全部耗在默认 thinking 的情况。Responses flavor（`api_flavor="responses"`）同样输出该标识：`output` 含 `type="reasoning"` 条目但无最终 message 时抛出同一 `returned reasoning but no final content (finish_reason=...)` 形态，`status="incomplete"` + `incomplete_details.reason="max_output_tokens"` 映射为 `finish_reason=length`，其余终态映射为自身状态名——`is_reasoning_budget_exhausted()` 与评估批减半自愈因此对 responses 实例同样生效；无 reasoning 条目的空响应仍报 `returned empty content` |
 | 推理预算下限与评估分批自愈（未发布） | ✅ | 结构化调用统一以 `MIN_STRUCTURED_MAX_TOKENS=4096` 兜底 `max_tokens`（`complete_structured_task()` 与 `complete_multimodal_structured_task()`；上限语义，正常答完不产生额外成本，只在模型把预算全花在 thinking 时生效），`api.sentiment` 16→512；`llm.base.is_reasoning_budget_exhausted()` 沿 cause/context 链识别 `returned reasoning but no final content` + `finish_reason=length`，discovery `_evaluate_batch`、recommendation `_classify_batch_with_split_retry` / `_precompute_batch_with_split_retry` 在该签名下把批减半递归重试（深度 3、额外请求 6，直到 JSON 放得下），限流 / 鉴权 / 超时 / 传输错误仍原样上抛；`soul.posture_gate` 与 `soul.preference_analyzer` 改用同一 helper，行为不变。`recommendation.evaluate_batch` 8192→16384、统一关键词 planner 合并生成下限 4096→8192 |
-| finish_reason=length 预算放大重试（未发布） | ✅ | `OpenAIProvider.complete()` 两条 flavor 都在输出截断时追加一次放大重试：chat-completions 路径（含 DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / 泛 openai_compatible 子类）识别 `finish_reason=length`（或 `max_tokens`），Responses 路径（`api_flavor="responses"`）识别 `status="incomplete"` + `incomplete_details.reason="max_output_tokens"`。reasoning-only 空 `content`（走完既有「去 response_format / text.format」「显式禁 thinking」重试后仍为空且截断）或 json_mode 下 JSON 被截断但有正文，都会以翻倍预算（chat 写 `max_tokens`、Responses 写 `max_output_tokens`，均封顶 `_LENGTH_RETRY_MAX_TOKENS_CAP=32768`，已达上限则不重试直接按原错误失败）重发一次，其余请求参数原样保留；共享同一 `_retry_with_larger_budget()` helper。`complete_with_tools()`（chat 原生函数调用）复用同一 helper：空 `content` 且无 `tool_calls` 且 length 截断时翻倍重试一次，tools / tool_choice 载荷原样保留，携带 tool_calls 的响应永不进入重试；responses-flavor 无原生 FC，其 prompt 模拟工具调用走 `complete()` 已被同一机制覆盖。修复 reasoning 模型把统一关键词 planner 合并生成等路由的 token 预算全部耗在 thinking 上导致持续回退的问题（生产日志 `keyword planner merged generation failed` 21+ 次）；重试仍失败时抛出与此前一致的 reasoning-budget / empty-content 错误，下游回退行为不变 |
+| finish_reason=length 预算放大重试（未发布） | ✅ | `OpenAIProvider.complete()` 两条 flavor 都在输出截断时追加一次放大重试：chat-completions 路径（含 DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper / 泛 openai_compatible 子类）识别 `finish_reason=length`（或 `max_tokens`），Responses 路径（`api_flavor="responses"`）识别 `status="incomplete"` + `incomplete_details.reason="max_output_tokens"`。reasoning-only 空 `content`（走完既有「去 response_format / text.format」「显式禁 thinking」重试后仍为空且截断）或 json_mode 下 JSON 被截断但有正文，都会以翻倍预算（chat 写 `max_tokens`、Responses 写 `max_output_tokens`，均封顶 `_LENGTH_RETRY_MAX_TOKENS_CAP=32768`，已达上限则不重试直接按原错误失败）重发一次，其余请求参数原样保留；共享同一 `_retry_with_larger_budget()` helper。`complete_with_tools()`（chat 原生函数调用）复用同一 helper：空 `content` 且无 `tool_calls` 且 length 截断时翻倍重试一次，tools / tool_choice 载荷原样保留，携带 tool_calls 的响应永不进入重试；responses-flavor 无原生 FC，其 prompt 模拟工具调用走 `complete()` 已被同一机制覆盖。修复 reasoning 模型把统一关键词 planner 合并生成等路由的 token 预算全部耗在 thinking 上导致持续回退的问题（生产日志 `keyword planner merged generation failed` 21+ 次）；重试仍失败时抛出与此前一致的 reasoning-budget / empty-content 错误，下游回退行为不变 |
 | v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=4096`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应；通用 health check 同时显式传 `reasoning_effort=""`，所以 DeepSeek 不会让一次连通性探针继承 `medium/high/max`、扩成 16K/32K thinking 请求后在 init 门禁内假超时 |
 | LLM Provider 实例路由 v2 | ✅ | `[llm.instances.<id>]` 把 adapter 类型与渠道端点解耦，同类型可配置多个 Base URL / token / model；`default_chain` 是任意长度全局故障切换链，`[llm.routes.<module>]` 默认继承，也可拥有自己的有序链。模块自定义链耗尽后不会越界 spill 到全局链；路由引用了未注册 / 已停用实例时按 bucket 打 WARNING（含实例 ID 与修复提示，issue #213：此前只是 INFO 级，用户看不到「聊聊口味」永久卡死的真实原因） |
 | 实例模型发现与可编辑选择 | ✅ | PC Web、插件与 setup 把当前未保存实例交给 `POST /api/config/discover-models`，后端精确调用该端点的 OpenAI-compatible `GET /models`，不保存配置；模型和 Effort 都是可手填的 combobox，发现失败保留原输入。该草稿端点在 active registry 无法构建的 degraded 恢复态仍精确放行，不会被旧配置造成的 503 阻断。协议只标准化模型列表，没有 effort capability 枚举，因此 Effort 选项是本地 advisory，不冒充服务端事实 |
 | v0.3.75 Per-module LLM 路由生效 | ✅ | `LLMService` 按 caller bucket 路由 soul / discovery / recommendation / evaluation；旧 `[llm.<module>] provider/model` 会无损投影为 v2 模块实例链，保留兼容但不再是推荐写法 |
-| v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
+| v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
 | 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
 | v0.3.0 Ollama embedding 兜底 | ✅ | `OllamaProvider.embed()` 走原生 `/api/embeddings`，配合 `bge-m3` 模型可在 Mac/Win/Linux CPU 跑相似度计算，不需要额外的 embedding API Key |
 | v0.3.0 EmbeddingService 双层缓存 | ✅ | L1 内存 + L2 SQLite 持久化；`build_embedding_service` 按 provider 自动选默认 model（gemini→gemini-embedding-001 / openai→text-embedding-3-small / ollama→bge-m3） |
@@ -95,7 +96,7 @@
 | v0.3.x 避雷探针多样性 prompt | ✅ | `build_avoidance_generation_prompt` 会携带 `existing_avoidance_details`，让 LLM 看到已有 active 的 `source_mode`、`source_signal`、体验轴和 specifics；system prompt 要求同一 `source_mode` + 同一粗主题 / 证据源只生成一个候选，已有 AI positive_boundary 时不再输出 AI 教程 / 测评 / 趋势换皮项 |
 | v0.3.x 第三方 API 网关适配（issue #72） | ✅ | Claude 实例的 `base_url` 可指向任意 Anthropic 协议网关；OpenAI / OpenAI-compatible 实例的 `api_flavor` 可选 Chat Completions 或 Responses。每个实例独立持有渠道 URL / token / model，所以同一 adapter 的多个网关可同时注册并互为降级；非法组合由配置校验 blocking 拦截 |
 | v0.3.162+ 托管 Ollama 生命周期自愈 | ✅ | `runtime/ollama_supervisor.py` 记录托管 daemon 的完整启动规格并新增 watchdog；`with-embedding` 私有 11435 daemon 纳入一键修复与崩溃自动拉起（详见下方[托管 Ollama 生命周期](#托管-ollama-生命周期v03162)） |
-| v0.3.165 海外网络三模式 | ✅ | `OpenAIProvider` / `ClaudeProvider` / `GeminiProvider`（含 DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference 子类与 embedding 实例）同时接收 `proxy` 与 `trust_env`。registry 统一读取 `[network].mode`：`direct` 注入忽略环境代理的 SDK transport，`system` 保留 SDK 环境继承，`custom` 注入指定代理并强制 `trust_env=False`。**Ollama 工厂不读该策略**——本地 / CN 直连由 `tests/test_network_proxy_isolation.py` 守卫 |
+| v0.3.165 海外网络三模式 | ✅ | `OpenAIProvider` / `ClaudeProvider` / `GeminiProvider`（含 DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper 子类与 embedding 实例）同时接收 `proxy` 与 `trust_env`。registry 统一读取 `[network].mode`：`direct` 注入忽略环境代理的 SDK transport，`system` 保留 SDK 环境继承，`custom` 注入指定代理并强制 `trust_env=False`。**Ollama 工厂不读该策略**——本地 / CN 直连由 `tests/test_network_proxy_isolation.py` 守卫 |
 | v0.3.166 国内网关代理豁免 | ✅ | registry 按每个实例的 `base_url` 独立裁决代理，委托 `network.is_domestic_endpoint()`。国内大模型网关与 localhost / 内网自建端点即使全局为 `system` / `custom` 也强制直连；同一链里的境外实例仍走全局代理策略 |
 | Issue #113 CA 环境防护 | ✅ | `network.set_outbound_proxy(..., mode="system")` 在任何继承环境的 SDK 客户端构造前检查 `SSL_CERT_FILE` / `SSL_CERT_DIR` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`。只移除指向不存在目标的失效覆盖，让 httpx / OpenSSL 回退到默认可信 CA store；有效私有 CA、`HTTPS_PROXY` 等代理变量和 TLS 验证均保持不变，避免 Windows 遗留 CA 路径导致所有客户端在发请求前直接 `FileNotFoundError`。 |
 | Issue #113 task-local 后台准入 bypass | ✅ | 内部 scope 通过 `ContextVar` 只影响当前异步上下文；scope 内 `LLMService.complete_with_core_memory()` 跳过库存敏感的后台 admission，但仍经过总 provider gate，退出 scope 后自动恢复。guided init 仅在阶段 2/3 使用，并行 discovery 不继承该 scope；既有公开 API 签名不变。 |
@@ -169,6 +170,7 @@ from openbiliclaw.llm import (
     RequestyProvider,
     ApiRouteProvider,
     CheaperInferenceProvider,
+    OpperProvider,
 )
 
 # 创建 provider
@@ -247,6 +249,12 @@ provider = CheaperInferenceProvider(
     api_key="ci_live_...",
     model="gpt-5.4-mini",
     base_url="https://api.cheaperinference.com/v1",
+)
+
+provider = OpperProvider(
+    api_key="your-opper-key",
+    model="claude-sonnet-4-6",
+    base_url="https://api.opper.ai/v3/compat",
 )
 
 provider = GeminiProvider(
@@ -346,7 +354,7 @@ POST /api/config/discover-models
 
 该接口同样不写配置。请求携带 `instance_id` 与当前页面的 `config.llm` 草稿；后端在内存副本中应用草稿，精确使用该实例自己的 Base URL、API Key、网络策略与认证方式调用 OpenAI-compatible `GET /models`。保存过的 masked key 会按配置更新的既有规则保留真实密钥，响应只返回排序去重后的模型 ID、耗时和安全错误，不回传凭据。它与草稿探测一起列入 degraded 精确 allow-list，因此旧 active registry 坏掉时仍可用 replacement draft 找模型。
 
-- 支持 `openai` / `deepseek` / `openrouter` / `orcarouter` / `requesty` / `api_route` / `cheaperinference` / `ollama` / `openai_compatible`；其他原生协议返回 `ok=false` 与继续手填的说明。
+- 支持 `openai` / `deepseek` / `openrouter` / `orcarouter` / `requesty` / `api_route` / `cheaperinference` / `opper` / `ollama` / `openai_compatible`；其他原生协议返回 `ok=false` 与继续手填的说明。
 - 拉取失败、端点没有实现 `/models` 或列表为空都不会覆盖页面里已经输入的模型。
 - OpenAI Models API 只提供 ID 等基础元数据，没有标准字段声明某模型支持哪些 reasoning effort。响应里的 `reasoning_efforts` 因此标记为 `local_advisory`，用于方便选择而不是服务端能力承诺，输入框始终允许手填。
 
@@ -745,7 +753,7 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 3. **Protocol DI**：`SupportsComplete` Protocol 解耦了调用方和具体实现，测试时可注入 Fake
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
 5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 默认负责把核心记忆注入到 Soul 相关任务里；已在 `user_input` 自带完整结构化上下文的高频任务可传 `inject_core_memory=False`，或通过 `llm.task_options.without_core_memory_kwargs()` 在兼容旧 stub 的前提下关闭注入，避免动态 core memory 破坏 provider prompt-cache 前缀
-6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter、OrcaRouter、Requesty、API Route、Cheaper Inference 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头
+6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter、OrcaRouter、Requesty、API Route、Cheaper Inference、Opper 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头
 7. **Gemini 独立适配**：Gemini 走官方 `google-genai` SDK，不强行复用 OpenAI-compatible 抽象；provider 内部负责把统一 `messages` 渲染成 quickstart 风格的单文本 prompt
 8. **Gemini 可选依赖降级**：环境里缺少 `google-genai` 时，`llm` 包和 registry 仍可正常导入；只有真正实例化 Gemini provider 时才会给出明确缺依赖错误。守卫捕获的是 `ImportError` 而非仅 `ModuleNotFoundError`（issue #80）——SDK 装上了但其原生传递依赖加载失败（如 Termux/Android 下 `cryptography` 的 manylinux 轮子 dlopen 失败）同样降级而不是让 CLI 启动即崩，实例化报错会附带底层 import 失败详情
 9. **Prompt 风格集中收口**：推荐、画像和聊天的“老B友”语气由共享 `ToneProfile` 驱动，不允许各模块各自发散成不同人格；用户自定义语气（`[soul] reply_style`，issue #255）只允许经 `_render_tone_profile()` 这一个缝以追加行形式进入语气块，默认空值保持 prompt 逐字节不变；`[soul] dialogue_tone_prompt` 是唯一例外，可整体替换对话 prompt 的语气块（仅 `build_socratic_dialogue_prompt`，其余 builder 无此参数）

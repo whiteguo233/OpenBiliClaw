@@ -523,7 +523,7 @@ flowchart LR
 微博的个人 bootstrap 采用同一类隔离任务边界，但不是普通行为采集：`weibo_tasks` → `/api/sources/weibo/next-task` → 带 `openbiliclaw_weibo_task=1` 的 `m.weibo.cn` tab → 同源 `/api/config` / `/api/account/getuid` 与收藏、关注、mentions GET → `/api/sources/weibo/task-result`。`SUBP + ALF` 只在扩展本地作为登录布尔提示，游客 `SUB` 不算凭据；任务结果必须带正 uid，后端按账号与 scope 去重后才进入 profile event ingress。失败/登录墙/挑战页/部分 scope 不会伪装成 healthy empty，已采 rows 仍留在 staged result 中。
 
 ### LLM Providers (`llm/`)
-- 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）
+- 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper）
 - `[llm.instances.<id>]` 为每个端点保存独立 `provider_type` / Base URL / token / model；registry 以实例 ID 注册，同一个 adapter 可实例化多次。`default_chain` 可包含任意数量实例，失败与限流 cooldown 都只影响当前实例
 - `LLMService` 通过 caller bucket 选择 `[llm.routes.soul/discovery/recommendation/evaluation]`：默认继承全局链，`inherit=false` 时执行模块自己的完整链并严格禁止 spill 到全局链。旧 provider/model override 会投影为等价实例或派生实例
 - `LLMRegistry.complete_chain()` 执行有序链，`complete_provider()` 精确探测一个实例；响应携带最终 `instance_id`。Ollama chat 实例必须显式配置 model，仅有服务地址或独立 `bge-m3` embedding 不会注册 chat、更不会猜 `llama3`

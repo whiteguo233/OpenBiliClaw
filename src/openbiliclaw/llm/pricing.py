@@ -49,6 +49,7 @@ CACHE_HIT_DISCOUNT: dict[str, float] = {
     "requesty": 0.50,
     "api_route": 0.50,
     "cheaperinference": 0.50,
+    "opper": 0.50,
     "ollama": 0.0,  # local; cached or not, cost is 0
 }
 
@@ -152,6 +153,11 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
     "cheaperinference": {
         # Gateway pricing follows the upstream model. Without knowing the
         # model, use the same midrange estimate as OpenRouter.
+        "default": (0.005, 0.015),
+    },
+    "opper": {
+        # Opper passes provider rates through without markup, so pricing
+        # follows the upstream model. Use the OpenRouter midrange estimate.
         "default": (0.005, 0.015),
     },
     "ollama": {

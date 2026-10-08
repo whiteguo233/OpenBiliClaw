@@ -165,6 +165,7 @@ _CACHE_USAGE_SEMANTICS_BY_PROVIDER = {
     "requesty": "prompt_includes_cached",
     "api_route": "prompt_includes_cached",
     "cheaperinference": "prompt_includes_cached",
+    "opper": "prompt_includes_cached",
 }
 
 
@@ -1916,6 +1917,7 @@ class _ProviderAttemptUsageRecorder:
                 "requesty",
                 "api_route",
                 "cheaperinference",
+                "opper",
                 "deepseek",
             }:
                 continue
@@ -2488,6 +2490,7 @@ def validate_json_minify_transport(
             "requesty",
             "api_route",
             "cheaperinference",
+            "opper",
             "deepseek",
         }:
             if call.get("provider_attempt_accounting") != "raw_adapter_attempts":
@@ -2953,6 +2956,7 @@ def validate_candidate_transport_experiment(
             "requesty",
             "api_route",
             "cheaperinference",
+            "opper",
             "deepseek",
         }:
             if call.get("provider_attempt_accounting") != "raw_adapter_attempts":

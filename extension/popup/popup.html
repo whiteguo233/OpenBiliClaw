@@ -6778,6 +6778,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
@@ -6803,6 +6804,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
@@ -6978,6 +6980,21 @@
             <input id="cfgCheaperinferenceBaseUrl" type="text" placeholder="https://api.cheaperinference.com/v1">
           </div>
         </div>
+        <!-- Opper -->
+        <div class="settings-provider-fields" data-provider="opper">
+          <div class="settings-field">
+            <label for="cfgOpperKey">Opper API Key</label>
+            <input id="cfgOpperKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpperModel">Model</label>
+            <input id="cfgOpperModel" type="text" placeholder="claude-sonnet-4-6">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpperBaseUrl">Base URL</label>
+            <input id="cfgOpperBaseUrl" type="text" placeholder="https://api.opper.ai/v3/compat">
+          </div>
+        </div>
         <!-- OpenAI Compatible -->
         <div class="settings-provider-fields" data-provider="openai_compatible">
           <p class="settings-hint">
@@ -7068,6 +7085,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7089,6 +7107,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7110,6 +7129,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7131,6 +7151,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="opper">Opper</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -8391,6 +8412,7 @@
                 <option value="requesty">Requesty</option>
                 <option value="api_route">API Route</option>
                 <option value="cheaperinference">Cheaper Inference</option>
+                <option value="opper">Opper</option>
                 <option value="ollama">Ollama</option>
                 <option value="openai_compatible">OpenAI-compatible</option>
               </select>

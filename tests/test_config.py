@@ -1293,6 +1293,38 @@ def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
         validate_runtime_config(config)
 
 
+def test_build_config_supports_opper_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "opper",
+                "opper": {
+                    "api_key": "opper-test",
+                    "model": "gpt-5.5",
+                    "base_url": "https://api.opper.ai/v3/compat",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "opper"
+    assert config.llm.opper.api_key == "opper-test"
+    assert config.llm.opper.model == "gpt-5.5"
+    assert config.llm.opper.base_url == "https://api.opper.ai/v3/compat"
+
+
+def test_validate_runtime_config_requires_opper_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="opper",
+            opper=LLMProviderConfig(model="claude-sonnet-4-6"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.opper.api_key"):
+        validate_runtime_config(config)
+
+
 def test_validate_runtime_config_requires_requesty_api_key() -> None:
     config = Config(
         llm=LLMConfig(
