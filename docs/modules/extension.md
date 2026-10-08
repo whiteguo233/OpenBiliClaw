@@ -4,6 +4,8 @@ Popup 的 LLM 实例、默认链与模块选择支持 `api_route`（API Route）
 
 Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
 
+Popup 的 LLM 实例、默认链与模块选择支持 `opper`（Opper），新实例预填 `claude-sonnet-4-6` 与 `https://api.opper.ai/v3/compat`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
+
 > popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
 
 ## 模块范围

@@ -290,6 +290,57 @@ def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
     assert "cheaperinference" not in registry.available_providers
 
 
+def test_build_llm_registry_registers_opper() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="opper",
+            opper=LLMProviderConfig(api_key="opper-test"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "opper"
+    assert registry.get("opper").base_url == "https://api.opper.ai/v3/compat"
+    assert registry.get("opper")._model == "claude-sonnet-4-6"
+
+
+def test_build_llm_registry_registers_opper_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "opper-main": LLMInstanceConfig(
+                    name="Opper",
+                    provider_type="opper",
+                    api_key="opper-test",
+                    model="claude-sonnet-4-6",
+                )
+            },
+            default_chain=["opper-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "opper-main"
+    assert registry.get("opper-main").name == "opper"
+    assert registry.get("opper-main").base_url == "https://api.opper.ai/v3/compat"
+
+
+def test_build_llm_registry_omits_opper_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+            opper=LLMProviderConfig(model="claude-sonnet-4-6"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "opper" not in registry.available_providers
+
+
 def test_build_llm_registry_omits_requesty_without_api_key() -> None:
     config = Config(
         llm=LLMConfig(

@@ -1,7 +1,7 @@
 # OpenBiliClaw configuration example
 # Copy this file to config.toml and edit as needed.
 # 首次运行如果缺少 config.toml，程序会自动基于本文件生成模板。
-# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）时，需要为调用链中的实例填写 api_key。
+# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper）时，需要为调用链中的实例填写 api_key。
 # 本地 Ollama 主要用于向量检索（embedding, bge-m3）。作为聊天 provider 属高级用法：
 # 捆绑的 Ollama 只装了 embedding 模型，小体积本地聊天模型达不到内容管线质量线，
 # 因此图形向导 / init / bootstrap 都不再推荐把它当聊天默认。确要如此的高级用户可手动
@@ -61,7 +61,7 @@ default_chain = ["deepseek"]
 concurrency = 3
 # Global request timeout for all LLM providers (seconds).
 # Applies to OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter /
-# OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
+# OrcaRouter / Requesty / API Route / Cheaper Inference / Opper / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
 timeout = 1200
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
@@ -117,6 +117,16 @@ timeout = 1200
 # base_url = "https://api.cheaperinference.com/v1"
 #
 # default_chain = ["deepseek", "cheaperinference"]
+#
+# [llm.instances.opper]
+# name = "Opper 聚合"
+# provider_type = "opper"
+# enabled = true
+# api_key = "your-opper-key"
+# model = "claude-sonnet-4-6"
+# base_url = "https://api.opper.ai/v3/compat"
+#
+# default_chain = ["deepseek", "opper"]
 
 [llm.instances.deepseek]
 name = "DeepSeek 官方"
@@ -263,7 +273,7 @@ executable = ""
 headed = false
 
 # ── 海外网络路由（仅作用于海外客户端）──
-# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible
+# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / Opper / openai_compatible
 # 的 chat + embedding、YouTube(yt-dlp)、X(twitter-cli)、Reddit(rdt-cli /
 # OpenCLI)、Bangumi(api.bgm.tv 与封面 CDN lain.bgm.tv 均为海外 Cloudflare,
 # 国内网络直连易超时,需走代理)、GitHub 内容来源 / 自动更新、Codex OAuth。

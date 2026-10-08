@@ -94,6 +94,7 @@ SUPPORTED_PROVIDERS = (
     "requesty",
     "api_route",
     "cheaperinference",
+    "opper",
 )
 REMOTE_PROVIDERS = (
     "openai",
@@ -106,6 +107,7 @@ REMOTE_PROVIDERS = (
     "requesty",
     "api_route",
     "cheaperinference",
+    "opper",
 )
 
 # Providers whose backend has no embeddings endpoint. When a user picks
@@ -122,6 +124,7 @@ PROVIDERS_WITHOUT_EMBED = (
     "requesty",
     "api_route",
     "cheaperinference",
+    "opper",
 )
 
 
@@ -209,6 +212,7 @@ HUMAN_LLM_MENU: tuple[tuple[str, str, str], ...] = (
     ("requesty", "Requesty 聚合", "openai/gpt-4o-mini"),
     ("api_route", "API Route 聚合", "gpt-5.5"),
     ("cheaperinference", "Cheaper Inference 聚合", "gpt-5.4-mini"),
+    ("opper", "Opper 聚合", "claude-sonnet-4-6"),
 )
 
 HUMAN_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
@@ -234,6 +238,7 @@ PROVIDER_MODEL_DEFAULTS: dict[str, str] = {
     "requesty": "openai/gpt-4o-mini",
     "api_route": "gpt-5.5",
     "cheaperinference": "gpt-5.4-mini",
+    "opper": "claude-sonnet-4-6",
     "ollama": "qwen2.5:7b",
 }
 
@@ -245,6 +250,7 @@ PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
     "requesty": "https://router.requesty.ai/v1",
     "api_route": "https://global.api-route.com/v1",
     "cheaperinference": "https://api.cheaperinference.com/v1",
+    "opper": "https://api.opper.ai/v3/compat",
 }
 
 
@@ -2119,6 +2125,7 @@ def _ensure_llm_instance(project_dir: Path, provider: str) -> str:
         "requesty": "Requesty",
         "api_route": "API Route",
         "cheaperinference": "Cheaper Inference",
+        "opper": "Opper",
     }
     update_config_secret(
         config_path,
@@ -3233,6 +3240,7 @@ remote = {
     "requesty",
     "api_route",
     "cheaperinference",
+    "opper",
 }
 instances = llm.get("instances", {}) if isinstance(llm.get("instances"), dict) else {}
 chain = llm.get("default_chain", []) if isinstance(llm.get("default_chain"), list) else []

@@ -44,6 +44,12 @@ def test_estimate_cost_cheaperinference_uses_gateway_default() -> None:
     )
 
 
+def test_estimate_cost_opper_uses_gateway_default() -> None:
+    assert estimate_cost("opper", "claude-sonnet-4-6", 1000, 1000) == pytest.approx(
+        0.005 + 0.015, rel=1e-9
+    )
+
+
 def test_estimate_cost_falls_back_to_provider_default() -> None:
     """Unknown model under known provider → default rate."""
     expected_default = PRICING["deepseek"]["default"]

@@ -907,6 +907,7 @@ OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。
  8   Requesty 聚合                         默认 openai/gpt-4o-mini。一个 Key 跑多家模型,按调用计费
  9   API Route 聚合                        默认 gpt-5.5。一个 Key 跑多家模型,按调用计费
 10   Cheaper Inference 聚合                默认 gpt-5.4-mini。一个 Key 跑多家模型,按调用计费
+11   Opper 聚合                            默认 claude-sonnet-4-6。一个 Key 跑多家模型,按调用计费
 
 Tip:不确定就选 1 (DeepSeek),¥0.001/千 token 几乎免费,月度通常 ¥0.5-2。已经买了中转站 / OneAPI Key 选 2 (协议兼容)。本地 Ollama 仅用于向量检索(embedding),不作为聊天服务商;如需本地聊天模型请到设置页手动配置。
 

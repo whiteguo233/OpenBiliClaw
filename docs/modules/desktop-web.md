@@ -15,6 +15,8 @@ LLM 实例设置页可选择 `api_route`（API Route），新实例预填 `gpt-5
 
 LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
 
+LLM 实例设置页可选择 `opper`（Opper），新实例预填 `claude-sonnet-4-6` 与 `https://api.opper.ai/v3/compat`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |

@@ -16,7 +16,7 @@ def test_shell_installers_recommend_same_default_llm_provider() -> None:
     expected_default = "Choose your LLM chat provider (default: deepseek):"
     expected_supported = (
         "Supported: deepseek | openai | gemini | claude | openrouter | requesty | "
-        "api_route | cheaperinference | openai_compatible"
+        "api_route | cheaperinference | opper | openai_compatible"
     )
     # Local Ollama is embedding-only in onboarding (v0.3.177); the chat menu
     # must not offer it, and both shell installers must say so identically.
@@ -147,13 +147,13 @@ def test_human_installers_run_full_terminal_wizard_before_init() -> None:
 def test_agent_install_llm_menu_numbering_matches_current_options() -> None:
     doc = _read("docs/agent-install.md")
 
-    assert "Present **ten top-level options**" in doc
+    assert "Present **eleven top-level options**" in doc
     assert "Present **three top-level options**" not in doc
     assert 'is folded into "Advanced" further down' not in doc
     assert "**Hardware caveat for local Ollama**" in doc
     assert (
-        "#### Options 3-10 (OpenAI 官方 / Gemini / Claude / OpenRouter / "
-        "OrcaRouter / Requesty / API Route / Cheaper Inference)"
+        "#### Options 3-11 (OpenAI 官方 / Gemini / Claude / OpenRouter / "
+        "OrcaRouter / Requesty / API Route / Cheaper Inference / Opper)"
     ) in doc
     assert "#### Option 2 (OpenAI 官方 / Gemini / Claude / OpenRouter)" not in doc
 

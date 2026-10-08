@@ -296,6 +296,7 @@ base_url = "https://relay.example.com/v1"
 | `requesty` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；无 embedding 接口，需独立配置 `[llm.embedding]` |
 | `api_route` | ✅ | 一个 Key 使用多家模型 | 按调用计费；embedding 需独立配置 `[llm.embedding]` |
 | `cheaperinference` | ✅ | 一个 Key 使用多家模型 | 按调用计费；embedding 需独立配置 `[llm.embedding]` |
+| `opper` | ✅ | 一个 Key 使用多家模型 | 按调用计费；embedding 需独立配置 `[llm.embedding]` |
 | `ollama` | ❌ | 完全离线 / 不要 Key / 16GB+ 内存 | CPU 推理首次响应慢（10-60s）。Docker 里的 Ollama chat 实例必须把 `base_url` 设成 `http://host.docker.internal:11434/v1` 才能访问宿主机 |
 | OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 使用 `provider_type="openai_compatible"`，必须显式配置 `base_url`。**普通用户不要选这个** |
 

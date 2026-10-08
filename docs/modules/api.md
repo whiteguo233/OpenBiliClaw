@@ -12,6 +12,8 @@
 
 `GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型。
 
+`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `opper`（Opper），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Opper 实例草稿查询其 OpenAI 兼容 `GET /models`。
+
 ## 本地向量 CPU 回退后的健康检查
 
 | 接口 | 状态 | 契约 |

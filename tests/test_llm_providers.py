@@ -29,6 +29,7 @@ from openbiliclaw.llm.gemini_provider import GeminiProvider, gemini_sdk_availabl
 from openbiliclaw.llm.ollama_provider import OllamaProvider
 from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
 from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
+from openbiliclaw.llm.opper_provider import OpperProvider
 from openbiliclaw.llm.orcarouter_provider import OrcaRouterProvider
 from openbiliclaw.llm.requesty_provider import RequestyProvider
 
@@ -1726,6 +1727,41 @@ async def test_cheaperinference_list_models_keeps_only_text_models(
     monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
 
     assert await provider.list_models() == ["claude-sonnet-5", "gpt-5.4-mini", "untyped-model"]
+
+
+def test_opper_provider_defaults() -> None:
+    provider = OpperProvider(api_key="opper-test")
+
+    assert provider.name == "opper"
+    assert provider.base_url == "https://api.opper.ai/v3/compat"
+    assert provider._model == "claude-sonnet-4-6"
+    assert provider.supports_embedding is False
+    assert provider._openai_reasoning_effort("claude-sonnet-4-6", "high") is None
+
+
+@pytest.mark.asyncio
+async def test_opper_provider_uses_per_call_model_without_reasoning_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpperProvider(api_key="opper-test")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("opper-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="gpt-5.5",
+        reasoning_effort="high",
+    )
+
+    assert response.content == "opper-ok"
+    assert captured["model"] == "gpt-5.5"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert provider._model == "claude-sonnet-4-6"
 
 
 def test_requesty_provider_accepts_regional_base_url() -> None:
