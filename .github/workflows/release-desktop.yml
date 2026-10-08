@@ -249,14 +249,12 @@ jobs:
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Make bundled ollama windowless (PE subsystem console -> GUI)
-        shell: pwsh
-        run: |
-          # A GUI-subsystem exe never allocates a console, so flip ollama.exe +
-          # every bundled runner exe to GUI to stop the console/conhost flashing.
-          $exes = @("dist\OpenBiliClaw\ollama.exe")
-          $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-          python packaging\patch_pe_subsystem.py @exes
+      # Do NOT patch the PE subsystem of the staged ollama binaries: rewriting
+      # the Subsystem byte invalidates their Authenticode signatures, and AV
+      # (Kaspersky) flags/quarantines such signed-but-modified exes (#281).
+      # Windowless operation no longer needs the patch — ollama spawns its
+      # runner with CREATE_NO_WINDOW (upstream PR #8668) and our supervisor
+      # launches `ollama serve` with CREATE_NO_WINDOW too.
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y

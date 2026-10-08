@@ -200,10 +200,7 @@ jobs:
       - name: Stage bundled Ollama (Vulkan acceleration with CPU fallback)
         shell: pwsh
         run: |
-          # Keep ollama current (0.18.2 was ancient). NOTE: even 0.32.x still
-          # spawns its model runner (llama-server.exe) with its own console on
-          # Windows — the next step flips those exes to the GUI subsystem so no
-          # console window is ever allocated.
+          # Keep ollama current (0.18.2 was ancient).
           $ver = "0.32.13"
           Invoke-WebRequest "https://github.com/ollama/ollama/releases/download/v$ver/ollama-windows-amd64.zip" -OutFile ollama.zip
           Expand-Archive ollama.zip -DestinationPath ollama_win -Force
@@ -222,16 +219,12 @@ jobs:
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Make bundled ollama windowless (PE subsystem console -> GUI)
-        shell: pwsh
-        run: |
-          # ollama spawns llama-server.exe with its own console (visible window /
-          # conhost flashing). A GUI-subsystem exe never allocates a console, so
-          # flip ollama.exe + every bundled runner exe to GUI. Doesn't affect the
-          # stdout/stderr pipes ollama reads or the runner's HTTP port.
-          $exes = @("dist\OpenBiliClaw\ollama.exe")
-          $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-          python packaging\patch_pe_subsystem.py @exes
+      # Do NOT patch the PE subsystem of the staged ollama binaries: rewriting
+      # the Subsystem byte invalidates their Authenticode signatures, and AV
+      # (Kaspersky) flags/quarantines such signed-but-modified exes (#281).
+      # Windowless operation no longer needs the patch — ollama spawns its
+      # runner with CREATE_NO_WINDOW (upstream PR #8668) and our supervisor
+      # launches `ollama serve` with CREATE_NO_WINDOW too.
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y

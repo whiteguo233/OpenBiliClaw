@@ -285,7 +285,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-packed bootloaders trigger AV heuristics far more often (#281); CI
+    # has no upx so this only affected local builds, but keep it off everywhere.
+    upx=False,
     # Windowed (no console). The Windows build runs as a system-tray app
     # (packaging/entry.py); logs go to logs/desktop.log and are viewable from the
     # tray menu. macOS already runs windowed via the .app bundle below.
@@ -302,7 +304,7 @@ _coll_targets += [a.binaries, a.zipfiles, a.datas]
 coll = COLLECT(
     *_coll_targets,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="OpenBiliClaw",
 )
