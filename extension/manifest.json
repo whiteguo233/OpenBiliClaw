@@ -157,25 +157,6 @@
         },
         {
             "matches": [
-                "https://*.instagram.com/*"
-            ],
-            "js": [
-                "dist/content/instagram.js"
-            ],
-            "run_at": "document_start"
-        },
-        {
-            "matches": [
-                "https://*.instagram.com/*"
-            ],
-            "js": [
-                "dist/main/instagram-response-tap.js"
-            ],
-            "run_at": "document_start",
-            "world": "MAIN"
-        },
-        {
-            "matches": [
                 "*://*.x.com/*",
                 "*://*.twitter.com/*"
             ],
