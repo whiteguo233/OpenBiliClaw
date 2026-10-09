@@ -7398,6 +7398,82 @@
       </div>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="tiktok" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-tiktok">
+        <h3><span class="section-icon">&#x266A;</span> TikTok</h3>
+        <div class="settings-field-row">
+          <input id="cfgTiktokEnabled" type="checkbox">
+          <label for="cfgTiktokEnabled">启用 TikTok discovery</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgTiktokStatus" data-source-status="tiktok"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-tiktok">
+        <div class="settings-probe-row source-verify-row">
+          <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
+          <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokMode">后端模式</label>
+          <select id="cfgTiktokMode">
+            <option value="auto">auto（Web API 优先，yt-dlp 兜底）</option>
+            <option value="web">web（仅 Web API）</option>
+            <option value="ytdlp">ytdlp（仅 yt-dlp）</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCookie">Cookie（可选，解锁关键词搜索）</label>
+          <textarea id="cfgTiktokCookie" placeholder="从浏览器复制 Cookie 字符串（登录 tiktok.com 后插件会自动同步）；留空 = 访客身份运行"></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCookieEnv">TikTok Cookie 环境变量</label>
+          <input id="cfgTiktokCookieEnv" type="text" placeholder="OPENBILICLAW_TIKTOK_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokRegion">地区参数（匹配网络出口）</label>
+          <input id="cfgTiktokRegion" type="text" placeholder="JP">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokTzName">时区参数</label>
+          <input id="cfgTiktokTzName" type="text" placeholder="Asia/Tokyo">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokTags">常驻话题标签（逗号分隔，不带 #）</label>
+          <input id="cfgTiktokTags" type="text" placeholder="booktok, learnsontiktok">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCreators">跟踪创作者（逗号分隔，@ 可省略）</label>
+          <input id="cfgTiktokCreators" type="text" placeholder="@creator1, @creator2">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyFeedBudget">TikTok 每日推荐流任务</label>
+          <input id="cfgTiktokDailyFeedBudget" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailySearchBudget">TikTok 每日搜索任务（需登录 Cookie）</label>
+          <input id="cfgTiktokDailySearchBudget" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyTagBudget">TikTok 每日话题标签任务</label>
+          <input id="cfgTiktokDailyTagBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyUserBudget">TikTok 每日创作者任务</label>
+          <input id="cfgTiktokDailyUserBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <p class="settings-hint" data-budget-note>预算 = 每日任务次数上限，不是开关；填 1 表示每天只允许 1 次。0 或留空 = 不限。</p>
+        <div class="settings-field">
+          <label for="cfgTiktokRequestInterval">TikTok 请求间隔秒数</label>
+          <input id="cfgTiktokRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokMinInterval">TikTok 最小调度间隔分钟数</label>
+          <input id="cfgTiktokMinInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <p class="settings-hint">TikTok 主后端是 Web API（访客身份 + 请求签名），yt-dlp 仅作兜底；未配置 Cookie 时关键词规划器的词会映射为话题标签。需要海外出网。</p>
+      </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="twitter" data-open="0">
         <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-twitter">
         <h3><span class="section-icon">&#x1D54F;</span> X (Twitter)</h3>
@@ -7848,6 +7924,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
           <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareTiktok">候选池 TikTok 占比</label>
+          <input id="cfgPoolShareTiktok" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareTwitter">候选池 X 占比</label>

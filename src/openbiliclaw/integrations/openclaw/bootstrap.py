@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
-from openbiliclaw.api.runtime_context import build_youtube_discovery_producer
+from openbiliclaw.api.runtime_context import (
+    build_tiktok_discovery_producer,
+    build_youtube_discovery_producer,
+)
 from openbiliclaw.bilibili.api import BilibiliAPIClient
 from openbiliclaw.bilibili.auth import resolve_runtime_cookie
 from openbiliclaw.config import (
@@ -359,6 +362,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         candidate_pipeline=candidate_pipeline,
     )
+    tiktok_producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+    )
     runtime_controller: ContinuousRefreshController
 
     async def _drain_one_shot_expression_copy(profile: Any) -> int:
@@ -425,6 +437,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_limit=int(getattr(config.scheduler, "discovery_limit", 30)),
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
+        tiktok_producer=tiktok_producer,
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,

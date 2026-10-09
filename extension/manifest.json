@@ -16,6 +16,7 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",

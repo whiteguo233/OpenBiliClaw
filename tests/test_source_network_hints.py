@@ -61,7 +61,7 @@ def _hint_strings() -> tuple[str, ...]:
 def test_overseas_platform_list_is_the_verified_one() -> None:
     """Pins the classification a human verified against the transport code.
 
-    bangumi / youtube / twitter / reddit / instagram sit outside the GFW;
+    bangumi / youtube / tiktok / twitter / reddit / instagram sit outside the GFW;
     the CN-direct families must never join them, because pitfall rule 1
     forces those to ignore proxies entirely.
     """
@@ -69,7 +69,7 @@ def test_overseas_platform_list_is_the_verified_one() -> None:
         "bangumi",
         "github",
         "instagram",
-        "youtube",
+        "youtube", "tiktok",
         "twitter",
         "reddit",
     } == OVERSEAS_EGRESS_PLATFORMS
@@ -77,7 +77,7 @@ def test_overseas_platform_list_is_the_verified_one() -> None:
         assert not requires_overseas_network(family), f"{family} is CN-direct"
     # Aliases resolve too — a caller passing "bgm" / "x" / "yt" / "ig" must not slip
     # through as an unknown platform and silently lose the advisory.
-    for alias in ("bgm", "x", "yt", "rd", "ig"):
+    for alias in ("bgm", "x", "yt", "rd", "tt", "ig"):
         assert requires_overseas_network(alias), alias
 
 
@@ -90,7 +90,7 @@ def test_overseas_hints_distinguish_backend_and_browser_transports() -> None:
     instead of being told that changing the backend setting will fix it.
     """
     routed = {rule.family for rule in SOURCE_FAMILY_RULES if rule.routed_by_network_mode}
-    assert routed == {"bangumi", "github", "youtube", "twitter", "reddit"}
+    assert routed == {"bangumi", "github", "youtube", "tiktok", "twitter", "reddit"}
     assert OVERSEAS_EGRESS_PLATFORMS - routed == {"instagram"}
 
     for family in routed:

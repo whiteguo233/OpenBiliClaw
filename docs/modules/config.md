@@ -653,7 +653,7 @@ daemon，保留当前 v2 文件和自动备份，再由操作者显式把导出�
 
 ### `[sources.<name>]` 发布日期偏好
 
-所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `twitter` / `zhihu` /
+所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `tiktok` / `twitter` / `zhihu` /
 `reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo`）都支持以下四个字段，默认
 `"all"` = 不按发布日期过滤：
 
@@ -750,7 +750,7 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 >
 > `127.0.0.1` 与 `localhost` 并非总是等价：macOS 上 Chrome 常只绑定 IPv6 `::1:9222`，而 Python urllib 默认走 IPv4。用 `localhost` 最稳妥（`getaddrinfo` 会同时尝试两边）。
 
-> **关于 `daily_*_budget`：** 多数来源的这些字段是**每 UTC 日、按任务类型的入队次数上限**；微博例外，三个 budget 只计最终经全局去重和 candidate pipeline 实际保留的候选条数。它们都不是启用 / 关闭来源的开关（来源开关是各段的 `enabled`）。显式填 `0` 表示不设每日上限，补池只受平台缺口 / `discovery_limit` / producer 节流控制；字段缺省时使用各来源表格所列默认值，其中小红书搜索为 `20`。对按任务计数的来源，填 `1` 只会把该任务类型限制到每天 1 次——配置加载时对落在 1–4 的可疑值会打印一次 WARN 提示。
+> **关于 `daily_*_budget`：** 多数来源的这些字段是**每 UTC 日、按任务类型的入队次数上限**；微博例外，三个 budget 只计最终经全局去重和 candidate pipeline 实际保留的候选条数。它们都不是启用 / 关闭来源的开关（来源开关是各段的 `enabled`）。显式填 `0` 表示不设每日上限，补池只受平台缺口 / `discovery_limit` / producer 节流控制；字段缺省时使用各来源表格所列默认值，其中小红书搜索为 `20`。对按任务计数的来源，填 `1` 只会把该任务类型限制到每天 1 次——配置加载时对落在 1–4 的可疑值会打印一次 WARN 提示；但等于官方默认值的字段不触发该警告（例如 TikTok 官方默认 `daily_feed_budget=3` / `daily_search_budget=3` 落在 1–4 区间，官方默认不可能是不小心当成了开关），只有手写偏离默认的 1–4 值才提醒。
 
 ### `[sources.bilibili]`
 
@@ -832,6 +832,26 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 | `daily_channel_budget` | int | `0` | `yt_channel` 每天最多选择的订阅频道数；`0` 表示不设每日上限，本轮频道数由平台缺口 / `discovery_limit` 决定 |
 | `request_interval_seconds` | int | `2` | 预留的 YouTube 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
 | `min_interval_minutes` | int | `3` | `YoutubeDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
+
+### `[sources.tiktok]`
+
+TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，因此 `tiktok_search` 策略默认不启用——仅在配置登录 Cookie 且 mode 允许 web 时挂载（登录态抓取违反 TikTok ToS，有账号风险）；统一关键词规划器 claim 的词在搜索挂载时原样喂 `tiktok_search`（tag 退回常驻 tags + LLM 自生成），未挂载时压缩成无空格 hashtag 后喂 `tiktok_tag`。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否让 TikTok 参与候选池配比和后台 discovery；实验性来源，默认关闭，只能显式 opt-in |
+| `mode` | str | `"auto"` | 后端选择：`auto`（Web API 优先、后端级失败回退 yt-dlp）/ `web`（仅 Web API）/ `ytdlp`（仅 yt-dlp）；非法值在 `PUT /api/config` 保存时拒绝 |
+| `cookie_env` | str | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量（优先于 `data/tiktok_cookie.json`）；不配置时访客身份是完整合法模式，配置后解锁关键词搜索与更高限额，保存前经 passport 会话心跳探针验证 |
+| `region` | str | `"JP"` | Web API 请求的地区参数；应匹配你的网络出口地区，被风控 gate（空响应）时首先检查 |
+| `tz_name` | str | `"Asia/Tokyo"` | Web API 请求的时区参数，与 `region` 配套 |
+| `tags` | list[str] | `[]` | `tiktok_tag` 的常驻 hashtag（不带 `#`）；画像 / 规划器生成的标签在此之上叠加，按 `tags_per_run` 截断 |
+| `creators` | list[str] | `[]` | `tiktok_user` 跟踪的创作者 handle（`@` 前缀可省略）；TikTok 无账号 bootstrap，创作者列表完全由配置维护 |
+| `daily_feed_budget` | int | `3` | `tiktok_feed` 每日推荐流拉取上限（1 单位 = 1 次拉取，高曝光面默认压低）；`0` 表示不设每日上限 |
+| `daily_search_budget` | int | `3` | `tiktok_search` 每日关键词搜索上限（1 单位 = 1 个关键词）；搜索需登录 Cookie（登录态抓取违反 TikTok ToS，有账号风险），仅在配置 Cookie 且 mode 允许 web 时挂载 |
+| `daily_tag_budget` | int | `0` | `tiktok_tag` 每天最多执行的话题标签批次数；`0` 表示不设每日上限 |
+| `daily_user_budget` | int | `0` | `tiktok_user` 每天最多抓取的创作者数；`0` 表示不设每日上限 |
+| `request_interval_seconds` | int | `2` | 每个 TikTok Web 请求的最小间隔（含 bootstrap/重试），formal/inspiration 通过持久状态共享 |
+| `min_interval_minutes` | int | `3` | `TiktokDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
 
 ### `[sources.twitter]`
 
@@ -1091,7 +1111,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub、Instagram 等其余十二个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub、Instagram 等其余十三个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1099,6 +1119,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
 | `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
+| `tiktok` | int | `1` | TikTok 平台族占比；`tiktok_feed` / `tiktok_search` / `tiktok_tag` / `tiktok_user` 统一计入该族 |
 | `twitter` | int | `1` | X (Twitter) 平台族占比；`search` / `feed`（For-You）/ `creator`（账号订阅）三个策略统一计入该族 |
 | `github` | int | `1` | GitHub 平台族占比；`github-search` / `github-ranked` / `github-latest` 统一计入该族，`gh` alias 在写入前归一化 |
 | `zhihu` | int | `1` | 知乎平台族占比；插件 `zhihu-search` / `zhihu-hot` / `zhihu-feed` / `zhihu-creator` / `zhihu-related` 候选统一计入该族 |
@@ -1111,7 +1132,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音、YouTube、X、知乎与 Reddit 分别由既有正式 producer 补 raw candidates；GitHub 低于目标且 `[sources.github].enabled=true` 时，`GitHubDiscoveryProducer` 通过官方 REST API 执行 `search / ranked / latest`，按 canonical 去重与最终保留数扣预算，并遵守持久 cooldown。Bangumi 继续直连官方匿名 API；Linux.do 继续入队同源扩展任务。所有来源都只把 raw candidates 交给共享 evaluator/admission。
 
-`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十二平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
+`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十四平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
 
 ### `[discovery]`
 
@@ -1319,7 +1340,7 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：展示实例、全局调用链与四个模块链摘要，允许调整全局并发 / 超时、测试默认链，并跳转桌面 Web 完整编辑；插件保存其他字段时不会回写或压扁实例路由
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`，以及小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub 的来源配置
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十二个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十四个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 高级功能（桌面 Web 与插件设置页均有「认知循环预算」区块）：`soul.awareness_event_batch_size`、`soul.insight_note_batch_size`、`soul.cognition_max_tokens`（issue #169）
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 
@@ -1484,3 +1505,10 @@ Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP
 免费端点限流直接报告。read_webpage 为避免代理改变已校验目标，使用不继承环境代理的
 公开 IP 绑定直连，只支持标准 HTTP(S) 端口。无法直达、需登录或依赖脚本的正文会明确
 提示限制，不自动调用用户浏览器会话。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+`sources.tiktok.request_interval_seconds` 现在实际约束每个上游请求（含 bootstrap/重试），formal 和 inspiration 共享。`daily_feed_budget` 是每日调用次数，不影响单次默认 12 条的取数上限；`mode=web` 在失败与冷却期间都禁止 yt-dlp 回退。
+
+TikTok 封面的 DoH 查询和固定地址下载遵循 `[network]` 路由，system 模式会把系统代理传给 libcurl；不存在额外 Cookie 或模型配置。该安全路径依赖 `cloudflare-dns.com` 可达，失败时不降级到未验证 DNS。

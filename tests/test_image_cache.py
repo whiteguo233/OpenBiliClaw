@@ -186,6 +186,17 @@ def test_is_allowed_image_url() -> None:
     assert is_allowed_image_url(BILI) is True
     assert is_allowed_image_url(XHS) is True
     assert is_allowed_image_url("https://lain.bgm.tv/pic/cover/l/demo.jpg") is True
+    # TikTok cover CDNs (all three regional suffixes).
+    assert (
+        is_allowed_image_url("https://p16-sign.tiktokcdn.com/tos-maliva-avt-0068/x~tpl.image")
+        is True
+    )
+    assert (
+        is_allowed_image_url("https://p16-sign-va.tiktokcdn-us.com/tos-useast5-avt-0068-tx/x")
+        is True
+    )
+    assert is_allowed_image_url("https://p16-sign.tiktokcdn-eu.com/tos-alisg-avt-0068/x") is True
+    assert is_allowed_image_url("https://eviltiktokcdn.com/a.jpg") is False  # boundary
     # content_cache.cover_url forms: protocol-relative and http normalize to https.
     assert is_allowed_image_url(BILI_PROTO_RELATIVE) is True
     assert is_allowed_image_url(BILI_HTTP) is True

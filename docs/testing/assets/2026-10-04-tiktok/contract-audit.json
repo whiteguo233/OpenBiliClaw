@@ -1,0 +1,1304 @@
+{
+  "contract": {
+    "aliases": [],
+    "auth": {
+      "account_resolution": "Environment cookie precedes data-file cookie; no account bootstrap",
+      "capability_modes": {
+        "cookie-sync": "login-required",
+        "discover": "optional-credential"
+      },
+      "capability_required": {
+        "cookie-sync": false,
+        "discover": true
+      },
+      "credential_kinds": [
+        "cookie"
+      ],
+      "identity_evidence": "Passport heartbeat confirms a session, never proves search availability or account ownership",
+      "login_cookie_names": [
+        "sessionid",
+        "sessionid_ss",
+        "sid_tt"
+      ],
+      "login_state_path": "credential",
+      "mode": "anonymous-with-optional-credentials",
+      "verify_action": "live_probe",
+      "write_path": "unified"
+    },
+    "canonical_slug": "tiktok",
+    "content_types": [
+      "video"
+    ],
+    "discover": {
+      "budget": "Daily feed calls independent of per-pull size; search/tag claim bounded by remaining execution units",
+      "cursor": "First-page snapshot; no completeness or retraction inference",
+      "modes": [
+        "feed",
+        "tag",
+        "user",
+        "search"
+      ],
+      "search_generation": "Merged planner and inspiration axis; guest phrases compact to hashtags; cookie search keeps phrases"
+    },
+    "display_name": "TikTok",
+    "e2e": {
+      "mutating_actions": [],
+      "safe_actions": [
+        "feed",
+        "search",
+        "fetch-public-collection"
+      ],
+      "safe_assertions": {
+        "feed": "upstream-state-unchanged",
+        "fetch-public-collection": "upstream-state-unchanged",
+        "search": "upstream-state-unchanged"
+      },
+      "safe_postconditions": {
+        "feed": "Read-only public metadata into isolated storage; no likes, saves, follows or production writes.",
+        "fetch-public-collection": "Read-only public metadata into isolated storage; no likes, saves, follows or production writes.",
+        "search": "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
+      }
+    },
+    "engagement": {
+      "comment": "mapped",
+      "danmaku": "unavailable",
+      "favorite": "mapped",
+      "like": "mapped",
+      "share": "mapped",
+      "view": "mapped"
+    },
+    "events": {
+      "mappings": "Discovery candidates only; no upstream account behavior events",
+      "scope_caps": "Per-query result cap and per-source execution budgets; no account scopes",
+      "strategy_prefixes": [
+        "tiktok_"
+      ]
+    },
+    "exclusion_tests": {
+      "engagement.danmaku": [
+        "tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"
+      ],
+      "extension.background": [
+        "tests/test_tiktok_contract.py::test_tiktok_extension_background_task_is_absent"
+      ],
+      "extension.early-response": [
+        "tests/test_tiktok_contract.py::test_tiktok_extension_early_response_is_absent"
+      ],
+      "extension.task": [
+        "tests/test_tiktok_contract.py::test_tiktok_extension_task_is_excluded"
+      ],
+      "extension.task-marker": [
+        "tests/test_tiktok_contract.py::test_tiktok_extension_task_marker_is_absent"
+      ],
+      "media.deep-link": [
+        "tests/test_tiktok_contract.py::test_tiktok_media_deep_link_uses_https"
+      ],
+      "media.native-save": [
+        "tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"
+      ],
+      "profile.incremental": [
+        "tests/test_tiktok_contract.py::test_tiktok_discovery_only_exclusions"
+      ],
+      "profile.refresh-mode": [
+        "tests/test_tiktok_contract.py::test_tiktok_profile_refresh_mode_is_none"
+      ],
+      "profile.signals": [
+        "tests/test_tiktok_contract.py::test_tiktok_profile_signals_are_excluded"
+      ],
+      "surface.setup": [
+        "tests/test_tiktok_contract.py::test_tiktok_surface_setup_excludes_guided_init"
+      ]
+    },
+    "exclusions": {
+      "engagement.danmaku": "TikTok has no danmaku metric.",
+      "extension.background": "No task execution tabs; cookie sync is separate.",
+      "extension.early-response": "Backend HTTP owns content responses.",
+      "extension.task": "Cookie sync only; no task dispatcher or content collector.",
+      "extension.task-marker": "No browser tasks.",
+      "media.deep-link": "Canonical HTTPS browser fallback.",
+      "media.native-save": "TikTok saves are local-only; upstream mutations unsupported.",
+      "profile.incremental": "No account signals or periodic account tasks.",
+      "profile.refresh-mode": "No TikTok account profile refresh.",
+      "profile.signals": "Discovery-only source; TikTok guided init is rejected.",
+      "surface.setup": "Discovery-only source is configured after initial setup; guided account init is excluded."
+    },
+    "extension": {
+      "background": false,
+      "cookie_sync": true,
+      "early_response": false,
+      "hosts": [
+        "tiktok.com"
+      ],
+      "task": "none",
+      "task_marker": false
+    },
+    "hosts": [
+      "tiktok.com"
+    ],
+    "identity": {
+      "account_scope": "Public discovery only; no account behavior or ownership import",
+      "dedupe": "Canonical tiktok family plus video id",
+      "item_id": "TikTok numeric video id; item_key=tiktok:<id>",
+      "url": "https://www.tiktok.com/@<handle>/video/<id>"
+    },
+    "integration_level": "discovery-only",
+    "media": {
+      "deep_link": "browser-fallback",
+      "image": "proxy",
+      "image_hosts": [
+        "tiktokcdn.com",
+        "tiktokcdn-us.com",
+        "tiktokcdn-eu.com"
+      ],
+      "native_save": false
+    },
+    "profile": {
+      "incremental": false,
+      "refresh_mode": "none",
+      "signals": false
+    },
+    "schema_version": 1,
+    "smoke": {
+      "sinks": {
+        "affinity": "forbidden",
+        "event_ingress": "forbidden",
+        "memory": "forbidden",
+        "profile": "forbidden",
+        "schedule": "forbidden",
+        "seen": "forbidden",
+        "snapshot": "forbidden",
+        "task": "forbidden",
+        "task_result": "forbidden"
+      },
+      "storage_scope": "isolated-only"
+    },
+    "surfaces": {
+      "cli": true,
+      "credentials": true,
+      "desktop": true,
+      "extension_popup": true,
+      "mobile": true,
+      "recommendation": true,
+      "setup": false,
+      "source_status": true
+    },
+    "task": {
+      "absolute_deadline": "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.",
+      "buffer": "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.",
+      "idle_deadline": "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.",
+      "lease": "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.",
+      "retry": "No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown."
+    },
+    "transport": {
+      "capability_routes": {
+        "cookie-sync": "extension:unified-credential:passport-probe",
+        "discover": "backend:signed-web-api:guest-or-cookie"
+      },
+      "entrypoints": [
+        "src/openbiliclaw/sources/tiktok_web.py",
+        "src/openbiliclaw/sources/tiktok.py"
+      ],
+      "fallback_owner": "external-cli",
+      "kind": "hybrid",
+      "network_policy": "Signed curl_cffi and yt-dlp follow shared outbound network routing.",
+      "owner": "backend",
+      "requires_overseas_network": true,
+      "route_aliases": [],
+      "routed_by_network_mode": true
+    },
+    "upstream": {
+      "pagination": "Bounded first-page snapshots only; no full-history completeness claim",
+      "partial_policy": "Retain successful query candidates and mark only failed query claims failed",
+      "publication_time_policy": "createTime epoch UTC; no discovered-time substitution",
+      "success_content_types": [
+        "application/json"
+      ],
+      "terminal_evidence": "HTTP 200, business status zero and explicit itemList/item_list array; only [] means empty",
+      "terminal_policy": "429 persists shared cooldown; auth/error/schema/gate/transport failures are not empty"
+    }
+  },
+  "contract_path": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-source-readiness/docs/platform-source-contract.tiktok.toml",
+  "diff_base": null,
+  "disclaimer": "registration inventory only; PASS does not prove semantic correctness or real E2E completion",
+  "repository_root": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-source-readiness",
+  "results": [
+    {
+      "capability": "canonical.registry",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 17,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 147,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 150,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 149,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 151,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 152,
+          "path": "src/openbiliclaw/sources/platforms.py"
+        }
+      ],
+      "label": "canonical slug, aliases, hosts, and strategy prefixes",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "transport.implementation",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1,
+          "path": "src/openbiliclaw/sources/tiktok_web.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        }
+      ],
+      "label": "backend-owned hybrid transport",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "content-types.registration",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 294,
+          "path": "src/openbiliclaw/sources/event_format.py"
+        }
+      ],
+      "label": "declared content-type normalization coverage",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "config.registration",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1602,
+          "path": "src/openbiliclaw/config.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 377,
+          "path": "config.example.toml"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2536,
+          "path": "src/openbiliclaw/api/models.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 20041,
+          "path": "src/openbiliclaw/api/app.py"
+        }
+      ],
+      "label": "config model and config.example.toml",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "api.models",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 919,
+          "path": "src/openbiliclaw/api/models.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1094,
+          "path": "src/openbiliclaw/api/models.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2536,
+          "path": "src/openbiliclaw/api/models.py"
+        }
+      ],
+      "label": "API request/response models",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "api.source-status",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2800,
+          "path": "src/openbiliclaw/api/app.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2145,
+          "path": "src/openbiliclaw/api/source_auth/providers.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 919,
+          "path": "src/openbiliclaw/api/models.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 17378,
+          "path": "src/openbiliclaw/api/app.py"
+        }
+      ],
+      "label": "GET /api/sources/status concrete source coverage",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "api.credentials",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 17727,
+          "path": "src/openbiliclaw/api/app.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1094,
+          "path": "src/openbiliclaw/api/models.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 17884,
+          "path": "src/openbiliclaw/api/app.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 261,
+          "path": "src/openbiliclaw/api/source_auth/write.py"
+        }
+      ],
+      "label": "GET /api/sources/credentials concrete source coverage",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "source-auth.provider",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2145,
+          "path": "src/openbiliclaw/api/source_auth/providers.py"
+        }
+      ],
+      "label": "source-auth provider registry",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "source-auth.verify",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 78,
+          "path": "src/openbiliclaw/api/source_auth/verify.py"
+        }
+      ],
+      "label": "verify action (live_probe)",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "source-auth.write",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 261,
+          "path": "src/openbiliclaw/api/source_auth/write.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 17460,
+          "path": "src/openbiliclaw/api/app.py"
+        }
+      ],
+      "label": "credential write contract (unified)",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "runtime.source-policy",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 14,
+          "path": "src/openbiliclaw/runtime/source_policy.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 29,
+          "path": "src/openbiliclaw/runtime/source_policy.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 44,
+          "path": "src/openbiliclaw/runtime/source_policy.py"
+        }
+      ],
+      "label": "source enablement and pool-share policy",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "shared.source-keys",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 66,
+          "path": "src/openbiliclaw/web/shared/source-status.js"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 104,
+          "path": "src/openbiliclaw/web/shared/source-status.js"
+        }
+      ],
+      "label": "shared SOURCE_KEYS and label registry",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "cli.registration",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 14798,
+          "path": "src/openbiliclaw/cli.py"
+        }
+      ],
+      "label": "source-specific CLI smoke registration",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "tests.source-specific",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2547,
+          "path": "tests/test_cli.py"
+        }
+      ],
+      "label": "source-specific regression tests",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "docs.module",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1,
+          "path": "docs/modules/tiktok.md"
+        }
+      ],
+      "label": "platform module documentation",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "docs.changelog",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 5,
+          "path": "docs/changelog.md"
+        }
+      ],
+      "label": "changelog entry",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "discover.formal",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1614,
+          "path": "src/openbiliclaw/runtime/refresh.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 191,
+          "path": "src/openbiliclaw/api/runtime_context.py"
+        }
+      ],
+      "label": "formal producer, scheduler, and runtime context",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "discover.modes",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 7,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 7,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 7,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 7,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        }
+      ],
+      "label": "declared discover modes in producer",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "search.planner",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 105,
+          "path": "src/openbiliclaw/runtime/keyword_planner.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 235,
+          "path": "src/openbiliclaw/runtime/keyword_planner.py"
+        }
+      ],
+      "label": "merged keyword planner platform/style registration",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "search.prompts",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 2855,
+          "path": "src/openbiliclaw/llm/prompts.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 3008,
+          "path": "src/openbiliclaw/llm/prompts.py"
+        }
+      ],
+      "label": "prompt supply advantage and allowed platform schema",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "search.keyword-claim",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 147,
+          "path": "src/openbiliclaw/runtime/tiktok_producer.py"
+        }
+      ],
+      "label": "KeywordFetchCoordinator.claim(<slug>)",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "search.provenance-tests",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 130,
+          "path": "tests/test_tiktok_discovery_strategy.py"
+        }
+      ],
+      "label": "source_keyword_id propagation regression",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "search.inspiration-axis",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 1145,
+          "path": "tests/test_inspiration_pipeline.py"
+        }
+      ],
+      "label": "keyword inspiration axis materialization regression",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "profile.signals",
+      "detail": "contract explicitly declares profile.signals=false; exclusion: Discovery-only source; TikTok guided init is rejected.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 35,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "bootstrap/profile signal wiring",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "profile.incremental",
+      "detail": "contract explicitly declares profile.incremental=false; exclusion: No account signals or periodic account tasks.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 12,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "post-init incremental sync",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "extension.task",
+      "detail": "contract explicitly declares extension.task='none'; exclusion: Cookie sync only; no task dispatcher or content collector.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 55,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "browser-extension source task/identity",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "extension.task-marker",
+      "detail": "contract explicitly declares extension.task_marker=false; exclusion: No browser tasks.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 59,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "task-mode marker/isolation registration",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "extension.background",
+      "detail": "contract explicitly declares extension.background=false; exclusion: No task execution tabs; cookie sync is separate.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 63,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "background/service-worker source registration",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "extension.early-response",
+      "detail": "contract explicitly declares extension.early_response=false; exclusion: Backend HTTP owns content responses.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 68,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "early-response capture/replay",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "extension.cookie-sync",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 23,
+          "path": "extension/src/background/cookie-sync.ts"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 577,
+          "path": "extension/src/background/cookie-sync.ts"
+        }
+      ],
+      "label": "login-cookie state synchronization",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.cli",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 14798,
+          "path": "src/openbiliclaw/cli.py"
+        }
+      ],
+      "label": "cli product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.setup",
+      "detail": "contract explicitly declares surfaces.setup=false; exclusion: Discovery-only source is configured after initial setup; guided account init is excluded.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 72,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "setup product surface",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "surface.desktop",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 793,
+          "path": "src/openbiliclaw/web/desktop/index.html"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 246,
+          "path": "src/openbiliclaw/web/desktop/assets/js/app.js"
+        }
+      ],
+      "label": "desktop product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.mobile",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 136,
+          "path": "src/openbiliclaw/web/js/view-models.js"
+        }
+      ],
+      "label": "mobile product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.extension_popup",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 7401,
+          "path": "extension/popup/popup.html"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 34,
+          "path": "extension/popup/popup-helpers.js"
+        }
+      ],
+      "label": "extension popup product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.source_status",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 665,
+          "path": "src/openbiliclaw/api/app.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 66,
+          "path": "src/openbiliclaw/web/shared/source-status.js"
+        }
+      ],
+      "label": "source status product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.credentials",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 261,
+          "path": "src/openbiliclaw/api/source_auth/write.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 66,
+          "path": "src/openbiliclaw/web/shared/source-status.js"
+        }
+      ],
+      "label": "credentials product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "surface.recommendation",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 246,
+          "path": "src/openbiliclaw/web/desktop/assets/js/app.js"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 136,
+          "path": "src/openbiliclaw/web/js/view-models.js"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 34,
+          "path": "extension/popup/popup-helpers.js"
+        }
+      ],
+      "label": "recommendation product surface",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.view",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 21,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 99,
+          "path": "tests/test_tiktok_client.py"
+        }
+      ],
+      "label": "view_count availability and mapping",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.like",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 21,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 100,
+          "path": "tests/test_tiktok_client.py"
+        }
+      ],
+      "label": "like_count availability and mapping",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.favorite",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 197,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 757,
+          "path": "tests/test_tiktok_web.py"
+        }
+      ],
+      "label": "favorite_count availability and mapping",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.comment",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 21,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 101,
+          "path": "tests/test_tiktok_client.py"
+        }
+      ],
+      "label": "comment_count availability and mapping",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.share",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 196,
+          "path": "src/openbiliclaw/sources/tiktok.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 102,
+          "path": "tests/test_tiktok_client.py"
+        }
+      ],
+      "label": "share_count availability and mapping",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "engagement.danmaku",
+      "detail": "contract explicitly declares engagement.danmaku='unavailable'; exclusion: TikTok has no danmaku metric.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 12,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "danmaku_count availability and mapping",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "media.image",
+      "detail": "all declared concrete registration points were found",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 286,
+          "path": "src/openbiliclaw/runtime/image_cache.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 287,
+          "path": "src/openbiliclaw/runtime/image_cache.py"
+        },
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 288,
+          "path": "src/openbiliclaw/runtime/image_cache.py"
+        }
+      ],
+      "label": "image-proxy host allow-list",
+      "required": true,
+      "status": "PASS"
+    },
+    {
+      "capability": "media.deep-link",
+      "detail": "contract explicitly declares media.deep_link='browser-fallback'; exclusion: Canonical HTTPS browser fallback.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 78,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "mobile native-app deep link",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "media.native-save",
+      "detail": "contract explicitly declares media.native_save=false; exclusion: TikTok saves are local-only; upstream mutations unsupported.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 12,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "platform-native save adapter/executor",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "media.image-network-boundary",
+      "detail": "static hostname syntax and allow-list wiring are not DNS safety proof; acceptance must verify every redirect hop and resolved address rejects loopback/private/link-local/reserved targets and document rebinding policy",
+      "evidence": [],
+      "label": "image proxy DNS/redirect/SSRF boundary",
+      "required": true,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "identity.semantics",
+      "detail": "item_id=TikTok numeric video id; item_key=tiktok:<id>; url=https://www.tiktok.com/@<handle>/video/<id>; dedupe=Canonical tiktok family plus video id; account_scope=Public discovery only; no account behavior or ownership import",
+      "evidence": [],
+      "label": "item identity, URL, dedupe, and account scope",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "auth.identity-evidence",
+      "detail": "resolution=Environment cookie precedes data-file cookie; no account bootstrap; evidence=Passport heartbeat confirms a session, never proves search availability or account ownership; verify_action=live_probe; login_state_path=credential; login_cookie_names=['sessionid', 'sessionid_ss', 'sid_tt']; capability_modes={'discover': 'optional-credential', 'cookie-sync': 'login-required'}; capability_required={'discover': True, 'cookie-sync': False}",
+      "evidence": [],
+      "label": "auth routes, login-state path, and identity evidence",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "upstream.response-contract",
+      "detail": "success_content_types=['application/json']; pagination=Bounded first-page snapshots only; no full-history completeness claim; terminal_evidence=HTTP 200, business status zero and explicit itemList/item_list array; only [] means empty; terminal_policy=429 persists shared cooldown; auth/error/schema/gate/transport failures are not empty; partial_policy=Retain successful query candidates and mark only failed query claims failed; publication_time_policy=createTime epoch UTC; no discovered-time substitution",
+      "evidence": [],
+      "label": "success content types, pagination, and terminal evidence",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "engagement.branch-coverage",
+      "detail": "mapped_metrics=['view', 'like', 'favorite', 'comment', 'share']; capability_routes={'discover': 'backend:signed-web-api:guest-or-cookie', 'cookie-sync': 'extension:unified-credential:passport-probe'}; acceptance must compare the same upstream item across every active route/branch",
+      "evidence": [],
+      "label": "engagement metric parity across fetch branches",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "discover.operational-contract",
+      "detail": "search_generation=Merged planner and inspiration axis; guest phrases compact to hashtags; cookie search keeps phrases; budget=Daily feed calls independent of per-pull size; search/tag claim bounded by remaining execution units; cursor=First-page snapshot; no completeness or retraction inference",
+      "evidence": [],
+      "label": "search generation, budgets, and cursor recovery",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "profile.refresh-mode",
+      "detail": "contract explicitly declares profile.refresh_mode='none'; exclusion: No TikTok account profile refresh.; exact test node exists, but this inventory does not execute it—record executed evidence in the acceptance ledger",
+      "evidence": [
+        {
+          "changed_since_base": null,
+          "excerpt": "<source excerpt omitted>",
+          "line": 39,
+          "path": "tests/test_tiktok_contract.py"
+        }
+      ],
+      "label": "profile refresh ownership and cadence",
+      "required": false,
+      "status": "N/A"
+    },
+    {
+      "capability": "e2e.action-boundary",
+      "detail": "safe_actions=['feed', 'search', 'fetch-public-collection']; safe_assertions={'feed': 'upstream-state-unchanged', 'search': 'upstream-state-unchanged', 'fetch-public-collection': 'upstream-state-unchanged'}; safe_postconditions={'feed': 'Read-only public metadata into isolated storage; no likes, saves, follows or production writes.', 'search': 'Read-only public metadata into isolated storage; no likes, saves, follows or production writes.', 'fetch-public-collection': 'Read-only public metadata into isolated storage; no likes, saves, follows or production writes.'}; mutating_actions=[]; mutating actions require exact user authorization or a test account",
+      "evidence": [],
+      "label": "safe and state-changing real-E2E actions",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "transport.fallback-ownership",
+      "detail": "primary_owner=backend; fallback_owner=external-cli; route_aliases=[]; capability_routes={'discover': 'backend:signed-web-api:guest-or-cookie', 'cookie-sync': 'extension:unified-credential:passport-probe'}; network_policy=Signed curl_cffi and yt-dlp follow shared outbound network routing.",
+      "evidence": [],
+      "label": "primary/fallback transport ownership",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "events.mapping-and-scope",
+      "detail": "strategy_prefixes=['tiktok_']; mappings=Discovery candidates only; no upstream account behavior events; scope_caps=Per-query result cap and per-source execution budgets; no account scopes",
+      "evidence": [],
+      "label": "event mappings, strategy prefixes, and backend scope caps",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "task.runtime-bounds",
+      "detail": "lease=No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.; idle=No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.; absolute=No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.; retry=No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.; buffer=No browser tasks; backend bounded HTTP requests and durable rate-limit cooldown.",
+      "evidence": [],
+      "label": "lease, idle/absolute deadlines, retry, and buffer bounds",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "e2e.smoke-sinks",
+      "detail": "storage_scope=isolated-only; sinks={'task': 'forbidden', 'task_result': 'forbidden', 'seen': 'forbidden', 'affinity': 'forbidden', 'snapshot': 'forbidden', 'schedule': 'forbidden', 'event_ingress': 'forbidden', 'memory': 'forbidden', 'profile': 'forbidden'}",
+      "evidence": [],
+      "label": "isolated smoke-test projection budget",
+      "required": false,
+      "status": "MANUAL"
+    },
+    {
+      "capability": "manual.semantic-e2e",
+      "detail": "static registration evidence cannot prove normalization semantics, auth truth, built extension assets, upstream behaviour, or real E2E completion",
+      "evidence": [],
+      "label": "semantic, built-artifact, and real E2E verification",
+      "required": false,
+      "status": "MANUAL"
+    }
+  ],
+  "summary": {
+    "MANUAL": 12,
+    "MISSING": 0,
+    "N/A": 11,
+    "PASS": 37,
+    "fully_verified": false,
+    "registration_check_passed": true,
+    "required_missing": 0
+  },
+  "tool": "platform-source-registration-inventory"
+}

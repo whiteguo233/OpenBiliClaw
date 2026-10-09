@@ -38,6 +38,7 @@ LEARNED_OK_PLATFORMS: Final[frozenset[str]] = frozenset(
         "douyin",
         "linuxdo",
         "reddit",
+        "tiktok",
         "twitter",
         "unknown",
         "v2ex",

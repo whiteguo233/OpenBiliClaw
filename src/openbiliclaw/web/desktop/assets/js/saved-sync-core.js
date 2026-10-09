@@ -9,6 +9,7 @@
     bili: "bilibili",
     xhs: "xiaohongshu",
     dy: "douyin",
+    tt: "tiktok",
     yt: "youtube",
     x: "twitter",
     zh: "zhihu",
@@ -45,6 +46,7 @@
     try {
       const host = new URL(text(item?.content_url || item?.url)).hostname.toLowerCase();
       if (host === "youtu.be" || host.endsWith(".youtube.com")) return "youtube";
+      if (host === "tiktok.com" || host.endsWith(".tiktok.com")) return "tiktok";
       if (host === "x.com" || host.endsWith(".x.com") || host.endsWith(".twitter.com")) return "twitter";
       if (host.endsWith(".zhihu.com")) return "zhihu";
       if (["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"].some(

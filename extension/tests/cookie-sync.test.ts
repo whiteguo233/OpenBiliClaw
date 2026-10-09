@@ -1144,3 +1144,176 @@ test("readCookiesForDomains falls back to per-domain getAll when unfiltered getA
   } as unknown as typeof chrome;
   assert.equal(await readWeiboLoginState(), true);
 });
+
+test("readTiktokCookieHeader returns the full jar once a session cookie exists", async () => {
+  const { readTiktokCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+    { name: "msToken", value: "tt-ms", domain: ".tiktok.com" },
+  ]);
+
+  assert.equal(await readTiktokCookieHeader(), "sessionid=tt-sess; ttwid=tt-tw; msToken=tt-ms");
+});
+
+test("readTiktokCookieHeader never pushes a guest jar (ttwid / msToken only)", async () => {
+  const { readTiktokCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+    { name: "msToken", value: "tt-ms", domain: ".tiktok.com" },
+  ]);
+
+  // Guest cookies are not a login — guest identity works without them, so
+  // there is nothing worth a round trip.
+  assert.equal(await readTiktokCookieHeader(), null);
+
+  installChromeMock([]);
+  assert.equal(await readTiktokCookieHeader(), null);
+});
+
+test("cookie sync runtime event posts the current tiktok cookie immediately", async () => {
+  const { handleCookieSyncRuntimeEvent } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  const handled = handleCookieSyncRuntimeEvent({
+    type: "tiktok_cookie_sync_requested",
+    reason: "missing_cookie",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  // The unified credential write gate, same path as the settings paste box.
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/sources/tiktok/credential");
+  assert.deepEqual(calls[0].body, {
+    value: "sessionid=tt-sess; ttwid=tt-tw",
+    source: "runtime-stream-request",
+  });
+});
+
+test("onChanged on tiktok.com session cookies debounces into one sync", async () => {
+  const { startCookieSync } = await importCookieSync();
+  const { listeners } = installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  // A login touches several cookies; the debounce must collapse them.
+  listeners[0]({ cookie: { name: "sessionid", domain: ".tiktok.com" }, removed: false });
+  listeners[0]({ cookie: { name: "ttwid", domain: ".tiktok.com" }, removed: false });
+  listeners[0]({ cookie: { name: "msToken", domain: ".tiktok.com" }, removed: false });
+  // Analytics churn must not trigger anything.
+  listeners[0]({ cookie: { name: "tt_csrf_token", domain: ".tiktok.com" }, removed: false });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/sources/tiktok/credential"]);
+});
+
+test("tiktok logout syncs silently (no POST, no error)", async () => {
+  const { startCookieSync } = await importCookieSync();
+  // The session cookie is gone from the jar by the time the sync runs.
+  const { listeners } = installChromeMock([
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  listeners[0]({ cookie: { name: "sessionid", domain: ".tiktok.com" }, removed: true });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  // Guest mode is legitimate: a logout must not pester the backend.
+  assert.deepEqual(calls, []);
+});
+
+test("tiktok sync retry cadence follows the backend verdict", async () => {
+  const { syncTiktokCookieToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+  ]);
+
+  // Passport probe refuses the jar: wait for a real re-login (hourly).
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: false, error_code: "cookie_invalid" }), {
+      status: 200,
+    });
+  assert.equal(await syncTiktokCookieToBackend("test"), false);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.delayInMinutes === 60,
+    ),
+  );
+
+  // Probe could not conclude (network): moderate 5-minute retry.
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: false, error_code: "validation_network" }), {
+      status: 200,
+    });
+  assert.equal(await syncTiktokCookieToBackend("test"), false);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.delayInMinutes === 5,
+    ),
+  );
+
+  // Accepted: settle into the hourly refresh.
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  assert.equal(await syncTiktokCookieToBackend("test"), true);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.periodInMinutes === 60,
+    ),
+  );
+});
+
+test("tiktok per-platform alarm syncs only tiktok", async () => {
+  const { handleCookieSyncAlarm } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "sessionid", value: "dy-sess", domain: ".douyin.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(
+      JSON.stringify({ ok: true, has_cookie: true, accepted: true }),
+      { status: 200 },
+    );
+  };
+
+  const handled = handleCookieSyncAlarm("openbiliclaw-cookie-sync-tiktok");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/sources/tiktok/credential"]);
+});

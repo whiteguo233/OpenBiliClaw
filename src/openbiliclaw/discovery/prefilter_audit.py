@@ -57,6 +57,7 @@ PREFILTER_PLATFORM_CLASSES: Final[frozenset[str]] = frozenset(
         "instagram",
         "github",
         "reddit",
+        "tiktok",
         "twitter",
         "unknown",
         "weibo",

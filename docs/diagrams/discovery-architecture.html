@@ -838,7 +838,7 @@
   <!-- content cache -->
   <rect x="500" y="408" width="600" height="56" rx="8" fill="#1a1a24" stroke="#8b949e" stroke-width="2"/>
   <text x="800" y="430" text-anchor="middle" fill="#8b949e" font-size="13" font-weight="600">content_cache (Pool)</text>
-  <text x="800" y="448" text-anchor="middle" fill="#6e7681" font-size="9">source_platform 使用 13 个 canonical family（含 Instagram）· classify_pool_backlog 补分类</text>
+  <text x="800" y="448" text-anchor="middle" fill="#6e7681" font-size="9">source_platform 使用 14 个 canonical family（含 TikTok / Instagram）· classify_pool_backlog 补分类</text>
 
   <!-- arrows from queues/producers down -->
   <line x1="645" y1="308" x2="700" y2="322" stroke="#3fb950" stroke-width="1.3" marker-end="url(#x-green)"/>
@@ -876,7 +876,8 @@
 <!-- SECTION 6: Multi-source discovery topology                    -->
 <!-- ═══════════════════════════════════════════════════════════════ -->
 <div class="diagram-section">
-<div class="section-title">6. 多源发现拓扑 &mdash; 四条代表路径与十二个平台如何进入同一候选池</div>
+<p>TikTok：正式 producer / inspiration → 共享请求间隔与持久限流 → 签名 Web API（访客或登录搜索）→ 统一候选池 → 评估 → 推荐；auto 模式可回退 yt-dlp。仅公开发现，不参与账号画像初始化。</p>
+<div class="section-title">6. 多源发现拓扑 &mdash; 四条代表路径与十四个平台如何进入同一候选池</div>
 
 <svg width="1140" height="680" viewBox="0 0 1140 680">
   <defs>
@@ -989,7 +990,7 @@
   <!-- content_cache -->
   <rect x="20" y="418" width="1100" height="56" rx="10" fill="#1a1a24" stroke="#8b949e" stroke-width="2"/>
   <text x="570" y="440" text-anchor="middle" fill="#c9d1d9" font-size="14" font-weight="700">content_cache (统一候选池)</text>
-  <text x="570" y="460" text-anchor="middle" fill="#8b949e" font-size="9.5">每行带十二平台 canonical source_platform；pool_source_shares 决定各平台配额（默认仅 bilibili 启用）</text>
+  <text x="570" y="460" text-anchor="middle" fill="#8b949e" font-size="9.5">每行带十四平台 canonical source_platform；pool_source_shares 决定各平台配额（默认仅 bilibili 启用）</text>
 
   <line x1="570" y1="474" x2="570" y2="500" stroke="#484f58" stroke-width="1.5" marker-end="url(#t-gray)"/>
 

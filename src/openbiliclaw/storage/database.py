@@ -94,6 +94,9 @@ from openbiliclaw.sources.platforms import (
     PLATFORM_REDDIT as _REDDIT_SOURCE_FAMILY,
 )
 from openbiliclaw.sources.platforms import (
+    PLATFORM_TIKTOK as _TIKTOK_SOURCE_FAMILY,
+)
+from openbiliclaw.sources.platforms import (
     PLATFORM_XIAOHONGSHU as _XHS_SOURCE_FAMILY,
 )
 from openbiliclaw.sources.platforms import (
@@ -21832,6 +21835,20 @@ class Database:
             video_index = path_parts.index("video")
             if len(path_parts) > video_index + 1:
                 return path_parts[video_index + 1]
+        if platform == _TIKTOK_SOURCE_FAMILY and "video" in path_parts:
+            # https://www.tiktok.com/@user/video/<numeric id> (photo posts use
+            # /photo/<id>; both map onto the same numeric content id space).
+            video_index = path_parts.index("video")
+            if len(path_parts) > video_index + 1:
+                candidate = path_parts[video_index + 1]
+                return candidate if candidate.isdigit() else ""
+            return ""
+        if platform == _TIKTOK_SOURCE_FAMILY and "photo" in path_parts:
+            photo_index = path_parts.index("photo")
+            if len(path_parts) > photo_index + 1:
+                candidate = path_parts[photo_index + 1]
+                return candidate if candidate.isdigit() else ""
+            return ""
         if platform == _YOUTUBE_SOURCE_FAMILY:
             query_video_id = parse_qs(parsed.query).get("v", [""])[0].strip()
             if query_video_id:

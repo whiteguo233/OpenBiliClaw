@@ -322,7 +322,7 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 - 「已消费」事件（`view` / `favorite` / `like` / `coin`，2026-07-26 起不再只有 `view`）在与事件行相同的 SQLite 事务内 upsert canonical `seen_items(source_platform:content_id)`；旧库按游标回填全部历史，类型集扩大时按 `scanned_event_types_version` 自动倒回重扫一次，不再用“最近 2000 条”扫描充当推荐去重。另有两条**非事件**入口：account sync 每轮把完整 B 站收藏快照经 `Database.mark_items_seen()` 直接写入账本；三端惊喜卡“× / 看过了”经 `Database.mark_delight_seen()` 先写 canonical ledger、再置 `delight_notified`。二者都幂等且不产生偏好事件，因此不会重复计入学习信号。普通推荐与 delight 动态阈值、打分 backlog、计数、pending 出口统一硬过滤这份账本。`reshuffle` 只记录一次强度 `0.1`、satisfaction-neutral 的批次导航事实，不把当前十张卡伪装成十条负反馈。
 
 ### Content Discovery (`discovery/`)
-- 多策略内容发现覆盖十三平台：B 站四策略、小红书、抖音、YouTube、X、GitHub、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与 Instagram。`runtime.source_policy` 以默认 `5:1:1:1:1:1:1:1:1:1:1:1:1` 比例补池，关闭来源不占 quota；GitHub 的 `search/ranked/latest` 只读取公开 repository，分支预算在 canonical 去重和最终保留后扣减。统一 `KeywordPlanner` 只生产并管理关键词生命周期，实际抓取、去重与候选入池仍由来源 producer 负责。
+- 多策略内容发现覆盖十四平台：B 站四策略、小红书、抖音、YouTube、TikTok、X、GitHub、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与 Instagram。`runtime.source_policy` 以默认 `5:1:1:1:1:1:1:1:1:1:1:1:1:1` 比例补池，关闭来源不占 quota；GitHub 的 `search/ranked/latest` 只读取公开 repository，分支预算在 canonical 去重和最终保留后扣减。统一 `KeywordPlanner` 只生产并管理关键词生命周期，实际抓取、去重与候选入池仍由来源 producer 负责。
 Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公共 URL；允许复用已有登录会话被动读取页面自然返回的公开 MediaGrid，不构造搜索请求或主动写 Recent Searches，结果单独标记 authenticated-topic 证据。
 - 统一关键词水位在 due 计算前经过 digest-grace 整理：`KeywordPlanner → Database.reconcile_pending_keyword_digests()` 在短事务中保留当前 digest 和宽限内安全的旧 `regular/pending`（原 digest/生成溯源不变），过龄、避雷、重复或超 cap 才过期；随后 `count_pending_keywords_all_digests()` 决定是否仍需 LLM 生成，retained pending 同时进入 history。整理失败或 DAO 不可用会退回 `expire_pending_by_digest()` + exact-digest count；grace=0 是显式旧行为。`claimed/executing/terminal` 与 explore 通道不经过这条迁移。
 - XHS 自动发现的停止与风控链路是 `config source/scheduler gate → /api/sources/xhs/next-task → xhs_task_runtime_state → extension dispatcher → task executor risk detector → rate_limited result → persistent cooldown / keyword requeue`。关闭来源只暂停 legacy discovery claim，不删除排队计划；扩展因此不再打开 search / creator / bootstrap 页面，重新开启后可恢复。可见安全验证、操作频繁或 429 会把 `rate_limit_strikes` 推进到下一个独立轮次，并打开 `1h → 2h → 4h … → 24h` 平台级冷却，阻断所有 XHS task claim（包括 native-save）并停止 producer；同一活动冷却内的重复报告不加轮次，冷却后的正常 search / creator 成功才重置。关联 planner 关键词从 executing 回到 pending、不增加 attempts。明确的用户 native-save 与 discovery 开关正交，但仍不能越过安全冷却。
@@ -340,7 +340,7 @@ Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公�
 
 ### Sources (`sources/`) — 多源适配层 (v0.3.0+)
 - `SourceAdapter` Protocol：每个内容源实现统一接口
-- `platforms.py` — Bilibili / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Instagram 十三个平台族的唯一可枚举注册表；Storage pool accounting、事件 identity、URL host 推断、已看过滤和 runtime 常量都委托该表，避免跨模块别名漂移
+- `platforms.py` — Bilibili / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Instagram 十四个平台族的唯一可枚举注册表；Storage pool accounting、事件 identity、URL host 推断、已看过滤和 runtime 常量都委托该表，避免跨模块别名漂移
 - `link_ingest.py` — 对话内链接摄入（issue #83）：聊天消息里的 URL 提取、b23.tv / xhslink.com 短链展开、按平台抓内容摘要（B站复用 `BilibiliAPIClient` /view，其余抓 og 元数据），渲染当轮 prompt 上下文块并把抓取成功的链接记为 `share` 偏好事件；被 `SocraticDialogue` 在 Web 与 CLI 聊天入口前调用，抓取失败永远降级不阻塞聊天
 - `weibo_tasks.py` — 微博 init-only 浏览器任务队列、账号绑定、scope 去重与收藏 / 关注 / mentions 到画像事件的转换；扩展只回传规范化、无 Cookie 的结果
 - `instagram.py` / `instagram_tasks.py` — Instagram 媒体/用户防御性归一化、durable discover/bootstrap 队列、current-account 分区和 liked/saved/following 事件映射；扩展只回传字段白名单结果
@@ -350,6 +350,7 @@ Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公�
 - `yt_tasks` — YouTube 扩展任务队列（`bootstrap_profile` 初始化画像任务；观看历史 / 订阅 / 点赞由扩展以用户浏览器登录态读取 DOM 并分批回传；任务 poll 时标记 `in_progress`，CLI 可复用近期 bootstrap）
 - `youtube.takeout` — Google Takeout 离线导入解析器，将 YouTube 观看历史 / 订阅 / 点赞转换为统一事件
 - `YoutubeDiscoveryProducer` — 后端直连的 YouTube steady-state discovery loop；在 YouTube 平台族低于 quota 时调用 `yt_search` / `yt_trending` / `yt_channel`，并用 SQLite execution ledger 控制每日执行预算
+- `sources.tiktok` / `sources.tiktok_web` / `runtime.tiktok_producer` — 实验性 TikTok 源（issue #88）：默认走 Web API 后端（访客身份 + vendored 纯 Python 签名 `sources/tiktok_sign.py` + curl_cffi Chrome TLS 指纹），`tiktok_feed` 拉匿名推荐流，`tiktok_tag` 拉话题标签列表（统一关键词压缩为 hashtag），`tiktok_user` 拉配置创作者的最近视频；`[sources.tiktok].mode` 控制分发，后端级失败回退 yt-dlp 后端（单视频元数据走 `TikTok` extractor）；可选登录 Cookie 解锁搜索。不依赖扩展任务队列，候选归一为 `source_platform="tiktok"` 后写 `discovery_candidates`
 - `twitter_adapter` — X (Twitter) 服务端 cookie 重放（`source_type="twitter"`，标签 `"X"`）；`XAdapter.fetch()` 是真实实现（非 stub），按 recipe 分发到 `discovery/strategies/x.py` 的 `XSearchStrategy`（画像关键词）/ `XForYouStrategy`（推荐流 For-You）/ `XCreatorStrategy`（账号订阅）。配套 `x_client.py` 的 `XClient`（封装默认运行时依赖 `twitter-cli`，lazy import + 只读 + 类型化错误；`openbiliclaw[x]` 仅作为兼容旧脚本的安装别名保留）、`discovery/x_normalize.py`（tweet → `DiscoveredContent`）、`x_tasks.py`（`x_creator_subscriptions` CRUD）、`storage/x_health.py`（源健康状态机）
 - `zhihu_tasks` — 知乎扩展任务队列（`bootstrap_events` 事件 smoke + `search` / `hot` / `feed` / `creator` / `related` discovery）；插件在已登录知乎 tab 中读取浏览历史 / 收藏夹 / 动态点赞收藏，或调用 discovery 接口回传 `zhihu_*` 候选；`runtime.zhihu_producer.ZhihuDiscoveryProducer` 在知乎平台族低于 quota 时按 `source_modes` 入队任务，结果经 `sources.zhihu_tasks.zhihu_discovery_items_to_contents()` 写入 `discovery_candidates`
 - `reddit_tasks` — Reddit 扩展任务队列（`bootstrap_events` 初始化信号 + fallback / 显式 `search` / `hot` / `subreddit` / `related` discovery）；插件在已登录 Reddit tab 中读取 saved / upvoted / subscribed 或同源 `.json` endpoint 回传 `reddit_*` 结果；`runtime.reddit_producer.RedditDiscoveryProducer` 在 Reddit 平台族低于 quota 时默认用 rdt-cli 按 `source_modes` 抓 discovery 候选，命令后端不可用或显式 `backend="extension"` 时入队插件 discovery 任务，结果经 `sources.reddit_tasks.reddit_items_to_contents()` 写入 `discovery_candidates`，producer 自身 fetch-only，不同步等待 LLM 评估
@@ -600,6 +601,22 @@ embedding 和空向量失败留待下轮重试，成功槽位会复用。已有�
    学习、推荐、反馈回流仍由 `runtime/`、`soul/`、`recommendation/` 等模块负责，`integrations/openclaw/skill.py` 只负责对外暴露稳定 handler；新功能必须同时进入 operation、descriptor、CLI（若适合）和 capability manifest。
 3. **宿主发现走能力协商 + 仓库根目录 `skills/`**
    当前仓库通过 `skills/openbiliclaw-adapter/SKILL.md` 提供真实 workspace skill，再由 skill 内部调用 adapter CLI bridge；`capabilities` 是避免宿主继续使用旧能力子集的权威入口。
+
+
+### TikTok 请求状态边界
+
+```mermaid
+flowchart LR
+  Producer[TikTok formal producer] --> Router[TiktokRouterClient]
+  Inspiration[Inspiration backend] --> Router
+  Router --> State[TiktokRequestState: shared SQLite pacing/cooldown]
+  State --> Web[Signed Web API]
+  Router -->|auto only| Fallback[yt-dlp]
+```
+
+状态库仅含时间戳，独立于候选数据库；失败原因经 strategy intermediates 返回 producer，成功分支候选仍可入池。
+
+TikTok 图片：`image_cache → tiktok_images → 配置网络路由内的 Cloudflare DoH → 公网 IP 固定 + 原 host TLS 校验 → 有界图片流/缓存`；每次 redirect 重走校验，无账号 Cookie。
 
 ## macOS 分发构建链
 

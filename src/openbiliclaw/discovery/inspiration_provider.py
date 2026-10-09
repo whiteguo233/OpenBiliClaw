@@ -1125,6 +1125,64 @@ class DouyinPlatformSearchBackend:
         return _dedupe_previews([item for item in previews if item is not None], limit=limit)
 
 
+def _tiktok_preview(item: Any) -> ExaPreviewItem | None:
+    """Map one TikTok result (web ``DiscoveredContent`` or yt-dlp raw dict)."""
+    if isinstance(item, dict):
+        title = _clean_title(item.get("title") or item.get("fulltitle") or item.get("description"))
+        url = _first_text(item.get("webpage_url"), item.get("url"))
+        video_id = _first_text(item.get("id"), item.get("video_id"), item.get("aweme_id"))
+        author = _first_text(item.get("channel"), item.get("uploader"), item.get("creator"))
+        if not url.startswith("http") and video_id:
+            url = f"https://www.tiktok.com/@{author or 'tiktok'}/video/{video_id}"
+    else:
+        title = _clean_title(getattr(item, "title", ""))
+        url = _first_text(getattr(item, "content_url", ""))
+        author = _first_text(getattr(item, "author_name", ""), getattr(item, "up_name", ""))
+    if not title or not url:
+        return None
+    return ExaPreviewItem(title=title, url=url, highlights=tuple(_clean_highlights([author])))
+
+
+class TiktokPlatformSearchBackend:
+    """Use the TikTok router client as inspiration-only grounding.
+
+    Keyword search rides the web API when a login cookie is mounted
+    (``search_available``); guest identities fall back to the hashtag
+    listing (web API with yt-dlp fallback), the only keyword-shaped
+    surface that works without an account.
+    """
+
+    platform = "tiktok"
+    risk_controlled = True
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    def cooldown_remaining(self) -> float:
+        return _backend_cooldown_remaining(self._client)
+
+    async def search(self, query: str, *, limit: int, pages: int = 1) -> list[ExaPreviewItem]:
+        count = max(1, int(limit))
+        rows: list[Any] | None
+        if bool(getattr(self._client, "search_available", False)):
+            search = getattr(self._client, "search_videos", None)
+            if not callable(search):
+                return []
+            rows = await search(query, limit=count)
+        else:
+            get_tag = getattr(self._client, "get_tag_videos", None)
+            if not callable(get_tag):
+                return []
+            from openbiliclaw.sources.tiktok import tag_from_query
+
+            tag = tag_from_query(query)
+            if not tag:
+                return []
+            rows = await get_tag(tag, limit=count)
+        previews = [_tiktok_preview(row) for row in rows or []]
+        return _dedupe_previews([item for item in previews if item is not None], limit=count)
+
+
 class XhsPlatformSearchBackend:
     """Use an injected xiaohongshu search bridge as inspiration-only grounding."""
 
@@ -1647,6 +1705,7 @@ def build_platform_source_backends(
     github_client: object | None = None,
     reddit_runner: object | None = None,
     douyin_client: object | None = None,
+    tiktok_client: object | None = None,
     xhs_search: PlatformSearchCallable | None = None,
     zhihu_search: PlatformSearchCallable | None = None,
     bangumi_client: object | None = None,
@@ -1682,6 +1741,20 @@ def build_platform_source_backends(
                 yt_client = None
         if yt_client is not None:
             backends.append(YoutubePlatformSearchBackend(yt_client))
+
+    tiktok_cfg = getattr(sources, "tiktok", None)
+    if bool(getattr(tiktok_cfg, "enabled", False)):
+        tt_client = tiktok_client
+        if tt_client is None:
+            try:
+                from openbiliclaw.api.runtime_context import _build_tiktok_client
+
+                tt_client = _build_tiktok_client(config, tiktok_cfg)
+            except Exception:
+                logger.debug("tiktok inspiration backend unavailable", exc_info=True)
+                tt_client = None
+        if tt_client is not None:
+            backends.append(TiktokPlatformSearchBackend(tt_client))
 
     twitter_cfg = getattr(sources, "twitter", None)
     if bool(getattr(twitter_cfg, "enabled", False)) and x_client is not None:

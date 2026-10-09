@@ -4145,6 +4145,8 @@ class ContentDiscoveryEngine:
                         profile,
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
+                        keywords=keywords,
+                        keyword_ids=keyword_ids,
                     )
                     for s, run_limit in other_entries
                 ]

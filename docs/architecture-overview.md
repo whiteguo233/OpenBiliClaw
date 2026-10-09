@@ -173,3 +173,13 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
+
+### TikTok 公开发现
+
+```text
+正式发现 / 灵感探索 → TikTok router → 共享请求间隔 / 持久 429 冷却 → 签名 Web API
+                                └─ auto 且 Web 不可用 → yt-dlp（列表能力受上游限制）
+                      → 统一候选池 → 评估 → 推荐
+```
+
+登录 Cookie 只增加可尝试的 search 能力；passport 验证与搜索可用性分别验收。

@@ -13,7 +13,7 @@ import re
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -207,6 +207,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "tiktok": 1,
     "twitter": 1,
     "zhihu": 1,
     "reddit": 1,
@@ -1290,6 +1291,49 @@ class YoutubeSourceConfig(SourceDatePreferenceConfig):
 
 
 @dataclass
+class TiktokSourceConfig(SourceDatePreferenceConfig):
+    """TikTok experimental source configuration.
+
+    TikTok steady-state discovery runs through a backend-direct runtime
+    producer. Two backends exist, selected by ``mode``: the signed web API
+    backend (``sources/tiktok_web.py``, guest identity, no login needed;
+    ``auto`` default with yt-dlp fallback) and the yt-dlp backend
+    (``sources/tiktok.py``). yt-dlp ships no TikTok *search* extractor and
+    guest keyword search is gated upstream, so keyword-planner words are
+    mapped onto hashtags instead of a search endpoint. ``tags`` /
+    ``creators`` seed the two listing strategies; the budget knobs cap
+    per-day execution units. A login cookie (``cookie_env`` /
+    ``data/tiktok_cookie.json``) is optional and unlocks keyword search.
+    """
+
+    enabled: bool = False
+    # Backend selector: "auto" (web with yt-dlp fallback) | "web" | "ytdlp".
+    mode: str = "auto"
+    # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
+    # is the fallback. Guest identity remains a legitimate mode without it.
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    # Geo parameters sent with every web API request; they should match the
+    # proxy egress region. When TikTok gates every response (empty body +
+    # ``tt_orcas_res: 1``), these two are the first thing to check.
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    # Baseline hashtags for the tag strategy (without the leading ``#``).
+    tags: tuple[str, ...] = ()
+    # TikTok creator handles for the user strategy (``@`` prefix optional).
+    creators: tuple[str, ...] = ()
+    # For-You feed pulls per day (high-visibility surface; kept small).
+    daily_feed_budget: int = 3
+    # Keyword search runs per day. Search only works with a login cookie and
+    # logged-in scraping carries account risk (TikTok ToS), so it is off
+    # unless a cookie is configured; the budget stays small regardless.
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
+@dataclass
 class TwitterSourceConfig(SourceDatePreferenceConfig):
     """X (Twitter) direct-cookie discovery configuration.
 
@@ -1569,6 +1613,7 @@ class SourcesConfig:
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
+    tiktok: TiktokSourceConfig = field(default_factory=TiktokSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
     reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
@@ -1988,6 +2033,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("xiaohongshu", sources.xiaohongshu),
         ("douyin", sources.douyin),
         ("youtube", sources.youtube),
+        ("tiktok", sources.tiktok),
         ("twitter", sources.twitter),
         ("zhihu", sources.zhihu),
         ("reddit", sources.reddit),
@@ -2006,6 +2052,11 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
             if not isinstance(value, int) or isinstance(value, bool):
                 continue
             if not (_SUSPICIOUS_BUDGET_LOW <= value <= _SUSPICIOUS_BUDGET_HIGH):
+                continue
+            # The shipped default cannot be a misused toggle — TikTok's official
+            # daily_feed_budget/daily_search_budget default is 3, which sits in
+            # the suspicious 1-4 band. A hand-written non-default still warns.
+            if source_field.default is not MISSING and value == source_field.default:
                 continue
             key = f"sources.{source_name}.{name}"
             if key in _warned_budget_keys:
@@ -2369,6 +2420,7 @@ def _build_config(
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
+    tiktok_raw = sources_raw.get("tiktok", {})
     twitter_raw = sources_raw.get("twitter", {})
     zhihu_raw = sources_raw.get("zhihu", {})
     reddit_raw = sources_raw.get("reddit", {})
@@ -2412,6 +2464,23 @@ def _build_config(
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 3))),
+        ),
+        tiktok=TiktokSourceConfig(
+            enabled=bool(tiktok_raw.get("enabled", False)),
+            mode=str(tiktok_raw.get("mode", "auto")),
+            cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
+            # Empty geo values are meaningless and would gate every request;
+            # fall back to the verified defaults instead of saving them.
+            region=str(tiktok_raw.get("region", "JP")).strip() or "JP",
+            tz_name=str(tiktok_raw.get("tz_name", "Asia/Tokyo")).strip() or "Asia/Tokyo",
+            tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
+            creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
+            daily_feed_budget=int(tiktok_raw.get("daily_feed_budget", 3)),
+            daily_search_budget=int(tiktok_raw.get("daily_search_budget", 3)),
+            daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
+            daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
+            request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
+            min_interval_minutes=max(0, int(tiktok_raw.get("min_interval_minutes", 3))),
         ),
         twitter=TwitterSourceConfig(
             enabled=bool(twitter_raw.get("enabled", False)),
@@ -2668,6 +2737,7 @@ def _build_config(
         xiaohongshu=xhs_raw,
         douyin=douyin_raw,
         youtube=youtube_raw,
+        tiktok=tiktok_raw,
         twitter=twitter_raw,
         zhihu=zhihu_raw,
         reddit=reddit_raw,
@@ -4373,6 +4443,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "zhihu",
     "reddit",
@@ -6012,6 +6083,22 @@ def _render_config_toml(
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.youtube),
             "",
+            "[sources.tiktok]",
+            f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"mode = {_toml_string(config.sources.tiktok.mode)}",
+            f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
+            f"region = {_toml_string(config.sources.tiktok.region)}",
+            f"tz_name = {_toml_string(config.sources.tiktok.tz_name)}",
+            f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
+            f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
+            f"daily_feed_budget = {config.sources.tiktok.daily_feed_budget}",
+            f"daily_search_budget = {config.sources.tiktok.daily_search_budget}",
+            f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
+            f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
+            f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.tiktok.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.tiktok),
+            "",
             "[sources.twitter]",
             f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
             f"mode = {_toml_string(config.sources.twitter.mode)}",
@@ -6249,6 +6336,7 @@ def _render_config_toml(
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
+            f"tiktok = {int(config.scheduler.pool_source_shares.get('tiktok', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",

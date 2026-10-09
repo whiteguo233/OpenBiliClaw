@@ -24,14 +24,15 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceLinuxdoText" in html
     assert "sourceWeiboTitle" in html
     assert "sourceWeiboText" in html
-    assert "十三类平台来源（含实验性 Instagram）与开放 Web" in html
-    assert "Thirteen platform sources (including experimental Instagram) and the open web" in html
+    assert "十四类平台来源（含实验性 Instagram）与开放 Web" in html
+    assert "Fourteen platform sources (including experimental Instagram) and the open web" in html
     source_cards = re.findall(r'data-source="([a-z0-9_-]+)"', html)
     assert source_cards == [
         "bilibili",
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "x",
         "zhihu",
         "reddit",
@@ -45,6 +46,8 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     ]
     assert "sourceYoutubeTitle" in html
     assert "sourceYoutubeText" in html
+    assert "sourceTiktokTitle" in html
+    assert "sourceTiktokText" in html
     assert "sourceXTitle" in html
     assert "sourceXText" in html
     assert "sourceGithubTitle" in html

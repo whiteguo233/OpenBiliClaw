@@ -28,6 +28,7 @@ from openbiliclaw.discovery.inspiration_provider import (
     PlatformSourceInspirationProvider,
     RedditPlatformSearchBackend,
     SerplyInspirationProvider,
+    TiktokPlatformSearchBackend,
     V2EXPlatformSearchBackend,
     WeiboPlatformSearchBackend,
     XhsPlatformSearchBackend,
@@ -1137,6 +1138,79 @@ async def test_youtube_platform_backend_maps_search_rows_to_previews() -> None:
             highlights=("Funding, rights, and studio incentives.", "Studio Notes"),
         )
     ]
+
+
+async def test_tiktok_platform_backend_uses_keyword_search_when_cookie_mounted() -> None:
+    class TtClient:
+        search_available = True
+
+        async def search_videos(self, query: str, *, limit: int) -> list[object]:
+            assert query == "booktok"
+            assert limit == 2
+            return [
+                SimpleNamespace(
+                    title="BookTok picks that actually hold up",
+                    content_url="https://www.tiktok.com/@reader/video/7340000000000000001",
+                    author_name="reader",
+                    up_name="reader",
+                )
+            ]
+
+        async def get_tag_videos(self, tag: str, *, limit: int) -> list[object]:
+            raise AssertionError("guest tag path must not run when search is available")
+
+    backend = TiktokPlatformSearchBackend(TtClient())
+
+    assert backend.risk_controlled is True
+    assert await backend.search("booktok", limit=2) == [
+        ExaPreviewItem(
+            title="BookTok picks that actually hold up",
+            url="https://www.tiktok.com/@reader/video/7340000000000000001",
+            highlights=("reader",),
+        )
+    ]
+
+
+async def test_tiktok_platform_backend_falls_back_to_tag_listing_for_guest() -> None:
+    class TtClient:
+        search_available = False
+
+        async def get_tag_videos(self, tag: str, *, limit: int) -> list[dict]:
+            assert tag == "urbansketching"
+            assert limit == 3
+            # yt-dlp raw entry shape (flat extraction).
+            return [
+                {
+                    "id": "7340000000000000002",
+                    "description": "Sketching the night market in 20 minutes",
+                    "channel": "sketchdaily",
+                },
+                {"id": "", "description": "no id -> dropped"},
+            ]
+
+    backend = TiktokPlatformSearchBackend(TtClient())
+
+    assert await backend.search("urban sketching", limit=3) == [
+        ExaPreviewItem(
+            title="Sketching the night market in 20 minutes",
+            url="https://www.tiktok.com/@sketchdaily/video/7340000000000000002",
+            highlights=("sketchdaily",),
+        )
+    ]
+
+
+def test_build_platform_source_backends_adds_tiktok_only_when_enabled() -> None:
+    sources = SimpleNamespace(
+        bilibili=SimpleNamespace(enabled=False),
+        tiktok=SimpleNamespace(enabled=True),
+    )
+    enabled = SimpleNamespace(sources=sources)
+    backends = build_platform_source_backends(enabled, tiktok_client=object())
+    assert [backend.platform for backend in backends] == ["tiktok"]
+
+    sources.tiktok.enabled = False
+    backends = build_platform_source_backends(enabled, tiktok_client=object())
+    assert backends == []
 
 
 async def test_reddit_platform_backend_maps_command_rows_to_previews() -> None:

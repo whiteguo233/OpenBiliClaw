@@ -931,6 +931,7 @@ class SourcesStatusResponse(BaseModel):
     xiaohongshu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     douyin: SourceStatusItem = Field(default_factory=SourceStatusItem)
     youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    tiktok: SourceStatusItem = Field(default_factory=SourceStatusItem)
     twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
     zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     reddit: SourceStatusItem = Field(default_factory=SourceStatusItem)
@@ -1106,6 +1107,7 @@ class SourcesCredentialsResponse(BaseModel):
     xiaohongshu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     douyin: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     youtube: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    tiktok: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     twitter: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     zhihu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     reddit: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
@@ -2386,6 +2388,26 @@ class YoutubeSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 3
 
 
+class TiktokSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    mode: str = "auto"
+    # Resolved optional login Cookie header (env override, else
+    # data/tiktok_cookie.json); masked on the way out. Guest identity is a
+    # legitimate mode, so an empty cookie is not an error state.
+    cookie: str = ""
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    tags: list[str] = Field(default_factory=list)
+    creators: list[str] = Field(default_factory=list)
+    daily_feed_budget: int = 3
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
 class TwitterSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     mode: str = "cookie"
@@ -2538,6 +2560,7 @@ class SourcesConfigOut(BaseModel):
     xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+    tiktok: TiktokSourceConfigOut = Field(default_factory=TiktokSourceConfigOut)
     twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
     zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
     reddit: RedditSourceConfigOut = Field(default_factory=RedditSourceConfigOut)

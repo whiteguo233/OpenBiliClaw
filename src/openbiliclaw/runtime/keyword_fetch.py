@@ -57,6 +57,9 @@ from openbiliclaw.sources.platforms import (
     PLATFORM_REDDIT as PLATFORM_REDDIT,
 )
 from openbiliclaw.sources.platforms import (
+    PLATFORM_TIKTOK as PLATFORM_TIKTOK,
+)
+from openbiliclaw.sources.platforms import (
     PLATFORM_TWITTER as PLATFORM_TWITTER,
 )
 from openbiliclaw.sources.platforms import (

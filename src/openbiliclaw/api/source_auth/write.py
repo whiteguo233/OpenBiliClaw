@@ -258,6 +258,29 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
         form_label="YouTube",
         help_text="YouTube 按公开源接入，不需要登录，也没有任何凭据要填。",
     ),
+    "tiktok": CredentialSpec(
+        slug="tiktok",
+        kinds=("cookie",),
+        # A guest TikTok jar carries ttwid / msToken but none of these; they
+        # are the same ByteDance session-cookie family 抖音's gate counts.
+        any_of_keys=("sessionid", "sessionid_ss", "sid_tt"),
+        invalid_message=(
+            "TikTok Cookie 缺少登录态字段（sessionid / sessionid_ss / sid_tt），未保存。"
+            "请在已登录的浏览器重新复制完整 Cookie。"
+        ),
+        live_gate=True,
+        form_kind="cookie_textarea",
+        form_label="TikTok Cookie（可选）",
+        form_placeholder="留空表示不覆盖现有 cookie（访客身份下无需配置）",
+        env_var_path="sources.tiktok.cookie_env",
+        env_var_default="OPENBILICLAW_TIKTOK_COOKIE",
+        login_url="https://www.tiktok.com/",
+        help_text=(
+            "TikTok 默认以访客身份读公开数据，无需登录；登录 Cookie 只用于解锁关键词搜索"
+            "与更高限额（登录态抓取有账号风险，见 TikTok 来源文档）。保存时会真的向 "
+            "TikTok 验证一次（passport 会话心跳），验证不通过不会落盘。"
+        ),
+    ),
     "bangumi": CredentialSpec(
         slug="bangumi",
         # ``kinds=()``: the unified write endpoint does not accept Bangumi's
@@ -539,6 +562,15 @@ def current_credential(slug: str, *, cfg: Config) -> str:
                 data_dir=cfg.data_path,
                 cookie_env=str(
                     getattr(cfg.sources.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")
+                ),
+            ).strip()
+        if slug == "tiktok":
+            from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+            return resolve_tiktok_cookie(
+                data_dir=cfg.data_path,
+                cookie_env=str(
+                    getattr(cfg.sources.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
                 ),
             ).strip()
         if slug == "twitter":
@@ -838,6 +870,12 @@ def persist_credential(
         from openbiliclaw.sources.douyin_auth import DouyinCookieManager
 
         DouyinCookieManager(cfg.data_path).set_cookie(text, source=source)
+        return PersistResult(persisted=True, cookie_names=names)
+
+    if slug == "tiktok":
+        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+        TiktokCookieManager(cfg.data_path).set_cookie(text, source=source)
         return PersistResult(persisted=True, cookie_names=names)
 
     if slug == "twitter":

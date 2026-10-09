@@ -62,7 +62,7 @@
 | 模块 | 文档 | 对应代码 | 状态 |
 |------|------|----------|------|
 | 后端 API | [modules/api.md](modules/api.md) | `src/openbiliclaw/api/` | ✅ durable 对话 + 配置后台应用 + 本机-only 迁移四 API；GitHub 配置 / 状态 / init / repository 推荐 DTO 已记录 |
-| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十二来源 planner 与 GitHub repository 查询约束已记录 |
+| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十四来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
 | 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository 与 Instagram（实验性、默认关闭），验收见专用 ledger |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
@@ -71,8 +71,9 @@
 | V2EX 接入 | [modules/v2ex.md](modules/v2ex.md) | `src/openbiliclaw/sources/v2ex*.py` + `runtime/v2ex_producer.py` + 扩展任务桥 | ✅ 匿名 API/Feed + 可选 PAT + 四个只读 bootstrap scope + Topic 回复聚合 |
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
 | Instagram 接入 | [modules/instagram.md](modules/instagram.md) | `src/openbiliclaw/sources/instagram*.py` + `runtime/instagram_producer.py` + `extension/src/**/instagram*` | 🧪 可选登录 topic/creator + 登录态 init-only liked/saved/following；默认关闭，生产需另行确认 Meta 授权 |
-| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十三来源契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
+| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十四来源契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
+| TikTok 接入（实验性） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `sources/tiktok_web.py` + `sources/tiktok_sign.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ Web API 访客身份（签名 + curl_cffi）feed / hashtag / creator discovery，yt-dlp 兜底（issue #88）；可选登录 Cookie（扩展同步）解锁关键词搜索 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
 | 记忆系统 | [modules/memory.md](modules/memory.md) | `src/openbiliclaw/memory/` | ✅ 完成 |
 | 灵魂引擎 | [modules/soul.md](modules/soul.md) | `src/openbiliclaw/soul/` | ✅ 完成 |
@@ -100,6 +101,11 @@
 
 - [贡献指南](contributing.md) — 环境搭建、代码规范、文档更新要求
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok discovery-only 接入的冻结范围、排除项与验证证据见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。
 
 - [桌面打包与 macOS 签名公证](modules/packaging.md) — 本机凭据、CI Secrets、正式与实验安装包及验收。
 

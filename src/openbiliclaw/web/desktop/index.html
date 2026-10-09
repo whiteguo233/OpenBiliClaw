@@ -790,6 +790,70 @@
               </div>
             </article>
 
+            <article class="source-status-row source-card" data-source-status="tiktok" data-source-credential="tiktok" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-tiktok">
+                <span class="source-card-logo" data-source-logo="tiktok" aria-hidden="true">TT</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">TikTok</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareTiktok" value="1" inputmode="numeric" aria-label="TikTok 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 TikTok</span><select id="tiktokEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-tiktok">
+                <section class="source-seg">
+                  <h4>接入方式</h4>
+                  <p class="seg-note">主后端是 TikTok Web API（访客身份 + 请求签名），无需登录即可使用推荐流 / 话题标签 / 创作者列表；yt-dlp 仅作兜底。可选登录 Cookie 由浏览器扩展自动同步，也可在下方手动粘贴，留空保存不会覆盖现有值；配置后解锁关键词搜索。需要海外出网，代理设置见「通用」页。</p>
+                  <div class="source-cred-box">
+                    <div class="source-cred-line"><span class="source-credential-ro-tag">脱敏</span><span class="source-credential-summary">加载中…</span></div>
+                    <textarea class="source-credential-value" rows="2" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+                  </div>
+                  <label class="settings-field full"><span>TikTok Cookie（可选）</span><textarea id="tiktokCookie" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="保留空值表示不覆盖现有 cookie（登录 tiktok.com 后插件会自动同步）"></textarea></label>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>Cookie 环境变量</span><input id="tiktokCookieEnv" placeholder="OPENBILICLAW_TIKTOK_COOKIE"></label>
+                    <label class="settings-field"><span>后端模式</span><select id="tiktokMode"><option value="auto">auto（Web API 优先，yt-dlp 兜底）</option><option value="web">web（仅 Web API）</option><option value="ytdlp">ytdlp（仅 yt-dlp）</option></select></label>
+                  </div>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>地区参数</span><input id="tiktokRegion" placeholder="JP"></label>
+                    <label class="settings-field"><span>时区参数</span><input id="tiktokTzName" placeholder="Asia/Tokyo"></label>
+                  </div>
+                  <p class="seg-note">地区 / 时区应匹配你的网络出口；被风控 gate（空响应）时首先检查这两项。</p>
+                </section>
+                <section class="source-seg">
+                  <h4>发现分支与每日预算</h4>
+                  <p class="seg-note">预算是该分支每日任务次数上限，0 或留空 = 不限。关键词搜索需要登录 Cookie；未配置时关键词规划器的词会映射为话题标签。</p>
+                  <div class="branch-table" data-branch-toggles="off">
+                    <div class="branch-head"><span>分支</span><span>每日预算</span><span>说明</span></div>
+                    <div class="branch-row"><span class="branch-name">推荐流</span><input id="tiktokDailyFeedBudget" class="branch-budget" inputmode="numeric" placeholder="3" aria-label="TikTok 每日推荐流预算"><span class="branch-hint">For You 推荐流（高曝光，建议压低）</span></div>
+                    <div class="branch-row"><span class="branch-name">搜索</span><input id="tiktokDailySearchBudget" class="branch-budget" inputmode="numeric" placeholder="3" aria-label="TikTok 每日搜索预算"><span class="branch-hint">需登录 Cookie（有账号风险）</span></div>
+                    <div class="branch-row"><span class="branch-name">话题标签</span><input id="tiktokDailyTagBudget" class="branch-budget" inputmode="numeric" placeholder="0 = 不限" aria-label="TikTok 每日话题标签预算"><span class="branch-hint">常驻标签 + 规划器话题词</span></div>
+                    <div class="branch-row"><span class="branch-name">创作者</span><input id="tiktokDailyUserBudget" class="branch-budget" inputmode="numeric" placeholder="0 = 不限" aria-label="TikTok 每日创作者预算"><span class="branch-hint">跟踪下方创作者列表</span></div>
+                  </div>
+                  <label class="settings-field full"><span>常驻话题标签（逗号分隔，不带 #）</span><input id="tiktokTags" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="booktok, learnsontiktok"></label>
+                  <label class="settings-field full"><span>跟踪创作者（逗号分隔，@ 可省略）</span><input id="tiktokCreators" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="@creator1, @creator2"></label>
+                </section>
+                <section class="source-seg">
+                  <h4>节流</h4>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求间隔秒数</span><input id="tiktokRequestInterval" inputmode="numeric" placeholder="2"></label>
+                    <label class="settings-field"><span>最小调度间隔分钟</span><input id="tiktokMinInterval" inputmode="numeric" placeholder="3"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>验证</h4>
+                  <div class="settings-probe-row source-verify-row">
+                    <button class="pill-btn source-verify-btn" type="button">测试连接</button>
+                    <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+                  </div>
+                </section>
+              </div>
+            </article>
+
             <article class="source-status-row source-card" data-source-status="twitter" data-source-credential="twitter" data-open="0">
               <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-twitter">
                 <span class="source-card-logo" data-source-logo="twitter" aria-hidden="true">X</span>

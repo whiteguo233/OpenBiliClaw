@@ -44,6 +44,7 @@ import {
   normalizeRecommendation,
   normalizeProfileSummary,
   normalizeRuntimeStatus,
+  normalizeSavedItem,
   platformDisplayName,
   resolveInitBangumiUsername,
   resolveInitGitHubUsername,
@@ -97,8 +98,32 @@ test("platformDisplayName maps known platforms and passes through unknown", () =
   assert.equal(platformDisplayName("bgm"), "Bangumi");
   assert.equal(platformDisplayName("gh"), "GitHub");
   assert.equal(platformDisplayName("linuxdo"), "Linux.do");
+  assert.equal(platformDisplayName("tiktok"), "TikTok");
+  assert.equal(platformDisplayName("tt"), "TikTok");
   assert.equal(platformDisplayName("newtube"), "newtube");
   assert.equal(platformDisplayName(""), "");
+});
+
+test("tiktok normalizes to its own platform family, not douyin", () => {
+  // Regression: the popup alias table mapped tiktok -> douyin, so TikTok
+  // content displayed as 抖音 after the backend split the families.
+  assert.equal(
+    normalizeSavedItem({ source_platform: "tiktok", content_id: "7340000000000000002" })
+      .source_platform,
+    "tiktok",
+  );
+  assert.equal(
+    normalizeSavedItem({
+      content_id: "7340000000000000002",
+      content_url: "https://www.tiktok.com/@sketchdaily/video/7340000000000000002",
+    }).source_platform,
+    "tiktok",
+  );
+  // douyin keeps its own family.
+  assert.equal(
+    normalizeSavedItem({ source_platform: "douyin", content_id: "1" }).source_platform,
+    "douyin",
+  );
 });
 
 test("Bangumi cards keep canonical subject links and catalog metadata", () => {

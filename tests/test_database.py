@@ -132,6 +132,30 @@ def test_event_source_schema_migrates_legacy_rows_without_overclaiming(
     )
 
 
+def test_extract_content_id_from_tiktok_urls() -> None:
+    extract = Database._extract_content_id_from_url
+
+    assert (
+        extract("tiktok", "https://www.tiktok.com/@sketchdaily/video/7340000000000000002")
+        == "7340000000000000002"
+    )
+    # Query strings / trailing params don't pollute the id.
+    assert (
+        extract("tiktok", "https://www.tiktok.com/@user/video/7340000000000000003?lang=en")
+        == "7340000000000000003"
+    )
+    # Photo posts share the same numeric id space.
+    assert (
+        extract("tiktok", "https://www.tiktok.com/@user/photo/7340000000000000004")
+        == "7340000000000000004"
+    )
+    # Non-video paths and non-numeric segments yield no id.
+    assert extract("tiktok", "https://www.tiktok.com/@sketchdaily") == ""
+    assert extract("tiktok", "https://www.tiktok.com/tag/booktok") == ""
+    assert extract("tiktok", "https://www.tiktok.com/@user/video/not-a-video") == ""
+    assert extract("tiktok", "") == ""
+
+
 def test_event_insert_persists_canonical_source_attribution(tmp_path: Path) -> None:
     db = _db(tmp_path)
 

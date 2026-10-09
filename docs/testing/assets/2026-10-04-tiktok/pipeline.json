@@ -1,0 +1,25 @@
+{
+  "chat_provider": "openai_compatible",
+  "storage": "isolated",
+  "profile": "synthetic science interest",
+  "pipeline": {
+    "discovered": 4,
+    "reason": "ok",
+    "enqueued": 4,
+    "evaluated": 4,
+    "cached": 3,
+    "rejected": 1
+  },
+  "embedding_dimensions": 768,
+  "candidate_statuses": {
+    "cached": 3,
+    "rejected_low_score": 1
+  },
+  "admitted": 3,
+  "copy_ready": 3,
+  "served": 3,
+  "recommendations_http": 200,
+  "api_items": 3,
+  "api_tiktok_identity_valid": true,
+  "item_identity_valid": true
+}

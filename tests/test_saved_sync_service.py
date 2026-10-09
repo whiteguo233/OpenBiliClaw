@@ -162,6 +162,24 @@ def test_local_save_without_auto_sync_never_invokes_adapter(db: Database) -> Non
     assert adapter.calls == []
 
 
+def test_tiktok_local_save_is_local_only_not_pending_upgrade(db: Database) -> None:
+    """TikTok has no native-save adapter by design; a local save must commit
+    as ``unsupported`` / ``local_only_source`` instead of a misleading pending
+    "upgrade and retry" state."""
+    adapter = FakeAdapter(NativeSaveCapability("bilibili", True, True, True))
+    service = SavedSyncService(db, NativeSaveRouter([adapter]))
+    item = SavedItemInput("tiktok", "7340000000000000001")
+
+    result = service.save_local("favorite", item, auto_sync=True)
+
+    row = db.get_saved_membership("favorite", item.item_key)
+    assert row is not None
+    assert row["sync_status"] == "unsupported"
+    assert result.saved is True
+    assert result.sync_status == "unsupported"
+    assert adapter.calls == []
+
+
 def test_validate_native_save_selection_reads_existing_membership_without_mutation(
     db: Database,
 ) -> None:

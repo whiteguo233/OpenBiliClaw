@@ -2852,6 +2852,10 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
     ),
     "douyin": "短视频 / 娱乐 / 热点 / 搞笑 / 才艺。短平快、口语、跟得上当下热度。",
     "youtube": ("英文长内容 / 纪录片 / 讲座 / 国际视角。2-4 词,中英文按话题选最常见的搜索语言。"),
+    "tiktok": (
+        "海外短视频 / 话题标签驱动 / 趋势挑战 / 生活技巧 / 娱乐。产出词最终会被"
+        "压缩成无空格 hashtag 使用,优先英文单词或可连写的短组合,避免长句。"
+    ),
     "twitter": (
         "实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,华语圈话题可用中文。"
     ),
@@ -2932,7 +2936,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter / github / zhihu / reddit / "
+    "(bilibili / xiaohongshu / douyin / youtube / tiktok / twitter / github / zhihu / reddit / "
     "bangumi / linuxdo / v2ex / weibo / instagram),"
     "每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
@@ -2969,6 +2973,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
     '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
     '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
+    '  "tiktok": ["satisfying", "historyfacts"],\n'
     '  "twitter": ["rust async runtime", "llm agents discussion"],\n'
     '  "zhihu": ["AI 工具 经验", "城市规划 问答"],\n'
     '  "reddit": ["local LLM agents", "open source AI tooling"],\n'
@@ -3006,7 +3011,7 @@ Return ONLY a strict JSON object with exactly this shape:
     {
       "interest": "string",
       "axis_id_or_label": "existing axis_id or exact axis_label",
-      "platform": "bilibili|xiaohongshu|douyin|youtube|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
+      "platform": "bilibili|xiaohongshu|douyin|youtube|tiktok|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
       "core_concept": "short searchable concept",
       "decoration": "optional style marker",
       "recency_sensitivity": "low|medium|high"

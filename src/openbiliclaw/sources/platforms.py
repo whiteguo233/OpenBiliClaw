@@ -14,6 +14,7 @@ PLATFORM_BILIBILI = "bilibili"
 PLATFORM_XIAOHONGSHU = "xiaohongshu"
 PLATFORM_DOUYIN = "douyin"
 PLATFORM_YOUTUBE = "youtube"
+PLATFORM_TIKTOK = "tiktok"
 PLATFORM_TWITTER = "twitter"
 PLATFORM_GITHUB = "github"
 PLATFORM_ZHIHU = "zhihu"
@@ -55,6 +56,7 @@ CONTENT_ID_METADATA_KEYS = (
     "bvid",
     "note_id",
     "aweme_id",
+    "tiktok_aweme_id",
     "video_id",
     "yt_video_id",
     "post_id",
@@ -94,6 +96,7 @@ class SourceFamilyRule:
 #       same request through a proxy returned HTTP 200 in ~0.5s; see the
 #       ``_DIRECT_FETCH_HOST_SUFFIXES`` comment in runtime/image_cache.py.
 #     • youtube — youtube.com / ytimg.com / ggpht.com.
+#     • tiktok — tiktok.com (fetched through yt-dlp, honoring the same proxy).
 #     • twitter — x.com.       • reddit — reddit.com.
 #   The CN-direct families are the exact opposite and MUST stay False:
 #   pitfall rule 1 forces ``trust_env=False`` on bilibili / douyin (and the
@@ -107,6 +110,7 @@ class SourceFamilyRule:
 #     • bangumi — sources/bangumi_client.py passes ``outbound_httpx_kwargs()``.
 #     • youtube — youtube/client.py passes ``outbound_httpx_kwargs()`` /
 #       ``outbound_requests_proxies()`` / ``outbound_ytdlp_proxy()``.
+#     • tiktok — sources/tiktok.py passes ``outbound_ytdlp_proxy()`` to yt-dlp.
 #     • twitter — sources/x_client.py resolves the route into twitter-cli's
 #       dedicated ``TWITTER_PROXY`` session setup.
 #     • reddit — sources/reddit_tasks.py passes ``outbound_cli_environment()``
@@ -128,7 +132,7 @@ SOURCE_FAMILY_RULES = (
     ),
     SourceFamilyRule(
         family=PLATFORM_DOUYIN,
-        platform_aliases=frozenset({"douyin", "dy", "tiktok"}),
+        platform_aliases=frozenset({"douyin", "dy"}),
         source_prefixes=("dy-", "dy_", "douyin"),
         url_hosts=("douyin.com",),
     ),
@@ -137,6 +141,14 @@ SOURCE_FAMILY_RULES = (
         platform_aliases=frozenset({"youtube", "yt"}),
         source_prefixes=("yt-", "yt_", "youtube"),
         url_hosts=("youtube.com", "youtu.be"),
+        requires_overseas_network=True,
+        routed_by_network_mode=True,
+    ),
+    SourceFamilyRule(
+        family=PLATFORM_TIKTOK,
+        platform_aliases=frozenset({"tiktok", "tt"}),
+        source_prefixes=("tiktok-", "tiktok_", "tiktok"),
+        url_hosts=("tiktok.com",),
         requires_overseas_network=True,
         routed_by_network_mode=True,
     ),

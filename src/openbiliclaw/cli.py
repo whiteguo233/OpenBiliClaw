@@ -409,7 +409,7 @@ _KEYWORD_INSPIRATION_PLATFORMS_OPTION = typer.Option(
     "-p",
     help=(
         "目标平台，可重复传或逗号分隔。默认 bilibili；可选 bilibili/xiaohongshu/"
-        "douyin/youtube/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
+        "douyin/youtube/tiktok/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
     ),
 )
 _KEYWORD_INSPIRATION_KIND_OPTION = typer.Option(
@@ -8426,6 +8426,7 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
         "xiaohongshu": "小红书",
         "douyin": "抖音",
         "youtube": "YouTube",
+        "tiktok": "TikTok",
     }
     return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
 
@@ -14579,6 +14580,7 @@ def keyword_inspiration_dry_run(
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "twitter",
         "github",
         "zhihu",
@@ -15261,6 +15263,191 @@ def _run_douyin_formal_discovery(*, limit: int) -> None:
             "warning",
             "抖音 discovery 执行失败",
             "请检查后端及扩展日志中的结构化错误。",
+        ),
+    }
+    kind, title, body = messages.get(reason, ("warning", "未知状态", reason or "无详细信息"))
+    _print_status_panel(kind, title, body)
+    if reason not in {"throttled", "pool_full"}:
+        raise typer.Exit(code=1)
+
+
+@app.command("discover-tiktok")
+def discover_tiktok_smoke(
+    mode: str = typer.Option("feed", help="只读取数分支：feed / tag / user / search"),
+    query: str = typer.Option("", help="标签、创作者或搜索词；feed 不需要"),
+    limit: int = typer.Option(5, min=1, max=20, help="最多显示的条目数"),
+) -> None:
+    """Read TikTok metadata with isolated state; never write the user's candidate pool."""
+    import tempfile
+
+    from openbiliclaw.api.runtime_context import _build_tiktok_client
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+    if mode not in {"feed", "tag", "user", "search"} or (mode != "feed" and not query.strip()):
+        raise typer.BadParameter("mode 必须是 feed/tag/user/search，非 feed 分支需要 --query")
+    cfg = load_config()
+    from openbiliclaw.network import set_outbound_proxy
+
+    set_outbound_proxy(cfg.network.proxy, mode=cfg.network.mode)
+    cookie = resolve_tiktok_cookie(data_dir=cfg.data_path, cookie_env=cfg.sources.tiktok.cookie_env)
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-tiktok-smoke-") as directory:
+        cfg.data_dir = directory
+        client = _build_tiktok_client(cfg, cfg.sources.tiktok)
+        if client.web is not None:
+            client.web.identity.login_cookie = cookie
+
+        async def run() -> list[Any]:
+            if mode == "feed":
+                rows = await client.get_feed(limit=limit)
+                if rows is None:
+                    raise RuntimeError("TikTok feed unavailable")
+                return list(rows)
+            method = {
+                "tag": client.get_tag_videos,
+                "user": client.get_user_videos,
+                "search": client.search_videos,
+            }[mode]
+            return list(await method(query, limit=limit))
+
+        try:
+            rows = asyncio.run(run())
+        except Exception as exc:
+            console.print(f"TikTok smoke: {getattr(exc, 'reason', type(exc).__name__)}")
+            raise typer.Exit(code=1) from exc
+        console.print(f"TikTok {mode}: fetched={len(rows)}; storage=isolated; candidate_writes=0")
+
+
+def _run_tiktok_discovery(*, limit: int) -> None:
+    """Run the formal TikTok producer without the daemon master switch."""
+    from openbiliclaw.api.runtime_context import build_tiktok_discovery_producer
+    from openbiliclaw.config import load_config
+    from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
+    from openbiliclaw.llm.concurrency import background_llm_concurrency
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    _require_runtime_config()
+    config = load_config()
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "TikTok discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.tiktok].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    if not hasattr(database, "conn"):
+        _print_status_panel("warning", "TikTok 任务表不可用", "当前数据库不支持 tiktok 运行台账。")
+        raise typer.Exit(code=1)
+
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    llm_service = LLMService(
+        registry=_build_registry(),
+        memory=_build_memory_manager(),
+        usage_recorder=_build_usage_recorder(),
+        module_overrides=module_overrides_from_config(config),
+        concurrency=config.llm.concurrency,
+        concurrency_gate=_build_llm_concurrency_gate(),
+    )
+    concurrency = DiscoveryConcurrencyController(
+        bilibili_request_concurrency=2,
+        llm_evaluation_concurrency=background_llm_concurrency(config.llm.concurrency),
+    )
+    producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+        # Manual discover is source-scoped and must not inherit the daemon's
+        # scheduler master switch.
+        enabled_override=True,
+    )
+    if producer is None:
+        _print_status_panel(
+            "warning",
+            "TikTok discovery producer 未启动",
+            "请确认 TikTok 来源已启用且数据库可用。",
+        )
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(producer.produce_if_due(limit=limit))
+    reason = str(result.get("reason", ""))
+    discovered = int(cast("int | float | str | bool", result.get("discovered", 0)) or 0)
+    enqueued = int(cast("int | float | str | bool", result.get("enqueued", 0)) or 0)
+    source_counts_raw = result.get("source_counts", {})
+    source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+    source_counts_text = ", ".join(
+        f"{source}:{count}" for source, count in sorted(source_counts.items())
+    )
+
+    _print_page_title("TikTok 内容发现", "正式 producer · unified keywords · candidate pipeline")
+    if reason in {"ok", "empty", "degraded"}:
+        if reason == "degraded":
+            console.print("  [yellow]部分 TikTok 分支失败，已保留成功候选；详见后端日志。[/yellow]")
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "tiktok"),
+                ("来源分布", source_counts_text or "（无）"),
+            ],
+        )
+        if reason == "empty" or discovered <= 0:
+            console.print("  [dim]本轮分支正常完成，但没有产生新候选。[/dim]")
+            return
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "rate_limited": ("warning", "TikTok 暂时限流", "共享冷却期结束后会自动恢复。"),
+        "no_keywords": ("info", "暂无待执行关键词", "等待关键词规划器补充。"),
+        "disabled": ("info", "TikTok discovery 已禁用", "请启用 TikTok 来源后重试。"),
+        "throttled": (
+            "info",
+            "距离上次 TikTok discovery 不足最小调度间隔",
+            "可在配置页调整 TikTok 最小调度间隔分钟数。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需继续补充 TikTok 候选。"),
+        "no_profile": ("warning", "尚未初始化 Soul 画像", "请先执行 `openbiliclaw init`。"),
+        "budget_exhausted": (
+            "warning",
+            "TikTok discovery 分支预算已耗尽",
+            "请调整对应 daily_*_budget 或等待 UTC 日预算重置。",
+        ),
+        "error": (
+            "warning",
+            "TikTok discovery 执行失败",
+            "请检查后端日志中的结构化错误。",
         ),
     }
     kind, title, body = messages.get(reason, ("warning", "未知状态", reason or "无详细信息"))
@@ -16714,7 +16901,7 @@ def discover(
         "--source",
         "-s",
         help=(
-            "触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu、reddit、"
+            "触发发现的内容源：bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、"
             "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 instagram。"
         ),
         case_sensitive=False,
@@ -16752,6 +16939,16 @@ def discover(
                 "douyin 渠道走正式 producer，已忽略策略过滤。",
             )
         _run_douyin_formal_discovery(limit=limit)
+        return
+
+    if source_normalized == "tiktok":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "tiktok 渠道走正式 producer，已忽略策略过滤。",
+            )
+        _run_tiktok_discovery(limit=limit)
         return
 
     if source_normalized == "zhihu":
@@ -16838,7 +17035,7 @@ def discover(
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
-            "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、github（gh）、"
+            "bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（gh）、"
             "linuxdo、v2ex、weibo、instagram。"
         )
 

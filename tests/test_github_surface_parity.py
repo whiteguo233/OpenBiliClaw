@@ -92,14 +92,18 @@ def test_canonical_source_roster_matches_every_central_registration_set() -> Non
         "source policy shares": set(DEFAULT_POOL_SOURCE_SHARES),
         "shared frontend source keys": set(_js_string_array(shared_source, "SOURCE_KEYS")),
         "API source-share order": set(_literal_assignment(app_path, "_SOURCE_SHARE_ORDER")),
-        "API init order": set(_literal_assignment(app_path, "_INIT_SOURCE_ORDER")),
     }
     for name, roster in rosters.items():
         _assert_same_roster(name, roster, canonical)
 
+    # Guided init covers every source family except tiktok (guidedInit: false —
+    # its discovery is creator/tag driven and collects no profile signals).
+    init_roster = tuple(_literal_assignment(app_path, "_INIT_SOURCE_ORDER"))
+    assert set(init_roster) == canonical - {"tiktok"}
+    assert "tiktok" not in init_roster
+
     assert tuple(SOURCE_ORDER) == canonical_tuple
     assert tuple(_literal_assignment(app_path, "_SOURCE_SHARE_ORDER")) == canonical_tuple
-    assert tuple(_literal_assignment(app_path, "_INIT_SOURCE_ORDER")) == canonical_tuple
     assert "github: Object.freeze({ guidedInit: true })" in shared_source
     assert 'github: "GitHub"' in shared_source
 

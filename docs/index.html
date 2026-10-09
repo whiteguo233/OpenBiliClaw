@@ -1177,7 +1177,7 @@
             </div>
             <div class="metric">
               <b data-i18n="metricCrossTitle">跨平台</b>
-              <span data-i18n="metricCrossText">十三类平台来源（含实验性 Instagram）与开放 Web 汇入同一推荐闭环</span>
+              <span data-i18n="metricCrossText">十四类平台来源（含实验性 Instagram）与开放 Web 汇入同一推荐闭环</span>
             </div>
             <div class="metric">
               <b data-i18n="metricProactiveTitle">可调教</b>
@@ -1363,7 +1363,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         <div class="section-head reveal">
           <p class="eyebrow" data-i18n="sourcesEyebrow">Sources</p>
           <h2 data-i18n="sourcesTitle">你的兴趣不该被单个平台切碎。</h2>
-          <p class="lead" data-i18n="sourcesLead">B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web，共用同一套理解、发现和推荐流程。</p>
+          <p class="lead" data-i18n="sourcesLead">B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web，共用同一套理解、发现和推荐流程。</p>
         </div>
         <div class="sources-grid">
           <article class="source-card reveal" data-source="bilibili">
@@ -1385,6 +1385,11 @@ docker compose -f docker-compose.prebuilt.yml up -d
             <span>YouTube</span>
             <h3 data-i18n="sourceYoutubeTitle">YouTube</h3>
             <p data-i18n="sourceYoutubeText">插件读取观看历史、订阅和点赞用于画像初始化，也支持 Takeout 离线导入；日常发现由后端搜索、热门和频道内容补池。</p>
+          </article>
+          <article class="source-card reveal" data-source="tiktok">
+            <span>TikTok</span>
+            <h3 data-i18n="sourceTiktokTitle">TikTok（实验性）</h3>
+            <p data-i18n="sourceTiktokText">Web API 访客身份 + 请求签名匿名读取推荐流、话题标签与创作者列表补池，yt-dlp 兜底；可选登录 Cookie（插件自动同步）解锁关键词搜索。</p>
           </article>
           <article class="source-card reveal" data-source="x">
             <span>X / Twitter</span>
@@ -1568,8 +1573,8 @@ docker compose -f docker-compose.prebuilt.yml up -d
         pageTitle: "OpenBiliClaw - 自进化跨平台内容发现 Agent | 本地私有全网推荐",
         metaDescription: "OpenBiliClaw 是纯本地、私有、开源的自进化跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web。",
         ogTitle: "OpenBiliClaw - 自进化跨平台内容发现 Agent",
-        ogDescription: "纯本地、私有、开源。让 Agent 带着对你的理解，从十三类平台来源（含实验性 Instagram）与开放 Web 主动寻找内容。",
-        twitterDescription: "纯本地、私有、开源的跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web。",
+        ogDescription: "纯本地、私有、开源。让 Agent 带着对你的理解，从十四类平台来源（含实验性 Instagram）与开放 Web 主动寻找内容。",
+        twitterDescription: "纯本地、私有、开源的跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web。",
         ogLocale: "zh_CN",
         htmlLang: "zh-CN",
         brandSubtitle: "自进化内容发现 Agent",
@@ -1595,7 +1600,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         metricEvolveTitle: "自进化",
         metricEvolveText: "使用、反馈、聊天都会推动理解继续变深",
         metricCrossTitle: "跨平台",
-        metricCrossText: "十三类平台来源（含实验性 Instagram）与开放 Web 汇入同一推荐闭环",
+        metricCrossText: "十四类平台来源（含实验性 Instagram）与开放 Web 汇入同一推荐闭环",
         metricProactiveTitle: "可调教",
         metricProactiveText: "喜欢、不感兴趣和聊天反馈都会改变后续推荐",
         heroVisualAria: "OpenBiliClaw 推荐界面截图",
@@ -1658,7 +1663,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         loopStep5Text: "Recommendation Engine 选出内容、解释原因、接收反馈；下一轮画像和候选池会因此继续校准。",
         sourcesEyebrow: "Sources",
         sourcesTitle: "你的兴趣不该被单个平台切碎。",
-        sourcesLead: "B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web，共用同一套理解、发现和推荐流程。",
+        sourcesLead: "B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web，共用同一套理解、发现和推荐流程。",
         sourceBiliTitle: "B 站",
         sourceBiliText: "历史、收藏、关注、搜索、趋势、关联链和跨域探索共同提供候选。",
         sourceXhsTitle: "小红书",
@@ -1667,6 +1672,8 @@ docker compose -f docker-compose.prebuilt.yml up -d
         sourceDouyinText: "初始化信号走扩展任务；search、hot 和 feed 从抖音首页 DOM 操作触发，并被动收集页面响应。",
 	        sourceYoutubeTitle: "YouTube",
 	        sourceYoutubeText: "插件读取观看历史、订阅和点赞用于画像初始化，也支持 Takeout 离线导入；日常发现由后端搜索、热门和频道内容补池。",
+	        sourceTiktokTitle: "TikTok（实验性）",
+	        sourceTiktokText: "Web API 访客身份 + 请求签名匿名读取推荐流、话题标签与创作者列表补池，yt-dlp 兜底；可选登录 Cookie（插件自动同步）解锁关键词搜索。",
 	        sourceXTitle: "X（Twitter）",
 	        sourceXText: "初始化信号和 Cookie 由插件同步，后端以只读会话执行搜索、For You 与关注作者发现，推文使用文字卡片呈现。",
 	        sourceZhihuTitle: "知乎",
@@ -1763,7 +1770,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         metricEvolveTitle: "Self-improving",
         metricEvolveText: "Usage, feedback, and chat all deepen the system's understanding",
         metricCrossTitle: "Cross-platform",
-        metricCrossText: "Thirteen platform sources (including experimental Instagram) and the open web feed one recommendation loop",
+        metricCrossText: "Fourteen platform sources (including experimental Instagram) and the open web feed one recommendation loop",
         metricProactiveTitle: "Tunable",
         metricProactiveText: "Likes, dislikes, and chat feedback change future recommendations",
         heroVisualAria: "OpenBiliClaw recommendation UI screenshot",
@@ -1826,7 +1833,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         loopStep5Text: "Recommendation Engine selects content, explains why, and receives feedback. The next profile and pool iteration are calibrated from that signal.",
         sourcesEyebrow: "Sources",
         sourcesTitle: "Your interests should not be split by one platform.",
-        sourcesLead: "Bilibili, Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web share one understanding, discovery, and recommendation flow.",
+        sourcesLead: "Bilibili, Xiaohongshu, Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web share one understanding, discovery, and recommendation flow.",
         sourceBiliTitle: "Bilibili",
         sourceBiliText: "History, favorites, follows, search, trends, related chains, and exploration all contribute candidates.",
         sourceXhsTitle: "Xiaohongshu",
@@ -1835,6 +1842,8 @@ docker compose -f docker-compose.prebuilt.yml up -d
         sourceDouyinText: "Init signals use extension tasks; search, hot, and feed start from the Douyin home page via DOM interactions and passively collect page responses.",
 	        sourceYoutubeTitle: "YouTube",
 	        sourceYoutubeText: "The extension reads watch history, subscriptions, and likes for profile init, with offline Takeout import also supported; backend search, hot, and channel discovery replenish the daily pool.",
+	        sourceTiktokTitle: "TikTok (experimental)",
+	        sourceTiktokText: "The web API guest identity anonymously reads the For-You feed, hashtag, and creator listings with signed requests to replenish the pool, with yt-dlp as fallback; an optional login cookie (synced by the extension) unlocks keyword search.",
 	        sourceXTitle: "X (Twitter)",
 	        sourceXText: "The extension syncs init signals and cookies; the backend uses a read-only session for search, For You, and followed-author discovery, with tweets rendered as text cards.",
 	        sourceZhihuTitle: "Zhihu",

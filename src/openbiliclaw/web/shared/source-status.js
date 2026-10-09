@@ -63,7 +63,7 @@
 
   /** Platform slugs the contract covers, in settings-page display order. */
   const SOURCE_KEYS = Object.freeze([
-    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",
+    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit",
     "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 
@@ -73,6 +73,9 @@
     douyin: Object.freeze({ guidedInit: true }),
     weibo: Object.freeze({ guidedInit: true }),
     youtube: Object.freeze({ guidedInit: true }),
+    // TikTok is a yt-dlp public source with no account bootstrap, so it has
+    // no guided-init checkbox; it is toggled from config / settings only.
+    tiktok: Object.freeze({ guidedInit: false }),
     twitter: Object.freeze({ guidedInit: true }),
     github: Object.freeze({ guidedInit: true }),
     zhihu: Object.freeze({ guidedInit: true }),
@@ -99,6 +102,7 @@
     douyin: "抖音",
     weibo: "微博",
     youtube: "YouTube",
+    tiktok: "TikTok",
     twitter: "X",
     github: "GitHub",
     zhihu: "知乎",
