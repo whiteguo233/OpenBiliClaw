@@ -21,7 +21,7 @@ const REASON_TEXT = {
   no_sources_selected: "至少勾选一个数据来源。",
   invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
   no_profile_signal_sources:
-    "所选来源缺少可用于画像初始化的账号信号；请按该来源提示补充个人令牌、公开用户名，或先在对应网站登录并连接扩展（如 bgm.tv）。",
+    "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
   invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
   bangumi_token_check_failed: "校验 Bangumi 令牌时无法连接 Bangumi，请稍后重试。",
   github_bootstrap_not_ready:
@@ -281,6 +281,7 @@ const INIT_SOURCE_LABEL_FALLBACK = {
   reddit: "Reddit",
   bangumi: "Bangumi",
   v2ex: "V2EX",
+  instagram: "Instagram",
 };
 const INIT_SOURCE_DEFAULT_CHECKED = new Set(["bilibili"]);
 const _initSourceStatus = globalThis.OpenBiliClawSourceStatus || null;
@@ -648,7 +649,9 @@ export function shouldAttachEmbeddingPullProgress(status) {
 export function describeInitStartError(error) {
   const details = error && error.details;
   const code = details && (details.error || details.reason);
-  const detail = typeof details?.detail === "string" ? details.detail.trim() : "";
+  // The same admission code serves several platforms; the backend owns the
+  // source-specific recovery hint. Callers render this as plain text.
+  const detail = typeof details?.detail === "string" ? details.detail.trim().slice(0, 2000) : "";
   return (
     detail ||
     describeInitReason(code) ||

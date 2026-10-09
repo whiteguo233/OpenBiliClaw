@@ -44,11 +44,16 @@ from openbiliclaw.api.source_auth import (
 )
 from openbiliclaw.api.source_auth.forms import WRITABLE_FORM_KINDS
 from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
-from openbiliclaw.api.source_auth.providers import _DOUYIN_DETAIL, SOURCE_AUTH_PROVIDERS
+from openbiliclaw.api.source_auth.providers import (
+    _DOUYIN_DETAIL,
+    SOURCE_AUTH_PROVIDERS,
+    SourceAuthContext,
+)
 from openbiliclaw.api.source_auth.verify import (
     _BROWSER_HEARTBEAT_PREFIXES,
     VERIFY_ACTIONS,
     VERIFY_DEBOUNCE,
+    VerifyDebounce,
     _verify_browser_heartbeat,
     verify_source,
 )
@@ -1586,6 +1591,9 @@ _EXPECTED_VERIFY_METHODS = {
     # the fixed verify action remains browser_heartbeat.
     "linuxdo": "none",
     "weibo": "none",
+    # Instagram's fixed verify action can request the first heartbeat, while
+    # the source-wide legacy method stays none until evidence exists (I3).
+    "instagram": "none",
     # V2EX is anonymous by default; its optional PAT only becomes probeable
     # after the caller supplies a token.
     "v2ex": "none",
@@ -2554,6 +2562,79 @@ async def test_weibo_browser_heartbeat_roundtrip_updates_verification(
     assert result.changed is True
 
 
+async def test_instagram_browser_heartbeat_roundtrip_updates_verification(
+    contract_env: _Env,
+) -> None:
+    """Instagram verification asks the extension for boolean login evidence."""
+    contract_env.cfg.sources.instagram.enabled = True
+    _seed_browser_login_state(
+        contract_env.db,
+        prefix="instagram",
+        logged_in=True,
+        when_iso=_iso_hours_ago(73),
+    )
+
+    class _RespondingHub:
+        async def publish(self, event: dict[str, object]) -> bool:
+            assert event["type"] == "instagram_login_state_sync_requested"
+            _seed_browser_login_state(
+                contract_env.db,
+                prefix="instagram",
+                logged_in=True,
+                when_iso=_iso_hours_ago(0),
+            )
+            return True
+
+    result = await verify_source(
+        "instagram",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        event_hub=_RespondingHub(),
+    )
+
+    assert result.contract.verify_method == "browser_heartbeat"
+    assert result.contract.verification == "verified"
+    assert result.contract.capabilities["bootstrap"].readiness == "ready"
+    assert result.changed is True
+
+
+async def test_instagram_first_verify_requests_initial_browser_heartbeat(
+    contract_env: _Env,
+) -> None:
+    """No prior row must not disable the extension heartbeat action."""
+
+    contract_env.cfg.sources.instagram.enabled = True
+
+    class _RespondingHub:
+        async def publish(self, event: dict[str, object]) -> bool:
+            assert event["type"] == "instagram_login_state_sync_requested"
+            _seed_browser_login_state(
+                contract_env.db,
+                prefix="instagram",
+                logged_in=True,
+                when_iso=_iso_hours_ago(0),
+            )
+            return True
+
+    before = SOURCE_AUTH_PROVIDERS["instagram"](
+        SourceAuthContext(cfg=contract_env.cfg, database=contract_env.db)
+    )
+    assert before.can_verify_now is True
+    assert before.verify_method == "none"
+
+    result = await verify_source(
+        "instagram",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        event_hub=_RespondingHub(),
+        debounce=VerifyDebounce(),
+    )
+
+    assert result.contract.verification == "verified"
+    assert result.contract.capabilities["bootstrap"].readiness == "ready"
+    assert result.changed is True
+
+
 @pytest.mark.parametrize(
     ("slug", "prefix"),
     [("xiaohongshu", "xhs"), ("zhihu", "zhihu"), ("linuxdo", "linuxdo")],
@@ -3213,7 +3294,12 @@ def test_extension_only_platforms_expose_no_writable_input(contract_env: _Env) -
         slug for slug, item in payload.items() if item["form"]["kind"] == "extension_only"
     }
 
-    assert extension_only == {"xiaohongshu", "zhihu", "linuxdo"}, extension_only
+    assert extension_only == {
+        "xiaohongshu",
+        "zhihu",
+        "linuxdo",
+        "instagram",
+    }, extension_only
     for slug in extension_only:
         form = payload[slug]["form"]
         assert form["placeholder"] == "", slug

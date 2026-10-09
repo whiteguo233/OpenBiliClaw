@@ -6373,7 +6373,7 @@
                 <span id="poolReplenished" class="recommendation-status-value">刚补进 0 条</span>
               </div>
               <div class="recommendation-status-chip" data-tone="info">
-                <span class="recommendation-status-label">现在在忙</span>
+                <span id="poolTopicsLabel" class="recommendation-status-label">现在在忙</span>
                 <span id="poolTopics" class="recommendation-status-value">还在继续摸你的口味</span>
               </div>
             </div>
@@ -7878,6 +7878,31 @@
       </div>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="instagram" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-instagram">
+          <h3><span class="section-icon">IG</span> Instagram</h3>
+          <div class="settings-field-row">
+            <input id="cfgInstagramEnabled" type="checkbox">
+            <label for="cfgInstagramEnabled">启用 Instagram discovery</label>
+          </div>
+          <p class="settings-hint source-status-row" id="cfgInstagramStatus" data-source-status="instagram"><span class="src-dot">●</span> <span class="src-detail">Instagram 来源状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-instagram">
+          <p class="settings-hint">公开 Topic / Creator 发现可匿名运行；初始化只在当前 Instagram 登录浏览器内只读拉取最近点赞、收藏和关注。扩展只同步 sessionid 是否存在，不上传 Cookie 值。</p>
+          <div class="settings-field">
+            <label>内容发现分支</label>
+            <div class="settings-field-row"><input id="cfgInstagramModeTopic" type="checkbox"><label for="cfgInstagramModeTopic">Topic</label></div>
+            <div class="settings-field-row"><input id="cfgInstagramModeCreator" type="checkbox"><label for="cfgInstagramModeCreator">Creator</label></div>
+          </div>
+          <div class="settings-field"><label for="cfgInstagramDailyTopicBudget">每日 Topic 条目</label><input id="cfgInstagramDailyTopicBudget" type="number" min="0" step="1" placeholder="60"></div>
+          <div class="settings-field"><label for="cfgInstagramDailyCreatorBudget">每日 Creator 条目</label><input id="cfgInstagramDailyCreatorBudget" type="number" min="0" step="1" placeholder="30"></div>
+          <div class="settings-field"><label for="cfgInstagramRequestInterval">请求间隔秒数</label><input id="cfgInstagramRequestInterval" type="number" min="1" max="30" step="1" placeholder="3"></div>
+          <div class="settings-field"><label for="cfgInstagramMinInterval">最小调度间隔分钟</label><input id="cfgInstagramMinInterval" type="number" min="0" step="1" placeholder="10"></div>
+          <div class="settings-field"><label for="cfgInstagramBootstrapLimit">每类初始化信号上限</label><input id="cfgInstagramBootstrapLimit" type="number" min="1" max="300" step="1" placeholder="300"></div>
+        </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="pool">
         <h3><span class="section-icon">&#x1F4E6;</span> 候选池来源占比</h3>
         <div class="settings-field">
@@ -7929,6 +7954,8 @@
           <input id="cfgPoolShareLinuxdo" type="number" min="1" step="1" placeholder="1">
           <label for="cfgPoolShareV2ex">候选池 V2EX 占比</label>
           <input id="cfgPoolShareV2ex" type="number" min="1" step="1" placeholder="1">
+          <label for="cfgPoolShareInstagram">候选池 Instagram 占比</label>
+          <input id="cfgPoolShareInstagram" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

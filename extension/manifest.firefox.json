@@ -50,6 +50,7 @@
         "http://localhost/*"
     ],
     "optional_host_permissions": [
+        "https://*.instagram.com/*",
         "http://*/*",
         "https://*/*"
     ],
@@ -173,6 +174,25 @@
                 "content/v2ex.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "content/instagram.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "main/instagram-response-tap.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
         },
         {
             "matches": [

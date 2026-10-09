@@ -380,6 +380,22 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
             "插件只同步是否登录，实际只读请求在微博页面内执行，不上传 Cookie。"
         ),
     ),
+    "instagram": CredentialSpec(
+        slug="instagram",
+        kinds=("login_state",),
+        opaque_credential=True,
+        unverified_reason=(
+            "Instagram Cookie 留在浏览器中；插件只上报 sessionid 是否存在，"
+            "后端不读取或保存 Cookie。"
+        ),
+        form_kind="extension_only",
+        form_label="Instagram 登录态",
+        login_url="https://www.instagram.com/",
+        help_text=(
+            "公开 topic/creator 发现无需登录。导入个人点赞、收藏和关注时，请在浏览器登录 "
+            "Instagram；插件只上报一个布尔登录状态。"
+        ),
+    ),
 }
 
 
@@ -798,6 +814,7 @@ def persist_credential(
             "linuxdo": "linuxdo",
             "v2ex": "v2ex",
             "weibo": "weibo",
+            "instagram": "instagram",
         }.get(slug, slug)
         setter = f"set_{prefix}_login_state"
         getter = f"get_{prefix}_login_state"

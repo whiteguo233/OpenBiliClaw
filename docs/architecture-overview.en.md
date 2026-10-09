@@ -21,6 +21,7 @@ background ─ background admission (default 3) ──────┘
                 parked when canonical available = 0
 
 guided init: signals → preferences → full profile commit → discover → evaluate → copy → canonical ready
+             Instagram: read-only liked/saved/following → init-owned topic/creator → small-batch eval/copy
                                                               └→ optional probes after terminal state
 
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
@@ -53,7 +54,9 @@ config save: persist → HTTP 202 queued/apply_revision → latest-wins backgrou
 config hot reload: accepting drain old worker → atomic pause/revoke → new worker; 25m safety window
 realtime: runtime-stream 20s idle heartbeat → transient close shows reconnecting and retries
 images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3, fg priority)
-                                            → cache-key singleflight → whitelist fetch → atomic cache
+                                            → cache-key singleflight → public DNS (proxied: fixed DoH)
+                                            → pinned IP / original Host and TLS → atomic cache
+Instagram manual replenish → source quota/task locks → discover/eval/copy → usable supply or explicit failure
 ```
 
 ```

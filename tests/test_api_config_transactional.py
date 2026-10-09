@@ -149,6 +149,38 @@ async def test_put_bilibili_date_preference_hot_reloads_curator(
 
 
 @pytest.mark.asyncio
+async def test_instagram_date_preference_config_api_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    save_config(_valid_config(), config_path)
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.put(
+            "/api/config",
+            json={
+                "sources": {
+                    "instagram": {
+                        "recommendation_date_preset": "last_7_days",
+                        "recommendation_date_weight": 1.0,
+                    }
+                }
+            },
+        )
+        assert response.status_code == 202
+        await _wait_for_apply_state(client, "applied")
+        echoed = (await client.get("/api/config")).json()["sources"]["instagram"]
+    assert echoed["recommendation_date_preset"] == "last_7_days"
+    assert echoed["recommendation_date_weight"] == 1.0
+    assert load_config(config_path).sources.instagram.recommendation_date_weight == 1.0
+
+
+@pytest.mark.asyncio
 async def test_put_config_idle_lane_returns_after_persist_before_rebuild(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

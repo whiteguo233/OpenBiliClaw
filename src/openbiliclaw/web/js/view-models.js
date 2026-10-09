@@ -141,6 +141,7 @@ const SOURCE_LABEL_MAP = {
   bangumi: "Bangumi",
   linuxdo: "Linux.do",
   v2ex: "V2EX",
+  instagram: "Instagram",
   web: "Web",
 };
 
@@ -172,6 +173,8 @@ const SOURCE_ALIAS_MAP = {
   "linux.do": "linuxdo",
   v2: "v2ex",
   v2ex: "v2ex",
+  ig: "instagram",
+  instagram: "instagram",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -254,6 +257,8 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   "v2ex-tab": "V2EX Tab",
   "v2ex-hot": "V2EX 热门",
   "v2ex-latest": "V2EX 最新",
+  "instagram-topic": "Instagram Topic",
+  "instagram-creator": "Instagram 作者",
 };
 
 function urlHostMatches(url, hostnames) {
@@ -287,6 +292,7 @@ export function normalizeSourcePlatform(item) {
     if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
     if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
     if (urlHostMatches(url, ["v2ex.com"])) return "v2ex";
+    if (urlHostMatches(url, ["instagram.com"])) return "instagram";
     return "web";
   }
   if (normalizeText(item?.bvid)) return "bilibili";
@@ -330,6 +336,7 @@ function formatRuntimeTopicLabel(value) {
   if (key.startsWith("github-")) return "GitHub";
   if (key.startsWith("linuxdo-")) return "Linux.do";
   if (key.startsWith("v2ex-")) return "V2EX";
+  if (key.startsWith("instagram-")) return "Instagram";
   return text;
 }
 
@@ -388,7 +395,12 @@ export function buildContentUrl(item) {
   if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
   if (platform === "tiktok") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
-  if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
+  if (
+    platform === "zhihu"
+    || platform === "reddit"
+    || platform === "weibo"
+    || platform === "instagram"
+  ) return "";
   return buildVideoUrl(vid);
 }
 
@@ -771,12 +783,27 @@ export function normalizeRuntimeStatus(status) {
       : [],
     manual_refresh_state: normalizeText(status?.manual_refresh_state) || "idle",
     manual_refresh_message: normalizeText(status?.manual_refresh_message),
+    discovery_failure_message: normalizeText(status?.discovery_failure_message),
   };
 }
 
 export function mergeRuntimeStatusEvent(status, event) {
   const runtime = normalizeRuntimeStatus(status);
   const next = { ...runtime };
+  if (event?.type === "refresh.started" || event?.type === "refresh.strategy") {
+    next.manual_refresh_state = "running";
+    next.manual_refresh_message = normalizeText(event?.message);
+  } else if (event?.type === "refresh.pool_updated") {
+    next.manual_refresh_state = "success";
+  } else if (event?.type === "refresh.failed") {
+    next.manual_refresh_state = "failed";
+    next.manual_refresh_message = normalizeText(event?.message);
+  }
+  if (typeof event?.discovery_failure_message === "string") {
+    next.discovery_failure_message = normalizeText(event.discovery_failure_message);
+  } else if (Number(event?.pool_available_count) > 0) {
+    next.discovery_failure_message = "";
+  }
   if (typeof event?.pool_available_count === "number") {
     // A pool snapshot can only be emitted by a running, initialized backend.
     // Promote the partial stream payload so first-load HTTP timeouts do not
@@ -832,6 +859,16 @@ export function getPoolStatusSummary(status) {
       topics: "后台还在继续给你找新的",
     };
   }
+  if (runtime.pool_available_count === 0
+      && (runtime.discovery_failure_message || runtime.manual_refresh_state === "failed")) {
+    return {
+      available: "暂无可换库存",
+      replenished: "内容发现未完成",
+      topics: runtime.manual_refresh_state === "failed"
+        ? runtime.manual_refresh_message || "请检查来源连接后重试内容发现"
+        : runtime.discovery_failure_message,
+    };
+  }
   if (runtime.pool_available_count === 0 && runtime.pool_pending_count > 0) {
     return {
       available: `找到 ${runtime.pool_pending_count} 条素材，正在整理成可换内容`,
@@ -874,6 +911,12 @@ export function getReadyRecommendationHint(status) {
   }
   if (runtime.manual_refresh_state === "running") {
     return { message: "这池先翻到头了，后台还在继续补新的。", tone: "info" };
+  }
+  if (runtime.manual_refresh_state === "failed") {
+    return { message: runtime.manual_refresh_message || "内容发现未完成，请检查来源连接后重试内容发现。", tone: "error" };
+  }
+  if (runtime.discovery_failure_message) {
+    return { message: runtime.discovery_failure_message, tone: "error" };
   }
   return { message: "这池先翻到头了，等后台再补点新的。", tone: "info" };
 }
@@ -925,7 +968,7 @@ export function getMobileRecommendationHeaderState({
             value: runtime.recent_pool_topics.length > 0
               ? formatCompactRuntimeTopicList(runtime.recent_pool_topics)
               : poolSummary.topics,
-            label: "现在在忙",
+            label: poolSummary.replenished === "内容发现未完成" ? "补货状态" : "现在在忙",
             tone: "info",
           },
         ]

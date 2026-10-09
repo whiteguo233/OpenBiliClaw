@@ -20,6 +20,7 @@ SOURCE_ORDER = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 DEFAULT_SOURCE_ENABLED = {
     "bilibili": True,
@@ -35,6 +36,7 @@ DEFAULT_SOURCE_ENABLED = {
     "linuxdo": False,
     "v2ex": False,
     "weibo": False,
+    "instagram": False,
 }
 DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 5,
@@ -50,6 +52,7 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "linuxdo": 1,
     "v2ex": 1,
     "weibo": 1,
+    "instagram": 1,
 }
 
 

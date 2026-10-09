@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import platform
 import re
@@ -261,6 +262,14 @@ def normalize_release_version(version: str) -> str:
 def make_bundle_version(version: str) -> str:
     """Normalize a tag-style version for bundle metadata."""
     return normalize_release_version(version).removeprefix("v")
+
+
+def make_macos_bundle_version(version: str) -> str:
+    """Keep architecture/variant labels out of Apple's numeric bundle version."""
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[.\-+].*)?$", make_bundle_version(version))
+    if match is None:
+        raise ValueError(f"cannot derive macOS bundle version from {version!r}")
+    return ".".join(match.groups())
 
 
 def make_windows_file_version_tuple(version: str) -> tuple[int, int, int, int]:
@@ -636,14 +645,16 @@ def write_macos_dmg_background(stage_dir: Path) -> Path:
     return background_path
 
 
-def make_macos_dmg(*, app_bundle: Path, output_dir: Path, version: str) -> Path:
+def make_macos_dmg(
+    *, app_bundle: Path, output_dir: Path, version: str, notarized: bool = False
+) -> Path:
     """Build a helper-assisted ``.dmg`` from the ``.app`` bundle (macOS only).
 
     Uses ``ditto`` (bundle-faithful copy that preserves the in-bundle symlinks)
     into a staging dir with an explicit verified install/restart helper and an
     ``/Applications`` shortcut, then ``hdiutil`` to a compressed UDZO image.
-    The helper is the reliable upgrade path; conventional drag-install remains
-    available as a compatibility fallback.
+    Experimental packages include the verified install/restart helper. Notarized
+    packages use drag-install guidance without an unsigned shell launcher.
     """
     import tempfile
     import time
@@ -658,9 +669,22 @@ def make_macos_dmg(*, app_bundle: Path, output_dir: Path, version: str) -> Path:
     try:
         subprocess.check_call(["ditto", str(app_bundle), str(stage / app_bundle.name)])
         (stage / "Applications").symlink_to("/Applications")
-        stage_macos_installer_command(stage)
-        write_macos_first_launch_guide(stage)
-        write_macos_dmg_background(stage)
+        if notarized:
+            (stage / MACOS_FIRST_LAUNCH_GUIDE_NAME).write_text(
+                "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+                "<title>OpenBiliClaw 安装</title><h1>安装 OpenBiliClaw</h1>"
+                "<p>本应用已通过 Developer ID 签名与 Apple 公证。</p>"
+                "<ol><li>升级前先从菜单栏退出旧版本。</li>"
+                "<li>将 OpenBiliClaw 拖到 Applications，升级时确认替换。</li>"
+                "<li>从 Applications 打开 OpenBiliClaw。</li></ol>"
+                "<p>Quit the old version, drag OpenBiliClaw to Applications, then launch it.</p>"
+                "<p>用户数据保留在 ~/OpenBiliClaw。User data is preserved.</p></html>",
+                encoding="utf-8",
+            )
+        else:
+            stage_macos_installer_command(stage)
+            write_macos_first_launch_guide(stage)
+            write_macos_dmg_background(stage)
         hdiutil_cmd = [
             "hdiutil",
             "create",
@@ -843,6 +867,175 @@ def repair_macos_ad_hoc_signature(app_bundle: Path) -> None:
     )
 
 
+def notary_credentials(profile: str, keychain: str | None = None) -> list[str]:
+    """Keep every notary operation on the keychain that stored the profile."""
+    args = ["--keychain-profile", profile]
+    if keychain:
+        args.extend(["--keychain", keychain])
+    return args
+
+
+def validate_macos_signing(
+    identity: str | None, profile: str | None, keychain: str | None = None
+) -> None:
+    """Reject incomplete signing configuration before building any artifacts."""
+    if not identity and not profile and not keychain:
+        return
+    if platform.system() != "Darwin":
+        raise ValueError("macOS signing options require macOS")
+    if not identity or not identity.startswith("Developer ID Application:") or not profile:
+        raise ValueError(
+            "Provide a Developer ID Application identity and a notary keychain profile"
+        )
+    subprocess.check_call(
+        ["xcrun", "notarytool", "history", *notary_credentials(profile, keychain)],
+        stdout=subprocess.DEVNULL,
+    )
+
+
+def sign_macos_app(app_bundle: Path, identity: str) -> None:
+    """Sign every nested Mach-O and code bundle inside-out, then seal the app."""
+    if not app_bundle.is_dir():
+        raise FileNotFoundError(app_bundle)
+    magic_values = {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf",
+        b"\xbf\xba\xfe\xca",
+    }
+    targets: list[Path] = []
+    for path in app_bundle.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            if path.suffix in {".framework", ".app", ".xpc", ".appex"}:
+                targets.append(path)
+        elif path.is_file():
+            with path.open("rb") as stream:
+                magic = stream.read(4)
+            if magic in magic_values:
+                # CAFEBABE is also the Java class magic. Do not sign data files.
+                description = subprocess.check_output(["file", "-b", str(path)], text=True)
+                if "Mach-O" in description:
+                    targets.append(path)
+    targets.sort(key=lambda path: (-len(path.parts), str(path)))
+    for path in [*targets, app_bundle]:
+        print(f"[sign] {path.relative_to(app_bundle.parent)}", flush=True)
+        subprocess.check_call(
+            [
+                "codesign",
+                "--force",
+                "--sign",
+                identity,
+                "--timestamp",
+                "--options",
+                "runtime",
+                str(path),
+            ]
+        )
+    subprocess.check_call(["codesign", "--verify", "--deep", "--strict", str(app_bundle)])
+
+
+def notarize_macos_artifact(
+    artifact: Path, profile: str, log_dir: Path, keychain: str | None = None
+) -> None:
+    """Require an Accepted Apple response; preserve the submission ID and log."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            "xcrun",
+            "notarytool",
+            "submit",
+            str(artifact),
+            *notary_credentials(profile, keychain),
+            "--output-format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Apple notarization upload failed: {result.stderr or result.stdout}")
+    submission = json.loads(result.stdout)
+    submission_path = log_dir / f"{artifact.name}.submission.json"
+    submission_path.write_text(result.stdout, encoding="utf-8")
+    submission_id = submission["id"]
+    print(f"[notary] Submitted {artifact.name}: {submission_id}", flush=True)
+    result = subprocess.run(
+        [
+            "xcrun",
+            "notarytool",
+            "wait",
+            submission_id,
+            *notary_credentials(profile, keychain),
+            "--timeout",
+            "90m",
+            "--output-format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    (log_dir / f"{artifact.name}.status.json").write_text(result.stdout, encoding="utf-8")
+    try:
+        status = json.loads(result.stdout).get("status")
+    except json.JSONDecodeError:
+        status = None
+    if status not in {"Accepted", "Invalid", "Rejected"}:
+        raise RuntimeError(
+            f"Notarization wait failed for {submission_id}; submission saved at {submission_path}. "
+            f"Resume with notarytool info/wait; do not resubmit blindly. {result.stderr}"
+        )
+    subprocess.run(
+        [
+            "xcrun",
+            "notarytool",
+            "log",
+            submission_id,
+            *notary_credentials(profile, keychain),
+            str(log_dir / f"{artifact.name}.notary.json"),
+        ],
+        check=True,
+    )
+    if status != "Accepted":
+        raise RuntimeError(f"Apple notarization {status}: {submission_id}; see {log_dir}")
+
+
+def staple_macos_artifact(artifact: Path) -> None:
+    """Attach and validate the notarization ticket for offline installation."""
+    subprocess.check_call(["xcrun", "stapler", "staple", str(artifact)])
+    subprocess.check_call(["xcrun", "stapler", "validate", str(artifact)])
+
+
+def notarize_macos_app(
+    app_bundle: Path, profile: str, log_dir: Path, keychain: str | None = None
+) -> None:
+    """Notarize the app before making its final ZIP and DMG."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="obc-notary-") as temp:
+        archive = Path(temp) / "OpenBiliClaw-notary.zip"
+        subprocess.check_call(
+            [
+                "ditto",
+                "-c",
+                "-k",
+                "--keepParent",
+                str(app_bundle),
+                str(archive),
+            ]
+        )
+        notarize_macos_artifact(archive, profile, log_dir, keychain)
+    staple_macos_artifact(app_bundle)
+    subprocess.check_call(
+        ["spctl", "--assess", "--type", "execute", "--verbose=2", str(app_bundle)]
+    )
+
+
 def stage_embedding_seed(
     dist_dir: Path,
     seed_dir: Path,
@@ -891,10 +1084,19 @@ def build(
     bundle_tailnet: bool = True,
     bundle_embedding: bool = False,
     model_seed_dir: str | None = None,
+    macos_signing_identity: str | None = None,
+    macos_notary_profile: str | None = None,
+    macos_notary_keychain: str | None = None,
 ) -> None:
-    """Run PyInstaller."""
+    """Run PyInstaller, optionally signing and notarizing macOS artifacts."""
+    validate_macos_signing(macos_signing_identity, macos_notary_profile, macos_notary_keychain)
     ensure_pyinstaller()
-    bundle_version = make_bundle_version(archive_version or read_project_version())
+    version_label = archive_version or read_project_version()
+    bundle_version = (
+        make_macos_bundle_version(version_label)
+        if platform.system() == "Darwin"
+        else make_bundle_version(version_label)
+    )
 
     # X (Twitter) discovery is bundled by default (spec §8 = always-bundle).
     # Install the X dependency alias so PyInstaller can statically see twitter_cli,
@@ -935,6 +1137,8 @@ def build(
 
     if platform.system() == "Darwin":
         apply_macos_bundle_fixes(DIST_DIR)
+        if macos_signing_identity and not (DIST_DIR / "OpenBiliClaw.app").is_dir():
+            raise FileNotFoundError("Signed macOS builds require dist/OpenBiliClaw.app")
 
     packaged_root = find_packaged_root(DIST_DIR)
     output = DIST_DIR / "OpenBiliClaw"
@@ -978,7 +1182,16 @@ def build(
         if platform.system() == "Darwin":
             app_bundle = DIST_DIR / "OpenBiliClaw.app"
             if app_bundle.exists():
-                repair_macos_ad_hoc_signature(app_bundle)
+                if macos_signing_identity and macos_notary_profile:
+                    sign_macos_app(app_bundle, macos_signing_identity)
+                    notarize_macos_app(
+                        app_bundle,
+                        macos_notary_profile,
+                        DIST_DIR / "notary-logs",
+                        macos_notary_keychain,
+                    )
+                else:
+                    repair_macos_ad_hoc_signature(app_bundle)
 
         print()
         print("=" * 60)
@@ -1019,7 +1232,38 @@ def build(
                         app_bundle=app_bundle,
                         output_dir=RELEASE_DIR,
                         version=asset_version,
+                        notarized=bool(macos_signing_identity),
                     )
+                    if macos_signing_identity and macos_notary_profile:
+                        subprocess.check_call(
+                            [
+                                "codesign",
+                                "--force",
+                                "--sign",
+                                macos_signing_identity,
+                                "--timestamp",
+                                str(dmg_path),
+                            ]
+                        )
+                        notarize_macos_artifact(
+                            dmg_path,
+                            macos_notary_profile,
+                            DIST_DIR / "notary-logs",
+                            macos_notary_keychain,
+                        )
+                        staple_macos_artifact(dmg_path)
+                        subprocess.check_call(
+                            [
+                                "spctl",
+                                "--assess",
+                                "--type",
+                                "open",
+                                "--context",
+                                "context:primary-signature",
+                                "--verbose=2",
+                                str(dmg_path),
+                            ]
+                        )
                     print(f"  Release installer: {dmg_path}")
         print("=" * 60)
     else:
@@ -1070,7 +1314,25 @@ def main() -> None:
         help="Path to the bge-m3 seed dir for --bundle-embedding "
         "(default: $OPENBILICLAW_MODEL_SEED_DIR or packaging/model-seed)",
     )
+    parser.add_argument(
+        "--macos-signing-identity",
+        default=os.environ.get("APPLE_SIGNING_IDENTITY"),
+        help="Developer ID Application identity; requires --macos-notary-profile",
+    )
+    parser.add_argument(
+        "--macos-notary-profile",
+        default=os.environ.get("APPLE_NOTARY_PROFILE"),
+        help="Validated notarytool keychain profile; requires --macos-signing-identity",
+    )
+    parser.add_argument(
+        "--macos-notary-keychain",
+        default=os.environ.get("APPLE_NOTARY_KEYCHAIN"),
+        help="File keychain used to store the notary profile (recommended for automation)",
+    )
     args = parser.parse_args()
+    validate_macos_signing(
+        args.macos_signing_identity, args.macos_notary_profile, args.macos_notary_keychain
+    )
 
     bundle_embedding = args.bundle_embedding or os.environ.get(
         "OPENBILICLAW_BUNDLE_EMBEDDING", ""
@@ -1087,6 +1349,9 @@ def main() -> None:
         bundle_tailnet=not args.no_bundle_tailnet,
         bundle_embedding=bundle_embedding,
         model_seed_dir=args.model_seed_dir,
+        macos_signing_identity=args.macos_signing_identity,
+        macos_notary_profile=args.macos_notary_profile,
+        macos_notary_keychain=args.macos_notary_keychain,
     )
 
 

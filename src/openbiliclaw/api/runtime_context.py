@@ -1674,6 +1674,7 @@ class RuntimeContext:
         new_linuxdo_producer: Any = None
         new_v2ex_producer: Any = None
         new_weibo_producer: Any = None
+        new_instagram_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -1725,6 +1726,32 @@ class RuntimeContext:
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 20)),
                 min_interval_minutes=int(getattr(xhs_cfg, "min_interval_minutes", 20)),
                 keyword_fetch=new_keyword_fetch,
+            )
+            # Formal discover runtime registration for the instagram source.
+            from openbiliclaw.runtime.instagram_producer import (
+                build_instagram_discovery_producer,
+            )
+
+            async def _kick_instagram_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "instagram_task_available", "source": "task_kick"})
+
+            new_instagram_producer = build_instagram_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_instagram_extension,
+                presence=self.presence,
+                # Explicit guided init owns this producer even with all
+                # background work disabled. Periodic ticks keep their gate.
+                manual=True,
+                presence_grace_seconds=int(
+                    getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
+                ),
             )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
 
@@ -2047,6 +2074,7 @@ class RuntimeContext:
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
             weibo_producer=new_weibo_producer,
+            instagram_producer=new_instagram_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided
@@ -2198,6 +2226,7 @@ class RuntimeContext:
             new_linuxdo_producer,
             new_v2ex_producer,
             new_weibo_producer,
+            new_instagram_producer,
         ):
             if producer is not None:
                 producer.candidate_evaluation_owned_by_coordinator = True

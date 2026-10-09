@@ -5,11 +5,12 @@
 ## 👤 我是用户
 
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
+- [Instagram main 集成交付](testing/2026-10-06-instagram-delivery.md) — README / 首页、最新主线整合、测试与保留的真实验收限制
 - [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 把 OpenBiliClaw 装进 DeepSeek Harness：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置）+ 22 个 Agent Bridge 工具，Agent 也能读推荐、答探测、闭环学习
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [Gitee v0.3.226 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.226) — 本版源码已同步，国内安装包镜像待上传；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名版本号
+- [Gitee v0.3.227 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.227) — 本版源码已同步，国内安装包镜像待上传；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名版本号
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
@@ -32,6 +33,7 @@
 - [Bangumi 来源文档](modules/bangumi.md) / [接入 Spec](plans/2026-07-17-bangumi-source-spec.md) / [实施计划](plans/2026-07-17-bangumi-source-plan.md) — 官方只读 API、公开收藏初始化、统一 discover、三端体验与验收边界
 - [GitHub 来源文档](modules/github.md) / [冻结契约](platform-source-contract.github.toml) / [验收记录](platform-source-acceptance.github.md) — 官方只读 REST API、公开 repository discovery、starred repositories 初始化与三端文字卡
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
+- [Instagram 来源文档](modules/instagram.md) / [验收台账](platform-source-acceptance.instagram.md) — 可选登录发现、init-only 点赞 / 收藏 / 关注、手动恢复与封面安全边界；最新真实结果和未完成的账号/许可门禁分开记录
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求
 - [聊天真实请求复验（9月28日）](testing/2026-09-28-chat-real-request-recheck.md) — 19 次真实模型请求、三端 UI、延迟样本与仍存在的限制
@@ -60,15 +62,16 @@
 | 模块 | 文档 | 对应代码 | 状态 |
 |------|------|----------|------|
 | 后端 API | [modules/api.md](modules/api.md) | `src/openbiliclaw/api/` | ✅ durable 对话 + 配置后台应用 + 本机-only 迁移四 API；GitHub 配置 / 状态 / init / repository 推荐 DTO 已记录 |
-| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十三来源 planner 与 GitHub repository 查询约束已记录 |
+| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十四来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
-| 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository source 为本分支 🧪 接线，验收见专用 ledger |
+| 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository 与 Instagram（实验性、默认关闭），验收见专用 ledger |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
 | GitHub 接入 | [modules/github.md](modules/github.md) | `src/openbiliclaw/sources/github*.py` + `runtime/github_producer.py` | 🧪 官方匿名/可选 PAT API + public starred init + repository search/ranked/latest 已接线；真实门禁以 [acceptance ledger](platform-source-acceptance.github.md) 为准 |
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |
 | V2EX 接入 | [modules/v2ex.md](modules/v2ex.md) | `src/openbiliclaw/sources/v2ex*.py` + `runtime/v2ex_producer.py` + 扩展任务桥 | ✅ 匿名 API/Feed + 可选 PAT + 四个只读 bootstrap scope + Topic 回复聚合 |
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
-| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十三来源契约正交化 + `verify_method` 证据强度 + 一键验证；GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
+| Instagram 接入 | [modules/instagram.md](modules/instagram.md) | `src/openbiliclaw/sources/instagram*.py` + `runtime/instagram_producer.py` + `extension/src/**/instagram*` | 🧪 可选登录 topic/creator + 登录态 init-only liked/saved/following；默认关闭，生产需另行确认 Meta 授权 |
+| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十四来源契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
 | TikTok 接入（实验性） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `sources/tiktok_web.py` + `sources/tiktok_sign.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ Web API 访客身份（签名 + curl_cffi）feed / hashtag / creator discovery，yt-dlp 兜底（issue #88）；可选登录 Cookie（扩展同步）解锁关键词搜索 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
@@ -103,3 +106,7 @@
 ### TikTok 来源验收补全（2026-10-04）
 
 TikTok discovery-only 接入的冻结范围、排除项与验证证据见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。
+
+- [桌面打包与 macOS 签名公证](modules/packaging.md) — 本机凭据、CI Secrets、正式与实验安装包及验收。
+
+- [v0.3.227 发布与商店审核记录](testing/2026-10-06-release-0.3.227.md) — macOS 签名公证、Instagram 实验性来源与各渠道回执。

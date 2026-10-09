@@ -2887,6 +2887,11 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
         "中文实时公共讨论 / 社会热点 / 娱乐文化 / 当事人回应 / 现场进展。"
         "优先具体人、事件、作品或话题实体,可搭配热议 / 回应 / 进展等微博原生语境词。"
     ),
+    "instagram": (
+        "视觉 / 摄影 / 设计 / 艺术 / 旅行 / 美食 / 时尚 / 游戏 / 动漫等话题。优先英文 "
+        "topic slug(2-4 个英文词,如 urban photography、indie game art),"
+        "适合 /popular/<topic>/ 公开热门页,不生成站内搜索长句。"
+    ),
 }
 
 
@@ -2932,7 +2937,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
     "(bilibili / xiaohongshu / douyin / youtube / tiktok / twitter / github / zhihu / reddit / "
-    "bangumi / linuxdo / v2ex / weibo),"
+    "bangumi / linuxdo / v2ex / weibo / instagram),"
     "每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
     "唯一例外:只有 user 消息含 <explore_domains> 时,才可以额外输出"
@@ -2976,6 +2981,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "linuxdo": ["本地大模型 部署 踩坑", "开源自托管 工具 分享"],\n'
     '  "v2ex": ["本地运行 Agent 讨论", "家庭网络折腾 经验"],\n'
     '  "weibo": ["AI Agent 热议", "动画制作 业内回应"],\n'
+    '  "instagram": ["urban photography", "indie game art"],\n'
     '  "github": ["local llm agent framework", "self hosted knowledge base"],\n'
     '  "explore_domains": [\n'
     '    {"domain": "城市声音采样", "novelty_level": 0.84, '
@@ -3005,7 +3011,7 @@ Return ONLY a strict JSON object with exactly this shape:
     {
       "interest": "string",
       "axis_id_or_label": "existing axis_id or exact axis_label",
-      "platform": "bilibili|xiaohongshu|douyin|youtube|tiktok|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo",
+      "platform": "bilibili|xiaohongshu|douyin|youtube|tiktok|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
       "core_concept": "short searchable concept",
       "decoration": "optional style marker",
       "recency_sensitivity": "low|medium|high"

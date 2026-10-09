@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 
 test("settings page exposes advanced config fields from backend schema", () => {
@@ -275,7 +276,7 @@ test("settings source tab separates every platform into its own block", () => {
     "Linux.do source body and card must close before V2EX starts",
   );
   assert.match(popupJs, /face\.tabIndex = on \? 0 : -1/);
-  assert.match(popupJs, /face\.setAttribute\("aria-disabled", on \? "false" : "true"\)/);
+  assert.match(popupJs, /face\.removeAttribute\("aria-disabled"\)/);
   assert.match(popupJs, /bilibiliEnabled\.checked = cfg\.sources\?\.bilibili\?\.enabled !== false/);
   assert.match(popupJs, /xhsEnabled\.checked = cfg\.sources\?\.xiaohongshu\?\.enabled === true/);
   assert.match(popupJs, /bilibili:\s*\{\s*enabled: checked\("cfgBilibiliEnabled", true\)/);
@@ -1308,4 +1309,32 @@ test("settings save bar stays pinned above scrolling content", () => {
   assert.match(savebarCss, /bottom: 0;/);
   assert.match(savebarCss, /box-shadow: 0 -12px 28px/);
   assert.doesNotMatch(savebarCss, /position: sticky;/);
+});
+
+
+test("disabled TikTok card keeps nested enable control accessible", () => {
+  const js = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const source = js.slice(js.indexOf("  const SOURCE_CARD_ENABLE_IDS ="), js.indexOf("  function initSourceCards()"));
+  class Element {
+    tabIndex = 0;
+    attributes = new Map<string, string>();
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+    removeAttribute(name: string) { this.attributes.delete(name); }
+  }
+  const face = new Element();
+  const toggle = { checked: false };
+  const card = { dataset: { sourceOff: "", open: "1" }, querySelector: () => face };
+  const document = {
+    querySelector: (selector: string) => selector.includes('"tiktok"') ? card : null,
+    getElementById: () => toggle,
+  };
+  const sync = runInNewContext(source + "\nsyncSourceCardEnabledState", { document, HTMLElement: Element });
+  sync();
+  assert.equal(card.dataset.sourceOff, "true");
+  assert.equal(card.dataset.open, "0");
+  assert.notEqual(face.attributes.get("aria-disabled"), "true", "Ancestor ARIA disabled also disables its enable checkbox");
+  toggle.checked = true;
+  sync();
+  assert.equal(card.dataset.sourceOff, "false");
+  assert.equal(face.tabIndex, 0);
 });

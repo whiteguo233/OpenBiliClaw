@@ -420,6 +420,7 @@ class RuntimeStatusResponse(BaseModel):
     recommendation_count: int
     pending_signal_events: int
     last_refresh_at: str = ""
+    discovery_failure_message: str = ""
     last_notification_at: str = ""
     unread_count: int
     pool_available_count: int = 0
@@ -807,6 +808,20 @@ class WeiboLoginStateResponse(BaseModel):
     updated_at: str = ""
 
 
+class InstagramLoginStateIn(BaseModel):
+    """Privacy-preserving Instagram sessionid presence heartbeat."""
+
+    logged_in: StrictBool
+
+
+class InstagramLoginStateResponse(BaseModel):
+    """Result of persisting the Instagram browser login heartbeat."""
+
+    ok: bool = True
+    logged_in: bool
+    updated_at: str = ""
+
+
 class XStatusResponse(BaseModel):
     """Current X (Twitter) source health (spec §7).
 
@@ -925,6 +940,7 @@ class SourcesStatusResponse(BaseModel):
     linuxdo: SourceStatusItem = Field(default_factory=SourceStatusItem)
     v2ex: SourceStatusItem = Field(default_factory=SourceStatusItem)
     weibo: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    instagram: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class SourceVerifyResponse(BaseModel):
@@ -1100,6 +1116,7 @@ class SourcesCredentialsResponse(BaseModel):
     linuxdo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     v2ex: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     weibo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    instagram: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -2527,6 +2544,16 @@ class WeiboSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 10
 
 
+class InstagramSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    source_modes: list[str] = Field(default_factory=lambda: ["topic", "creator"])
+    daily_topic_budget: int = Field(default=60, ge=0)
+    daily_creator_budget: int = Field(default=30, ge=0)
+    request_interval_seconds: int = Field(default=3, ge=1, le=30)
+    min_interval_minutes: int = Field(default=10, ge=0)
+    bootstrap_limit: int = Field(default=300, ge=1, le=300)
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
@@ -2542,6 +2569,7 @@ class SourcesConfigOut(BaseModel):
     linuxdo: LinuxdoSourceConfigOut = Field(default_factory=LinuxdoSourceConfigOut)
     v2ex: V2EXSourceConfigOut = Field(default_factory=V2EXSourceConfigOut)
     weibo: WeiboSourceConfigOut = Field(default_factory=WeiboSourceConfigOut)
+    instagram: InstagramSourceConfigOut = Field(default_factory=InstagramSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):

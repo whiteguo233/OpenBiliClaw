@@ -71,6 +71,31 @@ function initBackToTop() {
     const target = getScrollTopTarget();
     const scrollTop = target?.scrollTop || 0;
     button.hidden = scrollTop < BACK_TO_TOP_THRESHOLD;
+    button.style.translate = "";
+    if (button.hidden) return;
+
+    // Keep the shortcut from stealing taps from a card action underneath it.
+    // Probe a fixed 3x3 grid instead of scanning every loaded card on scroll;
+    // try at most two upward steps, then hide until a safe position is available.
+    const initial = button.getBoundingClientRect();
+    const topBoundary = $statusBar?.getBoundingClientRect().bottom || 0;
+    const step = initial.height + 12;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      button.style.translate = attempt ? `0 -${attempt * step}px` : "";
+      const rect = button.getBoundingClientRect();
+      if (rect.top < topBoundary + 8) break;
+      const xs = [rect.left + 1, rect.left + rect.width / 2, rect.right - 1];
+      const ys = [rect.top + 1, rect.top + rect.height / 2, rect.bottom - 1];
+      const overlapsControl = xs.some((x) => ys.some((y) =>
+        document.elementsFromPoint(x, y).some((element) => {
+          if (button.contains(element)) return false;
+          const control = element.closest('button, a[href], input, select, textarea, [role="button"]');
+          return control !== null && $app.contains(control);
+        }),
+      ));
+      if (!overlapsControl) return;
+    }
+    button.hidden = true;
   };
 
   const scrollToTop = () => {

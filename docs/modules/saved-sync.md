@@ -6,6 +6,8 @@
 
 当前模块已经实现 canonical identity / typed contracts、capability router、local-first sync service、SQLite DAO 边界、首个生产实现 `BilibiliNativeSaveAdapter`、平台中立 HTTP API / runtime 注册，以及插件 side panel、插件设置、桌面 Web、移动 Web 的保存与同步界面。旧端点仍只做本地 B 站兼容保存，不会因本次 wiring 自动修改平台账号。
 
+Instagram 推荐卡可使用 `instagram:<numeric-media-id>` 进入同一 local-first membership，但当前没有 Instagram native-save adapter。`favorite` / `watch_later` 都只保存在 OpenBiliClaw 本地；不会调用 Instagram 保存按钮、不会把 init 导入的 saved membership 当作本地列表写回依据，也不会因删除本地 membership 反向修改 Instagram。UI 必须显示「仅本地保存」，这与来源 contract 的 `media.native_save=false` 一致。
+
 ## 已实现功能
 
 | 功能 | 状态 | 说明 |

@@ -1424,6 +1424,7 @@
     .source-card-logo[data-source-logo="zhihu"] { background: #0084ff; }
     .source-card-logo[data-source-logo="reddit"] { background: #ff4500; }
     .source-card-logo[data-source-logo="bangumi"] { background: #f09199; }
+    .source-card-logo[data-source-logo="instagram"] { background: #c13584; }
     .source-card-head { min-width: 0; display: grid; gap: 4px; }
     .source-card-name { color: var(--fg); font-weight: 750; line-height: 1.25; }
     .source-card .source-status-badges { justify-content: flex-start; }

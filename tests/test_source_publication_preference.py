@@ -16,6 +16,7 @@ from openbiliclaw.recommendation.publication_preference import (
     PublicationDatePreference,
     evaluate_source_publication_preference,
 )
+from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES
 from openbiliclaw.storage.database import Database
 
 
@@ -31,19 +32,7 @@ class _FakeStrategy(DiscoveryStrategy):
 def test_all_source_configs_expose_date_preference_defaults() -> None:
     config = Config()
 
-    for slug in (
-        "bilibili",
-        "xiaohongshu",
-        "douyin",
-        "youtube",
-        "twitter",
-        "zhihu",
-        "reddit",
-        "bangumi",
-        "linuxdo",
-        "v2ex",
-        "weibo",
-    ):
+    for slug in CANONICAL_SOURCE_FAMILIES:
         source_cfg = getattr(config.sources, slug)
         assert source_cfg.recommendation_date_preset == "all"
         assert source_cfg.recommendation_date_start == ""
@@ -66,6 +55,25 @@ def test_non_bilibili_source_date_preference_round_trips(tmp_path: Path) -> None
     assert loaded.sources.youtube.recommendation_date_start == "2024-01-01"
     assert loaded.sources.youtube.recommendation_date_end == "2024-12-31"
     assert loaded.sources.youtube.recommendation_date_weight == 0.5
+
+
+def test_instagram_date_preference_reaches_shared_admission(tmp_path: Path) -> None:
+    from openbiliclaw.config import source_date_preferences
+
+    config = Config()
+    config.sources.instagram.recommendation_date_preset = "last_7_days"
+    config.sources.instagram.recommendation_date_weight = 1.0
+    path = tmp_path / "instagram.toml"
+    save_config(config, path)
+    loaded = load_config(path)
+    preference = source_date_preferences(loaded)["instagram"]
+    assert preference.preset == "last_7_days"
+    assert preference.weight == 1.0
+    assert not evaluate_source_publication_preference(
+        published_at="2000-01-01T00:00:00Z",
+        preference=preference,
+        now=datetime(2026, 10, 5, tzinfo=UTC),
+    ).eligible
 
 
 def test_filter_candidates_for_eval_removes_out_of_window_before_eval() -> None:

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "OpenBiliClaw",
-    "version": "0.3.226",
+    "version": "0.3.227",
     "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
     "permissions": [
         "activeTab",
@@ -33,6 +33,7 @@
         "http://localhost/*"
     ],
     "optional_host_permissions": [
+        "https://*.instagram.com/*",
         "http://*/*",
         "https://*/*"
     ],
@@ -154,6 +155,25 @@
                 "dist/content/v2ex.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "dist/content/instagram.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "dist/main/instagram-response-tap.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
         },
         {
             "matches": [

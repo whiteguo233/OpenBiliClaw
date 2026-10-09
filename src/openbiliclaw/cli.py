@@ -3256,6 +3256,7 @@ async def _run_init_discovery_backfill_async(
     target_pool_count: int = 100,
     label_suffix: str = "",
     progress_callback: Callable[[int, int, str], Awaitable[None] | None] | None = None,
+    selected_sources: set[str] | None = None,
 ) -> int:
     """Build the first serviceable discovery pool from the committed profile."""
     from openbiliclaw.discovery.pool_snapshot import build_cold_start_pool_snapshot
@@ -3275,6 +3276,48 @@ async def _run_init_discovery_backfill_async(
     if target == 0:
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
+
+    if selected_sources is not None and "instagram" in selected_sources:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+        from openbiliclaw.runtime.refresh import ContinuousRefreshController
+        from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+
+        config = load_config()
+        soul_engine = _build_soul_engine()
+        pipeline = _build_discovery_candidate_pipeline(
+            config=config, database=database, discovery_engine=discovery_engine
+        )
+        producer = build_instagram_discovery_producer(
+            config=config,
+            database=database,
+            soul_engine=soul_engine,
+            candidate_pipeline=pipeline,
+            keyword_fetch=KeywordFetchCoordinator(
+                database=database, discovery_config=config.discovery
+            ),
+            kick=lambda: _kick_task_dispatcher("instagram"),
+            manual=True,
+        )
+        if producer is not None:
+            producer.candidate_evaluation_owned_by_coordinator = True
+        controller = ContinuousRefreshController(
+            memory_manager=_build_memory_manager(),
+            database=database,
+            soul_engine=soul_engine,
+            discovery_engine=discovery_engine,
+            recommendation_engine=_build_recommendation_engine(),
+            discovery_candidate_pipeline=pipeline,
+            instagram_producer=producer,
+            scheduler_config=config.scheduler,
+            pool_target_count=target,
+            pool_source_shares=effective_pool_source_shares(config),
+            llm_concurrency_gate=gate,
+        )
+        return await controller.run_init_backfill(
+            profile, target, sources=selected_sources, progress_callback=progress_callback
+        )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -3390,7 +3433,16 @@ def _kick_task_dispatcher(source: str) -> None:
     Failures are silent: if the daemon isn't running the existing
     chrome.alarms 60s poll fallback still picks the task up.
     """
-    if source not in {"xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "v2ex"}:
+    if source not in {
+        "xhs",
+        "dy",
+        "yt",
+        "zhihu",
+        "reddit",
+        "linuxdo",
+        "v2ex",
+        "instagram",
+    }:
         return
     import urllib.error
     import urllib.request
@@ -3903,6 +3955,154 @@ def _collect_weibo_bootstrap_events(
             scope = str(item.get("scope", "")).strip()
             if scope in counts:
                 counts[scope] += 1
+    return events, counts, "ok" if events else "empty"
+
+
+def _enqueue_instagram_bootstrap_task(
+    *,
+    kick: bool = True,
+    profile_update: bool = False,
+    force: bool = False,
+    smoke_only: bool = False,
+) -> str | None:
+    """Resolve the runtime database and enqueue an init-only Instagram task."""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources import source_bootstrap
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]Instagram 个人事件未拉取: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+    source_cfg = getattr(getattr(load_config(), "sources", None), "instagram", None)
+    account_key = ""
+    with suppress(Exception):
+        state = _build_memory_manager().load_source_bootstrap_state()
+        candidate = str(
+            state.get("instagram_account_key", "") if isinstance(state, dict) else ""
+        ).strip()
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", candidate):
+            account_key = candidate
+    purpose = "smoke" if smoke_only else "guided-init" if profile_update else "fetch"
+    result = source_bootstrap.enqueue_instagram_bootstrap(
+        database,
+        config=source_cfg,
+        force=force,
+        profile_update=profile_update,
+        smoke_only=smoke_only,
+        account_key=account_key,
+        purpose=purpose,
+        notify=console.print,
+    )
+    if result.created and result.task_id and kick:
+        _kick_task_dispatcher("instagram")
+    return result.task_id
+
+
+def _instagram_result_failure_status(result: object) -> str:
+    """Classify only frozen Instagram failure codes from canonical fields."""
+
+    from openbiliclaw.sources.instagram_tasks import instagram_failure_category
+
+    if not isinstance(result, dict):
+        return ""
+    candidates: list[object] = [result.get("error")]
+    debug = result.get("debug")
+    if isinstance(debug, dict):
+        failures = debug.get("failures")
+        if isinstance(failures, list):
+            candidates.extend(failures)
+    return instagram_failure_category(*candidates)
+
+
+def _collect_instagram_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a frozen Instagram result and convert its personal memberships."""
+
+    import json
+    import time
+
+    from openbiliclaw.sources.instagram_tasks import (
+        INSTAGRAM_BOOTSTRAP_SCOPES,
+        InstagramTaskQueue,
+        instagram_bootstrap_items_to_events,
+    )
+
+    counts = {scope: 0 for scope in INSTAGRAM_BOOTSTRAP_SCOPES}
+    if not task_id:
+        return [], counts, "skipped"
+    wait = (
+        float(os.environ.get("OPENBILICLAW_INSTAGRAM_BOOTSTRAP_WAIT_SECONDS", "780"))
+        if max_wait_seconds is None
+        else max_wait_seconds
+    )
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], counts, "skipped"
+    if not hasattr(database, "conn"):
+        return [], counts, "skipped"
+    queue = InstagramTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, float(wait))
+    task: dict[str, Any] | None = None
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return [], counts, "timeout"
+        task = queue.get(task_id)
+        task_status = str((task or {}).get("status", "") or "")
+        if task_status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+    if not task:
+        return [], counts, "timeout"
+    if str(task.get("status", "")) == "failed":
+        try:
+            failed_result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            failed_result = {}
+        failure_status = _instagram_result_failure_status(failed_result)
+        return [], counts, failure_status or "failed"
+    if str(task.get("status", "")) != "completed":
+        # The extension owns the active claim token and may legitimately use
+        # its full 12-minute bounded pagination window.  A CLI wait timeout is
+        # not authority to cancel that in-flight task; leave it durable so the
+        # extension can publish its terminal result and a later init can reuse
+        # a valid completion.
+        return [], counts, "timeout"
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], counts, "failed"
+    if not isinstance(result, dict):
+        return [], counts, "failed"
+    items = [item for item in result.get("items", []) if isinstance(item, dict)]
+    raw_counts = result.get("scope_counts")
+    if isinstance(raw_counts, dict):
+        for scope in counts:
+            with suppress(TypeError, ValueError):
+                counts[scope] = max(0, int(raw_counts.get(scope, 0) or 0))
+    if not any(counts.values()):
+        for item in items:
+            scope = str(item.get("scope", "") or "")
+            if scope in counts:
+                counts[scope] += 1
+    account_key = str(result.get("account_key", "") or "")
+    events = instagram_bootstrap_items_to_events(items, account_key=account_key)
+    terminal = str(result.get("status", "") or "")
+    failure_status = _instagram_result_failure_status(result)
+    if failure_status:
+        return events, counts, failure_status
+    if terminal == "partial":
+        return events, counts, "partial"
     return events, counts, "ok" if events else "empty"
 
 
@@ -5500,6 +5700,30 @@ def _weibo_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[st
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "weibo",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _instagram_events_to_history_items(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert Instagram init-only membership events into profile rows."""
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(event.get("author", "") or metadata.get("author_name", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "instagram",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -7793,6 +8017,32 @@ def _ask_weibo_inclusion() -> bool:
     return True
 
 
+def _ask_instagram_inclusion() -> bool:
+    """Decide whether to enable Instagram discovery and init-only signals."""
+
+    if os.environ.get("OPENBILICLAW_NO_INSTAGRAM", "").strip() == "1":
+        console.print("[dim]  跳过 Instagram 来源(OPENBILICLAW_NO_INSTAGRAM=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]Instagram 数据接入(可选)[/bold]")
+    console.print(
+        "公开 topic / creator 内容发现无需登录；初始化画像时会通过浏览器扩展"
+        "只读导入当前账号最近的点赞、收藏和关注。"
+    )
+    console.print(
+        "[dim]Cookie 不会传给后端；首版个人信号仅在 init 时读取，"
+        "不会后台周期轮询，也不会点赞、收藏或关注。[/dim]"
+    )
+    console.print()
+    if not typer.confirm("启用 Instagram 数据接入?", default=False):
+        console.print("[dim]  已选择跳过，本次 init 不会启用 Instagram 来源。[/dim]")
+        return False
+    return True
+
+
 def _ask_bangumi_inclusion() -> bool:
     """Decide whether to enable Bangumi discovery and public bootstrap."""
     if os.environ.get("OPENBILICLAW_NO_BANGUMI", "").strip() == "1":
@@ -7930,6 +8180,7 @@ def _persist_init_source_enabled_flags(
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
+    include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
     github_username: str = "",
@@ -8031,6 +8282,13 @@ def _persist_init_source_enabled_flags(
         weibo_cfg = getattr(cfg.sources, "weibo", None)
         if weibo_cfg is not None and bool(getattr(weibo_cfg, "enabled", False)) != include_weibo:
             weibo_cfg.enabled = include_weibo
+            changed = True
+        instagram_cfg = getattr(cfg.sources, "instagram", None)
+        if (
+            instagram_cfg is not None
+            and bool(getattr(instagram_cfg, "enabled", False)) != include_instagram
+        ):
+            instagram_cfg.enabled = include_instagram
             changed = True
         if changed:
             save_config(cfg)
@@ -8288,6 +8546,9 @@ class InitResult:
     weibo_events: list[dict[str, Any]] = field(default_factory=list)
     weibo_scope_counts: dict[str, Any] = field(default_factory=dict)
     weibo_status: str = "skipped"
+    instagram_events: list[dict[str, Any]] = field(default_factory=list)
+    instagram_scope_counts: dict[str, Any] = field(default_factory=dict)
+    instagram_status: str = "skipped"
 
 
 class GuidedInitError(Exception):
@@ -8812,6 +9073,7 @@ async def run_guided_init(
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
+    include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
     github_username: str = "",
@@ -8952,6 +9214,7 @@ async def run_guided_init(
             include_linuxdo,
             include_v2ex,
             include_weibo,
+            include_instagram,
         )
     )
     _stage1_source_done = 0
@@ -9584,6 +9847,52 @@ async def run_guided_init(
     elif weibo_status == "failed":
         console.print("  [yellow]微博任务失败 —— 检查扩展日志后重试 init。[/yellow]")
 
+    instagram_task_id = (
+        (
+            await _enqueue_register_kick(
+                lambda **kwargs: _enqueue_instagram_bootstrap_task(
+                    profile_update=True,
+                    **kwargs,
+                ),
+                "instagram",
+            )
+        )
+        if include_instagram
+        else None
+    )
+    if include_instagram:
+        await _stage1_begin_source(
+            "Instagram",
+            wait_hint="扩展未响应会在约 13 分钟后自动跳过",
+        )
+        instagram_events, instagram_scope_counts, instagram_status = await _run_extension_collector(
+            _collect_instagram_bootstrap_events,
+            instagram_task_id,
+            label="Instagram",
+            env_name="OPENBILICLAW_INSTAGRAM_BOOTSTRAP_WAIT_SECONDS",
+            default_wait_seconds=780,
+        )
+        _stage1_finish_source()
+    else:
+        instagram_events, instagram_scope_counts, instagram_status = [], {}, "skipped"
+    if instagram_status in {"ok", "partial"}:
+        console.print(
+            "  Instagram "
+            f"点赞 [green]{instagram_scope_counts.get('instagram_liked', 0)}[/green] 条"
+            f" / 收藏 [green]{instagram_scope_counts.get('instagram_saved', 0)}[/green] 条"
+            f" / 关注 [green]{instagram_scope_counts.get('instagram_following', 0)}[/green] 人"
+        )
+    elif instagram_status == "login_required":
+        console.print("  [yellow]Instagram 需要登录 —— 请先在当前浏览器登录后重试。[/yellow]")
+    elif instagram_status == "challenge":
+        console.print("  [yellow]Instagram 触发 challenge；请先在浏览器完成验证后重试。[/yellow]")
+    elif instagram_status == "rate_limited":
+        console.print("  [yellow]Instagram 当前限流；请稍后再重试初始化。[/yellow]")
+    elif instagram_status == "timeout":
+        console.print("  [dim]Instagram 初始化信号未导入：扩展未连接或任务仍在后台运行。[/dim]")
+    elif instagram_status == "failed":
+        console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志后重试。[/yellow]")
+
     linuxdo_task_id = (
         (
             await _enqueue_register_kick(
@@ -9833,6 +10142,7 @@ async def run_guided_init(
     events_to_persist.extend(linuxdo_events)
     events_to_persist.extend(v2ex_events)
     events_to_persist.extend(weibo_events)
+    events_to_persist.extend(instagram_events)
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
@@ -9843,6 +10153,7 @@ async def run_guided_init(
     events.extend(linuxdo_events)
     events.extend(v2ex_events)
     events.extend(weibo_events)
+    events.extend(instagram_events)
     # With bilibili now optional, the floor is "at least one selected source
     # produced signals" — an all-empty run can't build a meaningful profile.
     if not events:
@@ -9883,6 +10194,7 @@ async def run_guided_init(
                 "linuxdo": len(linuxdo_events),
                 "v2ex": len(v2ex_events),
                 "weibo": len(weibo_events),
+                "instagram": len(instagram_events),
             }
         )
     # Re-running init re-fetches the same snapshot; without this the ledger
@@ -9903,7 +10215,11 @@ async def run_guided_init(
         for event in events_to_persist:
             await memory.propagate_event(event)
     stage1_degraded = (
-        dy_status == "degraded" or linuxdo_status == "degraded" or github_status == "partial"
+        dy_status == "degraded"
+        or linuxdo_status == "degraded"
+        or instagram_status
+        in {"partial", "login_required", "challenge", "rate_limited", "failed", "timeout"}
+        or github_status == "partial"
     )
     await _stage_done(
         1,
@@ -9917,6 +10233,8 @@ async def run_guided_init(
             if github_status == "partial"
             else "v2ex_partial"
             if v2ex_status == "partial"
+            else "instagram_partial"
+            if instagram_status == "partial"
             else None
         ),
     )
@@ -10139,6 +10457,8 @@ async def run_guided_init(
         combined_history.extend(_v2ex_events_to_history_items(v2ex_events))
     if weibo_events:
         combined_history.extend(_weibo_events_to_history_items(weibo_events))
+    if instagram_events:
+        combined_history.extend(_instagram_events_to_history_items(instagram_events))
     # X likes/bookmarks previously only fed the analyze stage; feeding the
     # profile builder too keeps cross-source flow uniform AND guarantees a
     # non-empty profile input when X is the only selected source.
@@ -10264,17 +10584,38 @@ async def run_guided_init(
         "target_pool_count": target_pool_count,
         "label_suffix": "",
     }
+    accepts_selected_sources = False
     try:
         signature = inspect.signature(discover_backfill)
     except (TypeError, ValueError):
         accepts_progress_callback = True
     else:
+        accepts_selected_sources = "selected_sources" in signature.parameters
         accepts_progress_callback = "progress_callback" in signature.parameters or any(
             parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
     if accepts_progress_callback:
         backfill_kwargs["progress_callback"] = _stage4_progress
+    if accepts_selected_sources:
+        backfill_kwargs["selected_sources"] = {
+            source
+            for source, included in (
+                ("bilibili", include_bili),
+                ("xiaohongshu", include_xhs),
+                ("douyin", include_dy),
+                ("youtube", include_yt),
+                ("twitter", include_x),
+                ("zhihu", include_zhihu),
+                ("reddit", include_reddit),
+                ("bangumi", include_bangumi),
+                ("linuxdo", include_linuxdo),
+                ("v2ex", include_v2ex),
+                ("weibo", include_weibo),
+                ("instagram", include_instagram),
+            )
+            if included
+        }
 
     # Stage 4 is best-effort once the full profile exists: timeout/failure is
     # terminal *partial success*, and clients may enter the app while the
@@ -10362,6 +10703,9 @@ async def run_guided_init(
         weibo_events=weibo_events,
         weibo_scope_counts=weibo_scope_counts,
         weibo_status=weibo_status,
+        instagram_events=instagram_events,
+        instagram_scope_counts=instagram_scope_counts,
+        instagram_status=instagram_status,
     )
 
 
@@ -10461,6 +10805,16 @@ def init(
         False,
         "--yes-weibo",
         help="跳过微博的 y/n 提问,直接启用微博数据接入(适合脚本化场景)。",
+    ),
+    no_instagram: bool = typer.Option(
+        False,
+        "--no-instagram",
+        help="跳过 Instagram 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_instagram_prompt: bool = typer.Option(
+        False,
+        "--yes-instagram",
+        help="跳过 Instagram 的 y/n 提问，直接启用 init-only 个人信号。",
     ),
     v2ex_username: str = typer.Option(
         "",
@@ -10785,6 +11139,17 @@ def init(
     else:
         include_weibo = _ask_weibo_inclusion()
 
+    if no_instagram:
+        include_instagram = False
+        console.print("[dim]  跳过 Instagram 数据接入(命令行 --no-instagram)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_INSTAGRAM", "").strip() == "1":
+        include_instagram = False
+        console.print("[dim]  跳过 Instagram 数据接入(OPENBILICLAW_NO_INSTAGRAM=1)。[/dim]")
+    elif skip_instagram_prompt:
+        include_instagram = True
+    else:
+        include_instagram = _ask_instagram_inclusion()
+
     selected_v2ex_username = ""
     if include_v2ex:
         from openbiliclaw.config import load_config
@@ -11032,6 +11397,7 @@ def init(
         include_bangumi,
         include_linuxdo,
         include_weibo,
+        include_instagram,
     )
     if not any(selected_sources):
         _print_status_panel(
@@ -11040,7 +11406,8 @@ def init(
             "已跳过 B 站且未启用任何其他平台——init 至少需要一个数据来源。"
             "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / "
             "--yes-youtube / --yes-x / --yes-github / --yes-zhihu / --yes-reddit / "
-            "--yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi 启用其他来源。",
+            "--yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi / "
+            "--yes-instagram 启用其他来源。",
         )
         raise typer.Exit(code=1)
 
@@ -11055,6 +11422,7 @@ def init(
         include_linuxdo,
         include_v2ex,
         include_weibo,
+        include_instagram,
     )
     if (
         include_bangumi
@@ -11108,6 +11476,7 @@ def init(
         github_token=github_token_to_persist,
         v2ex_username=selected_v2ex_username,
         include_weibo=include_weibo,
+        include_instagram=include_instagram,
     )
 
     # gui-init (B2): the four init stages now run inside the shared async
@@ -11151,6 +11520,7 @@ def init(
                 github_token=selected_github_token,
                 v2ex_username=selected_v2ex_username,
                 include_weibo=include_weibo,
+                include_instagram=include_instagram,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
                 purge_pool_callback=(
@@ -11205,6 +11575,9 @@ def init(
     weibo_events = list(getattr(result, "weibo_events", []))
     weibo_scope_counts = dict(getattr(result, "weibo_scope_counts", {}))
     weibo_status = str(getattr(result, "weibo_status", "skipped"))
+    instagram_events = list(getattr(result, "instagram_events", []))
+    instagram_scope_counts = dict(getattr(result, "instagram_scope_counts", {}))
+    instagram_status = str(getattr(result, "instagram_status", "skipped"))
     discovered_count = result.discovered_count
     discovery_error = result.discovery_error
     dy_degraded = dy_status == "degraded"
@@ -11216,6 +11589,15 @@ def init(
         or github_status == "partial"
         or v2ex_status == "partial"
         or weibo_status in {"failed", "timeout", "login_required"}
+        or instagram_status
+        in {
+            "failed",
+            "timeout",
+            "login_required",
+            "challenge",
+            "rate_limited",
+            "partial",
+        }
     )
 
     if result.discover_exc is not None:
@@ -11258,6 +11640,21 @@ def init(
             "微博采集未完成",
             "微博公开发现仍可用；请确认当前浏览器已登录微博、扩展已连接，"
             "再用 `openbiliclaw init --yes-weibo` 重试。",
+        )
+    if instagram_status in {
+        "failed",
+        "timeout",
+        "login_required",
+        "challenge",
+        "rate_limited",
+        "partial",
+    }:
+        _print_status_panel(
+            "warning",
+            "Instagram 采集未完整",
+            "Instagram 公开发现仍可用；首版个人信号只在初始化时读取。"
+            "请确认当前浏览器已登录 Instagram、扩展已连接，再用 "
+            "`openbiliclaw init --yes-instagram` 重试。",
         )
 
     _print_status_panel(
@@ -11312,6 +11709,9 @@ def init(
     weibo_favorites = int(weibo_scope_counts.get("weibo_favorites", 0))
     weibo_following = int(weibo_scope_counts.get("weibo_following", 0))
     weibo_mentions = int(weibo_scope_counts.get("weibo_mentions", 0))
+    instagram_liked = int(instagram_scope_counts.get("instagram_liked", 0))
+    instagram_saved = int(instagram_scope_counts.get("instagram_saved", 0))
+    instagram_following = int(instagram_scope_counts.get("instagram_following", 0))
     summary_rows: list[tuple[str, str]] = [
         ("📺 B 站观看历史", f"{len(history)} 条"),
         ("📺 B 站收藏夹", f"{len(favorites_data)} 条"),
@@ -11365,6 +11765,10 @@ def init(
         ("微博 关注", f"{weibo_following} 人"),
         ("微博 互动", f"{weibo_mentions} 条"),
         ("🌐 微博 入库事件", f"{len(weibo_events)} 条"),
+        ("Instagram 点赞", f"{instagram_liked} 条"),
+        ("Instagram 收藏", f"{instagram_saved} 条"),
+        ("Instagram 关注", f"{instagram_following} 人"),
+        ("🌐 Instagram 入库事件", f"{len(instagram_events)} 条"),
         ("📊 画像建模总事件", f"{len(events)} 条"),
         ("✅ 灵魂画像", "已生成"),
         ("🔍 首轮发现内容", f"{discovered_count} 条"),
@@ -11434,6 +11838,15 @@ def init(
             "https://weibo.com 或 https://m.weibo.cn，然后重跑 "
             "[cyan]openbiliclaw init --yes-weibo[/cyan]。[/dim]"
         )
+    if (
+        instagram_liked + instagram_saved + instagram_following == 0
+        and instagram_status != "skipped"
+    ):
+        console.print(
+            "[dim]ℹ️  Instagram 0 条个人信号入库。请确认扩展已安装、浏览器已登录 "
+            "https://www.instagram.com，然后重跑 "
+            "[cyan]openbiliclaw init --yes-instagram[/cyan]。[/dim]"
+        )
 
     source_parts = []
     if bilibili_events > 0:
@@ -11458,12 +11871,14 @@ def init(
         source_parts.append(f"[green]{len(v2ex_events)}[/green] 条 V2EX 信号")
     if len(weibo_events) > 0:
         source_parts.append(f"[green]{len(weibo_events)}[/green] 条微博信号")
+    if len(instagram_events) > 0:
+        source_parts.append(f"[green]{len(instagram_events)}[/green] 条 Instagram 信号")
     if len(source_parts) > 1:
         console.print(
             "[dim]ℹ️  本次画像综合了 "
             + " + ".join(source_parts)
             + "。支持增量刷新的来源会由 daemon 继续补充；"
-            "GitHub 公开 Star 为 init / 按需刷新。[/dim]"
+            "Instagram 个人信号与 GitHub 公开 Star 为 init / 按需刷新。[/dim]"
         )
 
     # Phase E (v0.3.28+): print cost breakdown for THIS init only,
@@ -11572,7 +11987,7 @@ def rebuild_profile(
     source: str = typer.Option(
         "",
         "--source",
-        help="只用指定来源：bilibili / xiaohongshu / douyin / youtube，留空=全部。",
+        help="只用指定来源（例如 instagram / bilibili），留空=全部。",
     ),
     no_analyze: bool = typer.Option(
         False,
@@ -11592,7 +12007,8 @@ def rebuild_profile(
     """
     import json as _json
 
-    _prepare_init_runtime()
+    # Rebuilding consumes stored events only, even for Bilibili itself.
+    _prepare_init_runtime(require_bili_auth=False)
     memory = _build_memory_manager()
     soul_engine = _build_soul_engine()
 
@@ -11689,7 +12105,7 @@ def _run_single_source_bootstrap(
     collect: Callable[[str | None], tuple[list[dict[str, Any]], dict[str, int], str]],
     wait_seconds: float,
     summary_renderer: Callable[[dict[str, int], str, int], None],
-) -> None:
+) -> str:
     """Shared core for ``fetch-douyin`` / ``fetch-xhs`` standalone commands.
 
     Pure pull pipeline — enqueue → kick → wait for completion →
@@ -11719,6 +12135,7 @@ def _run_single_source_bootstrap(
     summary_renderer(scope_counts, status_label, len(events))
     if status_label in {"timeout", "failed"}:
         raise typer.Exit(code=1)
+    return status_label
 
 
 @app.command("profile-consolidate")
@@ -12084,6 +12501,65 @@ def fetch_xhs(
         wait_seconds=wait_seconds,
         summary_renderer=_render,
     )
+
+
+@app.command("fetch-instagram")
+def fetch_instagram(
+    wait_seconds: float = typer.Option(
+        780.0,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回传点赞 / 收藏 / 关注的最大秒数（默认 780s）。",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="忽略近期 Instagram bootstrap 任务，强制重新执行三个只读 scope。",
+    ),
+) -> None:
+    """只读验证 Instagram 初始化事件，不重建画像。"""
+
+    def _render(scope_counts: dict[str, int], status_label: str, event_count: int) -> None:
+        if status_label in {"ok", "partial"}:
+            console.print(
+                "  Instagram "
+                f"点赞 [green]{scope_counts.get('instagram_liked', 0)}[/green] 条"
+                f" / 收藏 [green]{scope_counts.get('instagram_saved', 0)}[/green] 条"
+                f" / 关注 [green]{scope_counts.get('instagram_following', 0)}[/green] 人"
+            )
+            console.print(f"  共转换 [green]{event_count}[/green] 条 canonical 事件。")
+            if status_label == "partial":
+                console.print("  [yellow]部分 scope 未完成；已保留成功读取的只读结果。[/yellow]")
+        elif status_label == "empty":
+            console.print(
+                "  [yellow]Instagram 三个 scope 均已确认完成，但没有可导入记录。[/yellow]"
+            )
+        elif status_label == "login_required":
+            console.print("  [yellow]请先在当前浏览器登录 Instagram，再让扩展重试。[/yellow]")
+        elif status_label == "challenge":
+            console.print("  [yellow]Instagram 触发 challenge；请先在浏览器完成验证。[/yellow]")
+        elif status_label == "rate_limited":
+            console.print("  [yellow]Instagram 当前限流；请稍后重试。[/yellow]")
+        elif status_label == "timeout":
+            console.print("  [dim]Instagram 任务超时：扩展未连接或任务仍在分页。[/dim]")
+        else:
+            console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志。[/yellow]")
+
+    status_label = _run_single_source_bootstrap(
+        source_label="Instagram",
+        enqueue=lambda: _enqueue_instagram_bootstrap_task(
+            force=force,
+            smoke_only=True,
+        ),
+        collect=lambda task_id: _collect_instagram_bootstrap_events(
+            task_id,
+            max_wait_seconds=wait_seconds,
+        ),
+        wait_seconds=wait_seconds,
+        summary_renderer=_render,
+    )
+    if status_label in {"login_required", "challenge", "rate_limited"}:
+        raise typer.Exit(code=1)
 
 
 @app.command("fetch-youtube")
@@ -15649,7 +16125,11 @@ def _run_v2ex_discovery(*, limit: int, force: bool = False) -> None:
     try:
         asyncio.run(soul_engine.get_profile())
     except SoulProfileNotInitializedError as exc:
-        _print_status_panel("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。")
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init`。",
+        )
         raise typer.Exit(code=1) from exc
     discovery_engine = _build_discovery_engine()
     candidate_pipeline = _build_discovery_candidate_pipeline(
@@ -16225,6 +16705,162 @@ def _run_weibo_discovery(*, limit: int, force: bool = False) -> None:
     _print_status_panel(kind, title, body)
 
 
+def _run_instagram_discovery(*, limit: int, force: bool = False) -> None:
+    """Run one formal Instagram cycle through the shared candidate pipeline."""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.instagram_producer import InstagramDiscoveryProducer
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+
+    _require_runtime_config()
+    config = load_config()
+    source_cfg = config.sources.instagram
+    if not source_cfg.enabled:
+        _print_status_panel(
+            "warning",
+            "Instagram discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.instagram].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。")
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    producer = InstagramDiscoveryProducer(
+        database=database,
+        task_queue=InstagramTaskQueue(database),
+        soul_engine=soul_engine,
+        enabled=True,
+        source_modes=tuple(source_cfg.source_modes),
+        daily_topic_budget=source_cfg.daily_topic_budget,
+        daily_creator_budget=source_cfg.daily_creator_budget,
+        min_interval_minutes=source_cfg.min_interval_minutes,
+        request_interval_ms=min(
+            30_000,
+            max(1_000, int(source_cfg.request_interval_seconds) * 1000),
+        ),
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+        kick=lambda: _kick_task_dispatcher("instagram"),
+    )
+    result = asyncio.run(producer.produce_if_due(limit=limit, force=force))
+    reason = str(result.get("reason") or "")
+    discovered = int(cast("Any", result.get("discovered") or 0))
+    enqueued = int(cast("Any", result.get("enqueued") or 0))
+    modes = ", ".join(source_cfg.source_modes)
+    _print_page_title("Instagram 内容发现", f"正式 discover · {modes}")
+    if reason == "ok":
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "instagram"),
+                ("分支", modes),
+                ("状态", reason),
+            ],
+        )
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "disabled": (
+            "warning",
+            "Instagram discovery 已禁用",
+            "请启用 Instagram 来源后重试。",
+        ),
+        "no_profile": (
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init`。",
+        ),
+        "throttled": (
+            "info",
+            "Instagram discovery 尚未到期",
+            "可使用 --force 手动验证。",
+        ),
+        "extension_absent": (
+            "warning",
+            "Instagram 浏览器扩展未连接",
+            "请连接扩展后重试；本轮没有创建浏览器任务。",
+        ),
+        "mode_disabled": (
+            "warning",
+            "Instagram discovery 没有启用分支",
+            "请至少启用 topic 或 creator。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需补充 Instagram 候选。"),
+        "budget_exhausted": (
+            "info",
+            "Instagram discovery 今日预算已用完",
+            "可在配置页调整 topic / creator 每日保留候选预算。",
+        ),
+        "no_topics": (
+            "info",
+            "没有 Instagram topic",
+            "画像兴趣为空，暂时无法生成 topic 任务。",
+        ),
+        "no_creator_seeds": (
+            "info",
+            "没有 Instagram 作者种子",
+            "请同时启用 topic 分支，以本轮公开内容作者作为 creator 种子。",
+        ),
+        "empty": (
+            "info",
+            "Instagram discovery 返回为空",
+            "浏览器任务已完成，但本轮没有可转换的公开内容。",
+        ),
+        "no_progress": (
+            "info",
+            "Instagram discovery 没有新增候选",
+            "公开内容已抓取，但均被去重或候选池准入规则过滤。",
+        ),
+        "timeout": (
+            "warning",
+            "Instagram 浏览器任务超时",
+            "请确认 OpenBiliClaw 浏览器扩展在线并已连接当前后端。",
+        ),
+        "task_failed": (
+            "warning",
+            "Instagram 浏览器任务失败",
+            str(result.get("mode_results") or ""),
+        ),
+    }
+    kind, title, body = messages.get(
+        reason,
+        ("warning", "Instagram discovery 未产出内容", reason or "无详细信息"),
+    )
+    _print_status_panel(kind, title, body)
+    if reason not in {
+        "throttled",
+        "pool_full",
+        "budget_exhausted",
+        "no_topics",
+        "no_creator_seeds",
+        "empty",
+        "no_progress",
+    }:
+        raise typer.Exit(code=1)
+
+
 @app.command("discover-douyin")
 def discover_douyin(
     keywords: list[str] | None = _DOUYIN_DISCOVERY_KEYWORDS_OPTION,
@@ -16266,7 +16902,7 @@ def discover(
         "-s",
         help=(
             "触发发现的内容源：bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、"
-            "bangumi、github（别名 gh）、linuxdo、v2ex 或 weibo。"
+            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 instagram。"
         ),
         case_sensitive=False,
     ),
@@ -16275,7 +16911,10 @@ def discover(
     force: bool = typer.Option(
         False,
         "--force",
-        help="xiaohongshu / bangumi / github / v2ex / weibo：忽略最小调度间隔强制执行一次。",
+        help=(
+            "xiaohongshu / bangumi / github / v2ex / weibo / instagram："
+            "忽略最小调度间隔强制执行一次。"
+        ),
     ),
 ) -> None:
     """手动触发内容发现（按来源选择渠道）."""
@@ -16383,11 +17022,21 @@ def discover(
         _run_weibo_discovery(limit=limit, force=force)
         return
 
+    if source_normalized in {"instagram", "ig"}:
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "instagram 渠道走 source_modes 配置的浏览器任务 discovery 分支，已忽略策略过滤。",
+            )
+        _run_instagram_discovery(limit=limit, force=force)
+        return
+
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
             "bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（gh）、"
-            "linuxdo、v2ex、weibo。"
+            "linuxdo、v2ex、weibo、instagram。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)

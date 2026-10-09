@@ -2,6 +2,11 @@ name: Release Extension Package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing extension-v tag to repair with this workflow ref (leave empty for tag runs)"
+        required: false
+        type: string
   push:
     tags:
       - "extension-v*"
@@ -33,7 +38,7 @@ jobs:
 
       - name: Verify extension version matches release tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           # GitHub Actions does not accept `shell: node` — use bash + jq
           # (preinstalled on ubuntu-latest) for a portable version check.
@@ -91,7 +96,7 @@ jobs:
       - name: Verify extension release archives
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           FIREFOX_SIGNING_ACTIVE: ${{ steps.firefox-signing.outputs.enabled }}
         run: |
           expected="${RELEASE_TAG#extension-v}"
@@ -145,7 +150,7 @@ jobs:
 
       - name: Verify extension version matches release tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           expected="${RELEASE_TAG#extension-v}"
           manifest_version=$(jq -r .version extension/manifest.json)
@@ -218,7 +223,7 @@ jobs:
       - name: Build and package Safari extension
         if: steps.safari-detect.outputs.packaged == 'true'
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           SAFARI_SIGNED: ${{ steps.safari-detect.outputs.signed }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
@@ -273,7 +278,7 @@ jobs:
       - name: Verify downloaded extension artifacts
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
           SAFARI_PACKAGED: ${{ needs.safari.outputs.safari_packaged }}
         run: |
@@ -311,7 +316,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
           SAFARI_PACKAGED: ${{ needs.safari.outputs.safari_packaged }}
         run: |
@@ -347,7 +352,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           CHANNEL: extension
           ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip release-artifacts/openbiliclaw-extension-v*.xpi release-artifacts/openbiliclaw-extension-v*-safari.dmg
         run: bash .github/scripts/sync-aggregate-release.sh

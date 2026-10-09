@@ -54,3 +54,13 @@ and favorite-Node pages. The background login check asks Firefox only whether th
 exists and sends a boolean plus the public rendered username; it never accesses, stores, or
 sends the cookie value. The build contains no V2EX write client and does not forward page HTML,
 headers, CSRF/once values, private messages, or browser history.
+
+`*://*.instagram.com/*` is required only for the experimental, disabled-by-default Instagram
+source. The extension creates isolated, marked task tabs for bounded public topic/creator reads
+or an explicitly selected initialization import of liked/saved/following rows. The latter first
+requires a same-origin current-account response with a numeric id. Firefox is asked only whether
+the `sessionid` cookie exists; its value, Authorization/CSRF headers, raw JSON/HTML, challenge
+pages, browser history, and search history never enter a task result. The document-start
+MAIN-world response tap sends only bounded normalized media/user fields, opaque pagination, and
+terminal evidence to its same-tab isolated executor. The build contains no Instagram login,
+2FA/challenge automation, Search input, or like/save/follow/comment/message write client.

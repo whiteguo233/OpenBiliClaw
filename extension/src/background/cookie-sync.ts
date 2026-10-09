@@ -49,6 +49,7 @@ const XHS_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-xhs";
 const ZHIHU_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-zhihu";
 const LINUXDO_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-linuxdo";
 const V2EX_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-v2ex";
+const INSTAGRAM_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-instagram";
 const WEIBO_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-weibo";
 // Pre-split shared alarm. chrome.alarms persist across extension updates,
 // so an old install can still fire this name once after upgrading.
@@ -122,6 +123,7 @@ const XHS_LOGIN_COOKIE_NAME = "web_session";
 const ZHIHU_LOGIN_COOKIE_NAME = "z_c0";
 const LINUXDO_LOGIN_COOKIE_NAME = "_t";
 const V2EX_LOGIN_COOKIE_NAME = "A2";
+const INSTAGRAM_LOGIN_COOKIE_NAME = "sessionid";
 // SUB is also issued to anonymous visitors and therefore is never sufficient
 // evidence of a logged-in account.  Require the account session pair instead.
 const WEIBO_LOGIN_COOKIE_NAMES = ["SUBP", "ALF"];
@@ -136,6 +138,7 @@ type CookieSyncPlatform =
   | "zhihu"
   | "linuxdo"
   | "v2ex"
+  | "instagram"
   | "weibo";
 
 const debounceTimers: Partial<Record<CookieSyncPlatform, ReturnType<typeof setTimeout>>> = {};
@@ -353,6 +356,14 @@ export async function readLinuxdoLoginState(): Promise<boolean> {
 export async function readV2EXLoginState(): Promise<boolean> {
   const cookies = await readCookiesForDomains(["v2ex.com"]);
   return cookies.some((cookie) => cookie.name === V2EX_LOGIN_COOKIE_NAME);
+}
+
+/** Return only whether Instagram's authenticated session cookie exists. */
+export async function readInstagramLoginState(): Promise<boolean> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) return false;
+  const cookies = await chromeApi.cookies.getAll({ domain: "instagram.com" });
+  return cookies.some((cookie) => cookie.name === INSTAGRAM_LOGIN_COOKIE_NAME);
 }
 
 /** Return whether Weibo has an account session, excluding anonymous SUB. */
@@ -807,6 +818,80 @@ export async function syncV2EXLoginStateToBackend(
   }
 }
 
+type InstagramSourceSyncState = "enabled" | "disabled" | "unavailable";
+
+async function getInstagramSourceSyncState(): Promise<InstagramSourceSyncState> {
+  const chromeApi = getChromeApi();
+  try {
+    if (chromeApi?.permissions?.contains) {
+      const granted = await chromeApi.permissions.contains({
+        origins: ["https://*.instagram.com/*"],
+      });
+      if (!granted) return "disabled";
+    }
+    const response = await authenticatedFetch(await apiUrl("/config"), {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!response.ok) return "unavailable";
+    const config = await response.json() as {
+      sources?: { instagram?: { enabled?: boolean } };
+    };
+    const enabled = config.sources?.instagram?.enabled;
+    if (enabled === true) return "enabled";
+    if (enabled === false) return "disabled";
+    return "unavailable";
+  } catch {
+    // Fail closed: a disabled/unreachable source must not trigger cookie reads.
+    return "unavailable";
+  }
+}
+
+/** Probe opt-in readiness without accessing Instagram's browser cookies. */
+export async function isInstagramSourceSyncEnabled(): Promise<boolean> {
+  return (await getInstagramSourceSyncState()) === "enabled";
+}
+
+export async function syncInstagramLoginStateToBackend(
+  source: string = "extension",
+  bypassEnabledGate = false,
+): Promise<boolean> {
+  if (!bypassEnabledGate) {
+    const state = await getInstagramSourceSyncState();
+    if (state === "unavailable") {
+      // A backend that starts after this worker must receive the readiness
+      // heartbeat without waiting an hour or requiring another cookie change.
+      scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    if (state === "disabled") {
+      scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
+      return true;
+    }
+  }
+  const loggedIn = await readInstagramLoginState();
+  try {
+    const response = await authenticatedFetch(await apiUrl("/sources/instagram/credential"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "login_state", value: loggedIn, source }),
+    });
+    if (!response.ok) {
+      scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    const result = (await response.json()) as { accepted?: boolean };
+    if (result.accepted) {
+      scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
+      return true;
+    }
+  } catch {
+    // The alarm below keeps readiness eventually consistent with the browser.
+  }
+  scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+  return false;
+}
+
 export async function syncWeiboLoginStateToBackend(
   source: string = "extension",
 ): Promise<boolean> {
@@ -876,6 +961,12 @@ export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): bo
     void syncV2EXLoginStateToBackend("runtime-stream-request");
     return true;
   }
+  if (eventType === "instagram_login_state_sync_requested") {
+    // Guided init is an explicit user flow and may request readiness before
+    // the source enable flag has been committed; automatic heartbeats remain gated.
+    void syncInstagramLoginStateToBackend("runtime-stream-request", true);
+    return true;
+  }
   if (eventType === "weibo_login_state_sync_requested") {
     void syncWeiboLoginStateToBackend("runtime-stream-request");
     return true;
@@ -914,6 +1005,8 @@ function scheduleCookieSync(platform: CookieSyncPlatform, source: string): void 
       void syncLinuxdoLoginStateToBackend(source);
     } else if (platform === "v2ex") {
       void syncV2EXLoginStateToBackend(source);
+    } else if (platform === "instagram") {
+      void syncInstagramLoginStateToBackend(source);
     } else {
       void syncWeiboLoginStateToBackend(source);
     }
@@ -950,6 +1043,7 @@ export function startCookieSync(): void {
   void syncZhihuLoginStateToBackend("startup");
   void syncLinuxdoLoginStateToBackend("startup");
   void syncV2EXLoginStateToBackend("startup");
+  void syncInstagramLoginStateToBackend("startup");
   void syncWeiboLoginStateToBackend("startup");
 
   // React to login / logout / refresh.
@@ -1029,6 +1123,14 @@ export function startCookieSync(): void {
       scheduleCookieSync("v2ex", changeInfo.removed ? "v2ex-logout" : "v2ex-cookies-onchange");
       return;
     }
+    if (domain.endsWith("instagram.com")) {
+      if (changeInfo.cookie.name !== INSTAGRAM_LOGIN_COOKIE_NAME) return;
+      scheduleCookieSync(
+        "instagram",
+        changeInfo.removed ? "instagram-logout" : "instagram-cookies-onchange",
+      );
+      return;
+    }
     if (domain.endsWith("weibo.com") || domain.endsWith("weibo.cn")) {
       if (!WEIBO_LOGIN_COOKIE_NAMES.includes(changeInfo.cookie.name)) return;
       scheduleCookieSync("weibo", changeInfo.removed ? "weibo-logout" : "weibo-cookies-onchange");
@@ -1048,6 +1150,7 @@ export function startCookieSync(): void {
   scheduleHourlyCookieSync(ZHIHU_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(LINUXDO_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(V2EX_LOGIN_STATE_SYNC_ALARM);
+  scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(WEIBO_LOGIN_STATE_SYNC_ALARM);
 }
 
@@ -1093,6 +1196,10 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncV2EXLoginStateToBackend("hourly-alarm");
     return true;
   }
+  if (alarmName === INSTAGRAM_LOGIN_STATE_SYNC_ALARM) {
+    void syncInstagramLoginStateToBackend("hourly-alarm");
+    return true;
+  }
   if (alarmName === WEIBO_LOGIN_STATE_SYNC_ALARM) {
     void syncWeiboLoginStateToBackend("hourly-alarm");
     return true;
@@ -1109,6 +1216,7 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncZhihuLoginStateToBackend("hourly-alarm");
     void syncLinuxdoLoginStateToBackend("hourly-alarm");
     void syncV2EXLoginStateToBackend("hourly-alarm");
+    void syncInstagramLoginStateToBackend("hourly-alarm");
     void syncWeiboLoginStateToBackend("hourly-alarm");
     return true;
   }

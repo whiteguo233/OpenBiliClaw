@@ -47,6 +47,7 @@ _ZHIHU = "zhihu"
 _REDDIT = "reddit"
 _BANGUMI = "bangumi"
 _WEIBO = "weibo"
+_INSTAGRAM = "instagram"
 _SEARCH_PLATFORMS = (
     _BILI,
     _XHS,
@@ -721,6 +722,21 @@ async def test_weibo_deficit_is_included_in_unified_keyword_generation(db: Datab
     assert len(llm.calls) == 1
     assert _WEIBO in llm.calls[0]["user"]
     assert _pending(db, _WEIBO, digest) == ["AI Agent 热议", "动画制作 业内回应"]
+
+
+async def test_instagram_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
+    profile = _profile(("urban photography", 0.93), ("indie game art", 0.81))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={_INSTAGRAM: ["urban photography", "indie game art"]})
+    deficit = _FakeDeficitSource(deficits={_INSTAGRAM: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert ledger == {_INSTAGRAM: 2}
+    assert len(llm.calls) == 1
+    assert _INSTAGRAM in llm.calls[0]["user"]
+    assert _pending(db, _INSTAGRAM, digest) == ["urban photography", "indie game art"]
 
 
 async def test_keyword_planner_uses_layered_profile_prefix(db: Database) -> None:

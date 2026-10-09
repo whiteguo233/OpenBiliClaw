@@ -17,6 +17,12 @@ Linux.do bootstrap 的三个 scope 有部分失败时以 `degraded` 回传：已
 
 ## 共享流水线 `cli.run_guided_init`
 
+### Instagram 初始化的来源边界
+
+仅选择 Instagram 时，阶段 1 将三个 scope 的有效原始事件传入同一画像流水线；部分采集保留有效事件并报告 `instagram_degraded`，零信号仍为 `empty_signals`。阶段 4 必须使用这次选择的来源：API 将 effective sources 传给 `ContinuousRefreshController.run_init_backfill`，CLI 将 `selected_sources` 传给 `_run_init_discovery_backfill_async`，两者都使用正式 Instagram topic/creator producer → 共享 candidate pipeline → 推荐表达与 canonical pool 检查，不执行 B 站默认发现策略。
+
+这一手动入口可在 scheduler 关闭时构造 Instagram producer，但不启用定时调度或增量拉取。API 运行期间新入队以及恢复认领的 discover task 都在浏览器领取前登记到当前 init run，旧后台任务仍受 init admission gate 阻挡。阶段 4 在同一个 refresh lock 内调用 `drain_pending(..., flush=True)`，只跳过小批次的聚合等待，不跳过评分阈值、来源配额、candidate claim 或调用方批次上限。无合格推荐仍不能宣称首轮内容池就绪。未选择 Instagram 的旧初始化路径保持原行为，本变更不代表其它来源已全部完成来源感知补池。
+
 | 项 | 说明 |
 |---|---|
 | 位置 | `src/openbiliclaw/cli.py` |
@@ -85,6 +91,10 @@ v0.3.157+：`/api/embedding/repair` 是有界的「诊断 → 修复 → 重新�
 
 wrapper 的任务句柄另有 done callback 审计终态；若任务已经退出而 DB 仍是 `starting/running`，协调器会补写 `interrupted` 并发布失败事件。30 秒 heartbeat 只刷新 owner lease，阶段 1/2 的 elapsed tick 同样标记为非实质更新；它们都不会伪造 `last_progress_at`。
 
+### 初始化启动失败的跨界面提示
+
+popup、setup 和桌面 Web 的 `POST /api/init` 失败反馈优先使用后端可操作的 `detail`；首次与重新初始化入口一致。只接受非空字符串，去掉首尾空白并限制为 2000 字符，以纯文本显示，不解释其中的 HTML。缺失或结构化详情回落到错误码文案；`no_profile_signal_sources` 是多来源共享错误码，兜底不再硬编码 Bangumi。Bangumi 的令牌 / 公开用户名 / 扩展观察身份提示仍由后端具体详情提供；此改动不改变账号解析、来源选择或准入条件。
+
 ## 重新初始化（force 重建）
 
 已初始化后的「重新初始化」复用同一条四阶段流水线，不删除任何既有数据（事件、收藏、对话历史、手动编辑覆盖保留），只重新拉取所选平台数据、重建完整画像并补足首轮发现池。入口收敛（gui-init §4）：推荐 tab 的「开始初始化」CTA 只服务首跑；已初始化后唯一入口在设置页（桌面 Web 通用 tab「初始化与画像」区、扩展 popup 通用 tab），CLI 用 `init --force`。
@@ -127,6 +137,14 @@ wrapper 的任务句柄另有 done callback 审计终态；若任务已经退出
 超时错误态（v0.3.168+）：三端均优先展示后端 typed detail，而不是短 reason label。`analyze_failed` / `profile_failed` 会在进度区显示具体步骤、本轮墙钟上限的含义、常见原因和恢复动作；后台 account-sync 在探针仍失败时虽然 reason 是 `llm_not_ready`，只要 detail 以 `画像分析失败：` 开头也走同一优先级，避免机器码 / 通用门禁提示盖住根因。`partial_success + discovery_timeout/discovery_partial` 在终态完成面显示部分完成 detail；popup 的 `init_completed` 事件同样保留 warning。进度 / 原因节点使用 `aria-live`，硬失败切为 `role=alert` / assertive，普通进度保持 polite，避免每次轮询都强打断读屏。
 
 Issue #113 空库存解环（v0.3.168+）：首次运行时 `soul.preference*` / `soul.profile_build` 等 maintenance 调用可能因 canonical durable inventory 为空而停在后台 admission，但首池又依赖阶段 2/3 先完成。`run_guided_init()` 现在用 task-local `ContextVar` scope 只放行阶段 2 偏好分析和阶段 3 画像任务；同 scope 内的画像辅助调用一并放行，总 provider gate 仍限制并发。阶段 4 只在完整画像落盘后创建，且不继承 bypass；其中 `discovery.explore.queries` 与空库存时的 `sources.*.extract` 归 `refill.supply`，避免发现内部再形成「探索词等待库存、库存等待发现」的环；`api.config_probe` 归 interactive，使用户在空库存故障态仍能测试并修复模型配置，但继续受总 gate 限制。普通 account-sync / 画像重建不受影响；阶段 2 自适应、阶段 3 的 360 秒与阶段 4 的 600 秒上限继续兜住 provider 真慢或异常。
+
+## Instagram 初始化
+
+Instagram 是显式 opt-in、`init-only` 的浏览器来源。只有用户选择该来源、扩展在线且最近 `sessionid` 布尔心跳为已登录时，Stage 1 才排队 `bootstrap_events`。任务在隔离 Instagram tab 中先读取 current account，再以独立 lane 拉取近期 liked、saved 和 following；三者分别转换为 `like`、`favorite`、`follow`。
+
+每个 lane 独立保存 `scope_count` 与 `scope_complete`。合法响应明确终止游标才 complete；达到 item/page cap、cursor 重复、挑战、限流、登录墙、HTML 或 schema 漂移都保留已接受 rows 并返回 partial/failed。本版不做缺失推断或 retraction，也不注册周期增量调度。Instagram-only 且没有可用登录态/有效事件时，仍走现有 `no_profile_signal_sources` / `empty_signals` fail-closed 语义。
+
+任务回调沿用 init 写者门控对 `/api/sources/<slug>/{kick,task-result}` 的精确 allowlist；canonical result 先 stage，再进入 durable event ingress 和 seen checkpoint，最后翻 terminal。Cookie、请求头和原始响应不属于 init payload。
 
 ## 测试
 

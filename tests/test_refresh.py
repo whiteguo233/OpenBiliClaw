@@ -109,6 +109,59 @@ async def test_run_init_backfill_skips_when_pool_already_full() -> None:
     assert disc.calls == []
 
 
+async def test_instagram_only_init_uses_formal_producer_eval_and_copy_without_bilibili() -> None:
+    from unittest.mock import AsyncMock
+
+    db = SimpleNamespace(count_pool_candidates=lambda **_: 0)
+    disc = _FakeDisc()
+    ctrl = _ctrl(db, disc)
+    order: list[str] = []
+
+    async def produce(**kwargs: Any) -> dict[str, object]:
+        assert ctrl._refresh_lock.locked()
+        assert kwargs == {"limit": 15, "force": True}
+        order.append("produce")
+        return {"discovered": 3, "enqueued": 3, "reason": "ok"}
+
+    async def evaluate(**kwargs: Any) -> dict[str, int]:
+        assert kwargs["batch_size"] == 3
+        assert kwargs["flush"] is True
+        order.append("evaluate")
+        return {"evaluated": 3, "cached": 1}
+
+    async def copy(**kwargs: Any) -> int:
+        order.append("copy")
+        db.count_pool_candidates = lambda **_: 1
+        return 1
+
+    ctrl.instagram_producer = SimpleNamespace(produce_if_due=AsyncMock(side_effect=produce))
+    ctrl.discovery_candidate_pipeline = SimpleNamespace(
+        drain_pending=AsyncMock(side_effect=evaluate)
+    )
+    ctrl.recommendation_engine = SimpleNamespace(
+        drain_pending_expression_copy=AsyncMock(side_effect=copy)
+    )
+    n = await ctrl.run_init_backfill(object(), 15, sources={"instagram"})
+    assert n == 3
+    assert order == ["produce", "evaluate", "copy"]
+    assert disc.calls == []
+    assert not ctrl._refresh_lock.locked()
+
+
+async def test_instagram_init_does_not_fall_back_to_bilibili_when_unavailable() -> None:
+    from unittest.mock import AsyncMock
+
+    db = SimpleNamespace(count_pool_candidates=lambda **_: 0)
+    disc = _FakeDisc()
+    ctrl = _ctrl(db, disc)
+    ctrl.recommendation_engine = SimpleNamespace(
+        drain_pending_expression_copy=AsyncMock(return_value=0)
+    )
+    with pytest.raises(InitialPoolUnavailableError):
+        await ctrl.run_init_backfill(object(), 15, sources={"instagram"})
+    assert disc.calls == []
+
+
 async def test_run_init_backfill_holds_refresh_lock() -> None:
     disc = _FakeDisc()
     ctrl = _ctrl(_FakeDB([0]), disc)

@@ -31,6 +31,7 @@
 | v0.3.x 原生 function calling（M1） | ✅ | `OpenAIProvider.complete_with_tools()` 走 OpenAI `tools=[{"type":"function",...}]` 原生 FC，支持单次响应多个 `tool_calls` 并行解析；`api_flavor="responses"` 实例与 Ollama 显式标 `supports_tool_calling=False`，由 service 层 prompt 模拟兜底；DeepSeek 继承原生 FC 并保留 thinking max_tokens 下限；`LLMRegistry.complete_with_tools*()` 复用 fallback 链 cooldown / 限流语义，链内跳过无 FC 能力的实例 |
 | token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()` 产出 `LLMStreamChunk`（`delta` 增量 + 终止块聚合 `LLMResponse`）；基类默认实现 = 调 `complete()` / `complete_with_tools()` 后一次性吐全文，所有现存 provider 零改动兼容。真流式只在 `OpenAIProvider`（chat-completions flavor，`stream=True` + `stream_options.include_usage`，tool_calls 增量静默聚合到终止块）实现，DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / ApiRoute / openai_compatible 子类自动继承；responses flavor 与 `json_mode` 保持一次性回退（结构化调用依赖格式拒绝重试梯），Claude / Gemini / CodexChatGPT 走基类回退。`LLMRegistry.stream_*()` 镜像 six 个非流式入口（fallback 链 / 显式链 / 精确路由 × 普通 / FC），流式专属语义：**只在首个 delta 之前允许 fallback**，已吐字后失败直接上抛避免重复文本。`LLMService.stream_complete_with_core_memory()` / `stream_socratic_dialogue()` / `stream_complete_with_native_tools()` 复用同一套路由 / provider slot / 记账；prompt 模拟工具路由保持一次性（回复是否为 tool_call JSON 要等全文才知道） |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
+| OpenAI-compatible 成功兼容参数复用 | ✅ | `complete()` 首次仍走既有标准请求和有界空响应回退；只有回退成功（JSON 模式还须返回合法 object/list）才在当前 provider 实例内记忆去除 `response_format` / 显式关闭 thinking。按模型、effort、是否显式传 effort、JSON 模式隔离，最多 32 组、不落盘；provider 重建即清空，已记忆参数的请求失败/仍为空时清除。默认链、模型、token 上限、429 cooldown 和业务准入不变，不保证解决上游额度或所有空响应。 |
 | Agent 聊天按需深度 | ✅ | `build_socratic_dialogue_prompt(..., socratic=False)` 让简单问题简答、复杂任务充分展开，访谈追问由所选 skill 负责；不新增分类调用，不覆盖实例 reasoning 或压低输出预算。默认 `True` 保持旧对话风格 |
 | 画像整理裁决 prompt | ✅ | `build_profile_consolidation_prompt()` 保持静态 system + 确定性 user JSON；likes 从“仅严格同义”调整为“是否重复占用同一推荐意图”，允许合并“搞笑 / 娱乐搞笑”这类无新增选择价值的同粒度标签，同时明确保留“篮球 / NBA”“AI技术 / AI视频技术”等会改变召回范围的父子兴趣。每个簇携带 `known_distinct_pairs`，模型不得重判或合并用户回滚 / 当前策略已确认分开的 pair；代码侧仍作相同约束的强校验。dislikes 继续只合并近乎同义项并严禁向上泛化 |
 | Phase 2 provider-independent cognition views | ✅ | Preference、plain Awareness、Awareness-with-confusions 与 Insight builder 都有显式 `input_view="legacy"|"compact-v1"` seam；compact 使用 `CognitionEventViewV1` 与 `CognitionProfileViewV1` 删除 transport/storage 重复字段并按 stable soul → stable preference → volatile cognition → current batch 排序，system message、输出 schema、reasoning 和 token ceiling 不变。生产 rollout 逐 task 控制：只默认开启已通过 SenseTime 门的 `soul.awareness_confusions`，plain `soul.awareness` 固定 legacy，Preference/Insight 默认 legacy。该投影不依赖 tokenizer、模型或 provider cache。 |
@@ -153,6 +154,8 @@ CPU 也不可用时保留故障与可重试状态，不承诺修复损坏的模�
 CLI、桌面 Web、移动 Web 和插件复用同一后端；没有新增配置字段或端侧开关。
 
 ### Provider 类
+
+`complete()` 调用签名与用户配置不变。通用 `openai_compatible` provider 在同一实例内、按模型 / reasoning 参数 / JSON mode 隔离复用已成功的格式兼容参数；最多 32 组，不写磁盘，不跨模型或 provider 传播。实例重建即清空，初始请求报错或仍为空时丢弃对应提示。它不替代 provider 路由、限流冷却或额度管理。
 
 ```python
 from openbiliclaw.llm import (

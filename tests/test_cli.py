@@ -91,6 +91,85 @@ def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -
     assert database.admission_min_score == 0.72
 
 
+@pytest.mark.parametrize(
+    ("terminal_status", "error", "expected_code"),
+    [
+        ("failed", "response_envelope_unobserved", 1),
+        ("failed", "rate_limited", 1),
+        ("failed", "challenge_required", 1),
+        ("failed", "login_required", 1),
+        ("failed", "html_response", 1),
+        ("empty", "", 0),
+    ],
+)
+def test_instagram_discover_browser_result_exit_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_status: str,
+    error: str,
+    expected_code: int,
+) -> None:
+    """Exercise the real CLI, producer and queue, replacing only browser transport."""
+    import urllib.request
+
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    config = config_module.Config()
+    config.llm.deepseek.api_key = "test-not-a-secret"
+    config.llm.deepseek.model = "deepseek-chat"
+    config.llm.deepseek.base_url = "http://127.0.0.1:1/v1"
+    config.sources.instagram.enabled = True
+    config.sources.instagram.source_modes = ("topic",)
+    config_module.save_config(config, tmp_path / "config.toml")
+
+    database = Database(config.data_path / "openbiliclaw.db")
+    database.initialize()
+    memory = MemoryManager(config.data_path, database=database)
+    memory.initialize()
+    profile = OnionProfile()
+    profile.populate_from_flat_preference(
+        {"interests": [{"name": "technology", "category": "technology", "weight": 1.0}]}
+    )
+    layer = memory.get_layer("soul")
+    layer.data.update(profile.to_dict())
+    layer.save()
+    queue = InstagramTaskQueue(database)
+
+    def browser_result(request: urllib.request.Request, **_kwargs: Any) -> io.BytesIO:
+        assert request.full_url.endswith("/api/sources/instagram/kick")
+        task = queue.next_pending()
+        assert task is not None
+        queue.stage_final_result(
+            task["id"],
+            claim_token=task["claim_token"],
+            terminal_status=terminal_status,
+            error=error,
+            items=[],
+            debug={
+                "response_observed": terminal_status == "empty",
+                "terminal_evidence": "all_collections_terminal"
+                if terminal_status == "empty"
+                else "response_unobserved",
+            },
+        )
+        assert queue.complete(task["id"], claim_token=task["claim_token"])
+        return io.BytesIO(b"{}")
+
+    async def forbidden_http(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("A failed browser task must not call an upstream API or LLM")
+
+    monkeypatch.setattr(urllib.request, "urlopen", browser_result)
+    monkeypatch.setattr(httpx.AsyncClient, "send", forbidden_http)
+    result = CliRunner().invoke(
+        app, ["discover", "--source", "instagram", "--limit", "2", "--force"]
+    )
+    assert (error or "返回为空") in result.output
+    assert result.exit_code == expected_code
+
+
 class _FakeMemoryLayer:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
@@ -4024,7 +4103,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   7-9. "" — accept Bili history/favorite/follow init limits
     #   10+. "n" — skip optional source prompts
     #               (xhs / douyin / youtube / X / zhihu / reddit /
-    #                Linux.do / v2ex / weibo / bangumi / GitHub)
+    #                Linux.do / v2ex / weibo / bangumi / GitHub / Instagram)
     wizard_input = (
         "\n".join(
             [
@@ -4052,7 +4131,7 @@ def test_init_guides_missing_runtime_config_interactively(
         )
         + "\n"
     )
-    result = runner.invoke(app, ["init"], input=wizard_input)
+    result = runner.invoke(app, ["init"], input=wizard_input + "n\n")
 
     assert result.exit_code == 1
     assert captured["provider"] == "gemini"
@@ -4129,12 +4208,12 @@ def test_init_guides_missing_auth_interactively(
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
     # to XHS / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX /
-    # Weibo / Bangumi / GitHub so this test stays focused on the cookie-prompt
+    # Weibo / Bangumi / GitHub / Instagram so this test stays focused on the cookie-prompt
     # path.
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\n",
+        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 12,
     )
 
     assert result.exit_code == 1
@@ -5363,6 +5442,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 
@@ -5411,6 +5491,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 

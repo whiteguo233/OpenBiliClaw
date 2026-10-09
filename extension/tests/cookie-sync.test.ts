@@ -107,6 +107,198 @@ test("V2EX login-state checks only the cookie name and never reads its secret va
   assert.equal(await readV2EXLoginState(), true);
 });
 
+test("Instagram login-state heartbeat sends a boolean and never reads or uploads sessionid", async () => {
+  const { readInstagramLoginState, syncInstagramLoginStateToBackend } = await importCookieSync();
+  const sessionCookie = {
+    name: "sessionid",
+    domain: ".instagram.com",
+  } as Cookie;
+  Object.defineProperty(sessionCookie, "value", {
+    get() {
+      throw new Error("Instagram sessionid value must not be read");
+    },
+  });
+  installChromeMock([sessionCookie]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body || "{}")) as Record<string, unknown>,
+    });
+    if (String(url).endsWith("/api/config")) {
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }), {
+        status: 200,
+      });
+    }
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  assert.equal(await readInstagramLoginState(), true);
+  assert.equal(await syncInstagramLoginStateToBackend("test"), true);
+  assert.deepEqual(calls, [
+    { url: "http://127.0.0.1:8420/api/config", body: {} },
+    {
+      url: "http://127.0.0.1:8420/api/sources/instagram/credential",
+      body: { kind: "login_state", value: true, source: "test" },
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(calls), /session-secret/);
+});
+
+test("automatic Instagram heartbeat is disabled by config while explicit init bypasses the gate", async () => {
+  const { handleCookieSyncRuntimeEvent, syncInstagramLoginStateToBackend } = await importCookieSync();
+  installChromeMock([{ name: "sessionid", value: "secret", domain: ".instagram.com" }]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).endsWith("/api/config")) {
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: false } } }), {
+        status: 200,
+      });
+    }
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/config"]);
+  assert.equal(handleCookieSyncRuntimeEvent({ type: "instagram_login_state_sync_requested" }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls.some((url) => url.endsWith("/api/sources/instagram/credential")), true);
+});
+
+test("Instagram startup retries unavailable config without cookie access and converges after reconnect", async () => {
+  const { startCookieSync, handleCookieSyncAlarm } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  const cookieReads: string[] = [];
+  const sessionCookie = { name: "sessionid", domain: ".instagram.com" } as Cookie;
+  Object.defineProperty(sessionCookie, "value", {
+    get() {
+      throw new Error("Instagram sessionid value must not be read");
+    },
+  });
+  chrome.cookies.getAll = async (details) => {
+    cookieReads.push(details.domain || "");
+    return (details.domain === "instagram.com" ? [sessionCookie] : []) as chrome.cookies.Cookie[];
+  };
+  chrome.permissions = {
+    contains: async () => true,
+  } as unknown as typeof chrome.permissions;
+  let configAvailable = false;
+  const heartbeats: unknown[] = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/config")) {
+      if (!configAvailable) throw new Error("backend not started yet");
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }));
+    }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      heartbeats.push(JSON.parse(String(init?.body)));
+    }
+    return new Response(JSON.stringify({ accepted: true }));
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(cookieReads.includes("instagram.com"), false);
+  assert.deepEqual(heartbeats, []);
+  assert.deepEqual(
+    alarms.filter((alarm) => alarm.name === "openbiliclaw-cookie-sync-instagram").at(-1)?.info,
+    { delayInMinutes: 1, periodInMinutes: 1 },
+  );
+
+  configAvailable = true;
+  assert.equal(handleCookieSyncAlarm("openbiliclaw-cookie-sync-instagram"), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(heartbeats, [{ kind: "login_state", value: true, source: "hourly-alarm" }]);
+  assert.deepEqual(cookieReads.filter((domain) => domain === "instagram.com"), ["instagram.com"]);
+  assert.deepEqual(
+    alarms.filter((alarm) => alarm.name === "openbiliclaw-cookie-sync-instagram").at(-1)?.info,
+    { periodInMinutes: 60 },
+  );
+});
+
+for (const failure of ["network", "unauthorized", "unavailable", "malformed-json", "missing-config"]) {
+  test(`Instagram ${failure} config keeps cookie access closed and schedules a retry`, async () => {
+    const { syncInstagramLoginStateToBackend, isInstagramSourceSyncEnabled } = await importCookieSync();
+    const { alarms } = installChromeMock([]);
+    let cookieReads = 0;
+    chrome.cookies.getAll = async () => {
+      cookieReads += 1;
+      return [];
+    };
+    const calls: string[] = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      if (failure === "network") throw new Error("backend unavailable");
+      if (failure === "unauthorized") return new Response("", { status: 401 });
+      if (failure === "unavailable") return new Response("", { status: 503 });
+      if (failure === "malformed-json") return new Response("not-json");
+      return new Response(JSON.stringify({ sources: {} }));
+    };
+
+    assert.equal(await isInstagramSourceSyncEnabled(), false);
+    assert.deepEqual(alarms, [], "readiness probe must not schedule work");
+    assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), false);
+    assert.equal(cookieReads, 0);
+    assert.deepEqual(calls, [
+      "http://127.0.0.1:8420/api/config",
+      "http://127.0.0.1:8420/api/config",
+    ]);
+    assert.deepEqual(alarms, [{
+      name: "openbiliclaw-cookie-sync-instagram",
+      info: { delayInMinutes: 1, periodInMinutes: 1 },
+    }]);
+  });
+}
+
+test("Instagram source disabled after an outage returns to hourly checks without reading cookies", async () => {
+  const { syncInstagramLoginStateToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  let cookieReads = 0;
+  chrome.cookies.getAll = async () => {
+    cookieReads += 1;
+    return [];
+  };
+  globalThis.fetch = async () => new Response("", { status: 503 });
+  assert.equal(await syncInstagramLoginStateToBackend("startup"), false);
+
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ sources: { instagram: { enabled: false } } }));
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+
+  assert.equal(cookieReads, 0);
+  assert.deepEqual(alarms.map((alarm) => alarm.info), [
+    { delayInMinutes: 1, periodInMinutes: 1 },
+    { periodInMinutes: 60 },
+  ]);
+});
+
+test("Instagram permission denial does not read config or cookies and stays on hourly checks", async () => {
+  const { syncInstagramLoginStateToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  let cookieReads = 0;
+  chrome.cookies.getAll = async () => {
+    cookieReads += 1;
+    return [];
+  };
+  chrome.permissions = {
+    contains: async () => false,
+  } as unknown as typeof chrome.permissions;
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }));
+  };
+
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+  assert.equal(cookieReads, 0);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(alarms, [{
+    name: "openbiliclaw-cookie-sync-instagram",
+    info: { periodInMinutes: 60 },
+  }]);
+});
+
 test("cookie sync runtime event posts the current bilibili cookie immediately", async () => {
   const { handleCookieSyncRuntimeEvent } = await importCookieSync();
   installChromeMock([
@@ -215,6 +407,9 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     if (String(url).endsWith("/api/sources/v2ex/credential")) {
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }
     return new Response(JSON.stringify({ ok: true, authenticated: true }), { status: 200 });
   };
 
@@ -229,6 +424,7 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     calls.map((call) => call.url).sort(),
     [
       "http://127.0.0.1:8420/api/bilibili/cookie",
+      "http://127.0.0.1:8420/api/config",
       "http://127.0.0.1:8420/api/sources/dy/cookie",
       "http://127.0.0.1:8420/api/sources/linuxdo/login-state",
       "http://127.0.0.1:8420/api/sources/v2ex/credential",
@@ -255,6 +451,7 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     value: false,
     source: "hourly-alarm",
   });
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sources/instagram/credential")), false);
 });
 
 test("readXCookieHeader returns the header only when auth_token and ct0 are present", async () => {
@@ -554,6 +751,9 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
     if (String(url).endsWith("/api/sources/v2ex/credential")) {
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }
     return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
   };
 
@@ -565,6 +765,7 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
     calls.map((call) => call.url).sort(),
     [
       "http://127.0.0.1:8420/api/bilibili/cookie",
+      "http://127.0.0.1:8420/api/config",
       "http://127.0.0.1:8420/api/sources/dy/cookie",
       "http://127.0.0.1:8420/api/sources/linuxdo/login-state",
       "http://127.0.0.1:8420/api/sources/v2ex/credential",
@@ -587,6 +788,7 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
   assert.deepEqual(calls.find((call) => call.url.endsWith("/api/sources/linuxdo/login-state"))?.body, {
     logged_in: false,
   });
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sources/instagram/credential")), false);
 });
 
 test("startCookieSync triggers a reddit cookie sync at startup", async () => {

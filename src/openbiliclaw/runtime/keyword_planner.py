@@ -111,6 +111,7 @@ _PLANNER_PLATFORMS: tuple[str, ...] = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 _BILIBILI = "bilibili"
 _PLATFORM_QUERY_STYLES: dict[str, dict[str, tuple[str, ...]]] = {
@@ -327,6 +328,29 @@ _PLATFORM_QUERY_STYLES: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "examples": ("AI Agent 热议", "动画制作 业内回应"),
         "avoid_markers": ("小红书", "subreddit"),
+    },
+    "instagram": {
+        "native_markers": (
+            "photography",
+            "design",
+            "art",
+            "architecture",
+            "travel",
+            "food",
+            "fashion",
+            "fitness",
+            "gaming",
+            "anime",
+            "diy",
+            "home",
+            "street",
+            "makeup",
+            "technology",
+            "nature",
+            "music",
+        ),
+        "examples": ("urban photography", "indie game art"),
+        "avoid_markers": ("小红书", "知乎", "B站", "微博"),
     },
     "github": {
         "native_markers": (

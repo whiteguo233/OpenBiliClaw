@@ -251,13 +251,14 @@
       { key: "bangumi", label: "Bangumi" },
       { key: "linuxdo", label: "Linux.do" },
       { key: "v2ex", label: "V2EX" },
+      { key: "instagram", label: "Instagram" },
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
     // 首次成功读到库存快照之前是"未知"，不能把还没读到伪装成 0。
     const PLATFORM_COUNT_UNKNOWN_TEXT = "—";
     const PLATFORM_COUNT_UNKNOWN_LABEL = "库存待读取";
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex" };
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX", instagram: "Instagram", ig: "Instagram" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex", ig: "instagram", instagram: "instagram" };
     const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment", "repository"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
@@ -272,7 +273,7 @@
     const INIT_SOURCE_LABEL_FALLBACK = {
       bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube",
       twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
-      linuxdo: "Linux.do", v2ex: "V2EX"
+      linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram"
     };
     const INIT_SOURCE_DEFAULT_CHECKED = new Set(["bilibili"]);
     const _initSourceStatus = globalThis.OpenBiliClawSourceStatus || null;
@@ -295,7 +296,7 @@
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
       invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
-      no_profile_signal_sources: "所选来源暂时没有可用的个人画像信号；请按该来源提示补充个人令牌、公开用户名，或先在对应网站登录并连接扩展（如 bgm.tv）。",
+      no_profile_signal_sources: "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
       invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
       bangumi_token_check_failed: "校验 Bangumi 令牌时无法连接 Bangumi，请稍后重试。",
       github_bootstrap_not_ready: "GitHub 初始化需要公开用户名或可选 PAT；公开 repository 发现仍可匿名使用。",
@@ -1355,6 +1356,7 @@
         if (urlHostMatches(url, ["github.com"])) return "github";
         if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
         if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
+        if (urlHostMatches(url, ["instagram.com"])) return "instagram";
         if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
         return "web";
       }
@@ -2075,6 +2077,14 @@
     function describeInitReason(reason) {
       if (!reason || reason === "none") return "";
       return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function initStartErrorText(details, fallback) {
+      // Shared admission codes use the backend's source-specific recovery hint.
+      // Both init surfaces render this bounded guidance as plain text.
+      const detail = typeof details?.detail === "string" ? details.detail.trim().slice(0, 2000) : "";
+      return detail || describeInitReason(details?.error || details?.reason)
+        || fallback || "初始化没能启动，请稍后重试。";
     }
 
     function initStatusReasonText(status) {
@@ -2909,8 +2919,7 @@
         renderAll();
         scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
       } catch (error) {
-        const code = error?.details?.error || error?.details?.reason;
-        state.initReason = error?.details?.detail || describeInitReason(code) || error?.message || "初始化没能启动，请稍后重试。";
+        state.initReason = initStartErrorText(error?.details, error?.message);
         state.initBusy = false;
         renderAll();
       }
@@ -3038,9 +3047,8 @@
         // Jump back to the recommend tab so the progress panel is visible.
         openHomePage();
       } catch (error) {
-        const code = error?.details?.error || error?.details?.reason;
         if (statusEl) {
-          statusEl.textContent = describeInitReason(code) || error?.message || "重新初始化没能启动，请稍后重试。";
+          statusEl.textContent = initStartErrorText(error?.details, error?.message || "重新初始化没能启动，请稍后重试。");
         }
         if (btn) btn.disabled = false;
       }
@@ -5213,6 +5221,13 @@ ${cardFeedbackBarHtml()}`;
         const activePlatform = activePlatformSlug();
         const activePlatformCount = platformAvailableCount(activePlatform);
         const loadFailed = desktopRecommendationLoadState === "failed" || desktopRecommendationLoadState === "failed-exhausted";
+        const runtime = normalizeRuntimeStatus(state.runtimeStatus);
+        const discoveryFailure = !state.videos.length && !loadFailed && runtime?.manual_refresh_state !== "running"
+          && runtime?.pool_available_count === 0
+          ? runtime.manual_refresh_state === "failed"
+            ? runtime.manual_refresh_message || "内容发现未完成，请检查来源连接后重试内容发现。"
+            : runtime.discovery_failure_message
+          : "";
         const platformMessage = activePlatform && !loadFailed
           ? activePlatformCount === null
             ? `${escapeHtml(platformName(activePlatform))}还没有装入推荐，可以点「加载更多推荐」试试。`
@@ -5222,6 +5237,8 @@ ${cardFeedbackBarHtml()}`;
           : "";
         const message = state.query.trim()
           ? `没有找到包含“${escapeHtml(state.query.trim())}”的推荐。`
+          : discoveryFailure
+            ? escapeHtml(discoveryFailure)
           : platformMessage
             ? platformMessage
             : state.videos.length
@@ -9179,6 +9196,7 @@ ${cardFeedbackBarHtml()}`;
         recent_pool_topics: Array.isArray(merged.recent_pool_topics) ? merged.recent_pool_topics.map(String).filter(Boolean) : [],
         manual_refresh_state: manualRefreshState || "idle",
         manual_refresh_message: String(merged.manual_refresh_message || ""),
+        discovery_failure_message: Number(merged.pool_available_count) > 0 ? "" : String(merged.discovery_failure_message || ""),
         runtime_event_type: incomingType || String(merged.runtime_event_type || ""),
         last_account_sync_at: String(merged.last_account_sync_at ?? ""),
         last_account_sync_error: String(merged.last_account_sync_error ?? ""),
@@ -9232,6 +9250,16 @@ ${cardFeedbackBarHtml()}`;
           ? { available: `还有 ${runtime.pool_available_count} 条可换`, replenished: "后台继续在找更多", topics: "可以先换一批，新的随时进" }
           : { available: "暂无可换库存", replenished: "正在补货", topics: "后台还在继续给你找新的" };
       }
+      if (runtime.pool_available_count === 0
+          && (runtime.discovery_failure_message || runtime.manual_refresh_state === "failed")) {
+        return {
+          available: "暂无可换库存",
+          replenished: "内容发现未完成",
+          topics: runtime.manual_refresh_state === "failed"
+            ? runtime.manual_refresh_message || "请检查来源连接后重试内容发现"
+            : runtime.discovery_failure_message,
+        };
+      }
       return {
         available: `还有 ${runtime.pool_available_count} 条可换`,
         replenished: runtime.last_replenished_count > 0
@@ -9278,6 +9306,7 @@ ${cardFeedbackBarHtml()}`;
 
     function getPoolRefreshLabel(runtime) {
       if (!runtime) return "—";
+      if (runtime.manual_refresh_state !== "running" && runtime.discovery_failure_message) return runtime.discovery_failure_message;
       if (runtime.manual_refresh_message) return runtime.manual_refresh_message;
       if (runtime.manual_refresh_state === "running") return runtime.pool_available_count > 0 ? "后台继续补货中" : "正在补货";
       if (runtime.manual_refresh_state === "success") return "刚同步完成";
@@ -9303,6 +9332,7 @@ ${cardFeedbackBarHtml()}`;
       $("#poolAvailable").textContent = summary?.available || "后端未初始化";
       $("#poolReplenished").textContent = summary?.replenished || "—";
       $("#poolTopics").textContent = summary?.topics || "—";
+      $("#poolTopicsLabel").textContent = summary?.replenished === "内容发现未完成" ? "补货状态" : "最近主题";
       $("#poolRefreshState").textContent = getPoolRefreshLabel(runtime);
       renderDesktopRuntimeFailure();
     }
@@ -9477,6 +9507,10 @@ ${cardFeedbackBarHtml()}`;
       ["hot", "weiboModeHot"],
       ["creator", "weiboModeCreator"],
     ];
+    const INSTAGRAM_SOURCE_MODE_FIELDS = [
+      ["topic", "instagramModeTopic"],
+      ["creator", "instagramModeCreator"],
+    ];
     const BANGUMI_SUBJECT_TYPE_FIELDS = [
       ["anime", "bangumiTypeAnime"],
       ["book", "bangumiTypeBook"],
@@ -9597,7 +9631,8 @@ ${cardFeedbackBarHtml()}`;
       bangumi: "bangumiEnabled",
       github: "githubEnabled",
       linuxdo: "linuxdoEnabled",
-      v2ex: "v2exEnabled"
+      v2ex: "v2exEnabled",
+      instagram: "instagramEnabled"
     };
 
     function collectEnabledSourceIssues(data) {
@@ -9896,7 +9931,8 @@ ${cardFeedbackBarHtml()}`;
       github: "shareGitHub",
       linuxdo: "shareLinuxdo",
       v2ex: "shareV2EX",
-      weibo: "shareWeibo"
+      weibo: "shareWeibo",
+      instagram: "shareInstagram"
     };
     const SOURCE_CARD_LABELS = {
       bilibili: "Bilibili",
@@ -9911,7 +9947,8 @@ ${cardFeedbackBarHtml()}`;
       bangumi: "Bangumi",
       github: "GitHub",
       linuxdo: "Linux.do",
-      v2ex: "V2EX"
+      v2ex: "V2EX",
+      instagram: "Instagram"
     };
     const SOURCE_CARD_INLINE_COLORS = { linuxdo: "#1f6f43" };
 
@@ -10811,6 +10848,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("shareLinuxdo", scheduler.pool_source_shares?.linuxdo);
       setInput("shareV2EX", scheduler.pool_source_shares?.v2ex);
       setInput("shareWeibo", scheduler.pool_source_shares?.weibo);
+      setInput("shareInstagram", scheduler.pool_source_shares?.instagram);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -10964,6 +11002,13 @@ ${cardFeedbackBarHtml()}`;
       setInput("weiboDailyCreatorBudget", config.sources?.weibo?.daily_creator_budget);
       setInput("weiboRequestInterval", config.sources?.weibo?.request_interval_seconds);
       setInput("weiboMinInterval", config.sources?.weibo?.min_interval_minutes);
+      setSelect("instagramEnabled", config.sources?.instagram?.enabled === true ? "on" : "off");
+      setCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, config.sources?.instagram?.source_modes);
+      setInput("instagramDailyTopicBudget", config.sources?.instagram?.daily_topic_budget);
+      setInput("instagramDailyCreatorBudget", config.sources?.instagram?.daily_creator_budget);
+      setInput("instagramRequestInterval", config.sources?.instagram?.request_interval_seconds);
+      setInput("instagramMinInterval", config.sources?.instagram?.min_interval_minutes);
+      setInput("instagramBootstrapLimit", config.sources?.instagram?.bootstrap_limit);
       setSelect("youtubeEnabled", config.sources?.youtube?.enabled === true ? "on" : "off");
       const youtubeIncremental = document.getElementById("youtubeIncremental");
       if (youtubeIncremental) youtubeIncremental.checked = config.sources?.youtube?.incremental_enabled === true;
@@ -12157,7 +12202,7 @@ ${cardFeedbackBarHtml()}`;
       if (weightField) weightField.hidden = mode !== "custom";
     }
 
-    const DESKTOP_SOURCE_DATE_SLUGS = ["bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit", "bangumi", "linuxdo", "v2ex"];
+    const DESKTOP_SOURCE_DATE_SLUGS = ["bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit", "bangumi", "linuxdo", "v2ex", "instagram"];
 
     function ensureSourceDateFields() {
       for (const slug of DESKTOP_SOURCE_DATE_SLUGS) {
@@ -12466,6 +12511,16 @@ ${cardFeedbackBarHtml()}`;
             request_interval_seconds: getIntInput("v2exRequestInterval", 2),
             min_interval_minutes: getIntInput("v2exMinInterval", 5),
             ...sourceDateFieldsForUpdate("v2ex")
+          },
+          instagram: {
+            enabled: $("#instagramEnabled").value === "on",
+            source_modes: collectCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, ["topic", "creator"]),
+            daily_topic_budget: getIntInput("instagramDailyTopicBudget", 60),
+            daily_creator_budget: getIntInput("instagramDailyCreatorBudget", 30),
+            request_interval_seconds: getIntInput("instagramRequestInterval", 3),
+            min_interval_minutes: getIntInput("instagramMinInterval", 10),
+            bootstrap_limit: getIntInput("instagramBootstrapLimit", 300),
+            ...sourceDateFieldsForUpdate("instagram")
           }
         },
         scheduler: {
@@ -12497,7 +12552,8 @@ ${cardFeedbackBarHtml()}`;
             github: getIntInput("shareGitHub", 1),
             linuxdo: getIntInput("shareLinuxdo", 1),
             v2ex: getIntInput("shareV2EX", 1),
-            weibo: getIntInput("shareWeibo", 1)
+            weibo: getIntInput("shareWeibo", 1),
+            instagram: getIntInput("shareInstagram", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -13536,7 +13592,7 @@ ${cardFeedbackBarHtml()}`;
       safeBind(`#${id}`, "change", () => renderSourcesStatusRows(state.sourceStatus));
     });
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", tiktok: $("#tiktokEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", tiktok: $("#tiktokEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on", instagram: $("#instagramEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
@@ -13552,6 +13608,7 @@ ${cardFeedbackBarHtml()}`;
         if (shares.linuxdo !== undefined) setInput("shareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setInput("shareV2EX", shares.v2ex);
         if (shares.weibo !== undefined) setInput("shareWeibo", shares.weibo);
+        if (shares.instagram !== undefined) setInput("shareInstagram", shares.instagram);
         renderShareOverview();
         markSettingsDirty();
         showToast("已应用来源占比建议");

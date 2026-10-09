@@ -21,6 +21,7 @@ background ─ background admission (default 3) ──────┘
                 parked when canonical available = 0
 
 引导初始化：信号 → 偏好 → 完整画像提交 → 发现 → 评估 → 推荐文案 → canonical 内容可用
+             Instagram：只读 liked/saved/following → 本次 init 的 topic/creator → 小批量评估/文案
                                                      └→ 终态后再调度可选探针
 
 Agent 宿主（OpenClaw / Hermes / WorkBuddy）
@@ -53,7 +54,8 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 配置热重载：保持接单并排空旧 worker → 原子暂停/revoke → 新 worker；安全窗25分钟
 实时连接：runtime-stream 20s idle 心跳 → 短暂 close 显示重连中并自动续连
 封面：proxy 前台 + refresh 预取 → app-stable lane（总4/后台3、前台优先）
-                               → cache-key singleflight → 白名单抓取 → 原子缓存
+                               → cache-key singleflight → 公网 DNS（代理固定 DoH）→ 固定 IP / TLS → 原子缓存
+Instagram 手动补库 → 来源配额/任务锁 → 正式发现/评估/文案 → 可用库存或明确失败
 ```
 
 ```

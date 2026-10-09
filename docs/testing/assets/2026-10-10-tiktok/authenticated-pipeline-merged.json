@@ -1,0 +1,36 @@
+{
+  "chat_provider": "openai_compatible",
+  "storage": "isolated",
+  "profile": "synthetic science interest",
+  "pipeline": {
+    "discovered": 4,
+    "reason": "ok",
+    "enqueued": 4,
+    "evaluated": 4,
+    "cached": 4,
+    "rejected": 0
+  },
+  "embedding_dimensions": 768,
+  "keyword": "science experiments",
+  "keyword_rows": [
+    {
+      "id": 1,
+      "keyword": "science experiments",
+      "status": "used"
+    }
+  ],
+  "candidate_keyword_ids": [
+    1
+  ],
+  "candidate_statuses": {
+    "cached": 4
+  },
+  "admitted": 4,
+  "copy_ready": 4,
+  "served": 2,
+  "recommendations_http": 200,
+  "api_items": 4,
+  "api_tiktok_identity_valid": true,
+  "item_identity_valid": true,
+  "passed": true
+}

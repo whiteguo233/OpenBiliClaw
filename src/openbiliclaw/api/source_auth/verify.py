@@ -91,6 +91,7 @@ VERIFY_ACTIONS: dict[str, VerifyAction] = {
     "linuxdo": "browser_heartbeat",
     "v2ex": "live_probe",
     "weibo": "browser_heartbeat",
+    "instagram": "browser_heartbeat",
 }
 
 _BROWSER_HEARTBEAT_PREFIXES: dict[str, str] = {
@@ -98,6 +99,7 @@ _BROWSER_HEARTBEAT_PREFIXES: dict[str, str] = {
     "zhihu": "zhihu",
     "linuxdo": "linuxdo",
     "weibo": "weibo",
+    "instagram": "instagram",
 }
 
 # The user-facing tri-state. Deliberately computed here rather than in each

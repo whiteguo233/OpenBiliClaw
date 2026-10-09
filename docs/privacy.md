@@ -1,9 +1,13 @@
 # OpenBiliClaw 隐私权政策
 
 生效日期：2026-05-31
-更新日期：2026-08-31
+更新日期：2026-10-05
 
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问已启用浏览器接入的受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。GitHub v1 来源只由后端通过 GitHub 官方 REST API 读取公开仓库，不在 GitHub 页面运行内容脚本，也不申请 GitHub 主机权限或下发浏览器任务。
+
+Instagram 是默认关闭的实验来源：普通 Instagram 页面不做被动行为采集；只有用户启用公开发现或显式选择初始化时，插件才在隔离任务 tab 中执行有界同源只读任务。安全隔离不代表 Meta 授权，部署者仍需自行确认自动采集权限。
+
+直接 topic 页可以复用浏览器现有登录会话，被动解析页面自然返回的公开媒体；登录响应要求作者明确非私密，只上报规范化字段及 `authenticated_topic_observed` 布尔证据，不上传原始追踪字段。匿名路径保留；这不代表匿名路径始终可用，也不代表已审计页面自身的 Recent Searches 前后状态。
 
 本政策说明 OpenBiliClaw 浏览器插件与本地后端如何处理数据。插件不会把数据发送到 OpenBiliClaw 开发者运营的服务器；Chrome Web Store / AMO 发布包默认只声明本机后端权限，数据流向通常是用户本机运行的 OpenBiliClaw 后端。
 
@@ -19,6 +23,7 @@ OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器�
 | 用户活动 | 点击、搜索、滚动、停留时长、观看时长、喜欢 / 不喜欢、收藏、稍后再看、关注等行为 | 构建和更新兴趣画像，改进推荐排序，过滤不感兴趣内容 |
 | 网站内容 | 页面上可见的文字、封面图 URL、视频 / 笔记标题、作者、标签、描述、链接、统计信息等元数据 | 理解内容主题、生成候选池、去重和解释推荐理由 |
 | V2EX 只读任务字段 | Topic / Node 的公开 ID、标题、URL、作者、Node、时间、回复摘录，以及布尔登录状态 | 执行用户主动触发的四个 bootstrap scope、聚合讨论事件和生成 Node 偏好；不用于站内写操作 |
+| Instagram 只读任务字段 | 公开 media / user ID、canonical URL、caption、作者、封面、权威发布时间；初始化时的 liked / saved / following scope、数字 current-account ID 与 `sessionid` 存在布尔值 | 公开 topic / creator 发现和用户显式触发的近期点赞、收藏、关注初始化；不用于普通浏览追踪或站内写操作 |
 | GitHub 后端只读字段 | 公开仓库的数值 ID、`node_id`、名称、作者、公开 URL、描述、topics、语言、许可证、统计与时间字段；初始化时还可使用公开 username 及其公开 starred 仓库 | 通过 GitHub 官方 REST API 完成公开仓库发现、去重、推荐和用户主动触发的画像初始化；服务端查询强制 `is:public`，返回行仍会再次拒绝非公开仓库，不执行 Star 或其他站内写操作 |
 | 个人通讯 | 用户在 OpenBiliClaw 插件侧边栏聊天框中主动输入的消息；以及用户在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（提交成功后经网络层采集，仅送本机后端） | 与用户配置的本地后端聊天接口交互，帮助查看画像、推荐和设置；用户亲手写的评论 / 弹幕是最强的兴趣表达之一，用于更准确地构建兴趣画像 |
 | 本地配置与 UI 状态 | 后端地址、已关闭提示、插件设置、缓存的后端配置、任务状态 | 保持插件连接、本地偏好和界面状态 |
@@ -75,7 +80,11 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 
 ## 本地存储与保留
 
+海外封面缓存未命中且项目网络策略实际选用代理时，后端通过同一代理向 Cloudflare 的固定 `https://1.1.1.1/dns-query` 查询公开 CDN 域名的 A/AAAA 地址，再校验为公网 IP 并固定连接，防止重绑定访问内网。Cloudflare 可见 CDN 域名、查询时间与代理出口地址；不会收到 Instagram 账号、Cookie、封面 URL 的路径/签名参数或画像。DNS 查询不跟随重定向，失败不绕过安全检查。国内 CDN 和 `network.mode=direct` 使用本机 DNS，不走此 DoH 服务；缓存命中不触发查询。这是封面安全传输依赖，不是统计或遥测。
+
 插件会使用浏览器的本地扩展存储保存设置、连接状态、缓存配置和 UI 状态。OpenBiliClaw 后端会在用户本机或自托管环境中保存配置文件、SQLite 数据库、日志和画像文件。
+
+Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task / claim、任务 tab、deadline、分页进度、已归一化内容与待确认的 exact-result outbox，以便浏览器或扩展重启后恢复。后端确认或明确终态拒绝后清理；离线待重试时会继续保留，卸载扩展会清除这些扩展数据。此状态不含 Instagram Cookie、请求头、CSRF、原始 JSON/HTML 或挑战页正文；旧 `storage.session` 状态只迁移一次。
 
 用户主动导出的 `.obcbackup` 是**未加密的敏感 ZIP 文件**，可能包含模型 / 来源 API Key、平台 Cookie、画像和浏览 / 推荐历史。包内 manifest 带成员大小与 SHA-256，只用于完整性校验，不提供保密性。导出会合并磁盘 `config.toml` / `config.local.toml`、移除整段 `[api.auth]`，再写成包内单份可移植配置；因此源机的登录密码 / hash、session secret、设备访问 key 及其它 auth 策略不会进入包。导出同时刻意排除日志、旧备份、embedding / 评测 / 临时缓存、证书、自启动文件、`data/tailnet/` 节点私钥 / 状态和 `data/bin/` 可执行文件（根目录名按大小写不敏感判定）、OpenBiliClaw Web / 扩展访问会话、外部 CLI 凭据和环境变量值；平台登录 Cookie 则属于明确包含的可移植敏感数据。manifest 的 `source_omitted_environment_variables` 只记录源机当时有值、会影响 OpenBiliClaw 的环境变量名称，包括 `OPENBILICLAW_*`、Gemini 标准 Key 变量及系统代理 / CA 变量；导入端另返回 `target_active_environment_variables`，提示目标环境当前仍可能覆盖导入文件。两个列表都不包含变量值。用户应只在可信设备间传递，并及时删除不再需要的副本。
 
@@ -98,12 +107,14 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 |------|------|
 | `activeTab` | 在用户当前打开的受支持平台页面中识别内容并执行必要的页面动作 |
 | `alarms` | 定时重试 cookie 同步、后端连接检查和任务轮询 |
-| `cookies` | 读取用户已登录站点的必要 cookie，并按各来源最小化契约使用；Linux.do 只判断 `_t` 是否存在并上报布尔值，不同步任何 Cookie 值 |
+| `cookies` | 读取用户已登录站点的必要 cookie，并按各来源最小化契约使用；Linux.do `_t` 与 Instagram `sessionid` 都只判断是否存在并上报布尔值，不同步 Cookie value |
 | `notifications` | 显示来自本地后端的推荐、任务或状态通知 |
 | `scripting` | 在受支持平台页面注入内容脚本，采集页面内容和行为信号 |
 | `sidePanel` | 提供 OpenBiliClaw 侧边栏界面 |
 | `storage` | 保存插件设置、本地 UI 状态和后端连接信息 |
 | 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
+
+`https://*.instagram.com/*` 主机权限只用于带任务标记的隔离 tab。公开任务读取有界 topic/hashtag 或明确 creator 页面；初始化先匹配同源账户表单用户名与新鲜 `PolarisViewer` 的用户名和双 ID，再以 GET 读取 saved/following，被动观察原生 Likes 页只读 Bloks 响应。扩展不重放 Bloks POST、不执行其表达式或 Select/Unlike 动作。插件只上报 `sessionid` 存在性；Cookie value、Authorization/CSRF、请求头、原始 JSON/HTML/Bloks、挑战正文和完整历史不会上传。MAIN 桥只发送有界白名单 rows、cursor 与终态证据。扩展不提交 Instagram Search，不执行 like/save/follow/comment/message，不自动处理安全验证；页面自身的上游状态变化仍需独立审计。普通 Instagram 页面不启动 behavior collector。
 
 `http://127.0.0.1/*` 和 `http://localhost/*` 用于连接用户自己的本机 OpenBiliClaw 后端。内容采集脚本只声明在受支持内容平台上运行；发布包不声明 `http://*/*`、`https://*/*` 或 `<all_urls>` 这类所有网站权限。
 

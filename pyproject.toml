@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.226"
+version = "0.3.227"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,7 +25,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx[socks]>=0.27",
+    "httpx[socks]>=0.28",
+    # Public network-backend API pins cover-image connections against DNS rebinding.
+    "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
     # TikTok web API backend (sources/tiktok_web.py): Chrome TLS impersonation

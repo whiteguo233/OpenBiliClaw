@@ -1,5 +1,7 @@
 # 配置参考
 
+Instagram 与其它平台共用 `recommendation_date_preset/start/end/weight`，经 TOML、配置 API、桌面与插件日期表单往返；默认全部日期，候选仍走共享日期准入。
+
 > `[llm].concurrency` 缺省/非法值为 3；显式正数原样保留。后台容量为 `max(1, total-1)`（默认 2）；`candidate_eval_concurrency` 仍默认 3。
 
 > `config.toml` 所有配置段落详解。
@@ -1008,6 +1010,26 @@ V2EX 是匿名公开 discovery 源，支持官方匿名 JSON API / Feed，以及
 
 完整字段和公开路径见 [V2EX 来源文档](v2ex.md)。
 
+### `[sources.instagram]`
+
+Instagram 上游任务沿用浏览器自己的网络，不受后端 `[network]` 直接控制。推荐封面的后端共享代理则受 `[network]` 的海外路由控制：选择代理时通过同一代理进行固定 Cloudflare DoH 公网解析并 pin IP；direct 使用本机 DNS。该行为不新增配置项，详见 [runtime 封面安全边界](runtime.md#image-proxy-api) 与[隐私说明](../privacy.md)。
+
+Instagram 是默认关闭的实验来源。公开 `topic` / `creator` 与个人 init 都由扩展隔离任务执行；后端不保存或重放 Instagram Cookie。完整安全、授权与终态边界见 [Instagram 来源文档](instagram.md)。
+
+| 键 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | 是否允许 Instagram 参与候选配比、公开任务和显式 guided init |
+| `source_modes` | list[str] | `["topic", "creator"]` | 只接受 `topic` / `creator`；不提供登录私有任意 keyword SERP，不执行会写 Recent Searches 的 UI 搜索 |
+| `daily_topic_budget` | int | `60` | topic 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
+| `daily_creator_budget` | int | `30` | creator 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
+| `request_interval_seconds` | int | `3` | 同一任务内相邻只读请求的节流下限；不能绕过 task 的 absolute deadline |
+| `min_interval_minutes` | int | `10` | producer 发现尝试的持久冷却间隔，跨 CLI 进程保留，空跑不反复派发；显式 smoke 仍受扩展 presence、task cap 与限流终态约束 |
+| `bootstrap_limit` | int | `300` | liked / saved / following 每 scope 的最大条数，保存范围 `1..300`；达到 cap 不代表历史完整 |
+
+Instagram 首版为 `init-only`，没有 `instagram_incremental_hours` 配置，也不进入周期账号回拉 roster。关闭来源时保存的 pool share 不参与有效配比。
+
+`daily_topic_budget` / `daily_creator_budget` 按最终保留的候选条数计费，不是 HTTP 请求数或任务数。加载配置时，小预算提示也使用候选条数单位；提示不会改写配置，`0` 仍表示不设日上限。
+
 状态语义如下：
 
 | 状态 | 配置页文案 | 含义 |
@@ -1089,7 +1111,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub 等其余十二个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub、Instagram 等其余十三个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1106,10 +1128,11 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `linuxdo` | int | `1` | Linux.do 平台族占比；`linuxdo-search` / `linuxdo-hot` / `linuxdo-feed` / `linuxdo-creator` / `linuxdo-related` 统一计入该族 |
 | `v2ex` | int | `1` | V2EX 平台族占比；`v2ex-search` / `v2ex-node` / `v2ex-tab` / `v2ex-hot` / `v2ex-latest` 统一计入该族 |
 | `weibo` | int | `1` | 微博平台族占比；`weibo-search` / `weibo-hot` / `weibo-creator` 统一计入该族 |
+| `instagram` | int | `1` | Instagram 平台族占比；`instagram-topic` / `instagram-creator` 统一计入该族，仅在来源启用时生效 |
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音、YouTube、X、知乎与 Reddit 分别由既有正式 producer 补 raw candidates；GitHub 低于目标且 `[sources.github].enabled=true` 时，`GitHubDiscoveryProducer` 通过官方 REST API 执行 `search / ranked / latest`，按 canonical 去重与最终保留数扣预算，并遵守持久 cooldown。Bangumi 继续直连官方匿名 API；Linux.do 继续入队同源扩展任务。所有来源都只把 raw candidates 交给共享 evaluator/admission。
 
-`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十三平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
+`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十四平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
 
 ### `[discovery]`
 
@@ -1317,7 +1340,7 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：展示实例、全局调用链与四个模块链摘要，允许调整全局并发 / 超时、测试默认链，并跳转桌面 Web 完整编辑；插件保存其他字段时不会回写或压扁实例路由
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`，以及小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub 的来源配置
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十三个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十四个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 高级功能（桌面 Web 与插件设置页均有「认知循环预算」区块）：`soul.awareness_event_batch_size`、`soul.insight_note_batch_size`、`soul.cognition_max_tokens`（issue #169）
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 

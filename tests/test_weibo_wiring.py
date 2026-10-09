@@ -93,8 +93,11 @@ def test_weibo_config_rejects_non_integer_budget_types(
 
 
 def test_weibo_source_policy_order_enablement_and_share() -> None:
-    assert SOURCE_ORDER[-1] == "weibo"
     assert SOURCE_ORDER.count("weibo") == 1
+    assert SOURCE_ORDER.index("v2ex") < SOURCE_ORDER.index("weibo")
+    assert SOURCE_ORDER.index("weibo") < SOURCE_ORDER.index("instagram")
+    assert tuple(DEFAULT_SOURCE_ENABLED) == SOURCE_ORDER
+    assert tuple(DEFAULT_POOL_SOURCE_SHARES) == SOURCE_ORDER
     assert DEFAULT_SOURCE_ENABLED["weibo"] is False
     assert DEFAULT_POOL_SOURCE_SHARES["weibo"] == 1
 
@@ -111,7 +114,8 @@ def test_weibo_source_policy_order_enablement_and_share() -> None:
 def test_weibo_platform_alias_and_strategy_resolution(alias: str) -> None:
     assert normalize_source_platform(alias) == "weibo"
     assert source_family("weibo-hot", alias) == "weibo"
-    assert CANONICAL_SOURCE_FAMILIES[-1] == "weibo"
+    assert CANONICAL_SOURCE_FAMILIES.count("weibo") == 1
+    assert CANONICAL_SOURCE_FAMILIES.index("weibo") < CANONICAL_SOURCE_FAMILIES.index("instagram")
 
 
 @pytest.mark.parametrize(
@@ -128,7 +132,10 @@ def test_weibo_url_inference_uses_exact_host_boundaries(url: str) -> None:
 
 
 def test_keyword_planner_and_merged_prompt_include_weibo() -> None:
-    assert keyword_planner._PLANNER_PLATFORMS[-1] == "weibo"
+    assert keyword_planner._PLANNER_PLATFORMS[-1] == "instagram"
+    assert keyword_planner._PLANNER_PLATFORMS.index(
+        "weibo"
+    ) < keyword_planner._PLANNER_PLATFORMS.index("instagram")
     assert "weibo" in keyword_planner._PLATFORM_QUERY_STYLES
     assert "热议" in keyword_planner._PLATFORM_QUERY_STYLES["weibo"]["native_markers"]
     assert "实时" in platform_supply_advantage("weibo")

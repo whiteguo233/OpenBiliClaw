@@ -246,6 +246,9 @@ class MemoryManager:
         self._account_sync_state_path = data_dir / "memory" / "account_sync_state.json"
         self._source_bootstrap_state_path = data_dir / "memory" / "source_bootstrap_state.json"
         self._discovery_runtime_state_path = data_dir / "memory" / "discovery_runtime.json"
+        self._init_discovery_resolution_path = (
+            data_dir / "memory" / "init_discovery_resolution.json"
+        )
         self._insight_candidates_path = data_dir / "memory" / "insight_candidates.json"
         self._cognition_updates_path = data_dir / "memory" / "cognition_updates.json"
         self._profile_overrides_path = data_dir / "memory" / "profile_overrides.json"
@@ -605,6 +608,60 @@ class MemoryManager:
         with open(self._discovery_runtime_state_path, encoding="utf-8") as file:
             loaded = json.load(file)
         return self._normalize_discovery_runtime_state(loaded)
+
+    def load_resolved_init_discovery_run(self) -> str:
+        """Read the single durable first-pool recovery receipt, if present."""
+        try:
+            with self._init_discovery_resolution_path.open(encoding="utf-8") as file:
+                raw = json.load(file)
+        except (OSError, ValueError):
+            return ""
+        value = raw.get("run_id", "") if isinstance(raw, dict) else ""
+        return value if isinstance(value, str) and len(value) <= 128 else ""
+
+    def record_resolved_init_discovery_run(self, run_id: str) -> bool:
+        """Remember observed usable supply without altering the init outcome.
+
+        The file contains one run ID, not growing history. Revalidate the
+        current owner inside the file lock so a stale status reader cannot
+        overwrite a newer run's recovery receipt.
+        """
+        from openbiliclaw.memory.json_state import update_json_state
+
+        if not run_id or len(run_id) > 128:
+            return False
+        if self.load_resolved_init_discovery_run() == run_id:
+            return True
+
+        def normalize(raw: object) -> dict[str, str]:
+            value = raw.get("run_id", "") if isinstance(raw, dict) else ""
+            return {"run_id": value if isinstance(value, str) and len(value) <= 128 else ""}
+
+        def record(latest: dict[str, str]) -> dict[str, str]:
+            current = self._database.get_latest_init_run()
+            if (
+                current is not None
+                and current.get("run_id") == run_id
+                and current.get("status") == "completed"
+                and current.get("error_reason") in {"discovery_partial", "discovery_timeout"}
+            ):
+                # Do not trust the caller's earlier pool snapshot: a force
+                # re-init may have retired it before this run was observed.
+                ready = self._database.count_pool_readiness().get("available", 0) > 0
+                supplied = ready or self._database.has_current_recommendation_supply()
+                owner = self._database.get_latest_init_run()
+                if supplied and owner is not None and owner.get("run_id") == run_id:
+                    return {"run_id": run_id}
+            return latest
+
+        result = update_json_state(
+            self._init_discovery_resolution_path,
+            default_factory=lambda: {"run_id": ""},
+            normalize=normalize,
+            serialize=normalize,
+            mutate=record,
+        )
+        return result.get("run_id") == run_id
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         """Persist continuous-discovery runtime state to disk."""

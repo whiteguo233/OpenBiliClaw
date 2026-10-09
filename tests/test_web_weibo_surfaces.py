@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -76,8 +78,8 @@ def test_weibo_current_docs_store_metadata_and_release_boundary_are_in_sync() ->
     changelog = _read("docs/changelog.md")
     amo = json.loads(_read("extension/amo-metadata.json"))
 
-    assert "linuxdo / v2ex / weibo / github` 枚举" in storage
-    assert "12 个 canonical family" in diagram
+    assert "linuxdo / v2ex / weibo / github / instagram` 枚举" in storage
+    assert f"{len(CANONICAL_SOURCE_FAMILIES)} 个 canonical family" in diagram
     assert "微博" in docker
     assert "微博" in listing
     assert "七平台内容发现 AI Agent" not in listing

@@ -2,16 +2,14 @@ name: Release Desktop Installers
 
 # Tag-triggered auto-publish. Push a `desktop-v*` tag (e.g. `desktop-v0.3.102`)
 # and this builds the macOS (.dmg) + Windows (.exe) installers and publishes them
-# to a GitHub *pre-release* (the app is unsigned / pre-alpha). This is the
+# to a GitHub *pre-release* (the app is pre-alpha). This is the
 # auto-publish counterpart to build-installers.yml (manual, artifacts-only).
 #
 # Scope note: the backend SOURCE stays source-only (`backend-v*` tags are git
 # markers, no Release) — only the desktop installer BINARIES ship here.
 #
-# Arch note: only macOS arm64 + Windows x64 are auto-built. The macos-13 (Intel
-# x64) runner is scarce and routinely queues for a very long time; gating every
-# release on it would stall the whole publish. Build the Intel .dmg on demand via
-# the manual build-installers.yml and attach it to the release if needed.
+# Arch note: automatic releases build macOS arm64 + Windows x64.
+# Signed/notarized Intel x64 builds use the manual build-installers.yml workflow.
 on:
   workflow_dispatch:
   push:
@@ -25,7 +23,7 @@ permissions:
 jobs:
   macos:
     name: macOS installer (.dmg, arm64, ${{ matrix.variant }})
-    runs-on: macos-14 # Apple Silicon
+    runs-on: macos-15 # Apple Silicon
     strategy:
       # fail-fast off so a failing variant doesn't cancel the other.
       fail-fast: false
@@ -33,6 +31,15 @@ jobs:
         variant: [lean, with-embedding]
     steps:
       - uses: actions/checkout@v6
+
+      - name: Prepare Developer ID signing and notarization
+        uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          notary-user: ${{ secrets.APPLE_NOTARY_USER }}
+          notary-password: ${{ secrets.APPLE_NOTARY_PASSWORD }}
 
       - uses: actions/setup-python@v6
         with:
@@ -90,6 +97,24 @@ jobs:
           [ "${{ matrix.variant }}" = "with-embedding" ] && flags="--bundle-embedding"
           python packaging/build.py --clean $flags --archive-version "${{ steps.ver.outputs.version }}-arm64"
 
+      - name: Verify frozen macOS startup after signing
+        shell: python
+        run: |
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          app = Path("dist/OpenBiliClaw.app").resolve()
+          with tempfile.TemporaryDirectory(prefix="obc-frozen-smoke-") as profile:
+              env = dict(os.environ, OPENBILICLAW_SELFTEST="1", OPENBILICLAW_PROJECT_ROOT=profile)
+              result = subprocess.run([str(app / "Contents/MacOS/OpenBiliClaw")], env=env, timeout=180)
+              log = Path(profile) / "logs/desktop.log"
+              text = log.read_text(encoding="utf-8") if log.exists() else ""
+              if result.returncode or "selftest OK" not in text:
+                  raise RuntimeError(f"Frozen startup failed ({result.returncode}): {text[-8000:]}")
+          subprocess.run([str(app / "Contents/Resources/openbiliclaw-tailnet-helper"), "--self-test"], check=True, timeout=30)
+
       - name: Enforce GitHub asset size limit (< 2GB)
         run: |
           for f in dist/release/*.dmg dist/release/*.zip; do
@@ -106,6 +131,22 @@ jobs:
             dist/release/*.dmg
             dist/release/*.zip
           if-no-files-found: error
+
+      - name: Preserve Apple notarization diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-notary-logs-${{ matrix.variant }}
+          path: dist/notary-logs/
+          if-no-files-found: ignore
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${APPLE_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$APPLE_SIGNING_KEYCHAIN"
+          fi
 
   windows:
     name: Windows installer (.exe, ${{ matrix.variant }})
@@ -208,14 +249,28 @@ jobs:
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Make bundled ollama windowless (PE subsystem console -> GUI)
+      # Do NOT patch the PE subsystem of the staged ollama binaries: rewriting
+      # the Subsystem byte invalidates their Authenticode signatures, and AV
+      # (Kaspersky) flags/quarantines such signed-but-modified exes (#281).
+      # Windowless operation no longer needs the patch — ollama spawns its
+      # runner with CREATE_NO_WINDOW (upstream PR #8668) and our supervisor
+      # launches `ollama serve` with CREATE_NO_WINDOW too.
+
+      - name: Verify bundled ollama Authenticode signatures
         shell: pwsh
         run: |
-          # A GUI-subsystem exe never allocates a console, so flip ollama.exe +
-          # every bundled runner exe to GUI to stop the console/conhost flashing.
+          # Guard for #281: every staged ollama exe must keep Ollama's original
+          # Authenticode signature. Any post-download mutation (like the removed
+          # PE-subsystem patch) breaks it and gets the installer flagged by AV.
           $exes = @("dist\OpenBiliClaw\ollama.exe")
           $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-          python packaging\patch_pe_subsystem.py @exes
+          $bad = @()
+          foreach ($f in $exes) {
+            $status = (Get-AuthenticodeSignature $f).Status
+            Write-Host "$f => $status"
+            if ($status -ne 'Valid') { $bad += "$f ($status)" }
+          }
+          if ($bad.Count -gt 0) { throw "Broken Authenticode signatures (AV will flag these): $($bad -join '; ')" }
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -300,12 +355,10 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           cat > "$notes_file" <<'EOF'
-          **实验性桌面安装包**（未签名 / 未公证，仅供尝鲜）。macOS DMG 内已放入一键安装并启动助手与首次打开说明；后端源码仍为 source-only，此处只发桌面应用二进制。
+          **桌面预发布安装包**。macOS 安装包均经过 Developer ID 签名和 Apple 公证；缺少凭据或公证失败时停止对应构建，不生成实验包。后端源码仍为 source-only，此处只发桌面应用二进制。
 
-          ### macOS 安全阻挡
-          - 当前 Release 是 ad-hoc signed、未 notarized。打开 DMG 后推荐双击 `安装并启动 Install OpenBiliClaw.command`，它会校验新包、退出旧实例、原子替换 `/Applications/OpenBiliClaw.app` 并启动刚安装的版本；传统拖拽仍可用，但升级需手动退出和重开。
-          - 首次运行安装助手或应用被拦截时，右键 / Control-click 对应项目 →「打开」→ 在弹窗里再点「打开」；或到「System Settings → Privacy & Security」点「Open Anyway / 仍要打开」。
-          - 若提示“OpenBiliClaw.app 已损坏，无法打开”，通常是下载隔离属性导致。确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"`，然后再次打开应用。
+          ### 安装
+          - **macOS**：退出旧版，打开 DMG，将 OpenBiliClaw 拖到 Applications 后启动。无需解除隔离；首次打开可能显示正常的互联网下载确认。
           - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
 
           自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。

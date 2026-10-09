@@ -12612,6 +12612,27 @@ class Database:
         row = cursor.fetchone()
         return int(row["count"]) if row is not None else 0
 
+    def has_current_recommendation_supply(self) -> bool:
+        """Whether recommendation history still points at usable, unretired content."""
+        self._ensure_fresh_read()
+        admission_sql, admission_params = self._pool_admission_sql(
+            score_expr="COALESCE(r.confidence, 0.0)", source_expr="c.source"
+        )
+        row = self.conn.execute(
+            f"""
+            SELECT 1
+            FROM recommendations AS r
+            JOIN content_cache AS c ON c.item_key = r.item_key
+            WHERE COALESCE(c.pool_status, 'fresh') IN ('fresh', 'shown')
+              AND TRIM(COALESCE(c.title, '')) != ''
+              AND TRIM(COALESCE(r.expression, '')) != ''
+              AND {admission_sql}
+            LIMIT 1
+            """,
+            admission_params,
+        ).fetchone()
+        return row is not None
+
     def count_unread_recommendations(self) -> int:
         """Return temporally eligible recommendations not yet presented."""
         self._ensure_fresh_read()
@@ -20521,6 +20542,90 @@ class Database:
             state_key="weibo_login_state",
             timestamp_key="weibo_login_state_at",
         )
+
+    def set_instagram_login_state(self, logged_in: bool, when_iso: str | None = None) -> None:
+        """Persist only whether the extension observed a non-empty sessionid.
+
+        The cookie value never crosses the browser/backend boundary.
+        """
+
+        if not isinstance(logged_in, bool):
+            raise TypeError("logged_in must be bool")
+        if when_iso is None:
+            from datetime import UTC, datetime
+
+            when_iso = datetime.now(UTC).isoformat()
+        self._set_browser_login_state(
+            state_key="instagram_login_state",
+            timestamp_key="instagram_login_state_at",
+            logged_in=logged_in,
+            when_iso=str(when_iso),
+        )
+
+    def get_instagram_login_state(self) -> tuple[bool, str]:
+        """Return ``(logged_in, iso_timestamp)`` for Instagram."""
+
+        return self._get_browser_login_state(
+            state_key="instagram_login_state",
+            timestamp_key="instagram_login_state_at",
+        )
+
+    def project_instagram_login_state_if_not_newer(
+        self,
+        logged_in: bool,
+        evidence_at: str,
+    ) -> bool:
+        """Project task evidence unless a newer browser heartbeat already won.
+
+        The compare and write share one ``BEGIN IMMEDIATE`` transaction.  This
+        closes both the stage/replay crash window and the race where logout is
+        observed while profile-event projection is still running.
+        """
+
+        if not isinstance(logged_in, bool):
+            raise TypeError("logged_in must be bool")
+
+        def parsed(value: object) -> datetime | None:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            try:
+                result = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if result.tzinfo is None:
+                result = result.replace(tzinfo=UTC)
+            return result.astimezone(UTC)
+
+        evidence_time = parsed(evidence_at)
+        if evidence_time is None:
+            raise ValueError("invalid Instagram heartbeat evidence timestamp")
+        normalized_evidence = evidence_time.isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM auth_state WHERE key='instagram_login_state_at'"
+            ).fetchone()
+            current_time = parsed(row["value"] if row is not None else "")
+            if current_time is not None and current_time > evidence_time:
+                conn.commit()
+                return False
+            conn.executemany(
+                "INSERT OR REPLACE INTO auth_state (key, value) VALUES (?, ?)",
+                [
+                    ("instagram_login_state", "1" if logged_in else "0"),
+                    ("instagram_login_state_at", normalized_evidence),
+                ],
+            )
+            conn.commit()
+            return True
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def set_v2ex_browser_identity(
         self,

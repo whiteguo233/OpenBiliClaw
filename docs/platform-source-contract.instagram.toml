@@ -1,0 +1,189 @@
+# Instagram source contract. Discovery reads direct topic/creator pages with
+# optional browser login enhancement. Personal initialization uses same-origin
+# reads; no Instagram Cookie or raw response body leaves the extension.
+
+schema_version = 1
+canonical_slug = "instagram"
+display_name = "Instagram"
+integration_level = "full"
+aliases = ["ig"]
+hosts = ["instagram.com"]
+content_types = ["post", "reel", "carousel", "user"]
+
+[transport]
+kind = "browser-task"
+owner = "shared"
+entrypoints = [
+  "src/openbiliclaw/sources/instagram.py",
+  "src/openbiliclaw/sources/instagram_tasks.py",
+  "src/openbiliclaw/runtime/instagram_producer.py",
+  "extension/src/content/instagram/task-executor.ts",
+  "extension/src/background/instagram-task-dispatcher.ts",
+]
+route_aliases = []
+fallback_owner = "none"
+requires_overseas_network = true
+routed_by_network_mode = false
+network_policy = "The user's browser owns connectivity. Discovery preserves anonymous responses and also accepts route-bound authenticated public-media grids. Initialization requires login. Tasks stay bounded; the backend never replays Instagram credentials."
+
+[transport.capability_routes]
+discover = "extension:browser-task:direct-topic-and-public-profile:optional-session"
+profile = "extension:browser-task:session-current-read-only"
+bootstrap = "extension:browser-task:session-current-read-only"
+cookie-sync = "extension:cookie-sync:boolean-login-readiness-only"
+
+[identity]
+item_id = "Instagram media id is canonical storage identity; shortcode/code is retained for canonical /p/ or /reel/ URLs, and followed users use their numeric user id"
+url = "Canonical https://www.instagram.com/p/<code>/, https://www.instagram.com/reel/<code>/, or public https://www.instagram.com/<username>/ URL"
+dedupe = "Canonical source family plus numeric media id; personal event keys are additionally partitioned by the current-account key and interaction scope"
+account_scope = "Before accepting events, match the same-session account form username to a fresh named PolarisViewer SSR module; require matching nonzero outer id and data.id"
+
+[auth]
+mode = "capability-specific"
+credential_kinds = ["login_state"]
+verify_action = "browser_heartbeat"
+write_path = "unified"
+account_resolution = "GET accounts/edit/web_form_data plus fresh same-origin homepage SSR PolarisViewer; cookie presence is readiness only"
+identity_evidence = "Successful account-form username must equal PolarisViewer.data.username; outer id and data.id must agree. Missing, conflicting or anonymous viewer fails closed; DOM labels and ds_user_id are not evidence"
+login_cookie_names = ["sessionid"]
+login_state_path = "callback"
+
+[auth.capability_modes]
+discover = "optional-credential"
+profile = "login-required"
+bootstrap = "login-required"
+cookie-sync = "optional-credential"
+
+[auth.capability_required]
+discover = true
+profile = true
+bootstrap = true
+cookie-sync = false
+
+[upstream]
+success_content_types = ["application/json", "text/javascript", "text/html"]
+pagination = "Topic/creator use page_info/end_cursor. Saved/following use next_max_id. Likes observes native activity Bloks with bounded scrolling; three unchanged nonempty observations stop with progress_stalled and preserve partial rows because a reliable terminal cursor is not proven. Every lane has frozen item/page caps."
+terminal_evidence = "HTTP success plus route-specific decoded envelope and explicit has_next_page=false, missing next_max_id, or recognized empty state; native Likes empty requires exact empty Text/TextSpan in the allowlisted Bloks tree without rejected/media rows. Personal scopes require verified current-account identity"
+terminal_policy = "Login walls, checkpoint/challenge pages, feedback_required, HTML returned to an API request, malformed envelopes, timeouts, 401/403/429, missing identity, and unobserved responses are failed or partial, never valid-empty. Final login/challenge routes and explicit error values/form/visible diagnostics are evidence; script/metadata keywords and nullable field names are not. Unexpected homepage HTML stays html_response. A dedicated unavailable-page title plus broken-link explanation is public_page_unavailable; only this page-local failure permits trying another seed."
+partial_policy = "Retain accepted rows but do not mark a scope complete, advance snapshot completeness, or infer removals when a page cap, item cap, schema error, auth failure, challenge, timeout, or rate limit interrupts pagination. Nonempty saved/following pages with no valid rows fail; mixed rows degrade. A bootstrap account identity change discards the mixed snapshot and terminalizes the same claim with instagram_account_changed."
+publication_time_policy = "Use an authoritative taken_at or media timestamp only, normalized to UTC; discovery/task time is never substituted"
+
+[discover]
+modes = ["topic", "creator"]
+initial_readiness = "After the normal first-page delay, passively wait at most 20 seconds for a matching envelope, affirmative empty, or terminal risk. Replay waits neither paginate nor renew idle. No scroll after the last allowed page; still-unobserved responses fail closed."
+creator_public_proof = "Native data.user or data.xig_user_by_username, including only the observed ScheduledServerJS.handle -> __bbox.require -> RelayPrefetchedStreamCache.next -> __bbox.result.data.xig_user_by_username wrapper. Explicit is_private=false, current route username and canonical numeric author identity must agree. Prefer a positive integral pk; use id only when pk is absent. Native Relay pk and id may be different namespaces, not a conflict. Invalid pk cannot fall back to id; mismatched authors, viewer/suggestions and unknown/private evidence are rejected. Module instructions are never evaluated."
+creator_cache = "Only an absent profile proof may reuse same-page public evidence. Every matching profile in one payload must be explicitly public with valid, mutually consistent identity. Fresh invalid/unknown/private/conflicting evidence, or truncated scans, revoke cached proof. Consistent same-account proofs merge without losing a known pk; SSR scans cannot reenter and allow at most one follow-up pass to bind earlier media. Author matching uses the same strict user-key parser and same-field identity comparisons, never a media-ID parser or cross-namespace digit collision."
+search_generation = "Profile aliases map to bounded direct topic routes. Tasks never submit Search or reconstruct private requests. With user authorization on 2026-09-30, the native page's authenticated top-SERP MediaGrid units are accepted as optional-session public media, never labeled anonymous; account/header units are ignored and private/unknown media rejected. Page-owned mutations require independent audit; admission is unchanged."
+budget = "Independent daily per-mode budgets are charged only to globally deduplicated candidates retained after filtering and final limit"
+cursor = "Opaque page_info/end_cursor values remain task-local; topic and creator branches are bounded and do not claim a complete public snapshot. Creator rows require explicit public authors or matching numeric ID and username from the native public data.user profile; viewer/suggested accounts are not proof. Unknown/private rows cannot cross the bridge; creator_not_public and creator HTTP 401/403/429 terminalize normally."
+
+[profile]
+signals = true
+incremental = false
+refresh_mode = "init-only"
+
+[extension]
+task = "browser-task"
+hosts = ["instagram.com"]
+task_marker = true
+background = true
+early_response = true
+cookie_sync = true
+
+[surfaces]
+cli = true
+setup = true
+desktop = true
+mobile = true
+extension_popup = true
+source_status = true
+credentials = true
+recommendation = true
+
+[surface_scope]
+desktop_platform_filter = true
+mobile_platform_filter = false
+extension_popup_platform_filter = false
+platform_filter_policy = "Desktop owns the repository platform filter and inventory counts. Mobile and extension popup expose canonical Instagram identity plus readiness/init status without claiming a platform-filter control that does not exist."
+
+[engagement]
+view = "unavailable"
+like = "unavailable"
+favorite = "unavailable"
+comment = "unavailable"
+share = "unavailable"
+danmaku = "unavailable"
+
+[media]
+image = "proxy"
+image_hosts = ["cdninstagram.com", "fbcdn.net"]
+address_policy = "Every redirect validates all DNS answers as public and pins numeric destination IPs, preserving original Host and verified TLS. Direct uses local DNS; proxied CDN requests use bounded TLS-verified Cloudflare 1.1.1.1 DoH via the same proxy, sending only the public hostname. No unchecked hostname CONNECT fallback."
+deep_link = "browser-fallback"
+native_save = false
+
+[e2e]
+safe_actions = ["read-identity", "snapshot", "read-public-page", "read-public-profile"]
+mutating_actions = []
+
+[e2e.safe_assertions]
+read-identity = "upstream-state-unchanged"
+snapshot = "upstream-state-unchanged"
+read-public-page = "upstream-state-unchanged"
+read-public-profile = "upstream-state-unchanged"
+
+[e2e.safe_postconditions]
+read-identity = "Only same-origin account-form and fresh homepage GETs are read; no raw credentials, form, HTML or upstream mutation cross the extension boundary."
+snapshot = "Saved/following use GET. Likes passively observes native liked_media_screen/liked_refresh/liked_next Bloks responses; the extension never reconstructs POSTs or executes embedded actions. No Select/Unlike or other engagement action is invoked. Page-owned upstream state changes require separate audit."
+read-public-page = "Direct /popular/<topic>/ navigation, anonymous or existing-session responses; only public media grids are read. No Search submit or engagement action. Page-owned mutations remain a separate audit boundary."
+read-public-profile = "Only bounded public creator media is read; follow and engagement mutations are absent."
+
+[events]
+strategy_prefixes = ["instagram-", "instagram_"]
+mappings = "Liked media maps to like, saved media maps to favorite, and followed accounts map to follow. Feed impressions and recommendation exposure never become profile events."
+scope_caps = "The backend freezes allowed scopes and independent page/item caps before claim. Likes are capped at the upstream UI's documented recent-300 boundary; capped scopes remain incomplete and cannot retract older events."
+
+[task]
+lease = "Backend atomic leasing and the cross-source extension mutex prevent a second active Instagram task from being claimed; stale claims recover the first staged result"
+idle_deadline = "A durable idle deadline advances only on accepted progress and survives worker restarts. Discovery uses 90 seconds; bootstrap allows max(90s, 4*request_interval + 3*20s + 5s), bounded to 185s. Request timeouts start after pacing waits; the absolute deadline is unchanged."
+absolute_deadline = "A durable absolute deadline bounds navigation, response observation, parsing, and all paginated reads across restarts"
+retry = "The exact canonical task-result payload is persisted in extension storage.local before POST and retried with bounded backoff until a 2xx ACK or explicit terminal rejection; backend first-final-wins remains authoritative. Legacy session state migrates once; a missing task tab resolves the original claim as recovery_tab_gone, preserving accepted rows as partial."
+poll_contention = "Losing the cross-source mutex schedules a separate durable 30-second alarm; no claim is made until the mutex is acquired. This avoids permanent starvation when every source's minute alarms coincide."
+buffer = "Only bounded normalized media/user rows, cursors, task/claim/tab identity, deadlines, progress, and the pending result are stored locally until ACK or terminal rejection; raw response bodies, Cookie, Authorization, CSRF values, and headers are never buffered or transmitted"
+
+[smoke]
+storage_scope = "isolated-only"
+
+[smoke.sinks]
+task = "allowed"
+task_result = "allowed"
+seen = "forbidden"
+affinity = "forbidden"
+snapshot = "forbidden"
+schedule = "forbidden"
+event_ingress = "forbidden"
+memory = "forbidden"
+profile = "forbidden"
+
+[exclusions]
+"search.integration" = "Instagram Search writes Recent Searches and no stable anonymous keyword-media contract exists; formal discovery therefore uses direct topic and creator routes without submitting the upstream search UI."
+"profile.incremental" = "The first integration imports recent logged-in personal signals during guided init only; no post-init periodic account polling is claimed."
+"engagement.view" = "Play/view counts are not present with consistent semantics across every selected topic, creator, post, carousel, and reel response path."
+"engagement.like" = "Like counts are not present with consistent semantics across every selected anonymous response path; liked membership is a private profile event, not aggregate engagement."
+"engagement.favorite" = "Instagram does not expose a stable public aggregate favorite count; saved membership is a private profile event."
+"engagement.comment" = "Comment counts are not present with consistent semantics across every selected anonymous response path."
+"engagement.share" = "The selected read-only paths do not expose a trustworthy aggregate share count."
+"engagement.danmaku" = "Instagram has no Bilibili-style danmaku metric."
+"media.deep-link" = "No stable, documented Instagram native URL scheme is claimed; mobile deliberately opens the canonical HTTPS URL."
+"media.native-save" = "OpenBiliClaw save remains local and never invokes Instagram's upstream save mutation."
+
+[exclusion_tests]
+"search.integration" = ["tests/test_instagram_contract.py::test_instagram_search_integration_is_excluded"]
+"profile.incremental" = ["tests/test_instagram_contract.py::test_instagram_profile_refresh_is_init_only"]
+"engagement.view" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"engagement.like" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"engagement.favorite" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"engagement.comment" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"engagement.share" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"engagement.danmaku" = ["tests/test_instagram_contract.py::test_instagram_normalization_does_not_fabricate_engagement"]
+"media.deep-link" = ["tests/test_instagram_contract.py::test_instagram_mobile_uses_https_fallback"]
+"media.native-save" = ["tests/test_instagram_contract.py::test_instagram_has_no_native_save_adapter"]

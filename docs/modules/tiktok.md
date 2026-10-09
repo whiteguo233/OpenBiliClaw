@@ -202,3 +202,7 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 ### 移动端范围
 
 移动网页支持 TikTok 推荐卡、封面、HTTPS 打开与本地收藏/稍后再看。按共享接入规范 §0.3，来源设置、凭据管理和测试连接只在桌面 Web 与扩展 popup 提供；移动端这些入口明确不适用，由 TikTok contract 与契约测试记录。
+
+### 登录态续验（2026-10-10）
+
+已安装 Chrome 分支扩展自动同步 Cookie、真实 passport 验证与关键词搜索通过；正式登录搜索 producer 使用完整短语，4 条候选经实际模型评估全部入池并生成文案。完整证据及测试边界见 [验收记录](../platform-source-acceptance.tiktok.md#已安装-chrome-与登录搜索续验2026-10-10)。这不扩展 discovery-only 范围。

@@ -114,7 +114,7 @@
             <div class="metric"><strong id="metricUnread">—</strong><span>通知数</span></div>
             <div class="metric"><strong id="metricSources">—</strong><span>内容源</span></div>
           </div>
-          <p class="hero-topics">最近主题：<span id="poolTopics">等待后端同步</span></p>
+          <p class="hero-topics"><span id="poolTopicsLabel">最近主题</span>：<span id="poolTopics">等待后端同步</span></p>
           <p id="accountSyncStatus" class="account-sync-status" hidden></p>
         </section>
         <section class="side-section side-activity-section" data-od-id="activity-rail" aria-label="后台动态摘要">
@@ -196,7 +196,7 @@
               <button class="pill-btn" id="resetFiltersBtn" type="button" hidden="">重置筛选</button>
             </div>
           </div>
-          <!-- chip 由 renderFilters 渲染成 role=tab（含 aria-selected 与库存计数） -->
+          <!-- chip 由 renderFilters 渲染成 role=tab（含 instagram、aria-selected 与库存计数） -->
           <div class="filter-row" id="filterRow" role="tablist" aria-label="推荐平台与库存"></div>
           <!-- 首屏骨架占位：后端推荐取回前先撑住版面，renderVideos 首次渲染时整体替换 -->
           <div class="card-grid" id="videoGrid">
@@ -1280,6 +1280,57 @@
                   <h4>验证</h4>
                   <div class="settings-probe-row source-verify-row">
                     <button class="pill-btn source-verify-btn" type="button">测试 PAT</button>
+                    <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+                  </div>
+                </section>
+              </div>
+            </article>
+
+            <article class="source-status-row source-card" data-source-status="instagram" data-source-credential="instagram" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-instagram">
+                <span class="source-card-logo" data-source-logo="instagram" aria-hidden="true">IG</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">Instagram</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareInstagram" value="1" inputmode="numeric" aria-label="Instagram 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 Instagram</span><select id="instagramEnabled"><option value="on">启用</option><option value="off" selected>停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-instagram">
+                <section class="source-seg">
+                  <h4>接入方式</h4>
+                  <p class="seg-note">公开发现由浏览器扩展读取，无需登录；个人点赞、收藏和关注仅在首次初始化时读取。首次使用请在扩展的「设置 → 平台源」启用 Instagram 并保存，允许 instagram.com 站点访问；导入个人事件还需在同一浏览器登录 Instagram。Cookie 不会上传到后端。</p>
+                  <div class="source-cred-box">
+                    <div class="source-cred-line"><span class="source-credential-ro-tag">脱敏</span><span class="source-credential-summary">加载中…</span></div>
+                    <textarea class="source-credential-value" rows="2" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>发现分支与每日预算</h4>
+                  <p class="seg-note">话题读取可用的公开 topic 页面；作者分支以话题返回的作者为种子，因此启用作者时会同时启用话题。不提交 Instagram 站内搜索，不执行点赞、收藏或关注。</p>
+                  <div class="branch-table" data-branch-toggles="on">
+                    <div class="branch-head"><span></span><span>分支</span><span>每日预算</span><span>说明</span></div>
+                    <div class="branch-row"><input id="instagramModeTopic" type="checkbox" class="branch-toggle" aria-label="Instagram 话题分支"><span class="branch-name">话题</span><input id="instagramDailyTopicBudget" class="branch-budget" inputmode="numeric" placeholder="60" aria-label="Instagram 每日话题预算"><span class="branch-hint">有界公开 topic 内容</span></div>
+                    <div class="branch-row"><input id="instagramModeCreator" type="checkbox" class="branch-toggle" aria-label="Instagram 作者分支"><span class="branch-name">作者</span><input id="instagramDailyCreatorBudget" class="branch-budget" inputmode="numeric" placeholder="30" aria-label="Instagram 每日作者预算"><span class="branch-hint">围绕话题中观察到的作者扩展</span></div>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>节流与初始化</h4>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求间隔秒数</span><input id="instagramRequestInterval" inputmode="numeric" placeholder="3"></label>
+                    <label class="settings-field"><span>最小调度间隔分钟</span><input id="instagramMinInterval" inputmode="numeric" placeholder="10"></label>
+                    <label class="settings-field"><span>初始化每类信号上限</span><input id="instagramBootstrapLimit" inputmode="numeric" placeholder="300"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>验证</h4>
+                  <div class="settings-probe-row source-verify-row">
+                    <button class="pill-btn source-verify-btn" type="button">刷新浏览器登录状态</button>
                     <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
                   </div>
                 </section>

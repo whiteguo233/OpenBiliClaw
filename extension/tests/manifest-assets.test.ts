@@ -255,7 +255,11 @@ test("Chrome and Firefox manifests avoid all-sites host permission", () => {
     assert.equal(manifest.host_permissions?.includes("<all_urls>"), false);
     assert.equal(manifest.host_permissions?.includes("http://127.0.0.1/*"), true);
     assert.equal(manifest.host_permissions?.includes("http://localhost/*"), true);
-    assert.deepEqual(manifest.optional_host_permissions, ["http://*/*", "https://*/*"]);
+    assert.deepEqual([...(manifest.optional_host_permissions ?? [])].sort(), [
+      "http://*/*",
+      "https://*/*",
+      "https://*.instagram.com/*",
+    ].sort());
     assert.equal(manifest.host_permissions?.includes("*://*.bilibili.com/*"), true);
     assert.equal(manifest.host_permissions?.includes("*://*.xiaohongshu.com/*"), true);
     assert.equal(manifest.host_permissions?.includes("*://*.douyin.com/*"), true);

@@ -9,6 +9,8 @@
 
 ## The only thing you actually need to do
 
+Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
+
 Pick the command for the user's shell — **detect the platform from the user's environment, do not let them choose if you can tell**:
 
 **macOS / Linux / WSL2 (Bash):**
@@ -913,3 +915,7 @@ system-level package the user must consent to.
 - `docs/openclaw-quickstart.md` — OpenClaw-specific integration after install
 - `scripts/install.sh` — the installer itself (the command above)
 - `scripts/agent_bootstrap.py` — the Python contract core invoked by install.sh
+
+## macOS 桌面包签名
+
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。

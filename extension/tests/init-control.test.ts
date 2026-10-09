@@ -317,14 +317,26 @@ test("idle status is not terminal", () => {
 test("reason + start-error text mapping", () => {
   assert.ok(describeInitReason("bilibili_not_logged_in").includes("B 站"));
   assert.equal(describeInitReason("none"), "");
-  assert.ok(describeInitReason("no_profile_signal_sources").includes("账号信号"));
-  assert.ok(!describeInitReason("no_profile_signal_sources").includes("Bangumi"));
+  assert.equal(
+    describeInitReason("no_profile_signal_sources"),
+    "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
+  );
   assert.equal(describeInitReason("totally_unknown"), "");
   const err = Object.assign(new Error("boom"), {
     status: 409,
     details: { error: "already_running" },
   });
   assert.ok(describeInitStartError(err).includes("进行中"));
+});
+
+test("an Instagram-only 409 keeps the backend's source-specific guidance", () => {
+  const detail =
+    "Instagram 公开 topic / creator 发现无需登录，但初始化点赞、收藏和关注记录需要当前浏览器已登录 Instagram 并连接扩展。";
+  const rejected = Object.assign(new Error("/api/init request failed: 409"), {
+    status: 409,
+    details: { error: "no_profile_signal_sources", detail },
+  });
+  assert.equal(describeInitStartError(rejected), detail);
 });
 
 test("a Bangumi-only 409 names all three account tiers", () => {
@@ -337,15 +349,33 @@ test("a Bangumi-only 409 names all three account tiers", () => {
     details: {
       error: "no_profile_signal_sources",
       detail:
-        "只选择 Bangumi 初始化时，需提供个人令牌、公开用户名，或先在浏览器登录 bgm.tv。",
+        "只选择 Bangumi 初始化时，需提供个人令牌（推荐，自动识别当前用户）、公开用户名，或先在浏览器登录 bgm.tv 让扩展自动识别。",
     },
   });
   const text = describeInitStartError(rejected);
+  assert.equal(text, rejected.details.detail);
   assert.ok(text.includes("个人令牌"));
   assert.ok(text.includes("公开用户名"));
   // The tier that needs no typing at all must be named, otherwise the copy
   // still tells a logged-in bgm.tv user to go fetch a token.
   assert.ok(text.includes("bgm.tv"));
+});
+
+test("start-error backend guidance accepts only bounded non-empty text", () => {
+  for (const detail of [undefined, null, "  ", {}, [], 42, false]) {
+    assert.equal(
+      describeInitStartError({ details: { error: "already_running", detail } }),
+      "初始化正在进行中。",
+    );
+  }
+  assert.equal(
+    describeInitStartError({ details: { error: "already_running", detail: "  请连接扩展。  " } }),
+    "请连接扩展。",
+  );
+  assert.equal(
+    describeInitStartError({ details: { detail: "x".repeat(5000) } }),
+    "x".repeat(2000),
+  );
 });
 
 test("guided-init start failures prefer source-specific backend detail", () => {
@@ -450,6 +480,7 @@ test("init source options: bilibili is default-checked but deselectable, others 
     "bangumi",
     "linuxdo",
     "v2ex",
+    "instagram",
   ]);
   // The login reminder copy mentions logging in on this browser.
   assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
@@ -485,6 +516,13 @@ test("init source options: Zhihu is present, opt-in, labelled 知乎", () => {
   assert.ok(zhihu, "zhihu option must exist");
   assert.ok(!zhihu?.defaultChecked);
   assert.equal(zhihu?.label, "知乎");
+});
+
+test("init source options: Instagram is present, opt-in, labelled Instagram", () => {
+  const instagram = INIT_SOURCE_OPTIONS.find((option) => option.key === "instagram");
+  assert.ok(instagram, "instagram option must exist");
+  assert.ok(!instagram?.defaultChecked);
+  assert.equal(instagram?.label, "Instagram");
 });
 
 test("init source options: Reddit is present, opt-in, labelled Reddit", () => {

@@ -6379,6 +6379,7 @@ class TestBackendAPI:
             "recommendation_count": 5,
             "pending_signal_events": 3,
             "last_refresh_at": "2026-03-10T12:00:00",
+            "discovery_failure_message": "",
             "last_notification_at": "2026-03-10T12:30:00",
             "unread_count": 2,
             "pool_available_count": 28,
@@ -15832,6 +15833,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["refresh_check_interval_seconds"] == 75
@@ -16498,6 +16500,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert cfg.scheduler.refresh_check_interval_seconds == 75
         assert cfg.scheduler.eval_min_batch_size == 23
@@ -16668,6 +16671,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
                 "github": 0,
                 "unknown": 0,
             },
@@ -16685,6 +16689,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "github": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 8,
@@ -16827,6 +16832,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
                 "github": 0,
                 "unknown": 0,
             },
@@ -16844,6 +16850,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "github": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 6,

@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
+OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
 
 **核心理念**：
 - 不是冷冰冰的推荐算法，而是一个**有温度的 AI 朋友**
@@ -36,6 +36,7 @@ OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 A
 **浏览器插件（核心采集入口）**：
 - 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do 普通页面的交互行为；Reddit 初始化 saved/upvoted/subscribed 信号复用插件登录态任务桥，日常 discovery 默认使用 rdt-cli 登录态命令后端，不可用时 fallback 到插件任务。Linux.do 的隔离任务 tab 只运行同源只读 executor、不会启动普通 collector：公开 discovery 支持 search/hot/feed/creator/related，个人 bootstrap 支持 bookmarks/likes/read_history。其余行为链覆盖点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
 - 微博公开 discovery 由后端匿名 visitor 完成；插件只在显式 guided init 时申请微博 host permission，使用隔离同源任务页只读导入收藏、关注和 mentions。后端不接收 Cookie，不做普通行为采集、站内写回或 native-save；个人 bootstrap 当前为 init-only
+- Instagram 普通页面不启动被动行为采集。公开 topic/creator discovery 与显式 guided init 的 liked/saved/following 导入都在隔离任务 tab 中执行；`sessionid` 只上报存在性，current-account 数字 ID 才是账号分区证据。登录墙、challenge、HTML、429 与 partial 不得伪装成空结果；不执行 Instagram Search 或任何站内写入。
 - GitHub 由后端调用官方 REST API：匿名即可发现公开 repository，可选 PAT 只增强限额并支持账号核验；公开用户名的 starred repositories 仅在 init/on-demand 映射为 `favorite`。GitHub 不增加浏览器权限、content script、Cookie/任务桥、媒体处理、native-save 或站内写入
 - 记录行为发生时的**完整上下文**：对应的 DOM 页面快照、当前浏览路径、时间戳、平台来源与内容 ID；后端把来源平台、稳定内容 ID 和来源置信度写入 durable event ledger，旧事件无法确认时保留未知，不凭标题或任务名猜测
 - 捕捉用户的**微行为**：鼠标悬停、视频进度条跳转、视频暂停 / 继续、页面导航等
@@ -178,7 +179,7 @@ Discovery 可以继续宽搜，普通 dislike 不撤销关键词或来源任务�
 | 策略 | 说明 |
 |------|------|
 | **兴趣关键词搜索** | 根据用户画像生成关键词组合搜索；B 站生产路径在既有请求预算内预留 1 个 `pubdate` 请求（最多 5 条），与普通相关性结果交错进入评估窗口，只补近期供给而不改变 relevance/admission |
-| **搜索灵感脑暴** | 可选地从 like 二级兴趣抽样；`OnionProfile.interest.likes` 会优先展开 specifics，一级 domain 只在缺少 specifics 时兜底，并按 parent 计数降权防止小窗口被同一领域占满；结合 recent interest selection count、关键词覆盖频次、raw candidate 数量 / 占比 / dominant content type 和最终候选池占比降权高频兴趣，coverage join 统一走 `_normalize_match_text()` 折叠大小写 / 空白漂移，画像整理会同步迁移 keyword 与 selection ledger 标签，完整 coverage 只在本地控制环使用，LLM payload 只携带 must-cover + 少量 cooldown 摘要；随后由 `discovery.keyword_brainstorm` 脑暴带 `kind_fit=regular|explore|both` 的搜索 probe branch，每兴趣最多 2 条，regular + explore 同轮触发时共用一次 brainstorm 和一次 grounding stage；按 `[discovery].inspiration_search_backends` 通过 search provider 链（默认已启用平台源 → Exa → You.com free MCP）grounding 具体实体 / 社区词 / 讨论点，stage 级搜索预算由 `inspiration_max_probe_searches_per_stage` 控制，平台源扇出由 `inspiration_platforms_per_probe` 控制，每 probe 翻页 / 扩量由 `inspiration_search_pages_per_probe` 控制，B 站 / 抖音 / X 等 risk-controlled 来源受 `inspiration_riskcontrolled_probe_budget` 与 cooldown / 限流约束；`platform_sources` 可复用已启用且可同步搜索的 B站 / 小红书 / 抖音 / YouTube / X / GitHub / 知乎 / Reddit / Bangumi / V2EX / 微博后端，只把标题 / URL / 摘要作为灵感 evidence，不入候选池；Linux.do 仍由异步扩展任务取数，不冒充同步 grounding 后端。GitHub formal / inspiration 共用 public query sanitizer 与持久 cooldown，私有行或异常结果 fail closed；泛词不是硬错误，会交给 curator 结合画像、平台 guide 和覆盖约束判断；再经 `discovery.keyword_inspiration` 做 Profile Curator / Detail Expander，优先生成按平台 keyed 的 `platform_keywords`；`platform_guides.query_style` 覆盖全部十三来源；写库前由系统侧执行 must-cover 排序、每平台二级兴趣 / lens family 上限、原样证据标题 / URL / 过长 query / 平台语言不匹配 / 平台检索语法不匹配过滤、grounding hint `source_interest` 校正、explore 横向 lens 校验，缺失 must-cover 兴趣时用 `discovery.keyword_inspiration.repair` 做一次 bounded repair，repair 仍缺词时用 deterministic platform-native backfill 补齐；新配置默认以混合模式开启，与旧 merged keyword planner 并行，admission yield 会回填 inspiration / expansion 反馈计数；实验开关可让 due 平台完全跳过旧 merged keyword planner，只用新流程产词，并在 B 站 explore 到期时写入 `keyword_kind="explore"` 的探索词池；`keyword-inspiration-dry-run` 可真实预览中间链路但不写关键词池，且使用独立 preview selection scope，`keyword-inspiration-report` 对比 inspiration / merged cohort、输出 production / preview 抽中分布并给出 replace 门禁 |
+| **搜索灵感脑暴** | 可选地从 like 二级兴趣抽样；`OnionProfile.interest.likes` 会优先展开 specifics，一级 domain 只在缺少 specifics 时兜底，并按 parent 计数降权防止小窗口被同一领域占满；结合 recent interest selection count、关键词覆盖频次、raw candidate 数量 / 占比 / dominant content type 和最终候选池占比降权高频兴趣，coverage join 统一走 `_normalize_match_text()` 折叠大小写 / 空白漂移，画像整理会同步迁移 keyword 与 selection ledger 标签，完整 coverage 只在本地控制环使用，LLM payload 只携带 must-cover + 少量 cooldown 摘要；随后由 `discovery.keyword_brainstorm` 脑暴带 `kind_fit=regular|explore|both` 的搜索 probe branch，每兴趣最多 2 条，regular + explore 同轮触发时共用一次 brainstorm 和一次 grounding stage；按 `[discovery].inspiration_search_backends` 通过 search provider 链（默认已启用平台源 → Exa → You.com free MCP）grounding 具体实体 / 社区词 / 讨论点，stage 级搜索预算由 `inspiration_max_probe_searches_per_stage` 控制，平台源扇出由 `inspiration_platforms_per_probe` 控制，每 probe 翻页 / 扩量由 `inspiration_search_pages_per_probe` 控制，B 站 / 抖音 / X 等 risk-controlled 来源受 `inspiration_riskcontrolled_probe_budget` 与 cooldown / 限流约束；`platform_sources` 可复用已启用且可同步搜索的 B站 / 小红书 / 抖音 / YouTube / X / GitHub / 知乎 / Reddit / Bangumi / V2EX / 微博后端，只把标题 / URL / 摘要作为灵感 evidence，不入候选池；Linux.do 仍由异步扩展任务取数，不冒充同步 grounding 后端。GitHub formal / inspiration 共用 public query sanitizer 与持久 cooldown，私有行或异常结果 fail closed；泛词不是硬错误，会交给 curator 结合画像、平台 guide 和覆盖约束判断；再经 `discovery.keyword_inspiration` 做 Profile Curator / Detail Expander，优先生成按平台 keyed 的 `platform_keywords`；`platform_guides.query_style` 覆盖全部十四来源；写库前由系统侧执行 must-cover 排序、每平台二级兴趣 / lens family 上限、原样证据标题 / URL / 过长 query / 平台语言不匹配 / 平台检索语法不匹配过滤、grounding hint `source_interest` 校正、explore 横向 lens 校验，缺失 must-cover 兴趣时用 `discovery.keyword_inspiration.repair` 做一次 bounded repair，repair 仍缺词时用 deterministic platform-native backfill 补齐；新配置默认以混合模式开启，与旧 merged keyword planner 并行，admission yield 会回填 inspiration / expansion 反馈计数；实验开关可让 due 平台完全跳过旧 merged keyword planner，只用新流程产词，并在 B 站 explore 到期时写入 `keyword_kind="explore"` 的探索词池；`keyword-inspiration-dry-run` 可真实预览中间链路但不写关键词池，且使用独立 preview selection scope，`keyword-inspiration-report` 对比 inspiration / merged cohort、输出 production / preview 抽中分布并给出 replace 门禁 |
 | **相关推荐链探索** | 从已知好内容出发，沿相关推荐不断深入 |
 | **分区热门/排行榜** | 固定全站榜，并按本地洗牌轮转覆盖非 0 分区榜，结合用户画像筛选 |
 | **UP 主追踪** | 追踪关注的和发现的优质 UP 主的新动态 |
@@ -186,7 +187,7 @@ Discovery 可以继续宽搜，普通 dislike 不撤销关键词或来源任务�
 | **跨领域探索** | 刻意推荐用户从未接触过但心理画像暗示可能喜欢的领域；当统一 `KeywordPlanner` 已有 merged keyword 调用、`explore_refresh_hours` 到期或即将到期且 B 站仍有补货空间时，默认会把 `explore_domains` 合并进同一次关键词生成，把探索 query 写入 B 站 `keyword_kind="explore"` query cache。开启 inspiration-only 替换模式后，这部分也改由 search-backed inspiration flow 生成 `query_kind="explore"` 的 B 站探索词。`ExploreStrategy` 后续从该 explore 候选池 claim query 搜索；池为空时不再单独打一次 explore 计划 LLM |
 | **热点关联** | 追踪热点话题，判断是否与用户深层兴趣相关 |
 
-Linux.do 同样纳入统一关键词 planner 的十三平台目标与 `platform_guides.query_style`；其 search query 使用社区话题风格，候选仍只进入统一待评估池。Linux.do 不是 inspiration grounding 的后端直连来源：真实取数依旧由扩展 task tab 完成。
+Linux.do 同样纳入统一关键词 planner 的十四平台目标与 `platform_guides.query_style`；其 search query 使用社区话题风格，候选仍只进入统一待评估池。Linux.do 不是 inspiration grounding 的后端直连来源：真实取数依旧由扩展 task tab 完成。
 
 GitHub 纳入统一关键词 planner 与 `platform_guides.query_style`，使用适合 repository search 的简洁技术主题词；CLI、正式 producer 与 inspiration provider 共用 public query sanitizer，来源级持久 cooldown 也由 formal / inspiration 共用。inspiration 只有在 producer 正常返回且结果仍满足 public-only normalizer 时才提供 evidence，异常、限流、清洗后空 query 或私有行一律 fail closed，不写候选池或推荐池。
 
@@ -306,6 +307,8 @@ background ─ background admission (default 3) ──────┘
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes
+             Instagram selected → init-owned topic/creator tasks → explicit small-batch flush
+                                → same evaluator/copy; no unselected Bilibili fallback
 
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
         → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
@@ -348,8 +351,11 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
 
 cover images: proxy foreground ─┐
               refresh prefetch ─┴→ app-stable coordinator(total 4 / bg 3, fg priority)
-                                  → cache-key singleflight → whitelist fetch (sinaimg included, direct)
+                                  → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
+                                  → pinned IP/direct-or-proxy (original Host + verified TLS)
                                   → atomic cache
+Instagram manual replenish → producer/task locks + quota/budget → topic/creator
+                          → explicit bounded eval/copy → usable supply or refresh.failed
 dialogue entries → app-stable execution lease(max active 1; reload pause/drain)
   durable dialogue → confirmation entry(pending list / cards)
                  → chat_turn(reply_to_turn_id + payload + fixed turn time)
@@ -464,7 +470,9 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ +停留满意度   │  │ +文字卡渲染   │  │ 待聊列表/卡片   │    │
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ bili/xhs/dy/yt/zhihu/reddit/linuxdo/v2ex/weibo 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ bili/xhs/dy/yt/zhihu/reddit/linuxdo/v2ex/weibo/instagram 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ Instagram: local claim / progress / outbox → 同 claim 重启恢复 → ACK 后清理；丢 tab 明确 failed / partial │ │
+│  │ Instagram init: form + PolarisViewer → native Likes Bloks / saved+following GET（只返回白名单数据） │ │
 │  │ 微博任务仅在显式 guided init 运行：同源只读导入收藏、关注、mentions；不上传 Cookie、不采集普通行为 │ │
 │  │ GitHub 仅显示配置/状态/init/文字卡；官方 REST 调用全在后端，不加入扩展任务或权限 │ │
 │  │ XHS 自动任务：source/scheduler 领取门 → SQLite 节流/风控冷却 → 关闭/限流时不再开任务 tab │ │
@@ -623,7 +631,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ + 各自 producer│ │ bounded task/result│  │             │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ sources.platforms：十三平台 alias / strategy / URL host      │ │
+│  │ sources.platforms：十四平台 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -670,6 +678,10 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   有界 Topic 详情 + PAT Reply digest -> v2ex:<topic_id> 文字卡；Reply 不单独入池 │ │
 │  │   四只读 scope + route/耗尽证明 -> staged ingress -> identity gate -> 账号分区 Node affinity │ │
 │  │   首个 complete 收藏 scope 种基线；后续连续两次缺失 -> durable retract/restore │ │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ InstagramDiscoveryProducer: optional-session topic/creator → canonical public media → eval │ │
+│  │   liked/saved/following → like/favorite/follow；sessionid 只作 bool，账号由 current-user 正证 │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Cookie/登录态、runtime-stream presence、任务持久化/claim、seen-key 去重 │ │
@@ -822,3 +834,7 @@ localhost。两个入口互斥，默认 HTTP 不变。
 *文档版本: v0.3 | 日期: 2026-08-09 | 状态: 持续更新*
 
 TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（保持 Host/SNI 与 network 代理）→ 有界缓存`。
+
+## macOS 构建分发补充
+
+桌面打包 → Developer ID 内层/应用签名 → Apple 公证并附票据 → ZIP/DMG → DMG 签名、公证和 Gatekeeper 检查；正式 DMG 拖入 Applications 安装。此构建链不改变 §3 的运行时数据流。详见[架构分发链](architecture.md#macos-分发构建链)与[打包接口](modules/packaging.md)。

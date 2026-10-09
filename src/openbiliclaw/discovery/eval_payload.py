@@ -75,6 +75,30 @@ def _text(value: object) -> str:
     return value if isinstance(value, str) else str(value)
 
 
+def _sanitize_wire_text(value: str) -> str:
+    """Strip exactly the characters the evaluation wire validator rejects.
+
+    One upstream-sourced control character (e.g. a NUL inside a Bilibili
+    description) used to raise in ``_validate_text`` and fail the *whole*
+    evaluation batch (#284). Source rows keep their raw text; only the LLM
+    wire copy is cleaned here, so a dirty item can no longer kill its batch.
+    The strip set mirrors the validator: C0 controls except ``\\t \\r \\n``,
+    plus DEL. Lone surrogates are replaced so the result always encodes as
+    valid UTF-8.
+    """
+
+    cleaned = "".join(
+        character
+        for character in value
+        if character in {"\t", "\r", "\n"} or not (ord(character) < 0x20 or ord(character) == 0x7F)
+    )
+    try:
+        cleaned.encode("utf-8")
+    except UnicodeEncodeError:
+        cleaned = cleaned.encode("utf-8", "replace").decode("utf-8")
+    return cleaned
+
+
 def _nonempty_list(value: object) -> list[object] | None:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         return None
@@ -112,8 +136,8 @@ def build_canonical_evaluation_batch(
     """Build the sole canonical sparse representation for all transports."""
 
     source_items = [dict(item) for item in content_items]
-    platforms = [_text(item.get("source_platform")) for item in source_items]
-    content_types = [_text(item.get("content_type")) for item in source_items]
+    platforms = [_sanitize_wire_text(_text(item.get("source_platform"))) for item in source_items]
+    content_types = [_sanitize_wire_text(_text(item.get("content_type"))) for item in source_items]
     default_platform = _homogeneous_default(platforms)
     default_content_type = _homogeneous_default(content_types)
 
@@ -130,8 +154,10 @@ def build_canonical_evaluation_batch(
         local_ids.append(local_id)
         item: dict[str, object] = {
             "id": local_id,
-            "title": _text(source.get("title")),
-            "author": _text(source.get("author_name") or source.get("up_name")),
+            "title": _sanitize_wire_text(_text(source.get("title"))),
+            "author": _sanitize_wire_text(
+                _text(source.get("author_name") or source.get("up_name"))
+            ),
         }
         if default_platform is None:
             item["source_platform"] = platforms[index]
@@ -143,7 +169,7 @@ def build_canonical_evaluation_batch(
         for field in _OPTIONAL_STRING_FIELDS:
             value = source.get(field)
             if isinstance(value, str) and value:
-                item[field] = value
+                item[field] = _sanitize_wire_text(value)
         for field in _OPTIONAL_POSITIVE_INTEGER_FIELDS:
             value = source.get(field)
             if _is_positive_integer(value):
@@ -155,7 +181,11 @@ def build_canonical_evaluation_batch(
         for field in _OPTIONAL_LIST_FIELDS:
             value = _nonempty_list(source.get(field))
             if value is not None:
-                item[field] = value
+                entries = [
+                    sanitized for entry in value if (sanitized := _sanitize_wire_text(_text(entry)))
+                ]
+                if entries:
+                    item[field] = entries
         if _text(source.get("cover_image_ref")):
             item["cover_image_ref"] = f"cover:{local_id}"
         canonical_items.append(item)
