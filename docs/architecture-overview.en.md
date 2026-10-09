@@ -155,3 +155,14 @@ Desktop background resume (cards already loaded): skip the pool-filling recommen
 Overseas traffic: `[network].mode` → system proxy (default) / direct / custom proxy → LLM, YouTube, X/Reddit CLIs, Bangumi, GitHub source/API stats, and updater; CN clients including V2EX remain isolated and direct
 Manual Douyin discovery: CLI discover → daemon-equivalent producer → per-keyword outcomes → extension search/hot/feed → pending-eval pool
 ```
+
+
+### TikTok public discovery
+
+```text
+Formal producer / inspiration → TikTok router → shared pacing / durable 429 cooldown → signed Web API
+                                             └─ auto + unavailable Web → yt-dlp (limited list support)
+                             → shared candidate pool → evaluation → recommendations
+```
+
+An optional login cookie enables search attempts. Passport session verification and actual search availability are verified separately; account history and profile initialization are excluded.

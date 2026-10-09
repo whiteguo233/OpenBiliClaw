@@ -1,6 +1,6 @@
 # TikTok 来源验收报告
 
-本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。发现范围的真实功能验收已补齐，合并后全量回归仍在执行。
+本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。discovery-only 范围的真实功能验收已补齐；本机全量与修复后回归结果见文末，当前分支 CI 以 [PR #275 checks](https://github.com/whiteguo233/OpenBiliClaw/pull/275/checks) 为准。
 
 ## 范围与 provenance
 
@@ -138,4 +138,6 @@ Chrome 连接工具可列出浏览器，但会话命名/标签控制均超时；
 - Ruff 全 src/tests 通过；MyPy 317 文件通过；Chrome / Firefox 构建及资源检查通过；修复后扩展 1681/1681 通过。
 - 首轮专项 172 passed / 1 failed（main 的海外路由清单漏预期 TikTok），修正断言后相邻 25 项全部通过。第三方声明 16 项通过。
 - 合并时桌面 alias 表产生语法错误，已修正并通过 Node 语法检查；涉及的桌面对话布局、autoload、issue-98 浏览器用例重跑 34/34 通过。
-- 本机全量 pytest 正在执行，首次运行包含修正前的失败；最终 head 的 CI/后续重跑结果需要单独记录，不把分阶段结果冒充同一次全绿。
+- 本机完整 pytest 首轮结束：10323 passed / 65 skipped / 7 failed（34 分 17 秒）。5 项桌面浏览器失败已由修复后 34/34 重跑覆盖；余下两项是 main 的初始化名单测试未排除 discovery-only TikTok，以及架构图仍写 13 来源。修正后相关 Instagram / 微博 / TikTok 契约 / docs index 共 82/82 通过。首次失败与重跑分开记录，不冒充同一次全绿。
+- 扩展修复后 1681/1681；Ruff、MyPy 317 文件、Node 语法检查、两种扩展构建/资源检查均通过。测试配置的 LLM 与 network 对象同生产配置一致。临时服务器、浏览器已关闭，测试配置/Cookie/数据库已清理，只保留脱敏证据。
+- 合并冲突已消除，原 feat/tiktok-source worktree 同步且原有未跟踪文件保留；未合并 PR、未发版、未切换正式后端。后续 CI 状态直接查看 PR checks，不以本文冻结运行中状态。

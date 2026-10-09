@@ -78,7 +78,7 @@ def test_weibo_current_docs_store_metadata_and_release_boundary_are_in_sync() ->
     changelog = _read("docs/changelog.md")
     amo = json.loads(_read("extension/amo-metadata.json"))
 
-    assert "linuxdo / v2ex / weibo / github / instagram` 枚举" in storage
+    assert " / ".join(CANONICAL_SOURCE_FAMILIES) + "` 枚举" in storage
     assert f"{len(CANONICAL_SOURCE_FAMILIES)} 个 canonical family" in diagram
     assert "微博" in docker
     assert "微博" in listing
