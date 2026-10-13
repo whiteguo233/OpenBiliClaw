@@ -9,6 +9,7 @@ guard (five states).
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -19,7 +20,7 @@ from openbiliclaw.config import (
 )
 from openbiliclaw.llm.prompts import build_posture_gate_prompt
 from openbiliclaw.memory.manager import MemoryManager
-from openbiliclaw.soul.engine import SoulEngine
+from openbiliclaw.soul.engine import SoulEngine, _interest_rebuild_diff
 from openbiliclaw.soul.posture_gate import (
     ACCEPT,
     DOWNGRADE,
@@ -449,6 +450,159 @@ async def test_ap3_feedback_batch_trigger_uses_feedback_write_point(tmp_path: An
     assert call["write_point"] == "feedback_soul_rebuild"
     assert call["change"]["trigger"] == "feedback_batch"
     assert call["change"]["context"] == {"feedback_count": 3}
+
+
+async def test_ap3_rebuild_snapshot_is_compact_diff_summary(tmp_path: Any) -> None:
+    """Issue #288: the gate snapshot carries the spec's rebuild diff summary,
+    not two full interest serializations with their timestamp bulk."""
+    engine = _engine(tmp_path)
+    stub = _StubGate("shadow", GateDecision(verdict=ACCEPT, enforced=False))
+    engine._posture_gate = stub  # type: ignore[assignment]
+    full_entry = {
+        "name": "深度学习",
+        "category": "tech",
+        "weight": 0.9,
+        "evidence_count": 12,
+        "first_seen": "2026-01-01T00:00:00+08:00",
+        "last_seen": "2026-10-12T21:00:00+08:00",
+        "last_decay_at": "2026-10-12T21:00:00+08:00",
+        "last_evidence_at": "2026-10-12T21:00:00+08:00",
+    }
+    updated_entry = {**full_entry, "weight": 0.95, "evidence_count": 13}
+    await engine._gate_soul_rebuild(
+        trigger="dialogue",
+        existing_preference={
+            "interests": [full_entry, {"name": "旧爱好", "category": "life", "weight": 0.3}]
+        },
+        updated_preference={
+            "interests": [
+                updated_entry,
+                {"name": "新爱好", "category": "life", "weight": 0.7, "evidence_count": 2},
+            ]
+        },
+        source_refs=[],
+    )
+    change = stub.calls[0]["change"]
+    assert "before_interests" not in change
+    assert "after_interests" not in change
+    diff = change["interest_diff"]
+    assert diff["before_count"] == 2
+    assert diff["after_count"] == 2
+    assert [entry["name"] for entry in diff["added"]] == ["新爱好"]
+    assert [entry["name"] for entry in diff["removed"]] == ["旧爱好"]
+    assert diff["changed"] == [
+        {
+            "name": "深度学习",
+            "category": "tech",
+            "weight_before": 0.9,
+            "weight_after": 0.95,
+            "evidence_count_before": 12,
+            "evidence_count_after": 13,
+        }
+    ]
+    serialized = json.dumps(diff, ensure_ascii=False)
+    for field in ("first_seen", "last_seen", "last_decay_at", "last_evidence_at"):
+        assert field not in serialized
+
+
+async def test_ap3_rebuild_identical_snapshots_produce_empty_diff(tmp_path: Any) -> None:
+    """The confirmed-hypotheses trigger passes the same preference object for
+    before and after; the diff must be empty (the context carries the signal)."""
+    engine = _engine(tmp_path)
+    stub = _StubGate("shadow", GateDecision(verdict=ACCEPT, enforced=False))
+    engine._posture_gate = stub  # type: ignore[assignment]
+    preference = {"interests": [{"name": "x", "category": "c", "weight": 0.8, "evidence_count": 3}]}
+    await engine._gate_soul_rebuild(
+        trigger="confirmed_hypotheses",
+        existing_preference=preference,
+        updated_preference=preference,
+        source_refs=[],
+        context={"confirmed_hypotheses": ["假设一"]},
+    )
+    change = stub.calls[0]["change"]
+    assert change["write_point"] == "hypotheses_soul_rebuild"
+    diff = change["interest_diff"]
+    assert diff["added"] == []
+    assert diff["removed"] == []
+    assert diff["changed"] == []
+    assert diff["unchanged_count"] == 1
+
+
+def test_interest_rebuild_diff_ignores_timestamp_only_changes() -> None:
+    before = {
+        "interests": [
+            {
+                "name": "a",
+                "category": "c",
+                "weight": 0.5,
+                "first_seen": "2026-01-01T00:00:00",
+                "last_seen": "2026-01-01T00:00:00",
+            }
+        ]
+    }
+    after = {
+        "interests": [
+            {
+                "name": "a",
+                "category": "c",
+                "weight": 0.5,
+                "first_seen": "2026-01-01T00:00:00",
+                "last_seen": "2026-10-13T00:00:00",
+            }
+        ]
+    }
+    diff = _interest_rebuild_diff(before, after)
+    assert diff["changed"] == []
+    assert diff["unchanged_count"] == 1
+
+
+def test_interest_rebuild_diff_skips_malformed_and_sorts_by_weight() -> None:
+    before: dict[str, object] = {
+        "interests": [{"category": "c"}, "not-a-dict", {"name": "b", "weight": 0.9}]
+    }
+    after: dict[str, object] = {"interests": "not-a-list"}
+    diff = _interest_rebuild_diff(before, after)
+    assert diff["before_count"] == 1
+    assert diff["after_count"] == 0
+    assert [entry["name"] for entry in diff["removed"]] == ["b"]
+    added_source = {
+        "interests": [
+            {"name": "low", "weight": 0.2},
+            {"name": "high", "weight": 0.9},
+            {"name": "mid", "weight": 0.5},
+        ]
+    }
+    added = _interest_rebuild_diff({}, added_source)["added"]
+    assert [entry["name"] for entry in added] == ["high", "mid", "low"]
+
+
+def test_interest_rebuild_diff_shrinks_snapshot_for_large_profiles() -> None:
+    """Guard the issue #288 measurement: a large mostly-unchanged profile must
+    serialize to a small fraction of the two full interest lists."""
+    timestamp_fields = {
+        "first_seen": "2026-01-01T00:00:00+08:00",
+        "last_seen": "2026-10-12T21:00:00+08:00",
+        "last_decay_at": "2026-10-12T21:00:00+08:00",
+        "last_evidence_at": "2026-10-12T21:00:00+08:00",
+    }
+    interests = [
+        {
+            "name": f"兴趣{index:03d}",
+            "category": f"类别{index % 8}",
+            "weight": 0.9 - index * 0.001,
+            "evidence_count": index,
+            **timestamp_fields,
+        }
+        for index in range(400)
+    ]
+    updated = [dict(item) for item in interests]
+    updated[0]["weight"] = 0.99
+    full = json.dumps(
+        {"before_interests": interests, "after_interests": updated}, ensure_ascii=False
+    )
+    diff = _interest_rebuild_diff({"interests": interests}, {"interests": updated})
+    assert diff["unchanged_count"] == 399
+    assert len(json.dumps(diff, ensure_ascii=False)) < len(full) * 0.05
 
 
 # --- Access point ② RETIRED: VALUES/CORE are sealed in update_layer ------

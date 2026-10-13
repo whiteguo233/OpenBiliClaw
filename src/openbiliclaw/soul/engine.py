@@ -247,6 +247,87 @@ def _as_dict_list(raw_value: object) -> list[dict[str, object]]:
     return [item for item in raw_value if isinstance(item, dict)]
 
 
+def _interest_gate_summary(item: dict[str, object]) -> dict[str, object]:
+    """Compact an interest entry for the posture-gate rebuild snapshot.
+
+    The gate weighs direction and evidence, so only ``name`` / ``category`` /
+    ``weight`` / ``evidence_count`` survive; the four ISO timestamp fields
+    alone made up ~55% of the serialized entry bytes (issue #288).
+    """
+    try:
+        weight = round(float(item.get("weight", 0.0) or 0.0), 4)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        weight = 0.0
+    try:
+        evidence_count = int(str(item.get("evidence_count", 0) or 0))
+    except (TypeError, ValueError):
+        evidence_count = 0
+    return {
+        "name": str(item.get("name", "")).strip(),
+        "category": str(item.get("category", "")).strip(),
+        "weight": weight,
+        "evidence_count": evidence_count,
+    }
+
+
+def _interest_rebuild_diff(
+    existing_preference: dict[str, object],
+    updated_preference: dict[str, object],
+) -> dict[str, object]:
+    """Diff two preference snapshots' interest lists for the posture gate.
+
+    Spec access point ③ requires a rebuild *diff summary*, not the two full
+    interest serializations that used to dominate this caller's token load
+    (issue #288). Entries are keyed by ``(name, category)`` — the same key
+    ``_preference_changed_significantly`` uses — and every list is sorted by
+    descending weight so the serialized prompt stays deterministic. When
+    before and after are the same object (confirmed-hypotheses trigger) the
+    diff is empty and the trigger ``context`` carries the signal.
+    """
+
+    def index(preference: dict[str, object]) -> dict[tuple[str, str], dict[str, object]]:
+        result: dict[tuple[str, str], dict[str, object]] = {}
+        for item in _as_dict_list(preference.get("interests", [])):
+            summary = _interest_gate_summary(item)
+            key = (str(summary["name"]), str(summary["category"]))
+            if key[0]:
+                result[key] = summary
+        return result
+
+    before = index(existing_preference)
+    after = index(updated_preference)
+    added = [after[key] for key in after.keys() - before.keys()]
+    removed = [before[key] for key in before.keys() - after.keys()]
+    changed: list[dict[str, object]] = []
+    unchanged_count = 0
+    for key in before.keys() & after.keys():
+        old, new = before[key], after[key]
+        if old == new:
+            unchanged_count += 1
+            continue
+        changed.append(
+            {
+                "name": new["name"],
+                "category": new["category"],
+                "weight_before": old["weight"],
+                "weight_after": new["weight"],
+                "evidence_count_before": old["evidence_count"],
+                "evidence_count_after": new["evidence_count"],
+            }
+        )
+    added.sort(key=lambda entry: (-float(str(entry["weight"])), str(entry["name"])))
+    removed.sort(key=lambda entry: (-float(str(entry["weight"])), str(entry["name"])))
+    changed.sort(key=lambda entry: (-float(str(entry["weight_after"])), str(entry["name"])))
+    return {
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "unchanged_count": unchanged_count,
+        "before_count": len(before),
+        "after_count": len(after),
+    }
+
+
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
     "chat": "聊天",
@@ -5297,7 +5378,9 @@ class SoulEngine:
 
         Shared by all three rebuild triggers (dialogue / feedback_batch /
         confirmed_hypotheses). The judged snapshot carries the ``trigger``, its
-        ledger ``write_point``, an old-soul interest-diff summary, and the
+        ledger ``write_point``, a compact interest diff summary (spec access
+        point ③ — added/removed/changed entries with name/category/weight/
+        evidence_count only, never the full serializations), and the
         trigger-specific ``context`` (dialogue candidates / feedback-batch
         summary / confirmed-hypothesis list) so the gate sees the right
         provenance. off never calls the gate (byte-identical) and returns an
@@ -5318,8 +5401,7 @@ class SoulEngine:
                 "kind": "soul_rebuild",
                 "trigger": trigger,
                 "write_point": write_point,
-                "before_interests": existing_preference.get("interests", []),
-                "after_interests": updated_preference.get("interests", []),
+                "interest_diff": _interest_rebuild_diff(existing_preference, updated_preference),
                 "context": context or {},
             },
             core_memory=core_memory,
