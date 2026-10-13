@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -314,6 +315,9 @@ def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_gr
     database = Database(path)
     database.initialize()
     database.conn.execute("DROP INDEX idx_content_cache_item_key")
+    # Recent enough to stay inside the `current` class's 60-day admission TTL
+    # no matter when the test runs; a hardcoded date made this a time bomb.
+    recent_published_at = (datetime.now(UTC) - timedelta(days=7)).isoformat().replace("+00:00", "Z")
     database.conn.executemany(
         """
         INSERT INTO content_cache (
@@ -345,7 +349,7 @@ def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_gr
                 "current",
                 0.95,
                 "近期事件仍有效",
-                "2026-08-11T00:00:00Z",
+                recent_published_at,
             ),
         ],
     )
@@ -367,7 +371,7 @@ def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_gr
         "temporal_class": "current",
         "temporal_confidence": 0.95,
         "temporal_reason": "近期事件仍有效",
-        "published_at": "2026-08-11T00:00:00Z",
+        "published_at": recent_published_at,
         "pool_status": "fresh",
     }
 

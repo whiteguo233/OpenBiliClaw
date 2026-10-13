@@ -4,6 +4,8 @@
 
 ## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
 
+- 修复 `test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group` 时间炸弹：测试硬编码 `published_at='2026-08-11'` 并断言迁移后 `pool_status='fresh'`，但该日期随现实时间越过 `current` 时效类 60 天 admission TTL（2026-10-10 起）后迁移正确重算为 `temporal_review_hold`，CI 开始失败。改为动态生成「7 天前」时间戳，测试意图（近期 current 证据 → fresh）与时间解耦。
+
 - 修复 posture gate soul_rebuild 负载未按 spec 实现为 diff 摘要（#288）：`_gate_soul_rebuild` 的判定快照此前把完整兴趣列表逐字节传两遍（before + after），单条兴趣中四个 ISO 时间戳字段占 55% 字节却对判定无用，实测单次输入高达 13 万～15 万 tokens。现改为 `_interest_rebuild_diff()` 生成的 compact diff 摘要（added/removed/changed + 计数，条目仅保留 name/category/weight/evidence_count），与 spec 接入点③「rebuild diff 摘要过门控」一致；confirmed_hypotheses 触发源前后快照相同，diff 为空、信号由 context 承载。
 
 - 修复一条脏候选拖死整批评估（#284）：B 站简介等来源文本夹带 ASCII 控制字符时，`build_canonical_evaluation_batch` 的 wire 校验对整批抛错，重试烧完 50 次 `batch_eval_attempts` 后全批进 `failed_eval`。现新增 `_sanitize_wire_text()`，在构建 canonical 评估批的边界剥除 `\t \r \n` 之外的 C0 控制字符与 DEL、替换孤立代理项，清洗后为空的 tag 条目丢弃、整字段为空则省略；清洗只作用于发给 LLM 的 wire 副本，存储行保留原文，wire 校验器对 LLM 响应侧保持严格。已死信的历史候选由评估协调器启动时既有的 `revive_failed_eval_candidates` 自动复活，复活后经清洗即可正常评估。
