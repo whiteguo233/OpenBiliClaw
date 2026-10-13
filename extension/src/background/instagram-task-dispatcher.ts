@@ -1,5 +1,6 @@
 /** Durable dispatcher for bounded, read-only Instagram browser tasks. */
 
+import { syncInstagramContentScripts } from "./instagram-content-scripts.ts";
 import {
   INSTAGRAM_API_REQUEST_TIMEOUT_MS,
   isKnownInstagramScope,
@@ -266,6 +267,7 @@ async function loadPersistedState(): Promise<PersistedState | null> {
 
 async function fetchNextTask(): Promise<InstagramTask | null> {
   try {
+    await syncInstagramContentScripts();
     if (chrome.permissions?.contains) {
       const granted = await chrome.permissions.contains({
         origins: ["https://*.instagram.com/*"],

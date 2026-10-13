@@ -287,6 +287,8 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+Instagram opt-in → optional host grant → dynamic isolated + MAIN scripts → task tabs
+                 └ revoke → unregister; no static Instagram site access
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory

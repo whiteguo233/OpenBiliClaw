@@ -8,6 +8,7 @@
  * from the runtime-stream, not HTTP polling.
  */
 
+import { startInstagramContentScripts } from "./instagram-content-scripts.ts";
 import {
   computeActionBadge,
   flushResponseReportsUninitialized,
@@ -644,6 +645,8 @@ async function startServiceWorkerAfterRecovery(): Promise<void> {
   startPlatformTaskPolling();
   startCookieSync();
 }
+
+startInstagramContentScripts();
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureFlushAlarm();

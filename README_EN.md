@@ -630,6 +630,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
+Instagram: `user grant → dynamic page scripts → isolated task tabs`; revocation removes registrations, with no static Instagram site access.
+
 Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
