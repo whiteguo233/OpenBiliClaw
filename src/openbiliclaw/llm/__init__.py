@@ -1,6 +1,7 @@
 """LLM package — multi-model provider support."""
 
 from .api_route_provider import ApiRouteProvider
+from .atlascloud_provider import AtlasCloudProvider
 from .base import (
     HealthCheckResult,
     LLMAuthError,
@@ -38,6 +39,7 @@ from .service import (
 
 __all__ = [
     "ApiRouteProvider",
+    "AtlasCloudProvider",
     "CheaperInferenceProvider",
     "ClaudeProvider",
     "DeepSeekProvider",

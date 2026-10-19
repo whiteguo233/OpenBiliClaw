@@ -157,3 +157,26 @@ def test_cheaperinference_provider_exposed_across_web_surfaces() -> None:
     assert 'cheaperinference: "gpt-5.4-mini"' in setup_html
     assert 'id="cfgCheaperinferenceKey"' in popup_html
     assert 'setVal("cfgCheaperinferenceKey", cfg.llm?.cheaperinference?.api_key)' in popup_js
+
+
+def test_atlascloud_provider_exposed_across_web_surfaces() -> None:
+    desktop_html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
+    desktop_js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(
+        encoding="utf-8"
+    )
+    setup_html = (ROOT / "src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
+    popup_html = (ROOT / "extension/popup/popup.html").read_text(encoding="utf-8")
+    popup_js = (ROOT / "extension/popup/popup.js").read_text(encoding="utf-8")
+
+    for html in (desktop_html, setup_html, popup_html):
+        assert '<option value="atlascloud">Atlas Cloud</option>' in html
+    for js in (desktop_js, popup_js):
+        assert 'atlascloud: "Atlas Cloud"' in js
+        assert (
+            'atlascloud: { model: "deepseek-ai/deepseek-v4-flash", '
+            'base_url: "https://api.atlascloud.ai/v1" }'
+        ) in js
+    assert 'atlascloud: ["https://console.atlascloud.ai/api-keys", "Atlas Cloud"]' in (setup_html)
+    assert 'atlascloud: "deepseek-ai/deepseek-v4-flash"' in setup_html
+    assert 'id="cfgAtlascloudKey"' in popup_html
+    assert 'setVal("cfgAtlascloudKey", cfg.llm?.atlascloud?.api_key)' in popup_js

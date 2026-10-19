@@ -152,6 +152,7 @@
           <option value="requesty">Requesty</option>
           <option value="api_route">API Route</option>
           <option value="cheaperinference">Cheaper Inference</option>
+          <option value="atlascloud">Atlas Cloud</option>
           <option value="openai_compatible">OpenAI 兼容接口（自建 / 第三方）</option>
         </select>
 
@@ -305,6 +306,7 @@
       requesty: ["https://app.requesty.ai/api-keys", "Requesty"],
       api_route: ["https://global.api-route.com/", "API Route"],
       cheaperinference: ["https://cheaperinference.com/signup", "Cheaper Inference"],
+      atlascloud: ["https://console.atlascloud.ai/api-keys", "Atlas Cloud"],
       openai_compatible: ["", ""],
     };
     const DEFAULT_MODELS = {
@@ -317,6 +319,7 @@
       requesty: "openai/gpt-4o-mini",
       api_route: "gpt-5.5",
       cheaperinference: "gpt-5.4-mini",
+      atlascloud: "deepseek-ai/deepseek-v4-flash",
       openai_compatible: "",
     };
     const MODEL_DISCOVERY_PROVIDERS = new Set([
@@ -327,6 +330,7 @@
       "requesty",
       "api_route",
       "cheaperinference",
+      "atlascloud",
       "ollama",
       "openai_compatible",
     ]);

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from openbiliclaw import network
 
 from .api_route_provider import ApiRouteProvider
+from .atlascloud_provider import AtlasCloudProvider
 from .base import LLMProvider, LLMProviderError, LLMRegistry
 from .cheaperinference_provider import CheaperInferenceProvider
 from .claude_provider import ClaudeProvider
@@ -72,6 +73,7 @@ def build_llm_registry(
         ("requesty", _maybe_requesty_provider(config, overrides)),
         ("api_route", _maybe_api_route_provider(config, overrides)),
         ("cheaperinference", _maybe_cheaperinference_provider(config, overrides)),
+        ("atlascloud", _maybe_atlascloud_provider(config, overrides)),
     ]
 
     for _name, provider in provider_specs:
@@ -230,6 +232,7 @@ def _build_instance_provider(
         "requesty": _maybe_requesty_provider,
         "api_route": _maybe_api_route_provider,
         "cheaperinference": _maybe_cheaperinference_provider,
+        "atlascloud": _maybe_atlascloud_provider,
         "openai_compatible": _maybe_openai_compatible_provider,
     }
     factory = factories.get(provider_type)
@@ -1026,6 +1029,26 @@ def _maybe_cheaperinference_provider(
     return CheaperInferenceProvider(
         api_key=cfg.api_key,
         model=cfg.model or "gpt-5.4-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
+    )
+
+
+def _maybe_atlascloud_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "atlascloud" in overrides:
+        return overrides["atlascloud"]
+    cfg = config.llm.atlascloud
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://api.atlascloud.ai/v1"
+    return AtlasCloudProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "deepseek-ai/deepseek-v4-flash",
         base_url=base_url,
         timeout=float(config.llm.timeout),
         proxy=_outbound_proxy(base_url),

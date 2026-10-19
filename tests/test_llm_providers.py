@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from openbiliclaw.llm.api_route_provider import ApiRouteProvider
+from openbiliclaw.llm.atlascloud_provider import AtlasCloudProvider
 from openbiliclaw.llm.base import (
     LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
     LLMAuthError,
@@ -1680,6 +1681,16 @@ def test_cheaperinference_provider_defaults() -> None:
     assert provider._openai_reasoning_effort("gpt-5.4-mini", "high") is None
 
 
+def test_atlascloud_provider_defaults() -> None:
+    provider = AtlasCloudProvider(api_key="apikey-test")
+
+    assert provider.name == "atlascloud"
+    assert provider.base_url == "https://api.atlascloud.ai/v1"
+    assert provider._model == "deepseek-ai/deepseek-v4-flash"
+    assert provider.supports_embedding is False
+    assert provider._openai_reasoning_effort("deepseek-ai/deepseek-v4-flash", "high") is None
+
+
 @pytest.mark.asyncio
 async def test_cheaperinference_provider_uses_per_call_model_without_reasoning_param(
     monkeypatch: pytest.MonkeyPatch,
@@ -1703,6 +1714,31 @@ async def test_cheaperinference_provider_uses_per_call_model_without_reasoning_p
     assert "reasoning_effort" not in captured
     assert "extra_body" not in captured
     assert provider._model == "gpt-5.4-mini"
+
+
+@pytest.mark.asyncio
+async def test_atlascloud_provider_uses_per_call_model_without_reasoning_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = AtlasCloudProvider(api_key="apikey-test")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("atlascloud-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="moonshotai/kimi-k2.6",
+        reasoning_effort="high",
+    )
+
+    assert response.content == "atlascloud-ok"
+    assert captured["model"] == "moonshotai/kimi-k2.6"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert provider._model == "deepseek-ai/deepseek-v4-flash"
 
 
 @pytest.mark.asyncio

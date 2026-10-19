@@ -10,7 +10,7 @@
 
 `GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `api_route`，API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 API Route 实例草稿查询其 OpenAI 兼容 `GET /models`。
 
-`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型。
+`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference）与 `atlascloud`（Atlas Cloud），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型（Atlas Cloud 实例返回网关 `GET /models` 的全部模型）。
 
 ## 本地向量 CPU 回退后的健康检查
 

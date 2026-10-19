@@ -317,6 +317,7 @@
 
 - **问题**：一轮 discovery 里同一个 bvid 会被多个环节各自请求 `/x/web-interface/view`——推荐打分（`get_video_info`）、danmaku / 字幕 / play 的 cid 解析、收藏 / 稍后再看的 aid 解析、API 层 view 转发，同一出口 IP 承受数倍于必要的请求量。
 - **方案**：`get_video_view_data()` 对成功响应做进程级 LRU 缓存（ClassVar `OrderedDict`，TTL 600s、上限 512 条）；缓存键携带 SESSDATA 指纹（匿名与登录响应可能不同，explore 策略使用匿名 client），失败永不缓存。回归：`tests/test_bilibili_view_cache.py` +6 条（同 bvid 只请求一次、不同 bvid 分别请求、匿名 / 登录隔离、过期重取、失败不缓存、LRU 逐出）；`tests/conftest.py` 增加 autouse fixture 每测试清空缓存，防止跨测试泄漏。
+- 新增 Atlas Cloud 内置 Provider：`provider_type="atlascloud"` 通过 OpenAI 兼容接口接入 Atlas Cloud，默认 `https://api.atlascloud.ai/v1`、`deepseek-ai/deepseek-v4-flash`，模型名格式 `<vendor>/<model>`。接入后端配置与 API、CLI 和安装向导（菜单第 11 项）、桌面与扩展设置、首次设置向导；多模型网关不发送 `reasoning_effort`，embedding 仍需独立配置；只有用户显式配置时才会调用。
 - **文档同步**：`docs/modules/bilibili.md`（特性表新增「/view 进程内缓存」行）。
 
 ### 修复：B 站搜索冷却状态跨进程共享（2026-10-01，feat/bili-search-cooldown-shared-state，issue #232）

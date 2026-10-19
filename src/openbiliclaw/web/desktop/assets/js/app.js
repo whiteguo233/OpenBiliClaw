@@ -10214,6 +10214,7 @@ ${cardFeedbackBarHtml()}`;
       requesty: "Requesty",
     api_route: "API Route",
       cheaperinference: "Cheaper Inference",
+      atlascloud: "Atlas Cloud",
       ollama: "Ollama",
       openai_compatible: "OpenAI-compatible"
     };
@@ -10227,6 +10228,7 @@ ${cardFeedbackBarHtml()}`;
       requesty: { model: "openai/gpt-4o-mini", base_url: "https://router.requesty.ai/v1" },
     api_route: { model: "gpt-5.5", base_url: "https://global.api-route.com/v1" },
       cheaperinference: { model: "gpt-5.4-mini", base_url: "https://api.cheaperinference.com/v1" },
+      atlascloud: { model: "deepseek-ai/deepseek-v4-flash", base_url: "https://api.atlascloud.ai/v1" },
       ollama: { model: "qwen2.5:7b", base_url: "http://127.0.0.1:11434/v1" },
       openai_compatible: { model: "", base_url: "" }
     };
@@ -10238,6 +10240,7 @@ ${cardFeedbackBarHtml()}`;
       "requesty",
       "api_route",
       "cheaperinference",
+      "atlascloud",
       "ollama",
       "openai_compatible"
     ]);

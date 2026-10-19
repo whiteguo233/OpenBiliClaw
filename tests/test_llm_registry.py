@@ -254,6 +254,21 @@ def test_build_llm_registry_registers_cheaperinference() -> None:
     assert registry.get("cheaperinference")._model == "gpt-5.4-mini"
 
 
+def test_build_llm_registry_registers_atlascloud() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="atlascloud",
+            atlascloud=LLMProviderConfig(api_key="apikey-test"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "atlascloud"
+    assert registry.get("atlascloud").base_url == "https://api.atlascloud.ai/v1"
+    assert registry.get("atlascloud")._model == "deepseek-ai/deepseek-v4-flash"
+
+
 def test_build_llm_registry_registers_cheaperinference_instance() -> None:
     config = Config(
         llm=LLMConfig(
@@ -277,6 +292,29 @@ def test_build_llm_registry_registers_cheaperinference_instance() -> None:
     assert registry.get("cheaperinference-main").base_url == "https://api.cheaperinference.com/v1"
 
 
+def test_build_llm_registry_registers_atlascloud_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "atlascloud-main": LLMInstanceConfig(
+                    name="Atlas Cloud",
+                    provider_type="atlascloud",
+                    api_key="apikey-test",
+                    model="deepseek-ai/deepseek-v4-flash",
+                )
+            },
+            default_chain=["atlascloud-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "atlascloud-main"
+    assert registry.get("atlascloud-main").name == "atlascloud"
+    assert registry.get("atlascloud-main").base_url == "https://api.atlascloud.ai/v1"
+
+
 def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
     config = Config(
         llm=LLMConfig(
@@ -288,6 +326,19 @@ def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
     registry = build_llm_registry(config)
 
     assert "cheaperinference" not in registry.available_providers
+
+
+def test_build_llm_registry_omits_atlascloud_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+            atlascloud=LLMProviderConfig(model="deepseek-ai/deepseek-v4-flash"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "atlascloud" not in registry.available_providers
 
 
 def test_build_llm_registry_omits_requesty_without_api_key() -> None:

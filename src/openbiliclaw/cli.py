@@ -1961,6 +1961,11 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "base_url": "https://api.cheaperinference.com/v1",
         "model": "gpt-5.4-mini",
     },
+    # Atlas Cloud: OpenAI-compatible LLM gateway (apikey- key).
+    "atlascloud": {
+        "base_url": "https://api.atlascloud.ai/v1",
+        "model": "deepseek-ai/deepseek-v4-flash",
+    },
 }
 
 
@@ -1975,6 +1980,7 @@ _PROVIDER_HINTS: dict[str, str] = {
     "requesty": "Requesty 聚合（OpenAI 兼容协议）",
     "api_route": "API Route 聚合（OpenAI 兼容协议）",
     "cheaperinference": "Cheaper Inference 聚合（OpenAI 兼容协议）",
+    "atlascloud": "Atlas Cloud 聚合（OpenAI 兼容协议）",
 }
 
 
@@ -2019,6 +2025,10 @@ _PROVIDER_MODEL_HINT: dict[str, str] = {
     "cheaperinference": (
         "默认 gpt-5.4-mini。Cheaper Inference 模型名不带厂商前缀,"
         "如 gpt-5.4 / claude-sonnet-5 / gemini-3.1-pro"
+    ),
+    "atlascloud": (
+        "默认 deepseek-ai/deepseek-v4-flash。Atlas Cloud 模型名格式: <vendor>/<model>,"
+        "如 moonshotai/kimi-k2.6 / zai-org/glm-5.1 / qwen/qwen3.6-plus"
     ),
     "ollama": (
         "常见模型: qwen2.5:7b (默认 / 中文好) / llama3.2 (Meta 新版) / "
@@ -2523,6 +2533,7 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
     "requesty",
     "api_route",
     "cheaperinference",
+    "atlascloud",
 )
 
 
@@ -2590,6 +2601,11 @@ _LLM_MENU: tuple[tuple[str, str, str], ...] = (
         "cheaperinference",
         "Cheaper Inference 聚合",
         "默认 gpt-5.4-mini。一个 Key 跑多家模型,按调用计费",
+    ),
+    (
+        "atlascloud",
+        "Atlas Cloud 聚合",
+        "默认 deepseek-ai/deepseek-v4-flash。一个 Key 跑多家模型,按调用计费",
     ),
 )
 
@@ -3030,6 +3046,7 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
             "requesty",
             "api_route",
             "cheaperinference",
+            "atlascloud",
         }:
             console.print("[red]未知或没有 embedding 接口的 provider,跳过 embedding 配置。[/red]")
             return
@@ -7942,8 +7959,7 @@ def _ask_tiktok_inclusion() -> bool:
     console.print()
     console.print("[bold]🎬 TikTok 数据接入(可选)[/bold]")
     console.print(
-        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,"
-        "系统能读懂你跨平台的口味。"
+        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,系统能读懂你跨平台的口味。"
     )
     console.print()
     console.print("启用需要:")

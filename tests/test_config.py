@@ -1282,6 +1282,26 @@ def test_build_config_supports_cheaperinference_provider() -> None:
     assert config.llm.cheaperinference.base_url == "https://api.cheaperinference.com/v1"
 
 
+def test_build_config_supports_atlascloud_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "atlascloud",
+                "atlascloud": {
+                    "api_key": "apikey-test",
+                    "model": "moonshotai/kimi-k2.6",
+                    "base_url": "https://api.atlascloud.ai/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "atlascloud"
+    assert config.llm.atlascloud.api_key == "apikey-test"
+    assert config.llm.atlascloud.model == "moonshotai/kimi-k2.6"
+    assert config.llm.atlascloud.base_url == "https://api.atlascloud.ai/v1"
+
+
 def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
     config = Config(
         llm=LLMConfig(
@@ -1291,6 +1311,18 @@ def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
     )
 
     with pytest.raises(ConfigError, match="llm.cheaperinference.api_key"):
+        validate_runtime_config(config)
+
+
+def test_validate_runtime_config_requires_atlascloud_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="atlascloud",
+            atlascloud=LLMProviderConfig(model="deepseek-ai/deepseek-v4-flash"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.atlascloud.api_key"):
         validate_runtime_config(config)
 
 

@@ -13,7 +13,7 @@
 
 LLM 实例设置页可选择 `api_route`（API Route），新实例预填 `gpt-5.5` 与 `https://global.api-route.com/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
 
-LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
+LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference）与 `atlascloud`（Atlas Cloud；新实例预填 `deepseek-ai/deepseek-v4-flash` 与 `https://api.atlascloud.ai/v1`），Cheaper Inference 新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
 
 | 任务 | 状态 | 说明 |
 |------|------|------|

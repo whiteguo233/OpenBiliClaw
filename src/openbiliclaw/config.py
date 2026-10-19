@@ -74,6 +74,7 @@ _SUPPORTED_CHAT_PROVIDERS = {
     "requesty",
     "api_route",
     "cheaperinference",
+    "atlascloud",
 }
 _LLM_INSTANCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _TAILNET_HOSTNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -90,6 +91,7 @@ _LLM_PROVIDER_DISPLAY_NAMES = {
     "requesty": "Requesty",
     "api_route": "API Route",
     "cheaperinference": "Cheaper Inference",
+    "atlascloud": "Atlas Cloud",
 }
 _MIN_POOL_TARGET_COUNT = 1
 _MAX_POOL_TARGET_COUNT = 600
@@ -245,6 +247,7 @@ _REMOTE_PROVIDER_FIELDS = {
     "requesty": "llm.requesty.api_key",
     "api_route": "llm.api_route.api_key",
     "cheaperinference": "llm.cheaperinference.api_key",
+    "atlascloud": "llm.atlascloud.api_key",
     # v0.3.32+ — generic OpenAI-protocol-compatible provider (Groq /
     # Together / Azure OpenAI / vLLM / self-hosted, etc.). Distinct from
     # ``openai`` so users can run both in parallel (chat = openai for
@@ -532,6 +535,8 @@ class LLMConfig:
     api_route: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     # Cheaper Inference LLM gateway (OpenAI-compatible, ``ci_live_`` key).
     cheaperinference: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # Atlas Cloud LLM gateway (OpenAI-compatible, ``apikey-`` key).
+    atlascloud: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     # Per-module overrides (empty = use global default)
     soul: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
@@ -2366,6 +2371,7 @@ def _build_config(
         requesty=_provider_config("requesty"),
         api_route=_provider_config("api_route"),
         cheaperinference=_provider_config("cheaperinference"),
+        atlascloud=_provider_config("atlascloud"),
         embedding=EmbeddingConfig(
             **_filter_dataclass_kwargs(
                 EmbeddingConfig,
@@ -4956,6 +4962,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         "requesty": config.llm.requesty,
         "api_route": config.llm.api_route,
         "cheaperinference": config.llm.cheaperinference,
+        "atlascloud": config.llm.atlascloud,
     }
 
     provider_config = provider_configs.get(provider_name)
@@ -5984,6 +5991,7 @@ def _render_config_toml(
         lines.extend(_render_provider_section("requesty", config.llm.requesty))
         lines.extend(_render_provider_section("api_route", config.llm.api_route))
         lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
+        lines.extend(_render_provider_section("atlascloud", config.llm.atlascloud))
     lines.extend(
         [
             "[llm.embedding]",
@@ -6540,6 +6548,7 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
         "requesty",
         "api_route",
         "cheaperinference",
+        "atlascloud",
     }:
         lines.append(f"base_url = {_toml_string(provider.base_url)}")
     if name == "openai":
