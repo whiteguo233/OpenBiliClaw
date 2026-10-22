@@ -7,8 +7,11 @@
 以下主体记录历史 HTTP / Playwright 验收：真实网站自然语言建源、持久化后无模型重复执行，以及完整服务的聊天审批、定时发现、真实模型评估和重启保留。此前独立 Feed 推荐与反馈证据仍单列，真实账号及目标安装环境不能以 fixture 代替。完整服务的操作与隔离说明见[同日复验](testing/2026-10-03-dynamic-source-live-e2e.md)。
 
 2026-10-22 根据用户要求，新普通网页默认切换至真实 Ego Lite 原生执行器，禁止用
-Playwright 验收替代。当前桥接正在验证，官方宿主首次设置仍待用户完成；历史成功
-不提升为 Ego 成功。新增执行器的证据与未完成项单列于
+Playwright 验收替代。现已在真实官方宿主完成首次设置、哔哩轻小说聊天审批、
+自然定时采集、真实模型评估与 9 条入池，并验证托管宿主关闭后自动启动。
+另一个无 Ego 环境变量的新实例通过自然续聊找回原草稿、真实试采和审批启用，
+全程保持模型生成计划不变；完整证据和安装平台边界见单列 Ego 记录。
+历史成功不提升为 Ego 成功。新增执行器的证据与平台边界单列于
 [Ego Lite 验收记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
 
 ## 工作区与数据边界
@@ -63,7 +66,7 @@ Playwright 验收替代。当前桥接正在验证，官方宿主首次设置仍
 | Docker 运行态 | required | PASS（Linux/amd64） | 使用已有 Docker Desktop 官方 CLI，干净 0c983b19 上下文覆盖本轮最终 5 个 Python 与 2 个前端文件后正常构建，manifest SHA 与容器安装文件一致。Chromium 1243 连续 2 次各 2 页 / 2 条；5 秒总预算在 5.06 秒取消且同 profile 可重跑；418 诊断无 query/Cookie，最终登录优先级三分支通过。默认入口、health=healthy、browser available/installed=true、登录页与两份 JS 均 200，实际静态资源含修后文案。`network=none`、无宿主端口/真实凭据；`/tmp/dynamic-source-docker-acceptance-0c983b19/overlay-manifest.json` 与 `/tmp/dynamic-source-docker-*.log`。不代表外站账号或 arm64 验证 |
 | macOS / Windows 桌面安装态 | required | NOT_RUN | 本机 macOS 源码及真实 Chromium 验证不证明打包安装态；本轮没有完成两系统桌面安装验收 |
 | 安装态浏览器扩展 | required | PASS（本机 unpacked） | 当前分支构建、独立 Chromium profile 安装，真实连接 18485 完整服务，正确显示网站、2 份、5 分钟及 3 条运行历史；`output/playwright/dynamic-sources-live/extension-source-history.png`。没有发布到扩展商店，不代表其他浏览器安装态 |
-| Ego Lite 原生执行器（2026-10-22 更新） | required | BLOCKED（首次设置待用户完成） | 原生桥接已进入实现与协议验证；尚未完成真实宿主网站试跑及聊天入池，详见单列 Ego 记录。安装检测及历史 Playwright 记录不计入成功 |
+| Ego Lite 原生执行器（2026-10-22 更新） | required | PASS（macOS Intel 公开网站） | 真实聊天审批→Ego 首轮 10 发现/10 入队→真实 Luna 评估/文案→9 入池；自然第二轮 10 发现/0 入队。托管新 profile 首次设置与关闭后自动启动通过，重启前后均取同一组 10 URL。详见单列 Ego 记录；外站账号、Windows/Linux、完整冻结包不据此宣称通过 |
 | iframe / 弹窗依赖的登录 | 当前未支持 | NOT_RUN（成功路径） | 第一版只支持顶层页面，嵌入页/额外页面被阻止；fixture 的拒绝行为验证不能推导为嵌入式验证码、弹窗 SSO 可用 |
 | 账号画像导入、增量兴趣事件、站内发布/收藏 | N/A | PASS（排除验证） | `tests/test_custom_source_contract.py` 执行生产路径，验证无账号 bootstrap/信号导入、无扩展任务/Cookie 同步、原生保存不支持及无虚构指标；17 个契约排除项均有节点依据 |
 | 来源注册审计 | required | PASS（注册） | 31 PASS / 17 N/A / 11 MANUAL / 0 MISSING；`required_missing=0`、`registration_check_passed=true`、`fully_verified=false`，本轮 `/tmp/dynamic-source-live-audit.json` |

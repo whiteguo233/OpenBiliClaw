@@ -424,6 +424,21 @@ class WorkflowService:
             return self.store.save_draft(draft, draft_id=draft["draft_id"])
         session = None
         try:
+            if not background and draft["executor"] == "ego" and self._executor_factory is None:
+                from openbiliclaw.sources.ego_setup import EgoSetupManager
+
+                setup = EgoSetupManager(Path(self.database._db_path).resolve().parent)
+                status = setup.status()
+                if status["managed"] and status["setup_state"] != "ready":
+                    # First authoring and a resumed failed draft both prepare the
+                    # browser outside page budgets. Background repair never installs.
+                    status = await setup.prepare()
+                    if not status["available"]:
+                        draft.update(
+                            status="failed",
+                            detail=f"Ego Lite 尚未准备完成：{status['detail']}",
+                        )
+                        return self.store.save_draft(draft, draft_id=draft["draft_id"])
             session, observation = await self.observe_session(draft)
             await session.close()
             session = None
@@ -606,6 +621,7 @@ class WorkflowService:
                     "url": i.content_url,
                     "author_name": i.author_name,
                     "published_at": i.published_at,
+                    "description": i.description[:500],
                 }
                 for i in result.items[:5]
             ]

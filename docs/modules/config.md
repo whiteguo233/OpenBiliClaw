@@ -747,17 +747,33 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 新网页的 `auto` 和 `ego` 使用官方 Ego Lite；只有实际识别成功的 RSS/Atom/JSON Feed 自动使用 HTTP。更新已有流程时 `auto` 保留该流程执行器，避免悄然迁移。新建不接受 Playwright，已有旧流程仍按原执行器运行。
 
-宿主选择由启动后端的本机环境提供，不接受网页或模型指定可执行文件：
+默认使用托管宿主，无需新增 `config.toml` 配置。macOS 上首次普通网页准备会自动下载并
+验证官方应用，在**当前 SQLite 数据库所在目录的 `ego-managed`** 下安装、初始化私有
+profile 和 named host，再验证原生连接；安装不占用页面观察预算。设置页「准备 Ego Lite」
+或 `openbiliclaw sources prepare-ego` 可提前完成或重试这一步。已初始化的宿主退出后，
+实际网页任务按需启动；只读状态查询不下载、不启动应用、不打开首次设置。
+自动初始化跳过个人浏览数据导入，不设默认浏览器、不添加 Dock、不启用崩溃报告。
+当前托管与原生执行只支持 macOS；Linux/Docker 和 Windows 不因安装 Python 依赖而获得此能力。
 
-| 环境变量 | 用途 |
+启动后端时显式提供以下**任一非空环境变量**即退出托管（`managed=false`）。它们仅用于
+操作者自行管理的外部宿主；不接受网页或模型指定可执行文件，不会自动安装、初始化或
+重启该外部宿主。未配置任一变量时，默认并不是日常浏览器或 PATH 中的其他 Ego：
+
+| 环境变量 | 外部宿主用途 |
 | --- | --- |
-| `OPENBILICLAW_EGO_BROWSER` | 官方 `ego-browser` 的可执行文件路径；未设置时从 PATH 查找 |
-| `OPENBILICLAW_EGO_SERVER_NAME` | 可选的官方 named host 服务名，用于连接指定的 Ego 实例 |
-| `OPENBILICLAW_EGO_PROFILE` | 创建本应用任务空间所使用的 Ego profile ID，默认 `Default` |
+| `OPENBILICLAW_EGO_BROWSER` | 官方 `ego-browser` 的可执行文件路径；外部模式下未指定此项时从 PATH 查找 |
+| `OPENBILICLAW_EGO_SERVER_NAME` | 官方 named host 服务名；未指定时使用官方默认宿主 |
+| `OPENBILICLAW_EGO_PROFILE` | 本应用任务空间使用的 Ego profile ID；未指定时为 `Default` |
 
-Ego 需在后端所在主机运行并完成首次设置。来源/API 只保存不透明会话引用，私有会话目录保存本应用拥有的任务空间映射；网站凭据留在 Ego 的所选 profile，不复制到配置或模型。不同任务空间可能共享同一 profile 的登录状态，不把页面隔离表述成 Cookie 隔离。隔离验收使用官方宿主的独立 `--user-data-dir`，不会导入日常浏览数据。
+来源/API 只保存不透明会话引用，私有会话目录保存本应用拥有的任务空间映射；网站凭据
+留在所选 Ego profile，不复制到配置或模型。默认托管 profile 与日常浏览数据隔离，
+但其中的多个任务空间仍可能共享同一 profile 的登录状态；页面隔离不等于各来源 Cookie 隔离。
+网站登录始终由用户在接管页完成。
 
-设置页只读状态不打开 Ego 设置窗口。首次未验证连接时，`installed` 与 `available` 分开显示；用户实际试跑才尝试原生连接。缺失或离线不触发 Playwright 回退，HTTP Feed 仍可用。
+`installed`、`setup_state` 与 `available` 分别表示应用存在、准备阶段与当前原生连接。
+`setup_state=ready,available=false` 可以是已准备宿主暂时退出，下次实际工作再启动。
+外部连接 `connection_state=unverified` 则需实际试跑验证，不能从安装成功推断网页可用。
+状态 GET 没有这些启动副作用；准备失败不会触发 Playwright 回退，HTTP Feed 仍可用。
 
 ### `[sources.browser]`
 

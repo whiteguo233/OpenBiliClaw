@@ -357,3 +357,68 @@ test("new Ego and existing Playwright workflows retain their real executor ident
   assert.match(h.root.textContent, /网页（旧版 Playwright）/);
   assert.ok(h.button("重新登录"));
 });
+
+test("managed Ego preparation is explicit, deduplicated, and preserves source edits", async () => {
+  let finish;
+  const h = setup(() => new Promise(resolve => { finish = resolve; }), [{ id: "ego", managed: true, setup_state: "idle", installed: false, available: false, platform_supported: true }]);
+  await h.manager.load();
+  h.inputs()[1].value = "8";
+  assert.equal(h.calls.length, 1, "reading settings must not start preparation");
+  const prepare = h.button("准备 Ego Lite");
+  assert.ok(prepare);
+  prepare.handlers.click(); prepare.handlers.click(); await settle();
+  assert.equal(h.calls.filter(call => call.options.method === "POST").length, 1);
+  assert.equal(h.calls.at(-1).path, "/custom-sources/executors/ego/prepare");
+  finish({ setup_state: "preparing", phase: "download", detail: "Downloading the official app" });
+  await settle();
+  assert.ok(h.button("正在准备 Ego Lite…").disabled);
+  assert.equal(h.timers.size, 1);
+  assert.equal(h.inputs()[1].value, "8");
+  h.setExecutors([{ id: "ego", managed: true, setup_state: "ready", installed: true, available: true }]);
+  h.poll(); await settle();
+  assert.equal(h.timers.size, 0);
+  assert.match(h.root.textContent, /Ego Lite 已就绪/);
+  assert.equal(h.inputs()[1].value, "8");
+  assert.equal(h.changes.length, 1);
+});
+
+test("Ego preparation polling stops when settings leave the screen or are disposed", async () => {
+  const h = setup(undefined, [{ id: "ego", managed: true, setup_state: "preparing", available: false }]);
+  await h.manager.load();
+  assert.equal(h.timers.size, 1);
+  h.root.visible = false;
+  const before = h.calls.length;
+  h.poll(); await settle();
+  assert.equal(h.calls.length, before);
+  assert.equal(h.timers.size, 0);
+  h.root.visible = true;
+  await h.manager.load();
+  assert.equal(h.timers.size, 1);
+  h.manager.destroy();
+  assert.equal(h.timers.size, 0);
+});
+
+test("Ego preparation failure is retryable without losing unsaved source values", async () => {
+  const h = setup(async () => { throw new Error("Official download unavailable"); }, [{ id: "ego", managed: true, setup_state: "idle", installed: false, available: false }]);
+  await h.manager.load();
+  h.inputs()[1].value = "9";
+  h.button("准备 Ego Lite").handlers.click(); await settle();
+  assert.match(h.root.textContent, /Official download unavailable/);
+  assert.equal(h.button("准备 Ego Lite").disabled, false);
+  assert.equal(h.inputs()[1].value, "9");
+  assert.equal(h.timers.size, 0);
+  assert.ok(h.button("去聊一聊添加来源"));
+});
+
+test("external and unsupported Ego hosts never offer managed preparation", async () => {
+  for (const state of [
+    { managed: false, installed: true, available: false, setup_state: "idle" },
+    { managed: true, installed: false, available: false, platform_supported: false, setup_state: "unsupported" },
+  ]) {
+    const h = setup(undefined, [{ id: "ego", ...state }]);
+    await h.manager.load();
+    assert.equal(h.button("准备 Ego Lite"), undefined);
+    assert.ok(h.button("去聊一聊添加来源"));
+    assert.ok(h.calls.every(call => call.options.method === "GET"));
+  }
+});

@@ -167,8 +167,9 @@ Chat → prepare_discovery_source → scrubbed observation / compiled plan / tri
 Settings → names / shares / cadence / enabled state / run history
 ```
 
-New ordinary webpages use the official Ego Lite host; positively parsed RSS/Atom/JSON Feed
-uses HTTP. Missing or offline Ego never triggers Playwright fallback. Persisted legacy
+New ordinary webpages automatically prepare an isolated official Ego Lite host through
+`EgoSetupManager` (install → onboarding → native handshake), then start it on demand.
+Positively parsed RSS/Atom/JSON Feed uses HTTP. Setup failures never trigger Playwright fallback. Persisted legacy
 workflows retain their executor. The native adapter currently targets a local macOS host;
 real onboarding and end-to-end acceptance remain pending in the
 [Ego ledger](testing/2026-10-22-ego-lite-discovery-e2e.md).

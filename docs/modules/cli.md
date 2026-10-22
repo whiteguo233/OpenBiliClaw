@@ -1790,6 +1790,8 @@ $ openbiliclaw db-repair
 | 命令 | 行为 |
 | --- | --- |
 | `sources list` | 来源独立比例、流程与健康状态 |
+| `sources ego-status` | 只读返回托管 Ego 的 JSON 准备状态；不安装、不启动或打开首次设置 |
+| `sources prepare-ego` | 显式提前准备或重试私有 Ego 环境；返回完整 JSON，只有 ready 且 available 才退出 0，否则退出 1 |
 | `sources prepare URL --intent '自然语言发现目标'` | 观察网站并建草稿、试跑；`--executor auto/ego/http`（新网页使用 Ego Lite，Feed 自动选 HTTP），`--separate` 可拆分独立来源 |
 | `sources trial DRAFT_ID` | 重试已有草稿，不启用调度 |
 | `sources activate DRAFT_ID --share 2 --interval 30` | 明确启用已成功试跑的流程；已有来源保留原比例和启停 |
@@ -1799,9 +1801,15 @@ $ openbiliclaw db-repair
 | `sources run SOURCE_ID --limit 20` | 单次有界抓取与现有候选评估；持续定时运行依赖 `start` / `serve-api` |
 | `browser install` | 为既有旧版 Playwright 流程安装对应 Chromium；不是新网页来源的 Ego Lite 安装入口 |
 
-新网页来源需要在后端主机安装并打开 [Ego Lite](https://lite.ego.app/download)，完成首次设置后使用其官方 `ego-browser` 命令。缺失、首次设置未完成或宿主离线时报告原因，不回退到其他浏览器；RSS/Atom/JSON Feed 不依赖 Ego。
+在 macOS 上，`sources prepare` 与图形端聊天共用自动准备流程：首次普通网页任务会下载并
+验证官方 Ego Lite，在当前数据库目录的 `ego-managed` 下安装应用、初始化私有 profile
+并验证原生连接，无需先运行 `prepare-ego`。安装与初始化不占用页面观察的 60 秒预算。
+`prepare-ego` 仅用于提前准备或失败后重试；已准备的宿主退出后，实际网页任务会按需启动。
+状态查询不触发这些动作。自动初始化跳过浏览数据导入，不设默认浏览器、不添加 Dock、
+不启用崩溃报告，也不代用户登录网站。当前只支持 macOS；失败或不支持时说明原因，
+不会回退到其他浏览器。RSS/Atom/JSON Feed 不依赖 Ego。
 
-Ego 的登录状态留在所选宿主 profile，后端仅保存自己的任务空间/会话映射；不在 CLI 参数或聊天里输入密码/Cookie。`OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 的宿主选择见[配置文档](config.md#ego-lite-执行宿主)。pip/uv 的 Playwright driver 与 `browser install` 保留给既有流程兼容；新建流程不能选择 Playwright。
+Ego 的登录状态留在私有宿主 profile，后端仅保存自己的任务空间/会话映射；不在 CLI 参数或聊天里输入密码/Cookie。任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 非空配置会退出托管，`prepare-ego` 不修改外部宿主；`ego-status` 此时只说明托管已退出，真实外部连接状态看来源设置。宿主选择见[配置文档](config.md#ego-lite-执行宿主)。pip/uv 的 Playwright driver 与 `browser install` 保留给既有流程兼容；新建流程不能选择 Playwright。
 
 ### TikTok 来源验收补全（2026-10-04）
 

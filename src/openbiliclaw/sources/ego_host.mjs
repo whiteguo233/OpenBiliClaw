@@ -3,6 +3,22 @@ import net from 'node:net';
 import fs from 'node:fs';
 import { SNAPSHOT_JS, COLLECT_JS, FORM_JS, SEARCH_INPUT_JS } from './ego_dom.mjs';
 
+export async function workflowTaskSpace(ego, config) {
+  const checked=value=>{if(value?.error_code)throw Error(value.error_code);return value;};
+  if(config.task_id!==null) {
+    const spaces=checked(await ego.listTaskSpaces()).taskSpaces;
+    const task=spaces.find(x=>x.id===config.task_id && x.name===config.task_name && x.ownership==='agent' && x.profileId===config.profile);
+    if(task)return task;
+    // Ego drops empty task spaces on host restart. Recreate only after a
+    // confirmed host-generation change, and only when both old identities are
+    // absent. Renamed, user-owned, moved or reused identities remain a stop.
+    if(!config.recover_missing_task || spaces.some(x=>x.id===config.task_id || x.name===config.task_name))throw Error('ego_session_identity_changed');
+  }
+  const profiles=checked(await ego.listProfiles()).profiles;
+  if(!profiles.some(p=>p.id===config.profile))throw Error('EGO_PROFILE_NOT_FOUND');
+  return checked(await ego.createTaskSpace(config.task_name,config.profile));
+}
+
 export async function startFile(path) {
   return start(JSON.parse(fs.readFileSync(path,'utf8')));
 }
@@ -146,15 +162,7 @@ export async function start(config) {
   const lifetime=setTimeout(()=>void close(),config.interactive?15*60*1000:120000);
   let task;
   try {
-    if(config.task_id!==null) {
-      const spaces=native(await ego.listTaskSpaces()).taskSpaces;
-      task=spaces.find(x=>x.id===config.task_id && x.name===config.task_name && x.ownership==='agent');
-      if(!task)throw Error('ego_session_identity_changed');
-    } else {
-      const profiles=native(await ego.listProfiles()).profiles;
-      if(!profiles.some(p=>p.id===config.profile))throw Error('EGO_PROFILE_NOT_FOUND');
-      task=native(await ego.createTaskSpace(config.task_name,config.profile));
-    }
+    task=await workflowTaskSpace(ego,config);
     ego.useTaskSpace(task.id);
     const tab=native(await ego.createTab('about:blank'));target=tab.targetId;
     session=(await rpc('Target.attachToTarget',{targetId:target,flatten:true},null)).sessionId;

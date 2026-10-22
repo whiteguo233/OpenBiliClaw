@@ -187,7 +187,8 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 
 | 方法与路径 | 契约 |
 |---|---|
-| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；Ego 返回 `id,installed,available,platform_supported,connection_state,detail,network_guarantee,dns_pinned`；状态检查不启动应用，已安装不等于原生握手成功 |
+| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；Ego 返回 `id,installed,available,platform_supported,connection_state,setup_state,phase,managed,detail,network_guarantee,dns_pinned`；纯只读状态检查不安装、不启动应用或首次设置，已安装不等于原生握手成功 |
+| `POST /api/custom-sources/executors/ego/prepare` | 显式提前准备或重试托管 Ego；HTTP `202` 返回准备状态，同一 worker 复用正在执行的任务，跨进程由管理器锁协调；外部宿主或不支持的系统返回 `409`；成功准备不等于网站试跑成功 |
 | `POST /api/custom-sources/executors/playwright/install` | 历史 Playwright 流程的显式维护入口，新来源 UI 不调用；接受后 HTTP `202`、`{status:"installing"}`，旧执行器状态通过 `installing/ready/failed` 表达 |
 | `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
 | `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
@@ -216,12 +217,27 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 
 聊天工具 `prepare_discovery_source/trial_discovery_source` 为 `soft_write`；
 `activate_discovery_source/manage_discovery_source` 为 `hard_write`，由聊天确认卡批准后调用。
-设置页的保存、启停和安装按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
+设置页的保存、启停和「准备 Ego Lite」按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
 归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
 
-共享设置组件展示 Ego 状态与官方下载链接；刷新保留正在编辑的来源字段。
-`connection_state=unverified` 表示需要实际试跑验证原生连接，聊天新增入口仍可使用。
-HTTP Feed 不依赖浏览器；Ego 不可用也不触发 Playwright 安装或执行回退。
+普通网页的聊天工具、CLI 和 `POST /drafts` 共用 `WorkflowService.prepare`：macOS 上首次需要
+Ego 时自动准备本应用的私有宿主，无需先点击设置按钮；安装与初始化发生在页面观察的
+60 秒预算之外。已准备的宿主离线时，实际打开会话会按需启动。HTTP Feed 不进入这条
+准备路径；准备失败或环境不支持时返回真实原因，不改用 Playwright。
+
+共享设置组件展示准备状态；「准备 Ego Lite」用于提前准备或失败后重试。
+`setup_state` 为 `idle/preparing/ready/failed/unsupported`，`phase` 标明
+`download/verify/install/onboarding/restart/handshake/ready` 等阶段。仅准备进行中且组件
+可见时每 3 秒轮询 GET，停止显示或销毁后停止轮询；刷新不覆盖来源卡片未保存的输入。
+API 退出会取消本 worker 的准备任务；进程意外退出留下的无锁 preparing 状态被只读检查
+呈现为 failed，可重新准备。`ready` 表示初始化已完成，仍可能因宿主退出而
+`available=false`；下次实际工作再启动，GET 本身没有启动副作用。
+
+`connection_state=unverified` 表示尚需实际连接验证，聊天新增入口仍可使用。
+任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 非空配置切换为外部宿主，
+`managed=false`，不显示托管准备按钮，也不自动改动该宿主。列表始终保留执行器的
+installed/available/platform_supported 事实；仅托管 preparing/failed/unsupported 的
+准备详情覆盖 detail，外部连接详情保持原样。HTTP Feed 不依赖 Ego。
 
 登录交互使用后端页面 `/web/source-login.html?draft_id=…`。三端来源管理只接受同后端
 origin、该路径并带 draft ID 的跳转地址。用户在接管页面登录并继续，不向聊天或来源

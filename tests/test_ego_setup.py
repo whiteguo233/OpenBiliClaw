@@ -1,0 +1,596 @@
+"""Managed setup safety/lifecycle; protocol fixtures are not live Ego acceptance."""
+
+import asyncio
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from openbiliclaw.sources.ego_onboarding import (
+    EgoOnboardingError,
+    complete_onboarding,
+    onboarding_action,
+)
+from openbiliclaw.sources.ego_setup import EgoSetupError, EgoSetupManager
+
+
+@pytest.fixture
+def manager(tmp_path, monkeypatch):
+    for name in (
+        "OPENBILICLAW_EGO_BROWSER",
+        "OPENBILICLAW_EGO_SERVER_NAME",
+        "OPENBILICLAW_EGO_PROFILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.sys.platform", "darwin")
+    return EgoSetupManager(tmp_path)
+
+
+def snapshot(title, buttons, checkboxes=None):
+    return {
+        "url": "chrome://onboarding/",
+        "headings": [title],
+        "buttons": buttons,
+        "checkboxes": checkboxes or [],
+    }
+
+
+@pytest.mark.parametrize(
+    "heading,buttons,expected",
+    [
+        ("ego(lite) 是 AI Agent 运行网页自动化最快的浏览器", ["开始使用"], "开始使用"),
+        ("你和 Agent，各有各的 Space", ["下一步"], "下一步"),
+        ("和 Chrome 一样顺手，无需重新适应", ["下一步"], "下一步"),
+        ("隐私优先的设计", ["下一步"], "下一步"),
+        ("将数据导入 ego(lite)", ["导入数据", "稍后设置"], "稍后设置"),
+        ("保持联系", ["订阅", "跳过"], "跳过"),
+        ("你是如何了解到 ego(lite) 的？", ["下一步", "跳过"], "跳过"),
+        ("选个喜欢的标签页布局", ["横向", "纵向", "下一步"], "下一步"),
+        ("Import data to ego(lite)", ["Import data", "Set up later"], "Set up later"),
+    ],
+)
+def test_known_onboarding_controls_skip_optional_collection(heading, buttons, expected):
+    assert onboarding_action(snapshot(heading, buttons))["button"] == expected
+
+
+def test_finish_requires_exact_three_options_unchecked_before_click():
+    boxes = [
+        {"label": label, "checked": True}
+        for label in ["设为默认浏览器", "添加到程序坞", "分享崩溃报告"]
+    ]
+    state = snapshot("一切就绪", ["打开 ego(lite)"], boxes)
+    for box in boxes:
+        action = onboarding_action(state)
+        assert action["checkbox"] == box["label"]
+        assert "button" not in action
+        box["checked"] = False
+    assert onboarding_action(state) == {"step": 8, "button": "打开 ego(lite)", "complete": True}
+
+
+def test_snapshot_does_not_read_import_profile_checkboxes():
+    import shutil
+    import subprocess
+
+    from openbiliclaw.sources.ego_onboarding import _SNAPSHOT
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required to execute the fixed DOM privacy fixture")
+    program = """
+    globalThis.location={href:'chrome://onboarding/'};
+    let title='将数据导入 ego(lite)',reads=0;
+    globalThis.document={querySelectorAll:selector=>{
+      if(selector==='h1')return [{innerText:title}];
+      if(selector==='button')return [];
+      if(selector==='input[type=checkbox]'){
+        if(title!=='一切就绪')throw Error('private import options were read');
+        reads++;return [{checked:true,closest:()=>({innerText:'分享崩溃报告'})}];
+      }
+      throw Error('unexpected selector');
+    }};
+    const code=SNAPSHOT;
+    const imported=eval(code);
+    title='一切就绪';const completed=eval(code);
+    console.log(JSON.stringify({reads,imported:imported.checkboxes,final:completed.checkboxes}));
+    """.replace("SNAPSHOT", json.dumps(_SNAPSHOT))
+    result = subprocess.run([node, "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {
+        "reads": 1,
+        "imported": [],
+        "final": [{"label": "分享崩溃报告", "checked": True}],
+    }
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        snapshot("New account sign-in required", ["Continue"]),
+        snapshot("一切就绪", ["打开 ego(lite)"], [{"label": "new permission", "checked": True}]),
+        snapshot("将数据导入 ego(lite)", ["导入数据"]),
+        snapshot("隐私优先的设计", ["下一步", "下一步"]),
+        {**snapshot("隐私优先的设计", ["下一步"]), "url": "https://attacker.test/"},
+    ],
+)
+def test_unknown_or_ambiguous_setup_never_guesses(state):
+    with pytest.raises(EgoOnboardingError):
+        onboarding_action(state)
+
+
+def test_status_and_connection_do_not_create_files_or_spawn(manager, monkeypatch):
+    spawn = AsyncMock()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    assert manager.status()["setup_state"] == "idle"
+    connection = manager.connection()
+    assert connection["server_name"].startswith("obc-")
+    assert connection["executable"].startswith(str(manager.root))
+    assert not manager.root.exists()
+    spawn.assert_not_called()
+
+
+async def test_explicit_external_host_is_never_managed(manager, monkeypatch):
+    monkeypatch.setenv("OPENBILICLAW_EGO_BROWSER", "/an/external/ego-browser")
+    install = AsyncMock()
+    monkeypatch.setattr(manager, "_install", install)
+    assert not (await manager.prepare())["managed"]
+    assert not (await manager.ensure_running())["managed"]
+    assert manager.connection() == {}
+    assert not manager.root.exists()
+    install.assert_not_awaited()
+
+
+async def test_work_does_not_initialize_unprepared_host(manager, monkeypatch):
+    launch = AsyncMock()
+    monkeypatch.setattr(manager, "_launch", launch)
+    assert (await manager.ensure_running())["setup_state"] == "idle"
+    assert not manager.root.exists()
+    launch.assert_not_awaited()
+
+
+async def test_unsupported_host_does_not_install(manager, monkeypatch):
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.sys.platform", "linux")
+    result = await manager.prepare()
+    assert result["setup_state"] == "unsupported" and not result["platform_supported"]
+    assert not manager.root.exists()
+
+
+def fake_lifecycle(manager, monkeypatch):
+    calls = []
+    running = False
+
+    async def install():
+        calls.append("install")
+
+    async def launch(*, debugging):
+        nonlocal running
+        calls.append("debug" if debugging else "normal")
+        running = True
+        manager._write(pid=100, debug_port=18508 if debugging else 0)
+        return 18508 if debugging else 0
+
+    async def stop():
+        nonlocal running
+        calls.append("stop")
+        running = False
+        manager._write(pid=None, debug_port=0)
+
+    async def handshake():
+        assert manager._state()["debug_port"] == 0
+        calls.append("handshake")
+        manager._write(initialized=True, ready_pid=100, setup_state="ready", phase="ready")
+
+    monkeypatch.setattr(manager, "_install", install)
+    monkeypatch.setattr(manager, "_launch", launch)
+    monkeypatch.setattr(manager, "_stop", stop)
+    monkeypatch.setattr(manager, "_handshake", handshake)
+    monkeypatch.setattr(manager, "_pid", lambda: 100 if running else None)
+    manager.executable.parent.mkdir(parents=True)
+    manager.executable.touch()
+    return calls
+
+
+async def test_prepare_closes_temporary_debug_host_before_native_ready(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    complete = AsyncMock()
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", complete)
+    result = await manager.prepare()
+    assert result["setup_state"] == "ready" and result["available"]
+    assert calls == ["install", "stop", "debug", "stop", "normal", "handshake"]
+    complete.assert_awaited_once_with(18508)
+    assert manager._state()["debug_port"] == 0
+
+
+async def test_onboarding_failure_stops_owned_host_without_native_ready(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    monkeypatch.setattr(
+        "openbiliclaw.sources.ego_setup.complete_onboarding",
+        AsyncMock(side_effect=EgoOnboardingError("ego_setup_unknown_step")),
+    )
+    result = await manager.prepare()
+    assert result["setup_state"] == "failed" and not result["available"]
+    assert result["detail"] == "ego_setup_unknown_step"
+    assert "handshake" not in calls and calls[-1] == "stop"
+    assert manager._state()["debug_port"] == 0
+
+
+async def test_completed_ui_without_handshake_marker_can_recover(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    monkeypatch.setattr(
+        "openbiliclaw.sources.ego_setup.complete_onboarding",
+        AsyncMock(side_effect=EgoOnboardingError("ego_setup_page_unavailable")),
+    )
+    assert (await manager.prepare())["available"]
+    assert calls[-3:] == ["stop", "normal", "handshake"]
+
+
+async def test_initialized_offline_host_restarts_without_download_or_debug(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    manager._write(initialized=True, setup_state="ready")
+    result = await manager.ensure_running()
+    assert result["available"]
+    assert calls == ["normal", "handshake"]
+
+
+async def test_concurrent_prepare_reuses_single_install_and_host(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def complete(port):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", complete)
+    first = asyncio.create_task(manager.prepare())
+    await entered.wait()
+    assert (await manager.prepare())["setup_state"] == "preparing"
+    release.set()
+    assert (await first)["available"]
+    assert calls.count("debug") == 1 and calls.count("install") == 1
+
+
+async def test_cancelled_setup_closes_temporary_host(manager, monkeypatch):
+    calls = fake_lifecycle(manager, monkeypatch)
+    entered = asyncio.Event()
+
+    async def complete(port):
+        entered.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", complete)
+    task = asyncio.create_task(manager.prepare())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls[-1] == "stop" and "handshake" not in calls
+    assert manager.status()["setup_state"] == "failed"
+
+
+async def test_handshake_requires_actual_marker_and_default_profile(manager, monkeypatch):
+    manager.root.mkdir()
+    manager._write(pid=100, debug_port=0)
+    monkeypatch.setattr(manager, "_pid", lambda: 100)
+    command = AsyncMock(return_value="Please complete onboarding first")
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    with pytest.raises(EgoSetupError, match="native_handshake_failed"):
+        await manager._handshake()
+    assert not manager._state().get("initialized")
+    command.return_value = "OBC_EGO_READY:" + json.dumps({"version": "0.6.0.16", "profile": True})
+    await manager._handshake()
+    assert manager._state()["ready_pid"] == 100
+    assert command.call_args.args[0] == str(manager.executable)
+    assert "--ego-server-name=" + manager.server_name in command.call_args.args
+
+
+async def test_os_signature_rejection_is_not_bypassed(manager, monkeypatch):
+    command = AsyncMock(side_effect=["", "TeamIdentifier=EVIL\nIdentifier=com.citrolabs.ego.lite"])
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    with pytest.raises(EgoSetupError, match="signature_mismatch"):
+        await manager._verify(manager.app)
+    assert not any("xattr" in str(call) or "sudo" in str(call) for call in command.call_args_list)
+
+
+def test_bundle_metadata_normalization_cannot_follow_external_symlinks(manager, tmp_path):
+    manager.app.mkdir(parents=True)
+    outside = tmp_path / "unrelated"
+    outside.mkdir()
+    (manager.app / "outside").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(EgoSetupError, match="unsafe_bundle_link"):
+        manager._check_bundle_links(manager.app)
+
+
+async def test_install_normalizes_only_finder_metadata_before_full_verification(
+    manager, monkeypatch
+):
+    manager.root.mkdir()
+    commands = []
+    verified = []
+
+    async def command(*args, **kwargs):
+        commands.append(args)
+        if args[:2] == ("/usr/bin/hdiutil", "attach"):
+            (Path(args[args.index("-mountpoint") + 1]) / "ego lite.app").mkdir()
+        if args[0] == "/usr/bin/ditto":
+            staged = Path(args[2])
+            relative = manager.executable.relative_to(manager.app)
+            (staged / relative).parent.mkdir(parents=True)
+            (staged / relative).touch()
+        return ""
+
+    async def verify(app):
+        verified.append(app)
+        assert [call[2] for call in commands if call[0] == "/usr/bin/xattr"] == [
+            "com.apple.FinderInfo",
+            "com.apple.ResourceFork",
+        ]
+
+    async def download(path):
+        path.write_bytes(b"complete fixture dmg")
+
+    monkeypatch.setattr(manager, "_download", download)
+    monkeypatch.setattr(manager, "_verify", verify)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    await manager._install()
+    assert manager.executable.is_file()
+    assert len(verified) == 1
+    assert all("quarantine" not in str(call) for call in commands)
+    assert commands[-1][1] == "detach"
+
+
+async def test_invalid_cached_signature_is_verified_then_invalidated(manager, monkeypatch):
+    manager.root.mkdir()
+    cache = manager.root / "installer.dmg"
+    cache.write_bytes(b"existing complete dmg")
+    download = AsyncMock()
+    verify = AsyncMock(side_effect=EgoSetupError("ego_setup_signature_invalid"))
+
+    async def command(*args, **kwargs):
+        if args[:2] == ("/usr/bin/hdiutil", "attach"):
+            (Path(args[args.index("-mountpoint") + 1]) / "ego lite.app").mkdir()
+        return ""
+
+    commands = AsyncMock(side_effect=command)
+    monkeypatch.setattr(manager, "_download", download)
+    monkeypatch.setattr(manager, "_verify", verify)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", commands)
+    with pytest.raises(EgoSetupError, match="signature_invalid"):
+        await manager._install()
+    download.assert_not_awaited()
+    verify.assert_awaited_once()
+    assert str(cache) in commands.call_args_list[0].args
+    assert not cache.exists()
+    assert not manager.app.exists()
+
+
+def installer_lifecycle(manager, monkeypatch, failure):
+    """Keep prepare/install/verify real; replace only download, OS and host I/O."""
+    import shutil
+
+    attempt = 0
+    running = False
+
+    async def download(path):
+        nonlocal attempt
+        attempt += 1
+        path.write_bytes(b"complete fixture dmg")
+
+    async def command(*args, **kwargs):
+        if args[:2] == ("/usr/bin/hdiutil", "attach"):
+            if attempt == 1 and failure == "mount":
+                raise EgoSetupError("ego_setup_command_failed")
+            app = Path(args[args.index("-mountpoint") + 1]) / "ego lite.app"
+            if not (attempt == 1 and failure == "bundle"):
+                app.mkdir()
+                if not (attempt == 1 and failure == "cli"):
+                    cli = app / manager.executable.relative_to(manager.app)
+                    cli.parent.mkdir(parents=True)
+                    cli.touch()
+        elif args[0] == "/usr/bin/ditto":
+            shutil.copytree(args[1], args[2])
+        elif args[:2] == ("/usr/bin/codesign", "--verify") and attempt == 1:
+            if failure == "signature":
+                raise EgoSetupError("ego_setup_command_failed")
+            if failure == "timeout":
+                raise TimeoutError
+            if failure == "cancelled":
+                raise asyncio.CancelledError
+        elif args[:2] == ("/usr/bin/codesign", "-dv"):
+            team = "OTHER" if attempt == 1 and failure == "identity" else "JGQLC6YQYJ"
+            return f"TeamIdentifier={team}\nIdentifier=com.citrolabs.ego.lite"
+        elif args[0] == "/usr/sbin/spctl" and attempt == 1 and failure == "trust":
+            raise EgoSetupError("ego_setup_command_failed")
+        return ""
+
+    async def launch(*, debugging):
+        nonlocal running
+        running = True
+        manager._write(pid=100, debug_port=18508 if debugging else 0)
+        return 18508 if debugging else 0
+
+    async def stop():
+        nonlocal running
+        running = False
+
+    async def handshake():
+        manager._write(initialized=True, ready_pid=100, setup_state="ready", phase="ready")
+
+    downloader = AsyncMock(side_effect=download)
+    monkeypatch.setattr(manager, "_download", downloader)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", AsyncMock())
+    monkeypatch.setattr(manager, "_launch", launch)
+    monkeypatch.setattr(manager, "_stop", stop)
+    monkeypatch.setattr(manager, "_handshake", handshake)
+    monkeypatch.setattr(manager, "_pid", lambda: 100 if running else None)
+    return downloader
+
+
+@pytest.mark.parametrize(
+    "failure,detail",
+    [
+        ("signature", "ego_setup_signature_invalid"),
+        ("identity", "ego_setup_signature_mismatch"),
+        ("bundle", "ego_setup_bundle_missing"),
+        ("cli", "ego_setup_cli_missing"),
+    ],
+)
+async def test_bad_installer_next_prepare_downloads_again(manager, monkeypatch, failure, detail):
+    download = installer_lifecycle(manager, monkeypatch, failure)
+    first = await manager.prepare()
+    assert first["setup_state"] == "failed" and first["detail"] == detail
+    assert not manager.app.exists()
+    assert not (manager.root / "installer.dmg").exists()
+    assert download.await_count == 1  # No automatic retry loop.
+    second = await manager.prepare()
+    assert second["setup_state"] == "ready" and second["available"]
+    assert download.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "failure,detail",
+    [
+        ("trust", "ego_setup_system_trust_required"),
+        ("timeout", "ego_setup_timeout"),
+        ("mount", "ego_setup_mount_failed"),
+        ("cancelled", "ego_setup_cancelled"),
+    ],
+)
+async def test_uncertain_or_trust_failure_retains_installer(manager, monkeypatch, failure, detail):
+    download = installer_lifecycle(manager, monkeypatch, failure)
+    if failure == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await manager.prepare()
+        result = manager.status()
+    else:
+        result = await manager.prepare()
+    assert result["setup_state"] == "failed" and result["detail"] == detail
+    assert (manager.root / "installer.dmg").read_bytes() == b"complete fixture dmg"
+    assert not manager.app.exists()
+    assert download.await_count == 1
+
+
+async def test_interrupted_download_never_becomes_installer_cache(manager, monkeypatch, tmp_path):
+    manager.root.mkdir()
+    partial = tmp_path / "download"
+    partial.mkdir()
+
+    async def download(path):
+        path.write_bytes(b"incomplete")
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(manager, "_download", download)
+    with pytest.raises(asyncio.CancelledError):
+        await manager._cached_installer(partial)
+    assert not (manager.root / "installer.dmg").exists()
+
+
+async def test_symlink_installer_cache_is_rejected(manager, monkeypatch, tmp_path):
+    manager.root.mkdir()
+    unrelated = tmp_path / "unrelated.dmg"
+    unrelated.write_bytes(b"do not read or replace")
+    (manager.root / "installer.dmg").symlink_to(unrelated)
+    download = AsyncMock()
+    monkeypatch.setattr(manager, "_download", download)
+    with pytest.raises(EgoSetupError, match="invalid_installer_cache"):
+        await manager._cached_installer(tmp_path)
+    download.assert_not_awaited()
+    assert unrelated.read_bytes() == b"do not read or replace"
+
+
+async def test_raw_exception_body_is_never_exposed_by_prepare(manager, monkeypatch):
+    monkeypatch.setattr(manager, "_install", AsyncMock(side_effect=ValueError("secret-body")))
+    monkeypatch.setattr(manager, "_stop", AsyncMock())
+    result = await manager.prepare()
+    assert result["detail"] == "ego_setup_failed"
+    assert "secret-body" not in manager._state_path.read_text()
+
+
+def test_stale_progress_is_reported_interrupted_without_writing(manager):
+    manager.root.mkdir()
+    manager._write(setup_state="preparing", phase="onboarding")
+    before = manager._state_path.read_bytes()
+    assert manager.status()["detail"] == "ego_setup_interrupted"
+    assert manager._state_path.read_bytes() == before
+
+
+async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(monkeypatch):
+    import httpx
+    from websockets.asyncio.server import serve
+
+    states = [
+        snapshot("ego(lite) 是 AI Agent 运行网页自动化最快的浏览器", ["开始使用"]),
+        snapshot("你和 Agent，各有各的 Space", ["下一步"]),
+        snapshot("和 Chrome 一样顺手，无需重新适应", ["下一步"]),
+        snapshot("隐私优先的设计", ["下一步"]),
+        snapshot("将数据导入 ego(lite)", ["导入数据", "稍后设置"]),
+        snapshot("保持联系", ["订阅", "跳过"]),
+        snapshot("你是如何了解到 ego(lite) 的？", ["下一步", "跳过"]),
+        snapshot("选个喜欢的标签页布局", ["横向", "纵向", "下一步"]),
+        snapshot(
+            "一切就绪",
+            ["打开 ego(lite)"],
+            [
+                {"label": label, "checked": True}
+                for label in ["设为默认浏览器", "添加到程序坞", "分享崩溃报告"]
+            ],
+        ),
+    ]
+    index, snapshot_count = 0, 0
+    actions = []
+
+    async def native(socket):
+        nonlocal index, snapshot_count
+        async for raw in socket:
+            request = json.loads(raw)
+            assert request["method"] == "Runtime.evaluate"
+            expression = request["params"]["expression"]
+            assert "controller.completeOnboarding" not in expression
+            if "headings:" in expression:
+                # Native page appears before its controls have loaded.
+                value = snapshot("", []) if snapshot_count == 0 else states[index]
+                if snapshot_count == 0:
+                    value["headings"] = []
+                snapshot_count += 1
+            else:
+                action = json.loads(expression.rsplit("})(", 1)[1][:-1])
+                actions.append(action)
+                if "checkbox" in action:
+                    for box in states[index]["checkboxes"]:
+                        if box["label"] == action["checkbox"]:
+                            box["checked"] = False
+                elif not action.get("complete"):
+                    index += 1
+                value = True
+            await socket.send(
+                json.dumps({"id": request["id"], "result": {"result": {"value": value}}})
+            )
+
+    async with serve(native, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        actual_client = httpx.AsyncClient
+
+        def client(**kwargs):
+            assert kwargs["trust_env"] is False
+
+            def target(request):
+                assert str(request.url) == f"http://127.0.0.1:{port}/json/list"
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "type": "browser_ui",
+                            "url": "chrome://onboarding/",
+                            "webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/page/owned",
+                        },
+                        {"type": "page", "url": "https://personal.example/"},
+                    ],
+                )
+
+            return actual_client(transport=httpx.MockTransport(target), **kwargs)
+
+        monkeypatch.setattr("openbiliclaw.sources.ego_onboarding.httpx.AsyncClient", client)
+        await complete_onboarding(port, timeout=15)
+    assert len(actions) == 12
+    assert all(not box["checked"] for box in states[-1]["checkboxes"])
+    assert actions[4]["button"] == "稍后设置"
+    assert actions[-1]["complete"]

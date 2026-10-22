@@ -85,6 +85,9 @@
     let disposed = false;
     let revision = 0;
     let items = [];
+    let egoStatus = null;
+    let prepareRequest = false;
+    let preparationTimer = null;
     const editors = new Map();
     const pending = new Set();
     function node(tag, className, value) {
@@ -119,27 +122,71 @@
       message.dataset.tone = failed ? "error" : "success";
     }
 
+    function stopPreparationPolling() {
+      if (preparationTimer !== null) global.clearTimeout(preparationTimer);
+      preparationTimer = null;
+    }
+
+    function preparationVisible() {
+      return !disposed && root.isConnected !== false && !doc.hidden && root.getClientRects().length > 0;
+    }
+
+    function pollPreparation() {
+      stopPreparationPolling();
+      if (prepareRequest || egoStatus?.setup_state !== "preparing" || !preparationVisible()) return;
+      preparationTimer = global.setTimeout(() => {
+        preparationTimer = null;
+        if (preparationVisible()) void load({ refreshSources: false, silent: true });
+      }, 3000);
+    }
+
+    async function prepareEgo() {
+      if (disposed || prepareRequest || egoStatus?.managed !== true
+        || egoStatus?.platform_supported === false || egoStatus?.setup_state === "preparing") return;
+      prepareRequest = true;
+      renderExecutors([egoStatus]);
+      try {
+        const result = await request("/custom-sources/executors/ego/prepare", { method: "POST" });
+        if (disposed) return;
+        egoStatus = { ...egoStatus, ...result, id: "ego" };
+        announce(text(result?.detail) || "已开始准备 Ego Lite。", result?.setup_state === "failed");
+      } catch (error) {
+        if (!disposed) announce(errorMessage(error), true);
+      } finally {
+        prepareRequest = false;
+        if (!disposed) renderExecutors([egoStatus]);
+      }
+    }
+
     function renderExecutors(executors) {
       const ego = array(executors).find((executor) => executor?.id === "ego");
+      egoStatus = ego || null;
       const notice = node("section", "custom-source-executor-notice");
-      const unsupported = ego?.platform_supported === false;
+      const unsupported = ego?.platform_supported === false || ego?.setup_state === "unsupported";
+      const preparing = ego?.setup_state === "preparing" || prepareRequest;
       const ready = !unsupported && ego?.available === true;
       const missing = !unsupported && !ready && ego?.installed === false;
       const unverified = !unsupported && !ready && ego?.installed === true
         && ego?.connection_state === "unverified";
       const label = !ego ? "尚未获取 Ego Lite 状态"
         : unsupported ? "此运行环境暂不支持 Ego Lite"
-          : ready ? "Ego Lite 已就绪" : missing ? "Ego Lite 未安装"
+          : preparing ? "正在准备 Ego Lite…"
+            : ready ? "Ego Lite 已就绪" : missing ? "Ego Lite 未安装"
             : unverified ? "Ego Lite 已安装，待试跑验证" : "Ego Lite 尚未就绪";
       notice.append(node("strong", "", label));
       notice.append(node("p", "custom-source-note", "网页通过 Ego Lite 发现；公开 RSS、Atom、JSON Feed 订阅无需 Ego Lite。"));
       if (text(ego?.detail)) notice.append(node("p", "custom-source-note", text(ego.detail)));
-      if (!ready && !unsupported) notice.append(node("p", "custom-source-note", missing
-        ? "请在运行 OpenBiliClaw 的电脑上安装 Ego Lite，完成首次设置并打开应用，然后刷新状态。"
-        : unverified ? "到聊一聊提供网站地址，试跑时会验证 Ego Lite 连接。"
-          : "请确认运行 OpenBiliClaw 的电脑已打开 Ego Lite 并完成连接，然后刷新状态。"));
+      if (!ready && !unsupported) notice.append(node("p", "custom-source-note", ego?.managed === true
+        ? "准备会安装 Ego Lite 并初始化专用浏览器环境；网站登录仍在接管页完成。"
+        : missing ? "请在运行 OpenBiliClaw 的电脑上安装 Ego Lite，完成首次设置并打开应用，然后刷新状态。"
+          : unverified ? "到聊一聊提供网站地址，试跑时会验证 Ego Lite 连接。"
+            : "请确认运行 OpenBiliClaw 的电脑已打开 Ego Lite 并完成连接，然后刷新状态。"));
       const actions = node("div", "custom-source-actions");
-      if (missing) {
+      if (ego?.managed === true && !unsupported && (!ready || preparing)) {
+        const prepare = button(preparing ? "正在准备 Ego Lite…" : "准备 Ego Lite", () => void prepareEgo());
+        prepare.disabled = preparing;
+        actions.append(prepare);
+      } else if (missing) {
         // This is an explicit official download link, never an automatic install
         // or a switch to another browser executor. The backend reports its host
         // readiness; the UI must not infer it from this client's browser/OS.
@@ -152,6 +199,7 @@
       actions.append(button("刷新 Ego Lite 状态", () => void load({ refreshSources: false })));
       notice.append(actions);
       executorArea.replaceChildren(notice);
+      pollPreparation();
     }
 
     function field(label, value, type, options = {}) {
@@ -332,7 +380,7 @@
       else announce(`${success}列表刷新失败，请重试刷新。${message.textContent}`, true);
     }
 
-    async function load({ refreshSources = true } = {}) {
+    async function load({ refreshSources = true, silent = false } = {}) {
       if (disposed) return false;
       const current = ++revision;
       list.setAttribute("aria-busy", "true");
@@ -347,7 +395,7 @@
           render();
           announce(items.length ? `共 ${items.length} 个自定义来源；各自占比与内置来源平级。` : "");
           onChange(items);
-        } else {
+        } else if (!silent) {
           announce("Ego Lite 状态已更新。");
         }
         return true;
@@ -363,7 +411,7 @@
       }
     }
     return { load, destroy() {
-      disposed = true; revision += 1;
+      disposed = true; revision += 1; stopPreparationPolling();
     } };
   }
 

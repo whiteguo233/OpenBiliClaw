@@ -58,14 +58,19 @@ export const SNAPSHOT_JS = String.raw`() => {
 }`;
 
 export const COLLECT_JS = String.raw`({step,limit}) => {
-  const text = (node,sel) => {const e=sel?node.querySelector(sel):node;
+  const field = (node,sel) => {
+    const selector=sel.trim();
+    if(selector===':scope') return node;
+    return node.querySelector(/^[>+~]/.test(selector)?':scope '+selector:selector);
+  };
+  const text = (node,sel) => {const e=sel?field(node,sel):node;
     return (e?.innerText||e?.textContent||'').trim();};
   const visible = e => { if (!e || !e.getClientRects().length) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
   const items=[...document.querySelectorAll(step.item_selector)].slice(0,limit).map(node=>{
-    const a=node.querySelector(step.link_selector);
-    const t=step.published_selector?node.querySelector(step.published_selector):null;
+    const a=field(node,step.link_selector);
+    const t=step.published_selector?field(node,step.published_selector):null;
     return {title:text(node,step.title_selector||step.link_selector).slice(0,500),url:a?.href||'',
       author_name:step.author_selector?text(node,step.author_selector).slice(0,200):'',
       published_at:(t?.getAttribute(step.published_attribute)||t?.textContent||'').slice(0,100),

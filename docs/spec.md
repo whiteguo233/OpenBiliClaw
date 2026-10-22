@@ -358,7 +358,7 @@ Website / RSS / Atom / JSON Feed chat → prepare/trial → approval → source_
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
-                     Ego Lite host required for websites; missing/offline never falls back to Playwright
+                     Ego Lite: automatic managed setup → native handshake → on-demand startup; no Playwright fallback
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
                     → durable id mismatch pauses personal bootstrap only
@@ -703,7 +703,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ Dynamic Web: chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
-│  │   Ego Lite 原生宿主；缺失/离线明确失败，不回退其他浏览器 │ │
+│  │   Ego Lite 自动托管准备 → 原生握手 → 按需启动；失败明确报告 │ │
 │  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
 │  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │
 │  │   token-fenced lease + state/seen；此兼容路径不支持登录/JS/任意 crawl │ │

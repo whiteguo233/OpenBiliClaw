@@ -47,14 +47,24 @@ Ego Skill 就宣称具备服务器或 Docker 浏览器能力。
 明确选择，只允许人工登录期间使用，不扩大后台内容发现范围。普通新网页使用官方 Ego
 原生执行器，实际解析成功的 RSS / Atom / JSON Feed 使用 HTTP；不会回退到 Playwright。
 Ego 实施 origin、方法与公共 DNS 预检，宿主负责 socket 解析，不能声称具备旧 Chromium
-执行器的 DNS pin 保证。原生桥正在进行真实协议与网站验收。重新登录按钮只为包含
+执行器的 DNS pin 保证。真实网站能力以各次验收证据为准。重新登录按钮只为包含
 Playwright/Ego workflow 的来源显示，HTTP 公开流程没有登录按钮。
 
-设置组件区分 Ego 未安装、宿主未运行、已安装待试跑验证、已连接和环境不支持，
-提供[官方下载入口](https://lite.ego.app/download)，不再提交 Playwright 安装请求。
-`GET /api/custom-sources` 的执行器状态为只读检查，不打开应用或首次设置；安装并不等于
-已连接，`connection_state=unverified` 引导用户通过聊一聊实际试跑。聊天入口始终可用，
-刷新状态保留来源未保存的编辑。旧 Playwright 流程以兼容标签显示，原安装 API 留作维护。
+macOS 上首次通过聊天、CLI 或草稿 API 准备普通网页时，会自动下载并验证官方 Ego Lite，
+在当前数据库目录的 `ego-managed` 中安装应用、初始化私有 profile 和 named host、
+完成原生握手；用户无需单独完成首次设置。下载和初始化发生在页面观察的 60 秒预算之外。
+已准备宿主退出后，实际打开网页会话时按需启动。准备流程跳过个人浏览数据导入，
+不设默认浏览器、不添加 Dock、不启用崩溃报告；网站账号仍由用户在接管页登录。
+HTTP Feed 不需要 Ego，也不触发准备。
+
+共享设置中的「准备 Ego Lite」用于提前准备或失败后重试，显示安装、初始化与握手阶段。
+按钮调用 `POST /api/custom-sources/executors/ego/prepare`；只在组件可见且 preparing 时
+每 3 秒轮询状态，不覆盖来源未保存的编辑。`GET /api/custom-sources` 纯只读，不安装、
+不启动应用或首次设置。`setup_state=ready` 与 `available` 分开：已准备但离线可在实际
+任务时重新启动；`connection_state=unverified` 需通过实际试跑验证。聊天入口始终可用。
+任一显式 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 非空配置退出托管，界面不显示
+托管准备按钮，也不修改该外部宿主。当前只支持 macOS；不支持的环境明确报告，
+不会推荐或暗退到 Playwright。旧 Playwright 流程以兼容标签显示，原安装 API 留作维护。
 
 以下章节描述**兼容的匿名 HTTP recipe 路径**。其中「不支持登录/JavaScript」和
 旧版 CLI chat 排除仅约束该路径，不代表动态网站来源的产品边界。
@@ -356,8 +366,8 @@ transport 是 fixture seam，自行负责其连接行为；上述 socket pin 描
 默认 transport 使用 `httpx[socks]>=0.28,<1` 构造有界请求，并直接使用
 `httpcore>=1.0,<2` 的 network backend primitive 将已验证地址交给 socket 层。`httpcore` 因此是
 声明并锁定的生产依赖，不依靠 `httpx` 的传递依赖偶然存在。普通 `pip install .`、`uv sync`、
-Docker build 与桌面打包都会自动安装两者；用户不需要另装 Node、浏览器、Ego Lite 或 crawl
-服务。上游 major 版本不在当前兼容范围内，升级必须重跑 DNS pin / TLS SNI / redirect 回归。
+Docker build 与桌面打包都会自动安装两者；这条匿名 HTTP 路径不需要 Node、浏览器、
+Ego Lite 或 crawl 服务。上游 major 版本不在当前兼容范围内，升级必须重跑 DNS pin / TLS SNI / redirect 回归。
 
 ## 身份、时间与候选字段
 
@@ -526,7 +536,8 @@ producer 也不调度它；它不是本模块的 canonical Web source 或安全 
 动态来源将执行器独立建模，HTTP 路径仍不隐式升级权限或回退到登录浏览器。
 [Ego Lite 官方下载说明](https://lite.ego.app/download)提供 macOS 与 Windows beta；本项目当前原生适配器只支持 macOS，尚未完成 Windows 验收。
 [官方宿主桥接指南](https://lite.ego.app/document/en/docs/custom-agent-harness)要求在应用所在电脑
-执行命令。该部署方式与服务器原生执行不同，具体可用性必须依据运行环境与实际执行证据。
+执行命令。OpenBiliClaw 的 macOS 托管准备负责安装和初始化该本机宿主，不提供远程桥接，
+也不把 Linux/Docker 变成原生 Ego 环境；具体可用性仍依据运行环境与实际执行证据。
 
 ## 关键文件与测试
 

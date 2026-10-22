@@ -524,9 +524,14 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 
 ### 自定义网站来源的浏览器执行
 
-新建普通网页来源使用 Ego Lite。当前原生适配器只连接同机 macOS 宿主，Linux Docker
-没有 Ego 宿主或远程桥接；容器中应报告不可用，不能自动改用 Playwright。
-RSS / Atom / JSON Feed 仍可通过 HTTP 建源、定期发现与入池。
+新建普通网页来源使用 Ego Lite。macOS 原生后端在首次网页准备时自动下载、验证并
+初始化私有宿主，设置中的「准备 Ego Lite」或 `sources prepare-ego` 仅用于提前准备或
+重试；已初始化的宿主按需启动，GET 状态没有这些副作用。
+但当前托管准备与原生适配器都只支持 macOS：Linux Docker 没有 Ego 宿主或远程桥接，
+即使 Docker 运行在 Mac 上，容器仍报告 `platform_supported=false` / `setup_state=unsupported`。
+容器中不能使用托管准备按钮，准备 API 返回 409，也不会自动改用 Playwright。
+`OPENBILICLAW_EGO_*` 外部宿主配置只用于同机原生连接，不提供跨容器远程桥接。
+RSS / Atom / JSON Feed 不触发 Ego 准备，仍可通过 HTTP 建源、定期发现与入池。
 
 以下仅为已保存 Playwright 流程的兼容环境：镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
 `/opt/openbiliclaw-browsers`，运行时使用 headless 模式，无须桌面环境或宿主 Mac。

@@ -104,6 +104,26 @@ class WorkflowStore:
             raise ValueError("source draft not found")
         return dict(json.loads(row[0]))
 
+    def pending_draft_summaries(self) -> list[dict[str, str]]:
+        """Recover recent unfinished authoring after a chat or backend restart.
+
+        Expose only bounded user-facing metadata, never plans, observations,
+        session mappings, cookies, or raw trial responses.
+        """
+        rows = self.database.conn.execute(
+            "SELECT payload FROM custom_workflow_drafts "
+            "WHERE COALESCE(json_extract(payload, '$.published_workflow_id'), '')='' "
+            "ORDER BY updated_at DESC, draft_id DESC LIMIT 10"
+        ).fetchall()
+        # Ten summaries plus the heading fit the agent's default 4,000-character
+        # tool result budget. Full metadata is available when the draft is resumed.
+        limits = {"draft_id": 64, "name": 40, "entry_url": 80, "intent": 40, "status": 24}
+        return [
+            {key: str(draft.get(key, ""))[:limit] for key, limit in limits.items()}
+            for row in rows
+            for draft in [json.loads(row[0])]
+        ]
+
     def publish(self, draft_id: str, source_id: str) -> dict[str, Any]:
         """Activate a trialled immutable version, idempotently for one draft."""
         with self.transaction() as conn:

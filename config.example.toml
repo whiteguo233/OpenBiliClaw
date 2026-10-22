@@ -559,7 +559,8 @@ bootstrap_max_pages_per_scope = 20
 # enabled 是全局紧急开关；没有启用的 Web recipe 时不会预留候选池份额。
 # 第一版仅允许公开 HTTP(S)、端口 80/443 和 recipe 明示的 origin；不复用 Cookie，
 # 本段旧版 HTTP recipe 不执行网页脚本。新建动态网页来源通过聊一聊使用 Ego Lite，
-# 宿主环境变量与支持范围见 docs/modules/config.md，不使用本段 recipe 代替浏览器流程。
+# macOS 首次建源自动准备专用宿主，后续按需启动；通常无需环境变量。
+# 显式外部宿主选择与支持范围见 docs/modules/config.md，不使用本段 recipe 代替浏览器流程。
 [sources.web]
 enabled = true
 # 可选 recommendation_date_preset/start/end/weight 与其它来源相同；默认 all。

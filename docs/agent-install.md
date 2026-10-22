@@ -925,18 +925,42 @@ system-level package the user must consent to.
 ### Dynamic website discovery browser runtime
 
 New dynamic websites use the official Ego Lite host through its native Node/CDP API.
-Install [Ego Lite](https://lite.ego.app/download) on the same Mac as the backend, let the
-user complete first-run setup, and keep it running. Do not import a personal browser
-profile for acceptance tests; use a separate official `--user-data-dir` instead.
-The adapter currently supports macOS; the upstream Windows beta is not yet supported
-here, and Linux/Docker has no native Ego host integration.
+On macOS, the first ordinary website preparation in chat, `sources prepare`, or the
+source-draft API automatically downloads and verifies the official app, installs it in
+`<active database directory>/ego-managed`, initializes a private profile and named host,
+and verifies its native connection. No separate user onboarding is required. Installation
+and initialization happen before the bounded 60-second page observation. This does not
+automatically activate a source: trial samples and activation approval still follow.
 
-`OPENBILICLAW_EGO_BROWSER` selects the official CLI path (otherwise `ego-browser` on PATH),
-`OPENBILICLAW_EGO_SERVER_NAME` selects a named host, and `OPENBILICLAW_EGO_PROFILE` fixes
-the profile ID (default `Default`). An Ego task space isolates pages, while cookies
-belong to its selected profile. Secrets are never serialized into workflow plans.
-Status checks do not launch the app; an installed host remains unverified until an
-explicit trial establishes a native connection. Real protocol/site acceptance is pending.
+The settings action **Prepare Ego Lite** and the command below are optional ways to prepare
+early or retry a failure. A prepared host starts again when an actual website task needs
+it; the user does not have to keep it running. Status reads do not install or launch it.
+
+```bash
+openbiliclaw sources ego-status   # read-only managed setup state
+openbiliclaw sources prepare-ego  # explicit preparation / retry
+```
+
+The manager uses the [official Ego Lite distribution](https://lite.ego.app/download),
+checks the app signature and identity, and drives only the known onboarding page through
+a temporary loopback CDP endpoint. It skips browser-data import and disables the default
+browser, Dock and crash-report options. It restarts the owned host without that debugging
+port before native discovery. It does not sign in to websites or import the user's daily
+browser profile. Unknown setup screens or trust failures stop preparation with an error.
+
+Setting any nonempty `OPENBILICLAW_EGO_BROWSER`, `OPENBILICLAW_EGO_SERVER_NAME` or
+`OPENBILICLAW_EGO_PROFILE` selects an externally managed host and disables all automatic
+installation, initialization and restart for it. In external mode, the executable defaults
+to `ego-browser` on PATH and the profile ID to `Default`; the operator owns that host's
+setup and availability. The managed preparation button is hidden for external hosts.
+An Ego task space isolates pages, while cookies belong to the selected profile; tasks
+within one profile can share login state. Secrets are never serialized into workflow plans.
+Installed, prepared and currently connected are distinct states, and none proves a
+particular website trial will succeed.
+
+Managed preparation and the native adapter currently support macOS only. The upstream
+Windows beta is not supported here, and Linux/Docker has no native Ego integration or
+remote-host bridge. A Mac running Docker does not change the Linux container's capability.
 
 RSS/Atom/JSON Feed uses the default HTTP dependencies. New ordinary webpages never
 silently fall back to Playwright. Existing HTTP Sitemap/static-list recipes and saved
@@ -961,7 +985,8 @@ browser binaries at `/opt/openbiliclaw-browsers`. Browser-capable Docker images 
 Login profiles remain in the application's persistent data directory. No real account
 credentials are copied from the installer or the agent's personal browser.
 
-These legacy dependencies do not install Ego Lite. The native Ego adapter checks exact
+These legacy dependencies do not install Ego Lite; managed Ego preparation is a separate
+macOS runtime path. The native Ego adapter checks exact
 origins, methods and public DNS; it does not pin the host's socket resolution. See the
 [browser workflow module](modules/browser-workflows.md) for executor-specific boundaries.
 ## macOS 桌面包签名

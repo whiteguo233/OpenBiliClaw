@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -34,6 +35,27 @@ def _service(*, with_llm: bool = False) -> Any:
 
 def _print(value: Any) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def _ego_setup() -> Any:
+    from openbiliclaw.sources.ego_setup import EgoSetupManager
+
+    return EgoSetupManager(Path(_service().database._db_path).resolve().parent)
+
+
+@sources_app.command("ego-status")
+def ego_status() -> None:
+    """只读查看托管 Ego Lite 的准备状态，不安装或启动浏览器。"""
+    _print(_ego_setup().status())
+
+
+@sources_app.command("prepare-ego")
+def prepare_ego() -> None:
+    """安装 Ego Lite 并初始化专用环境；不导入个人浏览器数据或登录网站。"""
+    result = asyncio.run(_ego_setup().prepare())
+    _print(result)
+    if result.get("setup_state") != "ready" or result.get("available") is not True:
+        raise typer.Exit(code=1)
 
 
 @sources_app.command("list")

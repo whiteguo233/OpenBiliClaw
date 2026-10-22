@@ -139,7 +139,8 @@ def build_source_tool_registry(
             ),
             Tool(
                 name="list_sources",
-                description="列出用户当前的所有内容源订阅。",
+                description="列出用户当前的内容源订阅及最近未启用的网站/Feed草稿。"
+                "继续此前建源但缺少draft_id时先调用此工具，从实际草稿选择后试跑；不要要求用户提供内部ID。",
                 permission_level="read",
                 parameters={"type": "object", "properties": {}},
                 handler=lambda args: _list_sources(database, args),
@@ -335,7 +336,16 @@ def _list_sources(db: Any, _args: dict[str, Any]) -> str:
     if getattr(db, "_conn", None) is not None:
         from openbiliclaw.sources.workflow_service import WorkflowService
 
-        for source in WorkflowService(db).list_sources():
+        service = WorkflowService(db)
+        drafts = service.store.pending_draft_summaries()
+        if drafts:
+            # Recovery IDs must survive the agent's bounded tool-result prefix,
+            # even when the existing subscription inventory is long.
+            lines.append(
+                "尚未应用的来源草稿（不是已启用订阅；继续时使用 trial_discovery_source）："
+            )
+            lines.append(json.dumps(drafts, ensure_ascii=False, sort_keys=True))
+        for source in service.list_sources():
             lines.append(
                 f"{source['name']} ID: {source['source_id']} "
                 f"启用: {source['enabled']} 独立比例: {source['target_share']} "

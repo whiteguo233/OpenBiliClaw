@@ -5,8 +5,9 @@
 RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap / 静态列表
 与已保存的 Playwright 流程保留兼容；更新流程默认沿用原执行器，不自动迁移。
 
-本轮原生桥接仍在验收中：首次设置尚需用户在官方应用中完成，不能把代码、CLI
-安装检测或历史 Playwright 成功记录当成真实 Ego 网站执行证据。
+首次添加网页自动准备专用 Ego Lite，后续采集按需启动已准备的宿主。
+真实验收及平台限制见[本轮记录](../testing/2026-10-22-ego-lite-discovery-e2e.md)；
+安装检测和历史 Playwright 记录不计作 Ego 网站执行证据。
 
 ## 已实现能力
 
@@ -19,6 +20,7 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
 | Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
+| 托管准备 | 首次网页建源自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；设置页和 CLI 可提前准备或重试 |
 | 环境边界 | 当前适配器连接本机 macOS Ego 宿主；未验收 Windows，不提供 Linux/Docker 远程桥接 |
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
 
@@ -26,8 +28,13 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
 
 - `compile_browser_workflow(payload) -> BrowserWorkflowPlan`：保存前、运行前均校验。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
+- `WorkflowStore.pending_draft_summaries()` 返回最近 10 条未应用草稿的有界名称、网址、
+  目标、状态与 ID；聊天 `list_sources` 可在重启后恢复草稿，不要求用户记住内部 ID。
 - `EgoLiteWorkflowExecutor(profile_root).run(plan, session_id=..., parameters=...)`
   返回 `BrowserWorkflowResult`，明确区分成功、已证实为空、需要登录、降级和失败。
+- `EgoSetupManager(data_dir).prepare()` 安装与初始化；`status()` 只读，
+  `connection()` 返回专用 CLI／宿主／profile，`ensure_running()` 只启动已初始化的宿主。
+  data_dir 为当前数据库父目录；网页首次准备在页面运行预算以外执行，Feed 不进入此路径。
 - `open_session(plan, session_id=..., interactive=False, observation_only=False)`
   打开入口但不执行采集。`observation_only` 可以在跨域跳转被阻止后保留页面供观察；
   不会授权该跳转。
@@ -43,7 +50,8 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
 - 会话的 `act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。
 - Ego `availability()` 只读本机安装与匹配宿主进程，不启动 CLI 或首次设置。
   `connection_state=unverified` 表示已安装、待实际试跑握手；不能用 `installed=true`
-  宣称已连接。`available=true` 要求本进程已完成原生握手且宿主进程仍一致。
+  宣称已连接。托管宿主使用持久握手记录与当前专用进程身份核对，跨后端进程仍可读；
+  外部宿主使用本进程的原生握手记录。实际打开托管会话会按需启动已初始化宿主。
 - 以下两个接口只维护历史 Playwright 流程：`browser_runtime_status()` 检查匹配的
   Chromium 文件是否存在；仅装 Python 模块不算就绪。
   `PlaywrightWorkflowExecutor` 默认启动该完整 Chromium；显式 `executable_path` 仍优先。
@@ -57,7 +65,9 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
 只读子资源，不能用来扩大来源的内容范围。`auth.login_origins` 只在用户开启人工
 接管时允许登录导航和 POST；周期发现遇到该跳转会报告需要登录。
 
-计划只接受稳定 CSS selector。`click_link` 读取链接 href 再导航；`submit_search`
+计划只接受稳定 CSS selector。原生采集将条目字段的相对选择器（如 `> a`）按
+`:scope` 解析，`:scope` 自身也可作为链接条目；不改写模型保存的计划。
+`click_link` 读取链接 href 再导航；`submit_search`
 只支持无密码字段的 GET 表单。后台不能提交 POST；需要 POST 搜索、复杂应用内操作
 或未支持登录流程的网站会明确失败，不能偷偷扩展权限。第一版流程针对顶层文档，
 iframe 和弹窗请求会被阻止；强制依赖嵌入式验证码的网站目前不能完整接管，
@@ -67,6 +77,10 @@ Ego 原生桥在导航前、CDP 请求和重定向响应阶段校验精确 origi
 并限制请求数量和运行时间。脚本只使用仓库固定的观察、表单和提取逻辑，不能执行模型
 提供的 JavaScript。工作流任务只复用 ID、随机名称与 agent ownership 均匹配的
 task space，不接管个人标签页；关闭采集页后保留会话映射供定期执行。
+官方宿主重启会丢弃空 task space。仅对托管宿主，在已记录的宿主进程确实改变、
+旧 ID 与随机名称都不存在时，才在同一固定 profile 重建任务空间；同进程丢失、
+名称／ID 冲突、用户接管、profile 改变及缺少历史进程记录均继续失败。
+外部宿主不自动重建。该恢复证明公开采集可续跑，不等于真实账号登录持久已经验收。
 响应长度与已接收流量超过阈值会终止加载并报告资源预算错误；在途数据可能超过阈值，
 这不是宿主网络层的严格字节配额。后台连接前检查命名宿主仍在运行；官方 CLI 没有
 原子 no-autolaunch 开关，检查后宿主立刻退出的竞态尚不能完全消除。
@@ -74,7 +88,8 @@ task space，不接管个人标签页；关闭采集页后保留会话映射供�
 Ego 自己负责底层 DNS、socket 与网络设置，本适配器**没有 socket DNS pin**，
 `network_guarantee=origin_and_public_dns_preflight`、`dns_pinned=false` 如实报告。
 公共 DNS 预检不等同于实际连接地址固定；不把旧执行器的网络保证套用到 Ego。
-请求/响应防护与截图、DOM、输入接口仍需在官方宿主完成真实协议验证。
+真实公共网页的 DOM、截图与采集已经过官方宿主验证；人工登录和复杂站点的适用范围
+仍按各项实测结果报告，不能由公共列表采集推导。
 
 历史 Playwright 执行器运行前检查所有允许域的 DNS 地址均为公网，并给 Chromium 配置固定解析地址。
 未知域解析失败；每个请求还受精确 origin、方法和总请求数约束。显式 browser-context
@@ -94,12 +109,19 @@ Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连�
 
 ## 安装与维护
 
-新网站来源需要在运行后端的同一台 Mac 安装[官方 Ego Lite](https://lite.ego.app/download)，
-由用户完成首次设置并保持应用运行。官方另有 Windows beta，但当前 Python 适配器
-尚未支持它；没有可用于 Linux 容器的官方发布包。设置页提供官方下载入口与状态，
-不通过 Playwright 安装接口代装 Ego。
+新网站首次建源在运行后端的同一台 Mac 自动准备[官方 Ego Lite](https://lite.ego.app/download)。
+专用应用和 profile 位于数据库旁的 `ego-managed/`，无需填写 CLI 路径、服务名或启动参数。
+设置页“准备 Ego Lite”和 `openbiliclaw sources prepare-ego` 可提前准备／重试。
+完整安装包缓存于专用目录。镜像内缺应用/CLI 或明确签名不符时清除自身常规缓存，
+下一次准备会重新下载；系统信任拒绝、超时、取消或无法确定原因的挂载失败保留缓存，
+不自动循环下载。准备流程验证官方签名与系统信任，在专用首次设置页面跳过数据导入和可选订阅，
+关闭默认浏览器、Dock 和崩溃报告选项。仅准备期间开放已验证的 loopback CDP，
+完成后关闭调试端口、重启并核验真实原生连接；正常采集使用原生接口。
+遇到未知设置页面或校验失败明确报告，不通过隐藏偏好跳过设置或取消系统隔离属性。
+官方另有 Windows beta，但当前 Python 适配器尚未支持它；Linux/Docker 不运行托管准备。
 
-`OPENBILICLAW_EGO_BROWSER` 指定官方 CLI 路径（默认从 PATH 查找 `ego-browser`）；
+任一 `OPENBILICLAW_EGO_*` 环境变量表示显式使用外部宿主，托管流程不会修改它。
+此时 `OPENBILICLAW_EGO_BROWSER` 指定官方 CLI 路径（未指定时从 PATH 查找 `ego-browser`）；
 `OPENBILICLAW_EGO_SERVER_NAME` 选择命名宿主；`OPENBILICLAW_EGO_PROFILE` 指定 Ego
 profile ID（默认 `Default`）。环境变量由运行后端的进程继承，见[配置模块](config.md)。
 真实测试使用官方 `--user-data-dir` 隔离数据，不导入日常浏览器账号。

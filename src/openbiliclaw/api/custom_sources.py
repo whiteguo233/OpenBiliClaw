@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Response
@@ -48,6 +49,12 @@ class TakeoverIn(BaseModel):
     login_origin: str = ""
 
 
+def _ego_setup_manager(service: Any) -> Any:
+    from openbiliclaw.sources.ego_setup import EgoSetupManager
+
+    return EgoSetupManager(Path(service.database._db_path).resolve().parent)
+
+
 def create_custom_sources_router(service_factory: Callable[[], WorkflowService]) -> APIRouter:
     """Share live runtime dependencies; takeover handles stay inside this API worker."""
     router = APIRouter(prefix="/api/custom-sources")
@@ -56,6 +63,44 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
     admission = asyncio.Lock()
     installation: dict[str, str] = {}
     install_task: asyncio.Task[None] | None = None
+    ego_prepare_task: asyncio.Task[None] | None = None
+    ego_prepare_error: dict[str, Any] = {}
+
+    def ego_setup_status() -> dict[str, Any]:
+        status: dict[str, Any] = _ego_setup_manager(service()).status()
+        if ego_prepare_task is not None and not ego_prepare_task.done():
+            if status.get("setup_state") != "preparing":
+                status.update(setup_state="preparing", detail="正在准备 Ego Lite…")
+        elif ego_prepare_error:
+            status.update(ego_prepare_error)
+        return status
+
+    async def prepare_ego_runtime(manager: Any) -> None:
+        try:
+            await manager.prepare()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Do not expose command arguments, local paths or browser state.
+            ego_prepare_error.update(
+                setup_state="failed", detail=f"Ego Lite 准备失败：{type(exc).__name__}"
+            )
+
+    @router.post("/executors/ego/prepare", status_code=202)
+    async def prepare_ego() -> dict[str, Any]:
+        nonlocal ego_prepare_task
+        manager = _ego_setup_manager(service())
+        status = manager.status()
+        if status.get("managed") is not True:
+            raise HTTPException(409, "此 Ego Lite 连接由外部配置管理。")
+        if status.get("platform_supported") is False or status.get("setup_state") == "unsupported":
+            raise HTTPException(409, str(status.get("detail", "当前环境不支持准备 Ego Lite。")))
+        if status.get("setup_state") == "ready" and status.get("available") is True:
+            return dict(status)
+        if ego_prepare_task is None or ego_prepare_task.done():
+            ego_prepare_error.clear()
+            ego_prepare_task = asyncio.create_task(prepare_ego_runtime(manager))
+        return ego_setup_status()
 
     async def install_runtime() -> None:
         from openbiliclaw.sources.browser_install import install_browser_runtime
@@ -100,6 +145,17 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
             status = manager.executor(name).availability()
             if name == "playwright" and installation:
                 status.update(installation)
+            if name == "ego":
+                setup = ego_setup_status()
+                status.update(
+                    {key: setup[key] for key in ("setup_state", "phase", "managed") if key in setup}
+                )
+                if setup.get("managed") is True and setup.get("setup_state") in {
+                    "preparing",
+                    "failed",
+                    "unsupported",
+                }:
+                    status["detail"] = str(setup.get("detail", ""))
             executors.append(dict(status, id=name))
         return {"items": manager.list_sources(), "executors": executors}
 
@@ -240,6 +296,10 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
 
     @router.on_event("shutdown")
     async def shutdown() -> None:
+        if ego_prepare_task is not None and not ego_prepare_task.done():
+            ego_prepare_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ego_prepare_task
         if install_task is not None and not install_task.done():
             install_task.cancel()
             with suppress(asyncio.CancelledError):

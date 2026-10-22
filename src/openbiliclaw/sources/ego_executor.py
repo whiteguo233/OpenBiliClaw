@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from openbiliclaw.proc import no_window_kwargs
 from openbiliclaw.sources.browser_workflow import (
     BrowserWorkflowItem,
     BrowserWorkflowPlan,
@@ -33,6 +34,7 @@ from openbiliclaw.sources.browser_workflow import (
     workflow_origin,
     workflow_url,
 )
+from openbiliclaw.sources.ego_setup import EgoSetupManager
 from openbiliclaw.sources.web_public import _is_global_address, _system_resolver
 
 _LOCKS: dict[str, asyncio.Lock] = {}
@@ -47,6 +49,9 @@ def _error(code: str, detail: str = "") -> Exception:
         "ego_navigation_timeout": "Ego Lite navigation exceeded its time budget",
         "ego_protocol_timeout": "Ego Lite did not answer a browser command in time",
         "ego_protocol_error": "The installed Ego Lite did not accept a required browser command",
+        "ego_dom_error": (
+            "Ego Lite could not read this page; the workflow selectors need verification"
+        ),
         "ego_connection_closed": "The Ego Lite native host connection closed",
         "ego_session_identity_changed": "The saved Ego space is missing or its ownership changed",
         "resource_budget_exceeded": "The website exceeded this run's network resource budget",
@@ -72,6 +77,7 @@ def _host_pid(server_name: str) -> int | None:
             text=True,
             timeout=2,
             check=False,
+            **no_window_kwargs(),
         ).stdout.splitlines()
         for value in rows:
             if not value.isdigit():
@@ -82,6 +88,7 @@ def _host_pid(server_name: str) -> int | None:
                 text=True,
                 timeout=2,
                 check=False,
+                **no_window_kwargs(),
             ).stdout
             match = re.search(r"(?:^|\s)--ego-server-name=([\w.-]+)(?:\s|$)", command)
             if (match.group(1) if match else "") == server_name:
@@ -155,11 +162,23 @@ class EgoLiteWorkflowSession:
         self._temporary = tempfile.TemporaryDirectory(prefix="obc-ego-", dir="/tmp")
         directory = Path(self._temporary.name)
         directory.chmod(0o700)
+        current_pid = (
+            self.executor._setup._pid()
+            if self.executor.managed
+            else _host_pid(self.executor.server_name)
+        )
+        previous_pid = state.get("host_pid")
         config = {
             "socket": str(directory / "host.sock"),
             "ready": str(directory / "ready.json"),
             "plan": self.plan.to_dict(),
             "interactive": self.interactive,
+            "recover_missing_task": bool(
+                self.executor.managed
+                and current_pid
+                and isinstance(previous_pid, int)
+                and current_pid != previous_pid
+            ),
             **{key: state[key] for key in ("task_id", "task_name", "profile")},
         }
         module = Path(__file__).with_name("ego_host.mjs").as_uri()
@@ -175,7 +194,10 @@ class EgoLiteWorkflowSession:
             command.append(f"--ego-server-name={self.executor.server_name}")
         command += ["nodejs", "-e", script]
         self._process = await asyncio.create_subprocess_exec(
-            *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            **no_window_kwargs(),
         )
         deadline = time.monotonic() + 15
         ready_file = directory / "ready.json"
@@ -193,7 +215,7 @@ class EgoLiteWorkflowSession:
             await asyncio.sleep(0.05)
         ready = json.loads(ready_file.read_text())
         if ready.get("task_id") is not None:
-            state.update(task_id=ready["task_id"])
+            state.update(task_id=ready["task_id"], host_pid=current_pid)
             temporary = state_file.with_suffix(".tmp")
             temporary.write_text(json.dumps(state))
             temporary.chmod(0o600)
@@ -496,16 +518,28 @@ class EgoLiteWorkflowExecutor:
 
     def __init__(self, profile_root: Path) -> None:
         self.profile_root = profile_root / "ego"
-        self.executable = (
+        self._setup = EgoSetupManager(profile_root.parent)
+        managed = self._setup.connection()
+        self.executable = managed.get("executable") or (
             os.environ.get("OPENBILICLAW_EGO_BROWSER") or shutil.which("ego-browser") or ""
         )
-        self.server_name = os.environ.get("OPENBILICLAW_EGO_SERVER_NAME", "")
-        self.profile = os.environ.get("OPENBILICLAW_EGO_PROFILE", "Default")
+        self.server_name = managed.get(
+            "server_name", os.environ.get("OPENBILICLAW_EGO_SERVER_NAME", "")
+        )
+        self.profile = managed.get("profile", os.environ.get("OPENBILICLAW_EGO_PROFILE", "Default"))
+        self.managed = bool(managed)
         self.host_key = f"{self.executable}:{self.server_name}"
         self.policy = EgoRequestPolicy()
 
     def availability(self) -> dict[str, Any]:
         """Side-effect-free status: do not run CLI commands which can open onboarding."""
+        if self.managed:
+            return {
+                **self._setup.status(),
+                "executor": "ego",
+                "network_guarantee": "origin_and_public_dns_preflight",
+                "dns_pinned": False,
+            }
         installed = bool(self.executable and os.path.isfile(self.executable))
         supported = sys.platform == "darwin"
         pid = _host_pid(self.server_name) if installed and supported else None
@@ -548,11 +582,14 @@ class EgoLiteWorkflowExecutor:
             raise _error("invalid_session")
         if self.server_name and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.server_name):
             raise _error("invalid_host")
+        if self.managed and not self._setup.status()["available"]:
+            await self._setup.ensure_running()
         status = self.availability()
         if (
             not status["installed"]
             or not status["platform_supported"]
             or status["connection_state"] == "offline"
+            or (self.managed and not status["available"])
         ):
             raise _error("executor_unavailable", str(status["detail"]))
         if self.profile_root.is_symlink():

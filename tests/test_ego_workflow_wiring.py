@@ -373,3 +373,27 @@ def test_ego_host_state_is_scoped_beside_the_active_database(setup, tmp_path, mo
     monkeypatch.setattr(workflow_executors, "EgoLiteWorkflowExecutor", constructor)
     assert WorkflowService(service.database).executor("ego") is sentinel
     assert roots == [tmp_path / "browser-sessions"]
+
+
+@pytest.mark.parametrize(
+    "description", ["真实作品简介。", "真实作品简介。" * 100], ids=["short", "bounded"]
+)
+async def test_trial_exposes_bounded_real_description_to_api_and_chat(setup, description):
+    from openbiliclaw.agent.tools.custom_source_tools import _bounded_summary
+    from openbiliclaw.api.custom_sources import public_draft
+    from openbiliclaw.config import Config
+
+    service, executor, _, _ = setup
+    executor.run.return_value = BrowserWorkflowResult(
+        "ok", (BrowserWorkflowItem("A book", URL + "books/one", description=description),)
+    )
+    draft = await service.prepare(url=URL, intent="Discover book descriptions", executor="ego")
+    assert draft["status"] == "ready"
+    sample = public_draft(draft)["sample_items"][0]
+    assert sample["description"] == description[:500]
+    assert sample["author_name"] == ""
+    summary = json.loads(_bounded_summary(public_draft(draft), Config()))
+    assert summary["sample_items"][0]["description"] == description[:500]
+    assert service.store.get_draft(draft["draft_id"])["sample_items"][0] == sample
+    fetched = await service.fetch(draft)
+    assert fetched.items[0].description == description

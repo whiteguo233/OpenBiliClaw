@@ -37,7 +37,7 @@
 - [Instagram 来源文档](modules/instagram.md) / [验收台账](platform-source-acceptance.instagram.md) — 可选登录发现、init-only 点赞 / 收藏 / 关注、手动恢复与封面安全边界；最新真实结果和未完成的账号/许可门禁分开记录
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [动态网站与兼容 Web 来源文档](modules/web.md) / [浏览器流程](modules/browser-workflows.md) — 独立来源份额、同站多版本 workflow、HTTP Feed / 原生 Ego Lite、人工登录接管、普通候选评估与三端管理；旧 recipe 与 Playwright 流程保留兼容
-- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) / [Ego Lite 本轮验收](testing/2026-10-22-ego-lite-discovery-e2e.md) — 按执行环境区分自动化与真实网站证据；Ego 首次设置与真实端到端尚待完成
+- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) / [Ego Lite 本轮验收](testing/2026-10-22-ego-lite-discovery-e2e.md) — macOS 真实聊天建源、定时采集与 9 条入池，托管首次设置和按需启动；其他环境边界单列
 - [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
 - [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求
@@ -71,7 +71,7 @@
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
 | 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository 与 Instagram（正式可用、默认关闭），验收见专用 ledger |
 | 动态网站 / Web 接入 | [modules/web.md](modules/web.md) | `sources/custom_sources.py` + `workflow_store.py` + `workflow_service.py` + `workflow_executors.py` + `runtime/custom_workflow_producer.py`；旧 `web_*` recipe 保留 | 🧪 独立 `source_id` 份额、多版本 workflow、HTTP / Playwright、人工登录接管与三端来源管理已接线；Ego 不可用，真实验收见专用 ledger |
-| 浏览器发现工作流 | [modules/browser-workflows.md](modules/browser-workflows.md) | `sources/browser_workflow.py` + `workflow_executors.py` | 🧪 声明式计划编译、持久登录会话、人工接管与精确域权限；Playwright 执行，Ego 适配器尚未接入 |
+| 浏览器发现工作流 | [modules/browser-workflows.md](modules/browser-workflows.md) | `sources/browser_workflow.py` + `ego_executor.py` + `ego_setup.py` | 声明式计划、原生 Ego 网页、HTTP Feed、macOS 托管准备与按需启动；旧 Playwright 流程兼容保留 |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
 | GitHub 接入 | [modules/github.md](modules/github.md) | `src/openbiliclaw/sources/github*.py` + `runtime/github_producer.py` | 🧪 官方匿名/可选 PAT API + public starred init + repository search/ranked/latest 已接线；真实门禁以 [acceptance ledger](platform-source-acceptance.github.md) 为准 |
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |

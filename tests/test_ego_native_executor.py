@@ -100,7 +100,12 @@ async def test_existing_session_keeps_first_profile_and_host_identity(plan, tmp_
     monkeypatch.setattr(
         executor,
         "availability",
-        lambda: {"installed": True, "platform_supported": True, "connection_state": "unverified"},
+        lambda: {
+            "installed": True,
+            "available": True,
+            "platform_supported": True,
+            "connection_state": "ready",
+        },
     )
     executor.profile_root.mkdir()
     state = {
@@ -181,6 +186,24 @@ def test_native_request_response_redirect_guard_protocol():
         "redirect_blocked": True,
         "closed_owned_tab": True,
     }
+
+
+def test_native_host_restart_only_recreates_a_missing_owned_space():
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for the native binding protocol fixture")
+    host = Path(__import__("openbiliclaw.sources.ego_executor", fromlist=["x"]).__file__).with_name(
+        "ego_host.mjs"
+    )
+    fixture = Path(__file__).parent / "fixtures" / "ego_space_recovery.mjs"
+    result = subprocess.run(
+        [node, str(fixture), str(host)], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    assert "restart recovery passed" in result.stdout
 
 
 async def test_observation_preserves_denied_login_origin_without_navigating_it(plan, tmp_path):
