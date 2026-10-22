@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 from websockets.asyncio.client import connect
+
+logger = logging.getLogger(__name__)
 
 
 class EgoOnboardingError(RuntimeError):
@@ -158,7 +161,13 @@ async def complete_onboarding(port: int, *, timeout: float = 90) -> None:
 
                 previous = -1
                 for _ in range(40):
-                    snapshot = await evaluate(_SNAPSHOT)
+                    try:
+                        snapshot = await evaluate(_SNAPSHOT)
+                    except TimeoutError:
+                        # Reading startup UI is safe to repeat. Keep the outer
+                        # deadline; an unanswered action must never be replayed.
+                        logger.info("Waiting for the Ego setup page snapshot")
+                        continue
                     if not isinstance(snapshot, dict):
                         raise EgoOnboardingError("ego_setup_invalid_snapshot")
                     if snapshot.get("url") == "chrome://onboarding/" and not snapshot.get(
@@ -170,6 +179,8 @@ async def complete_onboarding(port: int, *, timeout: float = 90) -> None:
                         continue
                     action = onboarding_action(snapshot)
                     step = action["step"]
+                    if step != previous:
+                        logger.info("Ego setup page reached step %s", step)
                     if step < previous:
                         raise EgoOnboardingError("ego_setup_unexpected_transition")
                     # Allow resuming a partly completed setup but never clicking
@@ -177,7 +188,11 @@ async def complete_onboarding(port: int, *, timeout: float = 90) -> None:
                     if step == previous and "checkbox" not in action and step != 8:
                         await asyncio.sleep(0.25)
                         continue
-                    if not await evaluate(_action_script(action)):
+                    try:
+                        applied = await evaluate(_action_script(action))
+                    except TimeoutError as exc:
+                        raise EgoOnboardingError("ego_setup_action_timeout") from exc
+                    if not applied:
                         raise EgoOnboardingError("ego_setup_control_changed")
                     previous = step
                     if action.get("complete"):

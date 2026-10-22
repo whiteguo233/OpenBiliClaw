@@ -38,6 +38,7 @@
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [动态网站与兼容 Web 来源文档](modules/web.md) / [浏览器流程](modules/browser-workflows.md) — 独立来源份额、同站多版本 workflow、HTTP Feed / 原生 Ego Lite、人工登录接管、普通候选评估与三端管理；旧 recipe 与 Playwright 流程保留兼容
 - [动态网站来源验收](platform-source-acceptance.dynamic-web.md) / [Ego Lite 本轮验收](testing/2026-10-22-ego-lite-discovery-e2e.md) — macOS 真实聊天建源、定时采集与 9 条入池，托管首次设置和按需启动；[部署自动准备](testing/2026-10-23-ego-deployment-preparation.md)与其他环境边界单列
+- [Ego 自动部署与真实聊天复验](testing/2026-10-23-ego-live-deployment-e2e.md) — 官方联网下载、首次设置失败恢复、真实聊天审批、10 条发现 / 8 条入池及自然去重；Feed、设置与安装边界分列
 - [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
 - [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求

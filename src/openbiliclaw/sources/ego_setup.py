@@ -11,6 +11,7 @@ import asyncio
 import errno
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -27,6 +28,8 @@ import httpx
 
 from openbiliclaw.proc import no_window_kwargs
 from openbiliclaw.sources.ego_onboarding import EgoOnboardingError, complete_onboarding
+
+logger = logging.getLogger(__name__)
 
 _EXTERNAL_ENV = (
     "OPENBILICLAW_EGO_BROWSER",
@@ -66,7 +69,9 @@ async def _command(*args: str, timeout: float = 30) -> str:
     try:
         async with asyncio.timeout(timeout):
             stdout, stderr = await process.communicate()
-    except BaseException:
+    except BaseException as exc:
+        if isinstance(exc, TimeoutError):
+            logger.warning("Ego setup command %s exceeded %.1fs", Path(args[0]).name, timeout)
         with suppress(ProcessLookupError):
             process.kill()
         await process.communicate()
@@ -399,6 +404,11 @@ class EgoSetupManager:
                         return port
                     if addresses:
                         raise EgoSetupError("ego_setup_debug_not_loopback")
+                except TimeoutError:
+                    # A slow OS ownership probe is inconclusive, not a failed
+                    # browser startup. Retry within the existing bounded loop;
+                    # only a later verified loopback listener permits onboarding.
+                    logger.info("Waiting for the Ego loopback listener ownership check")
                 except EgoSetupError as exc:
                     if str(exc) != "ego_setup_command_failed":
                         raise

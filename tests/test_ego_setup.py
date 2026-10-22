@@ -37,6 +37,49 @@ def snapshot(title, buttons, checkboxes=None):
     }
 
 
+@pytest.mark.parametrize("outcome", ["ready", "non_loopback", "persistent_timeout"])
+async def test_launch_retries_temporary_listener_probe_timeout(manager, monkeypatch, outcome):
+    from types import SimpleNamespace
+
+    manager.root.mkdir(parents=True)
+    running = False
+
+    async def spawn(*args, **kwargs):
+        nonlocal running
+        running = True
+        return SimpleNamespace(pid=101, returncode=None)
+
+    attempts = 0
+
+    async def command(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        assert args[0] == "/usr/sbin/lsof"
+        assert args[args.index("-p") + 1] == "101"
+        if attempts == 1 or outcome == "persistent_timeout":
+            raise TimeoutError
+        port = manager._state()["debug_port"]
+        address = "127.0.0.1" if outcome == "ready" else "*"
+        return f"p101\nf5\nn{address}:{port}\n"
+
+    monkeypatch.setattr(manager, "_pid", lambda: 101 if running else None)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.sleep", AsyncMock())
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    if outcome == "ready":
+        assert await manager._launch(debugging=True) == manager._state()["debug_port"]
+        assert attempts == 2
+    else:
+        error = (
+            "ego_setup_debug_not_loopback"
+            if outcome == "non_loopback"
+            else "ego_setup_host_timeout"
+        )
+        with pytest.raises(EgoSetupError, match=error):
+            await manager._launch(debugging=True)
+        assert 2 <= attempts <= 80
+
+
 @pytest.mark.parametrize(
     "heading,buttons,expected",
     [
@@ -610,7 +653,8 @@ def stop_fixture(
     return elapsed, signals, probes
 
 
-async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(monkeypatch):
+@pytest.mark.parametrize("stall", ["none", "snapshot", "action"])
+async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(monkeypatch, stall):
     import httpx
     from websockets.asyncio.server import serve
 
@@ -643,6 +687,11 @@ async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(
             expression = request["params"]["expression"]
             assert "controller.completeOnboarding" not in expression
             if "headings:" in expression:
+                if stall == "snapshot" and snapshot_count == 0:
+                    # A read-only snapshot can time out while the native page
+                    # starts rendering; no action has been dispatched yet.
+                    snapshot_count += 1
+                    continue
                 # Native page appears before its controls have loaded.
                 value = snapshot("", []) if snapshot_count == 0 else states[index]
                 if snapshot_count == 0:
@@ -657,6 +706,10 @@ async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(
                             box["checked"] = False
                 elif not action.get("complete"):
                     index += 1
+                if stall == "action":
+                    # The click happened, but its receipt was lost. Retrying
+                    # the action could advance a second step without observing.
+                    continue
                 value = True
             await socket.send(
                 json.dumps({"id": request["id"], "result": {"result": {"value": value}}})
@@ -686,7 +739,15 @@ async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(
             return actual_client(transport=httpx.MockTransport(target), **kwargs)
 
         monkeypatch.setattr("openbiliclaw.sources.ego_onboarding.httpx.AsyncClient", client)
-        await complete_onboarding(port, timeout=15)
+        if stall == "action":
+            with pytest.raises(EgoOnboardingError, match="ego_setup_action_timeout"):
+                await complete_onboarding(port, timeout=15)
+        else:
+            await complete_onboarding(port, timeout=20 if stall == "snapshot" else 15)
+    if stall == "action":
+        assert len(actions) == 1
+        assert index == 1
+        return
     assert len(actions) == 12
     assert all(not box["checked"] for box in states[-1]["checkboxes"])
     assert actions[4]["button"] == "稍后设置"
