@@ -205,9 +205,10 @@ test("source manager offers website and feed links through chat and renders frie
   await h.manager.load();
   assert.ok(h.button("去聊一聊添加来源"));
   assert.match(h.root.textContent, /网址或 RSS、Atom、JSON Feed 订阅链接/);
-  for (const label of ["订阅源", "站点地图", "网页列表", "浏览器网页", "网页或订阅"]) assert.ok(h.root.textContent.includes(label));
+  for (const label of ["订阅源", "站点地图", "网页列表", "网页（旧版 Playwright）", "网页或订阅"]) assert.ok(h.root.textContent.includes(label));
   const workflows = descendants(h.root).find((node) => node.tagName === "details");
   assert.doesNotMatch(workflows.textContent, /http|playwright/);
+  assert.match(workflows.textContent, /旧版 Playwright/);
 });
 
 test("public HTTP workflows do not offer browser re-login", async () => {
@@ -261,55 +262,98 @@ test("a successful write followed by failed reload reports both facts", async ()
 });
 
 
-test("browser setup submits once, polls only installation, and preserves source edits", async () => {
-  const h = setup(async () => ({ status: "installing" }), [{ id: "playwright", available: false, detail: "需要下载浏览器" }]);
+test("missing Ego is visible even when Playwright is ready, without offering a replacement", async () => {
+  const h = setup(undefined, [{ id: "playwright", available: true }, { id: "ego", installed: false, available: false, detail: "Ego Lite is not installed" }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /Ego Lite 未安装/);
+  assert.match(h.root.textContent, /公开 RSS、Atom、JSON Feed 订阅无需 Ego Lite/);
+  const download = descendants(h.root).find(node => node.tagName === "a" && node.href === "https://lite.ego.app/download");
+  assert.ok(download);
+  assert.equal(download.target, "_blank");
+  assert.equal(download.rel, "noopener noreferrer");
+  assert.equal(h.button("安装浏览器"), undefined);
+  assert.ok(h.button("去聊一聊添加来源"));
+  assert.ok(h.calls.every(call => call.options.method === "GET"));
+  assert.equal(h.timers.size, 0);
+});
+
+test("installed Ego preserves its real connection error and refreshes status without discarding edits", async () => {
+  const h = setup(undefined, [{ id: "ego", installed: true, available: false, detail: "Application bridge is disconnected" }]);
   await h.manager.load();
   h.inputs()[1].value = "8";
-  const install = h.button("安装浏览器");
-  install.handlers.click(); install.handlers.click(); await settle();
-  assert.equal(h.calls.filter((call) => call.options.method === "POST").length, 1);
-  assert.equal(h.calls.at(-1).path, "/custom-sources/executors/playwright/install");
-  assert.ok(h.button("正在安装…").disabled);
-  assert.equal(h.timers.size, 1);
-  h.setExecutors([{ id: "playwright", available: false, status: "installing" }]);
-  h.poll(); await settle();
-  assert.equal(h.inputs()[1].value, "8", "background install polling must not discard an unsaved source edit");
-  assert.equal(h.timers.size, 1);
-  h.setExecutors([{ id: "playwright", available: true, status: "ready" }]);
-  h.poll(); await settle();
-  assert.equal(h.timers.size, 0);
-  assert.match(h.root.textContent, /浏览器已安装完成/);
-  assert.equal(h.button("安装浏览器"), undefined);
+  assert.match(h.root.textContent, /Ego Lite 尚未就绪/);
+  assert.match(h.root.textContent, /Application bridge is disconnected/);
+  assert.doesNotMatch(h.root.textContent, /Ego Lite 已就绪/);
+  h.setExecutors([{ id: "ego", installed: true, available: true, detail: "Connected to Ego Lite" }]);
+  h.button("刷新 Ego Lite 状态").handlers.click(); await settle();
+  assert.match(h.root.textContent, /Ego Lite 已就绪/);
+  assert.equal(h.inputs()[1].value, "8");
+  assert.equal(h.changes.length, 1, "connection refresh must not replace source cards");
+  assert.ok(h.calls.every(call => call.options.method === "GET"));
 });
 
-test("installation polling stops offscreen and on manager disposal", async () => {
-  const executor = [{ id: "playwright", available: false, status: "installing" }];
-  const h = setup(undefined, executor); await h.manager.load();
-  assert.equal(h.timers.size, 1);
-  h.root.visible = false;
-  const before = h.calls.length; h.poll(); await settle();
-  assert.equal(h.calls.length, before);
-  assert.equal(h.timers.size, 0);
-  h.root.visible = true; await h.manager.load();
-  assert.equal(h.timers.size, 1);
-  h.manager.destroy(); assert.equal(h.timers.size, 0);
-});
-
-test("browser install failure remains retryable and does not poll forever", async () => {
-  const h = setup(async () => { throw new Error("下载失败，请检查网络"); }, [{ id: "playwright", available: false }]);
-  await h.manager.load(); h.button("安装浏览器").handlers.click(); await settle();
-  assert.match(h.root.textContent, /下载失败/);
-  assert.equal(h.button("安装浏览器").disabled, false);
-  assert.equal(h.timers.size, 0);
-});
-
-test("manual refresh during failed install re-enables the current install button", async () => {
-  let rejectInstall;
-  const h = setup(() => new Promise((_resolve, reject) => { rejectInstall = reject; }), [{ id: "playwright", available: false }]);
-  await h.manager.load(); h.button("安装浏览器").handlers.click();
+test("ready Ego is shown even when Playwright is missing and never starts browser installation", async () => {
+  const h = setup(undefined, [{ id: "ego", installed: true, available: true }, { id: "playwright", available: false }]);
   await h.manager.load();
-  assert.equal(h.button("安装浏览器").disabled, true);
-  rejectInstall(new Error("安装服务连接失败")); await settle();
-  assert.match(h.root.textContent, /安装服务连接失败/);
-  assert.equal(h.button("安装浏览器").disabled, false);
+  assert.match(h.root.textContent, /Ego Lite 已就绪/);
+  assert.equal(h.button("安装浏览器"), undefined);
+  assert.equal(descendants(h.root).some(node => node.tagName === "a" && node.href === "https://lite.ego.app/download"), false);
+  assert.equal(h.timers.size, 0);
+});
+
+test("installed but unverified Ego invites a chat trial instead of a refresh loop", async () => {
+  const h = setup(undefined, [{ id: "ego", installed: true, available: false, connection_state: "unverified", detail: "Connection is verified during a website trial" }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /Ego Lite 已安装，待试跑验证/);
+  assert.match(h.root.textContent, /到聊一聊提供网站地址，试跑时会验证 Ego Lite 连接/);
+  assert.match(h.root.textContent, /Connection is verified during a website trial/);
+  assert.doesNotMatch(h.root.textContent, /已打开 Ego Lite 并完成连接|Ego Lite 尚未就绪/);
+  assert.equal(h.button("去聊一聊添加来源").disabled, false);
+  assert.ok(h.calls.every(call => call.options.method === "GET"));
+});
+
+test("missing Ego status is unknown rather than inferred from the client browser or Playwright", async () => {
+  const h = setup(undefined, [{ id: "playwright", available: true }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /尚未获取 Ego Lite 状态/);
+  assert.doesNotMatch(h.root.textContent, /Ego Lite 已就绪|Ego Lite 未安装/);
+  assert.equal(descendants(h.root).some(node => node.tagName === "a"), false);
+  h.manager.destroy();
+  await h.manager.load();
+  assert.equal(h.calls.length, 1);
+});
+
+test("Ego refresh failure preserves current source edits and reports the real error", async () => {
+  const h = setup(undefined, [{ id: "ego", installed: true, available: false }]);
+  await h.manager.load();
+  h.inputs()[1].value = "9";
+  h.rejectReads(); h.button("刷新 Ego Lite 状态").handlers.click(); await settle();
+  assert.match(h.root.textContent, /来源列表连接超时/);
+  assert.equal(h.inputs()[1].value, "9");
+  assert.equal(h.timers.size, 0);
+});
+
+test("an unsupported backend host does not offer local installation or suggest Playwright", async () => {
+  const h = setup(undefined, [
+    { id: "ego", installed: false, available: false, platform_supported: false, detail: "This backend requires a supported Ego host" },
+    { id: "playwright", available: true },
+  ]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /此运行环境暂不支持 Ego Lite/);
+  assert.match(h.root.textContent, /This backend requires a supported Ego host/);
+  assert.equal(descendants(h.root).some(node => node.tagName === "a"), false);
+  assert.doesNotMatch(h.root.textContent, /请在运行 OpenBiliClaw 的电脑上安装/);
+  assert.equal(h.button("安装浏览器"), undefined);
+  assert.ok(h.button("去聊一聊添加来源"), "HTTP subscriptions remain usable");
+});
+
+test("new Ego and existing Playwright workflows retain their real executor identity", async () => {
+  const h = setup();
+  h.setRows([{ ...source, workflows: [
+    { executor: "ego", kind: "browser" }, { executor: "playwright", kind: "browser" },
+  ] }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /网页（Ego Lite）/);
+  assert.match(h.root.textContent, /网页（旧版 Playwright）/);
+  assert.ok(h.button("重新登录"));
 });

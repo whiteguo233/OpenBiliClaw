@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from enum import StrEnum
+from typing import Annotated, Any
 
 import typer
 
 sources_app = typer.Typer(help="自定义 Discover 来源：草稿、试跑、启用、比例和运行记录")
+
+
+class SourceExecutor(StrEnum):
+    """Supported choices when creating a new discovery workflow."""
+
+    auto = "auto"
+    http = "http"
+    ego = "ego"
 
 
 def _service(*, with_llm: bool = False) -> Any:
@@ -38,18 +47,20 @@ def prepare(
     url: str,
     intent: str = typer.Option(..., "--intent"),
     name: str = "",
-    executor: str = "auto",
+    executor: Annotated[
+        SourceExecutor, typer.Option(help="auto：网页用 Ego Lite，识别成功的 Feed 用 HTTP")
+    ] = SourceExecutor.auto,
     separate: bool = False,
 ) -> None:
     """根据网址和自然语言目标建草稿；试跑后再 activate。"""
     from openbiliclaw.api.custom_sources import public_draft
 
     result = asyncio.run(
-        _service(with_llm=executor != "http").prepare(
+        _service(with_llm=executor != SourceExecutor.http).prepare(
             url=url,
             intent=intent,
             name=name,
-            executor=executor,
+            executor=executor.value,
             separate_source=separate,
         )
     )

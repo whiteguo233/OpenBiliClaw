@@ -1,8 +1,8 @@
 """Portable browser execution with isolated persistent login sessions.
 
 Only fixed repository-authored JavaScript is evaluated. A workflow supplies data
-and stable CSS selectors, never host code. Chromium resolves allowed names to
-prevalidated pinned addresses; request routing enforces origins and methods.
+and stable CSS selectors, never host code. The legacy Chromium launcher pins DNS.
+The native Ego adapter declares its separate public-DNS preflight guarantee.
 """
 
 from __future__ import annotations
@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import shutil
-import sys
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -27,6 +25,7 @@ from openbiliclaw.sources.browser_workflow import (
     workflow_origin,
     workflow_url,
 )
+from openbiliclaw.sources.ego_executor import EgoLiteWorkflowExecutor as EgoLiteWorkflowExecutor
 from openbiliclaw.sources.web_public import _is_global_address, _system_resolver
 
 if TYPE_CHECKING:
@@ -933,59 +932,3 @@ class PlaywrightWorkflowExecutor:
         finally:
             if session is not None:
                 await session.close()
-
-
-class EgoLiteWorkflowExecutor:
-    """Diagnose the optional Ego Lite v2 host bridge without launching an unsafe session.
-
-    Official v2 exposes nodejs/taskSpace/page.cdp, but does not expose a fail-closed
-    request interceptor or isolated pinned browser launch. Until such a host
-    bridge is configured, use the portable Chromium executor for scheduled work.
-    """
-
-    def availability(self) -> dict[str, Any]:
-        executable = shutil.which("ego-browser")
-        detail = (
-            "Ego Lite requires a macOS host bridge"
-            if sys.platform != "darwin"
-            else (
-                "ego-browser is not installed"
-                if executable is None
-                else "Ego Lite v2 cannot enforce the required isolated network policy"
-            )
-        )
-        return {
-            "executor": "ego_lite",
-            "available": False,
-            "installed": executable is not None,
-            "detail": detail,
-            "fallback": "playwright",
-        }
-
-    async def open_session(
-        self,
-        plan: BrowserWorkflowPlan,
-        *,
-        session_id: str,
-        interactive: bool = False,
-        observation_only: bool = False,
-    ) -> BrowserWorkflowSession:
-        """Fail explicitly rather than launching an unisolated personal browser."""
-
-        raise BrowserWorkflowExecutionError(
-            "executor_unavailable", str(self.availability()["detail"])
-        )
-
-    async def run(
-        self,
-        plan: BrowserWorkflowPlan,
-        *,
-        session_id: str,
-        parameters: WorkflowParameters | None = None,
-    ) -> BrowserWorkflowResult:
-        return BrowserWorkflowResult(
-            "failed",
-            detail=str(self.availability()["detail"]),
-            error_code="executor_unavailable",
-            scope_complete=False,
-        )

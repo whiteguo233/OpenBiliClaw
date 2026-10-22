@@ -157,6 +157,22 @@ Manual Douyin discovery: CLI discover → daemon-equivalent producer → per-key
 ```
 
 
+### Dynamic website and Feed discovery
+
+```text
+Chat → prepare_discovery_source → scrubbed observation / compiled plan / trial
+     → activate_discovery_source approval → independent source ID / share / cadence
+     → CustomWorkflowProducer → HTTP Feed or native Ego Lite task space
+     → ordinary candidate evaluation / copy → source-labelled recommendations
+Settings → names / shares / cadence / enabled state / run history
+```
+
+New ordinary webpages use the official Ego Lite host; positively parsed RSS/Atom/JSON Feed
+uses HTTP. Missing or offline Ego never triggers Playwright fallback. Persisted legacy
+workflows retain their executor. The native adapter currently targets a local macOS host;
+real onboarding and end-to-end acceptance remain pending in the
+[Ego ledger](testing/2026-10-22-ego-lite-discovery-e2e.md).
+
 ### TikTok public discovery
 
 ```text

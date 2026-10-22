@@ -524,7 +524,11 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 
 ### 自定义网站来源的浏览器执行
 
-镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
+新建普通网页来源使用 Ego Lite。当前原生适配器只连接同机 macOS 宿主，Linux Docker
+没有 Ego 宿主或远程桥接；容器中应报告不可用，不能自动改用 Playwright。
+RSS / Atom / JSON Feed 仍可通过 HTTP 建源、定期发现与入池。
+
+以下仅为已保存 Playwright 流程的兼容环境：镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
 `/opt/openbiliclaw-browsers`，运行时使用 headless 模式，无须桌面环境或宿主 Mac。
 执行器启动就绪检查返回的完整 Chromium；headless 模式不依赖另一个 headless shell 文件。
 网站登录通过应用的人工接管页面完成，使用专属浏览器 profile；profile 保存在
@@ -533,7 +537,7 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 浏览器版镜像只支持 `linux/amd64` 和 `linux/arm64`。`python:3.11-slim` 本身包含更多
 架构，但 Playwright Chromium 没有相应的 32 位运行环境，因此不再声称支持 arm/v7
 或 386。首次构建需要下载浏览器及 Debian 系统依赖，离线部署应预先构建镜像。
-Ego Lite 宿主 CLI 不属于容器的默认执行链路；当前可用执行器为 Chromium。
+这些 Chromium 依赖不安装 Ego Lite，也不能充当 Ego 验收证据。
 
 2026-10-03 已在 Linux/amd64 镜像中验证默认入口和健康检查、匹配 Chromium 的连续分页
 回放、超时释放 profile 以及资源失败诊断。测试使用无外网的容器内匿名 fixture，

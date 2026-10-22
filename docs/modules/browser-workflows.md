@@ -1,8 +1,12 @@
 # Browser discovery workflows
 
-浏览器发现使用独立的持久登录会话执行声明式流程；聊天负责建立和修改来源，
-调度、去重、评估和入池沿用统一发现链路。公共 Feed / Sitemap / 静态列表继续使用
-原有匿名 HTTP 适配器。
+浏览器发现由真实 Ego Lite 宿主执行声明式流程；聊天负责建立和修改来源，
+调度、去重、评估和入池沿用统一发现链路。新建来源的 `auto` 只对实际解析成功的
+RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap / 静态列表
+与已保存的 Playwright 流程保留兼容；更新流程默认沿用原执行器，不自动迁移。
+
+本轮原生桥接仍在验收中：首次设置尚需用户在官方应用中完成，不能把代码、CLI
+安装检测或历史 Playwright 成功记录当成真实 Ego 网站执行证据。
 
 ## 已实现能力
 
@@ -11,32 +15,37 @@
 | 流程编译 | `version=1`；只接受导航、搜索、等待、链接和最终采集；拒绝代码、秘密字段、临时 snapshot ref 和越界预算 |
 | 动态参数 | `query`、`date_from`、`date_to` 每轮替换；URL 参数进行编码 |
 | 标准提取 | 标题、URL、作者、发布时间、摘要；支持下一页、循环检测、条数和页数限制 |
-| 登录会话 | 后端生成的不透明 session ID 对应独立 profile；退出后保存 Cookie，下次执行复用 |
+| 登录会话 | 不透明 session ID 映射到应用拥有的 Ego task space 和固定 profile ID；同一 Ego profile 的 Cookie 可共享，task space 仅隔离页面 |
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
-| 可移植执行 | Playwright 完整 Chromium 支持桌面、Python CLI、Linux 服务器和 amd64/arm64 Docker；就绪检查与实际启动使用同一可执行文件 |
-| Ego Lite | 检测宿主 CLI 并返回明确不可用原因；尚无满足隔离与网络约束的 Ego Lite 执行适配器，不声称已完成该能力 |
+| Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
+| 环境边界 | 当前适配器连接本机 macOS Ego 宿主；未验收 Windows，不提供 Linux/Docker 远程桥接 |
+| 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
 
 ## 公共接口
 
 - `compile_browser_workflow(payload) -> BrowserWorkflowPlan`：保存前、运行前均校验。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
-- `PlaywrightWorkflowExecutor(profile_root).run(plan, session_id=..., parameters=...)`
+- `EgoLiteWorkflowExecutor(profile_root).run(plan, session_id=..., parameters=...)`
   返回 `BrowserWorkflowResult`，明确区分成功、已证实为空、需要登录、降级和失败。
 - `open_session(plan, session_id=..., interactive=False, observation_only=False)`
   打开入口但不执行采集。`observation_only` 可以在跨域跳转被阻止后保留页面供观察；
   不会授权该跳转。
-- `BrowserWorkflowSession.snapshot()` 返回有限的 tag、selector、文字和链接信息，
+- 会话的 `snapshot()` 返回有限的 tag、selector、文字和链接信息，
   不包含输入框值或 URL query；优先保留主内容及搜索／登录控件，并提供实际
   parent、ancestor、前后兄弟及相对 child-link selector。数组顺序不是 DOM 邻接证据。
   同时返回 `blocked_resource_origins` 和
   `blocked_navigation_origins`，供用户判断是否增加授权。
-  `resource_failures` 最多保留 12 项资源 origin、类型、HTTP 失败状态及固定网络
+  `resource_failures` 有界保留资源 origin、类型、HTTP 失败状态及固定网络
   错误码；不包含 URL query、响应正文或 Cookie。核心资源失败导致页面完全没有
   可见文字／控件时，建源直接报告访问失败，不把空白页面误判为需要更多用户信息。
   明确的登录墙或待授权跳转证据优先进入人工接管；先前可选资源失败不能遮蔽这些证据。
-- `BrowserWorkflowSession.act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。
-- `browser_runtime_status()` 检查匹配的 Chromium 文件是否存在；仅装 Python 模块不算就绪。
+- 会话的 `act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。
+- Ego `availability()` 只读本机安装与匹配宿主进程，不启动 CLI 或首次设置。
+  `connection_state=unverified` 表示已安装、待实际试跑握手；不能用 `installed=true`
+  宣称已连接。`available=true` 要求本进程已完成原生握手且宿主进程仍一致。
+- 以下两个接口只维护历史 Playwright 流程：`browser_runtime_status()` 检查匹配的
+  Chromium 文件是否存在；仅装 Python 模块不算就绪。
   `PlaywrightWorkflowExecutor` 默认启动该完整 Chromium；显式 `executable_path` 仍优先。
   无界面模式不再隐式选择另一份 headless shell，避免就绪检测与执行不一致及站点兼容差异。
 - `install_browser_runtime(with_system_deps=False)` 调用随 Playwright 打包的 Node driver，
@@ -54,7 +63,20 @@
 iframe 和弹窗请求会被阻止；强制依赖嵌入式验证码的网站目前不能完整接管，
 不能将顶层页面登录测试推断成所有网站／验证码都已支持。
 
-运行前检查所有允许域的 DNS 地址均为公网，并给 Chromium 配置固定解析地址。
+Ego 原生桥在导航前、CDP 请求和重定向响应阶段校验精确 origin、允许方法与公共 DNS，
+并限制请求数量和运行时间。脚本只使用仓库固定的观察、表单和提取逻辑，不能执行模型
+提供的 JavaScript。工作流任务只复用 ID、随机名称与 agent ownership 均匹配的
+task space，不接管个人标签页；关闭采集页后保留会话映射供定期执行。
+响应长度与已接收流量超过阈值会终止加载并报告资源预算错误；在途数据可能超过阈值，
+这不是宿主网络层的严格字节配额。后台连接前检查命名宿主仍在运行；官方 CLI 没有
+原子 no-autolaunch 开关，检查后宿主立刻退出的竞态尚不能完全消除。
+
+Ego 自己负责底层 DNS、socket 与网络设置，本适配器**没有 socket DNS pin**，
+`network_guarantee=origin_and_public_dns_preflight`、`dns_pinned=false` 如实报告。
+公共 DNS 预检不等同于实际连接地址固定；不把旧执行器的网络保证套用到 Ego。
+请求/响应防护与截图、DOM、输入接口仍需在官方宿主完成真实协议验证。
+
+历史 Playwright 执行器运行前检查所有允许域的 DNS 地址均为公网，并给 Chromium 配置固定解析地址。
 未知域解析失败；每个请求还受精确 origin、方法和总请求数约束。显式 browser-context
 proxy bypass 防止系统代理代替浏览器解析域名，破坏 DNS pin；未使用的本机代理端口
 只作为 fail-closed 兜底。服务工作线程、WebSocket、下载和额外页面被禁用或关闭。
@@ -62,7 +84,7 @@ proxy bypass 防止系统代理代替浏览器解析域名，破坏 DNS pin；�
 单次导航最多等待 30 秒，整个发现运行仍受计划的总时间预算约束；总预算取消后
 会释放 profile，允许后续重新打开。
 
-当前浏览器执行不继承 `[network]` 的系统／自定义代理。把普通代理直接传给
+历史 Playwright 执行不继承 `[network]` 的系统／自定义代理。把普通代理直接传给
 Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连接目标一致的保证。
 需要代理才能访问的网站当前可能超时；HTTP 客户端可通过代理访问，并不意味着
 浏览器工作流也已支持该路由。
@@ -72,16 +94,24 @@ Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连�
 
 ## 安装与维护
 
-默认 Python 安装已包含 Playwright driver；首次使用运行 `openbiliclaw browser install`，
-或使用设置页的安装按钮。`[browser]` extra 继续作为兼容别名。Linux
-缺少系统库时由管理员使用 `--with-system-deps`。桌面构建包含匹配的 Node driver，
-Chromium 按用户安装；Docker 在构建时安装浏览器和系统库。
-只需安装匹配的完整 Chromium；工作流不依赖单独的 headless shell 文件。
+新网站来源需要在运行后端的同一台 Mac 安装[官方 Ego Lite](https://lite.ego.app/download)，
+由用户完成首次设置并保持应用运行。官方另有 Windows beta，但当前 Python 适配器
+尚未支持它；没有可用于 Linux 容器的官方发布包。设置页提供官方下载入口与状态，
+不通过 Playwright 安装接口代装 Ego。
 
-浏览器 profile 是登录凭据存储，应与应用数据一起保留并限制本机访问权限。不要把
+`OPENBILICLAW_EGO_BROWSER` 指定官方 CLI 路径（默认从 PATH 查找 `ego-browser`）；
+`OPENBILICLAW_EGO_SERVER_NAME` 选择命名宿主；`OPENBILICLAW_EGO_PROFILE` 指定 Ego
+profile ID（默认 `Default`）。环境变量由运行后端的进程继承，见[配置模块](config.md)。
+真实测试使用官方 `--user-data-dir` 隔离数据，不导入日常浏览器账号。
+
+历史 Playwright 流程可继续用 `openbiliclaw browser install` 维护完整 Chromium；
+`[browser]` extra 仍为兼容别名。桌面包含匹配 Node driver，Docker 保留旧执行环境。
+这些依赖可用不代表 Ego 可用，也不触发新网站自动回退。
+
+Ego profile 是登录凭据存储，由官方宿主管理；应用数据只保存私有会话映射。不要把
 profile、Cookie、截图或接管输入写入流程版本、模型提示、公共日志或代码仓库。
 
-## 验证记录
+## 历史 Playwright 验证记录
 
 2026-10-03，使用真实 Chromium、公开 Django 官方博客和当前配置的真实模型，
 以“跟踪最新官方公告，提取标题和官方文章链接”为目标完成自然语言建源。

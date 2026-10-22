@@ -156,7 +156,7 @@ class WorkflowService:
         if name == "playwright":
             return PlaywrightWorkflowExecutor(profile_root(self.database))
         if name == "ego":
-            return EgoLiteWorkflowExecutor()
+            return EgoLiteWorkflowExecutor(profile_root(self.database))
         raise ValueError("unsupported browser executor")
 
     def list_sources(self) -> list[dict[str, Any]]:
@@ -235,6 +235,14 @@ class WorkflowService:
             current_workflow = self.store.get_workflow(workflow_id)
             if current_workflow["source_id"] != source_id:
                 raise ValueError("workflow does not belong to the selected source")
+            if executor == "auto":
+                executor = str(current_workflow["executor"])
+                if executor not in {"http", "ego", "playwright"}:
+                    raise ValueError("the existing workflow has an unsupported executor")
+        if executor == "playwright" and (
+            current_workflow is None or current_workflow["executor"] != "playwright"
+        ):
+            raise ValueError("Playwright is only supported for existing Playwright workflows")
         origin = _origin(url)
         same_site = [s for s in self.sources.list_sources() if s["origin"] == origin]
         source = self.sources.get_source(source_id) if source_id else None
@@ -283,6 +291,17 @@ class WorkflowService:
                     await self._probe(url, allow_dedicated_feed=True, observe_feed_scopes=True)
                 ).to_dict()
                 candidates = probe.get("candidates", [])
+                legacy_http_update = (
+                    current_workflow is not None and current_workflow["executor"] == "http"
+                )
+                if not legacy_http_update:
+                    # New HTTP workflows are actual subscriptions, including an
+                    # explicit HTTP choice. Existing HTTP HTML updates stay valid.
+                    candidates = [
+                        candidate
+                        for candidate in candidates
+                        if candidate.get("recipe", {}).get("strategy") == "feed"
+                    ]
                 index: int | None = 0 if candidates else None
                 if executor == "auto" and self.llm_service is not None and candidates:
                     try:
@@ -298,7 +317,7 @@ class WorkflowService:
                         draft.update(
                             executor="http",
                             status="failed",
-                            detail="已识别公开订阅或列表，但模型未完成目标匹配。请重试准备来源。",
+                            detail="已识别公开订阅，但模型未完成目标匹配。请重试准备来源。",
                         )
                         return self.store.save_draft(draft, draft_id=draft["draft_id"])
                     raw_index = selection.get("candidate_index")
@@ -313,10 +332,18 @@ class WorkflowService:
                     self.store.save_draft(draft, draft_id=draft["draft_id"])
                     return await self.trial(draft["draft_id"])
                 if executor == "http":
+                    detail = probe.get("detail") or (
+                        "未发现可用的公开 Feed 或静态列表，请提供内容入口。"
+                        if legacy_http_update
+                        else "未发现可用的公开 Feed。"
+                    )
+                    if not legacy_http_update:
+                        detail += (
+                            " HTTP 新建流程仅支持 RSS/Atom/JSON Feed；普通网页请使用 Ego Lite。"
+                        )
                     draft.update(
                         status="needs_details",
-                        detail=probe.get("detail")
-                        or "未发现可用的公开 Feed 或静态列表，请提供内容入口。",
+                        detail=detail,
                     )
                     return self.store.save_draft(draft, draft_id=draft["draft_id"])
             except (ValueError, OSError, TimeoutError) as exc:
@@ -332,7 +359,7 @@ class WorkflowService:
                 ),
             )
             return self.store.save_draft(draft, draft_id=draft["draft_id"])
-        draft["executor"] = "playwright" if executor == "auto" else executor
+        draft["executor"] = "ego" if executor == "auto" else executor
         self.store.save_draft(draft, draft_id=draft["draft_id"])
         return await self.author_browser(draft)
 

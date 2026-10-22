@@ -924,10 +924,24 @@ system-level package the user must consent to.
 
 ### Dynamic website discovery browser runtime
 
-Public Feed/Sitemap/static-list sources still use the default HTTP dependency set.
-The default Python installation includes the Playwright driver. Dynamic website workflows
-need its matching Chromium, installed on first use from settings or the CLI. The
-`browser` extra remains a backwards-compatible alias:
+New dynamic websites use the official Ego Lite host through its native Node/CDP API.
+Install [Ego Lite](https://lite.ego.app/download) on the same Mac as the backend, let the
+user complete first-run setup, and keep it running. Do not import a personal browser
+profile for acceptance tests; use a separate official `--user-data-dir` instead.
+The adapter currently supports macOS; the upstream Windows beta is not yet supported
+here, and Linux/Docker has no native Ego host integration.
+
+`OPENBILICLAW_EGO_BROWSER` selects the official CLI path (otherwise `ego-browser` on PATH),
+`OPENBILICLAW_EGO_SERVER_NAME` selects a named host, and `OPENBILICLAW_EGO_PROFILE` fixes
+the profile ID (default `Default`). An Ego task space isolates pages, while cookies
+belong to its selected profile. Secrets are never serialized into workflow plans.
+Status checks do not launch the app; an installed host remains unverified until an
+explicit trial establishes a native connection. Real protocol/site acceptance is pending.
+
+RSS/Atom/JSON Feed uses the default HTTP dependencies. New ordinary webpages never
+silently fall back to Playwright. Existing HTTP Sitemap/static-list recipes and saved
+Playwright workflows remain compatible. The following commands maintain only that
+legacy Playwright runtime; the `browser` extra remains a backwards-compatible alias:
 
 ```bash
 pip install -e .
@@ -939,17 +953,17 @@ openbiliclaw browser install --with-system-deps
 Workflows launch the same full Chromium executable reported by the readiness check,
 including in headless mode; a separate headless-shell installation is not required.
 
-The desktop build bundles Playwright's Node driver; the same command and the settings
-installation action download Chromium without invoking a system Python interpreter.
+The desktop build bundles Playwright's Node driver; the command downloads Chromium
+without invoking a system Python interpreter.
 Docker builds install the default driver, Chromium and its Linux dependencies, storing
 browser binaries at `/opt/openbiliclaw-browsers`. Browser-capable Docker images support
 `linux/amd64` and `linux/arm64`; 32-bit `arm/v7` and `386` are not supported.
 Login profiles remain in the application's persistent data directory. No real account
 credentials are copied from the installer or the agent's personal browser.
 
-Ego Lite is optional and currently reports an unavailable capability: its macOS host CLI
-alone does not provide the isolated execution/network contract implemented here. The
-portable workflow path uses Chromium. See [browser workflow module](modules/browser-workflows.md).
+These legacy dependencies do not install Ego Lite. The native Ego adapter checks exact
+origins, methods and public DNS; it does not pin the host's socket resolution. See the
+[browser workflow module](modules/browser-workflows.md) for executor-specific boundaries.
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。

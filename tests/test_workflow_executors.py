@@ -408,11 +408,17 @@ async def test_real_browser_item_budget_and_pagination_loop(
     assert not unsafe.items
 
 
-def test_ego_reports_unavailable_without_claiming_a_safe_execution_path() -> None:
-    availability = EgoLiteWorkflowExecutor().availability()
+def test_ego_reports_unavailable_without_claiming_a_safe_execution_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENBILICLAW_EGO_BROWSER", str(tmp_path / "missing-ego-browser"))
+    availability = EgoLiteWorkflowExecutor(tmp_path).availability()
     assert availability["available"] is False
+    assert availability["installed"] is False
+    assert availability["executor"] == "ego"
     assert availability["detail"]
-    assert availability["fallback"] == "playwright"
+    assert "fallback" not in availability
 
 
 async def test_real_browser_separates_cdn_resources_from_navigation(

@@ -36,8 +36,8 @@
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
 - [Instagram 来源文档](modules/instagram.md) / [验收台账](platform-source-acceptance.instagram.md) — 可选登录发现、init-only 点赞 / 收藏 / 关注、手动恢复与封面安全边界；最新真实结果和未完成的账号/许可门禁分开记录
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
-- [动态网站与兼容 Web 来源文档](modules/web.md) — 独立来源份额、同站多版本 workflow、HTTP / Playwright、人工登录接管、普通候选评估与三端管理；旧公开 recipe 单独保留兼容边界
-- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) — 按执行环境与实际证据区分自动化、隔离 UI 和真实网站验收；Ego bridge 未接入
+- [动态网站与兼容 Web 来源文档](modules/web.md) / [浏览器流程](modules/browser-workflows.md) — 独立来源份额、同站多版本 workflow、HTTP Feed / 原生 Ego Lite、人工登录接管、普通候选评估与三端管理；旧 recipe 与 Playwright 流程保留兼容
+- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) / [Ego Lite 本轮验收](testing/2026-10-22-ego-lite-discovery-e2e.md) — 按执行环境区分自动化与真实网站证据；Ego 首次设置与真实端到端尚待完成
 - [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
 - [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求

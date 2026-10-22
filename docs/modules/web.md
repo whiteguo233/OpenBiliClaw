@@ -44,17 +44,17 @@ Ego Skill 就宣称具备服务器或 Docker 浏览器能力。
 
 当前浏览器的内容导航与提取严格限定原站 `allowed_origins`。页面中实际观察到的公共
 静态资源 origin 可单独加入 `resource_origins`；跨站登录 origin 必须由用户在接管页
-明确选择，只允许人工登录期间使用，不扩大后台内容发现范围。不能把 Playwright 可用
-等同于任意网站可成功。Ego 只保留可选执行器接口，
-当前返回不可用，满足该隔离策略的宿主 bridge 尚未接入。重新登录按钮只为包含
+明确选择，只允许人工登录期间使用，不扩大后台内容发现范围。普通新网页使用官方 Ego
+原生执行器，实际解析成功的 RSS / Atom / JSON Feed 使用 HTTP；不会回退到 Playwright。
+Ego 实施 origin、方法与公共 DNS 预检，宿主负责 socket 解析，不能声称具备旧 Chromium
+执行器的 DNS pin 保证。原生桥正在进行真实协议与网站验收。重新登录按钮只为包含
 Playwright/Ego workflow 的来源显示，HTTP 公开流程没有登录按钮。
 
-设置组件只在 Playwright 不可用时显示「安装浏览器」，不替 Ego 安装宿主应用。
-显式点击向 `POST /api/custom-sources/executors/playwright/install` 提交请求；HTTP `202`
-的 `{status:"installing"}` 只表示开始安装，结果从 `GET /api/custom-sources` 的
-`executors[].status`（`installing/ready/failed`）及 `available/detail` 读取。安装中仅在
-页面和来源设置区域可见时每 3 秒刷新执行器提示，不重绘来源卡片或丢弃字段编辑；
-安装结束或设置隐藏后停止轮询。安装成功后仍需回到聊一聊试跑网站，再批准启用来源。
+设置组件区分 Ego 未安装、宿主未运行、已安装待试跑验证、已连接和环境不支持，
+提供[官方下载入口](https://lite.ego.app/download)，不再提交 Playwright 安装请求。
+`GET /api/custom-sources` 的执行器状态为只读检查，不打开应用或首次设置；安装并不等于
+已连接，`connection_state=unverified` 引导用户通过聊一聊实际试跑。聊天入口始终可用，
+刷新状态保留来源未保存的编辑。旧 Playwright 流程以兼容标签显示，原安装 API 留作维护。
 
 以下章节描述**兼容的匿名 HTTP recipe 路径**。其中「不支持登录/JavaScript」和
 旧版 CLI chat 排除仅约束该路径，不代表动态网站来源的产品边界。
@@ -69,7 +69,7 @@ Playwright/Ego workflow 的来源显示，HTTP 公开流程没有登录按钮。
 验收会写 draft/run/seen/schedule，并可使用合成画像与 memory，实际写入须记入验收账本，
 不导入真实用户历史或账号画像。
 
-CI 的 `web-guided-init-e2e` job 在安装 Chromium 后同时执行
+历史 Playwright 回归的 CI `web-guided-init-e2e` job 在安装 Chromium 后同时执行
 `tests/test_web_guided_init_e2e.py` 与 `tests/test_workflow_executors.py`，覆盖真实浏览器
 登录会话持久化、分页、请求边界和结构观察。该受控网站回归不替代外站、Docker 或
 桌面安装态验收；真实网站与运行环境的结果单列在[验收记录](../platform-source-acceptance.dynamic-web.md)。
@@ -524,7 +524,7 @@ producer 也不调度它；它不是本模块的 canonical Web source 或安全 
 
 历史 Phase A/B 草稿将 Ego Lite 列为 deferred；该结论仅记录旧版匿名 HTTP 路径的范围。
 动态来源将执行器独立建模，HTTP 路径仍不隐式升级权限或回退到登录浏览器。
-[Ego Lite 官方下载说明](https://lite.ego.app/download)当前仅提供 macOS 桌面应用；
+[Ego Lite 官方下载说明](https://lite.ego.app/download)提供 macOS 与 Windows beta；本项目当前原生适配器只支持 macOS，尚未完成 Windows 验收。
 [官方宿主桥接指南](https://lite.ego.app/document/en/docs/custom-agent-harness)要求在应用所在电脑
 执行命令。该部署方式与服务器原生执行不同，具体可用性必须依据运行环境与实际执行证据。
 

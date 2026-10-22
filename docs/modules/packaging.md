@@ -4,6 +4,7 @@
 
 | Feature | Status | Contract |
 | --- | --- | --- |
+| Ego native workflow resources | Implemented | The wheel includes `sources/ego_host.mjs` and `sources/ego_dom.mjs`. The desktop spec explicitly stages both under `openbiliclaw/sources`, beside `ego_executor.py`, so the native host's relative module import works from frozen paths. Ego Lite itself remains a separately installed application; bundling these resources does not imply a connected or supported Ego host. |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
@@ -26,6 +27,8 @@ All resource mutations (Ollama, Tailnet, model seed, compatibility links) must f
 
 Public helpers in `packaging/build.py`: `validate_macos_signing`, `sign_macos_app`, `notarize_macos_artifact`, `notarize_macos_app`, `staple_macos_artifact`; `make_macos_dmg(..., notarized=True)` selects the signed installation instructions after successful app notarization.
 
+The Ego adapter resolves `ego_host.mjs` beside its Python module and passes its file URI to Ego's native Node channel. The host then imports `./ego_dom.mjs`; preserve both file names and their directory when staging desktop data. These are application-owned modules, not workflow-supplied scripts. The wheel's existing `src/openbiliclaw` package inclusion also carries these files; no separate Python dependency or build option is needed.
+
 ## CI configuration
 
 Set these GitHub Actions repository secrets (same names used by Safari):
@@ -47,6 +50,8 @@ This repository has all five secrets configured; hosted arm64/x64 lean builds pa
 `dist/notary-logs/` holds submission ID, final status and Apple diagnostic JSON, also uploaded by CI on failure. A wait timeout (90 minutes per submission) does not imply rejection. Use `xcrun notarytool info ID --keychain-profile PROFILE --keychain PATH` or `wait ID --keychain-profile PROFILE --keychain PATH` before retrying; do not blindly resubmit. For an accepted timed-out submission, use `notarytool log ID --keychain-profile PROFILE PATH`, then staple/validate the exact submitted app or DMG. Rebuilds change signatures and may require another submission.
 
 Automated checks cover nested-code ordering, symlink/data exclusion, incomplete credentials, Apple rejection/timeouts and signed DMG contents. Release acceptance also requires real `codesign --verify --deep --strict`, `stapler validate`, `spctl --assess`, and a frozen application startup with an isolated data directory. Gatekeeper verification must not clear quarantine. A first internet-download confirmation is normal.
+
+`tests/test_ego_packaging.py` checks the desktop spec's actual resource entries and imports the staged native host from a temporary path containing spaces and non-ASCII characters. This verifies the relative JavaScript module dependency without launching Ego or accessing a browser profile. It does not replace a signed desktop build or an actual Ego connection test.
 
 Official references: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 

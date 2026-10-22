@@ -741,13 +741,29 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 聊天中确认的新网站以 `custom_<uuid>` 注册在应用数据库，不向 `[sources]` 增加任意 TOML 平台键。每个来源独立拥有 `target_share`（1–20，默认 1）、`interval_minutes`（5–10080，默认 30）和启停状态；同一网站可以有多个流程，也可拆成不同来源共享一个适用登录引用。名称、比例、周期与开关可直接修改；入口、目标和账号变化走新试跑/确认。
 
-配置读取策略 `effective_pool_source_shares(config, database=...)` 合并这些实例和内置平台份额；动态来源不聚合到旧 `[sources.web]` 的 `web` 份额，未知 custom ID 也不能通过手写 scheduler keys 预留配额。归档来源从列表与调度中移除，历史内容保留。浏览器凭据由执行宿主的 session profile 保存；注册表只保存不透明引用。动态浏览器流程由后端管理独立 profile，不使用下面历史实验的 CDP 设置。
+配置读取策略 `effective_pool_source_shares(config, database=...)` 合并这些实例和内置平台份额；动态来源不聚合到旧 `[sources.web]` 的 `web` 份额，未知 custom ID 也不能通过手写 scheduler keys 预留配额。归档来源从列表与调度中移除，历史内容保留。浏览器凭据由执行宿主的 session profile 保存；注册表只保存不透明引用。新网页通过 Ego Lite 的任务空间执行，不使用下面历史实验的 CDP 设置。Ego profile 内的登录状态由宿主保存；任务空间隔离页面，不等于不同 Cookie profile。
+
+### Ego Lite 执行宿主
+
+新网页的 `auto` 和 `ego` 使用官方 Ego Lite；只有实际识别成功的 RSS/Atom/JSON Feed 自动使用 HTTP。更新已有流程时 `auto` 保留该流程执行器，避免悄然迁移。新建不接受 Playwright，已有旧流程仍按原执行器运行。
+
+宿主选择由启动后端的本机环境提供，不接受网页或模型指定可执行文件：
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `OPENBILICLAW_EGO_BROWSER` | 官方 `ego-browser` 的可执行文件路径；未设置时从 PATH 查找 |
+| `OPENBILICLAW_EGO_SERVER_NAME` | 可选的官方 named host 服务名，用于连接指定的 Ego 实例 |
+| `OPENBILICLAW_EGO_PROFILE` | 创建本应用任务空间所使用的 Ego profile ID，默认 `Default` |
+
+Ego 需在后端所在主机运行并完成首次设置。来源/API 只保存不透明会话引用，私有会话目录保存本应用拥有的任务空间映射；网站凭据留在 Ego 的所选 profile，不复制到配置或模型。不同任务空间可能共享同一 profile 的登录状态，不把页面隔离表述成 Cookie 隔离。隔离验收使用官方宿主的独立 `--user-data-dir`，不会导入日常浏览数据。
+
+设置页只读状态不打开 Ego 设置窗口。首次未验证连接时，`installed` 与 `available` 分开显示；用户实际试跑才尝试原生连接。缺失或离线不触发 Playwright 回退，HTTP Feed 仍可用。
 
 ### `[sources.browser]`
 
 历史 `web_extract` / 自定义网页实验使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
 
-> 动态网站与旧匿名 Web recipe 都不读取本段。动态流程使用独立管理的 Playwright 会话；
+> 动态网站与旧匿名 Web recipe 都不读取本段。新网页流程使用 Ego Lite 宿主任务空间；
 > 旧 `feed / sitemap / listing` recipe 保持匿名 HTTP，不使用 CDP、登录 Cookie 或 JavaScript。
 > 小红书和抖音稳定链路也走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。
 

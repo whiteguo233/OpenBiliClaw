@@ -12,12 +12,12 @@
 ["transport"]
 "kind" = "hybrid"
 "owner" = "backend"
-"entrypoints" = ["src/openbiliclaw/sources/workflow_service.py", "src/openbiliclaw/sources/workflow_store.py", "src/openbiliclaw/sources/browser_workflow.py", "src/openbiliclaw/sources/workflow_executors.py", "src/openbiliclaw/runtime/custom_workflow_producer.py"]
+"entrypoints" = ["src/openbiliclaw/sources/workflow_service.py", "src/openbiliclaw/sources/workflow_store.py", "src/openbiliclaw/sources/browser_workflow.py", "src/openbiliclaw/sources/workflow_executors.py", "src/openbiliclaw/sources/ego_executor.py", "src/openbiliclaw/runtime/custom_workflow_producer.py"]
 "route_aliases" = []
 "fallback_owner" = "none"
 "requires_overseas_network" = false
 "routed_by_network_mode" = false
-"network_policy" = "Compiled public HTTP or portable read-only browser plans. Content navigation and extraction are restricted to approved exact origins; public DNS/IP validation and bounded execution are enforced by each available executor. Feed request origins and article-reference origins are separate: only observed public references are accepted, with no automatic article, image or enclosure fetch. New unapproved origins report degraded without committing complete checkpoints. Dedicated-platform domains are accepted only after positive Feed parsing and successful trial. Only explicit human takeover accepts credential input; secrets stay in private browser profiles. Unsupported Ego capabilities are reported unavailable, never silently enabled."
+"network_policy" = "New ordinary webpages use the official Ego Lite native Node/CDP host; auto uses HTTP only after positive Feed parsing. No fallback to Playwright; persisted legacy HTTP and Playwright workflows retain their executor. Content navigation/extraction requires approved exact origins, methods and bounded execution. Ego checks public DNS at request/redirect preflight but the host owns socket resolution: dns_pinned=false, unlike the HTTP and legacy Chromium transports. Feed request origins and article-reference origins are separate; no automatic article/image/enclosure fetch. New unapproved origins degrade without a complete checkpoint. Dedicated-platform HTML remains excluded. Only explicit human takeover accepts credentials; Ego profiles hold secrets while private app-owned task spaces isolate pages, not cookie identity. Missing/offline/unsupported Ego reports unavailable; installation alone is not a verified native connection."
 
 ["transport"."capability_routes"]
 "discover" = "backend:hybrid:per-workflow-auth:exact-origin"
@@ -145,7 +145,7 @@
 "extension.task" = "HTTP/browser workflows execute in the backend; no extension task dispatch or upstream task-result protocol is registered for dynamic sites."
 "extension.task-marker" = "Without an extension task, Web pages must not receive a task-mode URL marker."
 "extension.background" = "The extension is a chat/settings client. The backend owns periodic workflow scheduling, private browser profiles and recovery; no extension worker performs dynamic-site requests."
-"extension.early-response" = "No extension response interception is registered. A backend Playwright executor may observe its own controlled page without introducing a MAIN/isolated-world extension tap."
+"extension.early-response" = "No extension response interception is registered. The native Ego host (or a persisted legacy Playwright executor) observes its app-owned page without introducing a MAIN/isolated-world extension tap."
 "extension.cookie-sync" = "Browser login is owned by the backend executor profile, never copied from or synchronized by the browser extension."
 "engagement.view" = "Generic feeds and pages have no portable canonical view-count field."
 "engagement.like" = "Generic feeds and pages have no portable canonical like-count field."

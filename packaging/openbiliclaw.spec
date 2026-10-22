@@ -136,6 +136,17 @@ a = Analysis(
         # catalogs served at /i18n/ui. Without this the packaged app raises
         # CatalogError on config-show and the web UI stays in Chinese.
         (str(project_root / "src" / "openbiliclaw" / "i18n"), "openbiliclaw/i18n"),
+        # Ego's native host imports its sibling DOM module at runtime. Preserve
+        # their __file__-relative location; Python module analysis cannot collect
+        # JavaScript files referenced through file:// imports.
+        (
+            str(project_root / "src" / "openbiliclaw" / "sources" / "ego_host.mjs"),
+            "openbiliclaw/sources",
+        ),
+        (
+            str(project_root / "src" / "openbiliclaw" / "sources" / "ego_dom.mjs"),
+            "openbiliclaw/sources",
+        ),
         # Builtin chat skills (M4): SKILL.md files loaded via
         # agent/skill.py's __file__-relative builtin_skills_dir().
         (

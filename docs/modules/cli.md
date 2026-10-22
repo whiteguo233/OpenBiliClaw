@@ -1790,16 +1790,18 @@ $ openbiliclaw db-repair
 | 命令 | 行为 |
 | --- | --- |
 | `sources list` | 来源独立比例、流程与健康状态 |
-| `sources prepare URL --intent '自然语言发现目标'` | 观察网站并建草稿、试跑；`--executor http/playwright/ego/auto`，`--separate` 可拆分独立来源 |
+| `sources prepare URL --intent '自然语言发现目标'` | 观察网站并建草稿、试跑；`--executor auto/ego/http`（新网页使用 Ego Lite，Feed 自动选 HTTP），`--separate` 可拆分独立来源 |
 | `sources trial DRAFT_ID` | 重试已有草稿，不启用调度 |
 | `sources activate DRAFT_ID --share 2 --interval 30` | 明确启用已成功试跑的流程；已有来源保留原比例和启停 |
 | `sources set SOURCE_ID --share 3 --interval 60 --disabled` | 修改独立来源策略 |
 | `sources runs SOURCE_ID` | 查看版本、时间、状态、抓取与入队数量 |
 | `sources login SOURCE_ID` | 创建人工登录入口，在同一数据目录的 API 服务中打开 |
 | `sources run SOURCE_ID --limit 20` | 单次有界抓取与现有候选评估；持续定时运行依赖 `start` / `serve-api` |
-| `browser install` | 安装 Playwright 对应 Chromium；Linux 管理员可显式加 `--with-system-deps` |
+| `browser install` | 为既有旧版 Playwright 流程安装对应 Chromium；不是新网页来源的 Ego Lite 安装入口 |
 
-pip/uv 默认安装和桌面包均携带 Playwright driver，`browser` extra 保留兼容；Chromium 可通过设置页或安装命令获取。浏览器凭据保存在活动数据库旁的私有 `browser-sessions/`，不要在 CLI 参数或聊天里输入密码/Cookie。Ego 当前没有可用执行桥接，明确返回 unavailable。
+新网页来源需要在后端主机安装并打开 [Ego Lite](https://lite.ego.app/download)，完成首次设置后使用其官方 `ego-browser` 命令。缺失、首次设置未完成或宿主离线时报告原因，不回退到其他浏览器；RSS/Atom/JSON Feed 不依赖 Ego。
+
+Ego 的登录状态留在所选宿主 profile，后端仅保存自己的任务空间/会话映射；不在 CLI 参数或聊天里输入密码/Cookie。`OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 的宿主选择见[配置文档](config.md#ego-lite-执行宿主)。pip/uv 的 Playwright driver 与 `browser install` 保留给既有流程兼容；新建流程不能选择 Playwright。
 
 ### TikTok 来源验收补全（2026-10-04）
 

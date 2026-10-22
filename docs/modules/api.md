@@ -187,12 +187,12 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 
 | 方法与路径 | 契约 |
 |---|---|
-| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；executors 返回 `id,available,detail`，Playwright 安装进度通过 `status` 表达：`installing/ready/failed` |
-| `POST /api/custom-sources/executors/playwright/install` | 显式请求后台安装 Playwright 浏览器；接受后 HTTP `202`、`{status:"installing"}`，通过来源列表中的执行器状态查询结果 |
+| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；Ego 返回 `id,installed,available,platform_supported,connection_state,detail,network_guarantee,dns_pinned`；状态检查不启动应用，已安装不等于原生握手成功 |
+| `POST /api/custom-sources/executors/playwright/install` | 历史 Playwright 流程的显式维护入口，新来源 UI 不调用；接受后 HTTP `202`、`{status:"installing"}`，旧执行器状态通过 `installing/ready/failed` 表达 |
 | `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
 | `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
 | `GET /api/custom-sources/{source_id}/runs` | `{items}`；摘要包括 `run_id,workflow_id,version,executor,status,started_at,completed_at,discovered_count,enqueued_count,error` |
-| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`，executor 为 `auto/http/playwright/ego`；创建待试跑草稿，尚不启用定期发现 |
+| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`；新来源 executor 为 `auto/http/ego`，普通网页使用 Ego，明确解析为 Feed 才自动选 HTTP；更新旧流程时 auto 保留原执行器；创建待试跑草稿，尚不启用定期发现 |
 | `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
 | `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
 | `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管，返回 `draft_id,takeover_url,…` |
@@ -219,10 +219,9 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 设置页的保存、启停和安装按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
 归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
 
-共享设置组件只为不可用的 Playwright 显示「安装浏览器」，不提供 Ego 安装入口。
-安装中且页面与来源设置区域可见时，每 3 秒读取一次 `GET /api/custom-sources`，只更新
-执行器提示，保留正在编辑的来源字段；隐藏、销毁或安装结束后停止该轮询。`202` 只代表
-已开始安装，完成或失败以随后 `executors` 返回的 `available/status/detail` 为准。
+共享设置组件展示 Ego 状态与官方下载链接；刷新保留正在编辑的来源字段。
+`connection_state=unverified` 表示需要实际试跑验证原生连接，聊天新增入口仍可使用。
+HTTP Feed 不依赖浏览器；Ego 不可用也不触发 Playwright 安装或执行回退。
 
 登录交互使用后端页面 `/web/source-login.html?draft_id=…`。三端来源管理只接受同后端
 origin、该路径并带 draft ID 的跳转地址。用户在接管页面登录并继续，不向聊天或来源

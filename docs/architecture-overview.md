@@ -181,6 +181,18 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 ## Web 来源的对话入口
 
 ```text
+聊一聊 → prepare_discovery_source → 脱敏观察 / 自然语言固化 / 试跑
+       → activate_discovery_source 审批 → 独立 source_id / 份额 / 周期 / 版本化 workflow
+       → CustomWorkflowProducer → HTTP Feed 或 Ego Lite 原生任务空间
+       → 统一待评估池 → 真实评估与文案 → 来源名推荐卡
+设置页 → 来源配置 / 启停 / 频率 / 份额 / 运行历史
+```
+
+新普通网页使用 Ego Lite，真实 Feed 使用 HTTP；Ego 缺失或离线不回退到 Playwright。
+原生桥当前连接本机 macOS 宿主，验收状态见[专门记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
+以下为旧匿名 HTTP recipe 的兼容链路：
+
+```text
 聊一聊（桌面 / 移动 / 插件） → probe_web_source(url, strategy?) → 只读草稿 / 样例
                            → create_source hard-write 审批卡 → 批准后 typed compiler
 设置页显式添加 / API ────────────────────────────────────────┘
@@ -189,7 +201,7 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
                      → feed / sitemap / static listing parser → 共享待评估池
 ```
 
-Web 保持 discovery-only；CLI chat、本轮未使用的 Ego Lite、登录态与 JavaScript 渲染均不在此链路。
+Web 保持 discovery-only；上述旧 recipe 路径不使用登录态或 JavaScript，不代替新的 Ego 工作流。
 ### TikTok 公开发现
 
 ```text

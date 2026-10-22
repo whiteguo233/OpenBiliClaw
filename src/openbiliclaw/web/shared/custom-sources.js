@@ -23,7 +23,9 @@
 
   function workflowLabel(flow) {
     const labels = { feed: "订阅源", sitemap: "站点地图", listing: "网页列表", browser: "浏览器网页" };
-    return labels[text(flow.kind)] || (["playwright", "ego"].includes(flow.executor) ? "浏览器网页" : "网页或订阅");
+    if (flow.executor === "ego") return "网页（Ego Lite）";
+    if (flow.executor === "playwright") return "网页（旧版 Playwright）";
+    return labels[text(flow.kind)] || "网页或订阅";
   }
 
   function formatTime(value) {
@@ -83,10 +85,6 @@
     let disposed = false;
     let revision = 0;
     let items = [];
-    let installTimer = null;
-    let installing = false;
-    let installRequest = false;
-    let executorSnapshot = [];
     const editors = new Map();
     const pending = new Set();
     function node(tag, className, value) {
@@ -121,81 +119,39 @@
       message.dataset.tone = failed ? "error" : "success";
     }
 
-    function visible() {
-      return !disposed && doc.visibilityState !== "hidden"
-        && (!root.getClientRects || root.getClientRects().length > 0);
-    }
-
-    function stopInstallPoll() {
-      if (installTimer !== null) global.clearTimeout(installTimer);
-      installTimer = null;
-    }
-
-    function scheduleInstallPoll() {
-      stopInstallPoll();
-      if (!installing || !visible()) return;
-      installTimer = global.setTimeout(() => {
-        installTimer = null;
-        // Polling only refreshes the executor notice; it must not discard
-        // edits the user is making in a source card while Chrome downloads.
-        if (visible()) void load({ refreshSources: false });
-      }, 3000);
-    }
-
-    function onVisibilityChange() {
-      if (!visible()) stopInstallPoll();
-      else if (installing) void load({ refreshSources: false });
-    }
-    doc.addEventListener?.("visibilitychange", onVisibilityChange);
-
     function renderExecutors(executors) {
-      executorSnapshot = array(executors);
-      executorArea.replaceChildren();
-      const browser = executorSnapshot.find((executor) => executor?.id === "playwright");
-      installing = browser?.status === "installing";
-      if (!browser || browser.available === true) {
-        installing = false;
-        scheduleInstallPoll();
-        return;
-      }
+      const ego = array(executors).find((executor) => executor?.id === "ego");
       const notice = node("section", "custom-source-executor-notice");
-      notice.append(node("strong", "", installing ? "正在安装浏览器…" : "浏览器发现暂不可用"));
-      notice.append(node("p", "custom-source-note", text(browser.detail) || "安装后可发现需要浏览器打开的网站；公开订阅仍可继续使用。"));
-      const install = button(installing ? "正在安装…" : "安装浏览器", () => {
-        if (installRequest || installing || disposed) return;
-        installRequest = true;
-        install.disabled = true;
-        install.textContent = "正在开始安装…";
-        void (async () => {
-          try {
-            const result = await request("/custom-sources/executors/playwright/install", { method: "POST" });
-            if (disposed) return;
-            if (result?.status === "installing") {
-              renderExecutors([{ ...browser, status: "installing", detail: result.detail || browser.detail }]);
-              announce("浏览器安装已开始，可继续查看来源；安装完成后会更新状态。");
-            } else {
-              if (await load({ refreshSources: false })) {
-                announce(result?.available ? "浏览器已就绪。" : text(result?.detail) || "已提交浏览器安装，请刷新查看状态。");
-              }
-            }
-          } catch (error) {
-            if (!disposed) {
-              announce(errorMessage(error), true);
-              install.disabled = false;
-              install.textContent = "安装浏览器";
-            }
-          } finally {
-            installRequest = false;
-            // A manual refresh may replace this button while POST is pending.
-            // Restore the currently mounted control, not a detached node.
-            if (!disposed && !installing) renderExecutors(executorSnapshot);
-          }
-        })();
-      });
-      install.disabled = installing || installRequest;
-      notice.append(install);
-      executorArea.append(notice);
-      scheduleInstallPoll();
+      const unsupported = ego?.platform_supported === false;
+      const ready = !unsupported && ego?.available === true;
+      const missing = !unsupported && !ready && ego?.installed === false;
+      const unverified = !unsupported && !ready && ego?.installed === true
+        && ego?.connection_state === "unverified";
+      const label = !ego ? "尚未获取 Ego Lite 状态"
+        : unsupported ? "此运行环境暂不支持 Ego Lite"
+          : ready ? "Ego Lite 已就绪" : missing ? "Ego Lite 未安装"
+            : unverified ? "Ego Lite 已安装，待试跑验证" : "Ego Lite 尚未就绪";
+      notice.append(node("strong", "", label));
+      notice.append(node("p", "custom-source-note", "网页通过 Ego Lite 发现；公开 RSS、Atom、JSON Feed 订阅无需 Ego Lite。"));
+      if (text(ego?.detail)) notice.append(node("p", "custom-source-note", text(ego.detail)));
+      if (!ready && !unsupported) notice.append(node("p", "custom-source-note", missing
+        ? "请在运行 OpenBiliClaw 的电脑上安装 Ego Lite，完成首次设置并打开应用，然后刷新状态。"
+        : unverified ? "到聊一聊提供网站地址，试跑时会验证 Ego Lite 连接。"
+          : "请确认运行 OpenBiliClaw 的电脑已打开 Ego Lite 并完成连接，然后刷新状态。"));
+      const actions = node("div", "custom-source-actions");
+      if (missing) {
+        // This is an explicit official download link, never an automatic install
+        // or a switch to another browser executor. The backend reports its host
+        // readiness; the UI must not infer it from this client's browser/OS.
+        const download = node("a", "custom-source-button custom-source-login-link", "下载 Ego Lite");
+        download.href = "https://lite.ego.app/download";
+        download.target = "_blank";
+        download.rel = "noopener noreferrer";
+        actions.append(download);
+      }
+      actions.append(button("刷新 Ego Lite 状态", () => void load({ refreshSources: false })));
+      notice.append(actions);
+      executorArea.replaceChildren(notice);
     }
 
     function field(label, value, type, options = {}) {
@@ -385,23 +341,19 @@
       try {
         const result = await request("/custom-sources", { method: "GET", cache: "no-store" });
         if (disposed || current !== revision) return false;
-        const wasInstalling = installing;
         renderExecutors(result?.executors);
         if (refreshSources) {
           items = array(result?.items);
           render();
           announce(items.length ? `共 ${items.length} 个自定义来源；各自占比与内置来源平级。` : "");
           onChange(items);
-        } else if (wasInstalling && !installing) {
-          const browser = array(result?.executors).find((executor) => executor?.id === "playwright");
-          if (browser?.available) announce("浏览器已安装完成，可以回到聊一聊试跑网站。");
-          else announce(text(browser?.detail) || "浏览器安装未完成，请重试。", true);
+        } else {
+          announce("Ego Lite 状态已更新。");
         }
         return true;
       } catch (error) {
         if (disposed || current !== revision) return false;
         announce(errorMessage(error), true);
-        stopInstallPoll();
         return false;
       } finally {
         if (!disposed && current === revision) {
@@ -411,8 +363,7 @@
       }
     }
     return { load, destroy() {
-      disposed = true; revision += 1; stopInstallPoll();
-      doc.removeEventListener?.("visibilitychange", onVisibilityChange);
+      disposed = true; revision += 1;
     } };
   }
 

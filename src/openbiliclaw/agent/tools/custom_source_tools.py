@@ -156,7 +156,8 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
             handler=prepare,
             description="根据用户的网站或 RSS/Atom/JSON Feed 网址和自然语言目标建立草稿并试跑；"
             "不会启用来源。用户只要求订阅整个 Feed 时，intent 可为‘跟踪该订阅的新内容’。"
-            "自动识别采集方式，无需用户选择技术类型。需要登录时把 takeover_url 给用户操作，"
+            "网页通过 Ego Lite 采集；自动识别成功的 Feed 使用 HTTP。Ego 不可用时报告原因，"
+            "不会替换浏览器。需要登录时把 takeover_url 给用户操作，"
             "绝不索取密码/Cookie。"
             "同站默认一个来源多个流程；separate_source=true 才拆为独立配比来源。"
             "更新既有流程或订阅范围时先 list_sources 获取ID，再传 source_id+workflow_id；"
@@ -169,7 +170,7 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
                     "name": {"type": "string"},
                     "source_id": {"type": "string"},
                     "workflow_id": {"type": "string"},
-                    "executor": {"type": "string", "enum": ["auto", "http", "playwright", "ego"]},
+                    "executor": {"type": "string", "enum": ["auto", "http", "ego"]},
                     "separate_source": {"type": "boolean"},
                 },
                 "required": ["url", "intent"],

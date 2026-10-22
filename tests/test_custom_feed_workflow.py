@@ -130,8 +130,9 @@ def test_titleless_json_post_never_invents_a_title_for_empty_content():
 
 
 @pytest.mark.parametrize("kind", ["rss", "atom", "json"])
+@pytest.mark.parametrize("executor", ["auto", "http"])
 async def test_real_prepare_trial_activate_and_custom_queue_for_each_feed_format(
-    database, monkeypatch, kind
+    database, monkeypatch, kind, executor
 ):
     requests = []
     body, media_type = _feed(kind, title="")
@@ -146,7 +147,10 @@ async def test_real_prepare_trial_activate_and_custom_queue_for_each_feed_format
 
     service = _service(database, monkeypatch, handler)
     draft = await service.prepare(
-        url=FEED_URL, intent="Follow Python web application articles", name="Journal"
+        url=FEED_URL,
+        intent="Follow Python web application articles",
+        name="Journal",
+        executor=executor,
     )
     assert draft["status"] == "ready" and draft["trial_success"]
     assert service.sources.list_sources() == []
@@ -361,7 +365,7 @@ async def test_explicit_github_atom_uses_only_anonymous_feed_path(database, monk
     assert result.status == "ok" and len(result.items) == 1
 
 
-@pytest.mark.parametrize("executor", ["auto", "http", "playwright"])
+@pytest.mark.parametrize("executor", ["auto", "http", "ego"])
 async def test_dedicated_platform_html_never_falls_back_to_browser_including_trial(
     database, monkeypatch, executor
 ):
