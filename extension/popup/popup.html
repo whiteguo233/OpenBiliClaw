@@ -6566,7 +6566,7 @@
                 <span id="poolReplenished" class="recommendation-status-value">刚补进 0 条</span>
               </div>
               <div class="recommendation-status-chip" data-tone="info">
-                <span class="recommendation-status-label">现在在忙</span>
+                <span id="poolTopicsLabel" class="recommendation-status-label">现在在忙</span>
                 <span id="poolTopics" class="recommendation-status-value">还在继续摸你的口味</span>
               </div>
             </div>
@@ -6902,6 +6902,7 @@
         <button id="settingsTabSources" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSources" tabindex="-1">平台源</button>
         <button id="settingsTabScheduler" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelScheduler" tabindex="-1">调度</button>
         <button id="settingsTabAdvanced" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAdvanced" tabindex="-1">高级功能</button>
+        <button id="settingsTabFish" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelFish" tabindex="-1">养蓝色大肥鱼</button>
         <button id="settingsTabGeneral" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelGeneral" tabindex="-1">通用</button>
         <button id="settingsTabLogging" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelLogging" tabindex="-1">日志</button>
       </div>
@@ -7591,6 +7592,82 @@
       </div>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="tiktok" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-tiktok">
+        <h3><span class="section-icon">&#x266A;</span> TikTok</h3>
+        <div class="settings-field-row">
+          <input id="cfgTiktokEnabled" type="checkbox">
+          <label for="cfgTiktokEnabled">启用 TikTok discovery</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgTiktokStatus" data-source-status="tiktok"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-tiktok">
+        <div class="settings-probe-row source-verify-row">
+          <button class="settings-secondary-btn source-verify-btn" type="button">测试连接</button>
+          <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokMode">后端模式</label>
+          <select id="cfgTiktokMode">
+            <option value="auto">auto（Web API 优先，yt-dlp 兜底）</option>
+            <option value="web">web（仅 Web API）</option>
+            <option value="ytdlp">ytdlp（仅 yt-dlp）</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCookie">Cookie（可选，解锁关键词搜索）</label>
+          <textarea id="cfgTiktokCookie" placeholder="从浏览器复制 Cookie 字符串（登录 tiktok.com 后插件会自动同步）；留空 = 访客身份运行"></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCookieEnv">TikTok Cookie 环境变量</label>
+          <input id="cfgTiktokCookieEnv" type="text" placeholder="OPENBILICLAW_TIKTOK_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokRegion">地区参数（匹配网络出口）</label>
+          <input id="cfgTiktokRegion" type="text" placeholder="JP">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokTzName">时区参数</label>
+          <input id="cfgTiktokTzName" type="text" placeholder="Asia/Tokyo">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokTags">常驻话题标签（逗号分隔，不带 #）</label>
+          <input id="cfgTiktokTags" type="text" placeholder="booktok, learnsontiktok">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokCreators">跟踪创作者（逗号分隔，@ 可省略）</label>
+          <input id="cfgTiktokCreators" type="text" placeholder="@creator1, @creator2">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyFeedBudget">TikTok 每日推荐流任务</label>
+          <input id="cfgTiktokDailyFeedBudget" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailySearchBudget">TikTok 每日搜索任务（需登录 Cookie）</label>
+          <input id="cfgTiktokDailySearchBudget" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyTagBudget">TikTok 每日话题标签任务</label>
+          <input id="cfgTiktokDailyTagBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokDailyUserBudget">TikTok 每日创作者任务</label>
+          <input id="cfgTiktokDailyUserBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <p class="settings-hint" data-budget-note>预算 = 每日任务次数上限，不是开关；填 1 表示每天只允许 1 次。0 或留空 = 不限。</p>
+        <div class="settings-field">
+          <label for="cfgTiktokRequestInterval">TikTok 请求间隔秒数</label>
+          <input id="cfgTiktokRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTiktokMinInterval">TikTok 最小调度间隔分钟数</label>
+          <input id="cfgTiktokMinInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <p class="settings-hint">TikTok 主后端是 Web API（访客身份 + 请求签名），yt-dlp 仅作兜底；未配置 Cookie 时关键词规划器的词会映射为话题标签。需要海外出网。</p>
+      </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="twitter" data-open="0">
         <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-twitter">
         <h3><span class="section-icon">&#x1D54F;</span> X (Twitter)</h3>
@@ -8122,6 +8199,31 @@
       </div>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="instagram" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-instagram">
+          <h3><span class="section-icon">IG</span> Instagram</h3>
+          <div class="settings-field-row">
+            <input id="cfgInstagramEnabled" type="checkbox">
+            <label for="cfgInstagramEnabled">启用 Instagram discovery</label>
+          </div>
+          <p class="settings-hint source-status-row" id="cfgInstagramStatus" data-source-status="instagram"><span class="src-dot">●</span> <span class="src-detail">Instagram 来源状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-instagram">
+          <p class="settings-hint">公开 Topic / Creator 发现可匿名运行；初始化只在当前 Instagram 登录浏览器内只读拉取最近点赞、收藏和关注。扩展只同步 sessionid 是否存在，不上传 Cookie 值。</p>
+          <div class="settings-field">
+            <label>内容发现分支</label>
+            <div class="settings-field-row"><input id="cfgInstagramModeTopic" type="checkbox"><label for="cfgInstagramModeTopic">Topic</label></div>
+            <div class="settings-field-row"><input id="cfgInstagramModeCreator" type="checkbox"><label for="cfgInstagramModeCreator">Creator</label></div>
+          </div>
+          <div class="settings-field"><label for="cfgInstagramDailyTopicBudget">每日 Topic 条目</label><input id="cfgInstagramDailyTopicBudget" type="number" min="0" step="1" placeholder="60"></div>
+          <div class="settings-field"><label for="cfgInstagramDailyCreatorBudget">每日 Creator 条目</label><input id="cfgInstagramDailyCreatorBudget" type="number" min="0" step="1" placeholder="30"></div>
+          <div class="settings-field"><label for="cfgInstagramRequestInterval">请求间隔秒数</label><input id="cfgInstagramRequestInterval" type="number" min="1" max="30" step="1" placeholder="3"></div>
+          <div class="settings-field"><label for="cfgInstagramMinInterval">最小调度间隔分钟</label><input id="cfgInstagramMinInterval" type="number" min="0" step="1" placeholder="10"></div>
+          <div class="settings-field"><label for="cfgInstagramBootstrapLimit">每类初始化信号上限</label><input id="cfgInstagramBootstrapLimit" type="number" min="1" max="300" step="1" placeholder="300"></div>
+        </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="pool">
         <h3><span class="section-icon">&#x1F4E6;</span> 候选池来源占比</h3>
         <div class="settings-field">
@@ -8143,6 +8245,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
           <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareTiktok">候选池 TikTok 占比</label>
+          <input id="cfgPoolShareTiktok" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareTwitter">候选池 X 占比</label>
@@ -8169,6 +8275,8 @@
           <input id="cfgPoolShareLinuxdo" type="number" min="1" step="1" placeholder="1">
           <label for="cfgPoolShareV2ex">候选池 V2EX 占比</label>
           <input id="cfgPoolShareV2ex" type="number" min="1" step="1" placeholder="1">
+          <label for="cfgPoolShareInstagram">候选池 Instagram 占比</label>
+          <input id="cfgPoolShareInstagram" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareWeb">候选池旧版 Web 订阅占比</label>
@@ -8179,6 +8287,165 @@
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
         </div>
+      </div>
+      </div>
+
+      <div id="settingsPanelFish" class="settings-panel" data-settings-panel="fish" role="tabpanel" aria-labelledby="settingsTabFish" hidden>
+      <div class="settings-section">
+        <h3>养蓝色大肥鱼（实验室）</h3>
+        <p class="settings-hint">大肥鱼是一个独立的小号，有自己的 Cookie、自己的人设和自己的账本。</p>
+        <p class="settings-hint">它只做一件事：在你最近被推荐过的视频下面，挑一条评论回复并 @ 对方。默认只预览不发布；如果它用的账号就是你自己，它会直接拒绝运行。</p>
+        <div class="settings-field-row">
+          <input id="fishEnabled" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishEnabled">启用「养蓝色大肥鱼」</label>
+        </div>
+        <div class="settings-field-row">
+          <input id="fishDryRun" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishDryRun">只预览不发布（推荐保持开启）</label>
+        </div>
+        <p class="settings-hint" id="fishStatusLine" aria-live="polite">正在读取状态…</p>
+      </div>
+
+      <div class="settings-section">
+        <h3>大肥鱼的账号</h3>
+        <p class="settings-hint">粘贴大肥鱼自己那个 B 站账号的 Cookie（不是你的主账号）。它单独存在 data/fish/bilibili_cookie.json，校验通过才会保存；和主账号相同会被拒绝。</p>
+        <div class="settings-field">
+          <label for="fishCookie">大肥鱼的 Cookie</label>
+          <input id="fishCookie" type="password" autocomplete="off" spellcheck="false" placeholder="SESSDATA=…; bili_jct=…" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field-row">
+          <button class="settings-secondary-btn" id="fishSaveAccountBtn" type="button" data-settings-ignore-dirty>保存并校验</button>
+          <button class="settings-secondary-btn" id="fishQrLoginBtn" type="button" data-settings-ignore-dirty>扫码登录</button>
+          <button class="settings-secondary-btn" id="fishClearAccountBtn" type="button" data-settings-ignore-dirty>清除登录</button>
+        </div>
+        <div id="fishQrBox" style="display:none;justify-content:center;padding:8px 0;">
+          <img id="fishQrImage" alt="大肥鱼的登录二维码" width="160" height="160" style="width:160px;height:160px;padding:8px;border-radius:10px;background:#fff;">
+        </div>
+        <p class="settings-hint" id="fishQrStatus" aria-live="polite"></p>
+        <p class="settings-hint" id="fishAccountStatus" aria-live="polite"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3>人设与说话规矩</h3>
+        <p class="settings-hint">这几段会原样进入提示词：人设决定它像谁，规矩决定它不做什么，受众决定它优先回谁。改完点「保存设置」即可生效，不用重启。</p>
+        <div class="settings-field">
+          <label for="fishPersonaName">它的名字</label>
+          <input id="fishPersonaName" type="text" maxlength="20" autocomplete="off" placeholder="蓝色大肥鱼" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishPersonaPrompt">人格设定</label>
+          <textarea id="fishPersonaPrompt" rows="6" spellcheck="false" placeholder="你是一只叫「蓝色大肥鱼」的 B 站小用户…" data-settings-ignore-dirty></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="fishReplyRules">额外说话规矩</label>
+          <textarea id="fishReplyRules" rows="5" spellcheck="false" placeholder="只回答摆在你面前的那一条评论…" data-settings-ignore-dirty></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="fishAudiencePrompt">只回哪类人（可选）</label>
+          <textarea id="fishAudiencePrompt" rows="3" spellcheck="false" placeholder="留空则不限。例如：想找片单、抱怨推荐不准、在聊同一个人的人。" data-settings-ignore-dirty></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="fishTriggerPrompt">什么情况下才说话（可选）</label>
+          <textarea id="fishTriggerPrompt" rows="3" spellcheck="false" placeholder="留空则只要接得上就回。例如：只在认真讨论技术时插话；吵架、抽奖、打卡一律不回。" data-settings-ignore-dirty></textarea>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>在评论区 @ 你</h3>
+        <p class="settings-hint">打开后，它每天挑一条推荐告诉你：评论区 @ 你（公开）、私信你（不公开），或者两个都发。</p>
+        <p class="settings-hint">评论是公开的：别人也能看到大肥鱼 @ 了你的主号。</p>
+        <div class="settings-field-row">
+          <input id="fishNotifyOwner" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishNotifyOwner">每天在评论区 @ 我一次</label>
+        </div>
+        <div class="settings-field">
+          <label for="fishOwnerName">我的 B 站昵称（留空自动读取）</label>
+          <input id="fishOwnerName" type="text" maxlength="30" autocomplete="off" placeholder="留空则用主账号昵称" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishOwnerMid">我的 mid（可选，主号登录失效时用）</label>
+          <input id="fishOwnerMid" type="number" min="0" max="10000000000000" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishNotifyDailyLimit">每天最多通知几次</label>
+          <input id="fishNotifyDailyLimit" type="number" min="0" max="3" step="1" placeholder="1" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishNotifyChannel">通知方式</label>
+          <select id="fishNotifyChannel" data-settings-ignore-dirty>
+            <option value="comment">评论区 @ 你（公开）</option>
+            <option value="dm">私信你（不公开）</option>
+            <option value="both">评论 @ + 私信</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>节奏与上限</h3>
+        <div class="settings-field">
+          <label for="fishDailyLimit">每天最多发几条</label>
+          <input id="fishDailyLimit" type="number" min="0" max="20" step="1" placeholder="3" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinInterval">两次发言至少隔（分钟）</label>
+          <input id="fishMinInterval" type="number" min="5" max="1440" step="1" placeholder="30" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishActiveHours">只在几点到几点说话（留空不限）</label>
+          <input id="fishActiveHours" type="text" maxlength="11" autocomplete="off" placeholder="09:00-23:00" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishPerVideoLimit">同一视频最多几条</label>
+          <input id="fishPerVideoLimit" type="number" min="1" max="3" step="1" placeholder="1" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMaxChars">单条字数上限</label>
+          <input id="fishMaxChars" type="number" min="10" max="300" step="1" placeholder="80" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMaxCandidates">每轮看几个视频</label>
+          <input id="fishMaxCandidates" type="number" min="1" max="20" step="1" placeholder="5" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishCommentsPerVideo">每个视频看几条评论</label>
+          <input id="fishCommentsPerVideo" type="number" min="1" max="50" step="1" placeholder="10" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinLikes">只回点赞 ≥</label>
+          <input id="fishMinLikes" type="number" min="0" max="10000" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinViews">只回播放量 ≥（0 = 不限）</label>
+          <input id="fishMinViews" type="number" min="0" max="10000000" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinAgeDays">只在发布几天后回（0 = 不限）</label>
+          <input id="fishMinAgeDays" type="number" min="0" max="365" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishBlockedWords">屏蔽词（逗号分隔）</label>
+          <input id="fishBlockedWords" type="text" autocomplete="off" placeholder="剧透, 广告" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field-row">
+          <input id="fishAllowTopLevel" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishAllowTopLevel">允许它在视频下发顶层评论</label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>现在跑一轮</h3>
+        <p class="settings-hint">「预览一轮」只生成不发帖，也不占配额；「发一轮」会真的用大肥鱼的账号在评论区说话，请确认人设和上限都调好了。</p>
+        <div class="settings-field-row">
+          <button class="settings-secondary-btn" id="fishSaveConfigBtn" type="button" data-settings-ignore-dirty>保存设置</button>
+          <button class="settings-secondary-btn" id="fishPreviewBtn" type="button" data-settings-ignore-dirty>预览一轮</button>
+          <button class="settings-secondary-btn" id="fishRunBtn" type="button" data-settings-ignore-dirty>发一轮</button>
+        </div>
+        <p class="settings-hint" id="fishRunResult" aria-live="polite"></p>
+        <ul id="fishLedger" style="list-style:none;padding:0;margin:8px 0 0"></ul>
+        <details style="margin-top:10px;">
+          <summary>今日日报</summary>
+          <pre id="fishReport" style="max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.5;"></pre>
+        </details>
       </div>
       </div>
 
@@ -8287,9 +8554,10 @@
           <p id="cfgReinitStatus" class="settings-probe-status" aria-live="polite">读取初始化状态中…</p>
         </div>
         <div class="settings-field">
-          <label for="cfgLanguage">语言</label>
-          <select id="cfgLanguage">
-            <option value="zh">中文</option>
+          <label for="cfgLanguage">默认语言（所有端共用）</label>
+          <select id="cfgLanguage" data-i18n-skip>
+            <option value="zh-Hans">简体中文</option>
+            <option value="zh-Hant">繁體中文</option>
             <option value="en">English</option>
           </select>
         </div>
@@ -8800,10 +9068,12 @@
        package by scripts/build.mjs because MV3's CSP forbids loading them from
        the backend. Classic scripts run before the module below so popup.js can
        read their globals. -->
+  <script src="shared/i18n.js"></script>
   <script src="shared/dialogue-confirmation.js"></script>
   <script src="shared/source-status.js"></script>
   <script src="shared/custom-sources.js"></script>
   <script src="shared/agent-chat.js"></script>
   <script type="module" src="popup.js"></script>
+  <script type="module" src="popup-fish.js"></script>
 </body>
 </html>

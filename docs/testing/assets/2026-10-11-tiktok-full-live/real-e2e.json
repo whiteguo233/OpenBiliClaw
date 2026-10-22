@@ -1,0 +1,293 @@
+{
+  "scope": "real environment acceptance of PR #286; incremental only until installed account gates pass",
+  "base_head": "73cfd717c6910537249d7d6fd2cb96d00dd6bd87",
+  "code_patch": "effective Cookie refresh without additional model warmup; visible login text; bounded hydration/profile/list waits; exact title/subtitle identity; no repeated own-profile navigation; 60s per-scope base within existing 360s absolute ceiling",
+  "runtime": {
+    "factory": "create_app() without injected components",
+    "http": "uvicorn loopback TCP :8420",
+    "storage": "private temporary directory, separate SQLite",
+    "profile": "existing real user profile copied into isolated storage; not created from TikTok in this test",
+    "models_and_network": "loaded effective user configuration, equality checked after temporary config serialization",
+    "scheduler": "disabled; bounded explicit producer invocations",
+    "credentials": "real installed extension automatic WebSocket-triggered sync; no manual cookie extraction"
+  },
+  "baseline_bug": {
+    "cookie_sync": "PASS",
+    "passport_verify": "verified",
+    "search": "guest client captured at boot was not refreshed after credential synchronization; search was not mounted; forced search selection returned zero without upstream search"
+  },
+  "post_fix": {
+    "cookie_sync": "PASS",
+    "passport_verify": {
+      "http": 200,
+      "outcome": "verified",
+      "verification": "verified"
+    },
+    "native_search_strategy_mounted": true,
+    "first_search": {
+      "fetched": 4,
+      "enqueued": 4
+    },
+    "first_eval_attempt": {
+      "deadline_seconds": 180,
+      "upstream_chat_codes": [
+        429
+      ],
+      "outcome": "test deadline, not a definitive model outage"
+    },
+    "eval_resume": {
+      "test": "resume actual fetched candidates with normal runtime",
+      "budget_seconds": 600,
+      "before_statuses": {
+        "pending_eval": 4
+      },
+      "drained": {
+        "evaluated": 4,
+        "cached": 0,
+        "rejected": 4
+      },
+      "candidate_statuses": {
+        "rejected_low_score": 4
+      },
+      "copy_ready": 0,
+      "recommendations": {
+        "http": 200,
+        "items": 0,
+        "tiktok_items": 0,
+        "identity_valid": false
+      },
+      "finished": true
+    },
+    "specific_interest_run": {
+      "test": "one additional real search using a narrower existing interest",
+      "budget_seconds": 600,
+      "pipeline": {
+        "discovered": 8,
+        "reason": "ok",
+        "enqueued": 8
+      },
+      "before_statuses": {
+        "pending_eval": 8,
+        "rejected_low_score": 4
+      },
+      "drained": {
+        "evaluated": 8,
+        "cached": 1,
+        "rejected": 7
+      },
+      "candidate_statuses": {
+        "cached": 1,
+        "rejected_low_score": 11
+      },
+      "copy_ready": 1,
+      "recommendations": {
+        "http": 200,
+        "items": 1,
+        "tiktok_items": 1,
+        "identity_valid": true
+      },
+      "finished": true
+    },
+    "discovery_totals": {
+      "fetched": 12,
+      "enqueued": 12,
+      "evaluated": 12,
+      "admitted": 1,
+      "rejected_low_score": 11,
+      "copy_ready": 1,
+      "recommendations_http": 200,
+      "tiktok_recommendations": 1
+    }
+  },
+  "installed_account_gates": {
+    "installed_build_and_hot_reload": "PASS: exact packaged artifact equality, actual extension reload acknowledgement and real backend queue claim",
+    "bootstrap": "FAIL: current-account/profile/list DOM readiness not consistently established",
+    "guided_init_profile": "BLOCKED: no accepted real TikTok account signals",
+    "incremental": "BLOCKED: bootstrap prerequisite not passed",
+    "native_save": "NOT_RUN: no upstream favorite mutation attempted",
+    "browser_control": "Codex browser control timed out three times; project-native extension reload and real task execution were used instead",
+    "account_runs": {
+      "original_four_scope_build": {
+        "backup_verified": true,
+        "installed_build_matches_pr": true,
+        "reload": {
+          "http": 200,
+          "ok": true,
+          "delivered": true
+        },
+        "kick_http": 200,
+        "task_status": "failed",
+        "result": {
+          "status": null,
+          "completion_status": null,
+          "scope_counts": null,
+          "videos": 0,
+          "viewer_present": false,
+          "error": "login_wall"
+        },
+        "result_keys": [
+          "error",
+          "debug"
+        ],
+        "smoke_profile_unchanged": true,
+        "installed_assets_restored": true,
+        "restore_reload_http": 200
+      },
+      "hidden_login_text_diagnostic": {
+        "scope_access_evidence": {
+          "tt_like": {
+            "path_is_login": false,
+            "login_selectors": [],
+            "signed_in_selectors": [],
+            "ssr_login": false,
+            "ssr_viewer_present": false,
+            "ready_state": "complete",
+            "visible_login_text": []
+          },
+          "tt_collect": {
+            "path_is_login": false,
+            "login_selectors": [],
+            "signed_in_selectors": [],
+            "ssr_login": false,
+            "ssr_viewer_present": false,
+            "ready_state": "complete",
+            "visible_login_text": []
+          },
+          "tt_history": {
+            "path_is_login": false,
+            "login_selectors": [],
+            "signed_in_selectors": [],
+            "ssr_login": false,
+            "ssr_viewer_present": false,
+            "ready_state": "complete",
+            "visible_login_text": []
+          },
+          "tt_follow": {
+            "path_is_login": false,
+            "login_selectors": [],
+            "signed_in_selectors": [],
+            "ssr_login": false,
+            "ssr_viewer_present": false,
+            "ready_state": "complete",
+            "visible_login_text": []
+          }
+        },
+        "scope_statuses": {
+          "tt_like": "failed",
+          "tt_collect": "failed",
+          "tt_history": "failed",
+          "tt_follow": "failed"
+        },
+        "scope_complete": {
+          "tt_like": false,
+          "tt_collect": false,
+          "tt_history": false,
+          "tt_follow": false
+        },
+        "scope_errors": {
+          "tt_like": "login_wall",
+          "tt_collect": "login_wall",
+          "tt_history": "login_wall",
+          "tt_follow": "login_wall"
+        }
+      },
+      "navigation_timeout": {
+        "result": "test wait exceeded 500s; extension reload subsequently delivered task_idle_timeout",
+        "profile_sink": "existing-profile diagnostic had unrelated runtime learning; not counted as a clean smoke isolation PASS"
+      },
+      "clean_runtime_final_readonly_run": {
+        "backup_verified": true,
+        "installed_build_matches_pr": true,
+        "reload": {
+          "http": 200,
+          "ok": true,
+          "delivered": true
+        },
+        "kick_http": 200,
+        "task_status": "failed",
+        "result": {
+          "status": null,
+          "completion_status": null,
+          "scope_counts": null,
+          "videos": 0,
+          "viewer_present": false,
+          "error": "profile_entry_not_found"
+        },
+        "result_keys": [
+          "error",
+          "debug"
+        ],
+        "smoke_profile_unchanged": true,
+        "installed_assets_restored": true,
+        "restore_reload_http": 200
+      },
+      "list_boundary_observed": {
+        "status": "failed",
+        "error": "scope_root_not_proven",
+        "profile_update": false
+      },
+      "after_bounded_list_wait": {
+        "backup_verified": true,
+        "installed_build_matches_instrumented_candidate": true,
+        "reload": {
+          "http": 200,
+          "ok": true,
+          "delivered": true
+        },
+        "kick_http": 200,
+        "task_status": "failed",
+        "result": {
+          "status": null,
+          "completion_status": null,
+          "scope_counts": null,
+          "videos": 0,
+          "viewer_present": false,
+          "error": "profile_entry_not_found"
+        },
+        "result_keys": [
+          "error",
+          "debug"
+        ],
+        "smoke_profile_unchanged": true,
+        "installed_assets_restored": true,
+        "restore_reload_http": 200
+      }
+    },
+    "restoration": "Installed package restored from the initial verified backup; temporary diagnostic source removed and production build rebuilt"
+  },
+  "regression": {
+    "pytest_source_auth_tiktok_producer_web": {
+      "passed": 340,
+      "skipped": 37
+    },
+    "pytest_readiness_contract_docs": {
+      "passed": 35
+    },
+    "ruff": "PASS",
+    "mypy": {
+      "result": "PASS",
+      "files": 318
+    },
+    "registration_audit": {
+      "PASS": 46,
+      "MANUAL": 14,
+      "NA": 2,
+      "MISSING": 0,
+      "fully_verified": false
+    },
+    "extension_final": {
+      "passed": 1781,
+      "failed": 0,
+      "chrome_build_assets": "PASS",
+      "firefox_build_assets": "PASS"
+    },
+    "python_final": {
+      "passed": 375,
+      "skipped": 37,
+      "failed": 0
+    },
+    "full_backend_suite": "Prior baseline CI passed; this live repair reran the affected source/auth/docs suites, not the full backend suite."
+  },
+  "privacy": "No cookies, account handles, profile text, titles, raw model logs, or private configuration included.",
+  "verdict": "incremental only; discovery real E2E passes; full account acceptance FAIL/BLOCKED"
+}

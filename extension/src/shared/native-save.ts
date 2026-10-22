@@ -22,8 +22,9 @@ export type NativeSavePlatform =
   | "douyin"
   | "twitter"
   | "zhihu"
-  | "reddit";
-export type NativeSaveSlug = "yt" | "xhs" | "dy" | "x" | "zhihu" | "reddit";
+  | "reddit"
+  | "tiktok";
+export type NativeSaveSlug = "yt" | "xhs" | "dy" | "x" | "zhihu" | "reddit" | "tiktok";
 
 export interface NativeSaveTask {
   id: string;
@@ -62,6 +63,7 @@ export const NATIVE_SAVE_PLATFORM_CONTRACT: Readonly<
   twitter: { slug: "x", hosts: ["x.com", "twitter.com"] },
   zhihu: { slug: "zhihu", hosts: ["zhihu.com"] },
   reddit: { slug: "reddit", hosts: ["reddit.com", "redd.it"] },
+  tiktok: { slug: "tiktok", hosts: ["tiktok.com"] },
 };
 
 const ACTIONS = new Set<NativeSaveAction>(["favorite", "watch_later"]);

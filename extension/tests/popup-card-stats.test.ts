@@ -33,7 +33,7 @@ test("popup exposes the shared count formatter + stats builder", () => {
 test("recommendation card appends the stats element", () => {
   const renderRecommendations = popupJs.slice(
     popupJs.indexOf("function renderRecommendations"),
-    popupJs.indexOf("function getDisplayedRecommendationBvids"),
+    popupJs.indexOf("\nfunction ", popupJs.indexOf("function renderRecommendations") + 1),
   );
   assert.match(
     renderRecommendations,

@@ -227,5 +227,7 @@ def test_remote_config_cannot_stage_tailnet_secret(monkeypatch, tmp_path: Path) 
         )
 
     assert response.status_code == 403
-    assert "只能在运行后端的电脑上" in str(response.json()["detail"])
+    # The whole config route self-gates for remote callers with the auth gate
+    # off (issue #300), before the tailnet-specific loopback check is reached.
+    assert response.json()["error"] == "local_only"
     assert not (config.data_path / "tailnet" / ".bootstrap-credential.json").exists()

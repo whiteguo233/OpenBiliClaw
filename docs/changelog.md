@@ -2,8 +2,9 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
-## 未发布：动态网站来源与浏览器发现流程（2026-10-02）
+## 未发布：动态网站来源与浏览器发现流程（2026-10-22）
 
+- **当前主线整合**：合入 `8b99ed46`（v0.3.231），保留 Instagram/TikTok、聊天多语言、显式补池和配置热重载，同时保留动态来源的独立份额、身份与三端管理；合并 Web 与封面网络依赖约束为 `httpx[socks]>=0.28,<1`。
 - **真实产品链路复验**：使用隔离完整服务、真实模型与网站，验证聊天审批建源、独立份额保存和正常定时发现；三端运行记录将待评估入队数与最终入池区分。CI 已安装 Chromium 的任务补充执行真实浏览器 workflow 回归。逐项结果与外站、安装环境限制见[动态网站验收记录](platform-source-acceptance.dynamic-web.md)。
 - **惊喜卡网站归属**：补齐惊喜单条、批量和主动推送的 `source_id/source_name`，避免自定义网站内容进入惊喜队列后只显示通用 Web 标签；canonical 内容身份与反馈规则保持一致。
 - **浏览器建源诊断与查询复用**：保留入口查询参数，引导模型依据实际内容容器生成选择器，并将前次试跑诊断用于有界修复。空白页面的核心资源 HTTP 失败直接报告原因；明确登录墙或待授权跳转优先进入接管。真实 Django 文档搜索验证同一持久流程可随关键词变化执行，导航仍受总时间预算约束。
@@ -17,6 +18,292 @@
 
 
 ## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
+## v0.3.231：Instagram 与 TikTok 正式可用（2026-10-22）
+
+- **Instagram 与 TikTok 转正式来源**：两者不再标注实验性。README、项目首页、模块文档、隐私说明、商店 listing 与 AMO 元数据统一为「正式可用、默认关闭、需在设置中显式启用」；能力范围不变（Instagram topic / creator 发现 + 登录态有界只读初始化；TikTok 访客 feed / hashtag / creator + 登录后关键词搜索），已知限制（TikTok 站内收藏暂缓、非空账号画像与周期增量、Firefox 登录态待验；Instagram 完整 Likes 历史、双账号、Firefox 登录态与手机真机待验）保留为明确的「已知限制」，不再用「实验性」描述。
+
+- **大肥鱼的通知文案改由人设生成**：新增 `build_blue_fish_notice_prompt`（system 字节静态，人设 / 视频 / 主人在 user 消息），每次通知花一次模型调用写一句 ≤45 字的钩子，提示词里带正反例，明确拒绝「推荐你看看」「正合你口味」这类模板腔；模型不可用或 JSON 不合规时回落原模板。`fish.owner_notice` 登记为 maintenance caller。
+
+- **大肥鱼的默认人设更可爱、私信真正可用**：默认 persona 改成「圆滚滚、反应慢半拍，会「哇」「救命」「谁懂啊」，偶尔自称本鱼」，通知 prompt 明确角色扮演并把「太像影评」的书面腔列进反例；私信补上 `msg[dev_id]`（此前 B 站返回 `-400 请求错误`），通知失败不再回落成公开回复。
+
+- 修复 Ollama embedding 在无聊天 SDK 时的构建问题（#318）：embedding 客户端独立于 chat SDK 构建，部署不再要求额外安装 OpenAI 兼容聊天依赖。
+
+- 版本号同步：`pyproject.toml` / `extension/manifest.json` / `extension/package.json` → `0.3.231`；Firefox / Safari 清单的版本由构建脚本从 Chrome 清单注入。发布记录见 [v0.3.231 发布记录](testing/2026-10-22-release-v0.3.231.md)。
+
+## v0.3.230：候选池恢复、蓝鱼实验室、多语言与来源权限优化（2026-10-21）
+
+- TikTok / Instagram 扩展站点权限统一默认声明：Chrome / Firefox 将 Instagram 从可选权限移入固定权限，Safari 补齐两者域名。Instagram 来源设置保存不再弹授权或在关闭来源时撤销站点权限；移除已无调用的授权等待代码。来源仍实验性、默认关闭，登录及实际站点访问检查保留；同步首页、README、安装、隐私和商店审核说明。验证见 [权限验收](testing/2026-10-21-default-source-permissions.md)。
+
+- 同步项目首页与中英文 README 的 TikTok / Instagram 状态：移除 TikTok 已随 v0.3.229 发布后残留的“待发版”，明确两者仍为实验性、默认关闭，区分公开发现、登录后个人信号与本地收藏，并补齐连接指南和验收台账入口。没有改变扩展权限或来源实现，也不提升现有账号/浏览器验收结论。
+
+- 修复多进程补池配置不生效：API 热重载曾只更新主进程，discovery worker 继续持有旧模型或暂停状态，导致已有原始候选却没有可推荐内容。桌面与 `start` / `serve-api` 统一监督后台进程，设置队列成功结束后重启读取配置快照的子进程；先确认旧进程退出，保留父入口锁定的数据目录，失败回滚/排队修订期间不切到中间配置。增加真实子进程 + SQLite 的候选评估、入池与文案回归（可推荐数 0 → 1）。详见 [诊断与验证](testing/2026-10-20-empty-pool-recovery.md)。
+- 补充空池修复的真实请求验收：本机 B 站、模型、Ollama、主 API 及四个子进程的推荐 HTTP 链路完成 `0 → 3 → 消费后 0 → 自动补回 1`，画像及评分门槛未变；同时保留原主备模型的 429/500 失败证据，成功轮次明确使用隔离实例中切换的可用模型。详见 [真实请求验收](testing/2026-10-21-empty-pool-live-requests.md)。
+- 更新 Chrome Web Store 脱敏截图生成器以展示全部 14 个来源，并修正移动端懒加载图片的捕获时序；素材已重新生成并目检。
+
+- **蓝鱼实验室「养蓝色大肥鱼」（实验性，默认关闭）**：新增 `src/openbiliclaw/fish/`，一只**独立的小号**从推荐池挑视频、读评论区、挑一条评论回复并 @ 对方。账号隔离是硬约束——凭证独立存在 `<data_dir>/fish/bilibili_cookie.json`，绝不回退主账号 cookie，鱼的 mid 或 cookie 与主号相同即拒绝运行；配置与追加式账本都在 `data/fish/`，删目录即重置。它是**动作层而非第二套管线**：候选直接取已评估的推荐池（`exclude_processed=True`），模型只负责挑评论与写回复；发布后的评论**只写鱼自己的账本**，不写推荐反馈、不把推荐行标成已评论、不触发 cognition，用户画像与推荐列表都不受鱼的影响；等级与配额由账本推导，没有独立的 `state.json`，查重也只看账本（`bvid:rpid` + 跨天累计的单视频上限）。默认 `dry_run` 只预览，真实发布前还要过日配额、最小间隔、单视频上限、`bvid:rpid` 查重、字数与屏蔽词、`allow_top_level` 代码级判断六道硬闸；连续 3 条失败且最近一次在 60 分钟内时定时轮自动暂停（手动触发可绕过）。评论按 `cursor.next` 翻页取满（最多 5 页，老返回结构仍单请求）；新增可选的 `audience_prompt`「只回哪类人」，进 user 消息的 `<audience>` 段；发布成功后把 B 站返回的 `reply_rpid` 记进账本。新增 `/api/fish/{status,config,account,run,ledger}` 七个接口（写操作走 B 站凭据门禁，`config/status/account/ledger` 在 degraded 模式仍可用），桌面 Web 与扩展 popup 设置页各新增「养蓝色大肥鱼」Tab，人设与说话规矩可直接编辑。提示词遵守缓存约定（静态 system + user 携带人设/视频/评论/约束）。详见 [蓝鱼实验室](modules/fish.md) 与 [设计说明](plans/2026-10-19-blue-fish-lab-spec.md)。
+
+- **蓝鱼成为 B 站发现的一路**：新增只读策略 `CommentThreadStrategy`（`comment_thread`），从已评估推荐池取 1–3 个种子（先按鱼账本跳过已回过的视频与评论）读评论区，把评论里点名的 BV 号还原成 `DiscoveredContent` 交给统一 batch evaluator；同一趟把「种子视频 + 评论快照」写进 `data/fish/plans.json`（最多 3 条、45 分钟过期），由动作层在原有隔离 / 熔断 / 配额 / 间隔 / 账本查重闸门内执行，`discover()` 本身绝不发帖。动作层优先消费计划（不再重复抓评论），没有计划时回退到原推荐池路径。路线只在 API runtime 注册（CLI 没有动作层），实验室关闭或没有独立 Cookie 时零网络请求。详见 [蓝鱼实验室](modules/fish.md#作为-b-站发现的一路)。
+
+- **大肥鱼可以在评论区 @ 主人了**：新配置 `notify_owner`（默认关）/ `owner_name` / `notify_daily_limit`，打开后每天最多一次，在推荐池第一条视频下发一条顶层评论 `@主人昵称 推荐你看看这条：《标题》。…`；B 站会把开头 `@昵称` 解析成真正的提及，于是推荐以「有人 @ 了你」的形式进主人的消息。昵称留空时自动读主账号 nav。通知与回复共用最小间隔与账本，通知所在视频计入 `per_video_limit`（同一条视频不再回复），账本新增 `notified` 行和 `via` 之外完全隔离——主号画像、推荐列表不受影响；桌面 Web 与扩展 popup 的鱼设置页都新增「在评论区 @ 你」一节。公开评论区会把小号与主号关联起来，所以默认关闭。详见 [蓝鱼实验室](modules/fish.md#配置项)。
+
+- **大肥鱼支持扫码登录**：设置页新增「扫码登录」，后端用 B站 web 扫码接口生成二维码，再用 `qrcode` 渲染成 SVG data URL（不引第三方图片服务、前端不打包 QR 库），确认后从跨域 URL 取出 Cookie 落盘并走原来的隔离校验——扫到主号会立刻回滚并拒绝。确认时选「记住我 / 长期」，选 24 小时第二天会失效。依赖新增 `qrcode>=8`（同时是 bilibili-api-python 的传递依赖，显式声明）。桌面 Web 与扩展 popup 都已接入。详见 [蓝鱼实验室](modules/fish.md#账号隔离)。
+
+- **大肥鱼的通知与节奏可配了**：`notify_channel` 支持 **评论区 @ / 私信 / 两个都发**（两个都发时评论失败就不发私信；私信走 `send_private_message`，失败只记原因不回滚评论）；新增 `trigger_prompt`「什么情况下才开口」进 prompt 的 `<trigger>` 段（system 保持字节静态，模型据此 skip）；新增 `active_hours`「只在几点到几点说话」（支持跨夜，按本机时区，手动跑不受限）；每次尝试同时写一行 `data/fish/out/<日期>.md` 日报。桌面 Web 与扩展 popup 都加了对应控件，i18n 目录已同步。详见 [蓝鱼实验室](modules/fish.md#配置项)。
+
+- **大肥鱼补上质量门槛与日报视图**：新增 `min_view_count` / `min_publish_age_days`（默认 0 = 不限；开启后统计缺失或发布时间不可解析的候选会被挡掉，全被挡掉返回 `quality_gate`）；`/api/fish/status` 新增 `today_report`，设置页的「今日日报」折叠块直接显示 `data/fish/out/<日期>.md`的内容。两个设置面板都加了对应控件，i18n 已同步。详见 [蓝鱼实验室](modules/fish.md#配置项)。
+
+- **大肥鱼补了无凭据端到端自检**：新增 `scripts/fish_e2e_stub.py`，本地假 B站 + 假模型，把真实 app / 发现路线 / 候选流水线 / 引擎 / 客户端 / 账本 / 日报整条链路跑一遍并逐项断言（登录隔离、BV 号入队、计划复用不二次抓评论、评论 @ / 私信 / 两者投递、日报与推荐行不被改动）。同时修了两处真机前提问题：`fish.comment_reply` 之前是「未知 LLM caller」会被并发闸门按 maintenance 兜底并打警告，现在显式登记；画像未初始化时发现路线每 5 分钟打一条带 traceback 的 WARNING，现在安静返回 0。
+
+- 修复只发私信的通知会占掉该视频的回复名额：`FishStore.view()` 现在只把 `delivery` 含 `comment` 的 `notified` 行计入 `per_video_total`（旧行没有 `delivery` 时按评论处理）。只发私信没有碰评论区，不该挡住同一个视频下的下一条回复。
+
+- **大肥鱼支持直接填主人的 mid**：主号 Cookie 失效时，`owner_mid` 用来做隔离校验、私信收件人；昵称留空时用匿名 WBI 请求 `/x/space/wbi/acc/info` 兜底查（偶发风控失败则只影响 @ 前缀）。桌面 Web 与扩展 popup 都加了「我的 mid」输入，i18n 已同步。
+
+- **多语言基础设施（#305）**：`[general].language` 现在真正驱动界面、CLI 与新生成的模型输出，支持 `zh-Hans`（默认）/ `zh-Hant`（繁體・台灣）/ `en`；旧值 `zh`、`zh-TW`、`en-US` 等自动规范化，未知语言在 `PUT /api/config` 保存时 400 拒绝。新增 `openbiliclaw language [locale]` 与 `OPENBILICLAW_LANG` 单次覆盖、`GET /api/i18n/locales`、`/i18n/ui/<locale>.json` 静态目录；桌面 Web、移动 Web、设置向导与插件侧边栏共用 `web/shared/i18n.js`，按渲染后的 DOM 文本匹配目录翻译（内容与用户输入不翻译，`data-i18n-skip` 保护指定区域）。UI 目录由 `scripts/build_i18n_catalogs.py` 从源码生成：2797 条文案 + 197 条插值模式（如「模型：{0}」「{0} 分钟前」），`zh-Hant` 由 OpenCC `s2twp` 生成，英文 100% 覆盖并由 `tests/test_i18n.py` 守护；数字与短日期按 locale 格式化（`331K` / `Sep 5` 对 `33.1万` / `9月5日`）。聊天与推荐理由的 system prompt 保持字节静态，locale 以 `<output_language>` 指令进 user prompt，provider prompt cache 不受影响；`zh-Hant` 额外约束只用繁體字（真实 provider 实测：仅写「Traditional Chinese」首轮仍可能回简体），配置保存/应用提示也按新语言返回；历史推荐 / 画像文本保留原语言、不批量重译。详见 [多语言模块](modules/i18n.md)。
+
+- 修复 Safari 默认 Cookie store 不完整时扩展无法同步 B 站登录的问题（#304）：仅 Safari 构建通过 `getAllCookieStores()` 逐 store 查找，只有唯一候选 store 同时包含 `SESSDATA` / `bili_jct` / `DedeUserID` 才上传，不跨 store 拼接登录态，也不静默选择多个完整候选之一；缺失诊断仅记录 Cookie 名称，不记录值。
+- 修复用户 Cookie 已修复但「B 站登录已失效」横幅永久悬挂的死锁：`auth_expired` 持久化状态过去只有「完整跑完一轮账号同步」一个清理点，而 guided init 暂停（`llm_paused`）或 worker 崩溃循环让 daemon 永远到不了那个点，且 `account_sync_state.json` 随数据迁移原样保留。现在①B 站凭据一经落盘（`_credential_landed`）即调用 `AccountSyncService.clear_auth_expired_state()` 清除残留 `auth_expired`；②`llm_paused` 早退的 tick 仍会对持久化的 `auth_expired` 做一次 nav 复验，已登录即清除（暂停原因本就是避免与 guided init 的 bootstrap 抓取竞争，故选择轻量复验而非完整阶段拆分）。
+- `POST /api/bilibili/cookie` 在 guided init 期间不再 409 丢弃异值 Cookie：暂存到 `data/runtime/staged_bilibili_cookie.json`，init 终态与 `/api/init-completed` 自动经正常 validate+persist 路径应用；`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段），桌面 Web 横幅会显示「新 Cookie 已暂存」。
+- 写入探针传输失败（`validation_network`）时 B 站 Cookie 不再拒绝落盘：短退避重试两次仍以显式 unverified 标记持久化（verdict 记为 `network_error` 而非干净失败，响应带 `unverified_reason`）；账号同步每轮真实拉取仍是复检兜底。平台明确回「未登录」（真实 -101）依旧拒绝；抖音等其他活体门禁平台行为不变。
+- 凭据写入后的运行时重建失败不再被 `suppress(Exception)` 吞掉：ERROR 带 traceback 记日志并记入 `pending_runtime_rebuilds`，下一次写入（包括此前是纯 no-op 的相同 Cookie 重投）自动重试，不再静默停留在旧 Cookie 的内存运行时上。
+- 旧版 `POST /api/bilibili/cookie` 响应不再吞掉 unverified 标记：传输失败兜底落盘时响应新增 `unverified: true` 与 `unverified_reason`（纯增量字段），`message` 改用门禁自身的「已按未验证 Cookie 保存」诚实文案而非笼统的 "Cookie synced"；`ok`/`authenticated`/`error_code` 语义不变，扩展旧版本行为不受影响。
+
+- `test_public_expression_drain_carries_partial_progress_into_missing_retry_transient` 与 `test_expression_coordinator_reports_same_branch_partial_progress` 依赖 drain 按 A→D 顺序出批，但 `_seed_pool` 写入的 `last_scored_at` 使用 SQLite `CURRENT_TIMESTAMP`（秒级精度），种子插入跨秒时 `ORDER BY last_scored_at DESC` 不再等于插入顺序，CI 上以约每秒一次的概率随机失败。测试新增 `_pin_seed_score_order`，在种子后显式钉入递减时间戳，使 drain 顺序与种子顺序一致；生产代码不变。
+
+- 修复默认部署下 `PUT /api/config` 零鉴权篡改配置的严重漏洞：远程对端可改写 `llm.*.base_url` 劫持全部 LLM 流量并窃取存储的 API Key、植入 `bilibili.browser_executable` 在本机任意执行。`PUT /api/config`、`POST /api/config/probe-service`、`POST /api/config/discover-models` 收口为与 B 站凭据接口相同的特权检查（`_local_or_authenticated_gate`）：本机或已认证会话可用，门禁关闭时远程一律 `403 local_only`；probe / discover 不写盘也可泄露 Key，一并收口。门禁关闭时跨设备的桌面 / 移动 Web 与扩展改设置会被拒，需先开启密码门禁。README 中英文、`config.example.toml` 与 `docs/modules/api-auth.md` 同步更新。
+
+- 修复默认部署（`0.0.0.0` 绑定 + `[api.auth]` 门禁关闭）下 `POST /api/bilibili/auth/export` 零鉴权泄露完整 B 站登录 Cookie（SESSDATA / bili_jct）的严重漏洞：凭据导入、导出、注销三个接口无论门禁开关都要求本机访问或已认证会话，远程零鉴权调用一律 `403 local_only`。移动 App 远程使用这三接口前需先开启密码门禁并登录。`config.example.toml`、README 中英文与 `docs/modules/api-auth.md` 同步补充安全警示。
+
+- 补全 #284 的 wire 清洗：正文、简介或 `published_at` 只由控制字符组成（如单个 NUL）时，`_sanitize_wire_text()` 清洗后得到空串却仍写入 canonical item，wire 校验以「must be omitted when empty」对整批抛错。现与 tag 列表一致，清洗后为空即省略该字段。
+
+- README 中英文与项目首页突出 Instagram/TikTok 新来源，补齐首页首屏、搜索/分享摘要和连接指引；区分 Instagram 已于 v0.3.227 发布、TikTok 自本版起正式发布，保留默认关闭、代理要求及账号验收限制。
+
+- query inspiration 新增可选 `parallel` grounding 后端，通过免费匿名 Parallel Search MCP 获取标题、URL 与摘录；默认后端顺序不变，沿用现有网络策略、限时和失败回退。V2EX 正式 search 的外部召回白名单同步接纳 `parallel`，配置后 `site:v2ex.com/t` 召回同样可走该后端。
+
+- TikTok 首版合并收尾：同步主线 v0.3.228 与动态日期测试修复，保留发现推荐已验收、收藏暂缓的范围；非空账号画像/周期增量及 Firefox 安装验收转由 #295 跟踪。
+
+- TikTok 全面复核：受测提交四项 CI 全绿（10316 passed），本地后端 426、手机 62、扩展 1814 项通过，真实发现/模型/推荐和桌面/手机展示续验通过。站内收藏按用户要求暂缓；非空真实画像/周期增量、Firefox 安装验收仍单列未完成，不宣称 full contract 通过。
+
+- TikTok 10 月 14 日已通过既有本地 reload 入口真正部署请求完成等待补丁，正式收藏仍未持久化；键盘入口请求 HTTP 200/业务状态 0 后刷新仍丢失，passport 会话验证有效，新安装包三 scope 均明确空态。补安装摘要与脱敏证据，非空画像/真实周期增量继续保留验收缺口。
+
+- TikTok 获准对另一条可播放视频执行单次收藏对照：即时金色书签在真正刷新后消失，本人收藏仍明确为空；补脱敏证据，原生持久化继续 FAIL，非空画像/真实周期增量继续 BLOCKED。既有修复 `12007157` 的四项 CI 已全绿，本轮未修改功能代码或部署扩展。
+
+- 按用户确认将 TikTok 网页历史改为可选：默认初始化和周期回拉只请求喜欢、收藏、关注，旧四范围任务不复用。修复正式 runtime 启动/热重载漏传 TikTok 来源开关导致周期任务不入队；补实际 runtime 周期/关闭回归和非空事件跨轮去重验证，真实空账号不合成画像。
+
+- TikTok 收藏时序修复：点击前被动观察原生请求，按钮乐观选中后等待请求完成再刷新，防止提前刷新打断请求；新文档持久化确认仍不可省略。回归已通过，真实网页请求业务成功但刷新未保存的问题仍保留为未通过验收。
+
+- TikTok 代理路由修复：默认 system 显式读取 macOS/环境代理，修复 libcurl 漏用系统代理、direct 继承环境代理及 custom 被 NO_PROXY 绕过；Web API、登录验证与封面统一适配。确认 Instagram/TikTok 网页操作沿用浏览器代理，后端设置不能替浏览器切换出口。
+
+- TikTok 10 月 13 日只读续验：保留首次正式收藏任务超时、只读诊断与恢复正式包复查均 empty/complete 的不同证据，未再执行上游写入；收藏持久化、非空画像及周期增量仍未完成真实验收。
+
+- TikTok 连续采集接收确认：页面先持久化恢复记录和指针再回复 task/scope ACK；后台不再把空返回当接收成功，缺失回执在原预算内重投同一只读 scope，避免导航或忙碌时静默丢任务。
+
+- TikTok 原生收藏实机续修：排除屏幕外预加载视频的按钮，优先点击唯一内层原生按钮，识别文字未更新的金色书签；TikTok 即时成功也必须刷新只读确认后才能入账，避免把乐观 UI 当作持久保存。已按具体视频授权执行真实请求，但刷新状态与账号收藏仍未确认持久化；非空画像/周期增量继续保留验收缺口。
+
+- TikTok 慢加载续修：原生收藏等待登录与内容共同就绪，不再把尚未加载的控件误报登出；延长已选中列表的内容等待。结果持久化后即释放采集锁，修复下一列表早于上一结果 ACK 到达时被忽略的问题。真实账号完整验收仍未通过，见 TikTok 验收台账。
+
+- TikTok 账号入口续修：兼容当前桌面页的三种显式空列表、设置页 session 身份和“通用”入口；内容脚本注册慢时有界重投。初始化不再复用普通 smoke、部分 scope 或失败结果。真实账号的完整四 scope、非空画像和站内收藏仍未全部通过，详见验收台账。
+
+- TikTok 账号采集续修：本人页标题与标签分阶段渲染时等待目标入口，避免提前报缺失；结果回传每次最多等待 10 秒，超时保留 FIFO 原文并允许下次重放，迟到 URL 解析不发送过期回调。真实喜欢页已选中，但列表与初始化/增量仍未通过验收。
+
+- TikTok 真实安装版验收补修：登录墙文字检测改为读取可见 `innerText`，避免 SSR/隐藏翻译脚本误报 `login_wall`；没有正向本人登录身份时仍拒绝采集；补上登录导航和本人资料标题的有界渲染等待，避免文档 complete 先于页面 hydration 时提前失败；兼容账号名位于 user-subtitle，并避免在本人页重复导航。
+
+- TikTok 真实环境验收补修：后端无 Cookie 启动后，扩展同步有效凭据会安全刷新发现客户端并挂载搜索，避免状态显示已登录但仍持有访客客户端；重复同步及 env 优先下的无效变更不触发重建。
+
+- TikTok full-source 验收修复：接通真实 bootstrap_profile 四 scope wire；限制本人列表、账号绑定与冻结预算；保留断网/超时 partial，整页导航恢复；普通 smoke 不写画像；收藏阻止 SPA 串视频。CLI 等待调整为 480 秒并同步后台标签页提示；补跨 Python/TypeScript 协议集成回归，账号真实 E2E 仍待浏览器连接恢复。
+
+- TikTok 验收全量回归补修：旧身份去重测试用运行时的新鲜发布日期验证时效证据成组保留，避免固定 2026-08-11 日期随时间过期导致失败；生产时效判断不变。
+
+- TikTok 契约澄清：passport 心跳用于发现凭据验证；账号任务依据浏览器 observed viewer 与后端账号边界，不将观察身份标成上游 verified。
+
+### 新增：TikTok full 升级收尾——契约测试反转与 audit 清零（2026-10-11）
+
+- `tests/test_tiktok_contract.py` 由「断言排除成立」整体改写为正向注册断言：`_PLATFORM_SOURCE_FIELDS` / 双 manifest content_scripts / `source_incremental_sync` 注册、native-save 不再是 local-only、guidedInit=true、dispatcher 任务标记与两阶段结果重投；契约登记的排除测试 `test_tiktok_engagement_danmaku_is_unavailable`（新建）与 `test_tiktok_media_deep_link_uses_https`（保留）精确存在并通过；移动端凭据排除保持正向「排除仍成立」。
+- audit `required_missing=0`：`extension.task` / `extension.background` 通过新增 canonical 路由键模块 `extension/src/content/tiktok/task-executor.ts`（re-export `tt/` 实现）并让 service-worker 经该路径引用类型而 PASS；`source-auth.capability-readiness` 通过 `_TIKTOK_CAPABILITY_AUTH_MODES`（discover=optional-credential，profile/bootstrap/incremental/native-save/cookie-sync=login-required）与 `auth_tiktok` 的 capabilities 投影 PASS；guided init 增加 tiktok profile 能力准入（未就绪时单独选择返回 `no_profile_signal_sources`，混合选择降级并保留公开发现）。
+- 文档同步：saved-sync / extension 模块的六平台表述更新为七平台（含 TikTok）；`tiktok.md` 补站内收藏与 capability 准入叙述；验收台账更新。
+- 同时收录并行落地的扩展侧提交：`8799b0aa`（tiktok-task-dispatcher + `content/tiktok.ts` / `tt/` DOM-only 采集管线）、`e65d7e21`（native-save executor 与 dispatcher 接线）、`0cb57594`（`ExtensionNativeSaveBroker` 注册与授权面，`TikTok Favorites` 目标）。
+
+### 新增：TikTok 接入 guided init 画像初始化（2026-10-11）
+
+- 解除排除：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 放行 tiktok，`web/shared/source-status.js` 的 `guidedInit` 翻为 `true`；setup / 桌面 / popup 的初始化来源清单由共享 roster 自动派生，setup 页补充 `tiktok_degraded` 文案。
+- CLI：`init` 新增 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`），交互模式默认 N 并展示扩展 / 登录 / 焦点抢占准备清单；新增 `_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events`（默认等待 180 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调），init 第 1 阶段在 Instagram 之后串行采集点赞 / 收藏 / 观看历史 / 关注。
+- 画像链：事件经 `_tiktok_events_to_history_items` 进入画像构建（`source_platform=tiktok`），`InitResult` 增加 `tiktok_events` / `tiktok_scope_counts` / `tiktok_status`；`degraded` 按部分完成上报（CLI 面板与 API `tiktok_degraded` reason）；`ok` 终态 seed 增量调度时钟。
+- 测试：`tests/test_tiktok_guided_init.py` 覆盖准入、CLI 选项、collect 全状态分支与 init 全流程事件进画像；weibo / instagram / github 的 roster-parity 测试更新为「init 名单覆盖全部 share 来源」。
+
+### 新增：TikTok 升级为 full 来源——后端浏览器任务基建（2026-10-11）
+
+- 新增 `sources/tiktok_tasks.py`：`TiktokTaskQueue`（独立 `tiktok_tasks` 表，镜像抖音的 single-flight claim / 15 分钟 stale lease / 每日预算）与 bootstrap 事件转换；scope 为 `tt_like` / `tt_collect` / `tt_history` / `tt_follow`（仓库首个观看历史类 scope），事件映射 like→like、collect→favorite、history→view、follow→follow，信号强度 0.85 / 1.0 / 0.35 / 0.6。
+- 五处注册同步完成：`task_result_protocol._TASK_TABLES`（两阶段 staged completion）、`source_bootstrap._BOOTSTRAP_TASK_TABLES` 与 `enqueue_tiktok_bootstrap` / `seed_guided_init_attempts`（`empty` 证据不足不 seed）、`bootstrap_state` 的 `tiktok_seen_item_keys`、`source_incremental_sync` 的 `SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_INTERVAL_FIELDS`。
+- 新增 `GET /api/sources/tiktok/next-task`（bodyless 204）、`POST /api/sources/tiktok/task-result`（partial/ok/degraded/empty/failed，完整两阶段 staged completion）与 `POST /api/sources/tiktok/kick`。
+- 配置面：`sources.tiktok.incremental_enabled`（默认 `false`）与 `scheduler.tiktok_incremental_hours`（缺省继承全局）落地 dataclass / TOML 解析 / 校验 / `PUT /api/config` / `config.example.toml`；`source_incremental_enabled` 总开关默认关闭不变。
+- guided init 接线（`_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS`）与扩展执行器属于后续步骤；`tests/test_tiktok_contract.py` 的旧排除断言按升级验收台账在后续步骤统一反转。
+
+### 修复：TikTok 来源交付验收（2026-10-04）
+
+- 修复插件来源关闭后无法重新开启：移除包裹启用框的卡片祖先 `aria-disabled`，保留停用卡片折叠限制；补执行真实状态同步函数的回归。
+- 同步 main 后修正 Instagram 测试的初始化名单假设（TikTok 不参与初始化），补齐十四来源架构图和存储别名文档，保持 TikTok 与抖音独立。
+- 2026-10-10 补齐已安装扩展自动 Cookie 同步、真实登录关键词搜索和配置模型评估证据；同步 main，保留 Instagram 与 TikTok 各自来源身份及网络语义。
+
+- 按现有接入规范纠正移动端凭据门：手机仅验推荐/本地保存，来源设置与凭据验证在桌面和 popup；补显式契约排除与回归，避免错误阻塞验收。
+
+- 真实完整后端验收发现并修复默认发现第二阶段漏传关键词及归因 ID 的问题；防止领取 science 后重新生成无关标签，补充真实策略回归。
+
+- 补齐作者/话题资料缺少 ID 的错误终态，禁止将未知响应记为成功空结果；完整 CI 基线后端 9970 项、引导浏览器 39 项通过，资料边界补丁再通过 157 项回归。
+- 修复 keyword claim 超预算、HTTP/业务失败伪装正常空、强制 Web 模式误回退与永久停用、feed 每次条数误用每日预算、匿名 inspiration 多词短语失效。
+- TikTok 封面增加逐跳 DoH 公网地址校验和 IP 固定，保留代理与 TLS 验证；签名器第三方说明纳入生成器，避免再生成时丢失。
+- formal/inspiration 共享持久请求时隙和限流冷却；补全收藏字段、只读 CLI smoke、双轨关键词测试、discovery-only 契约与验收记录；同步最新 main 的 Ollama 修复。
+- 真实模型 pipeline 已验证：4 条候选进入评估，3 条入池，1 条低分拒绝，768 维 embedding；登录搜索和安装版扩展证据单独记录，不能用公开取数代替。
+
+### 修复：TikTok 后端缺口（审计逐项）
+
+- **头图白名单**：`tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过。
+- **预算误报警**：`_warn_suspicious_budgets` 对等于官方默认值的字段豁免（TikTok 官方默认 `daily_feed_budget=3` / `daily_search_budget=3` 不再每次启动误报）；手写偏离默认的 1–4 值仍提醒。
+- **init 半状态**：`_INIT_SOURCE_ORDER` 移除 tiktok（guidedInit: false 的源不再能被手工 POST `/api/init` 置 enabled 却不采集信号）；tiktok-only 选择归一化为空并按 `no_sources_selected` 拒绝。
+- **CLI 入口**：`openbiliclaw discover --source tiktok` 走正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支）。
+- **inspiration 预览**：`TiktokPlatformSearchBackend` 接入 `build_platform_source_backends`（有 Cookie 走关键词搜索，访客走话题标签列表），`keyword-inspiration-preview --platforms tiktok` 真正可用。
+- **planner claim 语义**：search 策略挂载（有登录 Cookie）时 claim 的词原样喂 `tiktok_search`，`tiktok_tag` 退回常驻 tags + LLM 自生成；未挂载时维持 claim → tag 压缩。used/failed 标记跟随实际消费词的策略。
+- **native-save 误导状态**：tiktok 加入 local-only 名单，本地收藏落 `unsupported` / `local_only_source` 而非误导性"待升级重试"。
+- **latent URL 身份映射**：`_extract_content_id_from_url` 支持 `/@user/video/<id>` 与 `/photo/<id>` → 数字内容 id。
+- 回归锁补齐：`tiktok_tag.generate_tags` / `tiktok_search.generate_keywords` 登记进 core-memory opt-out 政策测试；`config.example.toml` TikTok 段头改为准确的「Web API 主后端 + yt-dlp 兜底」描述。
+
+### 功能：TikTok 前端展示面（issue #88）
+
+- **桌面设置页 TikTok 卡片**：照 YouTube 卡片补齐——启用开关、后端 mode（auto/web/ytdlp）、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好；`SOURCE_ENABLE_SELECT_IDS` / `SOURCE_SHARE_INPUT_IDS` / `SOURCE_CARD_LABELS` / `DESKTOP_SOURCE_DATE_SLUGS` / `buildConfigUpdate` / 占比建议同步。修复保存配置丢 `scheduler.pool_source_shares.tiktok` 的回归点（Playwright E2E 钉死）。
+- **popup 平台归一修正**：`tiktok` 不再归并到 `douyin` 族（此前 TikTok 内容在 popup 显示为"抖音"）；`PLATFORM_DISPLAY_NAMES` 补 TikTok 条目。
+- **popup 设置页 TikTok 卡片**：照 YouTube 卡补齐启用、Cookie、mode、region / tz_name、tags / creators、预算、节流、占比与「测试连接」。
+- **展示一致性**：saved / history 平台名、view-models URL 推断与 `RUNTIME_TOPIC_LABEL_MAP`（tiktok_feed / tiktok_search / tiktok_tag / tiktok_user 中文标签）、saved-sync-core 别名与 host 推断、平台徽章色、推荐页静态过滤 tab 全部覆盖 tiktok。
+- **文档**：十二 → 十三计数修正（discovery / runtime / config / 架构图 / 商店 listing），清除「纯 yt-dlp 无登录态」过时描述，README 中英文平台清单补 TikTok，模块文档同步 planner claim 新语义与设置页卡片。
+
+### 功能：TikTok Web API 后端（访客身份 + 请求签名，issue #88）
+
+- 新增 TikTok Web API 后端（`sources/tiktok_web.py`）：以访客身份直连 TikTok Web API，请求经 vendored 纯 Python 签名（`sources/tiktok_sign.py`，Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0）+ curl_cffi Chrome TLS 指纹发送；bootstrap 由匿名推荐流响应铸真实 msToken，绝不伪造。2026-10-03 实测访客身份打通推荐流 / 创作者列表 / 话题标签列表，关键词搜索被上游 gate（预留 client 方法，登录 Cookie 可解锁）。
+- 新增 `tiktok_feed` 匿名推荐流策略（默认 `daily_feed_budget=3`）；`tiktok_tag` / `tiktok_user` 支持 web 路径，由 `TiktokRouterClient` 按 `[sources.tiktok].mode`（`auto` / `web` / `ytdlp`，默认 `auto` = web 优先 + yt-dlp 回退）分发；新增可选登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`），source-auth 契约改为可选凭据语义。
+- 新增默认依赖 `curl-cffi>=0.15`（Chrome TLS impersonation，与 yt-dlp 可选依赖同包兼容）。
+
+### 功能：TikTok 登录 Cookie 插件自动同步（issue #88）
+
+- 浏览器插件 `cookie-sync.ts` 覆盖 tiktok.com：检测到登录（sessionid / sessionid_ss / sid_tt）后把完整 Cookie jar 推送到统一凭据端点 `POST /api/sources/tiktok/credential`（结构校验 + passport 心跳 live probe，与设置页粘贴同一验证强度），落盘 `data/tiktok_cookie.json`；支持 `tiktok_cookie_sync_requested` runtime-stream 主动拉取、`cookies.onChanged` 按平台防抖与独立小时 alarm。访客身份下无 Cookie 是合法状态，未登录 / 登出时静默跳过。
+- manifest（Chrome / Firefox）host_permissions 增加 `*://*.tiktok.com/*`；桌面 dashboard 在 `tiktok_cookie_synced` 事件后刷新来源状态。
+
+### 功能：TikTok Cookie 探针、凭据写入门面、地区配置与搜索策略（issue #88）
+
+- **Cookie 主动探针**：新增 `probe_tiktok_login()`，调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳）验证可选登录 Cookie；`success` → verified，401/403 / 显式 error → failed，传输失败与风控空响应 → indeterminate。`VERIFY_ACTIONS["tiktok"]` 登记为 `live_probe`，契约在无 Cookie 时仍诚实报 `verify_method="none"`。
+- **凭据写入门面**：`CREDENTIAL_SPECS["tiktok"]` 开通 `POST /api/sources/tiktok/credential`（结构门 sessionid / sessionid_ss / sid_tt 至少其一 + live gate），`PUT /api/config` 粘贴同强度验证，落盘 `data/tiktok_cookie.json`。
+- **地区参数配置化**：`[sources.tiktok].region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）注入访客身份 base params；空值回退默认。
+- **`tiktok_search` 搜索策略**（默认不启用）：仅当配置登录 Cookie 且 mode 允许 web 时挂载；planner 注入词原样使用（不做 hashtag 压缩），搜索响应混合卡片只收视频条目；`daily_search_budget` 默认 3。登录态抓取违反 TikTok ToS 有账号风险，文档与配置注释已明确。
+
+### 功能：新增 TikTok 内容源（yt-dlp 轻量后端，实验性，issue #88）
+
+- 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。
+- 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
+- `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
+
+- 修复打包版 Ollama embedding 无法构建导致 init 永远 409（issue #318）：Windows 桌面安装包里 openai SDK 的 httpx 包装在构造时抛 `'AsyncHttpxClientWrapper' object has no attribute '_mounts'`，而 Ollama embedding 复用了 `OllamaProvider`（`OpenAIProvider.__init__` 会创建 `AsyncOpenAI`），异常被 `build_embedding_service` 的裸 `except` 吞掉 → `/api/init-status` 只报 `misconfigured`、`POST /api/init` 恒 409、推荐池恒空，用户改 base_url / provider 都绕不过去。现在 embedding 走新增的 `OllamaEmbeddingProvider`（原生 httpx 直连 `/api/embeddings`，不构造任何 chat SDK 客户端），`embed()` 的 CPU 回退 / 重试 / 响应体日志抽成 `embed_via_native_api()` 供两条路径共用；构建失败改为带 traceback 的 WARNING，不再静默返回 None。真实 Ollama + 真实 HTTP 请求的修复前后对照见 [验收记录](testing/2026-10-22-issue-318-embedding-e2e.md)：坏 SDK 注入下 main 复现 `misconfigured` 与 `POST /api/init` 恒 409，修复版 `embedding_check: ok` 且 init 返回 202。
+
+## v0.3.229：TikTok 新来源、远程访问安全收紧与 B 站登录失效横幅死锁修复（2026-10-16）
+
+- TikTok 新增实验性发现与登录态关键词搜索；B 站凭据及配置写入接口收紧远程访问；修复 B 站登录失效横幅在 Cookie 修复后仍悬挂的问题。Chrome / Firefox AMO 已提交待审核，桌面安装包、双架构 Docker 镜像与插件包均已发布，完整回执见 [发布记录](testing/2026-10-16-release-0.3.229.md)。
+
+## v0.3.228：画像门控大幅降本与安装包信任修复（2026-10-13）
+
+- 修复 macOS 打包在 Apple stapler 抖动下无重试：`staple_macos_artifact` 的 staple/validate 此前单次调用即失败，而 Apple ticket-delivery 端点会间歇断连（v0.3.228 x64 连续三次 exit 68，公证本身已 Accepted）；现两个动作各自重试 3 次（10s/20s/30s 退避），与 hdiutil 创建路径一致。
+
+- 修复 macOS 桌面发布构建的 bge-m3 digest allowlist 漂移：macOS 任务此前下载 `ollama/releases/latest` 的 Ollama.app，新版客户端 pull 到的 manifest 多出一层嵌套 manifest blob（内容为引用同一 config/model/license 的包装清单，已核实），触发 `make_model_seed` 防漂移护栏失败；Windows 任务一直固定在 0.32.13 无此问题。现将 `release-desktop.yml` 与 `build-installers.yml` 的 macOS Ollama 统一定位到 v0.32.13，两平台客户端行为一致。
+
+- 修复 posture gate soul_rebuild 负载未按 spec 实现为 diff 摘要（#288）：`_gate_soul_rebuild` 的判定快照此前把完整兴趣列表逐字节传两遍（before + after），单条兴趣中四个 ISO 时间戳字段占 55% 字节却对判定无用，实测单次输入高达 13 万～15 万 tokens。现改为 `_interest_rebuild_diff()` 生成的 compact diff 摘要（added/removed/changed + 计数，条目仅保留 name/category/weight/evidence_count），与 spec 接入点③「rebuild diff 摘要过门控」一致；confirmed_hypotheses 触发源前后快照相同，diff 为空、信号由 context 承载。真实 provider 端到端实测单次输入 41,149 → 4,221 tokens（降约 90%），shadow 默认模式调用方零延迟不变。
+
+- 修复 Windows 安装包被 Kaspersky 查杀（#281）：移除打包流程中对随包 `ollama.exe` 及 `lib/ollama` runner 的 PE 子系统改写步骤（`release-desktop.yml` / `build-installers.yml`），并删除 `packaging/patch_pe_subsystem.py` 及其测试。该改写使 Ollama 官方 Authenticode 签名失效（`TRUST_E_BAD_DIGEST`），被杀软按「已签名但被篡改」报 `HEUR:Trojan.Win64.Generic`；上游 ollama 自 PR #8668 起已用 `CREATE_NO_WINDOW` 启动 runner，配合 supervisor 启动 `ollama serve` 时的 `CREATE_NO_WINDOW`，不再弹控制台窗口，无需改二进制。两个 workflow 在编译安装包前新增 `Get-AuthenticodeSignature` 验签门禁，随包 exe 签名失效即构建失败，防止同类回归。同时将 `packaging/openbiliclaw.spec` 的 UPX 压缩关闭（`upx=False`），避免本地构建产出更易被误报的 UPX 壳 bootloader。
+
+- 聊一聊按“允许有限追问，不能无限追问”的用户澄清标准完成真实多轮验收：桌面/移动 Web、HTTP/SSE、重启恢复与 CLI 共 20 次回复，未复现无休止追问；18 个 durable 回合全部完成。实测触发主备模型降级，可选尾问仍存在；不是单模型或四端真机全面保证，详见[验收记录](testing/2026-10-14-chat-followup-e2e.md)。
+
+- 聊一聊统一新旧入口与内置角色的收敛规则：明确需求直接回应，模糊但可做先给结果，普通需求默认最多澄清一轮；主动探索连续两轮提问后总结，用户想停或让系统决定时不再追问。口味探寻师移除执着深挖动机的指令，暂时偏好保留时间范围。规则在现有模型调用中生效，不增加分类调用或修改工具权限；为提示词约束，非硬计数器。真实模型仍偶发附加追问；早期“零附加问题”的严格样本未通过，后续按用户确认的“允许有限追问、必须收敛”标准完成验收，见[最新记录](testing/2026-10-14-chat-followup-e2e.md)。
+
+- 修复一条脏候选拖死整批评估（#284）：B 站简介等来源文本夹带 ASCII 控制字符时，`build_canonical_evaluation_batch` 的 wire 校验对整批抛错，重试烧完 50 次 `batch_eval_attempts` 后全批进 `failed_eval`。现新增 `_sanitize_wire_text()`，在构建 canonical 评估批的边界剥除 `\t \r \n` 之外的 C0 控制字符与 DEL、替换孤立代理项，清洗后为空的 tag 条目丢弃、整字段为空则省略；清洗只作用于发给 LLM 的 wire 副本，存储行保留原文，wire 校验器对 LLM 响应侧保持严格。已死信的历史候选由评估协调器启动时既有的 `revive_failed_eval_candidates` 自动复活，复活后经清洗即可正常评估。
+
+- 修复 `test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group` 时间炸弹：测试硬编码 `published_at='2026-08-11'` 并断言迁移后 `pool_status='fresh'`，但该日期随现实时间越过 `current` 时效类 60 天 admission TTL（2026-10-10 起）后迁移正确重算为 `temporal_review_hold`，CI 开始失败。改为动态生成「7 天前」时间戳，测试意图（近期 current 证据 → fresh）与时间解耦。
+
+- v0.3.228 发布回执已归档：Chrome / Firefox AMO 已提交待审核，macOS arm64/Intel 与 Windows 安装包、双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。桌面标签因打包修复指向 `92d4f39f`（仅工作流/打包差异），详见 [发布记录](testing/2026-10-13-release-0.3.228.md)。
+
+## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
+
+- v0.3.227 发布回执已归档：Chrome / Firefox 已提交待审核，正式签名的 Mac 与 Safari 安装包、Windows 安装包和双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。详见 [发布记录](testing/2026-10-06-release-0.3.227.md)。
+
+- Safari 正式包关闭 Xcode 自动注入的调试权限，公证拒绝时立即输出诊断并停止；支持钥匙串公证凭据及保留原标签的打包修复。
+
+- macOS 桌面包强制 Developer ID 签名、Apple 公证、票据和 Gatekeeper 校验，使用拖入 Applications 的安装流程，聚合发行页同步移除旧的未签名放行说明；arm64 / Intel 云端流程已验收。
+- 后端与插件纳入 Instagram 实验性、默认关闭的只读发现和账号导入；来源仍为 incremental only，完整 Likes 终止、第二账号、Firefox 登录态及真机等限制以验收台账为准。
+- 初始化失败与恢复状态、跨浏览器任务恢复及封面网络边界修复随版交付。版本字段统一为 0.3.227，发布与商店审核回执见[发布记录](testing/2026-10-06-release-0.3.227.md)。
+
+- 发布门禁修复：初始化失败状态测试显式使用隔离配置，避免依赖本机模型凭据而在 CI 落入配置恢复模式；8 个原有 HTTP 场景保持原断言并通过，不修改产品行为。
+
+### Instagram 集成历史与验收边界
+
+- **main 集成交付（2026-10-06）**：保留最新主线的 GitHub、时效、Safari 恢复与聊天改动；Instagram 接通统一发布日期配置/准入，README 中英与首页标明实验性、默认关闭、尚未发布。[合并检查与交付记录](testing/2026-10-06-instagram-delivery.md)；已打开页面的跨端保存状态更新限制仍保留。
+
+- README 中英与项目首页同步入口和验收边界；真实账号初始化、配置模型发现与各端消费证据见 [Instagram 台账](platform-source-acceptance.instagram.md)。当前不发布新版本，不把模拟器当作手机真机，也不声称 Likes 全量终止或跨端实时保存状态已验收。
+
+- **补齐 Firefox 匿名 creator 的原生 SSR 公开证明**：真站页面有12条帖子且 `xig_user_by_username.is_private=false`，原解析器只识别 `data.user` 因而0响应。现支持已观察的 ScheduledServerJS/Relay 白名单包装；修复真实 Relay 的 `pk` 与 `id` 不同被误拒，优先正整数主键，非法主键不能回退放行。仍要求当前路径、用户名、媒体作者及非私密证明一致，未知/私密/建议账号不放行，新无效证明和截断扫描撤销旧缓存。实际 MAIN 扫描、拆分 SSR 与反例均有红绿回归，不执行模块指令或上传原始SSR；真站结论独立记录于台账。
+
+- **修复 Instagram 小页数首屏竞态**：首屏只等 1.5 秒可能在真实响应到达前用完单页预算；现独立、有界等候已有 MAIN 响应，保持原页数/隐私/empty/绝对期限规则，429/验证及时停止，最后一页不多滚动。迟到响应、无响应和迟到限流先红后绿；真实最后包结果见台账，不以普通页面有帖子替代任务成功。
+
+- **Instagram 真实收尾与有界执行**（2026-10-03）：新空库经真实 popup 取得 5 条账号事件，当前配置模型完成新画像、10 条候选及首批 2 条推荐；普通换批真实验证预算失败提示，并补齐余下 3 条文案。Likes 连续三次无新增提前 partial 停止；30 秒请求间隔不再提前耗尽 20 秒网络超时，bootstrap idle 根据间隔有界调整，绝对期限不变。Firefox 补测发现分钟轮询争锁可能反复错过领取，新增 30 秒 durable 重试，仍先恢复/持锁/权限检查。海外封面经所选代理查询固定 Cloudflare DoH，再逐跳固定公网 IP，修复本机 DNS 污染导致的真实封面失败；TLS、重定向和 SSRF 边界未放宽。完整证据及剩余外部门禁以[台账](platform-source-acceptance.instagram.md)最新日期为准，历史失败仍保留。
+
+- **补齐 Instagram 手动恢复与封面安全边界**：普通“换一批”调用 Instagram 正式 producer 并显式评估/生成推荐文案，后台调度关闭也可恢复；网络、限流、扩展离线失败给出实际失败态。共享封面抓取逐跳解析并拒绝非公网地址，HTTP/HTTPS 代理 CONNECT 与 SOCKS5 均固定数字目的 IP，保留原域名 Host/TLS 验证，按每个目标的国内直连/海外策略选路。显式声明已有传递依赖 HTTPCore；桌面滚动回归改为等待实际 wheel 结果而非固定 80ms，不修改滚动行为。完整验收与外部账号/许可边界见 Instagram 台账。
+
+- **修复首轮发现失败却仍显示“正在补货”**：运行状态从持久 init 结果投影安全的失败提示，popup、桌面和移动端显示“内容发现未完成／画像已保存”，实时失败事件同步刷新空态；待处理行为、关键词规划和未实际执行的刷新 success 不再冒充执行中或恢复。真实可用供给的恢复凭据按 init run 持久化，消费库存或重启不会复活旧错误，重初始化退休的历史推荐不算新一轮恢复。popup 首次实时连接后补读当前状态，弥合订阅前漏掉终态的窗口，并保留较新库存字段、防止迟到状态倒灌；不替换已有推荐卡。保留原始失败诊断；Instagram 恢复使用明确的发现入口，不承诺普通换批会重建任务。同一失败 CDN 资源在当前代理节点独立复现、已有备用节点两次实际下载成功，但共享代理分组切换仍需用户确认，未将备用路径探测标成真站全链路已恢复。
+
+- **记录 Instagram 最新真实请求阻塞，保留失败证据**：2026-10-02 10:58 UTC 新空库初始化真实取得 5 事件，当前模型两次调用成功并生成画像；话题页脚本/样式连接关闭导致 discovery 无有效响应、0 候选/推荐，一次有界诊断与普通页面复现。最新验收不沿用早先成功，详见台账；未修改代理或生产代码，另记录 popup 空态未直接显示该失败原因。
+
+- **修正 Instagram 小预算提示单位并补测本地后续流程**：配置提示按实际保留的候选条数描述日预算，不再误写成任务次数；不改变额度或扣减逻辑。既有真实推荐数据的隔离副本补验本地收藏/稍后再看、重复操作、移动端移除、重启持久化、来源开关热应用和跨进程 discovery 冷却，另验证 init-only 不入周期队列及离线 CLI 超时。该轮是实际本地 HTTP/SQLite/UI 验收，不冒充新的 Instagram/LLM 上游请求；此前暂缓门禁仍未升级为通过。
+
+- **加固 Instagram 私人任务的可观测账号连续性**：executor 现在 saved/following 每页和原生 Likes 观察的前后，以及未先命中终态风险时的正常结果提交前复核冻结账号；早到 Likes replay 必须绑定到已加载任务页的 `PolarisViewer` 与新鲜初始身份，证据缺失、不可解析或不一致均以 0 items 失败。检出切号时（包括 username 未变但数字 ID 已变）以 `instagram_account_changed` + 0 items 失败，由 durable dispatcher 隔离已持久中间 rows，不合并跨账号 partial。已观察的 429 / challenge / 登录墙仍在新增探针前停止，身份与私有数据 GET 共用冻结请求间隔并保留原页/条/deadline 上限。该修复只承诺检查点可观测的切号防护，不声称 Instagram 上游会话是原子快照；两次复核间完整的“切出再切回”仍无法观测。
+- **修复 Instagram 后端晚启动时的登录状态恢复**：配置不可达与来源禁用分开处理，前者保持不读 Cookie 并在 1 分钟后重试；恢复后纯布尔心跳成功即退回小时周期。48 项定向回归及最终安装态断线恢复通过。代理节点经用户批准调整后，全新隔离库的真实 UI 初始化取得 5 事件，使用当前模型完成画像、发现 10 候选并生成 4 推荐；采集上限仍保留 partial，未追加站内互动，未关闭或重启 Clash Verge。
+- **修复初始化失败提示串平台**：Instagram-only 真站预检返回登录 / 扩展连接提示时，popup 曾被共享错误码的旧 Bangumi 文案覆盖；popup、setup、桌面首次与重初始化入口现优先显示后端有界纯文本详情，无详情时使用平台中性兜底。保留 Bangumi 三档账号提示，补错误码、非法详情及真实浏览器 / 本地 HTTP 响应回归；不改变后端准入条件。
+
+- **修复移动推荐长列表浮层遮挡，补齐 Instagram 安装态边界测试**：回顶按钮有界避让卡片操作，无安全位置则暂时隐藏；375/390/768 宽度、resize/触底/回顶及既有 delight 共 24 项回归通过。另以合成上游、真实已安装扩展与 API 验证“提交后 ACK 被抑制→全浏览器重启→逐字节重放→清空 outbox”；Chrome ZIP 新 profile 的文字卡/原生侧栏，以及 Firefox ZIP 实装的 MAIN/跨 world/creator 执行均通过，不冒充真站或商店安装。当前代理路径的普通 HTTPS 同样中断，fresh 真站初始化仍阻塞，详见验收台账。
+
+- **修复 Instagram-only 引导初始化首轮推荐漏接**：真实全新设置流程发现第 4 阶段仍调用 B 站固定补货；现 API/CLI 复用 Instagram 正式 producer，扩展领取前登记 init-owned 新建/恢复任务，显式 flush 小批候选并同步生成文案。关闭后台 scheduler 仍可手动初始化，不放宽评分或解开旧任务隔离。新增先红后绿的来源路由、真实 API ownership、真实 pipeline 小批量及 CLI 装配回归；其它旧来源的初始化路由保持兼容。
+
+- **加固 Instagram 恢复、隐私和失败终态**：修复恢复后跨账号 rows 合并、saved/following 坏行被误报空集合、creator 限流未停止滚动及缺少正向公开证明的问题。补 MAIN→executor、durable dispatcher 和真实 API 回调回归，统一安全失败码以释放 lease。真实完整浏览器终止、受控网络故障下跨源互斥及原生 side panel 已验；当前真实模型的 topic/creator 发现复验通过。扩展全量 1459 项通过；另修复 saved-sync 测试在持久完成早于异步清理时的竞态，不改其生产逻辑。全部证据与剩余外部门禁见 Instagram 验收台账。
+
+- **修复真实非空 Instagram Likes 的 Bloks 解析**：复合媒体 ID、空白网格占位及界面引用曾造成 `response_schema_degraded`；现复用共享 ID 正规化并区分数据与界面引用，不执行表达式或放宽空状态判据。逐对象授权的真实样本已验证 2 点赞 + 2 收藏 + 1 关注准确导入，两轮事件数 0→5→5；当前真实模型基于这批事件生成新隔离画像，真实发现 4 条、过滤已看过 1 条、评估 3 条、入池 1 条，并生成 1 条推荐。媒体 cap=2 保持 partial，不冒充全历史分页。扩展全量 1448 项、Python 定向 78 项通过。
+
+- **补充 Instagram 合成初始化闭环并修复画像重建的跨平台登录门禁**：规范化合成任务通过正式 API/ingress 落 5 条事件，覆盖重复任务去重、partial、账号冲突和 smoke 隔离；辅助脚本拒绝既有数据库。`rebuild-profile` 只读本地事件，不再要求 B 站登录，配置检查保留。真实当前模型已基于合成事件完成偏好和画像生成；后续 4 条合成 discovery 候选因模型链限流留在 pending_eval，不冒充真站或推荐闭环通过。
+
+- **补齐可选登录 Instagram topic 发现**：经用户授权，仅在直接 topic 任务页被动读取自然返回的公开 MediaGrid，不提交 Search、不重放私有搜索请求。补齐路由、公开作者、未知单元、错误后停止滚动和截断保护，保存 authenticated-topic 布尔证据。真实正式 discovery 首轮取得 topic/creator 各 2 条，复验又取得 2 条；当前模型路由累计评估 6 条均低于准入阈值，无新增推荐。348 项 Python 定向测试、1447 项扩展测试通过；非空个人初始化与事件→画像收敛仍未验收。
+
+- **修复 Instagram 网页身份、点赞读取和 creator 漏收**：账户表单与新鲜 `PolarisViewer` 双 ID 验证替换 mobile current-user；监听补 `/graphql/query`；Likes 改为被动解析原生 activity Bloks，不伪装 UA、不执行表达式。实测三个个人 scope 均确认空集合、creator 队列返回 4 条 cap-partial 内容；非空 Likes 分页、topic 和完整画像链仍未通过，详见验收台账。
+
+- **修正 Instagram 正式 discovery 的假成功退出码**：2026-09-28 真站任务以 `response_envelope_unobserved` 失败，但 CLI 原来返回 0。现在失败和未知异常 reason 返回 1；明确空结果及节流、池满、预算耗尽等正常跳过保留 0，错误原因仍可见。新增真实 CLI → producer → 持久队列回归，仅模拟浏览器传输。初始化仍停在身份 HTML 响应，数字账号查询再次 429；topic/creator 均未获取候选，本轮没有进入 LLM 评估，不宣称完整 E2E 通过。
+- **纠正 Instagram 已登录仍提示 challenge 的误报**：真实诊断发现 current-user 路径重定向为首页 HTML，旧分类器误将应用脚本中的 challenge / captcha 路由名当作安全验证。现剔除非可见代码和 metadata，区分真实表单 / 明确文本 / 最终跳转路由，并修复 `checkpoint_url: null` 被字段名误判的问题；真实 429、登录墙和验证仍停止读取，未知 HTML 不伪装成空。网页会话已确认有效，但数字账号解析探针遇到 429，未改用未经真测的身份 fallback，完整初始化仍未验收。
+- **修复 Instagram 真站复验暴露的失败隔离与恢复问题**：已观察的兴趣别名映射为有界公开 topic seed；仅对同时具备专属标题与断链正文的软 404 返回 `public_page_unavailable` 并继续其他 seed。Producer 保留 failed task 的 canonical 错误，partial 已接收内容继续交接，但 challenge、限流、登录墙与 schema error 立即停止后续任务。扩展把有界 claim / progress / exact-result outbox 保存在 `storage.local`，浏览器重启丢失任务页时明确以同一 claim 结束，ACK 后清理；不保存 Cookie 或原始响应。设置保存的原生权限等待增加 30 秒超时、解锁与未保存提示。通用 OpenAI-compatible 实例只复用已经成功的有限格式兼容参数，不改用户模型路由。2026-09-26 再次真实请求确认个人初始化为 `challenge_required`，登录浏览器的公开页仍为 `response_envelope_unobserved`；完整账号 E2E 未通过，详见验收台账。
+- **补齐 Instagram 桌面设置并记录真实场景验收缺口**：桌面平台源页新增实际来源卡，补全启用、topic / creator 预算、节流、初始化上限、候选份额和份额建议的读写闭环；沿用既有卡片布局、字段标签与保存状态，明确扩展站点授权和登录步骤。新增来源注册表与实际卡片一致性回归，修正原 Linux.do / V2EX 相邻结构测试对“末尾只有两张卡”的过时假设。2026-09-26 隔离环境以真实 Instagram 公开内容和原有真实 LLM 路由验证候选评估、推荐展示与 local-only 反馈；发现兴趣词直接拼 topic 路由的失败及模型限流 / 空响应，真实登录初始化与授权后的 dispatcher 仍未验收，详见 Instagram 验收台账，不宣称完整 E2E 通过。
+- **按真实 Instagram 页面收紧 creator 与登录墙解析**：2026-08-31 的已安装 Chrome 只读预验收确认公开 creator SSR 已改用 `polaris_ordered_timeline_connection`，扩展 MAIN-world tap 现将其作为 creator timeline 规范化；HTML 分类器不再把登录表单普通 `required` 属性误报为 challenge，仍对明确 challenge/checkpoint/captcha fail closed。新增真实响应形状与登录表单回归，Chrome/Firefox 产物重新构建并校验。
+- **新增 Instagram 来源接入（实验性、默认关闭）**：公开内容发现通过扩展隔离任务读取有界 topic / creator 页面；首次画像可选只读导入本人近期点赞、收藏与关注，分别映射为 `like` / `favorite` / `follow`。Cookie、Authorization、原始响应和搜索历史写入都不离开或不发生在浏览器任务中；后端只接收布尔 `sessionid` readiness、正向 current-account 身份和字段白名单结果。实现参考固定 commit 的 instagrapi / Instaloader 等协议事实并保持 clean-room，GPL 代码未复制。该路径不是 Meta 官方 Consumer API，生产启用仍以 Meta 自动采集许可或明确产品风险决定为门禁。
+
+## v0.3.226：本地模型自动回退与聊天体验修复（2026-10-04）
+
+- 发布回执、商店审核状态及国内源码/安装包镜像范围见[发布与验证记录](testing/2026-10-04-release-0.3.226.md)；国内下载入口按实际已上传版本标注。
+
+### 构建：macOS Developer ID 签名与 Apple 公证（2026-10-05）
+
+- 2026-10-06：仓库 Apple Secrets 配置完成，GitHub Actions 的 arm64 / x64 安装包均通过实际签名、公证、票据和 Gatekeeper 校验及启动自检，产物已上传；[云端构建记录](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37337056080)。
+
+- GitHub 常规 CI 已通过（9796 项测试通过，111 跳过）；GitHub Actions 桌面 macOS 构建强制正式签名、公证及校验，缺少凭据即失败；移除实验包回退和旧开关，Intel runner 更新为 `macos-15-intel`、arm64 为 `macos-15`，单次公证等待放宽到 90 分钟。
+
+- 公证凭据支持显式 `--macos-notary-keychain` / `APPLE_NOTARY_KEYCHAIN`；CI 将凭据保存到临时文件钥匙串，预检、上传、等待与诊断均使用同一路径，避免默认数据保护钥匙串保存后不可读。
+
+- Intel 本机应用与 DMG 均已通过 Apple 公证、票据附加和 Gatekeeper 验证；从最终 DMG 复制并添加隔离属性后的启动、Tailnet 与 llama-server 验收通过，已生成本地 x64 安装包；尚未上传 GitHub Release。见[验证记录](testing/2026-10-05-macos-signing.md)。
+
+- 后端打包支持正式 Developer ID 签名、Hardened Runtime、应用与 DMG 公证/票据附加/Gatekeeper 验证；凭据不完整或公证失败会中止，保留 Apple 诊断记录。
+- 正式 DMG 使用拖入 Applications 的双语安装说明；实验包保留原助手。桌面 CI 共用临时钥匙串流程，并复用 Safari 的 Apple Secrets；本机登录 Xcode 不会自动配置 CI。详见 [打包模块](modules/packaging.md)。
+
+### 修复：本地向量模型自动回退 CPU（2026-10-04）
+
+- 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。
+
+- 本地 Ollama 向量请求先使用自动加速；遇到原生 runner 崩溃（包括 Windows `0xc0000409` / `0xc0000005`）、明确的 GPU / 内存分配错误或无效向量，原请求以 `num_gpu=0` 重试。同一后端进程的 endpoint/model 保持 CPU 到应用退出，正式调用与诊断共享选择。
+- CPU 返回有效向量才视为恢复；CPU 失败 / 无效向量不入缓存，回退后的健康探针超时不再乐观报告可用。缺模型、鉴权、路径错误、冷加载超时与远端服务不触发模式切换。
+- Windows 包保留 Vulkan 自动加速能力；CUDA/ROCm 仍按现有体积策略裁剪。桌面、移动 Web、插件与 CLI 共用后端逻辑，无新配置项或 UI 开关；详细行为见 [LLM 模块](modules/llm.md#本地-ollama-向量运行模式)，测试证据见 [验证记录](testing/2026-10-04-ollama-cpu-fallback.md)。
 
 ### 修复：最新聊天链路真实请求复验（2026-10-02）
 
@@ -97,6 +384,18 @@
 - **问题**：搜索冷却 / 退避档位 / v_voucher streak / DOM fallback 四项状态此前只是 `BilibiliAPIClient` 的 ClassVar，仅同进程共享；CLI 四进程布局（API 主进程 + worker + discovery worker）下，API 进程被 412 打进 600s 硬冷却后 discovery worker 仍用 API 搜索打同一出口 IP，worker 侧触发的 DOM fallback 信号 API 进程也看不到。
 - **方案**：新增 `bilibili/search_backoff.py`，把四项状态镜像到 `<data_dir>/bilibili_search_backoff.json`——deadline 以墙钟存储（`time.monotonic()` 跨进程不可比），复用 `memory/json_state.py` 的文件锁读-改-写，读取时按「最保守者赢」合并（deadline 取 max；escalation 档位与 streak 只在最长冷却 1800s 的事故窗口内合并，避免陈旧 streak 误触发新进程），任一进程搜索成功后清零计数并传播。状态文件不可写 / 不存在时完全退回进程内行为（fail-open，无新增配置项）；schema 预留 `scope` 字段，为后续按 cookie / proxy 分账留口。回归：`tests/test_bilibili_search_backoff.py` +9 条（412 硬冷却 / DOM fallback / streak 跨进程可见、最保守 deadline 获胜、reset 传播、陈旧计数忽略、禁用与不可写时逐字退回进程内行为、落盘 schema）；新增 `tests/conftest.py` 把套件的状态文件统一重定向到 tmp，避免测试读写真实 `data/`。
 - **文档同步**：`docs/modules/bilibili.md`（搜索风控冷却特性行 + 设计要点第 10 条）。
+
+### 新增 Cheaper Inference 内置 Provider（2026-09-30）
+
+- `provider_type="cheaperinference"` 通过 OpenAI 兼容接口接入 Cheaper Inference，默认 `https://api.cheaperinference.com/v1`、`gpt-5.4-mini`，模型名不带厂商前缀。支持独立实例、调用链、模型发现（只列 `type` 为 `text` 的聊天模型）和请求探测；多模型网关不发送 `reasoning_effort`，embedding 仍需独立配置。
+- 接入后端配置与 API、CLI 和安装向导（菜单第 10 项）、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
+
+### 维护：发版检查与测试隔离（2026-10-04）
+
+- 合并网页搜索的异步资源上下文，兼容 CI 的 Ruff 0.16.10 `SIM117` 检查，维持流式响应关闭顺序和总时限。
+- 修复推荐传输测试创建环境变量后未清理的问题：先登记再删除键，确保真实运行时直接写入的端口 / socket 在测试结束时恢复，避免后续 API 单测误走不存在的推荐 worker。
+
+## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
 
 ### 特性：聊天回复 token 级流式输出（2026-10-01，feat/token-streaming，issue #83）
 
@@ -308,11 +607,6 @@
 - **openai_compatible 原生 function calling**：`LLMProvider` 新增 `supports_tool_calling` 与 `complete_with_tools()`（默认抛 `LLMToolCallUnsupportedError`）；`OpenAIProvider` 实现 OpenAI `tools=[{"type":"function",...}]` 原生 FC，单次响应多 `tool_calls` 并行解析为 `{"id","name","arguments","arguments_raw"}`，带工具调用的空 content 合法；DeepSeek 继承并保留 thinking max_tokens 下限；`api_flavor="responses"` 与 Ollama 显式标 `False` 走兜底。`LLMRegistry` 新增 `complete_with_tools()` / `complete_with_tools_chain()` / `complete_provider_with_tools()` / `provider_supports_tool_calling()`，复用 fallback 链 cooldown / 限流 / 告警语义并跳过无 FC 能力实例。
 - **`LLMService.complete_with_native_tools()`**：agent loop 单跳入口，接收完整 canonical 消息列表 + OpenAI 工具 schema；路由首选 provider 支持原生 FC 走 native 链，否则把消息展平（assistant.tool_calls → 文本注释、role=tool → `[工具执行结果]`）进 prompt 模拟，解析 `{"tool_call": ...}` / `{"tool_calls": [...]}` 多调用 JSON；两条路径都不注入 core memory（loop 调用方拥有 system prompt）。旧 `complete_with_tools()`（单跳、旧扁平 schema）保持不变。
 - **多跳 `AgentLoop`（`agent/loop.py`）**：`run()` 异步生成器逐跳产出 `AgentEvent`（thinking / tool_call / tool_result / final / step_limit_reached，`to_dict()` 供 M2 SSE 序列化）；默认 64 跳上限（新增 `[agent]` 配置段 `loop_max_steps` / `tool_result_max_chars`，见 `docs/modules/config.md`），超限后发出 step_limit_reached 并以无工具收尾调用让模型汇报进展；未知工具名与参数校验失败以 `ok=false` 结果回填模型自纠；工具结果超长截断并标记。回归：`tests/test_agent_tool_registry.py` / `tests/test_llm_native_tools.py` / `tests/test_agent_loop.py` + `test_config.py` 的 `[agent]` round-trip。
-
-## 新增 Cheaper Inference 内置 Provider（2026-09-30，cheaperinference-provider）
-
-- `provider_type="cheaperinference"` 通过 OpenAI 兼容接口接入 Cheaper Inference，默认 `https://api.cheaperinference.com/v1`、`gpt-5.4-mini`，模型名不带厂商前缀。支持独立实例、调用链、模型发现（只列 `type` 为 `text` 的聊天模型）和请求探测；多模型网关不发送 `reasoning_effort`，embedding 仍需独立配置。
-- 接入后端配置与 API、CLI 和安装向导（菜单第 10 项）、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
 
 ## v0.3.224：自定义回复语气与设置页一键测试（2026-09-19）
 

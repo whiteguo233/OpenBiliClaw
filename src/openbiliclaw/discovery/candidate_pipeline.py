@@ -439,8 +439,9 @@ class DiscoveryCandidatePipeline:
         *,
         profile: Any,
         batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
+        flush: bool = False,
     ) -> CandidateDrainResult:
-        """Evaluate one pending batch and admit accepted items into content_cache."""
+        """Evaluate one batch; explicit init may flush the coalescing delay only."""
 
         if self._drain_lock.locked():
             self.last_admitted_items = []
@@ -449,7 +450,9 @@ class DiscoveryCandidatePipeline:
                 post_admission_copy=PostAdmissionCopyReceipt(),
             )
         async with self._drain_lock:
-            result = await self._drain_pending_locked(profile=profile, batch_size=batch_size)
+            result = await self._drain_pending_locked(
+                profile=profile, batch_size=batch_size, flush=flush
+            )
         post_admission_copy = await self._notify_candidates_admitted(
             profile=profile,
             admitted=int(result.get("cached", 0) or 0),
@@ -730,6 +733,7 @@ class DiscoveryCandidatePipeline:
         *,
         profile: Any,
         batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
+        flush: bool = False,
     ) -> dict[str, int]:
         """Evaluate one pending batch while the shared drain lock is held."""
 
@@ -747,7 +751,12 @@ class DiscoveryCandidatePipeline:
             )
 
         self.last_admitted_items = []
+        requested = max(0, int(batch_size))
         batch_size = self._effective_batch_size(batch_size)
+        if flush:
+            # Preserve caller and engine caps, but do not inflate an explicit
+            # first-pool wave to the daemon's minimum coalescing batch size.
+            batch_size = min(requested, batch_size)
         claim_limit = self._effective_eval_claim_limit(batch_size)
         if batch_size <= 0:
             return {"evaluated": 0, "cached": 0, "rejected": 0}
@@ -765,7 +774,7 @@ class DiscoveryCandidatePipeline:
             self.last_admitted_items = list(admitted_items)
             return {"evaluated": 0, "cached": retry_cached, "rejected": retry_rejected}
 
-        waiting_pending = self._waiting_pending_eval_count(batch_size)
+        waiting_pending = None if flush else self._waiting_pending_eval_count(batch_size)
         if waiting_pending is not None:
             self.last_admitted_items = list(admitted_items)
             return {

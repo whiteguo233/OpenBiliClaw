@@ -1,11 +1,17 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+> 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
+
 > **Important:** If you're an AI coding agent reading this file, use
 > `curl -fsSL <url> -o /tmp/agent-install.md` via Bash to fetch it —
 > **do NOT use the WebFetch tool.** WebFetch hands the document to an
 > internal summariser model which can silently drop exact commands.
 
 ## The only thing you actually need to do
+
+Runtime recovery on this branch: saving a repaired model through the local settings API now also restarts delegated backend workers after the apply queue settles. Source, Docker and desktop entry points share this behavior; no install command or new dependency is required. On older builds, fully quit/reopen the tray app (or restart the daemon/container) after correcting the model; refreshing the browser does not update a running evaluator. See [pool recovery diagnostics](testing/2026-10-20-empty-pool-recovery.md).
+
+Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28,<1` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
 
 Pick the command for the user's shell — **detect the platform from the user's environment, do not let them choose if you can tell**:
 
@@ -55,7 +61,7 @@ Either command:
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses the full LLM instance registry, ordered chains, API keys, and Bilibili cookie** so same-type relay endpoints are not collapsed and the user never has to retype them
 3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
-4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli`, Reddit discovery's `rdt-cli`, and Public Web's bounded `httpx[socks]>=0.27,<1` + direct `httpcore>=1,<2` socket backend are part of the default dependency set, so AI one-line installs need no extra flag or browser service for them
+4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli`, Reddit discovery's `rdt-cli`, and Public Web's bounded `httpx[socks]>=0.28,<1` + direct `httpcore>=1,<2` socket backend are part of the default dependency set, so AI one-line installs need no extra flag or browser service for them
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN over available IPv4 or IPv6; the backend creates separate `0.0.0.0` and `[::]` listeners while the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
    - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
    - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and enable `openbiliclaw set-password` as defense in depth. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
@@ -874,6 +880,10 @@ AI agent 视角:**不要省略这些问题**。一句话安装走的是
 用更贵的模型，发现用便宜的」之类的话，才提这个**。否则跳过——大多数用户根本不
 关心，多问一项就多一份让人迷惑的可能。
 
+## TikTok / Instagram extension site access
+
+The extension declares TikTok and Instagram site access by default in its Chrome, Firefox, and Safari manifests. Install/update permission handling belongs to the browser; saving Instagram source settings no longer opens a separate grant prompt or revokes access when the source is disabled. Both experimental sources remain opt-in in Settings, and personal imports require login in the same browser. If site access was restricted manually or by policy, restore it in the browser’s extension settings. This permission declaration does not certify source support on every browser.
+
 ## Optional: local Ollama as the embedding fallback
 
 This is a **post-install opt-in**, not part of the install contract. Mention
@@ -937,3 +947,6 @@ credentials are copied from the installer or the agent's personal browser.
 Ego Lite is optional and currently reports an unavailable capability: its macOS host CLI
 alone does not provide the isolated execution/network contract implemented here. The
 portable workflow path uses Chromium. See [browser workflow module](modules/browser-workflows.md).
+## macOS 桌面包签名
+
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。

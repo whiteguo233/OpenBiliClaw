@@ -111,6 +111,7 @@ function isPublicNativeSaveContentId(platform: NativeSavePlatform, value: unknow
     twitter: /^[0-9]{5,30}$/,
     zhihu: /^(?:question|answer|article):[0-9]+$/,
     reddit: /^t[13]_[a-z0-9]+$/,
+    tiktok: /^[0-9]{6,30}$/,
   };
   return patterns[platform].test(value);
 }

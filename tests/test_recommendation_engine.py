@@ -305,6 +305,23 @@ def _seed_pool(
         db.cache_content(item.bvid, **kwargs)
 
 
+def _pin_seed_score_order(db: Database, bvids: list[str]) -> None:
+    """Pin ``last_scored_at`` so drain order matches ``bvids`` order.
+
+    ``cache_content`` stamps ``last_scored_at`` with SQLite's
+    ``CURRENT_TIMESTAMP`` (one-second resolution). When the second rolls
+    over mid-seed, ``ORDER BY last_scored_at DESC`` no longer matches
+    insertion order and drain-order assertions flake. Assigning the first
+    bvid the newest timestamp keeps the DESC ordering deterministic. Call
+    this after ``_seed_pool`` in tests that assert a specific drain order.
+    """
+    for index, bvid in enumerate(bvids):
+        db._execute_write(
+            "UPDATE content_cache SET last_scored_at = ? WHERE bvid = ?",
+            (f"2020-01-01 00:00:{len(bvids) - index:02d}", bvid),
+        )
+
+
 def _seed_visible(db: Database, bvid: str, **kwargs: Any) -> None:
     """v0.3.57+ shorthand: cache a content row visible to the pool gate.
 
@@ -4492,6 +4509,7 @@ async def test_public_expression_drain_carries_partial_progress_into_missing_ret
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
         _seed_pool(db, items, precomputed=False)
+        _pin_seed_score_order(db, ["A", "B", "C", "D"])
         llm = _PartialThenTransientLLM()
         engine = RecommendationEngine(llm=llm, database=db)
         with pytest.raises(ExpressionCopyTransientError) as exc_info:
@@ -4590,6 +4608,7 @@ async def test_expression_coordinator_reports_same_branch_partial_progress() -> 
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
         _seed_pool(db, items, precomputed=False)
+        _pin_seed_score_order(db, ["A", "B", "C", "D"])
         engine = RecommendationEngine(llm=_PartialThenTimeoutLLM(), database=db)
         coordinator = ExpressionCopyCoordinator(
             pending_count_provider=lambda: 4,

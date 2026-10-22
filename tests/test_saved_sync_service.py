@@ -162,6 +162,24 @@ def test_local_save_without_auto_sync_never_invokes_adapter(db: Database) -> Non
     assert adapter.calls == []
 
 
+def test_tiktok_local_save_stays_pending_without_auto_sync(db: Database) -> None:
+    """TikTok now routes native save through the extension adapter; a local
+    save commits as ``pending`` and the default ``auto_sync=False`` path
+    performs no upstream mutation."""
+    adapter = FakeAdapter(NativeSaveCapability("tiktok", True, False, False))
+    service = SavedSyncService(db, NativeSaveRouter([adapter]))
+    item = SavedItemInput("tiktok", "7340000000000000001")
+
+    result = service.save_local("favorite", item, auto_sync=False)
+
+    row = db.get_saved_membership("favorite", item.item_key)
+    assert row is not None
+    assert row["sync_status"] == "pending"
+    assert result.saved is True
+    assert result.sync_status == "pending"
+    assert adapter.calls == []
+
+
 def test_validate_native_save_selection_reads_existing_membership_without_mutation(
     db: Database,
 ) -> None:
@@ -954,6 +972,8 @@ async def test_item_heartbeat_exception_detaches_with_retrying_lease_and_late_re
     release.set()
     for _ in range(100):
         result = service.get_sync_task(task.task_id)
+        # Persisting the terminal result precedes the watchdog's done callback.
+        # Wait for both observable completion and cleanup, not just the DB row.
         if result.items and result.items[0].status == "synced" and not service._detached_attempts:
             break
         await asyncio.sleep(0.01)

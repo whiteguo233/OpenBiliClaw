@@ -28,14 +28,14 @@ V2EX_SOURCE_WEIGHTS = {"search": 40, "node": 40, "tab": 10, "hot": 5, "latest": 
 
 
 def build_v2ex_external_search_provider(config: object) -> Any | None:
-    """Build the configured Exa/You chain used for ``site:v2ex.com/t`` recall."""
+    """Build the configured external search chain used for ``site:v2ex.com/t`` recall."""
 
     discovery = getattr(config, "discovery", None)
     configured = tuple(getattr(discovery, "inspiration_search_backends", ()) or ())
     external = tuple(
         str(value).strip().lower()
         for value in configured
-        if str(value).strip().lower() in {"bing_rss", "exa", "you", "serply"}
+        if str(value).strip().lower() in {"bing_rss", "exa", "you", "serply", "parallel"}
     )
     if not external:
         return None

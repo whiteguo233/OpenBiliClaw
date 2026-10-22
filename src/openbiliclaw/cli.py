@@ -28,6 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm.base import safe_llm_failure_message
 from openbiliclaw.llm.service import _background_admission_bypass
 from openbiliclaw.published_time import format_published_time
@@ -409,7 +410,7 @@ _KEYWORD_INSPIRATION_PLATFORMS_OPTION = typer.Option(
     "-p",
     help=(
         "目标平台，可重复传或逗号分隔。默认 bilibili；可选 bilibili/xiaohongshu/"
-        "douyin/youtube/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
+        "douyin/youtube/tiktok/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
     ),
 )
 _KEYWORD_INSPIRATION_KIND_OPTION = typer.Option(
@@ -525,6 +526,7 @@ _DEFAULT_REDDIT_BOOTSTRAP_WAIT_SECONDS = 180.0
 # legal task execution budget (29 minutes + 30 seconds result grace).
 _DEFAULT_LINUXDO_BOOTSTRAP_WAIT_SECONDS = 32.5 * 60.0
 _DEFAULT_V2EX_BOOTSTRAP_WAIT_SECONDS = 300.0
+_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS = 480.0
 _EXTENSION_PRESENCE_REQUIRED_WARNING = (
     "WARN extension presence required; backend will pause background LLM work "
     "after grace period if no extension client connects"
@@ -572,7 +574,16 @@ def _plain_terminal_text(value: object, *, style: str | None = None) -> Text:
     return Text(sanitized, style=style) if style is not None else Text(sanitized)
 
 
-def _format_pause_on_disconnect_status(*, enabled: bool, grace_seconds: int) -> str:
+def _format_pause_on_disconnect_status(
+    *, enabled: bool, grace_seconds: int, translator: Any | None = None
+) -> str:
+    if translator is not None:
+        return str(
+            translator(
+                "cli.config_show.pause.on" if enabled else "cli.config_show.pause.off",
+                seconds=grace_seconds,
+            )
+        )
     if not enabled:
         return "关闭"
     return f"开启（宽限 {grace_seconds}s）"
@@ -910,6 +921,7 @@ def _build_soul_engine() -> Any:
         posture_gate_force_enforce=cfg.soul.posture_gate_force_enforce,
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
         llm_concurrency_gate=_build_llm_concurrency_gate(),
@@ -980,6 +992,7 @@ def _build_recommendation_engine() -> Any:
         concurrency_gate=_build_llm_concurrency_gate(),
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
     )
     from openbiliclaw.llm.registry import build_embedding_service
 
@@ -1022,6 +1035,7 @@ def _build_recommendation_engine() -> Any:
         serve_snapshot_store=ServeSnapshotStore(cfg.data_path / "runtime" / "serve_snapshot.json"),
         serve_outbox=ServeOutbox(cfg.data_path / "runtime" / "serve_outbox.jsonl"),
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
     )
 
 
@@ -1232,6 +1246,12 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
     from openbiliclaw.api.app import create_app
     from openbiliclaw.config import load_config
+    from openbiliclaw.proc import (
+        ChildProcessSupervisor,
+        ManagedChild,
+        backend_child_env,
+        backend_config_generation,
+    )
 
     worker_requested = _worker_mode_requested()
     if worker_requested:
@@ -1267,67 +1287,91 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         port,
         api_host=host,
     )
-    worker_process: Any | None = None
-    discovery_worker_process: Any | None = None
-    recommendation_process: Any | None = None
-    image_service_process: Any | None = None
+    children: list[ManagedChild] = []
+    if worker_requested:
+        children.extend(
+            [
+                ManagedChild(
+                    "worker",
+                    lambda: _spawn_background_child(
+                        "worker",
+                        "openbiliclaw.worker",
+                        backend_child_env(api_app, OPENBILICLAW_FULL_WORKER="1"),
+                    ),
+                ),
+                ManagedChild(
+                    "discovery-worker",
+                    lambda: _spawn_background_child(
+                        "discovery-worker",
+                        "openbiliclaw.discovery_worker",
+                        backend_child_env(
+                            api_app, OPENBILICLAW_DISCOVERY_WORKER="1", OPENBILICLAW_FULL_WORKER="1"
+                        ),
+                    ),
+                ),
+                ManagedChild(
+                    "recommendation",
+                    lambda: _spawn_background_child(
+                        "recommendation",
+                        "openbiliclaw.recommendation_server",
+                        backend_child_env(
+                            api_app,
+                            OPENBILICLAW_RECOMMENDATION_ONLY="1",
+                            OPENBILICLAW_FULL_WORKER="1",
+                        ),
+                    ),
+                ),
+            ]
+        )
+    children.append(
+        ManagedChild(
+            "image-service",
+            lambda: _spawn_background_child(
+                "image-service", "openbiliclaw.image_service", backend_child_env(api_app)
+            ),
+        )
+    )
+    child_supervisor = ChildProcessSupervisor(
+        children, config_generation_provider=lambda: backend_config_generation(api_app)
+    )
     # 必须在 uvicorn 启动前装上,uvicorn 保存/恢复的"原始处理器"才是钩子;
     # 两条 uvicorn 启动路径(uvicorn.run / server.run)都被外层 finally 覆盖。
     restore_sigterm_handler = _install_sigterm_cleanup_hook()
     try:
+        child_supervisor.start()
+        child_pids = child_supervisor.pids
         if worker_requested:
-            worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}
-            worker_process = _spawn_background_child("worker", "openbiliclaw.worker", worker_env)
             _print_status_panel(
                 "info",
                 "Worker 进程",
-                f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
+                f"已启动独立 full worker pid={child_pids.get('worker')}（OPENBILICLAW_WORKER=1）",
             )
 
             # Dedicated discovery runtime worker: runs the same
             # ContinuousRefreshController as the API used to, but in a separate
             # process so HTTP endpoints never compete with discovery/eval.
-            discovery_env = {
-                **os.environ,
-                "OPENBILICLAW_DISCOVERY_WORKER": "1",
-                "OPENBILICLAW_FULL_WORKER": "1",
-            }
-            discovery_worker_process = _spawn_background_child(
-                "discovery-worker", "openbiliclaw.discovery_worker", discovery_env
-            )
             _print_status_panel(
                 "info",
                 "Discovery Worker 进程",
-                f"已启动独立 discovery worker pid={discovery_worker_process.pid}",
+                f"已启动独立 discovery worker pid={child_pids.get('discovery-worker')}",
             )
 
             # Dedicated recommendation API process on a Unix socket. The main
             # API proxies /api/recommendations/* here so full recommendation
             # ranking runs on its own process/CPU without extra TCP ports.
-            recommendation_env = {
-                **os.environ,
-                "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
-                "OPENBILICLAW_FULL_WORKER": "1",
-            }
-            recommendation_process = _spawn_background_child(
-                "recommendation", "openbiliclaw.recommendation_server", recommendation_env
-            )
             _print_status_panel(
                 "info",
                 "Recommendation API 进程",
-                f"已启动独立推荐 API pid={recommendation_process.pid}"
+                f"已启动独立推荐 API pid={child_pids.get('recommendation')}"
                 f"（{recommendation_transport}）",
             )
 
         # Dedicated image proxy process: image fetching/compression lives here,
         # so it cannot squeeze recommendation serving / reshuffle / chat APIs.
-        image_service_process = _spawn_background_child(
-            "image-service", "openbiliclaw.image_service", {**os.environ}
-        )
         _print_status_panel(
             "info",
             "Image Proxy 进程",
-            f"已启动独立 image-proxy pid={image_service_process.pid}（端口 8421）",
+            f"已启动独立 image-proxy pid={child_pids.get('image-service')}（端口 8421）",
         )
         # Main API forwards image requests to this local service.
         image_service_port = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_PORT", "8421")
@@ -1349,30 +1393,7 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         # SIGTERM 应走默认处置立即退出,而不是在 finally 里再抛异常
         # 打断剩余子进程的 terminate。
         restore_sigterm_handler()
-        if recommendation_process is not None:
-            recommendation_process.terminate()
-            try:
-                recommendation_process.wait(timeout=5)
-            except Exception:
-                recommendation_process.kill()
-        if discovery_worker_process is not None:
-            discovery_worker_process.terminate()
-            try:
-                discovery_worker_process.wait(timeout=5)
-            except Exception:
-                discovery_worker_process.kill()
-        if image_service_process is not None:
-            image_service_process.terminate()
-            try:
-                image_service_process.wait(timeout=5)
-            except Exception:
-                image_service_process.kill()
-        if worker_process is not None:
-            worker_process.terminate()
-            try:
-                worker_process.wait(timeout=5)
-            except Exception:
-                worker_process.kill()
+        child_supervisor.stop()
         if tailnet_supervisor is not None:
             tailnet_supervisor.stop()
 
@@ -3265,6 +3286,7 @@ async def _run_init_discovery_backfill_async(
     target_pool_count: int = 100,
     label_suffix: str = "",
     progress_callback: Callable[[int, int, str], Awaitable[None] | None] | None = None,
+    selected_sources: set[str] | None = None,
 ) -> int:
     """Build the first serviceable discovery pool from the committed profile."""
     from openbiliclaw.discovery.pool_snapshot import build_cold_start_pool_snapshot
@@ -3284,6 +3306,48 @@ async def _run_init_discovery_backfill_async(
     if target == 0:
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
+
+    if selected_sources is not None and "instagram" in selected_sources:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+        from openbiliclaw.runtime.refresh import ContinuousRefreshController
+        from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+
+        config = load_config()
+        soul_engine = _build_soul_engine()
+        pipeline = _build_discovery_candidate_pipeline(
+            config=config, database=database, discovery_engine=discovery_engine
+        )
+        producer = build_instagram_discovery_producer(
+            config=config,
+            database=database,
+            soul_engine=soul_engine,
+            candidate_pipeline=pipeline,
+            keyword_fetch=KeywordFetchCoordinator(
+                database=database, discovery_config=config.discovery
+            ),
+            kick=lambda: _kick_task_dispatcher("instagram"),
+            manual=True,
+        )
+        if producer is not None:
+            producer.candidate_evaluation_owned_by_coordinator = True
+        controller = ContinuousRefreshController(
+            memory_manager=_build_memory_manager(),
+            database=database,
+            soul_engine=soul_engine,
+            discovery_engine=discovery_engine,
+            recommendation_engine=_build_recommendation_engine(),
+            discovery_candidate_pipeline=pipeline,
+            instagram_producer=producer,
+            scheduler_config=config.scheduler,
+            pool_target_count=target,
+            pool_source_shares=effective_pool_source_shares(config),
+            llm_concurrency_gate=gate,
+        )
+        return await controller.run_init_backfill(
+            profile, target, sources=selected_sources, progress_callback=progress_callback
+        )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -3399,7 +3463,17 @@ def _kick_task_dispatcher(source: str) -> None:
     Failures are silent: if the daemon isn't running the existing
     chrome.alarms 60s poll fallback still picks the task up.
     """
-    if source not in {"xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "v2ex"}:
+    if source not in {
+        "xhs",
+        "dy",
+        "yt",
+        "zhihu",
+        "reddit",
+        "linuxdo",
+        "v2ex",
+        "instagram",
+        "tiktok",
+    }:
         return
     import urllib.error
     import urllib.request
@@ -3646,6 +3720,131 @@ def _collect_dy_bootstrap_events(
             for key in scope_counts:
                 short = key.removeprefix("dy_") if key.startswith("dy_") else key
                 if source == f"dy_bootstrap_{short}":
+                    scope_counts[key] += 1
+    result_status = str(result.get("status", "")).strip()
+    status_label = "degraded" if result_status == "degraded" else ("ok" if events else "empty")
+    return events, scope_counts, status_label
+
+
+def _enqueue_tiktok_bootstrap_task(
+    *,
+    force: bool = False,
+    kick: bool = True,
+    incremental: bool = False,
+) -> str | None:
+    """Resolve the runtime database and enqueue the TikTok bootstrap task."""
+    from openbiliclaw.sources import source_bootstrap
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]TikTok 初始化信号未导入: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    result = source_bootstrap.enqueue_tiktok_bootstrap(
+        database,
+        force=force,
+        incremental=incremental,
+        notify=console.print,
+    )
+    if result.created and result.task_id and kick:
+        _kick_task_dispatcher("tiktok")
+    return result.task_id
+
+
+def _collect_tiktok_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and harvest a previously-enqueued TikTok bootstrap task.
+
+    Returns ``(events, scope_counts, status_label)`` where
+    ``status_label`` is one of:
+      - ``"ok"``         — task completed with videos
+      - ``"degraded"``   — task completed with usable videos, but at least
+        one scope could not prove pagination completeness
+      - ``"empty"``      — task completed but extension returned 0 videos
+        (only a positively observed signed-in empty list)
+      - ``"timeout"``    — wait window expired, task still pending
+      - ``"failed"``     — extension or backend reported error
+      - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
+    """
+    import json
+    import time
+
+    from openbiliclaw.sources.tiktok_tasks import (
+        TiktokTaskQueue,
+        tiktok_bootstrap_videos_to_events,
+    )
+
+    if not task_id:
+        return [], {}, "skipped"
+
+    if max_wait_seconds is None:
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = TiktokTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    poll_interval = 0.5
+    task: dict[str, Any] | None = None
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return [], {}, "timeout"
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(poll_interval)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+    videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
+    events = tiktok_bootstrap_videos_to_events(videos)
+    raw_counts = result.get("scope_counts", {})
+    scope_counts = {"tt_like": 0, "tt_collect": 0, "tt_history": 0, "tt_follow": 0}
+    if isinstance(raw_counts, dict):
+        for key in scope_counts:
+            with suppress(Exception):
+                scope_counts[key] = int(raw_counts.get(key, 0) or 0)
+    if not any(scope_counts.values()):
+        # Fall back to per-event count: tiktok_bootstrap_videos_to_events
+        # tags each event's metadata.import_source as
+        # "tt_bootstrap_<scope_short>" (like / collect / history / follow).
+        for event in events:
+            metadata = event.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            source = str(metadata.get("import_source", ""))
+            for key in scope_counts:
+                short = key.removeprefix("tt_") if key.startswith("tt_") else key
+                if source == f"tt_bootstrap_{short}":
                     scope_counts[key] += 1
     result_status = str(result.get("status", "")).strip()
     status_label = "degraded" if result_status == "degraded" else ("ok" if events else "empty")
@@ -3912,6 +4111,154 @@ def _collect_weibo_bootstrap_events(
             scope = str(item.get("scope", "")).strip()
             if scope in counts:
                 counts[scope] += 1
+    return events, counts, "ok" if events else "empty"
+
+
+def _enqueue_instagram_bootstrap_task(
+    *,
+    kick: bool = True,
+    profile_update: bool = False,
+    force: bool = False,
+    smoke_only: bool = False,
+) -> str | None:
+    """Resolve the runtime database and enqueue an init-only Instagram task."""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources import source_bootstrap
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]Instagram 个人事件未拉取: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+    source_cfg = getattr(getattr(load_config(), "sources", None), "instagram", None)
+    account_key = ""
+    with suppress(Exception):
+        state = _build_memory_manager().load_source_bootstrap_state()
+        candidate = str(
+            state.get("instagram_account_key", "") if isinstance(state, dict) else ""
+        ).strip()
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", candidate):
+            account_key = candidate
+    purpose = "smoke" if smoke_only else "guided-init" if profile_update else "fetch"
+    result = source_bootstrap.enqueue_instagram_bootstrap(
+        database,
+        config=source_cfg,
+        force=force,
+        profile_update=profile_update,
+        smoke_only=smoke_only,
+        account_key=account_key,
+        purpose=purpose,
+        notify=console.print,
+    )
+    if result.created and result.task_id and kick:
+        _kick_task_dispatcher("instagram")
+    return result.task_id
+
+
+def _instagram_result_failure_status(result: object) -> str:
+    """Classify only frozen Instagram failure codes from canonical fields."""
+
+    from openbiliclaw.sources.instagram_tasks import instagram_failure_category
+
+    if not isinstance(result, dict):
+        return ""
+    candidates: list[object] = [result.get("error")]
+    debug = result.get("debug")
+    if isinstance(debug, dict):
+        failures = debug.get("failures")
+        if isinstance(failures, list):
+            candidates.extend(failures)
+    return instagram_failure_category(*candidates)
+
+
+def _collect_instagram_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a frozen Instagram result and convert its personal memberships."""
+
+    import json
+    import time
+
+    from openbiliclaw.sources.instagram_tasks import (
+        INSTAGRAM_BOOTSTRAP_SCOPES,
+        InstagramTaskQueue,
+        instagram_bootstrap_items_to_events,
+    )
+
+    counts = {scope: 0 for scope in INSTAGRAM_BOOTSTRAP_SCOPES}
+    if not task_id:
+        return [], counts, "skipped"
+    wait = (
+        float(os.environ.get("OPENBILICLAW_INSTAGRAM_BOOTSTRAP_WAIT_SECONDS", "780"))
+        if max_wait_seconds is None
+        else max_wait_seconds
+    )
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], counts, "skipped"
+    if not hasattr(database, "conn"):
+        return [], counts, "skipped"
+    queue = InstagramTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, float(wait))
+    task: dict[str, Any] | None = None
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return [], counts, "timeout"
+        task = queue.get(task_id)
+        task_status = str((task or {}).get("status", "") or "")
+        if task_status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+    if not task:
+        return [], counts, "timeout"
+    if str(task.get("status", "")) == "failed":
+        try:
+            failed_result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            failed_result = {}
+        failure_status = _instagram_result_failure_status(failed_result)
+        return [], counts, failure_status or "failed"
+    if str(task.get("status", "")) != "completed":
+        # The extension owns the active claim token and may legitimately use
+        # its full 12-minute bounded pagination window.  A CLI wait timeout is
+        # not authority to cancel that in-flight task; leave it durable so the
+        # extension can publish its terminal result and a later init can reuse
+        # a valid completion.
+        return [], counts, "timeout"
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], counts, "failed"
+    if not isinstance(result, dict):
+        return [], counts, "failed"
+    items = [item for item in result.get("items", []) if isinstance(item, dict)]
+    raw_counts = result.get("scope_counts")
+    if isinstance(raw_counts, dict):
+        for scope in counts:
+            with suppress(TypeError, ValueError):
+                counts[scope] = max(0, int(raw_counts.get(scope, 0) or 0))
+    if not any(counts.values()):
+        for item in items:
+            scope = str(item.get("scope", "") or "")
+            if scope in counts:
+                counts[scope] += 1
+    account_key = str(result.get("account_key", "") or "")
+    events = instagram_bootstrap_items_to_events(items, account_key=account_key)
+    terminal = str(result.get("status", "") or "")
+    failure_status = _instagram_result_failure_status(result)
+    if failure_status:
+        return events, counts, failure_status
+    if terminal == "partial":
+        return events, counts, "partial"
     return events, counts, "ok" if events else "empty"
 
 
@@ -5084,6 +5431,32 @@ def _dy_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, 
     return [row for row in rows if row.get("title") or row.get("url")]
 
 
+def _tiktok_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert TikTok bootstrap events into profile-builder history rows.
+
+    Mirror of ``_dy_events_to_history_items`` — preserves the
+    natural-language ``context`` and tags ``source_platform=tiktok``
+    so cross-source analysis remains uniform.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "tiktok",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
 _INIT_IMPORT_IDENTITY_KEYS = (
     "content_id",
     "bvid",
@@ -5509,6 +5882,30 @@ def _weibo_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[st
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "weibo",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _instagram_events_to_history_items(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert Instagram init-only membership events into profile rows."""
+
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(event.get("author", "") or metadata.get("author_name", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "instagram",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -6526,19 +6923,43 @@ def _print_autostart_status(cfg: Any) -> None:
     _print_key_value_table("自启动状态", _autostart_status_rows(cfg))
 
 
-def _format_autostart_config_status(cfg: Any) -> str:
+def _format_autostart_config_status(cfg: Any, translator: Any | None = None) -> str:
     from openbiliclaw.runtime import autostart
+
+    def _on_off(value: bool) -> str:
+        if translator is None:
+            return "开启" if value else "关闭"
+        return str(translator("cli.config_show.value.on" if value else "cli.config_show.value.off"))
 
     try:
         state = autostart.status()
     except Exception:
-        return "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
-    enabled = "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
-    registered = "已注册" if state.registered else "未注册"
-    return f"{enabled}（{registered}，{state.mechanism}）"
+        if translator is None:
+            return "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
+        return str(
+            translator(
+                "cli.config_show.autostart.fallback", enabled=_on_off(bool(cfg.autostart.enabled))
+            )
+        )
+    enabled = _on_off(bool(getattr(cfg.autostart, "enabled", False)))
+    if translator is None:
+        registered = "已注册" if state.registered else "未注册"
+        return f"{enabled}（{registered}，{state.mechanism}）"
+    return str(
+        translator(
+            "cli.config_show.autostart.state",
+            enabled=enabled,
+            registered=translator(
+                "cli.config_show.autostart.registered"
+                if state.registered
+                else "cli.config_show.autostart.unregistered"
+            ),
+            mechanism=state.mechanism,
+        )
+    )
 
 
-def _format_source_date_preference(config: Any) -> str:
+def _format_source_date_preference(config: Any, translator: Any | None = None) -> str:
     """Render a source publication-date range for ``config-show``."""
 
     preset = str(getattr(config, "recommendation_date_preset", "all") or "all")
@@ -6550,10 +6971,17 @@ def _format_source_date_preference(config: Any) -> str:
         "last_1_year": "最近一年",
     }
     if preset != "custom":
+        if translator is not None and preset in labels:
+            return str(translator(f"cli.config_show.date.{preset}"))
         return labels.get(preset, preset)
 
-    start = str(getattr(config, "recommendation_date_start", "") or "") or "不限"
-    end = str(getattr(config, "recommendation_date_end", "") or "") or "不限"
+    unlimited = "不限"
+    if translator is not None:
+        unlimited = str(translator("cli.config_show.date.unlimited"))
+    start = str(getattr(config, "recommendation_date_start", "") or "") or unlimited
+    end = str(getattr(config, "recommendation_date_end", "") or "") or unlimited
+    if translator is not None:
+        return str(translator("cli.config_show.date.custom", start=start, end=end))
     return f"自定义：{start} 至 {end}"
 
 
@@ -7553,6 +7981,70 @@ def _ask_dy_inclusion() -> bool:
     return True
 
 
+def _ask_tiktok_inclusion() -> bool:
+    """Decide whether to enqueue the TikTok bootstrap task on this init.
+
+    Resolution order (first match wins):
+      1. ``OPENBILICLAW_NO_TIKTOK=1`` env var → False, silent
+      2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
+         Conservative default: the account scopes require a logged-in
+         tiktok.com browser session and a foreground tab, so scripted runs
+         must opt in explicitly.
+      3. Interactive terminal → ask the user with default N, then
+         (if Y) walk them through a prep checklist.
+    """
+    if os.environ.get("OPENBILICLAW_NO_TIKTOK", "").strip() == "1":
+        console.print("[dim]  跳过 TikTok 数据接入(OPENBILICLAW_NO_TIKTOK=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]🎬 TikTok 数据接入(可选)[/bold]")
+    console.print(
+        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,系统能读懂你跨平台的口味。"
+    )
+    console.print()
+    console.print("启用需要:")
+    console.print("  1. 装好 OpenBiliClaw 浏览器扩展")
+    console.print(
+        "     [link=https://github.com/whiteguo233/OpenBiliClaw/releases]"
+        "https://github.com/whiteguo233/OpenBiliClaw/releases[/link]"
+    )
+    console.print("  2. 浏览器登录 [link=https://www.tiktok.com]https://www.tiktok.com[/link]")
+    console.print()
+    console.print(
+        "[dim]说 N 也没关系,init 会用其他已选来源建画像;"
+        "以后想加随时再跑一次 init,或设 OPENBILICLAW_NO_TIKTOK=1 永久跳过。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("加入 TikTok 数据?", default=False):
+        console.print("[dim]  已选择跳过,本次 init 不会请求 TikTok 数据。[/dim]")
+        return False
+
+    console.print()
+    console.print("[bold]准备 TikTok 接入[/bold]")
+    console.print("请确认以下三件事都做了:")
+    console.print("  [cyan]☐[/cyan] 装好了 OpenBiliClaw 浏览器扩展")
+    console.print("  [cyan]☐[/cyan] 浏览器保持打开，扩展已连接当前后端")
+    console.print("  [cyan]☐[/cyan] 已经登录了 https://www.tiktok.com")
+    console.print()
+    console.print(
+        "接下来扩展会在浏览器中打开一个后台标签页，依次读取点赞 / 收藏 /"
+        "观看历史 / 关注四个范围，完成后自动关闭。最多等待约 8 分钟；"
+        "如果页面无法确认或列表加载受限，会报告失败或部分完成。"
+    )
+    console.print()
+    if not typer.confirm("准备好了吗,可以开始吗?", default=True):
+        console.print(
+            "[dim]  已暂缓 TikTok 接入,本次 init 不会拉 TikTok 数据。装好扩展+登录"
+            "TikTok 后随时再跑一次 init 就能补上。[/dim]"
+        )
+        return False
+    return True
+
+
 def _ask_yt_inclusion() -> bool:
     """Decide whether to enqueue the YouTube bootstrap task on this init.
 
@@ -7802,6 +8294,32 @@ def _ask_weibo_inclusion() -> bool:
     return True
 
 
+def _ask_instagram_inclusion() -> bool:
+    """Decide whether to enable Instagram discovery and init-only signals."""
+
+    if os.environ.get("OPENBILICLAW_NO_INSTAGRAM", "").strip() == "1":
+        console.print("[dim]  跳过 Instagram 来源(OPENBILICLAW_NO_INSTAGRAM=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]Instagram 数据接入(可选)[/bold]")
+    console.print(
+        "公开 topic / creator 内容发现无需登录；初始化画像时会通过浏览器扩展"
+        "只读导入当前账号最近的点赞、收藏和关注。"
+    )
+    console.print(
+        "[dim]Cookie 不会传给后端；首版个人信号仅在 init 时读取，"
+        "不会后台周期轮询，也不会点赞、收藏或关注。[/dim]"
+    )
+    console.print()
+    if not typer.confirm("启用 Instagram 数据接入?", default=False):
+        console.print("[dim]  已选择跳过，本次 init 不会启用 Instagram 来源。[/dim]")
+        return False
+    return True
+
+
 def _ask_bangumi_inclusion() -> bool:
     """Decide whether to enable Bangumi discovery and public bootstrap."""
     if os.environ.get("OPENBILICLAW_NO_BANGUMI", "").strip() == "1":
@@ -7931,6 +8449,7 @@ def _persist_init_source_enabled_flags(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_tiktok: bool = False,
     include_x: bool = False,
     include_zhihu: bool = False,
     include_reddit: bool = False,
@@ -7939,6 +8458,7 @@ def _persist_init_source_enabled_flags(
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
+    include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
     github_username: str = "",
@@ -7967,6 +8487,10 @@ def _persist_init_source_enabled_flags(
             changed = True
         if bool(getattr(cfg.sources.youtube, "enabled", False)) != include_yt:
             cfg.sources.youtube.enabled = include_yt
+            changed = True
+        tiktok_cfg = getattr(cfg.sources, "tiktok", None)
+        if tiktok_cfg is not None and bool(getattr(tiktok_cfg, "enabled", False)) != include_tiktok:
+            tiktok_cfg.enabled = include_tiktok
             changed = True
         twitter_cfg = getattr(cfg.sources, "twitter", None)
         if twitter_cfg is not None and bool(getattr(twitter_cfg, "enabled", False)) != include_x:
@@ -8040,6 +8564,13 @@ def _persist_init_source_enabled_flags(
         weibo_cfg = getattr(cfg.sources, "weibo", None)
         if weibo_cfg is not None and bool(getattr(weibo_cfg, "enabled", False)) != include_weibo:
             weibo_cfg.enabled = include_weibo
+            changed = True
+        instagram_cfg = getattr(cfg.sources, "instagram", None)
+        if (
+            instagram_cfg is not None
+            and bool(getattr(instagram_cfg, "enabled", False)) != include_instagram
+        ):
+            instagram_cfg.enabled = include_instagram
             changed = True
         if changed:
             save_config(cfg)
@@ -8186,6 +8717,7 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
         "xiaohongshu": "小红书",
         "douyin": "抖音",
         "youtube": "YouTube",
+        "tiktok": "TikTok",
     }
     return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
 
@@ -8305,6 +8837,12 @@ class InitResult:
     weibo_events: list[dict[str, Any]] = field(default_factory=list)
     weibo_scope_counts: dict[str, Any] = field(default_factory=dict)
     weibo_status: str = "skipped"
+    instagram_events: list[dict[str, Any]] = field(default_factory=list)
+    instagram_scope_counts: dict[str, Any] = field(default_factory=dict)
+    instagram_status: str = "skipped"
+    tiktok_events: list[dict[str, Any]] = field(default_factory=list)
+    tiktok_scope_counts: dict[str, Any] = field(default_factory=dict)
+    tiktok_status: str = "skipped"
 
 
 class GuidedInitError(Exception):
@@ -8821,6 +9359,7 @@ async def run_guided_init(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_tiktok: bool = False,
     include_x: bool = False,
     include_zhihu: bool = False,
     include_reddit: bool = False,
@@ -8829,6 +9368,7 @@ async def run_guided_init(
     include_linuxdo: bool = False,
     include_v2ex: bool = False,
     include_weibo: bool = False,
+    include_instagram: bool = False,
     bangumi_username: str = "",
     bangumi_token: str = "",
     github_username: str = "",
@@ -8961,6 +9501,7 @@ async def run_guided_init(
             include_xhs,
             include_dy,
             include_yt,
+            include_tiktok,
             include_x,
             include_zhihu,
             include_reddit,
@@ -8969,6 +9510,7 @@ async def run_guided_init(
             include_linuxdo,
             include_v2ex,
             include_weibo,
+            include_instagram,
         )
     )
     _stage1_source_done = 0
@@ -9253,6 +9795,7 @@ async def run_guided_init(
                 include_xhs,
                 include_dy,
                 include_yt,
+                include_tiktok,
                 include_x,
                 include_zhihu,
                 include_reddit,
@@ -9601,6 +10144,102 @@ async def run_guided_init(
     elif weibo_status == "failed":
         console.print("  [yellow]微博任务失败 —— 检查扩展日志后重试 init。[/yellow]")
 
+    instagram_task_id = (
+        (
+            await _enqueue_register_kick(
+                lambda **kwargs: _enqueue_instagram_bootstrap_task(
+                    profile_update=True,
+                    **kwargs,
+                ),
+                "instagram",
+            )
+        )
+        if include_instagram
+        else None
+    )
+    if include_instagram:
+        await _stage1_begin_source(
+            "Instagram",
+            wait_hint="扩展未响应会在约 13 分钟后自动跳过",
+        )
+        instagram_events, instagram_scope_counts, instagram_status = await _run_extension_collector(
+            _collect_instagram_bootstrap_events,
+            instagram_task_id,
+            label="Instagram",
+            env_name="OPENBILICLAW_INSTAGRAM_BOOTSTRAP_WAIT_SECONDS",
+            default_wait_seconds=780,
+        )
+        _stage1_finish_source()
+    else:
+        instagram_events, instagram_scope_counts, instagram_status = [], {}, "skipped"
+    if instagram_status in {"ok", "partial"}:
+        console.print(
+            "  Instagram "
+            f"点赞 [green]{instagram_scope_counts.get('instagram_liked', 0)}[/green] 条"
+            f" / 收藏 [green]{instagram_scope_counts.get('instagram_saved', 0)}[/green] 条"
+            f" / 关注 [green]{instagram_scope_counts.get('instagram_following', 0)}[/green] 人"
+        )
+    elif instagram_status == "login_required":
+        console.print("  [yellow]Instagram 需要登录 —— 请先在当前浏览器登录后重试。[/yellow]")
+    elif instagram_status == "challenge":
+        console.print("  [yellow]Instagram 触发 challenge；请先在浏览器完成验证后重试。[/yellow]")
+    elif instagram_status == "rate_limited":
+        console.print("  [yellow]Instagram 当前限流；请稍后再重试初始化。[/yellow]")
+    elif instagram_status == "timeout":
+        console.print("  [dim]Instagram 初始化信号未导入：扩展未连接或任务仍在后台运行。[/dim]")
+    elif instagram_status == "failed":
+        console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志后重试。[/yellow]")
+
+    # TikTok uses a background task tab; serialize with the other sources
+    # to respect the shared browser-task mutex.
+    tiktok_task_id = (
+        (await _enqueue_register_kick(_enqueue_tiktok_bootstrap_task, "tiktok"))
+        if include_tiktok
+        else None
+    )
+    if tiktok_task_id:
+        console.print(
+            "  [dim]已请求扩展拉 TikTok 点赞 / 收藏 / 关注"
+            "(后台标签页顺序读取，最多等待约 8 分钟)。[/dim]"
+        )
+    if include_tiktok:
+        await _stage1_begin_source("TikTok", wait_hint="扩展未响应会在约 8 分钟后自动跳过")
+    if include_tiktok:
+        tiktok_events, tiktok_scope_counts, tiktok_status = await _run_extension_collector(
+            _collect_tiktok_bootstrap_events,
+            tiktok_task_id,
+            label="TikTok",
+            env_name="OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS",
+            default_wait_seconds=_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS,
+        )
+    else:
+        tiktok_events, tiktok_scope_counts, tiktok_status = [], {}, "skipped"
+    if include_tiktok:
+        _stage1_finish_source()
+    if tiktok_status == "ok":
+        console.print(
+            "  TikTok "
+            f"点赞 [green]{tiktok_scope_counts.get('tt_like', 0)}[/green] 条"
+            f" / 收藏 [green]{tiktok_scope_counts.get('tt_collect', 0)}[/green] 个"
+            f" / 关注 [green]{tiktok_scope_counts.get('tt_follow', 0)}[/green] 人"
+        )
+    elif tiktok_status == "degraded":
+        console.print(
+            "  [yellow]TikTok 已导入部分信号，但至少一个范围未完成分页；"
+            "本次结果按不完整处理，请检查扩展日志后重试。[/yellow]"
+        )
+    elif tiktok_status == "empty":
+        console.print(
+            "  [yellow]TikTok 任务跑通但 0 条 videos —— 已确认登录且目标列表为空。[/yellow]"
+        )
+    elif tiktok_status == "timeout":
+        console.print(
+            "  [dim]TikTok 初始化信号未导入:扩展未连接或任务仍在后台跑。"
+            "可通过 OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS 调整等待。[/dim]"
+        )
+    elif tiktok_status == "failed":
+        console.print("  [yellow]TikTok 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
+
     linuxdo_task_id = (
         (
             await _enqueue_register_kick(
@@ -9801,6 +10440,7 @@ async def run_guided_init(
                 "linuxdo": linuxdo_status,
                 "v2ex": v2ex_status,
                 "weibo": weibo_status,
+                "tiktok": tiktok_status,
             },
         )
     except Exception:
@@ -9850,9 +10490,11 @@ async def run_guided_init(
     events_to_persist.extend(linuxdo_events)
     events_to_persist.extend(v2ex_events)
     events_to_persist.extend(weibo_events)
+    events_to_persist.extend(instagram_events)
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
+    events.extend(tiktok_events)
     events.extend(zhihu_events)
     events.extend(reddit_events)
     events.extend(bangumi_events)
@@ -9860,6 +10502,7 @@ async def run_guided_init(
     events.extend(linuxdo_events)
     events.extend(v2ex_events)
     events.extend(weibo_events)
+    events.extend(instagram_events)
     # With bilibili now optional, the floor is "at least one selected source
     # produced signals" — an all-empty run can't build a meaningful profile.
     if not events:
@@ -9892,6 +10535,7 @@ async def run_guided_init(
                 "xiaohongshu": len(xhs_events),
                 "douyin": len(dy_events),
                 "youtube": len(yt_events),
+                "tiktok": len(tiktok_events),
                 "twitter": x_event_count,
                 "zhihu": len(zhihu_events),
                 "reddit": len(reddit_events),
@@ -9900,6 +10544,7 @@ async def run_guided_init(
                 "linuxdo": len(linuxdo_events),
                 "v2ex": len(v2ex_events),
                 "weibo": len(weibo_events),
+                "instagram": len(instagram_events),
             }
         )
     # Re-running init re-fetches the same snapshot; without this the ledger
@@ -9920,7 +10565,12 @@ async def run_guided_init(
         for event in events_to_persist:
             await memory.propagate_event(event)
     stage1_degraded = (
-        dy_status == "degraded" or linuxdo_status == "degraded" or github_status == "partial"
+        dy_status == "degraded"
+        or tiktok_status == "degraded"
+        or linuxdo_status == "degraded"
+        or instagram_status
+        in {"partial", "login_required", "challenge", "rate_limited", "failed", "timeout"}
+        or github_status == "partial"
     )
     await _stage_done(
         1,
@@ -9928,12 +10578,16 @@ async def run_guided_init(
         reason=(
             "douyin_degraded"
             if dy_status == "degraded"
+            else "tiktok_degraded"
+            if tiktok_status == "degraded"
             else "linuxdo_degraded"
             if linuxdo_status == "degraded"
             else "github_partial"
             if github_status == "partial"
             else "v2ex_partial"
             if v2ex_status == "partial"
+            else "instagram_partial"
+            if instagram_status == "partial"
             else None
         ),
     )
@@ -10142,6 +10796,8 @@ async def run_guided_init(
         combined_history.extend(_dy_events_to_history_items(dy_events))
     if yt_events:
         combined_history.extend(_yt_events_to_history_items(yt_events))
+    if tiktok_events:
+        combined_history.extend(_tiktok_events_to_history_items(tiktok_events))
     if zhihu_events:
         combined_history.extend(_zhihu_events_to_history_items(zhihu_events))
     if reddit_events:
@@ -10156,6 +10812,8 @@ async def run_guided_init(
         combined_history.extend(_v2ex_events_to_history_items(v2ex_events))
     if weibo_events:
         combined_history.extend(_weibo_events_to_history_items(weibo_events))
+    if instagram_events:
+        combined_history.extend(_instagram_events_to_history_items(instagram_events))
     # X likes/bookmarks previously only fed the analyze stage; feeding the
     # profile builder too keeps cross-source flow uniform AND guarantees a
     # non-empty profile input when X is the only selected source.
@@ -10281,17 +10939,38 @@ async def run_guided_init(
         "target_pool_count": target_pool_count,
         "label_suffix": "",
     }
+    accepts_selected_sources = False
     try:
         signature = inspect.signature(discover_backfill)
     except (TypeError, ValueError):
         accepts_progress_callback = True
     else:
+        accepts_selected_sources = "selected_sources" in signature.parameters
         accepts_progress_callback = "progress_callback" in signature.parameters or any(
             parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
     if accepts_progress_callback:
         backfill_kwargs["progress_callback"] = _stage4_progress
+    if accepts_selected_sources:
+        backfill_kwargs["selected_sources"] = {
+            source
+            for source, included in (
+                ("bilibili", include_bili),
+                ("xiaohongshu", include_xhs),
+                ("douyin", include_dy),
+                ("youtube", include_yt),
+                ("twitter", include_x),
+                ("zhihu", include_zhihu),
+                ("reddit", include_reddit),
+                ("bangumi", include_bangumi),
+                ("linuxdo", include_linuxdo),
+                ("v2ex", include_v2ex),
+                ("weibo", include_weibo),
+                ("instagram", include_instagram),
+            )
+            if included
+        }
 
     # Stage 4 is best-effort once the full profile exists: timeout/failure is
     # terminal *partial success*, and clients may enter the app while the
@@ -10379,6 +11058,12 @@ async def run_guided_init(
         weibo_events=weibo_events,
         weibo_scope_counts=weibo_scope_counts,
         weibo_status=weibo_status,
+        instagram_events=instagram_events,
+        instagram_scope_counts=instagram_scope_counts,
+        instagram_status=instagram_status,
+        tiktok_events=tiktok_events,
+        tiktok_scope_counts=tiktok_scope_counts,
+        tiktok_status=tiktok_status,
     )
 
 
@@ -10418,6 +11103,16 @@ def init(
         False,
         "--yes-youtube",
         help="跳过 YouTube 的 y/n 提问,直接启用(适合脚本化场景)。",
+    ),
+    no_tiktok: bool = typer.Option(
+        False,
+        "--no-tiktok",
+        help="跳过 TikTok 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_tiktok_prompt: bool = typer.Option(
+        False,
+        "--yes-tiktok",
+        help="跳过 TikTok 的 y/n 提问,直接启用(适合脚本化场景)。",
     ),
     no_x: bool = typer.Option(
         False,
@@ -10478,6 +11173,16 @@ def init(
         False,
         "--yes-weibo",
         help="跳过微博的 y/n 提问,直接启用微博数据接入(适合脚本化场景)。",
+    ),
+    no_instagram: bool = typer.Option(
+        False,
+        "--no-instagram",
+        help="跳过 Instagram 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_instagram_prompt: bool = typer.Option(
+        False,
+        "--yes-instagram",
+        help="跳过 Instagram 的 y/n 提问，直接启用 init-only 个人信号。",
     ),
     v2ex_username: str = typer.Option(
         "",
@@ -10734,6 +11439,19 @@ def init(
     else:
         include_yt = _ask_yt_inclusion()
 
+    # Same resolution order for the TikTok opt-in. Default is
+    # off-in-non-interactive (see _ask_tiktok_inclusion docstring).
+    if no_tiktok:
+        include_tiktok = False
+        console.print("[dim]  跳过 TikTok 数据接入(命令行 --no-tiktok)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_TIKTOK", "").strip() == "1":
+        include_tiktok = False
+        console.print("[dim]  跳过 TikTok 数据接入(OPENBILICLAW_NO_TIKTOK=1)。[/dim]")
+    elif skip_tiktok_prompt:
+        include_tiktok = True
+    else:
+        include_tiktok = _ask_tiktok_inclusion()
+
     # X (Twitter) is server-side cookie replay — no init bootstrap task, so this
     # only flips [sources.twitter].enabled; the producer fetches later once the
     # x.com cookie is synced. Same resolution order as the other opt-ins.
@@ -10801,6 +11519,17 @@ def init(
         include_weibo = True
     else:
         include_weibo = _ask_weibo_inclusion()
+
+    if no_instagram:
+        include_instagram = False
+        console.print("[dim]  跳过 Instagram 数据接入(命令行 --no-instagram)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_INSTAGRAM", "").strip() == "1":
+        include_instagram = False
+        console.print("[dim]  跳过 Instagram 数据接入(OPENBILICLAW_NO_INSTAGRAM=1)。[/dim]")
+    elif skip_instagram_prompt:
+        include_instagram = True
+    else:
+        include_instagram = _ask_instagram_inclusion()
 
     selected_v2ex_username = ""
     if include_v2ex:
@@ -11049,6 +11778,7 @@ def init(
         include_bangumi,
         include_linuxdo,
         include_weibo,
+        include_instagram,
     )
     if not any(selected_sources):
         _print_status_panel(
@@ -11057,7 +11787,8 @@ def init(
             "已跳过 B 站且未启用任何其他平台——init 至少需要一个数据来源。"
             "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / "
             "--yes-youtube / --yes-x / --yes-github / --yes-zhihu / --yes-reddit / "
-            "--yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi 启用其他来源。",
+            "--yes-linuxdo / --yes-v2ex / --yes-weibo / --yes-bangumi / "
+            "--yes-instagram 启用其他来源。",
         )
         raise typer.Exit(code=1)
 
@@ -11072,6 +11803,7 @@ def init(
         include_linuxdo,
         include_v2ex,
         include_weibo,
+        include_instagram,
     )
     if (
         include_bangumi
@@ -11112,6 +11844,7 @@ def init(
         include_xhs=include_xhs,
         include_dy=include_dy,
         include_yt=include_yt,
+        include_tiktok=include_tiktok,
         include_x=include_x,
         include_zhihu=include_zhihu,
         include_reddit=include_reddit,
@@ -11125,6 +11858,7 @@ def init(
         github_token=github_token_to_persist,
         v2ex_username=selected_v2ex_username,
         include_weibo=include_weibo,
+        include_instagram=include_instagram,
     )
 
     # gui-init (B2): the four init stages now run inside the shared async
@@ -11155,6 +11889,7 @@ def init(
                 include_xhs=include_xhs,
                 include_dy=include_dy,
                 include_yt=include_yt,
+                include_tiktok=include_tiktok,
                 include_x=include_x,
                 include_zhihu=include_zhihu,
                 include_reddit=include_reddit,
@@ -11168,6 +11903,7 @@ def init(
                 github_token=selected_github_token,
                 v2ex_username=selected_v2ex_username,
                 include_weibo=include_weibo,
+                include_instagram=include_instagram,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
                 purge_pool_callback=(
@@ -11222,17 +11958,34 @@ def init(
     weibo_events = list(getattr(result, "weibo_events", []))
     weibo_scope_counts = dict(getattr(result, "weibo_scope_counts", {}))
     weibo_status = str(getattr(result, "weibo_status", "skipped"))
+    instagram_events = list(getattr(result, "instagram_events", []))
+    instagram_scope_counts = dict(getattr(result, "instagram_scope_counts", {}))
+    instagram_status = str(getattr(result, "instagram_status", "skipped"))
+    tiktok_events = list(getattr(result, "tiktok_events", []))
+    tiktok_scope_counts = dict(getattr(result, "tiktok_scope_counts", {}))
+    tiktok_status = str(getattr(result, "tiktok_status", "skipped"))
     discovered_count = result.discovered_count
     discovery_error = result.discovery_error
     dy_degraded = dy_status == "degraded"
+    tiktok_degraded = tiktok_status == "degraded"
     linuxdo_degraded = linuxdo_status == "degraded"
     partial_success = (
         discovery_error
         or dy_degraded
+        or tiktok_degraded
         or linuxdo_degraded
         or github_status == "partial"
         or v2ex_status == "partial"
         or weibo_status in {"failed", "timeout", "login_required"}
+        or instagram_status
+        in {
+            "failed",
+            "timeout",
+            "login_required",
+            "challenge",
+            "rate_limited",
+            "partial",
+        }
     )
 
     if result.discover_exc is not None:
@@ -11246,6 +11999,13 @@ def init(
             "warning",
             "抖音采集部分完成",
             "dy_status=degraded：已采到的抖音事件仍已用于画像建模，"
+            "但至少一个范围未能证明分页完整；请检查扩展日志后重试补齐。",
+        )
+    if tiktok_degraded:
+        _print_status_panel(
+            "warning",
+            "TikTok 采集部分完成",
+            "tiktok_status=degraded：已采到的 TikTok 事件仍已用于画像建模，"
             "但至少一个范围未能证明分页完整；请检查扩展日志后重试补齐。",
         )
     if linuxdo_degraded:
@@ -11275,6 +12035,21 @@ def init(
             "微博采集未完成",
             "微博公开发现仍可用；请确认当前浏览器已登录微博、扩展已连接，"
             "再用 `openbiliclaw init --yes-weibo` 重试。",
+        )
+    if instagram_status in {
+        "failed",
+        "timeout",
+        "login_required",
+        "challenge",
+        "rate_limited",
+        "partial",
+    }:
+        _print_status_panel(
+            "warning",
+            "Instagram 采集未完整",
+            "Instagram 公开发现仍可用；首版个人信号只在初始化时读取。"
+            "请确认当前浏览器已登录 Instagram、扩展已连接，再用 "
+            "`openbiliclaw init --yes-instagram` 重试。",
         )
 
     _print_status_panel(
@@ -11306,6 +12081,10 @@ def init(
     yt_history_count = int(yt_scope_counts.get("yt_history", 0))
     yt_subs_count = int(yt_scope_counts.get("yt_subscriptions", 0))
     yt_likes_count = int(yt_scope_counts.get("yt_likes", 0))
+    tiktok_like = int(tiktok_scope_counts.get("tt_like", 0))
+    tiktok_collect = int(tiktok_scope_counts.get("tt_collect", 0))
+    tiktok_history = int(tiktok_scope_counts.get("tt_history", 0))
+    tiktok_follow = int(tiktok_scope_counts.get("tt_follow", 0))
     zhihu_history_count = int(zhihu_scope_counts.get("zhihu_read_history", 0))
     zhihu_favorite_count = int(zhihu_scope_counts.get("zhihu_collection", 0)) + int(
         zhihu_scope_counts.get("zhihu_activity_favorite", 0)
@@ -11329,6 +12108,9 @@ def init(
     weibo_favorites = int(weibo_scope_counts.get("weibo_favorites", 0))
     weibo_following = int(weibo_scope_counts.get("weibo_following", 0))
     weibo_mentions = int(weibo_scope_counts.get("weibo_mentions", 0))
+    instagram_liked = int(instagram_scope_counts.get("instagram_liked", 0))
+    instagram_saved = int(instagram_scope_counts.get("instagram_saved", 0))
+    instagram_following = int(instagram_scope_counts.get("instagram_following", 0))
     summary_rows: list[tuple[str, str]] = [
         ("📺 B 站观看历史", f"{len(history)} 条"),
         ("📺 B 站收藏夹", f"{len(favorites_data)} 条"),
@@ -11351,6 +12133,15 @@ def init(
         ("▶ YouTube 订阅频道", f"{yt_subs_count} 个"),
         ("▶ YouTube 点赞", f"{yt_likes_count} 个"),
         ("🌐 YouTube 入库事件", f"{len(yt_events)} 条"),
+        ("🎬 TikTok 点赞", f"{tiktok_like} 条"),
+        ("🎬 TikTok 收藏", f"{tiktok_collect} 个"),
+        ("🎬 TikTok 观看历史（可选）", f"{tiktok_history} 条" if tiktok_history else "默认不采集"),
+        ("🎬 TikTok 关注", f"{tiktok_follow} 人"),
+        ("🌐 TikTok 入库事件", f"{len(tiktok_events)} 条"),
+        (
+            "🎬 TikTok 采集状态(tiktok_status)",
+            "部分完成 (degraded)" if tiktok_degraded else tiktok_status,
+        ),
         ("知乎 浏览", f"{zhihu_history_count} 条"),
         ("知乎 收藏", f"{zhihu_favorite_count} 条"),
         ("知乎 点赞", f"{zhihu_like_count} 条"),
@@ -11382,6 +12173,10 @@ def init(
         ("微博 关注", f"{weibo_following} 人"),
         ("微博 互动", f"{weibo_mentions} 条"),
         ("🌐 微博 入库事件", f"{len(weibo_events)} 条"),
+        ("Instagram 点赞", f"{instagram_liked} 条"),
+        ("Instagram 收藏", f"{instagram_saved} 条"),
+        ("Instagram 关注", f"{instagram_following} 人"),
+        ("🌐 Instagram 入库事件", f"{len(instagram_events)} 条"),
         ("📊 画像建模总事件", f"{len(events)} 条"),
         ("✅ 灵魂画像", "已生成"),
         ("🔍 首轮发现内容", f"{discovered_count} 条"),
@@ -11401,6 +12196,14 @@ def init(
             "[dim]ℹ️  YouTube 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
             "https://www.youtube.com / 任务仍在后台跑。装好扩展后重新跑 "
             "[cyan]openbiliclaw init --yes-youtube[/cyan] 可补齐。[/dim]"
+        )
+    if (
+        tiktok_like + tiktok_collect + tiktok_history + tiktok_follow
+    ) == 0 and tiktok_status != "skipped":
+        console.print(
+            "[dim]ℹ️  TikTok 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
+            "https://www.tiktok.com / 任务仍在后台跑。装好扩展后重新跑 "
+            "[cyan]openbiliclaw init --yes-tiktok[/cyan] 可补齐。[/dim]"
         )
     if (
         zhihu_history_count + zhihu_favorite_count + zhihu_like_count
@@ -11451,6 +12254,15 @@ def init(
             "https://weibo.com 或 https://m.weibo.cn，然后重跑 "
             "[cyan]openbiliclaw init --yes-weibo[/cyan]。[/dim]"
         )
+    if (
+        instagram_liked + instagram_saved + instagram_following == 0
+        and instagram_status != "skipped"
+    ):
+        console.print(
+            "[dim]ℹ️  Instagram 0 条个人信号入库。请确认扩展已安装、浏览器已登录 "
+            "https://www.instagram.com，然后重跑 "
+            "[cyan]openbiliclaw init --yes-instagram[/cyan]。[/dim]"
+        )
 
     source_parts = []
     if bilibili_events > 0:
@@ -11475,12 +12287,14 @@ def init(
         source_parts.append(f"[green]{len(v2ex_events)}[/green] 条 V2EX 信号")
     if len(weibo_events) > 0:
         source_parts.append(f"[green]{len(weibo_events)}[/green] 条微博信号")
+    if len(instagram_events) > 0:
+        source_parts.append(f"[green]{len(instagram_events)}[/green] 条 Instagram 信号")
     if len(source_parts) > 1:
         console.print(
             "[dim]ℹ️  本次画像综合了 "
             + " + ".join(source_parts)
             + "。支持增量刷新的来源会由 daemon 继续补充；"
-            "GitHub 公开 Star 为 init / 按需刷新。[/dim]"
+            "Instagram 个人信号与 GitHub 公开 Star 为 init / 按需刷新。[/dim]"
         )
 
     # Phase E (v0.3.28+): print cost breakdown for THIS init only,
@@ -11589,7 +12403,7 @@ def rebuild_profile(
     source: str = typer.Option(
         "",
         "--source",
-        help="只用指定来源：bilibili / xiaohongshu / douyin / youtube，留空=全部。",
+        help="只用指定来源（例如 instagram / bilibili），留空=全部。",
     ),
     no_analyze: bool = typer.Option(
         False,
@@ -11609,7 +12423,8 @@ def rebuild_profile(
     """
     import json as _json
 
-    _prepare_init_runtime()
+    # Rebuilding consumes stored events only, even for Bilibili itself.
+    _prepare_init_runtime(require_bili_auth=False)
     memory = _build_memory_manager()
     soul_engine = _build_soul_engine()
 
@@ -11706,7 +12521,7 @@ def _run_single_source_bootstrap(
     collect: Callable[[str | None], tuple[list[dict[str, Any]], dict[str, int], str]],
     wait_seconds: float,
     summary_renderer: Callable[[dict[str, int], str, int], None],
-) -> None:
+) -> str:
     """Shared core for ``fetch-douyin`` / ``fetch-xhs`` standalone commands.
 
     Pure pull pipeline — enqueue → kick → wait for completion →
@@ -11736,6 +12551,7 @@ def _run_single_source_bootstrap(
     summary_renderer(scope_counts, status_label, len(events))
     if status_label in {"timeout", "failed"}:
         raise typer.Exit(code=1)
+    return status_label
 
 
 @app.command("profile-consolidate")
@@ -12101,6 +12917,65 @@ def fetch_xhs(
         wait_seconds=wait_seconds,
         summary_renderer=_render,
     )
+
+
+@app.command("fetch-instagram")
+def fetch_instagram(
+    wait_seconds: float = typer.Option(
+        780.0,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回传点赞 / 收藏 / 关注的最大秒数（默认 780s）。",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="忽略近期 Instagram bootstrap 任务，强制重新执行三个只读 scope。",
+    ),
+) -> None:
+    """只读验证 Instagram 初始化事件，不重建画像。"""
+
+    def _render(scope_counts: dict[str, int], status_label: str, event_count: int) -> None:
+        if status_label in {"ok", "partial"}:
+            console.print(
+                "  Instagram "
+                f"点赞 [green]{scope_counts.get('instagram_liked', 0)}[/green] 条"
+                f" / 收藏 [green]{scope_counts.get('instagram_saved', 0)}[/green] 条"
+                f" / 关注 [green]{scope_counts.get('instagram_following', 0)}[/green] 人"
+            )
+            console.print(f"  共转换 [green]{event_count}[/green] 条 canonical 事件。")
+            if status_label == "partial":
+                console.print("  [yellow]部分 scope 未完成；已保留成功读取的只读结果。[/yellow]")
+        elif status_label == "empty":
+            console.print(
+                "  [yellow]Instagram 三个 scope 均已确认完成，但没有可导入记录。[/yellow]"
+            )
+        elif status_label == "login_required":
+            console.print("  [yellow]请先在当前浏览器登录 Instagram，再让扩展重试。[/yellow]")
+        elif status_label == "challenge":
+            console.print("  [yellow]Instagram 触发 challenge；请先在浏览器完成验证。[/yellow]")
+        elif status_label == "rate_limited":
+            console.print("  [yellow]Instagram 当前限流；请稍后重试。[/yellow]")
+        elif status_label == "timeout":
+            console.print("  [dim]Instagram 任务超时：扩展未连接或任务仍在分页。[/dim]")
+        else:
+            console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志。[/yellow]")
+
+    status_label = _run_single_source_bootstrap(
+        source_label="Instagram",
+        enqueue=lambda: _enqueue_instagram_bootstrap_task(
+            force=force,
+            smoke_only=True,
+        ),
+        collect=lambda task_id: _collect_instagram_bootstrap_events(
+            task_id,
+            max_wait_seconds=wait_seconds,
+        ),
+        wait_seconds=wait_seconds,
+        summary_renderer=_render,
+    )
+    if status_label in {"login_required", "challenge", "rate_limited"}:
+        raise typer.Exit(code=1)
 
 
 @app.command("fetch-youtube")
@@ -14121,6 +14996,7 @@ def keyword_inspiration_dry_run(
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "twitter",
         "github",
         "zhihu",
@@ -14811,6 +15687,191 @@ def _run_douyin_formal_discovery(*, limit: int) -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("discover-tiktok")
+def discover_tiktok_smoke(
+    mode: str = typer.Option("feed", help="只读取数分支：feed / tag / user / search"),
+    query: str = typer.Option("", help="标签、创作者或搜索词；feed 不需要"),
+    limit: int = typer.Option(5, min=1, max=20, help="最多显示的条目数"),
+) -> None:
+    """Read TikTok metadata with isolated state; never write the user's candidate pool."""
+    import tempfile
+
+    from openbiliclaw.api.runtime_context import _build_tiktok_client
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+    if mode not in {"feed", "tag", "user", "search"} or (mode != "feed" and not query.strip()):
+        raise typer.BadParameter("mode 必须是 feed/tag/user/search，非 feed 分支需要 --query")
+    cfg = load_config()
+    from openbiliclaw.network import set_outbound_proxy
+
+    set_outbound_proxy(cfg.network.proxy, mode=cfg.network.mode)
+    cookie = resolve_tiktok_cookie(data_dir=cfg.data_path, cookie_env=cfg.sources.tiktok.cookie_env)
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-tiktok-smoke-") as directory:
+        cfg.data_dir = directory
+        client = _build_tiktok_client(cfg, cfg.sources.tiktok)
+        if client.web is not None:
+            client.web.identity.login_cookie = cookie
+
+        async def run() -> list[Any]:
+            if mode == "feed":
+                rows = await client.get_feed(limit=limit)
+                if rows is None:
+                    raise RuntimeError("TikTok feed unavailable")
+                return list(rows)
+            method = {
+                "tag": client.get_tag_videos,
+                "user": client.get_user_videos,
+                "search": client.search_videos,
+            }[mode]
+            return list(await method(query, limit=limit))
+
+        try:
+            rows = asyncio.run(run())
+        except Exception as exc:
+            console.print(f"TikTok smoke: {getattr(exc, 'reason', type(exc).__name__)}")
+            raise typer.Exit(code=1) from exc
+        console.print(f"TikTok {mode}: fetched={len(rows)}; storage=isolated; candidate_writes=0")
+
+
+def _run_tiktok_discovery(*, limit: int) -> None:
+    """Run the formal TikTok producer without the daemon master switch."""
+    from openbiliclaw.api.runtime_context import build_tiktok_discovery_producer
+    from openbiliclaw.config import load_config
+    from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
+    from openbiliclaw.llm.concurrency import background_llm_concurrency
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    _require_runtime_config()
+    config = load_config()
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "TikTok discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.tiktok].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    if not hasattr(database, "conn"):
+        _print_status_panel("warning", "TikTok 任务表不可用", "当前数据库不支持 tiktok 运行台账。")
+        raise typer.Exit(code=1)
+
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    llm_service = LLMService(
+        registry=_build_registry(),
+        memory=_build_memory_manager(),
+        usage_recorder=_build_usage_recorder(),
+        module_overrides=module_overrides_from_config(config),
+        concurrency=config.llm.concurrency,
+        concurrency_gate=_build_llm_concurrency_gate(),
+    )
+    concurrency = DiscoveryConcurrencyController(
+        bilibili_request_concurrency=2,
+        llm_evaluation_concurrency=background_llm_concurrency(config.llm.concurrency),
+    )
+    producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+        # Manual discover is source-scoped and must not inherit the daemon's
+        # scheduler master switch.
+        enabled_override=True,
+    )
+    if producer is None:
+        _print_status_panel(
+            "warning",
+            "TikTok discovery producer 未启动",
+            "请确认 TikTok 来源已启用且数据库可用。",
+        )
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(producer.produce_if_due(limit=limit))
+    reason = str(result.get("reason", ""))
+    discovered = int(cast("int | float | str | bool", result.get("discovered", 0)) or 0)
+    enqueued = int(cast("int | float | str | bool", result.get("enqueued", 0)) or 0)
+    source_counts_raw = result.get("source_counts", {})
+    source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+    source_counts_text = ", ".join(
+        f"{source}:{count}" for source, count in sorted(source_counts.items())
+    )
+
+    _print_page_title("TikTok 内容发现", "正式 producer · unified keywords · candidate pipeline")
+    if reason in {"ok", "empty", "degraded"}:
+        if reason == "degraded":
+            console.print("  [yellow]部分 TikTok 分支失败，已保留成功候选；详见后端日志。[/yellow]")
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "tiktok"),
+                ("来源分布", source_counts_text or "（无）"),
+            ],
+        )
+        if reason == "empty" or discovered <= 0:
+            console.print("  [dim]本轮分支正常完成，但没有产生新候选。[/dim]")
+            return
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "rate_limited": ("warning", "TikTok 暂时限流", "共享冷却期结束后会自动恢复。"),
+        "no_keywords": ("info", "暂无待执行关键词", "等待关键词规划器补充。"),
+        "disabled": ("info", "TikTok discovery 已禁用", "请启用 TikTok 来源后重试。"),
+        "throttled": (
+            "info",
+            "距离上次 TikTok discovery 不足最小调度间隔",
+            "可在配置页调整 TikTok 最小调度间隔分钟数。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需继续补充 TikTok 候选。"),
+        "no_profile": ("warning", "尚未初始化 Soul 画像", "请先执行 `openbiliclaw init`。"),
+        "budget_exhausted": (
+            "warning",
+            "TikTok discovery 分支预算已耗尽",
+            "请调整对应 daily_*_budget 或等待 UTC 日预算重置。",
+        ),
+        "error": (
+            "warning",
+            "TikTok discovery 执行失败",
+            "请检查后端日志中的结构化错误。",
+        ),
+    }
+    kind, title, body = messages.get(reason, ("warning", "未知状态", reason or "无详细信息"))
+    _print_status_panel(kind, title, body)
+    if reason not in {"throttled", "pool_full"}:
+        raise typer.Exit(code=1)
+
+
 def _run_zhihu_discovery(*, limit: int) -> None:
     """Run one formal Zhihu discovery cycle through the runtime producer."""
     from openbiliclaw.config import load_config
@@ -15480,7 +16541,11 @@ def _run_v2ex_discovery(*, limit: int, force: bool = False) -> None:
     try:
         asyncio.run(soul_engine.get_profile())
     except SoulProfileNotInitializedError as exc:
-        _print_status_panel("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。")
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init`。",
+        )
         raise typer.Exit(code=1) from exc
     discovery_engine = _build_discovery_engine()
     candidate_pipeline = _build_discovery_candidate_pipeline(
@@ -16056,6 +17121,162 @@ def _run_weibo_discovery(*, limit: int, force: bool = False) -> None:
     _print_status_panel(kind, title, body)
 
 
+def _run_instagram_discovery(*, limit: int, force: bool = False) -> None:
+    """Run one formal Instagram cycle through the shared candidate pipeline."""
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.instagram_producer import InstagramDiscoveryProducer
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+
+    _require_runtime_config()
+    config = load_config()
+    source_cfg = config.sources.instagram
+    if not source_cfg.enabled:
+        _print_status_panel(
+            "warning",
+            "Instagram discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.instagram].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel("warning", "尚未初始化用户画像", "请先执行 `openbiliclaw init`。")
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    producer = InstagramDiscoveryProducer(
+        database=database,
+        task_queue=InstagramTaskQueue(database),
+        soul_engine=soul_engine,
+        enabled=True,
+        source_modes=tuple(source_cfg.source_modes),
+        daily_topic_budget=source_cfg.daily_topic_budget,
+        daily_creator_budget=source_cfg.daily_creator_budget,
+        min_interval_minutes=source_cfg.min_interval_minutes,
+        request_interval_ms=min(
+            30_000,
+            max(1_000, int(source_cfg.request_interval_seconds) * 1000),
+        ),
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+        kick=lambda: _kick_task_dispatcher("instagram"),
+    )
+    result = asyncio.run(producer.produce_if_due(limit=limit, force=force))
+    reason = str(result.get("reason") or "")
+    discovered = int(cast("Any", result.get("discovered") or 0))
+    enqueued = int(cast("Any", result.get("enqueued") or 0))
+    modes = ", ".join(source_cfg.source_modes)
+    _print_page_title("Instagram 内容发现", f"正式 discover · {modes}")
+    if reason == "ok":
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "instagram"),
+                ("分支", modes),
+                ("状态", reason),
+            ],
+        )
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "disabled": (
+            "warning",
+            "Instagram discovery 已禁用",
+            "请启用 Instagram 来源后重试。",
+        ),
+        "no_profile": (
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init`。",
+        ),
+        "throttled": (
+            "info",
+            "Instagram discovery 尚未到期",
+            "可使用 --force 手动验证。",
+        ),
+        "extension_absent": (
+            "warning",
+            "Instagram 浏览器扩展未连接",
+            "请连接扩展后重试；本轮没有创建浏览器任务。",
+        ),
+        "mode_disabled": (
+            "warning",
+            "Instagram discovery 没有启用分支",
+            "请至少启用 topic 或 creator。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需补充 Instagram 候选。"),
+        "budget_exhausted": (
+            "info",
+            "Instagram discovery 今日预算已用完",
+            "可在配置页调整 topic / creator 每日保留候选预算。",
+        ),
+        "no_topics": (
+            "info",
+            "没有 Instagram topic",
+            "画像兴趣为空，暂时无法生成 topic 任务。",
+        ),
+        "no_creator_seeds": (
+            "info",
+            "没有 Instagram 作者种子",
+            "请同时启用 topic 分支，以本轮公开内容作者作为 creator 种子。",
+        ),
+        "empty": (
+            "info",
+            "Instagram discovery 返回为空",
+            "浏览器任务已完成，但本轮没有可转换的公开内容。",
+        ),
+        "no_progress": (
+            "info",
+            "Instagram discovery 没有新增候选",
+            "公开内容已抓取，但均被去重或候选池准入规则过滤。",
+        ),
+        "timeout": (
+            "warning",
+            "Instagram 浏览器任务超时",
+            "请确认 OpenBiliClaw 浏览器扩展在线并已连接当前后端。",
+        ),
+        "task_failed": (
+            "warning",
+            "Instagram 浏览器任务失败",
+            str(result.get("mode_results") or ""),
+        ),
+    }
+    kind, title, body = messages.get(
+        reason,
+        ("warning", "Instagram discovery 未产出内容", reason or "无详细信息"),
+    )
+    _print_status_panel(kind, title, body)
+    if reason not in {
+        "throttled",
+        "pool_full",
+        "budget_exhausted",
+        "no_topics",
+        "no_creator_seeds",
+        "empty",
+        "no_progress",
+    }:
+        raise typer.Exit(code=1)
+
+
 @app.command("discover-douyin")
 def discover_douyin(
     keywords: list[str] | None = _DOUYIN_DISCOVERY_KEYWORDS_OPTION,
@@ -16468,8 +17689,8 @@ def discover(
         "--source",
         "-s",
         help=(
-            "触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu、reddit、"
-            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 web。"
+            "触发发现的内容源：bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、"
+            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo、instagram 或 web。"
         ),
         case_sensitive=False,
     ),
@@ -16478,7 +17699,10 @@ def discover(
     force: bool = typer.Option(
         False,
         "--force",
-        help="xiaohongshu / bangumi / github / v2ex / weibo / web：忽略最小调度间隔强制执行一次。",
+        help=(
+            "xiaohongshu / bangumi / github / v2ex / weibo / instagram / web："
+            "忽略最小调度间隔强制执行一次。"
+        ),
     ),
 ) -> None:
     """手动触发内容发现（按来源选择渠道）."""
@@ -16503,6 +17727,16 @@ def discover(
                 "douyin 渠道走正式 producer，已忽略策略过滤。",
             )
         _run_douyin_formal_discovery(limit=limit)
+        return
+
+    if source_normalized == "tiktok":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "tiktok 渠道走正式 producer，已忽略策略过滤。",
+            )
+        _run_tiktok_discovery(limit=limit)
         return
 
     if source_normalized == "zhihu":
@@ -16586,11 +17820,21 @@ def discover(
         _run_web_formal_discovery(limit=limit, force=force)
         return
 
+    if source_normalized in {"instagram", "ig"}:
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "instagram 渠道走 source_modes 配置的浏览器任务 discovery 分支，已忽略策略过滤。",
+            )
+        _run_instagram_discovery(limit=limit, force=force)
+        return
+
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
-            "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、github（gh）、"
-            "linuxdo、v2ex、weibo、web。"
+            "bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（gh）、"
+            "linuxdo、v2ex、weibo、instagram、web。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)
@@ -16896,61 +18140,166 @@ def probe() -> None:
             console.print(f"  [yellow]未找到活跃的「{domain}」猜测。[/yellow]")
 
 
+@app.command("language")
+def language_command(
+    locale: str | None = typer.Argument(
+        None,
+        help="zh-Hans（简体中文）/ zh-Hant（繁體中文）/ en（English）；留空查看当前值。",
+    ),
+) -> None:
+    """查看或切换界面 / 输出语言."""
+    from openbiliclaw.cli_i18n import cli_translator
+    from openbiliclaw.config import load_config, save_config
+    from openbiliclaw.i18n import (
+        SUPPORTED_LOCALES,
+        native_name,
+        normalize_locale,
+        resolve_locale,
+    )
+
+    cfg = load_config()
+    translator = cli_translator(cfg)
+    if locale is None:
+        current = normalize_locale(cfg.language)
+        console.print(
+            translator(
+                "cli.language.current",
+                locale=current,
+                native=native_name(current),
+            )
+        )
+        for code in SUPPORTED_LOCALES:
+            console.print(f"  {code:<8} {native_name(code)}")
+        console.print(translator("cli.language.usage"))
+        return
+
+    resolved = resolve_locale(locale)
+    if resolved is None:
+        console.print(
+            translator(
+                "cli.language.unsupported",
+                value=locale,
+                supported=" / ".join(SUPPORTED_LOCALES),
+            )
+        )
+        raise typer.Exit(2)
+
+    cfg.language = resolved
+    save_config(cfg)
+    translator = cli_translator(cfg)
+    console.print(
+        translator(
+            "cli.language.changed",
+            locale=resolved,
+            native=native_name(resolved),
+        )
+    )
+    console.print(translator("cli.language.hint_restart"))
+
+
 @app.command()
 def config_show() -> None:
     """显示当前配置."""
+    from openbiliclaw.cli_i18n import cli_translator
     from openbiliclaw.config import effective_llm_default_chain, load_config_with_diagnostics
+    from openbiliclaw.i18n import native_name, normalize_locale
     from openbiliclaw.llm import RegistryBuildError, summarize_registry
 
     cfg, diagnostics = load_config_with_diagnostics()
+    translator = cli_translator(cfg)
     instance_routing = bool(getattr(cfg.llm, "instance_routing", False))
     default_chain = effective_llm_default_chain(cfg.llm)
-    llm_label = "LLM 默认调用链" if instance_routing else "LLM"
+    tr = translator
+    llm_label = tr(
+        "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
+    )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
-    _print_page_title("当前配置概览", "运行时配置")
+    _print_page_title(tr("cli.config_show.title"), tr("cli.config_show.subtitle"))
     rows = [
-        ("语言", cfg.language),
-        (llm_label, llm_value or "未配置"),
-        ("LLM 并发", str(cfg.llm.concurrency)),
-        ("B站认证", cfg.bilibili.auth_method),
         (
-            "B站发布日期范围",
-            _format_source_date_preference(cfg.sources.bilibili),
+            tr("cli.config_show.row.language"),
+            tr(
+                "cli.config_show.value.locale_name",
+                locale=normalize_locale(cfg.language),
+                native=native_name(normalize_locale(cfg.language)),
+            ),
         ),
-        ("B站发布日期权重", str(cfg.sources.bilibili.recommendation_date_weight)),
-        ("定时任务", "开启" if cfg.scheduler.enabled else "关闭"),
-        ("停止后台 LLM 请求", "否" if cfg.scheduler.enabled else "是"),
+        (llm_label, llm_value or tr("cli.config_show.value.not_configured")),
+        (tr("cli.config_show.row.llm_concurrency"), str(cfg.llm.concurrency)),
+        (tr("cli.config_show.row.bilibili_auth"), cfg.bilibili.auth_method),
         (
-            "浏览器断开后暂停",
+            tr("cli.config_show.row.bilibili_date_range"),
+            _format_source_date_preference(cfg.sources.bilibili, translator),
+        ),
+        (
+            tr("cli.config_show.row.bilibili_date_weight"),
+            str(cfg.sources.bilibili.recommendation_date_weight),
+        ),
+        (
+            tr("cli.config_show.row.scheduler"),
+            tr(
+                "cli.config_show.value.on" if cfg.scheduler.enabled else "cli.config_show.value.off"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.stop_background_llm"),
+            tr(
+                "cli.config_show.value.no" if cfg.scheduler.enabled else "cli.config_show.value.yes"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.pause_on_disconnect"),
             _format_pause_on_disconnect_status(
                 enabled=cfg.scheduler.pause_on_extension_disconnect,
                 grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
+                translator=translator,
             ),
         ),
-        ("开机自启动", _format_autostart_config_status(cfg)),
+        (tr("cli.config_show.row.autostart"), _format_autostart_config_status(cfg, translator)),
         (
-            "海外网络模式",
-            {"direct": "直连", "system": "跟随系统代理", "custom": "自定义代理"}.get(
-                cfg.network.mode, cfg.network.mode
+            tr("cli.config_show.row.network_mode"),
+            tr(f"cli.config_show.value.{cfg.network.mode}")
+            if cfg.network.mode in {"direct", "system", "custom"}
+            else cfg.network.mode,
+        ),
+        (
+            tr("cli.config_show.row.network_proxy"),
+            cfg.network.proxy or tr("cli.config_show.value.unset"),
+        ),
+        (
+            tr("cli.config_show.row.saved_sync"),
+            tr(
+                "cli.config_show.value.on"
+                if cfg.saved_sync.auto_sync_enabled
+                else "cli.config_show.value.off"
             ),
         ),
-        ("海外自定义代理", cfg.network.proxy or "未设置"),
-        ("收藏自动同步", "开启" if cfg.saved_sync.auto_sync_enabled else "关闭"),
-        ("应用内 Tailnet", "开启" if cfg.tailnet.enabled else "关闭"),
-        ("Tailnet 节点名", cfg.tailnet.hostname),
-        ("数据目录", str(cfg.data_path)),
+        (
+            tr("cli.config_show.row.tailnet"),
+            tr("cli.config_show.value.on" if cfg.tailnet.enabled else "cli.config_show.value.off"),
+        ),
+        (tr("cli.config_show.row.tailnet_hostname"), cfg.tailnet.hostname),
+        (tr("cli.config_show.row.data_dir"), str(cfg.data_path)),
     ]
     if diagnostics.config_path:
-        rows.append(("配置文件", str(diagnostics.config_path)))
-    _print_key_value_table("配置项", rows)
+        rows.append((tr("cli.config_show.row.config_file"), str(diagnostics.config_path)))
+    _print_key_value_table(tr("cli.config_show.table_title"), rows)
 
     try:
         registry = _build_registry()
         summary = summarize_registry(cfg, registry)
-        provider_label = "已注册 Provider 实例" if instance_routing else "已注册 Provider"
-        default_label = "最终默认 Provider 实例" if instance_routing else "最终默认 Provider"
+        provider_label = tr(
+            "cli.config_show.row.registered_instances"
+            if instance_routing
+            else "cli.config_show.row.registered"
+        )
+        default_label = tr(
+            "cli.config_show.row.default_instance"
+            if instance_routing
+            else "cli.config_show.row.default"
+        )
         _print_key_value_table(
-            "Provider 概览",
+            tr("cli.config_show.provider_title"),
             [
                 (provider_label, ", ".join(summary.registered_providers)),
                 (default_label, summary.effective_default),
@@ -16958,10 +18307,10 @@ def config_show() -> None:
         )
     except RegistryBuildError as exc:
         _print_key_value_table(
-            "Provider 概览",
+            tr("cli.config_show.provider_title"),
             [
-                ("已注册 Provider", "无"),
-                ("Provider 状态", str(exc)),
+                (tr("cli.config_show.row.registered"), tr("cli.config_show.value.none")),
+                (tr("cli.config_show.row.provider_status"), str(exc)),
             ],
         )
 

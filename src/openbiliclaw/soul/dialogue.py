@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.agent.persona import DEFAULT_CHAT_PERSONA, chat_persona_instruction
+from openbiliclaw.i18n.output_language import append_output_language
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -120,15 +121,9 @@ class DialogueTurn:
 class SocraticDialogue:
     """Manages Socratic-style dialogue with the user.
 
-    The dialogue module doesn't just record what the user says — it actively
-    probes deeper to understand motivations, validate hypotheses, and refine
-    the agent's understanding of who the user really is.
-
-    Dialogue strategies:
-    1. 追问 Why — Don't stop at preferences, dig into motivations
-    2. 提出假设 — Actively hypothesize based on current understanding
-    3. 确认验证 — Use recommendations to test hypotheses
-    4. 动态调整 — Refine the soul profile based on dialogue
+    Fulfill the current request first. Clarify only consequential gaps and use
+    bounded exploration when the user asks for it; an incomplete profile is
+    not a reason to keep interviewing. Confirmed preferences feed learning.
     """
 
     def __init__(
@@ -581,10 +576,15 @@ class SocraticDialogue:
                     if system
                     else (_AGENT_LOOP_GROUND_RULES)
                 )
+                # The locale directive travels in the user message so the
+                # system prompt (and its provider cache prefix) stays stable.
+                localized_user_message = append_output_language(
+                    prompt_user_message, str(getattr(service, "output_language", "") or "")
+                )
                 reply = ""
                 async for event in agent_loop.run(
                     system_instruction=system,
-                    user_message=prompt_user_message,
+                    user_message=localized_user_message,
                     history=prompt_history,
                     tools=tools,
                     approval_context={
@@ -673,7 +673,9 @@ class SocraticDialogue:
 
         response = await service.complete_with_tools(
             system_instruction=system,
-            user_input=user_message,
+            user_input=append_output_language(
+                user_message, str(getattr(service, "output_language", "") or "")
+            ),
             tools=self._tools,
             history=self._history_to_messages(),
             caller="soul.dialogue.tools",
@@ -977,4 +979,8 @@ _AGENT_LOOP_GROUND_RULES = (
     "\n5. 审批状态：approval_request 和「已生成待批准动作」都表示等待用户操作，"
     "不是批准或执行成功。此时只说明「已提交，等待你在卡片批准，尚未执行」；"
     "只有服务端实际执行结果能证明操作完成，不能代用户批准。"
+    "\n6. 回复完成：遵循共享对话收敛规则，给出当前所需结果后直接结束。"
+    "结果与追问互斥：交付结果的回复不得混入问题或下一步邀请；必要澄清单独问一个问题。"
+    "结尾不要再问‘要不要我……’‘你更喜欢哪个’，也不要用‘如果你愿意……’继续索取回应。"
+    "只有缺失信息会实质改变当前结果时才澄清；探索已问两轮就只总结，不再附带问题或继续邀请。"
 )

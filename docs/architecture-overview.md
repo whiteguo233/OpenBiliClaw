@@ -21,6 +21,7 @@ background ─ background admission (default 3) ──────┘
                 parked when canonical available = 0
 
 引导初始化：信号 → 偏好 → 完整画像提交 → 发现 → 评估 → 推荐文案 → canonical 内容可用
+             Instagram：只读 liked/saved/following → 本次 init 的 topic/creator → 小批量评估/文案
                                                      └→ 终态后再调度可选探针
 
 Agent 宿主（OpenClaw / Hermes / WorkBuddy）
@@ -53,7 +54,8 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 配置热重载：保持接单并排空旧 worker → 原子暂停/revoke → 新 worker；安全窗25分钟
 实时连接：runtime-stream 20s idle 心跳 → 短暂 close 显示重连中并自动续连
 封面：proxy 前台 + refresh 预取 → app-stable lane（总4/后台3、前台优先）
-                               → cache-key singleflight → 白名单抓取 → 原子缓存
+                               → cache-key singleflight → 公网 DNS（代理固定 DoH）→ 固定 IP / TLS → 原子缓存
+Instagram 手动补库 → 来源配额/任务锁 → 正式发现/评估/文案 → 可用库存或明确失败
 ```
 
 ```
@@ -93,6 +95,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │ Soul 认知纪律：待聊双轨冷却 · 单对话锚 · worker-only 结算 · 轻量 winner receipt · 疑惑 FIFO · 台账 · 深层门控 │
 │   LLM 适配层 · 多平台源适配（SourceAdapter）        │
 │   模块路由 → LLM 实例链 → Provider 适配 · 多平台源适配（SourceAdapter） │
+│   本地向量请求 / 诊断 → 自动加速 → 失败时 CPU → 有效向量验证 │
 │   可选视觉预热：封面 / 画像质心 / 关键帧 + 弹幕 document embedding     │
 │   provenance（provider/model/dim/采样）→ 成功空 / 瞬时失败 → 下轮重试   │
 │   配置恢复草稿（正常/降级）→ 临时探测 / 精确实例 /models（不写盘）│
@@ -163,6 +166,10 @@ durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） 
 ### 推荐交互一致性
 
 ```text
+config save → safe API handoff → settled queue → parent supervisor
+            → confirm old children exited → reload workers / recommendation / images
+            → same locked data directory + durable candidate recovery
+
 recommendation request → main API → default Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
@@ -183,3 +190,30 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 ```
 
 Web 保持 discovery-only；CLI chat、本轮未使用的 Ego Lite、登录态与 JavaScript 渲染均不在此链路。
+### TikTok 公开发现
+
+```text
+正式发现 / 灵感探索 → TikTok router → 共享请求间隔 / 持久 429 冷却 → 签名 Web API
+                                └─ auto 且 Web 不可用 → yt-dlp（列表能力受上游限制）
+                      → 统一候选池 → 评估 → 推荐
+```
+
+登录 Cookie 只增加可尝试的 search 能力；passport 验证与搜索可用性分别验收。
+
+### 蓝鱼实验室（实验性，默认关闭）
+
+```text
+[fish]/config.json（独立于 config.toml）
+   → 守卫：enabled / 已登录 / 账号隔离 / 日配额 / 最小间隔
+   → 已评估的推荐池候选（exclude_processed） → 每条视频拉评论 → 单次 LLM「挑一条 + 写回复」
+   → 硬闸：字数 / 屏蔽词 / bvid:rpid 查重 / 单视频上限
+   → dry_run ? preview : post_comment(root, parent) 以「大肥鱼」自己的账号发出
+   → data/fish/ledger.jsonl（追加式账本；等级 / 配额 / 查重都由它推导）
+   → 只写账本：不写推荐反馈、不动推荐行、不触发 cognition
+```
+
+账号隔离是硬约束：凭证独立在 `data/fish/bilibili_cookie.json`，鱼的 mid 或 cookie 与主账号
+相同即拒绝运行，绝不回退主账号 Cookie。人设与说话规矩在设置页可编辑，system prompt 保持
+字节静态（人设 / 视频 / 评论 / 约束都在 user 消息）。鱼的反馈与用户的反馈是分开的：发布出去
+的评论只留在鱼自己的账本里，不会变成推荐反馈、不会触发 cognition，用户画像只由用户自己的
+行为驱动。

@@ -2841,6 +2841,8 @@ function renderPoolStatus(runtimeStatus) {
   elements.poolAvailable.textContent = summary.available;
   elements.poolReplenished.textContent = summary.replenished;
   elements.poolTopics.textContent = summary.topics;
+  const topicsLabel = document.getElementById("poolTopicsLabel");
+  if (topicsLabel) topicsLabel.textContent = summary.replenished === "内容发现未完成" ? "补货状态" : "现在在忙";
 }
 
 let committedPoolStatusVersion = 0;
@@ -3159,6 +3161,18 @@ function connectRuntimeStream() {
   // doesn't leave a zombie WebSocket against the old origin.
   runtimeStreamClient?.disconnect?.();
   const client = createRuntimeStreamClient({
+    fetchStatus: fetchRuntimeStatus,
+    onStatusSnapshot(status) {
+      state.runtimeStatus = status;
+      renderPoolStatus(state.runtimeStatus);
+      if (state.recommendations.length === 0) {
+        renderRecommendationState(getPopupState({
+          online: state.online, items: [], runtimeStatus: state.runtimeStatus,
+        }));
+      } else {
+        renderReadyRecommendationHint();
+      }
+    },
     onEvent(event) {
       if (event.pool_status_version) {
         if (event.pool_status_version < committedPoolStatusVersion) return;
@@ -3169,6 +3183,13 @@ function connectRuntimeStream() {
       renderPoolStatus(state.runtimeStatus);
       if (runtimeEventCarriesPoolCounts(event)) {
         renderReadyRecommendationHint();
+      }
+      if (state.recommendations.length === 0 && ["refresh.started", "refresh.strategy", "refresh.failed", "refresh.pool_updated"].includes(event.type)) {
+        // Empty-state feedback must follow the same live status as the pool
+        // header. Existing cards remain untouched by background refreshes.
+        renderRecommendationState(getPopupState({
+          online: state.online, items: [], runtimeStatus: state.runtimeStatus,
+        }));
       }
       if (event.type === "delight.candidate" && event.bvid) {
         mergeIncomingDelight(event);
@@ -4198,6 +4219,8 @@ function buildMessageCard(probe) {
 // Condense a raw count into Chinese-style 万/亿 units. Empty string for
 // non-positive values so callers render nothing.
 function formatCountCn(n) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
   const value = Math.floor(Number(n) || 0);
   if (value <= 0) return "";
   if (value >= 100000000)
@@ -8038,7 +8061,7 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX", web: "网页" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", tiktok: "TikTok", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram", web: "网页" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
@@ -8353,6 +8376,12 @@ function renderRecommendationState(stateShape) {
   if (stateShape.kind === "refreshing") {
     showRecommendationEmptyState("阿B 正在补货", stateShape.message);
     setHint("你最近的新行为已经记下了，稍等一下会补进更对味的内容。");
+    return;
+  }
+
+  if (stateShape.kind === "discovery_failed") {
+    showRecommendationEmptyState("内容发现未完成", stateShape.message);
+    setHint(stateShape.message, "error");
     return;
   }
 
@@ -9218,6 +9247,7 @@ function bindSettings() {
     ["sources", document.getElementById("settingsTabSources")],
     ["scheduler", document.getElementById("settingsTabScheduler")],
     ["advanced", document.getElementById("settingsTabAdvanced")],
+    ["fish", document.getElementById("settingsTabFish")],
     ["general", document.getElementById("settingsTabGeneral")],
     ["logging", document.getElementById("settingsTabLogging")],
   ];
@@ -9862,6 +9892,10 @@ function bindSettings() {
     ["tab", "cfgV2exModeTab"],
     ["hot", "cfgV2exModeHot"],
     ["latest", "cfgV2exModeLatest"],
+  ];
+  const INSTAGRAM_SOURCE_MODE_FIELDS = [
+    ["topic", "cfgInstagramModeTopic"],
+    ["creator", "cfgInstagramModeCreator"],
   ];
 
   function setCheckedValues(fields, rawValues) {
@@ -10773,11 +10807,13 @@ function bindSettings() {
   }
 
   const POPUP_SOURCE_DATE_SLUGS = [
+    "instagram",
     "bilibili",
     "xiaohongshu",
     "douyin",
     "weibo",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -10979,6 +11015,21 @@ function bindSettings() {
     setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
     setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
+    const tiktokEnabled = document.getElementById("cfgTiktokEnabled");
+    if (tiktokEnabled) tiktokEnabled.checked = cfg.sources?.tiktok?.enabled === true;
+    setVal("cfgTiktokMode", cfg.sources?.tiktok?.mode || "auto");
+    setVal("cfgTiktokCookie", cfg.sources?.tiktok?.cookie);
+    setVal("cfgTiktokCookieEnv", cfg.sources?.tiktok?.cookie_env);
+    setVal("cfgTiktokRegion", cfg.sources?.tiktok?.region);
+    setVal("cfgTiktokTzName", cfg.sources?.tiktok?.tz_name);
+    setVal("cfgTiktokTags", (cfg.sources?.tiktok?.tags || []).join(", "));
+    setVal("cfgTiktokCreators", (cfg.sources?.tiktok?.creators || []).join(", "));
+    setVal("cfgTiktokDailyFeedBudget", cfg.sources?.tiktok?.daily_feed_budget);
+    setVal("cfgTiktokDailySearchBudget", cfg.sources?.tiktok?.daily_search_budget);
+    setVal("cfgTiktokDailyTagBudget", cfg.sources?.tiktok?.daily_tag_budget);
+    setVal("cfgTiktokDailyUserBudget", cfg.sources?.tiktok?.daily_user_budget);
+    setVal("cfgTiktokRequestInterval", cfg.sources?.tiktok?.request_interval_seconds);
+    setVal("cfgTiktokMinInterval", cfg.sources?.tiktok?.min_interval_minutes);
     const twitterEnabled = document.getElementById("cfgTwitterEnabled");
     if (twitterEnabled) twitterEnabled.checked = cfg.sources?.twitter?.enabled === true;
     setVal("cfgTwitterCookie", cfg.sources?.twitter?.cookie);
@@ -11115,11 +11166,20 @@ function bindSettings() {
     setVal("cfgWebMaxResponseBytes", cfg.sources?.web?.max_response_bytes);
     setVal("cfgWebMaxRedirects", cfg.sources?.web?.max_redirects);
     setVal("cfgWebLeaseSeconds", cfg.sources?.web?.lease_seconds);
+    const instagramEnabled = document.getElementById("cfgInstagramEnabled");
+    if (instagramEnabled) instagramEnabled.checked = cfg.sources?.instagram?.enabled === true;
+    setCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, cfg.sources?.instagram?.source_modes);
+    setVal("cfgInstagramDailyTopicBudget", cfg.sources?.instagram?.daily_topic_budget);
+    setVal("cfgInstagramDailyCreatorBudget", cfg.sources?.instagram?.daily_creator_budget);
+    setVal("cfgInstagramRequestInterval", cfg.sources?.instagram?.request_interval_seconds);
+    setVal("cfgInstagramMinInterval", cfg.sources?.instagram?.min_interval_minutes);
+    setVal("cfgInstagramBootstrapLimit", cfg.sources?.instagram?.bootstrap_limit);
     void renderSourcesStatus();
 
     // General
     const lang = document.getElementById("cfgLanguage");
-    if (lang) lang.value = cfg.language || "zh";
+    if (lang) lang.value = cfg.language || "zh-Hans";
+    void applyPopupLocale(cfg.language || "zh-Hans");
     setVal("cfgDataDir", cfg.data_dir);
     setVal("cfgStorageDbPath", cfg.storage?.db_path);
     // Mirrors the [network].mode backend default (system since v0.3.175);
@@ -11219,6 +11279,7 @@ function bindSettings() {
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
+    setVal("cfgPoolShareTiktok", cfg.scheduler?.pool_source_shares?.tiktok);
     setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgPoolShareGithub", cfg.scheduler?.pool_source_shares?.github);
     setVal("cfgPoolShareZhihu", cfg.scheduler?.pool_source_shares?.zhihu);
@@ -11227,6 +11288,7 @@ function bindSettings() {
     setVal("cfgPoolShareLinuxdo", cfg.scheduler?.pool_source_shares?.linuxdo);
     setVal("cfgPoolShareV2ex", cfg.scheduler?.pool_source_shares?.v2ex);
     setVal("cfgPoolShareWeb", cfg.scheduler?.pool_source_shares?.web);
+    setVal("cfgPoolShareInstagram", cfg.scheduler?.pool_source_shares?.instagram);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -11367,6 +11429,29 @@ function bindSettings() {
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 3),
           ...popupSourceDateFieldsForUpdate("youtube")
         },
+        tiktok: {
+          enabled: checked("cfgTiktokEnabled"),
+          mode: getVal("cfgTiktokMode") || "auto",
+          ...(getVal("cfgTiktokCookie") ? { cookie: getVal("cfgTiktokCookie") } : {}),
+          cookie_env: getVal("cfgTiktokCookieEnv"),
+          region: getVal("cfgTiktokRegion"),
+          tz_name: getVal("cfgTiktokTzName"),
+          tags: getVal("cfgTiktokTags")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+          creators: getVal("cfgTiktokCreators")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+          daily_feed_budget: getInt("cfgTiktokDailyFeedBudget", 3),
+          daily_search_budget: getInt("cfgTiktokDailySearchBudget", 3),
+          daily_tag_budget: getInt("cfgTiktokDailyTagBudget", 0),
+          daily_user_budget: getInt("cfgTiktokDailyUserBudget", 0),
+          request_interval_seconds: getInt("cfgTiktokRequestInterval", 2),
+          min_interval_minutes: getInt("cfgTiktokMinInterval", 3),
+          ...popupSourceDateFieldsForUpdate("tiktok")
+        },
         twitter: {
           enabled: checked("cfgTwitterEnabled"),
           mode: "cookie",
@@ -11490,6 +11575,16 @@ function bindSettings() {
           max_redirects: getInt("cfgWebMaxRedirects", 5),
           lease_seconds: getInt("cfgWebLeaseSeconds", 300),
         },
+        instagram: {
+          enabled: checked("cfgInstagramEnabled"),
+          source_modes: collectCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, ["topic", "creator"]),
+          daily_topic_budget: getInt("cfgInstagramDailyTopicBudget", 60),
+          daily_creator_budget: getInt("cfgInstagramDailyCreatorBudget", 30),
+          request_interval_seconds: getInt("cfgInstagramRequestInterval", 3),
+          min_interval_minutes: getInt("cfgInstagramMinInterval", 10),
+          bootstrap_limit: getInt("cfgInstagramBootstrapLimit", 300),
+          ...popupSourceDateFieldsForUpdate("instagram")
+        },
       },
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
@@ -11529,6 +11624,7 @@ function bindSettings() {
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
           youtube: getInt("cfgPoolShareYoutube", 1),
+          tiktok: getInt("cfgPoolShareTiktok", 1),
           twitter: getInt("cfgPoolShareTwitter", 1),
           github: getInt("cfgPoolShareGithub", 1),
           zhihu: getInt("cfgPoolShareZhihu", 1),
@@ -11537,6 +11633,7 @@ function bindSettings() {
           linuxdo: getInt("cfgPoolShareLinuxdo", 1),
           v2ex: getInt("cfgPoolShareV2ex", 1),
           web: getInt("cfgPoolShareWeb", 1),
+          instagram: getInt("cfgPoolShareInstagram", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -11647,6 +11744,7 @@ function bindSettings() {
     douyin: "cfgDouyinEnabled",
     weibo: "cfgWeiboEnabled",
     youtube: "cfgYoutubeEnabled",
+    tiktok: "cfgTiktokEnabled",
     twitter: "cfgTwitterEnabled",
     github: "cfgGithubEnabled",
     zhihu: "cfgZhihuEnabled",
@@ -11655,6 +11753,7 @@ function bindSettings() {
     linuxdo: "cfgLinuxdoEnabled",
     v2ex: "cfgV2exEnabled",
     web: "cfgWebEnabled",
+    instagram: "cfgInstagramEnabled",
   };
 
   function setSourceCardOpen(card, open) {
@@ -11675,7 +11774,9 @@ function bindSettings() {
       card.dataset.sourceOff = on ? "false" : "true";
       if (face instanceof HTMLElement) {
         face.tabIndex = on ? 0 : -1;
-        face.setAttribute("aria-disabled", on ? "false" : "true");
+        // ARIA disabled is inherited by the nested enable checkbox.
+        // Keep that control operable; sourceOff guards expansion separately.
+        face.removeAttribute("aria-disabled");
       }
       if (!on) setSourceCardOpen(card, false);
     });
@@ -12644,6 +12745,7 @@ function bindSettings() {
             douyin: checked("cfgDouyinEnabled"),
             weibo: checked("cfgWeiboEnabled"),
             youtube: checked("cfgYoutubeEnabled"),
+            tiktok: checked("cfgTiktokEnabled"),
             twitter: checked("cfgTwitterEnabled"),
             github: checked("cfgGithubEnabled"),
             zhihu: checked("cfgZhihuEnabled"),
@@ -12652,6 +12754,7 @@ function bindSettings() {
             linuxdo: checked("cfgLinuxdoEnabled"),
             v2ex: checked("cfgV2exEnabled"),
             web: checked("cfgWebEnabled", true),
+            instagram: checked("cfgInstagramEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 5),
@@ -12659,6 +12762,7 @@ function bindSettings() {
             douyin: getInt("cfgPoolShareDouyin", 1),
             weibo: getInt("cfgPoolShareWeibo", 1),
             youtube: getInt("cfgPoolShareYoutube", 1),
+            tiktok: getInt("cfgPoolShareTiktok", 1),
             twitter: getInt("cfgPoolShareTwitter", 1),
             github: getInt("cfgPoolShareGithub", 1),
             zhihu: getInt("cfgPoolShareZhihu", 1),
@@ -12667,6 +12771,7 @@ function bindSettings() {
             linuxdo: getInt("cfgPoolShareLinuxdo", 1),
             v2ex: getInt("cfgPoolShareV2ex", 1),
             web: getInt("cfgPoolShareWeb", 1),
+            instagram: getInt("cfgPoolShareInstagram", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -12675,6 +12780,7 @@ function bindSettings() {
         if (shares.douyin !== undefined) setVal("cfgPoolShareDouyin", shares.douyin);
         if (shares.weibo !== undefined) setVal("cfgPoolShareWeibo", shares.weibo);
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
+        if (shares.tiktok !== undefined) setVal("cfgPoolShareTiktok", shares.tiktok);
         if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         if (shares.github !== undefined) setVal("cfgPoolShareGithub", shares.github);
         if (shares.zhihu !== undefined) setVal("cfgPoolShareZhihu", shares.zhihu);
@@ -12683,6 +12789,7 @@ function bindSettings() {
         if (shares.linuxdo !== undefined) setVal("cfgPoolShareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setVal("cfgPoolShareV2ex", shares.v2ex);
         if (shares.web !== undefined) setVal("cfgPoolShareWeb", shares.web);
+        if (shares.instagram !== undefined) setVal("cfgPoolShareInstagram", shares.instagram);
         markSettingsDirty(suggestBtn);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
@@ -13065,7 +13172,62 @@ async function maybeShowEmbeddingBanner() {
   }
 }
 
+const POPUP_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+function popupLocaleRuntime() {
+  return globalThis.OpenBiliClawI18n || null;
+}
+
+function readPopupLocale() {
+  try {
+    return localStorage.getItem(POPUP_LOCALE_STORAGE_KEY) || "zh-Hans";
+  } catch {
+    return "zh-Hans";
+  }
+}
+
+async function applyPopupLocale(language) {
+  const runtime = popupLocaleRuntime();
+  if (!runtime) return;
+  const normalized = runtime.normalizeLocale(language || "zh-Hans");
+  try {
+    localStorage.setItem(POPUP_LOCALE_STORAGE_KEY, normalized);
+  } catch {}
+  if (runtime.ready && runtime.locale === normalized) return;
+  try {
+    await runtime.setLocale(normalized);
+  } catch (error) {
+    console.warn("popup: locale switch failed", error);
+  }
+}
+
+async function initPopupLocale() {
+  const runtime = popupLocaleRuntime();
+  if (!runtime) return;
+  const locale = readPopupLocale();
+  try {
+    await runtime.init({
+      locale,
+      // Catalogs are bundled next to popup.html at build time so the panel
+      // localizes even when the backend is unreachable.
+      fetchCatalog: async (requested) => {
+        const url = chrome.runtime.getURL(`popup/locales/${requested}.json`);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`missing locale ${requested}`);
+        return response.json();
+      },
+    });
+  } catch (error) {
+    console.warn("popup: locale init failed", error);
+  }
+  document.getElementById("cfgLanguage")?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLSelectElement) void applyPopupLocale(target.value);
+  });
+}
+
 async function initializePopup() {
+  await initPopupLocale();
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab");
   const requestedLibraryTab = params.get("section") || params.get("library") || "";

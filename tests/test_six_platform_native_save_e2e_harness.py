@@ -117,13 +117,27 @@ def test_native_save_e2e_authorization_requires_exact_six_platform_mapping() -> 
             "content_id": "t3_public1",
             "expected_target": "Reddit Saved",
         },
+        {
+            "allow_state_changing": True,
+            "platform": "tiktok",
+            "action": "favorite",
+            "content_id": "7234567890123456789",
+            "expected_target": "TikTok Favorites",
+        },
+        {
+            "allow_state_changing": True,
+            "platform": "tiktok",
+            "action": "watch_later",
+            "content_id": "7234567890123456789",
+            "expected_target": "TikTok Favorites",
+        },
     ]
 
     assert (
         _run_typescript(
             f"{json.dumps(requests, ensure_ascii=False)}.map(isAuthorizedNativeSaveE2ERequest)"
         )
-        == [True] * 12
+        == [True] * 14
     )
 
 
@@ -235,6 +249,8 @@ def test_backend_native_save_e2e_models_cover_six_platforms_and_both_actions() -
         ("zhihu", "watch_later", "answer:123456789", "知乎收藏"),
         ("reddit", "favorite", "t3_public1", "Reddit Saved"),
         ("reddit", "watch_later", "t3_public1", "Reddit Saved"),
+        ("tiktok", "favorite", "7234567890123456789", "TikTok Favorites"),
+        ("tiktok", "watch_later", "7234567890123456789", "TikTok Favorites"),
     ]
 
     for platform, action, content_id, expected_target in rows:
@@ -542,6 +558,12 @@ def test_backend_native_save_e2e_rejects_unverified_saved_identity_before_publis
             "t1_comment1",
             "https://reddit.com/r/test/comments/public1/title/comment1/",
         ),
+        (
+            "tiktok",
+            "video",
+            "7234567890123456789",
+            "https://www.tiktok.com/@creator/video/7234567890123456789",
+        ),
     ],
 )
 def test_native_save_e2e_preflight_accepts_executor_equivalent_canonical_urls(
@@ -604,6 +626,13 @@ def test_native_save_e2e_preflight_accepts_executor_equivalent_canonical_urls(
         ("reddit", "post", "https://reddit.com/r/test/comments/public1/title#private"),
         ("reddit", "post", "https://user:pass@reddit.com/r/test/comments/public1/title"),
         ("reddit", "post", "https://reddit.com:443/r/test/comments/public1/title"),
+        (
+            "tiktok",
+            "video",
+            "https://www.tiktok.com/@creator/video/7234567890123456789?tracking=1",
+        ),
+        ("tiktok", "video", "https://www.tiktok.com/@creator/photo/7234567890123456789"),
+        ("tiktok", "video", "https://tiktok.com/video/7234567890123456789"),
     ],
 )
 def test_native_save_e2e_preflight_rejects_non_executor_urls(

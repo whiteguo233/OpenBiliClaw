@@ -387,6 +387,11 @@ class LLMService:
     # ``complete_socratic_dialogue`` (and suppresses the reply_style line
     # there, since the entire block is swapped).
     dialogue_tone_prompt: str = ""
+    # Canonical locale id (zh-Hans / zh-Hant / en) for model output that the
+    # user reads. Injected into the *user* prompt at call time so the system
+    # prompt stays byte-identical for provider caching. Empty (default) keeps
+    # the previous Chinese-only behaviour for tests and standalone callers.
+    output_language: str = ""
     _logged_unknown_override_keys: set[tuple[str, str]] = field(
         default_factory=set, init=False, repr=False
     )
@@ -1427,10 +1432,13 @@ class LLMService:
             source_platform_mix=source_mix or None,
             reply_style=self.reply_style,
             dialogue_tone_prompt=self.dialogue_tone_prompt,
+            output_language=self.output_language,
         )
         return await self.complete_with_core_memory(
             system_instruction=prompt_messages[0]["content"],
-            user_input=user_message,
+            # The builder appends the locale directive to the user message; the
+            # raw user text must still be what gets persisted as chat history.
+            user_input=prompt_messages[-1]["content"],
             history=history,
             caller=caller,
         )
@@ -1454,10 +1462,11 @@ class LLMService:
             source_platform_mix=source_mix or None,
             reply_style=self.reply_style,
             dialogue_tone_prompt=self.dialogue_tone_prompt,
+            output_language=self.output_language,
         )
         async for chunk in self.stream_complete_with_core_memory(
             system_instruction=prompt_messages[0]["content"],
-            user_input=user_message,
+            user_input=prompt_messages[-1]["content"],
             history=history,
             caller=caller,
         ):

@@ -22,6 +22,8 @@ _TASK_TABLES = frozenset(
         "linuxdo_tasks",
         "v2ex_tasks",
         "weibo_tasks",
+        "instagram_tasks",
+        "tiktok_tasks",
     }
 )
 

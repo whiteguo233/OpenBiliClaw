@@ -738,6 +738,77 @@ def test_ollama_embedding_without_base_url_uses_local_default(
 
 
 # ---------------------------------------------------------------------------
+# Regression: issue #318 — the packaged Windows desktop build shipped an
+# openai SDK whose vendored httpx wrapper raised from ``aclose()``
+# ("'AsyncHttpxClientWrapper' object has no attribute '_mounts'"). Ollama
+# embedding inherited OpenAIProvider, so building it constructed an
+# AsyncOpenAI client the embedding path never used; that raise was swallowed
+# by ``build_embedding_service`` and every probe reported "misconfigured"
+# (init 409 forever, recommendation pool permanently empty). Embedding must
+# not depend on the chat SDK at all.
+
+
+def test_ollama_embedding_builds_without_openai_sdk(tmp_path, monkeypatch) -> None:
+    """Building Ollama embedding must not construct an AsyncOpenAI client."""
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import openai_provider as openai_provider_mod
+
+    def _broken_async_openai(*args, **kwargs):
+        raise AttributeError("'AsyncHttpxClientWrapper' object has no attribute '_mounts'")
+
+    monkeypatch.setattr(openai_provider_mod, "AsyncOpenAI", _broken_async_openai)
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="test-key", model="gpt-4o"),
+            embedding=EmbeddingConfig(
+                provider="ollama",
+                model="bge-m3",
+                base_url="http://127.0.0.1:11435/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._model == "bge-m3"
+    assert service._provider.base_url == "http://127.0.0.1:11435/v1"
+    # No chat SDK client is built, so a broken openai/httpx pair in a packaged
+    # build cannot take embedding down with it.
+    assert not hasattr(service._provider, "_client")
+
+
+def test_embedding_build_failure_is_logged_with_cause(tmp_path, monkeypatch, caplog) -> None:
+    """A failed embedding build must say why instead of silently returning None."""
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated provider construction failure")
+
+    monkeypatch.setattr("openbiliclaw.llm.embedding.EmbeddingService", _boom)
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="test-key", model="gpt-4o"),
+            embedding=EmbeddingConfig(provider="ollama", model="bge-m3"),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is None
+    assert "embedding service" in caplog.text.lower()
+    assert "simulated provider construction failure" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # Regression: providers without an embeddings endpoint must NOT silently
 # return None. v0.3.18 and earlier handed the request to Claude / DeepSeek /
 # OpenRouter via ``hasattr(provider, "embed")`` — DeepSeek and OpenRouter

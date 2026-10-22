@@ -119,7 +119,7 @@ async def test_web_ticker_uses_source_deficit_and_formal_producer() -> None:
 
 def test_web_is_in_every_refresh_producer_roster() -> None:
     assert _PLATFORM_SOURCE_ORDER.count("web") == 1
-    assert _PLATFORM_SOURCE_ORDER.index("web") < _PLATFORM_SOURCE_ORDER.index("weibo")
+    assert _PLATFORM_SOURCE_ORDER[-1] == "web"
 
     deficit_source = inspect.getsource(ContinuousRefreshController._run_deficit_producers_once)
     forever_source = inspect.getsource(ContinuousRefreshController.run_forever)

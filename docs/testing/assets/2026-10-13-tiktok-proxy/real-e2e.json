@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-13",
+  "baseline": "844485bc",
+  "scope": "capability-increment",
+  "verdict": "incremental only",
+  "routing_regression": {
+    "transport": "real libcurl with local origin and proxy servers; no external requests",
+    "before": "3 failed, 2 passed",
+    "after": "5 passed",
+    "fixed": [
+      "OS-only system proxy materialization",
+      "explicit direct ignores ambient proxy",
+      "explicit custom overrides ambient NO_PROXY"
+    ]
+  },
+  "public_https": {
+    "target": "TikTok public home, no login cookie",
+    "config_mode": "system",
+    "proxy_materialized": true,
+    "status": 200,
+    "bytes": 407811,
+    "seconds": 0.7
+  },
+  "browser_control": {
+    "cua": "getState timeout",
+    "opencli": "connected; trusted click and read-only navigation succeeded; network read timed out, later read-only Instagram retry succeeded"
+  },
+  "native_favorite": {
+    "authorized_video_id": "7433494591833247008",
+    "write_count": 1,
+    "precondition": "visible exact-target bookmark unselected",
+    "click_method": "CDP",
+    "isTrusted": true,
+    "immediate": "gold selected",
+    "same_url_open": "reused document; deliberately not accepted as persistence evidence",
+    "actual_reload": "new document (in-page probe absent), ready complete, bookmark white/unselected",
+    "result": "FAIL persisted favorite; not explained solely by synthetic DOM click",
+    "no_unfavorite": true
+  },
+  "history": {
+    "navigation": "visible More -> observed settings-entrance -> /setting",
+    "rendered_sections": [
+      "account",
+      "privacy",
+      "push notifications",
+      "business verification",
+      "ads",
+      "screen time",
+      "content preferences",
+      "family pairing",
+      "accessibility"
+    ],
+    "history_or_activity_entry_found": false,
+    "result": "FAIL history_entry_not_found"
+  },
+  "instagram": {
+    "requires_overseas_network": true,
+    "browser_transport": "browser/system proxy, not backend network mode",
+    "backend_images": "shared overseas network route",
+    "live_home_navigation": "PASS navigation and rendered body, ready complete, 21 interactive controls; not authenticated source E2E"
+  },
+  "validation": {
+    "routing_and_related": "125 passed",
+    "backend_related": "848 passed, 37 skipped",
+    "docs_index": "5 passed",
+    "mypy": "PASS 318 files",
+    "ruff": "PASS",
+    "full_pytest": "NOT_RUN; previous 2 failures not reclassified"
+  },
+  "remaining": [
+    "native favorite persistence",
+    "repeatable nonempty account collection",
+    "history availability",
+    "real nonempty init/profile",
+    "real periodic incremental",
+    "Firefox installed E2E"
+  ],
+  "cleanup": {
+    "created_browser_session_leases_released": true,
+    "temporary_page_probe_removed_by_reload": true,
+    "no_backend_or_diagnostic_servers_created": true,
+    "no_raw_dom_cookie_or_network_body_saved": true,
+    "installed_extension_unchanged": true
+  }
+}

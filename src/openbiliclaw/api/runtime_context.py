@@ -38,6 +38,7 @@ from openbiliclaw.config import (
     publication_date_preference_for_source,
     source_date_preferences,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import (
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from openbiliclaw.config import Config
+    from openbiliclaw.fish.engine import FishCandidate
     from openbiliclaw.soul.dialogue_learn_queue import (
         DialogueDispatcher,
         DialogueJobKind,
@@ -190,6 +192,307 @@ def _build_yt_scraper_client() -> Any:
     from openbiliclaw.youtube.client import YtScraperClient
 
     return YtScraperClient()
+
+
+def build_tiktok_discovery_strategies(
+    *,
+    config: Any,
+    client: Any,
+    llm_service: Any,
+    concurrency: Any,
+    database: Database | None = None,
+    strategy_unit_budget: dict[str, int] | None = None,
+) -> list[Any]:
+    """Build TikTok discovery strategies from `[sources.tiktok]` config."""
+
+    from openbiliclaw.discovery.strategies.tiktok import (
+        TiktokFeedStrategy,
+        TiktokSearchStrategy,
+        TiktokTagStrategy,
+        TiktokUserStrategy,
+    )
+
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    tt_date_preference = publication_date_preference_for_source(tt_cfg)
+    budgets = strategy_unit_budget or {}
+    scheduler = getattr(config, "scheduler", None)
+    default_run_budget = max(1, int(getattr(scheduler, "discovery_limit", 30)))
+
+    def _strategy_budget(strategy: str, attr: str) -> int:
+        if strategy in budgets:
+            return int(budgets[strategy])
+        configured = int(getattr(tt_cfg, attr, 0))
+        return default_run_budget if configured <= 0 else configured
+
+    search_budget = _strategy_budget("tiktok_search", "daily_search_budget")
+    tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
+    user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
+    strategies: list[Any] = [
+        TiktokFeedStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            results_per_run=12,
+            date_preference=tt_date_preference,
+        ),
+    ]
+    # Keyword search is opt-in by credential: only mounted when the router
+    # says it can work (web backend + login cookie). Guest identities are
+    # gated upstream and logged-in scraping carries account risk, so the
+    # strategy simply does not exist without a cookie.
+    if bool(getattr(client, "search_available", False)):
+        strategies.append(
+            TiktokSearchStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                keywords_per_run=max(1, search_budget),
+                date_preference=tt_date_preference,
+            )
+        )
+    strategies.extend(
+        [
+            TiktokTagStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                tags=tuple(getattr(tt_cfg, "tags", ()) or ()),
+                tags_per_run=max(1, tag_budget),
+                date_preference=tt_date_preference,
+            ),
+            TiktokUserStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                creators=tuple(getattr(tt_cfg, "creators", ()) or ()),
+                max_creators=max(0, user_budget),
+                date_preference=tt_date_preference,
+            ),
+        ]
+    )
+    return strategies
+
+
+def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
+    """Return the execution units consumed by one TikTok strategy run."""
+    name = str(getattr(strategy, "name", ""))
+    intermediates = getattr(strategy, "last_intermediates", {}) or {}
+    if name == "tiktok_feed":
+        # One unit = one feed pull (the daily budget caps pulls, not items).
+        fetched = intermediates.get("fetched")
+        if isinstance(fetched, int):
+            return 1
+    if name == "tiktok_search":
+        queries = intermediates.get("queries")
+        if isinstance(queries, list):
+            return len(queries)
+    if name == "tiktok_tag":
+        tags = intermediates.get("tags")
+        if isinstance(tags, list):
+            return len(tags)
+    if name == "tiktok_user":
+        creators = intermediates.get("creators")
+        if isinstance(creators, list):
+            return len(creators)
+    return max(0, int(fallback))
+
+
+def _build_tiktok_client(config: Any, tt_cfg: Any) -> Any:
+    """Build the mode-dispatching TikTok router client.
+
+    ``mode`` (``[sources.tiktok].mode``): ``auto`` = web API backend with
+    yt-dlp fallback, ``web`` = web API only, ``ytdlp`` = yt-dlp only. The
+    web backend needs ``curl_cffi``; in ``auto`` mode a missing dependency
+    degrades to yt-dlp-only with a log line, while ``web`` mode lets the
+    ``ImportError`` propagate so the producer stays disabled loudly.
+    """
+    from openbiliclaw.sources.tiktok import TiktokClient
+    from openbiliclaw.sources.tiktok_web import (
+        _TIKTOK_MODES,
+        TiktokRouterClient,
+        TiktokWebClient,
+        TiktokWebIdentity,
+    )
+
+    mode = str(getattr(tt_cfg, "mode", "auto") or "auto").strip().lower()
+    if mode not in _TIKTOK_MODES:
+        logger.warning("tiktok: unsupported mode %r, falling back to 'auto'", mode)
+        mode = "auto"
+
+    web_client: Any = None
+    if mode in {"auto", "web"}:
+        try:
+            from openbiliclaw.network import outbound_ytdlp_proxy
+            from openbiliclaw.sources.tiktok_auth import (
+                TIKTOK_COOKIE_ENV,
+                resolve_tiktok_cookie,
+            )
+
+            cookie_env = str(getattr(tt_cfg, "cookie_env", TIKTOK_COOKIE_ENV) or TIKTOK_COOKIE_ENV)
+            cookie = ""
+            try:
+                cookie = resolve_tiktok_cookie(
+                    data_dir=config.data_path,
+                    cookie_env=cookie_env,
+                )
+            except Exception as exc:  # defensive: guest mode stays legitimate
+                logger.debug("tiktok cookie resolution failed (guest mode): %s", exc)
+            # Same outbound policy as the yt-dlp backend: None = inherit env,
+            # "" = force direct, URL = pinned proxy.
+            from openbiliclaw.sources.tiktok_state import TiktokRequestState
+
+            identity = TiktokWebIdentity(
+                request_state=TiktokRequestState(
+                    config.data_path / "tiktok_request_state.sqlite3",
+                    interval_seconds=float(getattr(tt_cfg, "request_interval_seconds", 2)),
+                ),
+                proxy=outbound_ytdlp_proxy(),
+                login_cookie=cookie,
+                region=str(getattr(tt_cfg, "region", "JP") or "JP").strip() or "JP",
+                tz_name=str(getattr(tt_cfg, "tz_name", "Asia/Tokyo") or "Asia/Tokyo").strip()
+                or "Asia/Tokyo",
+            )
+            web_client = TiktokWebClient(identity=identity)
+        except ImportError:
+            if mode == "web":
+                raise
+            logger.info("tiktok web backend unavailable (curl_cffi?); yt-dlp only")
+
+    return TiktokRouterClient(web=web_client, ytdlp=TiktokClient(), mode=mode)
+
+
+def build_tiktok_discovery_producer(
+    *,
+    config: Any,
+    database: Any,
+    soul_engine: Any,
+    discovery_engine: Any,
+    llm_service: Any,
+    concurrency: Any,
+    candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
+    enabled_override: bool | None = None,
+) -> Any | None:
+    """Build the runtime TikTok producer if TikTok discovery is enabled."""
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        return None
+    scheduler = getattr(config, "scheduler", None)
+    producer_enabled = (
+        bool(getattr(scheduler, "enabled", True))
+        if enabled_override is None
+        else bool(enabled_override)
+    )
+    if not hasattr(database, "conn"):
+        logger.info("tiktok producer disabled: database does not expose sqlite connection")
+        return None
+
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES,
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        TiktokDiscoveryProducer,
+        TiktokStrategyRunResult,
+    )
+
+    try:
+        tt_client = _build_tiktok_client(config, tt_cfg)
+    except ImportError as exc:
+        logger.info("tiktok producer disabled: TikTok dependencies unavailable: %s", exc)
+        return None
+
+    async def _discover(
+        profile: Any,
+        *,
+        strategy: str,
+        unit_budget: int,
+        result_limit: int,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> TiktokStrategyRunResult:
+        strategies = build_tiktok_discovery_strategies(
+            config=config,
+            client=tt_client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            strategy_unit_budget={strategy: unit_budget},
+        )
+        selected = [item for item in strategies if item.name == strategy]
+        if not selected:
+            return TiktokStrategyRunResult(items=[], units_used=0, source_counts={})
+
+        selected_strategy = selected[0]
+        discovery_engine.register_strategy(selected_strategy)
+        # Unified keyword planner injection (P1.7): forward claimed words to the
+        # engine as ``keywords``; the engine maps them onto the strategy's
+        # ``queries`` param (``tiktok_search`` consumes them verbatim,
+        # ``tiktok_tag`` maps them onto hashtags). ``None`` keeps the legacy
+        # self-generating behavior.
+        inject: dict[str, Any] = {}
+        if queries is not None:
+            inject["keywords"] = list(queries)
+        # P1.8 yield provenance: forward the keyword→id map so the engine stamps
+        # each produced item's ``source_keyword_id`` for admit-time backfill.
+        if keyword_ids:
+            inject["keyword_ids"] = dict(keyword_ids)
+        produce_fn = getattr(discovery_engine, "produce_candidates", None)
+        if callable(produce_fn):
+            raw_items = await produce_fn(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        else:
+            raw_items = await discovery_engine.discover(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        items = [
+            item
+            for item in raw_items
+            if str(getattr(item, "source_platform", "")) == "tiktok"
+            or str(getattr(item, "source_strategy", "")).startswith("tiktok_")
+        ]
+        units_used = _tiktok_strategy_units_used(
+            selected_strategy,
+            fallback=max(0, int(unit_budget)),
+        )
+        return TiktokStrategyRunResult(
+            items=items,
+            units_used=units_used,
+            source_counts={strategy: len(items)},
+            errors=dict(selected_strategy.last_intermediates.get("errors", {})),
+        )
+
+    strategies: tuple[str, ...] = (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH
+        if bool(getattr(tt_client, "search_available", False))
+        else TIKTOK_DISCOVERY_STRATEGIES
+    )
+    if str(getattr(tt_cfg, "mode", "auto")) == "ytdlp":
+        strategies = tuple(name for name in strategies if name != "tiktok_feed")
+    return TiktokDiscoveryProducer(
+        cooldown_remaining=getattr(tt_client, "cooldown_remaining", None),
+        database=database,
+        soul_engine=soul_engine,
+        discover=_discover,
+        enabled=producer_enabled,
+        min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
+        daily_feed_budget=int(getattr(tt_cfg, "daily_feed_budget", 3)),
+        daily_search_budget=int(getattr(tt_cfg, "daily_search_budget", 3)),
+        daily_tag_budget=int(getattr(tt_cfg, "daily_tag_budget", 0)),
+        daily_user_budget=int(getattr(tt_cfg, "daily_user_budget", 0)),
+        strategies=strategies,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+    )
 
 
 def _build_dialogue_settlement_dispatcher(
@@ -519,6 +822,10 @@ class RuntimeContext:
     dialogue_settlement_handlers: dict[Any, Any] = field(default_factory=dict)
     dialogue_settlement_guard: Any = None
     discovery_engine: Any = None
+    # Discovery-candidate pipeline owned by this runtime. Kept so a
+    # composition-root caller (the Blue Fish loop) can push one extra discovery
+    # route through the same enqueue → evaluate path every other strategy uses.
+    candidate_pipeline: Any = None
     recommendation_engine: Any = None
     runtime_controller: Any = None
     account_sync_service: Any = None
@@ -579,6 +886,61 @@ class RuntimeContext:
         if not callable(delegate):
             return None
         return delegate(new_config)
+
+    async def run_discovery_route(self, *, strategies: list[str], limit: int) -> int:
+        """Run one named discovery route and enqueue its raw candidates.
+
+        Seam for callers that own their own cadence (the Blue Fish loop): the
+        route is a normal registered strategy and its output goes through the
+        same candidate pipeline (enqueue → batch evaluator → admission) as
+        search / trending / explore. A discovery failure returns ``0`` so the
+        caller's loop keeps running; the real cause is logged here.
+
+        The route always runs — a full pool must not stop a route whose reader
+        has its own side effect (the comment-thread plan) — but its candidates
+        are only enqueued when the pool has room, mirroring
+        ``produce_and_enqueue``'s guard.
+        """
+
+        engine = self.discovery_engine
+        if engine is None or self.soul_engine is None:
+            return 0
+        try:
+            from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+            try:
+                profile = await self.soul_engine.get_profile()
+            except SoulProfileNotInitializedError:
+                # Before the first profile commit there is nothing to discover
+                # for; the loop retries on the next tick. Not an error worth a
+                # traceback every five minutes.
+                logger.debug(
+                    "discovery route %s skipped: soul profile not initialized",
+                    ",".join(str(item) for item in strategies),
+                )
+                return 0
+            items = await engine.produce_candidates(
+                profile,
+                strategies=list(strategies),
+                limit=max(1, int(limit)),
+            )
+            if not items:
+                return 0
+            pipeline = self.candidate_pipeline
+            if pipeline is None:
+                return 0
+            pool_full = getattr(pipeline, "pool_full", None)
+            if callable(pool_full) and pool_full():
+                return 0
+            inserted = pipeline.enqueue_candidates(list(items), source_context="mixed")
+        except Exception:  # noqa: BLE001 - a background route must not kill its owner
+            logger.warning(
+                "discovery route %s failed",
+                ",".join(str(item) for item in strategies),
+                exc_info=True,
+            )
+            return 0
+        return int(inserted or 0)
 
     async def _handle_pool_inventory_commit(
         self,
@@ -961,6 +1323,7 @@ class RuntimeContext:
             dialogue_tone_prompt=str(
                 getattr(getattr(new_config, "soul", None), "dialogue_tone_prompt", "") or ""
             ),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         # 2. Bilibili client
@@ -1072,6 +1435,7 @@ class RuntimeContext:
             posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
             dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
             module_overrides=new_module_overrides,
             llm_concurrency=llm_concurrency,
             llm_concurrency_gate=new_llm_gate,
@@ -1216,6 +1580,7 @@ class RuntimeContext:
             ),
             serve_outbox=ServeOutbox(new_config.data_path / "runtime" / "serve_outbox.jsonl"),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)
@@ -1299,6 +1664,35 @@ class RuntimeContext:
         new_discovery_engine.register_strategy(trending_strategy)
         new_discovery_engine.register_strategy(related_strategy)
         new_discovery_engine.register_strategy(explore_strategy)
+
+        # 7a. Comment-thread route (Blue Fish Lab): the lab's reading half.
+        # Registered only in the API runtime because the action layer that
+        # executes its plans exists only here — CLI discovery has no executor
+        # and would just leave dead plans behind. The route itself is inert
+        # unless the lab is enabled and has its own cookie, so registering it
+        # is zero behaviour change with the default (off) config.
+        from openbiliclaw.discovery.strategies.comment_thread import CommentThreadStrategy
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
+
+        async def _comment_thread_seeds(limit: int) -> list[FishCandidate]:
+            return recommendation_pool_seeds(self.database, limit)
+
+        comment_thread_strategy = CommentThreadStrategy(
+            data_dir=new_config.data_path,
+            seed_provider=_comment_thread_seeds,
+            client_factory=lambda cookie: BilibiliAPIClient(
+                cookie=cookie,
+                proxy=new_config.bilibili.proxy or None,
+            ),
+            plan_store=FishPlanStore(new_config.data_path),
+            # The ledger says which videos the fish already spoke under, so the
+            # route plans the next unanswered seed instead of replaying the
+            # top-ranked one every tick.
+            store=FishStore(new_config.data_path),
+        )
+        new_discovery_engine.register_strategy(comment_thread_strategy)
 
         # 7b. Register Bilibili source adapter (multi-source Phase 1)
         from openbiliclaw.sources.bilibili_adapter import BilibiliAdapter
@@ -1393,6 +1787,7 @@ class RuntimeContext:
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
+        new_tiktok_producer: Any = None
         new_x_producer: Any = None
         new_zhihu_producer: Any = None
         new_reddit_producer: Any = None
@@ -1402,6 +1797,7 @@ class RuntimeContext:
         new_v2ex_producer: Any = None
         new_web_producer: Any = None
         new_weibo_producer: Any = None
+        new_instagram_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -1454,6 +1850,32 @@ class RuntimeContext:
                 min_interval_minutes=int(getattr(xhs_cfg, "min_interval_minutes", 20)),
                 keyword_fetch=new_keyword_fetch,
             )
+            # Formal discover runtime registration for the instagram source.
+            from openbiliclaw.runtime.instagram_producer import (
+                build_instagram_discovery_producer,
+            )
+
+            async def _kick_instagram_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "instagram_task_available", "source": "task_kick"})
+
+            new_instagram_producer = build_instagram_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_instagram_extension,
+                presence=self.presence,
+                # Explicit guided init owns this producer even with all
+                # background work disabled. Periodic ticks keep their gate.
+                manual=True,
+                presence_grace_seconds=int(
+                    getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
+                ),
+            )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
 
             new_douyin_producer = build_douyin_discovery_producer(
@@ -1476,6 +1898,16 @@ class RuntimeContext:
                 candidate_pipeline=new_candidate_pipeline,
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
+                concurrency=concurrency,
+                keyword_fetch=new_keyword_fetch,
+            )
+            new_tiktok_producer = build_tiktok_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                discovery_engine=new_discovery_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                llm_service=new_llm_service,
                 concurrency=concurrency,
                 keyword_fetch=new_keyword_fetch,
             )
@@ -1728,6 +2160,7 @@ class RuntimeContext:
                 "reddit": _source_enabled("reddit"),
                 "linuxdo": _source_enabled("linuxdo"),
                 "v2ex": _source_enabled("v2ex"),
+                "tiktok": _source_enabled("tiktok"),
             },
             scheduler_config=new_config.scheduler,
             profile_ready=lambda: bool(new_soul_engine.is_profile_ready()),
@@ -1788,6 +2221,7 @@ class RuntimeContext:
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
+            tiktok_producer=new_tiktok_producer,
             x_producer=new_x_producer,
             zhihu_producer=new_zhihu_producer,
             reddit_producer=new_reddit_producer,
@@ -1798,6 +2232,7 @@ class RuntimeContext:
             web_producer=new_web_producer,
             custom_source_producer_provider=_custom_source_producer,
             weibo_producer=new_weibo_producer,
+            instagram_producer=new_instagram_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided
@@ -1942,6 +2377,7 @@ class RuntimeContext:
         for producer in (
             new_douyin_producer,
             new_youtube_producer,
+            new_tiktok_producer,
             new_zhihu_producer,
             new_bangumi_producer,
             new_github_producer,
@@ -1949,6 +2385,7 @@ class RuntimeContext:
             new_v2ex_producer,
             new_web_producer,
             new_weibo_producer,
+            new_instagram_producer,
         ):
             if producer is not None:
                 producer.candidate_evaluation_owned_by_coordinator = True
@@ -2135,6 +2572,7 @@ class RuntimeContext:
         self.skill_catalog = new_skill_catalog
         self.dialogue_settlement_queue = new_settlement_queue
         self.discovery_engine = new_discovery_engine
+        self.candidate_pipeline = new_candidate_pipeline
         self.recommendation_engine = new_recommendation_engine
         self.runtime_controller = new_runtime_controller
         self.account_sync_service = new_account_sync

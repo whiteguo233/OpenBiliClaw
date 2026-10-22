@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 向量 GPU → CPU 自动回退仅适用于后端进程可见的 loopback Ollama 端点。Compose 默认通过 `http://ollama:11434` 访问独立容器，不自动更改其执行模式；该容器仍按部署的 GPU/CPU 配置运行。
+
 [← 返回 README](../README.md)
 
 > 🔒 **局域网访问安全（可选密码门禁）**：容器把后端暴露在 `8420`，同网段设备都能访问。需要为局域网 / 远程设备加登录密码时（本机与浏览器扩展仍免登录），设置环境变量 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…`（或进容器跑 `openbiliclaw set-password`）。若手动套其他反向代理，记得配 `[api.auth].trusted_proxies` 或让代理自行鉴权；仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见 [`docs/modules/api-auth.md`](modules/api-auth.md)。
@@ -47,6 +49,11 @@ docker buildx build --platform linux/amd64,linux/arm64 -t openbiliclaw-backend:v
 ```
 
 ## 多源接入前置：登录态来源使用宿主机浏览器
+
+Instagram 分支的共享封面传输依赖 `httpx[socks]>=0.28` 与显式 `httpcore>=1.0,<2`，随正常 Python/镜像构建安装，不需要新守护进程。海外图片选择代理时，容器须能通过该代理访问 TLS 校验的 `https://1.1.1.1/dns-query`；仅查询公开 CDN 域名，再将公网目的 IP 固定到隧道。direct/国内 CDN 仍使用本机 DNS；DoH 故障应排查代理，不关闭证书或内网地址防护。Instagram 内容任务本身由宿主机浏览器联网，和容器封面链路分开。此说明不代表未发布分支已进入公共镜像。
+
+- **TikTok / Instagram 插件权限**：扩展默认声明两者的站点访问权限，浏览器在安装/更新时处理；保存来源设置不再单独授权。来源仍需显式启用，浏览器被手动或策略禁止站点访问时需恢复。容器部署不改变浏览器的实际授权状态。
+- **Instagram（默认关闭）**：公开 topic/creator 可选登录，个人 liked/saved/following 初始化需在装扩展的同一浏览器登录。后端只收到布尔心跳与规范化条目，不收到 Cookie；首版 init-only，不周期回拉账号。自动采集授权由部署者确认，详见[验收边界](platform-source-acceptance.instagram.md)。
 
 OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当前浏览器的登录会话来读取你能看到的内容。Docker 部署后，这些来源仍需在装了扩展的同一个浏览器里登录；公开匿名来源会在各自条目中明确说明：
 
@@ -148,7 +155,7 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 - 默认 embedding 是 `ollama` + `bge-m3`，Docker 里写成 compose 网络地址 `http://ollama:11434/v1`，指向随 compose 启动的 sidecar。如果你手动填了其他 embedding endpoint，不会被覆盖。
 - **后端不再等 sidecar 拉完模型才启动**：`bge-m3` 首次下载（~568MB）期间后端已经可用，`/setup/` 的前置检查会显示 embedding 尚未就绪，拉取完成后自动通过。模型下载失败时 sidecar 守护进程仍在，重启 compose 会自动重试。
 - B 站登录态推荐用浏览器扩展：扩展装在**宿主机浏览器**里，不在容器里。你登录 bilibili.com 后，扩展会把 Cookie 自动 POST 到 `127.0.0.1:8420` 的后端接口。
-- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及 Web 传输的 `httpx[socks]>=0.27,<1` / `httpcore>=1,<2` 已内置；Web 全局开关默认开启，但没有 enabled recipe 时不取数、不占 quota，无需浏览器服务。
+- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及 Web 传输的 `httpx[socks]>=0.28,<1` / `httpcore>=1,<2` 已内置；Web 全局开关默认开启，但没有 enabled recipe 时不取数、不占 quota，无需浏览器服务。
 - `[tailnet]` 也保持默认关闭。即使从宿主机挂载一个自行编译的 helper，容器网络 / 状态目录 / 生命周期仍不属于首版受支持路径；本指南不提供这种半自定义部署的可用性承诺。
 
 ### 可选公网域名自动 HTTPS（最简方案）
@@ -228,6 +235,8 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 ```
 
 ## 配置
+
+通过 Web / 本机设置 API 成功应用模型配置后，`serve-api` 的父 supervisor 会等待应用队列结束，在下一次约 5 秒巡检重启后台 worker / 推荐 / 图片服务，使候选评估和文案使用新模型。已有候选保留，数据目录仍固定为父进程当前持锁路径；无新增 Compose 服务或依赖。直接编辑 TOML 不触发 API handoff，仍需重启 backend 容器。旧镜像遇到修正模型后空池持续为零，也应完整重启 backend 后核对 `child-discovery-worker.log`。
 
 一行安装脚本会先在宿主机生成 `config.toml`，再同步到 Docker volume 的 `/app/runtime/config.toml`。配置要改时，优先重跑同一条安装 / bootstrap 命令；高级排查时可以直接编辑容器内文件。
 
@@ -529,3 +538,6 @@ Ego Lite 宿主 CLI 不属于容器的默认执行链路；当前可用执行器
 回放、超时释放 profile 以及资源失败诊断。测试使用无外网的容器内匿名 fixture，
 没有导入网站账号；arm64 和真实外站登录仍需对应环境验证，详见
 [动态网站来源验收](platform-source-acceptance.dynamic-web.md)。
+## macOS 桌面包签名
+
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。

@@ -5,11 +5,12 @@
 ## 👤 我是用户
 
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
+- [Instagram main 集成交付](testing/2026-10-06-instagram-delivery.md) — README / 首页、最新主线整合、测试与保留的真实验收限制
 - [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 把 OpenBiliClaw 装进 DeepSeek Harness：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置）+ 22 个 Agent Bridge 工具，Agent 也能读推荐、答探测、闭环学习
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [国内下载（123 云盘）](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) — 当前 v0.3.221 的 7 个包，分享永久有效并可直接打开下载；[Gitee v0.3.221 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.221) 提供国内镜像附件与源码入口
+- [Gitee v0.3.229 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229) — Gitee 最近同步版本；v0.3.231 源码与安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231)，国内安装包镜像待上传；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名版本号
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
@@ -23,6 +24,7 @@
 
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系
+- [多语言（i18n）](modules/i18n.md) — 简体 / 繁體 / English 的 locale 契约、UI 目录、模型输出语言与新增语言清单
 - [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — 逐对编排、Agent+Jev 局部修正、纯 Agent 与独立过滤 provider；设计阶段，尚未实现
 - [架构总览图](architecture-overview.md) / [English](architecture-overview.en.md) — 从 README 拆出的 ASCII 架构总览：runtime 并发闸门、Agent 编排层、多源适配与发现/推荐/保存链路
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
@@ -32,6 +34,7 @@
 - [Bangumi 来源文档](modules/bangumi.md) / [接入 Spec](plans/2026-07-17-bangumi-source-spec.md) / [实施计划](plans/2026-07-17-bangumi-source-plan.md) — 官方只读 API、公开收藏初始化、统一 discover、三端体验与验收边界
 - [GitHub 来源文档](modules/github.md) / [冻结契约](platform-source-contract.github.toml) / [验收记录](platform-source-acceptance.github.md) — 官方只读 REST API、公开 repository discovery、starred repositories 初始化与三端文字卡
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
+- [Instagram 来源文档](modules/instagram.md) / [验收台账](platform-source-acceptance.instagram.md) — 可选登录发现、init-only 点赞 / 收藏 / 关注、手动恢复与封面安全边界；最新真实结果和未完成的账号/许可门禁分开记录
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [动态网站与兼容 Web 来源文档](modules/web.md) — 独立来源份额、同站多版本 workflow、HTTP / Playwright、人工登录接管、普通候选评估与三端管理；旧公开 recipe 单独保留兼容边界
 - [动态网站来源验收](platform-source-acceptance.dynamic-web.md) — 按执行环境与实际证据区分自动化、隔离 UI 和真实网站验收；Ego bridge 未接入
@@ -64,9 +67,9 @@
 | 模块 | 文档 | 对应代码 | 状态 |
 |------|------|----------|------|
 | 后端 API | [modules/api.md](modules/api.md) | `src/openbiliclaw/api/` | ✅ durable 对话 + 配置后台应用 + 本机-only 迁移四 API；GitHub 配置 / 状态 / init / repository 推荐 DTO 已记录 |
-| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十二来源 planner 与 GitHub repository 查询约束已记录 |
+| LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十四来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
-| 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository source 为本分支 🧪 接线，验收见专用 ledger |
+| 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository 与 Instagram（正式可用、默认关闭），验收见专用 ledger |
 | 动态网站 / Web 接入 | [modules/web.md](modules/web.md) | `sources/custom_sources.py` + `workflow_store.py` + `workflow_service.py` + `workflow_executors.py` + `runtime/custom_workflow_producer.py`；旧 `web_*` recipe 保留 | 🧪 独立 `source_id` 份额、多版本 workflow、HTTP / Playwright、人工登录接管与三端来源管理已接线；Ego 不可用，真实验收见专用 ledger |
 | 浏览器发现工作流 | [modules/browser-workflows.md](modules/browser-workflows.md) | `sources/browser_workflow.py` + `workflow_executors.py` | 🧪 声明式计划编译、持久登录会话、人工接管与精确域权限；Playwright 执行，Ego 适配器尚未接入 |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
@@ -74,8 +77,10 @@
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |
 | V2EX 接入 | [modules/v2ex.md](modules/v2ex.md) | `src/openbiliclaw/sources/v2ex*.py` + `runtime/v2ex_producer.py` + 扩展任务桥 | ✅ 匿名 API/Feed + 可选 PAT + 四个只读 bootstrap scope + Topic 回复聚合 |
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
-| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十三来源契约正交化 + `verify_method` 证据强度 + 一键验证；GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
+| Instagram 接入 | [modules/instagram.md](modules/instagram.md) | `src/openbiliclaw/sources/instagram*.py` + `runtime/instagram_producer.py` + `extension/src/**/instagram*` | 🧪 可选登录 topic/creator + 登录态 init-only liked/saved/following；默认关闭，生产需另行确认 Meta 授权 |
+| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十五来源族契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
+| TikTok 接入（正式可用） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `sources/tiktok_web.py` + `sources/tiktok_sign.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ Web API 访客身份（签名 + curl_cffi）feed / hashtag / creator discovery，yt-dlp 兜底（issue #88）；可选登录 Cookie（扩展同步）解锁关键词搜索 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
 | 记忆系统 | [modules/memory.md](modules/memory.md) | `src/openbiliclaw/memory/` | ✅ 完成 |
 | 灵魂引擎 | [modules/soul.md](modules/soul.md) | `src/openbiliclaw/soul/` | ✅ 完成 |
@@ -87,6 +92,7 @@
 | 原生保存同步 | [modules/saved-sync.md](modules/saved-sync.md) | `src/openbiliclaw/saved_sync/` | ✅ canonical API + runtime + B 站 direct adapter + 六平台 extension adapter/executor + 三端后端状态驱动保存界面；GitHub repository 与微博保持 typed identity 的 local-only 保存 |
 | 灵魂管线架构 | [modules/soul-pipeline-architecture.md](modules/soul-pipeline-architecture.md) | `src/openbiliclaw/soul/` | ✅ 完成 |
 | 浏览器插件 | [modules/extension.md](modules/extension.md) | `extension/` | ✅ 支持既有来源任务桥与跨平台行为采集；GitHub 只新增 setup/status/config/repository 卡片 UI，明确不新增 host permission、content script、Cookie、任务或 native-save |
+| 蓝鱼实验室 | [modules/fish.md](modules/fish.md) | `src/openbiliclaw/fish/` | 🧪 独立小号的评论区回复 + @：同时是 B 站发现面上的一条只读路线（评论 BV 号进评估、计划交给动作层执行）；复用主链路推荐池、反馈与画像隔离，默认关闭、默认只预览、账号隔离与配额硬闸 |
 | CLI 命令参考 | [modules/cli.md](modules/cli.md) | `src/openbiliclaw/cli.py` | 🧪 已记录 GitHub `fetch-github`、三条 discover smoke 与正式 `discover --source github`；验收状态见 ledger |
 | 配置参考 | [modules/config.md](modules/config.md) | `config.example.toml` | ✅ 持续更新（含 `[sources.github]`、固定 PAT 环境变量、三分支预算、节流、bootstrap 上限与来源占比） |
 | 局域网密码门禁 | [modules/api-auth.md](modules/api-auth.md) | `src/openbiliclaw/auth_core.py` + `src/openbiliclaw/api/auth.py` | ✅ 可选 `[api.auth]` 密码门禁 + `/api/auth/*` + `set-password` |
@@ -103,3 +109,16 @@
 
 - [贡献指南](contributing.md) — 环境搭建、代码规范、文档更新要求
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开发现与登录后搜索已有实测；非空账号画像、周期增量及 Firefox 登录态仍在验证，站内收藏暂缓。各能力的契约与最新证据分别见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。
+
+- [桌面打包与 macOS 签名公证](modules/packaging.md) — 本机凭据、CI Secrets、正式与实验安装包及验收。
+
+- [v0.3.231 发布与商店审核记录](testing/2026-10-22-release-v0.3.231.md) — Instagram / TikTok 转正式来源、大肥鱼通知人设化、各渠道回执。
+- [v0.3.230 发布与商店审核记录](testing/2026-10-21-release-0.3.230.md) — 空候选池恢复、蓝鱼实验室、多语言、默认来源站点权限及各渠道回执。
+- [v0.3.229 发布与商店审核记录](testing/2026-10-16-release-0.3.229.md) — TikTok 新来源、远程访问安全收紧、B 站登录失效横幅死锁修复与各渠道回执。
+- [v0.3.228 发布与商店审核记录](testing/2026-10-13-release-0.3.228.md) — 画像门控降本、安装包信任修复与各渠道回执。
+- [v0.3.227 发布与商店审核记录](testing/2026-10-06-release-0.3.227.md) — macOS 签名公证、Instagram 实验性来源与各渠道回执。

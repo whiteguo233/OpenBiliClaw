@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-14",
+  "tested_commit": "41fb9e06be1dc8150808ed25f90c827bec10bec2",
+  "scope": "audit-only",
+  "verdict": "incremental only",
+  "source_discovery_recommendation_slice": "accepted",
+  "full_account_capabilities": "not fully accepted",
+  "user_scope": {
+    "native_save": "deferred; last real result remains failed, no new upstream writes",
+    "watch_history": "optional; excluded from default bootstrap and periodic sync"
+  },
+  "checks": {
+    "ruff": "pass",
+    "mypy_source_files": 318,
+    "backend_targeted_passed": 426,
+    "mobile_targeted_passed": 62,
+    "extension_passed": 1814,
+    "chrome_build_assets": "pass",
+    "firefox_build_assets": "pass",
+    "registration_inventory": {
+      "MANUAL": 14,
+      "MISSING": 0,
+      "N/A": 2,
+      "PASS": 46,
+      "fully_verified": false,
+      "registration_check_passed": true,
+      "required_missing": 0
+    }
+  },
+  "ci": {
+    "run_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/38435896568",
+    "tested_commit": "41fb9e06be1dc8150808ed25f90c827bec10bec2",
+    "all_four_checks": "success",
+    "pytest_passed": 10316,
+    "pytest_skipped": 131
+  },
+  "live_pipeline": {
+    "evidence": "pipeline.json",
+    "network": "existing system routing",
+    "llm": "actual configured providers",
+    "profile": "synthetic science interest",
+    "storage": "isolated temporary storage",
+    "recommendation_api": "ASGI transport; not TCP full backend E2E"
+  },
+  "ui": {
+    "method": "Playwright, current source renderer fixture with live pipeline DTOs; real cover downloader",
+    "desktop": {
+      "viewport": [
+        1440,
+        1000
+      ],
+      "visible_tiktok_cards": 4,
+      "cover_images_loaded": 4,
+      "canonical_https_links": 4,
+      "tiktok_filter_selected": true,
+      "horizontal_overflow": false,
+      "screenshot": "desktop.png"
+    },
+    "mobile": {
+      "viewport": [
+        390,
+        844
+      ],
+      "tiktok_cards": 4,
+      "cover_images_loaded": 4,
+      "horizontal_overflow": false,
+      "open_action": "opened matching canonical TikTok HTTPS URL in new tab",
+      "screenshot": "mobile.png"
+    },
+    "limitations": [
+      "fixture has no runtime WebSocket; resulting reconnect errors are expected fixture limitations",
+      "no fixture write is persistence evidence",
+      "not a physical-phone or installed Firefox E2E"
+    ]
+  },
+  "remaining": {
+    "nonempty_real_profile": "blocked by no accepted nonempty account signals",
+    "real_periodic_incremental": "nonempty account E2E unverified; runtime scheduling and idempotency regressions passed",
+    "firefox_installed": "not run",
+    "native_save": "user-deferred, not passed"
+  },
+  "production_changes": false,
+  "merged": false,
+  "released": false,
+  "merge_order": [
+    "275",
+    "286"
+  ]
+}

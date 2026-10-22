@@ -190,6 +190,26 @@ def outbound_ytdlp_proxy() -> str | None:
     return _outbound_proxy or ""
 
 
+def curl_cffi_proxy_kwargs(proxy: str | None) -> dict[str, Any]:
+    """Adapt system/explicit routing to libcurl without ambient overrides.
+
+    ``None`` inherits OS/environment proxies; an empty string forces direct;
+    a URL pins the proxy. libcurl does not read macOS System Settings, and
+    curl_cffi drops ``proxy=""`` before configuring libcurl, so use a nonempty
+    scheme mapping even for direct connections. Explicit proxies must also
+    override ambient NO_PROXY, like the other custom-mode transports.
+    """
+    from curl_cffi import CurlOpt
+
+    if proxy is not None:
+        return {"proxies": {"all": proxy}, "curl_options": {CurlOpt.NOPROXY: ""}}
+    system = getproxies()
+    proxies = {key: system[key] for key in ("http", "https", "all") if system.get(key)}
+    # Disable implicit libcurl environment discovery for unconfigured schemes.
+    proxies.setdefault("all", "")
+    return {"proxies": proxies, "curl_options": {CurlOpt.NOPROXY: system.get("no", "")}}
+
+
 def outbound_cli_environment(
     environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:

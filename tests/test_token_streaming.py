@@ -321,6 +321,32 @@ class _FakeMemory:
 
 
 class TestServiceNativeToolStreaming:
+    async def test_legacy_stream_keeps_followup_policy_and_prior_answer(self) -> None:
+        captured: list[list[dict[str, str]]] = []
+
+        class CaptureProvider(DummyProvider):
+            async def complete(self, messages: list[dict[str, str]], **kwargs: Any) -> LLMResponse:
+                captured.append(messages)
+                return LLMResponse(content="那先选慢生活。", model="dummy-model")
+
+        registry = LLMRegistry()
+        registry.register(CaptureProvider())
+        service = LLMService(registry=registry, memory=_FakeMemory())  # type: ignore[arg-type]
+        history = [
+            {"role": "user", "content": "推荐几个轻松的内容类型"},
+            {"role": "assistant", "content": "美食还是旅行？"},
+        ]
+
+        chunks = await _collect(
+            service.stream_socratic_dialogue(user_message="不知道，你决定吧", history=history)
+        )
+
+        assert len(captured) == 1
+        assert "同一需求默认最多澄清一轮" in captured[0][0]["content"]
+        assert captured[0][1:-1] == history
+        assert captured[0][-1]["content"] == "不知道，你决定吧"
+        assert chunks[-1].response.content == "那先选慢生活。"
+
     async def test_native_route_streams_deltas_and_terminal(self) -> None:
         provider = ScriptedStreamProvider("main", [])
         provider.supports_tool_calling = True

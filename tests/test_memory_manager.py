@@ -1000,6 +1000,9 @@ def test_source_bootstrap_state_defaults_when_missing(tmp_path: Path) -> None:
         "v2ex_seen_item_keys": [],
         "weibo_seen_item_keys": [],
         "weibo_account_key": "",
+        "instagram_seen_item_keys": [],
+        "instagram_account_key": "",
+        "tiktok_seen_item_keys": [],
         "last_source_bootstrap_sync_at": "",
         "source_incremental": {
             "cursor": "",

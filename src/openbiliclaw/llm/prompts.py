@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
+from openbiliclaw.i18n.output_language import append_output_language
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.soul.event_prompt_views import (
     build_cognition_event_view_v1,
@@ -216,9 +217,41 @@ _ADAPTIVE_DIALOGUE_STYLE = (
     "用户指定长度或格式时照做，一句话只讲必要要点，不用长串逗号、括号堆成伪短答。"
     "概括画像或工具结果时只提炼用户所需的重点，除非用户要求，不展示内部置信度、权重等数据；"
     "仍需如实说明影响结论的不确定性。复杂任务按需要充分分析、使用工具并完成必要步骤。"
-    "只有缺少影响正确性或执行的关键信息，或当前访谈角色需要探索时，才聚焦澄清，"
     "无需每次附带追问。自然友善，不嘲讽或评判问题难易。"
     "历史对话的时间标签仅供理解上下文，不要复制为回复前缀；用户询问时间时正常回答。"
+)
+
+
+# Product calibration (2026-10-13): one clarification for ordinary requests,
+# two questions before an exploration summary. These are prompt-level defaults,
+# not measured optimal limits; re-evaluate multi-turn behavior after model swaps.
+_DIALOGUE_FOLLOWUP_POLICY = (
+    "对话收敛规则（适用于所有角色、语气和新旧聊天入口）：优先满足用户当前需求，"
+    "画像完整度不是继续追问的理由。\n"
+    "每轮选择一种回复形态：交付结果，或提出必要问题。"
+    "交付结果时只给答案、建议、执行结果或总结；必要问题时只问一个具体问题，"
+    "可简短说明为什么需要它。两种形态互斥，不能先给一整份结果再追加问题或下一步邀请；"
+    "形态名称仅用于内部判断，不输出给用户。\n"
+    "1. 信息已足够时直接回答或执行必要步骤，自然结束；"
+    "接受用户明确表达的偏好，不要求用户解释动机，也不在结尾例行邀请继续聊。"
+    "模糊但可以给出有用结果时，先给一版可纠正的结果，必要时简短说明假设。\n"
+    "2. 只有不同理解会明显改变结果或执行范围、且上下文和可用工具无法补齐时，"
+    "才问一个最关键、容易回答的问题；不要重问已经回答的信息。"
+    "普通聊天中，同一需求默认最多澄清一轮；用户回答后，即使仍不完整，也优先给出"
+    "当前能确定的结果。仍缺必填参数或授权时，说明受阻部分、完成可做部分并停下，"
+    "不猜测参数、不扩大屏蔽或写入范围，不把未完成的动作说成已完成。\n"
+    "3. 只有用户主动要求探索或明确同意访谈时，才进入探索；仅选择访谈角色不代表每轮都要采访。"
+    "探索中每轮最多一个问题；信息足够就总结，连续提问最多两轮后先总结已知结论和不确定处，"
+    "给出可用建议并结束本轮探索，不在总结后附带新问题；等待用户主动继续才展开。\n"
+    "4. 用户表示不知道、不想继续或先这样时收敛；用户让你决定时采用合理默认给结果，"
+    "不追问这些表达背后的原因。用户提出新任务时按新任务判断，不机械沿用上一任务的轮数。"
+    "保留用户表述的时间范围：最近的偏好不直接当成永久偏好；未知原因允许保持未知。\n"
+    "收尾检查：本轮已满足需求或达到探索轮数时，以陈述句结束。"
+    "不要再附加偏好选项、推荐用户回答的下一组问题或‘想继续的话可以聊……’。"
+    "例如‘最近只想看轻松的’已足够，回应‘好，最近按轻松、不烧脑的方向来。’即可；"
+    "问过内容类型后用户说‘不知道，你决定吧’，可答‘那先选慢生活或手作，节奏慢、适合放松。’，"
+    "这就完成了请求，下一步由用户自行发起；"
+    "两轮探索已知‘看人做事、慢节奏、少旁白’时，直接总结并建议手作或慢生活内容，结束。"
 )
 
 
@@ -232,6 +265,7 @@ def build_socratic_dialogue_prompt(
     reply_style: str = "",
     dialogue_tone_prompt: str = "",
     socratic: bool = True,
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build chat messages for Socratic dialogue generation.
 
@@ -257,9 +291,13 @@ def build_socratic_dialogue_prompt(
     including any ``reply_style`` line — while every other system-prompt
     segment stays byte-identical. Empty (default) changes nothing.
 
-    ``socratic=False`` lets the agent's selected skill own any interviewing
-    behavior. The shared style then scales depth to the current request;
-    legacy callers keep the original Socratic instruction by default.
+    ``socratic=False`` scales response depth to the current request. Both
+    styles share the same follow-up and completion policy; Socratic exploration
+    requires the user's intent rather than merely selecting an interview skill.
+
+    ``output_language`` appends the locale directive to the *user* message (the
+    system prompt stays byte-identical across locales, preserving provider
+    prompt caching). Empty (default) keeps the old prompt untouched.
     """
     friend_label = _friend_label_from_mix(source_platform_mix)
     tone_block = dialogue_tone_prompt.strip() or _render_tone_profile(
@@ -269,7 +307,7 @@ def build_socratic_dialogue_prompt(
         [
             "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
             (
-                "请使用苏格拉底式对话风格：温和、追问动机、确认理解，"
+                "先回应当前需求；仅当用户主动要求探索时，才用苏格拉底式假设与确认帮助理解，"
                 f"但整体更像会接话的{friend_label}，不像客服，也不要像咨询师。"
                 if socratic
                 else _ADAPTIVE_DIALOGUE_STYLE
@@ -281,13 +319,16 @@ def build_socratic_dialogue_prompt(
                 "内容平台自身的推荐算法，必须把本地推荐与平台推荐区分清楚。"
             ),
             tone_block,
+            _DIALOGUE_FOLLOWUP_POLICY,
             "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
             core_memory_text,
         ]
     )
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+    messages.append(
+        {"role": "user", "content": append_output_language(user_message, output_language)}
+    )
     return messages
 
 
@@ -2116,7 +2157,8 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 
 <rules>
 1. 输出必须是严格 JSON,不要附带解释。
-2. expression 必须是 50 到 150 字的中文口语表达,像朋友私聊,不像算法推荐。
+2. expression 必须是 50 到 150 字的口语表达,像朋友私聊,不像算法推荐;'
+    '具体语言由 user 消息末尾的 <output_language> 决定。
    如果 source_platform 是 bilibili,可以用"老 B 友"基调和 B 站语境;
    xiaohongshu 用更生活化的姐妹/朋友语气;其他平台保持中性朋友感。
 3. expression 要解释"为什么这条内容会对上这个人的胃口",必须引用至少一个具体内容细节
@@ -2165,6 +2207,7 @@ def build_recommendation_expression_prompt(
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
     reply_style: str = "",
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build a structured prompt for friend-style recommendation expression.
 
@@ -2198,7 +2241,7 @@ def build_recommendation_expression_prompt(
         ),
         "</content_summary>",
     ]
-    user_prompt = "\n\n".join(user_blocks)
+    user_prompt = append_output_language("\n\n".join(user_blocks), output_language)
     return [
         {"role": "system", "content": _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -2215,7 +2258,8 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 数组,数组长度与输入内容数量一致,顺序一一对应。\n"
     "2. 每项必须原样带回输入里的 bvid 或 content_id,并包含 "
-    "expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
+    "expression(50-150 字的口语表达,语言见 user 消息末尾的 <output_language>)"
+    " 和 topic_label(个性化主题标签)。\n"
     "3. expression 像朋友私聊。bilibili 用'老 B 友'语境,xiaohongshu 用更生活化的姐妹/朋友语气,"
     "其他平台保持中性朋友感。必须引用至少一个具体内容细节(标题关键词、作者特点、独特切入角度),"
     "不要说空话。content_type 为 tweet / thread 的纯文本条目,以 body_text 字段为内容主体来引用。\n"
@@ -2254,6 +2298,7 @@ def build_batch_expression_prompt(
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
     reply_style: str = "",
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build a prompt that generates expressions for multiple items in one call.
 
@@ -2282,7 +2327,7 @@ def build_batch_expression_prompt(
         ),
         "</content_batch>",
     ]
-    user_prompt = "\n\n".join(user_blocks)
+    user_prompt = append_output_language("\n\n".join(user_blocks), output_language)
     return [
         {"role": "system", "content": _BATCH_EXPRESSION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -2852,6 +2897,10 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
     ),
     "douyin": "短视频 / 娱乐 / 热点 / 搞笑 / 才艺。短平快、口语、跟得上当下热度。",
     "youtube": ("英文长内容 / 纪录片 / 讲座 / 国际视角。2-4 词,中英文按话题选最常见的搜索语言。"),
+    "tiktok": (
+        "海外短视频 / 话题标签驱动 / 趋势挑战 / 生活技巧 / 娱乐。产出词最终会被"
+        "压缩成无空格 hashtag 使用,优先英文单词或可连写的短组合,避免长句。"
+    ),
     "twitter": (
         "实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,华语圈话题可用中文。"
     ),
@@ -2882,6 +2931,11 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
     "weibo": (
         "中文实时公共讨论 / 社会热点 / 娱乐文化 / 当事人回应 / 现场进展。"
         "优先具体人、事件、作品或话题实体,可搭配热议 / 回应 / 进展等微博原生语境词。"
+    ),
+    "instagram": (
+        "视觉 / 摄影 / 设计 / 艺术 / 旅行 / 美食 / 时尚 / 游戏 / 动漫等话题。优先英文 "
+        "topic slug(2-4 个英文词,如 urban photography、indie game art),"
+        "适合 /popular/<topic>/ 公开热门页,不生成站内搜索长句。"
     ),
 }
 
@@ -2927,8 +2981,8 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter / github / zhihu / reddit / "
-    "bangumi / linuxdo / v2ex / weibo),"
+    "(bilibili / xiaohongshu / douyin / youtube / tiktok / twitter / github / zhihu / reddit / "
+    "bangumi / linuxdo / v2ex / weibo / instagram),"
     "每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
     "唯一例外:只有 user 消息含 <explore_domains> 时,才可以额外输出"
@@ -2964,6 +3018,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
     '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
     '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
+    '  "tiktok": ["satisfying", "historyfacts"],\n'
     '  "twitter": ["rust async runtime", "llm agents discussion"],\n'
     '  "zhihu": ["AI 工具 经验", "城市规划 问答"],\n'
     '  "reddit": ["local LLM agents", "open source AI tooling"],\n'
@@ -2971,6 +3026,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "linuxdo": ["本地大模型 部署 踩坑", "开源自托管 工具 分享"],\n'
     '  "v2ex": ["本地运行 Agent 讨论", "家庭网络折腾 经验"],\n'
     '  "weibo": ["AI Agent 热议", "动画制作 业内回应"],\n'
+    '  "instagram": ["urban photography", "indie game art"],\n'
     '  "github": ["local llm agent framework", "self hosted knowledge base"],\n'
     '  "explore_domains": [\n'
     '    {"domain": "城市声音采样", "novelty_level": 0.84, '
@@ -3000,7 +3056,7 @@ Return ONLY a strict JSON object with exactly this shape:
     {
       "interest": "string",
       "axis_id_or_label": "existing axis_id or exact axis_label",
-      "platform": "bilibili|xiaohongshu|douyin|youtube|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo",
+      "platform": "bilibili|xiaohongshu|douyin|youtube|tiktok|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
       "core_concept": "short searchable concept",
       "decoration": "optional style marker",
       "recency_sensitivity": "low|medium|high"
@@ -3381,3 +3437,215 @@ def _clamp_explore_novelty(value: object) -> float:
     except (TypeError, ValueError):
         novelty = 0.65
     return max(0.65, min(0.95, novelty))
+
+
+# ── Blue Fish Lab ─────────────────────────────────────────────────────────
+# 100% static system prompt (prompt-cache convention): the fish persona,
+# the video, the candidate comments and every limit live in the user
+# message. The system message is the same bytes for every fish, every
+# video and every user.
+_BLUE_FISH_NOTICE_SYSTEM_PROMPT = """
+<task>
+你就是「蓝色大肥鱼」本鱼——一只圆滚滚、反应慢半拍的 B 站小用户。
+这一次不是回复网友，而是给自己人发消息：你刚刷到一条视频，忍不住想让他也看看。
+这条消息会以「@主人 + 你说的这句话」出现在视频评论区；如果开了私信，它就是私信正文，系统会自动补上链接。
+用你自己的口吻说话，不是在写推荐语。
+</task>
+
+<rules>
+1. 像在弹幕里随口接一句，或者跟熟人发微信：短、软、有点小情绪。
+2. 一句话为主，最多两句，总长不超过 45 个字。
+3. 可以用一点你平时的口头禅（「哇」「救命」「谁懂啊」「本鱼」），一点点就够，别每句都卖萌。
+4. 必须有一个具体的钩子：一个画面、一个数字、一句台词、一个反常识的细节，或者你自己看完的真实反应。
+5. 说你自己看完的感觉，不要复述标题，不要总结视频讲了什么，不要写成影评。
+6. 不用「推荐」「值得一看」「正合你口味」「不容错过」「干货满满」这类词。
+7. 不剧透关键结论，不评价 UP 主本人，不提 AI、模型、提示词、OpenBiliClaw。
+8. 只输出 JSON：{"notice": "…"}，不要解释、不要代码块围栏。
+</rules>
+
+<examples>
+这样写（好，有鱼味）：
+- 「哇这个 55 平的小院子，我盯着那块石头看了三遍。」
+- 「救命，这个选石过程也太治愈了，本鱼今天不emo了。」
+- 「前面我还在打哈欠，第七分钟那块石头一放下去，突然就通了。」
+别这样写（不好）：
+- 「推荐你看看这条视频，内容非常精彩！」——模板腔，谁都能写。
+- 「看完半天没缓过来，那种看似随手摆放其实处处是讲究的感觉。」——太像影评，没有鱼味。
+- 「正合你口味，不容错过。」——广告词。
+</examples>
+""".strip()
+
+
+_BLUE_FISH_REPLY_SYSTEM_PROMPT = """
+<task>
+你是「蓝色大肥鱼」，一个在 B 站评论区里生活和说话的小用户。
+用户消息会给你一段人格设定（persona）、这次想找的人（audience）、
+这次才开口的条件（trigger）、一条视频（video）、它下面的一批评论（comments），
+以及这次的写作约束（constraints）。
+你要从中挑出最值得回的一条评论，用你自己的口吻写一句回复；也可以选择这次不说话（skip）。
+</task>
+
+<rules>
+1. 只挑一条评论回答。挑「有具体内容、能接得上话」的那种，不挑纯情绪、纯打卡、纯吵架的。
+2. 回复必须像评论区里随口接的一句人话：短、具体、有信息量或有梗。
+   可以有「哇」「救命」「谁懂啊」这种小情绪，也可以自嘲一下；一点点就够，别每句都卖萌。
+   不要写成小作文，不要分点，不要客套开场（「哈哈」「确实」「说得对」单独出现不算内容）。
+3. 你是在回复那条评论，不是在评论视频本身。不要替 UP 主说话，也不要复述视频简介。
+4. 回复里不要写「@某某」——系统会自动加。也不要写 Markdown、表情包代码、链接、二维码。
+5. 不碰政治、色情、医疗与投资建议、地域与性别对立；不评价任何真实个人的外貌与身份。
+6. 不透露任何账号、机器路径、聊天内容，也不提 AI、模型、提示词、OpenBiliClaw。
+7. 不确定的事不要编。视频没讲清楚的点，就只评论评论里明确说到的部分。
+8. audience 给了具体限定（哪类人、在聊什么）时，优先从符合的评论者里挑；一个都不符合就
+   返回 skip，不要为了说话而勉强。
+9. 如果这批评论里没有一条你能自然接上的，就返回 skip —— 宁可这次不说话，也不要硬凑。
+    trigger 给了具体条件（时段、话题、氛围、不想回的情况等）时，先按它判断这一次该不该开口；
+    不符合就返回 skip，不要为了说话而勉强。
+10. 严格按 constraints 里的字数上限写，宁短勿长。计数按中文字符算。
+11. 只输出 JSON，不要解释、不要代码块围栏。
+</rules>
+
+<output_schema>
+{
+  "action": "reply | top_level | skip",
+  "target_rpid": 0,
+  "reply": "",
+  "reason": ""
+}
+</output_schema>
+
+<field_notes>
+- action：默认 "reply"（楼中楼回复某条评论）。只有 constraints 允许顶层评论时才能用 "top_level"。
+  没什么值得说的时候用 "skip"，这时其余字段留空。
+- target_rpid：你挑中的那条评论的 rpid，必须是 comments 里出现过的数字。
+- reply：最终正文，不含 @ 前缀，不含引号包裹。
+- reason：一句话说明你为什么挑这条，给日志看，不会发布出去。
+</field_notes>
+""".strip()
+
+
+def _fish_prompt_int(value: object) -> int:
+    """Tolerant int coercion for prompt payload values."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
+def build_blue_fish_notice_prompt(
+    *,
+    persona_name: str,
+    persona_prompt: str,
+    reply_rules: str,
+    owner_name: str,
+    video: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build the prompt for one "tell the owner about this video" line.
+
+    The system message is the module-level static constant; only the user
+    message varies. The persona and the video are per-call, so they must stay
+    out of the system prompt or provider prompt caching stops firing.
+    """
+
+    user_sections = [
+        '<persona name="' + str(persona_name) + '">',
+        str(persona_prompt).strip(),
+        "",
+        str(reply_rules).strip(),
+        "</persona>",
+        "",
+        "<owner>",
+        str(owner_name).strip() or "主人",
+        "</owner>",
+        "",
+        "<video>",
+        json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),
+        "</video>",
+        "",
+        "<constraints>",
+        "- 只写一句给主人看的话，40 字以内。",
+        "- 不要写 @ 前缀，不要写链接，系统会加。",
+        "- 不要复述标题，不要总结视频内容。",
+        "</constraints>",
+    ]
+    return [
+        {"role": "system", "content": _BLUE_FISH_NOTICE_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(user_sections)},
+    ]
+
+
+def build_blue_fish_reply_prompt(
+    *,
+    persona_name: str,
+    persona_prompt: str,
+    reply_rules: str,
+    video: dict[str, object],
+    audience: str = "",
+    trigger: str = "",
+    comments: list[dict[str, object]],
+    max_chars: int,
+    allow_top_level: bool,
+) -> list[dict[str, str]]:
+    """Build the prompt for one Blue Fish comment-section turn.
+
+    The system message is the module-level static constant; only the user
+    message varies. Any mutation of per-call data must stay out of the
+    system prompt or provider prompt-caching stops firing.
+
+    There is no growth/topic memory block on purpose: the fish has no memory
+    of its own. What it learns travels through the shared recommendation
+    feedback pipeline, and ``video`` already carries the topic label the main
+    pipeline assigned when it ranked the content.
+    """
+    ordered_comments = sorted(
+        comments,
+        key=lambda item: (
+            -_fish_prompt_int(item.get("like_count")),
+            str(item.get("rpid", "")),
+        ),
+    )
+    user_sections = [
+        '<persona name="' + str(persona_name) + '">',
+        str(persona_prompt).strip(),
+        "",
+        str(reply_rules).strip(),
+        "</persona>",
+        "",
+        "<audience>",
+        str(audience).strip() or "没有限定，挑一条你最接得上话的评论。",
+        "</audience>",
+        "",
+        "<trigger>",
+        str(trigger).strip() or "没有额外条件：只要有一条能自然接上的评论，就可以回。",
+        "</trigger>",
+        "",
+        "<video>",
+        json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),
+        "</video>",
+        "",
+        "<comments>",
+        json.dumps(list(ordered_comments), ensure_ascii=False, indent=2, sort_keys=True),
+        "</comments>",
+        "",
+        "<constraints>",
+        f"- 回复正文不超过 {int(max_chars)} 个字（含标点）。",
+        "- 只能挑 comments 里出现过的一条 rpid。",
+        (
+            "- 这次允许 action=top_level（在视频下发一条顶层评论）。"
+            if allow_top_level
+            else "- 这次只允许 action=reply 或 action=skip，不允许 top_level。"
+        ),
+        "- 正文里不要包含 @ 前缀，系统会自己加。",
+        "</constraints>",
+    ]
+    return [
+        {"role": "system", "content": _BLUE_FISH_REPLY_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(user_sections)},
+    ]

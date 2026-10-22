@@ -1,0 +1,29 @@
+name: Prepare macOS Developer ID signing
+description: Import a temporary signing keychain and validated notary profile
+inputs:
+  certificate:
+    description: Base64 Developer ID Application P12
+    required: false
+  certificate-password:
+    description: P12 password
+    required: false
+  team-id:
+    description: Apple Developer Team ID
+    required: false
+  notary-user:
+    description: Apple ID for notarization
+    required: false
+  notary-password:
+    description: Apple app-specific password
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ inputs.certificate }}
+        APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+        APPLE_TEAM_ID: ${{ inputs.team-id }}
+        APPLE_NOTARY_USER: ${{ inputs.notary-user }}
+        APPLE_NOTARY_PASSWORD: ${{ inputs.notary-password }}
+      run: bash "$GITHUB_ACTION_PATH/setup.sh"

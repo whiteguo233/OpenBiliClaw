@@ -16,6 +16,7 @@ import {
 } from "../src/background/native-save-task-runner.ts";
 import type { NativeSaveResult, NativeSaveTask } from "../src/shared/native-save.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
+import { saveTiktok, type TiktokNativeSaveEnvironment } from "../src/content/native-save/tiktok.ts";
 
 const task: NativeSaveTask = {
   id: "123e4567-e89b-12d3-a456-426614174000",
@@ -87,6 +88,125 @@ const zhihuTask: NativeSaveTask = {
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+test("TikTok optimistic selected state always needs a fresh read-only membership proof", async () => {
+  const tiktokTask: NativeSaveTask = {
+    ...douyinTask, platform: "tiktok", platform_slug: "tiktok",
+    item_key: "tiktok:7300000000000000000",
+    content_url: "https://www.tiktok.com/@test/video/7300000000000000000",
+    target_label: "TikTok Favorites",
+  };
+  for (const initial of ["synced", "already_synced"] as const) {
+    for (const persisted of [true, false]) {
+      const state = installChromeMock();
+      const posted: NativeSaveResult[] = [];
+      state.sendMessageImpl = acknowledgeNativeSaveMessage;
+      try {
+        const running = runNativeSaveTask(tiktokTask, "tiktok", async result => { posted.push(result); }, { timeoutMs: 1_000 });
+        await tick();
+        state.emitRuntimeMessage({
+          type: "NATIVE_SAVE_RESULT", platform: "tiktok", task_id: tiktokTask.id,
+          item_key: tiktokTask.item_key, document_instance_id: "mutation-document", status: initial,
+        }, { tab: { id: 42, url: tiktokTask.content_url } });
+        await tick();
+        assert.deepEqual(state.reloadedTabs, [42]);
+        const verification = state.sentMessages.at(-1)?.message as { execution_id: string; verification_only: boolean };
+        assert.equal(verification.verification_only, true);
+        state.emitRuntimeMessage({
+          type: "NATIVE_SAVE_RESULT", platform: "tiktok", task_id: tiktokTask.id,
+          item_key: tiktokTask.item_key, execution_id: verification.execution_id,
+          document_instance_id: "verification-document",
+          status: persisted ? "already_synced" : "failed",
+          error_code: persisted ? "" : "native_confirmation_not_observed",
+        }, { tab: { id: 42, url: tiktokTask.content_url } });
+        await running;
+        assert.equal(posted[0]?.status, persisted ? "already_synced" : "failed");
+        assert.equal(posted[0]?.error_code, persisted ? "" : "native_confirmation_not_observed");
+        assert.equal(state.sentMessages.filter(({ message }) =>
+          (message as { type?: string; verification_only?: boolean }).type === "NATIVE_SAVE_EXECUTE" &&
+          !(message as { verification_only?: boolean }).verification_only).length, 1);
+      } finally { state.restore(); }
+    }
+  }
+});
+
+test("TikTok cannot report optimistic success without a document to verify", async () => {
+  const state = installChromeMock();
+  const posted: NativeSaveResult[] = [];
+  const candidate: NativeSaveTask = {
+    ...douyinTask, platform: "tiktok", platform_slug: "tiktok",
+    item_key: "tiktok:7300000000000000000",
+    content_url: "https://www.tiktok.com/@test/video/7300000000000000000",
+    target_label: "TikTok Favorites",
+  };
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
+  try {
+    const running = runNativeSaveTask(candidate, "tiktok", async result => { posted.push(result); }, { timeoutMs: 1_000 });
+    await tick();
+    state.emitRuntimeMessage({
+      type: "NATIVE_SAVE_RESULT", platform: "tiktok", task_id: candidate.id,
+      item_key: candidate.item_key, status: "synced",
+    }, { tab: { id: 42, url: candidate.content_url } });
+    await running;
+    assert.equal(posted[0]?.status, "failed");
+    assert.equal(posted[0]?.error_code, "native_confirmation_not_observed");
+    assert.deepEqual(state.reloadedTabs, []);
+  } finally { state.restore(); }
+});
+
+test("TikTok runner waits for the native request before reloading optimistic UI", async () => {
+  const state = installChromeMock();
+  const candidate: NativeSaveTask = {
+    ...douyinTask, platform: "tiktok", platform_slug: "tiktok",
+    item_key: "tiktok:7300000000000000000",
+    content_url: "https://www.tiktok.com/@test/video/7300000000000000000",
+    target_label: "TikTok Favorites",
+  };
+  const posted: NativeSaveResult[] = [];
+  let selected = false;
+  let complete = false;
+  let clicks = 0;
+  let resume: () => void = () => {};
+  const pending = new Promise<void>(resolve => { resume = resolve; });
+  const env: TiktokNativeSaveEnvironment = {
+    currentUrl: candidate.content_url,
+    isLoggedIn: () => true, isUnavailable: () => false, isContentReady: () => true,
+    rateLimitFingerprint: () => "",
+    findFavoriteControls: () => [{ isSelected: () => selected, click() { clicks++; selected = true; } }],
+    watchFavoriteRequest: () => ({ isComplete: () => complete, dispose() {} }),
+    sleep: () => pending,
+  };
+  state.sendMessageImpl = acknowledgeNativeSaveMessage;
+  try {
+    const running = runNativeSaveTask(candidate, "tiktok", async result => { posted.push(result); }, { timeoutMs: 1_000 });
+    await tick();
+    const content = saveTiktok(candidate, env).then(outcome => {
+      state.emitRuntimeMessage({
+        type: "NATIVE_SAVE_RESULT", platform: "tiktok", task_id: candidate.id,
+        item_key: candidate.item_key, document_instance_id: "mutation-document", ...outcome as object,
+      }, { tab: { id: 42, url: candidate.content_url } });
+    });
+    await tick();
+    assert.equal(selected, true);
+    assert.deepEqual(state.reloadedTabs, []);
+    assert.deepEqual(posted, []);
+    complete = true;
+    resume();
+    await content;
+    await tick();
+    assert.deepEqual(state.reloadedTabs, [42]);
+    const verification = state.sentMessages.at(-1)?.message as { execution_id: string; verification_only: boolean };
+    assert.equal(verification.verification_only, true);
+    state.emitRuntimeMessage({
+      type: "NATIVE_SAVE_RESULT", platform: "tiktok", task_id: candidate.id,
+      item_key: candidate.item_key, execution_id: verification.execution_id,
+      document_instance_id: "verification-document", status: "already_synced",
+    }, { tab: { id: 42, url: candidate.content_url } });
+    await running;
+    assert.equal(posted[0]?.status, "already_synced");
+    assert.equal(clicks, 1);
+  } finally { resume(); state.restore(); }
+});
 
 async function acknowledgeNativeSaveMessage(_tabId: number, message: unknown): Promise<unknown> {
   return (message as { type?: unknown }).type === "NATIVE_SAVE_READY"

@@ -16,6 +16,7 @@ SOURCE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -23,14 +24,16 @@ SOURCE_ORDER = (
     "bangumi",
     "linuxdo",
     "v2ex",
-    "web",
     "weibo",
+    "instagram",
+    "web",
 )
 DEFAULT_SOURCE_ENABLED = {
     "bilibili": True,
     "xiaohongshu": False,
     "douyin": False,
     "youtube": False,
+    "tiktok": False,
     "twitter": False,
     "github": False,
     "zhihu": False,
@@ -39,6 +42,7 @@ DEFAULT_SOURCE_ENABLED = {
     "linuxdo": False,
     "v2ex": False,
     "weibo": False,
+    "instagram": False,
     "web": False,
 }
 DEFAULT_POOL_SOURCE_SHARES = {
@@ -46,6 +50,7 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "tiktok": 1,
     "twitter": 1,
     "github": 1,
     "zhihu": 1,
@@ -54,6 +59,7 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "linuxdo": 1,
     "v2ex": 1,
     "weibo": 1,
+    "instagram": 1,
     "web": 1,
 }
 

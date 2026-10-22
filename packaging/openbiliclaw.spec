@@ -132,6 +132,10 @@ a = Analysis(
         # packaged app. Dest mirrors the import path so __file__-relative
         # resolution (web_dir = .../openbiliclaw/web) works when frozen.
         (str(project_root / "src" / "openbiliclaw" / "web"), "openbiliclaw/web"),
+        # Locale contract data: Python semantic catalogs (CLI/API) and the UI
+        # catalogs served at /i18n/ui. Without this the packaged app raises
+        # CatalogError on config-show and the web UI stays in Chinese.
+        (str(project_root / "src" / "openbiliclaw" / "i18n"), "openbiliclaw/i18n"),
         # Builtin chat skills (M4): SKILL.md files loaded via
         # agent/skill.py's __file__-relative builtin_skills_dir().
         (
@@ -291,7 +295,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-packed bootloaders trigger AV heuristics far more often (#281); CI
+    # has no upx so this only affected local builds, but keep it off everywhere.
+    upx=False,
     # Windowed (no console). The Windows build runs as a system-tray app
     # (packaging/entry.py); logs go to logs/desktop.log and are viewable from the
     # tray menu. macOS already runs windowed via the .app bundle below.
@@ -308,7 +314,7 @@ _coll_targets += [a.binaries, a.zipfiles, a.datas]
 coll = COLLECT(
     *_coll_targets,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="OpenBiliClaw",
 )

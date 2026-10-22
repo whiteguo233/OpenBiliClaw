@@ -335,7 +335,7 @@ CAPTCHA 或“需要启用 JavaScript/cookie”的页面分别记为 `login_requ
 这条策略比普通“先解析 DNS 再让 HTTP client 自己连 hostname”更严格。测试中注入的自定义
 transport 是 fixture seam，自行负责其连接行为；上述 socket pin 描述的是默认生产 transport。
 
-默认 transport 使用 `httpx[socks]>=0.27,<1` 构造有界请求，并直接使用
+默认 transport 使用 `httpx[socks]>=0.28,<1` 构造有界请求，并直接使用
 `httpcore>=1.0,<2` 的 network backend primitive 将已验证地址交给 socket 层。`httpcore` 因此是
 声明并锁定的生产依赖，不依靠 `httpx` 的传递依赖偶然存在。普通 `pip install .`、`uv sync`、
 Docker build 与桌面打包都会自动安装两者；用户不需要另装 Node、浏览器、Ego Lite 或 crawl

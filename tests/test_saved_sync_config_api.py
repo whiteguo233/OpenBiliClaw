@@ -25,7 +25,7 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     save_config(config, config_path)
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
 
 def test_config_api_exposes_and_updates_saved_sync(

@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -56,6 +56,10 @@ const entrypoints = [
     outfile: resolve(root, `${outDir}/content/douyin.js`),
   },
   {
+    entry: resolve(root, "src/content/tiktok.ts"),
+    outfile: resolve(root, `${outDir}/content/tiktok.js`),
+  },
+  {
     entry: resolve(root, "src/main/xhs-token-sniffer.ts"),
     outfile: resolve(root, `${outDir}/main/xhs-token-sniffer.js`),
   },
@@ -94,6 +98,14 @@ const entrypoints = [
   {
     entry: resolve(root, "src/content/v2ex.ts"),
     outfile: resolve(root, `${outDir}/content/v2ex.js`),
+  },
+  {
+    entry: resolve(root, "src/content/instagram.ts"),
+    outfile: resolve(root, `${outDir}/content/instagram.js`),
+  },
+  {
+    entry: resolve(root, "src/main/instagram-response-tap.ts"),
+    outfile: resolve(root, `${outDir}/main/instagram-response-tap.js`),
   },
   {
     entry: resolve(root, "src/content/x.ts"),
@@ -135,6 +147,15 @@ const sharedWebDir = resolve(root, "../src/openbiliclaw/web/shared");
 await cp(sharedWebDir, resolve(root, "popup/shared"), { recursive: true });
 console.log(`📁 Copied web/shared/ → popup/shared/`);
 
+// UI locale catalogs share one source of truth with the web surfaces. The
+// side panel bundles them so its chrome localizes even while the backend is
+// down (the exact moment users need readable connection errors).
+const i18nUiDir = resolve(root, "../src/openbiliclaw/i18n/ui");
+const popupLocalesDir = resolve(root, "popup/locales");
+await rm(popupLocalesDir, { recursive: true, force: true });
+await cp(i18nUiDir, popupLocalesDir, { recursive: true });
+console.log(`📁 Copied i18n/ui/ → popup/locales/`);
+
 for (const target of entrypoints) {
   await mkdir(dirname(target.outfile), { recursive: true });
   await build({
@@ -153,6 +174,7 @@ for (const target of entrypoints) {
     // paths resolve in both layouts.
     define: {
       __OBC_ASSET_PREFIX__: JSON.stringify(isFirefox || isSafari ? "" : "dist/"),
+      __OBC_BROWSER_TARGET__: JSON.stringify(targetName),
     },
     // Safari-only `browser` → `chrome` shim (see above). `banner` is undefined
     // for Chrome/Firefox so those bundles remain unchanged.

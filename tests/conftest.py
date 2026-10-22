@@ -15,6 +15,14 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_ollama_embedding_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runner failures in fake transports must not affect later tests."""
+    from openbiliclaw.llm import ollama_embedding_runtime
+
+    monkeypatch.setattr(ollama_embedding_runtime, "_cpu_models", set())
+
+
+@pytest.fixture(autouse=True)
 def _isolate_bilibili_search_backoff(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

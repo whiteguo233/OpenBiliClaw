@@ -72,6 +72,31 @@ function initBackToTop() {
     const target = getScrollTopTarget();
     const scrollTop = target?.scrollTop || 0;
     button.hidden = scrollTop < BACK_TO_TOP_THRESHOLD;
+    button.style.translate = "";
+    if (button.hidden) return;
+
+    // Keep the shortcut from stealing taps from a card action underneath it.
+    // Probe a fixed 3x3 grid instead of scanning every loaded card on scroll;
+    // try at most two upward steps, then hide until a safe position is available.
+    const initial = button.getBoundingClientRect();
+    const topBoundary = $statusBar?.getBoundingClientRect().bottom || 0;
+    const step = initial.height + 12;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      button.style.translate = attempt ? `0 -${attempt * step}px` : "";
+      const rect = button.getBoundingClientRect();
+      if (rect.top < topBoundary + 8) break;
+      const xs = [rect.left + 1, rect.left + rect.width / 2, rect.right - 1];
+      const ys = [rect.top + 1, rect.top + rect.height / 2, rect.bottom - 1];
+      const overlapsControl = xs.some((x) => ys.some((y) =>
+        document.elementsFromPoint(x, y).some((element) => {
+          if (button.contains(element)) return false;
+          const control = element.closest('button, a[href], input, select, textarea, [role="button"]');
+          return control !== null && $app.contains(control);
+        }),
+      ));
+      if (!overlapsControl) return;
+    }
+    button.hidden = true;
   };
 
   const scrollToTop = () => {
@@ -187,6 +212,14 @@ async function openMobileSettings(opener) {
       <div><p class="eyebrow">Settings</p><h2>设置</h2></div>
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
+    <label class="mobile-settings-field" for="mobile-language">
+      <span>默认语言（界面与输出）</span>
+      <select id="mobile-language" data-i18n-skip>
+        <option value="zh-Hans">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="en">English</option>
+      </select>
+    </label>
     <section class="mobile-source-settings" aria-labelledby="mobile-custom-sources-title">
       <h3 id="mobile-custom-sources-title">内容来源</h3>
       <p class="mobile-settings-hint">在对话中添加网站，在这里管理已添加的来源。目标份额与内置来源一起分配，数值越大，候选内容占比越高。</p>
@@ -207,6 +240,7 @@ async function openMobileSettings(opener) {
   document.body.append(overlay);
   const close = card.querySelector(".mobile-settings-close");
   const toggle = card.querySelector("#mobile-saved-auto-sync");
+  const languageSelect = card.querySelector("#mobile-language");
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
@@ -259,6 +293,10 @@ async function openMobileSettings(opener) {
       const config = await fetchConfig();
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
+      const runtime = globalThis.OpenBiliClawI18n;
+      languageSelect.value = runtime
+        ? runtime.normalizeLocale(config.language || readStoredLocale())
+        : config.language || "zh-Hans";
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;
@@ -287,8 +325,12 @@ async function openMobileSettings(opener) {
     status.removeAttribute("role");
     status.textContent = "正在保存设置…";
     try {
-      await updateConfig({ saved_sync: { auto_sync_enabled: toggle.checked } });
+      await updateConfig({
+        language: languageSelect.value,
+        saved_sync: { auto_sync_enabled: toggle.checked },
+      });
       storedValue = toggle.checked;
+      await applyClientLocale(languageSelect.value);
       status.textContent = "设置已保存。手动同步始终可用。";
     } catch (error) {
       status.setAttribute("role", "alert");
@@ -464,7 +506,58 @@ export function setUnreadCount(n) {
 // ── Init ─────────────────────────────────────────────────────
 let _appStarted = false;
 
+const CLIENT_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+function readStoredLocale() {
+  try {
+    return localStorage.getItem(CLIENT_LOCALE_STORAGE_KEY) || document.documentElement.lang || "zh-Hans";
+  } catch {
+    return document.documentElement.lang || "zh-Hans";
+  }
+}
+
+function storeLocale(locale) {
+  try {
+    localStorage.setItem(CLIENT_LOCALE_STORAGE_KEY, locale);
+  } catch {
+    /* private mode: the locale still applies to this page */
+  }
+}
+
+async function applyClientLocale(language) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (!runtime) return;
+  const normalized = runtime.normalizeLocale(language || "zh-Hans");
+  storeLocale(normalized);
+  if (runtime.ready && runtime.locale === normalized) return;
+  try {
+    await runtime.setLocale(normalized);
+  } catch (error) {
+    console.warn("切换界面语言失败", error);
+  }
+}
+
+async function initClientLocale() {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (!runtime) return;
+  let locale = readStoredLocale();
+  try {
+    const config = await fetchConfig();
+    if (config?.language) locale = config.language;
+  } catch {
+    /* offline shell keeps the cached locale */
+  }
+  await applyClientLocale(locale);
+  // Await init: the MutationObserver is attached inside it, and the shell
+  // renders tab labels immediately afterwards. Starting it in the background
+  // leaves those first nodes untranslated until something re-renders them.
+  await runtime.init({ locale, basePath: "/i18n/ui/" }).catch((error) => {
+    console.warn("界面语言初始化失败", error);
+  });
+}
+
 async function startApp() {
+  await initClientLocale();
   document.body.classList.remove("auth-locked");
   for (const tab of TABS) ensureView(tab.id);
 

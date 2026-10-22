@@ -568,6 +568,7 @@ async def test_llm_service_calls_registry_with_memory_context(tmp_path: Path) ->
     assert registry.calls[0][0]["role"] == "system"
     assert "结构化表达" in registry.calls[0][0]["content"]
     assert "老B友" in registry.calls[0][0]["content"]
+    assert "同一需求默认最多澄清一轮" in registry.calls[0][0]["content"]
 
 
 @pytest.mark.asyncio

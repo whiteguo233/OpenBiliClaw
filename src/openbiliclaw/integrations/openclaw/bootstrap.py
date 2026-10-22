@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
-from openbiliclaw.api.runtime_context import build_youtube_discovery_producer
+from openbiliclaw.api.runtime_context import (
+    build_tiktok_discovery_producer,
+    build_youtube_discovery_producer,
+)
 from openbiliclaw.bilibili.api import BilibiliAPIClient
 from openbiliclaw.bilibili.auth import resolve_runtime_cookie
 from openbiliclaw.config import (
@@ -28,6 +31,7 @@ from openbiliclaw.discovery.strategies.strategies import (
     SearchStrategy,
     TrendingStrategy,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
 from openbiliclaw.llm.service import LLMService, module_overrides_from_config
@@ -161,6 +165,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
         reply_style=str(getattr(soul_cfg, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(config, "language", None)),
         module_overrides=module_overrides,
         llm_concurrency=llm_concurrency,
         llm_concurrency_gate=llm_gate,
@@ -445,6 +450,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             keyword_fetch_coordinator=keyword_fetch,
         )
 
+    tiktok_producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+    )
     runtime_controller: ContinuousRefreshController
 
     async def _drain_one_shot_expression_copy(profile: Any) -> int:
@@ -516,6 +530,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         custom_source_producer_provider=_custom_source_producer,
         keyword_fetch=keyword_fetch,
         keyword_planner=keyword_planner,
+        tiktok_producer=tiktok_producer,
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,

@@ -43,7 +43,9 @@ def _client_for_config(
     save_config(cfg, config_path)
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app), config_path
+    return TestClient(
+        app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+    ), config_path
 
 
 def _probe_base_config() -> Config:

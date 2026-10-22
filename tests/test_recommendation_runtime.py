@@ -27,15 +27,14 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_recommendation_transport_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Restore both transport keys after helpers write directly to os.environ."""
-    # delenv(..., raising=False) does not register an undo when a key is absent.
-    # The transport selector can then create a PORT/SOCK key that outlives the
-    # test, making unrelated API tests proxy to a server that does not exist.
-    # Setting empty values records the original state (including absence), while
-    # retaining the selector's normal "not configured" interpretation.
-    monkeypatch.setenv(RECOMMENDATION_SOCK_ENV, "")
-    monkeypatch.setenv(RECOMMENDATION_PORT_ENV, "")
+def _isolate_transport_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore transport keys even when runtime code creates an absent key."""
+    for name in (RECOMMENDATION_SOCK_ENV, RECOMMENDATION_PORT_ENV):
+        # delenv(raising=False) does not record an absent key for teardown.
+        # Register it first so direct os.environ writes cannot leak into later
+        # API tests and incorrectly enable the recommendation worker proxy.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
 
 
 def _hold_loopback_port(port: int = 0) -> socket.socket:

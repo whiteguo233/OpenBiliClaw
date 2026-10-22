@@ -302,7 +302,7 @@ uv run python -m openbiliclaw.integrations.openclaw.cli chat \
   --message "嗯对，最近在看很多参数化设计的东西"
 ```
 
-苏格拉底式对话支持多轮——每次 `chat` 都会返回一个新的追问/回应，并且对话内容会自动回写进灵魂画像；返回的 `turn_id` 可用于重试和 `chat-history`。
+对话支持多轮——每次 `chat` 优先回应当前需求，必要时才澄清；用户主动探索时有限追问并及时总结，对话内容会进入画像学习链路；返回的 `turn_id` 可用于重试和 `chat-history`。
 
 ### 3. 取推荐
 

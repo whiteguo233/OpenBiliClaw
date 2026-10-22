@@ -1,0 +1,68 @@
+{
+  "version": "0.3.226",
+  "release": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.226",
+  "draft": false,
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "openbiliclaw-extension-v0.3.226-firefox.zip",
+      "size": 1124694,
+      "digest": "sha256:48483a942686575f99599da74735d776dcbf3bb11268504615f3738d967cd208",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/openbiliclaw-extension-v0.3.226-firefox.zip"
+    },
+    {
+      "name": "openbiliclaw-extension-v0.3.226-safari.dmg",
+      "size": 6003285,
+      "digest": "sha256:74fb10af9b5813b0e1c9ed50d1c01e4f28b4507b89d38eb096bd44945a91455d",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/openbiliclaw-extension-v0.3.226-safari.dmg"
+    },
+    {
+      "name": "openbiliclaw-extension-v0.3.226.zip",
+      "size": 1223654,
+      "digest": "sha256:c7b8767207ef46ac645d5466d4a8263144347261c6959b13473f16da5d5ca6ff",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/openbiliclaw-extension-v0.3.226.zip"
+    },
+    {
+      "name": "OpenBiliClaw-macos-v0.3.226-arm64-with-embedding.dmg",
+      "size": 1320388756,
+      "digest": "sha256:472cedbc69990db01f9bd768dfd764eaac840e35a5cb9b784a33649c89ee8313",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/OpenBiliClaw-macos-v0.3.226-arm64-with-embedding.dmg"
+    },
+    {
+      "name": "OpenBiliClaw-macos-v0.3.226-arm64.dmg",
+      "size": 265865008,
+      "digest": "sha256:fe04a9d473dc683fdc2651ef861c3f5c30bd2e0d21aac0202886a84f2cc61fcf",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/OpenBiliClaw-macos-v0.3.226-arm64.dmg"
+    },
+    {
+      "name": "OpenBiliClaw-windows-0.3.226-Setup.exe",
+      "size": 80234046,
+      "digest": "sha256:92020bb20c659016dd637d72222d4188f7bf36ac3aa43db3746d7c64a883faf9",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/OpenBiliClaw-windows-0.3.226-Setup.exe"
+    },
+    {
+      "name": "OpenBiliClaw-windows-0.3.226-with-embedding-Setup.exe",
+      "size": 1094345738,
+      "digest": "sha256:5c0b5ea089c41e7d2e89faa22f887dc1544f64c38948f9d13804f91b680a31bf",
+      "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.226/OpenBiliClaw-windows-0.3.226-with-embedding-Setup.exe"
+    }
+  ],
+  "docker": [
+    {
+      "image": "ghcr.io/whiteguo233/openbiliclaw-backend:0.3.226",
+      "public": true,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    {
+      "image": "ghcr.io/whiteguo233/openbiliclaw-ollama:0.3.226",
+      "public": true,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    }
+  ]
+}

@@ -26,6 +26,11 @@ _XHS_NOTE_RE = re.compile(
     r"xiaohongshu\.com/(?:explore|discovery/item|search_result)/([0-9a-fA-F]{24})"
 )
 
+# Instagram shortcodes are case-sensitive; never lowercase the capture.
+_INSTAGRAM_MEDIA_RE = re.compile(
+    r"^(?i:https)://(?i:(?:www\.)?instagram\.com)/(?:p|reel|tv)/([A-Za-z0-9_-]+)"
+)
+
 
 def bvid_from_url(url: str) -> str:
     """Extract the ``BV...`` id from a ``bilibili.com/video/<bvid>`` URL."""
@@ -65,6 +70,12 @@ def note_id_from_url(url: str) -> str:
     return match.group(1).lower() if match else ""
 
 
+def instagram_shortcode_from_url(url: str) -> str:
+    """Extract a case-sensitive Instagram media shortcode from a canonical URL."""
+    match = _INSTAGRAM_MEDIA_RE.search(url)
+    return match.group(1) if match else ""
+
+
 def dedup_key(url: str) -> str:
     """Map an event URL to a normalized cross-source identity key.
 
@@ -84,4 +95,7 @@ def dedup_key(url: str) -> str:
     note_id = note_id_from_url(url)
     if note_id:
         return f"xhs:{note_id}"
+    instagram_shortcode = instagram_shortcode_from_url(url)
+    if instagram_shortcode:
+        return f"instagram:{instagram_shortcode}"
     return ""

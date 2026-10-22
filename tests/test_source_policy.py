@@ -23,6 +23,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "xiaohongshu": False,
         "douyin": False,
         "youtube": False,
+        "tiktok": False,
         "twitter": False,
         "github": False,
         "zhihu": False,
@@ -31,6 +32,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "linuxdo": False,
         "weibo": False,
         "v2ex": False,
+        "instagram": False,
         "web": False,
     }
 
@@ -43,6 +45,7 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "xiaohongshu": False,
         "douyin": False,
         "youtube": False,
+        "tiktok": False,
         "twitter": False,
         "github": False,
         "zhihu": False,
@@ -51,6 +54,7 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "linuxdo": False,
         "weibo": False,
         "v2ex": False,
+        "instagram": False,
         "web": False,
     }
     assert effective_pool_source_shares(config) == {"bilibili": 5}

@@ -777,6 +777,52 @@ async def test_openai_provider_skips_length_retry_when_budget_at_cap(
 
 
 @pytest.mark.asyncio
+async def test_compatible_successful_empty_response_workaround_is_reused_per_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        base_url="https://relay.example.com/v1",
+        provider_name="openai_compatible",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def request(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if (
+            kwargs["model"] == "deepseek-v4-flash"
+            and (
+                "response_format" in kwargs
+                or kwargs.get("extra_body") != {"thinking": {"type": "disabled"}}
+            )
+            and "reasoning_effort" not in kwargs
+        ):
+            response = _openai_response("")
+            response.choices[0].message.reasoning_content = "budget spent reasoning"
+            return response
+        return _openai_response('{"ok":true}')
+
+    monkeypatch.setattr(provider, "_request_with_retry", request)
+    for _ in range(2):
+        await provider.complete(
+            [{"role": "user", "content": "return JSON"}], json_mode=True, reasoning_effort=""
+        )
+    assert len(calls) == 4, "only the first call may pay for the two compatibility retries"
+    assert "response_format" not in calls[-1]
+    assert calls[-1]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    await provider.complete(
+        [{"role": "user", "content": "return JSON"}],
+        json_mode=True,
+        reasoning_effort="",
+        model="different-model",
+    )
+    assert "response_format" in calls[-1]
+    assert "extra_body" not in calls[-1], "learned hints must not leak to another model"
+
+
+@pytest.mark.asyncio
 async def test_claude_provider_normalizes_response(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = ClaudeProvider(api_key="test-key")
 

@@ -10,6 +10,7 @@ import logging
 import re
 import shutil
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
@@ -297,6 +298,154 @@ class ExaInspirationProvider:
         response = await self._client.post(self._base_url, json=payload)
         response.raise_for_status()
         return parse_exa_search_payload(response.json())[:count]
+
+
+class ParallelInspirationProvider:
+    """Anonymous Parallel Search MCP grounding over Streamable HTTP."""
+
+    backend_alias = "parallel"
+    _URL = "https://search.parallel.ai/mcp"
+    _MAX_RESPONSE_BYTES = 1024 * 1024
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 6.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._transport = transport
+        # Grounding is deterministic plumbing, not a model-issued tool call;
+        # omit model_name rather than inventing a model identity.
+        self._session_id = uuid.uuid4().hex
+
+    def begin_stage(self) -> None:
+        self._session_id = uuid.uuid4().hex
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        if not clean_query or limit <= 0:
+            return []
+        count = min(10, int(limit))
+        async with (
+            asyncio.timeout(self._timeout_seconds),
+            httpx.AsyncClient(
+                timeout=self._timeout_seconds,
+                follow_redirects=False,
+                headers={
+                    "User-Agent": "OpenBiliClaw (Parallel Search MCP)",
+                    "Accept": "application/json, text/event-stream",
+                },
+                **_overseas_routing_kwargs(self._transport),
+            ) as client,
+        ):
+            initialized = await self._rpc(
+                client,
+                1,
+                "initialize",
+                {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "OpenBiliClaw", "version": "1"},
+                },
+            )
+            version = initialized.get("protocolVersion")
+            if version != "2025-03-26":
+                raise RuntimeError("Parallel MCP returned an unsupported protocol version")
+            client.headers["MCP-Protocol-Version"] = version
+            async with client.stream(
+                "POST",
+                self._URL,
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            ) as response:
+                response.raise_for_status()
+            result = await self._rpc(
+                client,
+                2,
+                "tools/call",
+                {
+                    "name": "web_search",
+                    "arguments": {
+                        "objective": clean_query,
+                        "search_queries": [clean_query],
+                        "session_id": self._session_id,
+                    },
+                },
+            )
+        data = result.get("structuredContent")
+        if not isinstance(data, dict):
+            texts = _extract_mcp_content_text(result)
+            if not texts:
+                raise RuntimeError("Parallel MCP returned no structured search result")
+            data = json.loads("\n".join(texts))
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            raise RuntimeError("Parallel MCP returned an invalid search result")
+        items = []
+        for row in data["results"]:
+            if not isinstance(row, dict):
+                continue
+            title = _clean_title(row.get("title"))
+            url = _first_text(row.get("url"))
+            if title and url.startswith(("https://", "http://")):
+                items.append(
+                    ExaPreviewItem(
+                        title=title,
+                        url=url,
+                        highlights=tuple(_clean_highlights(row.get("excerpts"))),
+                    )
+                )
+        return _dedupe_previews(items, limit=count)
+
+    async def _rpc(
+        self, client: httpx.AsyncClient, request_id: int, method: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        async with client.stream(
+            "POST",
+            self._URL,
+            json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        ) as response:
+            response.raise_for_status()
+            if session := response.headers.get("Mcp-Session-Id"):
+                client.headers["Mcp-Session-Id"] = session
+            media_type = response.headers.get("content-type", "").split(";")[0].strip()
+            if media_type not in {"application/json", "text/event-stream"}:
+                raise RuntimeError("Parallel MCP returned an unsupported response format")
+            data = bytearray()
+            pending = b""
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > self._MAX_RESPONSE_BYTES:
+                    raise RuntimeError("Parallel MCP response exceeded the size limit")
+                if media_type == "text/event-stream":
+                    pending += chunk
+                    while match := re.search(rb"\r?\n\r?\n", pending):
+                        event, pending = pending[: match.start()], pending[match.end() :]
+                        lines = [
+                            line[5:].lstrip()
+                            for line in event.splitlines()
+                            if line.startswith(b"data:")
+                        ]
+                        if lines:
+                            result = self._decode_rpc(b"\n".join(lines), request_id)
+                            if result is not None:
+                                return result
+            if media_type == "application/json":
+                result = self._decode_rpc(bytes(data), request_id)
+                if result is not None:
+                    return result
+        raise RuntimeError("Parallel MCP returned no matching response")
+
+    @staticmethod
+    def _decode_rpc(data: bytes, request_id: int) -> dict[str, Any] | None:
+        envelope = json.loads(data)
+        if not isinstance(envelope, dict) or envelope.get("jsonrpc") != "2.0":
+            raise RuntimeError("Parallel MCP returned an invalid protocol response")
+        if envelope.get("id") != request_id:
+            return None
+        result = envelope.get("result")
+        if "error" in envelope or not isinstance(result, dict) or result.get("isError"):
+            raise RuntimeError("Parallel MCP search failed")
+        return result
 
 
 class YouInspirationProvider:
@@ -1125,6 +1274,64 @@ class DouyinPlatformSearchBackend:
         return _dedupe_previews([item for item in previews if item is not None], limit=limit)
 
 
+def _tiktok_preview(item: Any) -> ExaPreviewItem | None:
+    """Map one TikTok result (web ``DiscoveredContent`` or yt-dlp raw dict)."""
+    if isinstance(item, dict):
+        title = _clean_title(item.get("title") or item.get("fulltitle") or item.get("description"))
+        url = _first_text(item.get("webpage_url"), item.get("url"))
+        video_id = _first_text(item.get("id"), item.get("video_id"), item.get("aweme_id"))
+        author = _first_text(item.get("channel"), item.get("uploader"), item.get("creator"))
+        if not url.startswith("http") and video_id:
+            url = f"https://www.tiktok.com/@{author or 'tiktok'}/video/{video_id}"
+    else:
+        title = _clean_title(getattr(item, "title", ""))
+        url = _first_text(getattr(item, "content_url", ""))
+        author = _first_text(getattr(item, "author_name", ""), getattr(item, "up_name", ""))
+    if not title or not url:
+        return None
+    return ExaPreviewItem(title=title, url=url, highlights=tuple(_clean_highlights([author])))
+
+
+class TiktokPlatformSearchBackend:
+    """Use the TikTok router client as inspiration-only grounding.
+
+    Keyword search rides the web API when a login cookie is mounted
+    (``search_available``); guest identities fall back to the hashtag
+    listing (web API with yt-dlp fallback), the only keyword-shaped
+    surface that works without an account.
+    """
+
+    platform = "tiktok"
+    risk_controlled = True
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    def cooldown_remaining(self) -> float:
+        return _backend_cooldown_remaining(self._client)
+
+    async def search(self, query: str, *, limit: int, pages: int = 1) -> list[ExaPreviewItem]:
+        count = max(1, int(limit))
+        rows: list[Any] | None
+        if bool(getattr(self._client, "search_available", False)):
+            search = getattr(self._client, "search_videos", None)
+            if not callable(search):
+                return []
+            rows = await search(query, limit=count)
+        else:
+            get_tag = getattr(self._client, "get_tag_videos", None)
+            if not callable(get_tag):
+                return []
+            from openbiliclaw.sources.tiktok import tag_from_query
+
+            tag = tag_from_query(query)
+            if not tag:
+                return []
+            rows = await get_tag(tag, limit=count)
+        previews = [_tiktok_preview(row) for row in rows or []]
+        return _dedupe_previews([item for item in previews if item is not None], limit=count)
+
+
 class XhsPlatformSearchBackend:
     """Use an injected xiaohongshu search bridge as inspiration-only grounding."""
 
@@ -1647,6 +1854,7 @@ def build_platform_source_backends(
     github_client: object | None = None,
     reddit_runner: object | None = None,
     douyin_client: object | None = None,
+    tiktok_client: object | None = None,
     xhs_search: PlatformSearchCallable | None = None,
     zhihu_search: PlatformSearchCallable | None = None,
     bangumi_client: object | None = None,
@@ -1682,6 +1890,20 @@ def build_platform_source_backends(
                 yt_client = None
         if yt_client is not None:
             backends.append(YoutubePlatformSearchBackend(yt_client))
+
+    tiktok_cfg = getattr(sources, "tiktok", None)
+    if bool(getattr(tiktok_cfg, "enabled", False)):
+        tt_client = tiktok_client
+        if tt_client is None:
+            try:
+                from openbiliclaw.api.runtime_context import _build_tiktok_client
+
+                tt_client = _build_tiktok_client(config, tiktok_cfg)
+            except Exception:
+                logger.debug("tiktok inspiration backend unavailable", exc_info=True)
+                tt_client = None
+        if tt_client is not None:
+            backends.append(TiktokPlatformSearchBackend(tt_client))
 
     twitter_cfg = getattr(sources, "twitter", None)
     if bool(getattr(twitter_cfg, "enabled", False)) and x_client is not None:
@@ -1766,6 +1988,8 @@ def build_inspiration_search_provider(
                     timeout_seconds=timeout_seconds,
                 )
             )
+        elif backend == "parallel":
+            providers.append(ParallelInspirationProvider(timeout_seconds=timeout_seconds))
         elif backend == "exa":
             if str(exa_api_key or "").strip():
                 providers.append(
@@ -1830,6 +2054,7 @@ def _normalize_search_backends(value: object) -> tuple[str, ...]:
         "bing_rss": "bing_rss",
         "bing-rss": "bing_rss",
         "exa": "exa",
+        "parallel": "parallel",
         "local": "local_cache",
         "cache": "local_cache",
         "local_cache": "local_cache",

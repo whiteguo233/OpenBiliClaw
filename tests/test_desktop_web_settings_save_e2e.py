@@ -339,6 +339,63 @@ def test_settings_save_unlocks_before_runtime_apply_finishes(
     expect(bar).to_have_attribute("data-save-state", "dirty")
 
 
+def test_tiktok_pool_share_survives_settings_save(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    """Regression: the settings save rebuilds pool_source_shares key-by-key, so
+    a user-configured tiktok share must ride the tiktok card's share input
+    instead of being silently dropped."""
+    base_url, stub = settings_save_server
+    with stub.lock:
+        stub.config["scheduler"]["pool_source_shares"]["tiktok"] = 3
+        stub.config["sources"]["tiktok"] = {
+            "enabled": True,
+            "mode": "auto",
+            "cookie_env": "OPENBILICLAW_TIKTOK_COOKIE",
+            "region": "JP",
+            "tz_name": "Asia/Tokyo",
+            "tags": ["booktok"],
+            "creators": ["@sketchdaily"],
+            "daily_feed_budget": 3,
+            "daily_search_budget": 3,
+            "daily_tag_budget": 0,
+            "daily_user_budget": 0,
+            "request_interval_seconds": 2,
+            "min_interval_minutes": 3,
+        }
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="平台源").click()
+
+    share = page.get_by_label("TikTok 候选池占比")
+    expect(share).to_have_value("3")
+    # The card回填 covers the config block too (enable switch, geo, budgets).
+    expect(page.locator("#tiktokEnabled")).to_have_value("on")
+    expect(page.locator("#tiktokRegion")).to_have_value("JP")
+    expect(page.locator("#tiktokDailyFeedBudget")).to_have_value("3")
+
+    share.fill("4")
+    page.get_by_role("button", name="保存配置").click()
+
+    assert len(stub.saved_payloads) == 1
+    payload = stub.saved_payloads[0]
+    assert payload["scheduler"]["pool_source_shares"]["tiktok"] == 4
+    tiktok = payload["sources"]["tiktok"]
+    assert tiktok["enabled"] is True
+    assert tiktok["mode"] == "auto"
+    assert tiktok["region"] == "JP"
+    assert tiktok["tz_name"] == "Asia/Tokyo"
+    assert tiktok["tags"] == ["booktok"]
+    assert tiktok["creators"] == ["@sketchdaily"]
+    assert tiktok["daily_feed_budget"] == 3
+    assert tiktok["daily_search_budget"] == 3
+    # Date-preference fields ride the generic slug path.
+    assert tiktok["recommendation_date_preset"] == "all"
+
+
 def test_advanced_evaluator_mode_defaults_to_agent_and_round_trips(
     settings_save_server: tuple[str, SettingsSaveStub],
     chromium_page: Page,

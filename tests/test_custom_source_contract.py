@@ -309,6 +309,8 @@ def test_custom_web_extension_tasks_and_cookie_sync_are_absent():
         "xhs",
         "dy",
         "yt",
+        "tiktok",
+        "instagram",
         "x",
         "zhihu",
         "reddit",

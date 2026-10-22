@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-13",
+  "baseline": "12007157eaf022397eb09d1373c90d4fa360f535",
+  "scope": "authorized alternate-video persistence comparison",
+  "authorization": "Current user explicitly allowed one other playable public video to be added to favorites",
+  "browser": {
+    "channel": "existing signed-in Chrome via OpenCLI 1.8.8 / bridge 1.0.24",
+    "proxy": "existing browser route unchanged",
+    "production_config_changed": false,
+    "project_extension_changed": false,
+    "request_completion_fix_hot_reloaded": false
+  },
+  "target": {
+    "public_video_url": "https://www.tiktok.com/@waimaodr/video/7696140995603270943",
+    "selection": "observed current homepage video",
+    "ready_state_before": 4,
+    "duration_seconds": 38.542266,
+    "initial_bookmark": "unselected",
+    "correlated_controls": 1
+  },
+  "mutation": {
+    "favorite_clicks": 1,
+    "method": "CDP click; hit target",
+    "immediate_bookmark": "gold #FACE15",
+    "favorite_count_before": 0,
+    "favorite_count_after_click": 1,
+    "other_engagement_writes": 0,
+    "api_replays": 0
+  },
+  "request_evidence": {
+    "target_request_completion_observed": false,
+    "http_status": null,
+    "business_status": null,
+    "limitation": "No matching completion in passive timing/network capture; does not prove no request was sent"
+  },
+  "persistence": {
+    "same_url_open_reused_document": true,
+    "true_reload_performed": true,
+    "navigation_type": "reload",
+    "old_probe_survived_reload": false,
+    "video_ready_state_after_reload": 4,
+    "bookmark_after_reload": "unselected",
+    "favorite_count_after_reload": 0,
+    "own_favorites_tab_selected": true,
+    "explicit_empty_list": true,
+    "video_links_in_list": 0,
+    "target_present": false,
+    "result": "FAIL"
+  },
+  "remaining": {
+    "nonempty_live_profile": "BLOCKED: no persisted account signal",
+    "live_periodic_incremental": "BLOCKED: profile not ready",
+    "final_installed_executor": "NOT_RUN: request-completion fix not hot-reloaded"
+  },
+  "baseline_ci": {
+    "test": "SUCCESS",
+    "Windows HKCU autostart E2E": "SUCCESS",
+    "Smoke-build Firefox extension": "SUCCESS",
+    "Web guided-init E2E": "SUCCESS"
+  },
+  "cleanup": {
+    "owned_tab_closed": true,
+    "browser_lease_released": true,
+    "raw_private_data_saved": false
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "valid": {
+    "outcome": "verified",
+    "changed": true,
+    "verification": "verified",
+    "replayed": false
+  },
+  "invalid": {
+    "outcome": "failed",
+    "changed": true,
+    "verification": "failed",
+    "replayed": false
+  },
+  "reload": {
+    "ok": true,
+    "delivered": true
+  },
+  "automatic_resync": true,
+  "recovered": {
+    "outcome": "verified",
+    "changed": false,
+    "verification": "verified",
+    "replayed": false
+  },
+  "method": "Controlled invalid credential in isolated data directory; no account logout or natural expiry"
+}

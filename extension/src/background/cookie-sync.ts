@@ -20,6 +20,10 @@
  * stores the browser X (Twitter) cookie for server-side cookie-replay discovery;
  * POST /api/sources/reddit/cookie stores the browser Reddit cookie in rdt-cli's
  * credential store for command-backed Reddit discovery; POST
+ * /api/sources/tiktok/credential stores the browser TikTok cookie via the
+ * unified credential write gate (structural check + passport-beat live probe)
+ * for the optional search-unlock login (guest identity works without it);
+ * POST
  * /api/sources/xhs/login-state reports only whether xhs's web_session login
  * cookie exists; POST /api/sources/zhihu/login-state does the same for Zhihu's
  * z_c0 login cookie. Linux.do follows the same boolean-only channel for its
@@ -40,10 +44,12 @@ const BILI_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-bili";
 const DY_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-dy";
 const X_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-x";
 const REDDIT_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-reddit";
+const TIKTOK_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-tiktok";
 const XHS_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-xhs";
 const ZHIHU_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-zhihu";
 const LINUXDO_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-linuxdo";
 const V2EX_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-v2ex";
+const INSTAGRAM_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-instagram";
 const WEIBO_LOGIN_STATE_SYNC_ALARM = "openbiliclaw-cookie-sync-weibo";
 // Pre-split shared alarm. chrome.alarms persist across extension updates,
 // so an old install can still fire this name once after upgrading.
@@ -96,10 +102,28 @@ const IMPORTANT_DOUYIN_COOKIE_NAMES = [
 // 401 immediately, so we don't bother pushing partial jars to the backend.
 const REQUIRED_X_COOKIE_NAMES = ["auth_token", "ct0"];
 const REQUIRED_REDDIT_COOKIE_NAMES = ["reddit_session"];
+// TikTok login jars: the sessionid family is the account signal (guest jars
+// carry only ttwid / msToken, which must never count as a login — the
+// backend's structural gate uses exactly this family). The full jar is sent
+// because msToken / ttwid / device cookies help the web API session.
+const TIKTOK_AUTH_COOKIE_NAMES = ["sessionid", "sessionid_ss", "sid_tt"];
+// Cookie churn worth a re-sync: the session family plus the identity cookies
+// the web API backend reads back from its jar.
+const IMPORTANT_TIKTOK_COOKIE_NAMES = [
+  "sessionid",
+  "sessionid_ss",
+  "sid_tt",
+  "sid_guard",
+  "uid_tt",
+  "uid_tt_ss",
+  "msToken",
+  "ttwid",
+];
 const XHS_LOGIN_COOKIE_NAME = "web_session";
 const ZHIHU_LOGIN_COOKIE_NAME = "z_c0";
 const LINUXDO_LOGIN_COOKIE_NAME = "_t";
 const V2EX_LOGIN_COOKIE_NAME = "A2";
+const INSTAGRAM_LOGIN_COOKIE_NAME = "sessionid";
 // SUB is also issued to anonymous visitors and therefore is never sufficient
 // evidence of a logged-in account.  Require the account session pair instead.
 const WEIBO_LOGIN_COOKIE_NAMES = ["SUBP", "ALF"];
@@ -109,10 +133,12 @@ type CookieSyncPlatform =
   | "douyin"
   | "x"
   | "reddit"
+  | "tiktok"
   | "xhs"
   | "zhihu"
   | "linuxdo"
   | "v2ex"
+  | "instagram"
   | "weibo";
 
 const debounceTimers: Partial<Record<CookieSyncPlatform, ReturnType<typeof setTimeout>>> = {};
@@ -153,6 +179,9 @@ function scheduleHourlyCookieSync(alarmName: string): void {
  * with ``getAll({})`` and filter in JS with the same "domain or subdomain"
  * rule Chrome documents. If a browser rejects the unfiltered call, fall
  * back to one domain-filtered call per site so the sync still works.
+ * Safari can also expose an empty default store while the real login jar
+ * lives in another store, so Safari builds may probe each store for required
+ * cookies. Stores are never merged, and ambiguous complete jars are skipped.
  */
 function stripLeadingDot(domain: string): string {
   return domain.startsWith(".") ? domain.slice(1) : domain;
@@ -167,28 +196,51 @@ export function cookieDomainMatchesSite(cookieDomain: string, siteDomain: string
   );
 }
 
-async function readCookiesForDomains(
+function filterCookiesForDomains(
+  cookies: chrome.cookies.Cookie[],
   siteDomains: string[],
+): chrome.cookies.Cookie[] {
+  return cookies.filter(
+    (cookie) =>
+      !cookie.domain ||
+      siteDomains.some((siteDomain) =>
+        cookieDomainMatchesSite(cookie.domain || "", siteDomain),
+      ),
+  );
+}
+
+function hasAllCookieNames(
+  cookies: chrome.cookies.Cookie[],
+  requiredNames: readonly string[],
+): boolean {
+  const have = new Set(cookies.map((cookie) => cookie.name));
+  return requiredNames.every((required) => have.has(required));
+}
+
+declare const __OBC_BROWSER_TARGET__: string | undefined;
+
+function isSafariBuild(): boolean {
+  return typeof __OBC_BROWSER_TARGET__ !== "undefined" && __OBC_BROWSER_TARGET__ === "safari";
+}
+
+async function readCookiesFromStore(
+  chromeApi: typeof chrome,
+  siteDomains: string[],
+  storeId?: string,
 ): Promise<chrome.cookies.Cookie[]> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return [];
-  }
+  const storeQuery: chrome.cookies.GetAllDetails = storeId === undefined ? {} : { storeId };
   try {
-    const allCookies = await chromeApi.cookies.getAll({});
-    return allCookies.filter(
-      (cookie) =>
-        !cookie.domain ||
-        siteDomains.some((siteDomain) =>
-          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
-        ),
-    );
+    const allCookies = await chromeApi.cookies.getAll(storeQuery);
+    return filterCookiesForDomains(allCookies, siteDomains);
   } catch {
     // Defensive fallback for engines that reject an unfiltered getAll.
     const merged = new Map<string, chrome.cookies.Cookie>();
     for (const siteDomain of siteDomains) {
       try {
-        const cookies = await chromeApi.cookies.getAll({ domain: siteDomain });
+        const cookies = await chromeApi.cookies.getAll({
+          ...storeQuery,
+          domain: siteDomain,
+        });
         for (const cookie of cookies) {
           merged.set(`${cookie.domain}|${cookie.name}|${cookie.path}`, cookie);
         }
@@ -196,14 +248,50 @@ async function readCookiesForDomains(
         // Ignore a single failed domain filter and try the remaining sites.
       }
     }
-    return [...merged.values()].filter(
-      (cookie) =>
-        !cookie.domain ||
-        siteDomains.some((siteDomain) =>
-          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
-        ),
-    );
+    return filterCookiesForDomains([...merged.values()], siteDomains);
   }
+}
+
+async function readCookiesForDomains(
+  siteDomains: string[],
+  requiredCookieNames: readonly string[] = [],
+): Promise<chrome.cookies.Cookie[]> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) {
+    return [];
+  }
+
+  const defaultCookies = await readCookiesFromStore(chromeApi, siteDomains);
+  if (
+    requiredCookieNames.length === 0 ||
+    hasAllCookieNames(defaultCookies, requiredCookieNames) ||
+    !isSafariBuild() ||
+    !chromeApi.cookies.getAllCookieStores
+  ) {
+    return defaultCookies;
+  }
+
+  let stores: chrome.cookies.CookieStore[];
+  try {
+    stores = await chromeApi.cookies.getAllCookieStores();
+  } catch {
+    return defaultCookies;
+  }
+  let completeStoreCookies: chrome.cookies.Cookie[] | null = null;
+  for (const store of stores) {
+    const storeCookies = await readCookiesFromStore(chromeApi, siteDomains, store.id);
+    if (!hasAllCookieNames(storeCookies, requiredCookieNames)) {
+      continue;
+    }
+    if (completeStoreCookies) {
+      console.debug(
+        "[openbiliclaw] Bilibili cookie sync skipped; multiple complete Safari cookie stores",
+      );
+      return defaultCookies;
+    }
+    completeStoreCookies = storeCookies;
+  }
+  return completeStoreCookies ?? defaultCookies;
 }
 
 /**
@@ -216,12 +304,13 @@ async function readCookiesForDomains(
  * round trip.
  */
 export async function readBilibiliCookieHeader(): Promise<string | null> {
-  const cookies = await readCookiesForDomains(["bilibili.com"]);
-  const have = new Set(cookies.map((c) => c.name));
-  for (const required of REQUIRED_COOKIE_NAMES) {
-    if (!have.has(required)) {
-      return null;
-    }
+  const cookies = await readCookiesForDomains(["bilibili.com"], REQUIRED_COOKIE_NAMES);
+  const missing = REQUIRED_COOKIE_NAMES.filter(
+    (required) => !cookies.some((cookie) => cookie.name === required),
+  );
+  if (missing.length > 0) {
+    console.debug(`[openbiliclaw] Bilibili cookie sync skipped; missing: ${missing.join(", ")}`);
+    return null;
   }
   // Render in the standard Cookie-header form. Order doesn't matter
   // to the B 站 API but we keep it stable for log readability.
@@ -330,6 +419,14 @@ export async function readLinuxdoLoginState(): Promise<boolean> {
 export async function readV2EXLoginState(): Promise<boolean> {
   const cookies = await readCookiesForDomains(["v2ex.com"]);
   return cookies.some((cookie) => cookie.name === V2EX_LOGIN_COOKIE_NAME);
+}
+
+/** Return only whether Instagram's authenticated session cookie exists. */
+export async function readInstagramLoginState(): Promise<boolean> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) return false;
+  const cookies = await chromeApi.cookies.getAll({ domain: "instagram.com" });
+  return cookies.some((cookie) => cookie.name === INSTAGRAM_LOGIN_COOKIE_NAME);
 }
 
 /** Return whether Weibo has an account session, excluding anonymous SUB. */
@@ -550,6 +647,87 @@ export async function syncRedditCookieToBackend(
   }
 }
 
+/**
+ * Read all tiktok.com cookies and return them as a Cookie header.
+ *
+ * Gates on the sessionid family: guest jars (ttwid / msToken only) are NOT
+ * a login and are never pushed — most users have no TikTok login at all,
+ * and guest identity discovery works fine without one. The full jar is sent
+ * once a session cookie exists.
+ */
+export async function readTiktokCookieHeader(): Promise<string | null> {
+  const cookies = (await readCookiesForDomains(["tiktok.com"])).filter(
+    (cookie) => cookie.name && cookie.value,
+  );
+  const have = new Set(cookies.map((c) => c.name));
+  if (!TIKTOK_AUTH_COOKIE_NAMES.some((name) => have.has(name))) {
+    return null;
+  }
+  return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+/**
+ * POST the current TikTok cookie through the unified credential write gate
+ * (structural check + passport-beat live probe server-side). Silent when
+ * logged out: guest identity is a complete mode, so a missing cookie is
+ * never an error and never nags. Logout (session cookie removed) also
+ * resolves to a quiet no-op — the same shape as douyin; the stored cookie
+ * is left for the probe / next sync to re-judge, since no endpoint may
+ * erase a credential.
+ */
+export async function syncTiktokCookieToBackend(
+  source: string = "extension",
+): Promise<boolean> {
+  const cookieHeader = await readTiktokCookieHeader();
+  if (!cookieHeader) {
+    return false;
+  }
+  try {
+    const response = await authenticatedFetch(await apiUrl("/sources/tiktok/credential"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: cookieHeader,
+        source,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`[openbiliclaw] tiktok cookie sync HTTP ${response.status}`);
+      scheduleCookieSyncAlarm(TIKTOK_COOKIE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    const result = (await response.json()) as {
+      accepted: boolean;
+      error_code?: string;
+      message?: string;
+    };
+    if (result.accepted) {
+      console.log(`[openbiliclaw] tiktok cookie synced via ${source}`);
+      scheduleHourlyCookieSync(TIKTOK_COOKIE_SYNC_ALARM);
+      return true;
+    }
+    const errorCode = String(result.error_code || "").toLowerCase();
+    const message = String(result.message || "");
+    if (errorCode === "cookie_invalid") {
+      // The passport probe refused the jar — only a real tiktok.com
+      // re-login fixes this, so wait quietly.
+      console.warn(
+        `[openbiliclaw] tiktok cookie invalid / expired (${source}): ${message} — waiting for next tiktok.com login (or hourly retry)`,
+      );
+      scheduleCookieSyncAlarm(TIKTOK_COOKIE_SYNC_ALARM, COOKIE_SYNC_COOKIE_INVALID_RETRY_MINUTES);
+    } else {
+      // validation_network / unknown: usually clears on its own.
+      console.warn(`[openbiliclaw] tiktok cookie sync rejected (${source}): ${message}`);
+      scheduleCookieSyncAlarm(TIKTOK_COOKIE_SYNC_ALARM, COOKIE_SYNC_VALIDATION_NETWORK_RETRY_MINUTES);
+    }
+    return false;
+  } catch (err) {
+    console.warn("[openbiliclaw] tiktok cookie sync failed:", err);
+    scheduleCookieSyncAlarm(TIKTOK_COOKIE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+    return false;
+  }
+}
+
 export async function syncXhsLoginStateToBackend(
   source: string = "extension",
 ): Promise<boolean> {
@@ -703,6 +881,80 @@ export async function syncV2EXLoginStateToBackend(
   }
 }
 
+type InstagramSourceSyncState = "enabled" | "disabled" | "unavailable";
+
+async function getInstagramSourceSyncState(): Promise<InstagramSourceSyncState> {
+  const chromeApi = getChromeApi();
+  try {
+    if (chromeApi?.permissions?.contains) {
+      const granted = await chromeApi.permissions.contains({
+        origins: ["https://*.instagram.com/*"],
+      });
+      if (!granted) return "disabled";
+    }
+    const response = await authenticatedFetch(await apiUrl("/config"), {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!response.ok) return "unavailable";
+    const config = await response.json() as {
+      sources?: { instagram?: { enabled?: boolean } };
+    };
+    const enabled = config.sources?.instagram?.enabled;
+    if (enabled === true) return "enabled";
+    if (enabled === false) return "disabled";
+    return "unavailable";
+  } catch {
+    // Fail closed: a disabled/unreachable source must not trigger cookie reads.
+    return "unavailable";
+  }
+}
+
+/** Probe opt-in readiness without accessing Instagram's browser cookies. */
+export async function isInstagramSourceSyncEnabled(): Promise<boolean> {
+  return (await getInstagramSourceSyncState()) === "enabled";
+}
+
+export async function syncInstagramLoginStateToBackend(
+  source: string = "extension",
+  bypassEnabledGate = false,
+): Promise<boolean> {
+  if (!bypassEnabledGate) {
+    const state = await getInstagramSourceSyncState();
+    if (state === "unavailable") {
+      // A backend that starts after this worker must receive the readiness
+      // heartbeat without waiting an hour or requiring another cookie change.
+      scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    if (state === "disabled") {
+      scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
+      return true;
+    }
+  }
+  const loggedIn = await readInstagramLoginState();
+  try {
+    const response = await authenticatedFetch(await apiUrl("/sources/instagram/credential"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "login_state", value: loggedIn, source }),
+    });
+    if (!response.ok) {
+      scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    const result = (await response.json()) as { accepted?: boolean };
+    if (result.accepted) {
+      scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
+      return true;
+    }
+  } catch {
+    // The alarm below keeps readiness eventually consistent with the browser.
+  }
+  scheduleCookieSyncAlarm(INSTAGRAM_LOGIN_STATE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+  return false;
+}
+
 export async function syncWeiboLoginStateToBackend(
   source: string = "extension",
 ): Promise<boolean> {
@@ -752,6 +1004,10 @@ export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): bo
     void syncRedditCookieToBackend("runtime-stream-request");
     return true;
   }
+  if (eventType === "tiktok_cookie_sync_requested") {
+    void syncTiktokCookieToBackend("runtime-stream-request");
+    return true;
+  }
   if (eventType === "xhs_login_state_sync_requested") {
     void syncXhsLoginStateToBackend("runtime-stream-request");
     return true;
@@ -766,6 +1022,12 @@ export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): bo
   }
   if (eventType === "v2ex_login_state_sync_requested") {
     void syncV2EXLoginStateToBackend("runtime-stream-request");
+    return true;
+  }
+  if (eventType === "instagram_login_state_sync_requested") {
+    // Guided init is an explicit user flow and may request readiness before
+    // the source enable flag has been committed; automatic heartbeats remain gated.
+    void syncInstagramLoginStateToBackend("runtime-stream-request", true);
     return true;
   }
   if (eventType === "weibo_login_state_sync_requested") {
@@ -796,6 +1058,8 @@ function scheduleCookieSync(platform: CookieSyncPlatform, source: string): void 
       void syncXCookieToBackend(source);
     } else if (platform === "reddit") {
       void syncRedditCookieToBackend(source);
+    } else if (platform === "tiktok") {
+      void syncTiktokCookieToBackend(source);
     } else if (platform === "xhs") {
       void syncXhsLoginStateToBackend(source);
     } else if (platform === "zhihu") {
@@ -804,6 +1068,8 @@ function scheduleCookieSync(platform: CookieSyncPlatform, source: string): void 
       void syncLinuxdoLoginStateToBackend(source);
     } else if (platform === "v2ex") {
       void syncV2EXLoginStateToBackend(source);
+    } else if (platform === "instagram") {
+      void syncInstagramLoginStateToBackend(source);
     } else {
       void syncWeiboLoginStateToBackend(source);
     }
@@ -835,10 +1101,12 @@ export function startCookieSync(): void {
   void syncDouyinCookieToBackend("startup");
   void syncXCookieToBackend("startup");
   void syncRedditCookieToBackend("startup");
+  void syncTiktokCookieToBackend("startup");
   void syncXhsLoginStateToBackend("startup");
   void syncZhihuLoginStateToBackend("startup");
   void syncLinuxdoLoginStateToBackend("startup");
   void syncV2EXLoginStateToBackend("startup");
+  void syncInstagramLoginStateToBackend("startup");
   void syncWeiboLoginStateToBackend("startup");
 
   // React to login / logout / refresh.
@@ -879,6 +1147,16 @@ export function startCookieSync(): void {
       );
       return;
     }
+    if (domain.endsWith("tiktok.com")) {
+      if (!IMPORTANT_TIKTOK_COOKIE_NAMES.includes(changeInfo.cookie.name)) {
+        return;
+      }
+      scheduleCookieSync(
+        "tiktok",
+        changeInfo.removed ? "tiktok-logout" : "tiktok-cookies-onchange",
+      );
+      return;
+    }
     if (domain.endsWith("xiaohongshu.com")) {
       if (changeInfo.cookie.name !== XHS_LOGIN_COOKIE_NAME) {
         return;
@@ -908,6 +1186,14 @@ export function startCookieSync(): void {
       scheduleCookieSync("v2ex", changeInfo.removed ? "v2ex-logout" : "v2ex-cookies-onchange");
       return;
     }
+    if (domain.endsWith("instagram.com")) {
+      if (changeInfo.cookie.name !== INSTAGRAM_LOGIN_COOKIE_NAME) return;
+      scheduleCookieSync(
+        "instagram",
+        changeInfo.removed ? "instagram-logout" : "instagram-cookies-onchange",
+      );
+      return;
+    }
     if (domain.endsWith("weibo.com") || domain.endsWith("weibo.cn")) {
       if (!WEIBO_LOGIN_COOKIE_NAMES.includes(changeInfo.cookie.name)) return;
       scheduleCookieSync("weibo", changeInfo.removed ? "weibo-logout" : "weibo-cookies-onchange");
@@ -922,10 +1208,12 @@ export function startCookieSync(): void {
   scheduleHourlyCookieSync(DY_COOKIE_SYNC_ALARM);
   scheduleHourlyCookieSync(X_COOKIE_SYNC_ALARM);
   scheduleHourlyCookieSync(REDDIT_COOKIE_SYNC_ALARM);
+  scheduleHourlyCookieSync(TIKTOK_COOKIE_SYNC_ALARM);
   scheduleHourlyCookieSync(XHS_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(ZHIHU_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(LINUXDO_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(V2EX_LOGIN_STATE_SYNC_ALARM);
+  scheduleHourlyCookieSync(INSTAGRAM_LOGIN_STATE_SYNC_ALARM);
   scheduleHourlyCookieSync(WEIBO_LOGIN_STATE_SYNC_ALARM);
 }
 
@@ -951,6 +1239,10 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncRedditCookieToBackend("hourly-alarm");
     return true;
   }
+  if (alarmName === TIKTOK_COOKIE_SYNC_ALARM) {
+    void syncTiktokCookieToBackend("hourly-alarm");
+    return true;
+  }
   if (alarmName === XHS_LOGIN_STATE_SYNC_ALARM) {
     void syncXhsLoginStateToBackend("hourly-alarm");
     return true;
@@ -965,6 +1257,10 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
   }
   if (alarmName === V2EX_LOGIN_STATE_SYNC_ALARM) {
     void syncV2EXLoginStateToBackend("hourly-alarm");
+    return true;
+  }
+  if (alarmName === INSTAGRAM_LOGIN_STATE_SYNC_ALARM) {
+    void syncInstagramLoginStateToBackend("hourly-alarm");
     return true;
   }
   if (alarmName === WEIBO_LOGIN_STATE_SYNC_ALARM) {
@@ -983,6 +1279,7 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncZhihuLoginStateToBackend("hourly-alarm");
     void syncLinuxdoLoginStateToBackend("hourly-alarm");
     void syncV2EXLoginStateToBackend("hourly-alarm");
+    void syncInstagramLoginStateToBackend("hourly-alarm");
     void syncWeiboLoginStateToBackend("hourly-alarm");
     return true;
   }

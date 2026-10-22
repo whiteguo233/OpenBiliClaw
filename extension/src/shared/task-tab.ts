@@ -10,6 +10,7 @@
 export const TASK_TAB_MARKERS: readonly string[] = [
   "openbiliclaw_xhs_task=1",
   "openbiliclaw_dy_task=1",
+  "openbiliclaw_tiktok_task=1",
   "openbiliclaw_bili_task=1",
   "openbiliclaw_yt_task=1",
   "openbiliclaw_zhihu_task=1",

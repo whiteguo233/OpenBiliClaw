@@ -13,7 +13,7 @@ import re
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -207,15 +207,17 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "tiktok": 1,
     "twitter": 1,
     "zhihu": 1,
     "reddit": 1,
     "bangumi": 1,
     "linuxdo": 1,
     "v2ex": 1,
-    "web": 1,
     "weibo": 1,
+    "instagram": 1,
     "github": 1,
+    "web": 1,
 }
 
 _SOURCE_INCREMENTAL_ENV_FIELDS = {
@@ -228,6 +230,7 @@ _SOURCE_INCREMENTAL_ENV_FIELDS = {
     "OPENBILICLAW_SCHEDULER_REDDIT_INCREMENTAL_HOURS": "reddit_incremental_hours",
     "OPENBILICLAW_SCHEDULER_LINUXDO_INCREMENTAL_HOURS": "linuxdo_incremental_hours",
     "OPENBILICLAW_SCHEDULER_V2EX_INCREMENTAL_HOURS": "v2ex_incremental_hours",
+    "OPENBILICLAW_SCHEDULER_TIKTOK_INCREMENTAL_HOURS": "tiktok_incremental_hours",
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -1032,6 +1035,7 @@ class SchedulerConfig:
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS
     eval_min_batch_size: int = _DEFAULT_EVAL_MIN_BATCH_SIZE
     eval_max_wait_seconds: float = _DEFAULT_EVAL_MAX_WAIT_SECONDS
@@ -1290,6 +1294,52 @@ class YoutubeSourceConfig(SourceDatePreferenceConfig):
 
 
 @dataclass
+class TiktokSourceConfig(SourceDatePreferenceConfig):
+    """TikTok experimental source configuration.
+
+    TikTok steady-state discovery runs through a backend-direct runtime
+    producer. Two backends exist, selected by ``mode``: the signed web API
+    backend (``sources/tiktok_web.py``, guest identity, no login needed;
+    ``auto`` default with yt-dlp fallback) and the yt-dlp backend
+    (``sources/tiktok.py``). yt-dlp ships no TikTok *search* extractor and
+    guest keyword search is gated upstream, so keyword-planner words are
+    mapped onto hashtags instead of a search endpoint. ``tags`` /
+    ``creators`` seed the two listing strategies; the budget knobs cap
+    per-day execution units. A login cookie (``cookie_env`` /
+    ``data/tiktok_cookie.json``) is optional and unlocks keyword search.
+    """
+
+    enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
+    # Backend selector: "auto" (web with yt-dlp fallback) | "web" | "ytdlp".
+    mode: str = "auto"
+    # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
+    # is the fallback. Guest identity remains a legitimate mode without it.
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    # Geo parameters sent with every web API request; they should match the
+    # proxy egress region. When TikTok gates every response (empty body +
+    # ``tt_orcas_res: 1``), these two are the first thing to check.
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    # Baseline hashtags for the tag strategy (without the leading ``#``).
+    tags: tuple[str, ...] = ()
+    # TikTok creator handles for the user strategy (``@`` prefix optional).
+    creators: tuple[str, ...] = ()
+    # For-You feed pulls per day (high-visibility surface; kept small).
+    daily_feed_budget: int = 3
+    # Keyword search runs per day. Search only works with a login cookie and
+    # logged-in scraping carries account risk (TikTok ToS), so it is off
+    # unless a cookie is configured; the budget stays small regardless.
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
+@dataclass
 class TwitterSourceConfig(SourceDatePreferenceConfig):
     """X (Twitter) direct-cookie discovery configuration.
 
@@ -1491,6 +1541,19 @@ class WebSourceConfig:
     lease_seconds: int = 300
 
 
+@dataclass
+class InstagramSourceConfig(SourceDatePreferenceConfig):
+    """Instagram browser-task discovery and personal-signal configuration."""
+
+    enabled: bool = False
+    source_modes: tuple[str, ...] = ("topic", "creator")
+    daily_topic_budget: int = 60
+    daily_creator_budget: int = 30
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 10
+    bootstrap_limit: int = 300
+
+
 V2EX_ALLOWED_SOURCE_MODES = frozenset({"search", "node", "tab", "hot", "latest"})
 V2EX_CONFIG_INTEGER_LIMITS: dict[str, tuple[int, int]] = {
     "daily_search_budget": (0, 100_000),
@@ -1572,6 +1635,7 @@ class SourcesConfig:
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
+    tiktok: TiktokSourceConfig = field(default_factory=TiktokSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
     reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
@@ -1579,8 +1643,9 @@ class SourcesConfig:
     github: GitHubSourceConfig = field(default_factory=GitHubSourceConfig)
     linuxdo: LinuxdoSourceConfig = field(default_factory=LinuxdoSourceConfig)
     v2ex: V2EXSourceConfig = field(default_factory=V2EXSourceConfig)
-    web: WebSourceConfig = field(default_factory=WebSourceConfig)
     weibo: WeiboSourceConfig = field(default_factory=WeiboSourceConfig)
+    instagram: InstagramSourceConfig = field(default_factory=InstagramSourceConfig)
+    web: WebSourceConfig = field(default_factory=WebSourceConfig)
 
 
 @dataclass
@@ -1926,6 +1991,13 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
     for env_key, env_value in os.environ.items():
         if not env_key.startswith(prefix):
             continue
+        if env_key == "OPENBILICLAW_RUNTIME_DATA_DIR":
+            # Internal parent -> child fence: a hot-respawn must retain the
+            # parent's migration-locked path even if the saved data_dir awaits
+            # a full application restart. Disk-only reads ignore this override.
+            if env_value.strip():
+                raw.setdefault("general", {})["data_dir"] = env_value
+            continue
         # Auth vars are multi-word (PASSWORD_HASH, SESSION_TTL_HOURS, …); the naive
         # `_` split would mis-nest them — e.g. PASSWORD_HASH → api.auth.password.hash,
         # injecting a dict at auth.password (later hashed as its repr) or raising
@@ -1982,14 +2054,16 @@ def _filter_dataclass_kwargs(
 def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
     """Warn once per process for per-source budgets that look like misused toggles.
 
-    ``daily_*_budget`` is a per-UTC-day task-count cap, not an on/off switch; ``0``
-    means unlimited. A value of 1–4 almost always means the user typed ``1`` to
-    "enable" a source and unknowingly throttled it to a single task per day.
+    ``daily_*_budget`` is a per-UTC-day source-work cap, not an on/off switch;
+    ``0`` means unlimited. Individual producers define whether work means
+    retained candidates or upstream requests. A value of 1–4 almost always
+    means the user typed ``1`` to "enable" a source and unknowingly throttled it.
     """
     source_configs: list[tuple[str, Any]] = [
         ("xiaohongshu", sources.xiaohongshu),
         ("douyin", sources.douyin),
         ("youtube", sources.youtube),
+        ("tiktok", sources.tiktok),
         ("twitter", sources.twitter),
         ("zhihu", sources.zhihu),
         ("reddit", sources.reddit),
@@ -1997,6 +2071,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("github", sources.github),
         ("linuxdo", sources.linuxdo),
         ("weibo", sources.weibo),
+        ("instagram", sources.instagram),
     ]
     for source_name, source_config in source_configs:
         for source_field in fields(source_config):
@@ -2008,12 +2083,19 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
                 continue
             if not (_SUSPICIOUS_BUDGET_LOW <= value <= _SUSPICIOUS_BUDGET_HIGH):
                 continue
+            # The shipped default cannot be a misused toggle — TikTok's official
+            # daily_feed_budget/daily_search_budget default is 3, which sits in
+            # the suspicious 1-4 band. A hand-written non-default still warns.
+            if source_field.default is not MISSING and value == source_field.default:
+                continue
             key = f"sources.{source_name}.{name}"
             if key in _warned_budget_keys:
                 continue
             _warned_budget_keys.add(key)
             logger.warning(
-                "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
+                "config: %s=%d — 这是每日保留候选条数上限,不是开关;想不限条数请设为 0"
+                if source_name == "instagram"
+                else "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
                 key,
                 value,
             )
@@ -2368,6 +2450,7 @@ def _build_config(
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
+    tiktok_raw = sources_raw.get("tiktok", {})
     twitter_raw = sources_raw.get("twitter", {})
     zhihu_raw = sources_raw.get("zhihu", {})
     reddit_raw = sources_raw.get("reddit", {})
@@ -2377,6 +2460,7 @@ def _build_config(
     v2ex_raw = sources_raw.get("v2ex", {})
     web_raw = sources_raw.get("web", {})
     weibo_raw = sources_raw.get("weibo", {})
+    instagram_raw = sources_raw.get("instagram", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -2411,6 +2495,24 @@ def _build_config(
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 3))),
+        ),
+        tiktok=TiktokSourceConfig(
+            enabled=bool(tiktok_raw.get("enabled", False)),
+            incremental_enabled=bool(tiktok_raw.get("incremental_enabled", False)),
+            mode=str(tiktok_raw.get("mode", "auto")),
+            cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
+            # Empty geo values are meaningless and would gate every request;
+            # fall back to the verified defaults instead of saving them.
+            region=str(tiktok_raw.get("region", "JP")).strip() or "JP",
+            tz_name=str(tiktok_raw.get("tz_name", "Asia/Tokyo")).strip() or "Asia/Tokyo",
+            tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
+            creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
+            daily_feed_budget=int(tiktok_raw.get("daily_feed_budget", 3)),
+            daily_search_budget=int(tiktok_raw.get("daily_search_budget", 3)),
+            daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
+            daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
+            request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
+            min_interval_minutes=max(0, int(tiktok_raw.get("min_interval_minutes", 3))),
         ),
         twitter=TwitterSourceConfig(
             enabled=bool(twitter_raw.get("enabled", False)),
@@ -2634,6 +2736,40 @@ def _build_config(
                 weibo_raw.get("min_interval_minutes", 10), "min_interval_minutes"
             ),
         ),
+        instagram=InstagramSourceConfig(
+            enabled=bool(instagram_raw.get("enabled", False)),
+            source_modes=_normalize_instagram_source_modes(
+                instagram_raw.get("source_modes", ["topic", "creator"])
+            ),
+            daily_topic_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_topic_budget", 60), "daily_topic_budget"
+            ),
+            daily_creator_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_creator_budget", 30), "daily_creator_budget"
+            ),
+            request_interval_seconds=min(
+                30,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("request_interval_seconds", 3),
+                        "request_interval_seconds",
+                    ),
+                ),
+            ),
+            min_interval_minutes=_normalize_instagram_non_negative_int(
+                instagram_raw.get("min_interval_minutes", 10), "min_interval_minutes"
+            ),
+            bootstrap_limit=min(
+                300,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("bootstrap_limit", 300), "bootstrap_limit"
+                    ),
+                ),
+            ),
+        ),
     )
     normalize_github_source_config(sources.github, strict=False)
     normalize_v2ex_source_config(sources.v2ex, strict=False)
@@ -2644,6 +2780,7 @@ def _build_config(
         xiaohongshu=xhs_raw,
         douyin=douyin_raw,
         youtube=youtube_raw,
+        tiktok=tiktok_raw,
         twitter=twitter_raw,
         zhihu=zhihu_raw,
         reddit=reddit_raw,
@@ -2652,6 +2789,7 @@ def _build_config(
         linuxdo=linuxdo_raw,
         v2ex=v2ex_raw,
         weibo=weibo_raw,
+        instagram=instagram_raw,
     )
     _warn_suspicious_budgets(sources)
 
@@ -2834,6 +2972,11 @@ def _build_config(
                     ),
                     "v2ex_incremental_hours": _normalize_source_incremental_hours(
                         sched_raw.get("v2ex_incremental_hours"),
+                        default=None,
+                        allow_none=True,
+                    ),
+                    "tiktok_incremental_hours": _normalize_source_incremental_hours(
+                        sched_raw.get("tiktok_incremental_hours"),
                         default=None,
                         allow_none=True,
                     ),
@@ -3475,6 +3618,7 @@ def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
         "bing_rss": "bing_rss",
         "bing-rss": "bing_rss",
         "exa": "exa",
+        "parallel": "parallel",
         "local": "local_cache",
         "cache": "local_cache",
         "local_cache": "local_cache",
@@ -3699,6 +3843,37 @@ def normalize_tls_san_names(value: object) -> list[str]:
             seen.add(key)
             normalized.append(canonical)
     return normalized
+
+
+def _normalize_instagram_source_modes(value: object) -> tuple[str, ...]:
+    """Return the ordered, bounded Instagram discovery mode set.
+
+    Creator expansion is seeded from topic results, so a creator-only value
+    must retain the topic lane instead of producing a permanently empty run.
+    """
+
+    if isinstance(value, str):
+        raw = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        raw = [str(part).strip() for part in value]
+    else:
+        raw = ["topic", "creator"]
+    selected = tuple(
+        dict.fromkeys(item.lower() for item in raw if item.lower() in {"topic", "creator"})
+    )
+    if selected == ("creator",):
+        return ("topic", "creator")
+    return selected or ("topic", "creator")
+
+
+def _normalize_instagram_non_negative_int(value: object, field_name: str) -> int:
+    """Validate one Instagram budget/interval integer without bool coercion."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"sources.instagram.{field_name} 必须是非负整数")
+    if value < 0:
+        raise ConfigError(f"sources.instagram.{field_name} 不能为负数")
+    return value
 
 
 def normalize_tls_enabled(value: object) -> bool:
@@ -4317,6 +4492,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "zhihu",
     "reddit",
@@ -4325,6 +4501,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 
 
@@ -4424,6 +4601,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         ("reddit_incremental_hours", config.scheduler.reddit_incremental_hours, True),
         ("linuxdo_incremental_hours", config.scheduler.linuxdo_incremental_hours, True),
         ("v2ex_incremental_hours", config.scheduler.v2ex_incremental_hours, True),
+        ("tiktok_incremental_hours", config.scheduler.tiktok_incremental_hours, True),
     )
     for field_name, value, allow_none in incremental_intervals:
         try:
@@ -5667,6 +5845,7 @@ def save_config(
         ("reddit_incremental_hours", True),
         ("linuxdo_incremental_hours", True),
         ("v2ex_incremental_hours", True),
+        ("tiktok_incremental_hours", True),
     ):
         _normalize_source_incremental_hours(
             getattr(config.scheduler, field_name),
@@ -5955,6 +6134,23 @@ def _render_config_toml(
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.youtube),
             "",
+            "[sources.tiktok]",
+            f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.tiktok.incremental_enabled)}",
+            f"mode = {_toml_string(config.sources.tiktok.mode)}",
+            f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
+            f"region = {_toml_string(config.sources.tiktok.region)}",
+            f"tz_name = {_toml_string(config.sources.tiktok.tz_name)}",
+            f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
+            f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
+            f"daily_feed_budget = {config.sources.tiktok.daily_feed_budget}",
+            f"daily_search_budget = {config.sources.tiktok.daily_search_budget}",
+            f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
+            f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
+            f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.tiktok.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.tiktok),
+            "",
             "[sources.twitter]",
             f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
             f"mode = {_toml_string(config.sources.twitter.mode)}",
@@ -6080,6 +6276,16 @@ def _render_config_toml(
             f"min_interval_minutes = {config.sources.weibo.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.weibo),
             "",
+            "[sources.instagram]",
+            f"enabled = {_toml_bool(config.sources.instagram.enabled)}",
+            f"source_modes = {_toml_str_list(list(config.sources.instagram.source_modes))}",
+            f"daily_topic_budget = {config.sources.instagram.daily_topic_budget}",
+            f"daily_creator_budget = {config.sources.instagram.daily_creator_budget}",
+            f"request_interval_seconds = {config.sources.instagram.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.instagram.min_interval_minutes}",
+            f"bootstrap_limit = {config.sources.instagram.bootstrap_limit}",
+            *_render_source_date_preference_lines(config.sources.instagram),
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             f"llm_budget_max_calls = {config.scheduler.llm_budget_max_calls}",
@@ -6128,6 +6334,11 @@ def _render_config_toml(
             *(
                 [f"v2ex_incremental_hours = {config.scheduler.v2ex_incremental_hours}"]
                 if config.scheduler.v2ex_incremental_hours is not None
+                else []
+            ),
+            *(
+                [f"tiktok_incremental_hours = {config.scheduler.tiktok_incremental_hours}"]
+                if config.scheduler.tiktok_incremental_hours is not None
                 else []
             ),
             f"refresh_check_interval_seconds = {config.scheduler.refresh_check_interval_seconds}",
@@ -6189,6 +6400,7 @@ def _render_config_toml(
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
+            f"tiktok = {int(config.scheduler.pool_source_shares.get('tiktok', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",
@@ -6198,6 +6410,7 @@ def _render_config_toml(
             f"v2ex = {int(config.scheduler.pool_source_shares.get('v2ex', 1))}",
             f"web = {int(config.scheduler.pool_source_shares.get('web', 1))}",
             f"weibo = {int(config.scheduler.pool_source_shares.get('weibo', 1))}",
+            f"instagram = {int(config.scheduler.pool_source_shares.get('instagram', 1))}",
             "",
             "[discovery]",
             "unified_keyword_planner_enabled = "

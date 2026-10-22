@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from openbiliclaw.sources.dy_tasks import DyTaskQueue
+from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
 from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 from openbiliclaw.sources.yt_tasks import YtTaskQueue
 from openbiliclaw.storage.database import Database
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
         (XhsTaskQueue, {"keyword": "机械键盘"}),
         (DyTaskQueue, {"keywords": ["摄影"]}),
         (YtTaskQueue, {"scopes": ["yt_history"]}),
+        (TiktokTaskQueue, {"scopes": ["tt_like"]}),
     ],
 )
 def test_next_pending_uses_independent_transaction_connection(

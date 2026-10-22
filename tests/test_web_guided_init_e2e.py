@@ -1478,6 +1478,116 @@ def _select_bangumi_only(page: Any) -> None:
 
 
 @pytest.mark.parametrize("surface", ["setup", "desktop"])
+def test_web_e2e_instagram_only_renders_backend_rejection_detail(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+    surface: str,
+) -> None:
+    """A shared admission code must not replace Instagram guidance with Bangumi."""
+    base_url, stub = guided_init_server
+    detail = (
+        "Instagram 公开 topic / creator 发现无需登录，但初始化"
+        "点赞、收藏和关注记录需要当前浏览器已登录 Instagram 并连接扩展。"
+    )
+    stub.post_init_error = (409, {"error": "no_profile_signal_sources", "detail": detail})
+    _install_fake_runtime_stream(chromium_page)
+
+    start, reason = _open_init_sources(chromium_page, base_url, surface)
+    chromium_page.locator('input[data-init-source="bilibili"]').uncheck()
+    chromium_page.locator('input[data-init-source="instagram"]').check()
+    start.click()
+
+    chromium_page.wait_for_function("() => window.__obcInitPosted === true")
+    assert stub.init_posts == [
+        {
+            "sources": ["instagram"],
+            "llm_concurrency": 3,
+            "init_timeout_minutes": 60,
+        }
+    ]
+    chromium_page.wait_for_function(
+        "selector => document.querySelector(selector)?.textContent.trim().length > 0",
+        arg="#initReason" if surface == "setup" else ".init-reason",
+    )
+    text = reason.inner_text()
+    assert detail in text
+    assert "Bangumi" not in text
+    assert start.is_enabled()
+
+
+@pytest.mark.parametrize("surface", ["setup", "desktop"])
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        pytest.param(
+            '  <img id="unexpected-init-error" src="missing">请连接 Instagram 扩展。  ',
+            '<img id="unexpected-init-error" src="missing">请连接 Instagram 扩展。',
+            id="plain-text",
+        ),
+        pytest.param("x" * 5000, "x" * 2000, id="bounded-text"),
+        pytest.param(None, None, id="missing-detail"),
+        pytest.param({"message": "not plain text"}, None, id="structured-detail"),
+        pytest.param("  ", None, id="empty-detail"),
+    ],
+)
+def test_web_e2e_init_rejection_details_are_bounded_plain_text(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+    surface: str,
+    detail: Any,
+    expected: str | None,
+) -> None:
+    """Unusable details fall back without guessing which source was selected."""
+    base_url, stub = guided_init_server
+    stub.post_init_error = (409, {"error": "no_profile_signal_sources", "detail": detail})
+    _install_fake_runtime_stream(chromium_page)
+    start, reason = _open_init_sources(chromium_page, base_url, surface)
+    start.click()
+
+    chromium_page.wait_for_function("() => window.__obcInitPosted === true")
+    chromium_page.wait_for_function(
+        "selector => !document.querySelector(selector)?.disabled",
+        arg="#startInit" if surface == "setup" else '[data-init-action="start"]',
+    )
+    text = reason.inner_text()
+    prefix = "初始化没能启动：" if surface == "setup" else ""
+    expected = expected or "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。"
+    assert len(text) == len(prefix + expected)
+    assert text == prefix + expected
+    assert reason.locator("#unexpected-init-error").count() == 0
+    assert start.is_enabled()
+
+
+def test_desktop_web_e2e_reinit_keeps_backend_rejection_detail(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+) -> None:
+    base_url, stub = guided_init_server
+    stub.set_initialized()
+    stub.runtime_status["initialized"] = True
+    detail = "Instagram 初始化需要当前浏览器已登录并连接扩展。"
+    stub.post_init_error = (409, {"error": "no_profile_signal_sources", "detail": detail})
+    _install_fake_runtime_stream(chromium_page)
+    chromium_page.on("dialog", lambda dialog: dialog.accept())
+
+    chromium_page.goto(f"{base_url}/web/")
+    chromium_page.locator("#settingsBtn").click()
+    chromium_page.locator('[data-settings-tab="general"]').click()
+    chromium_page.locator("#reinitBtn").click()
+
+    chromium_page.wait_for_function("() => window.__obcInitPosted === true")
+    chromium_page.wait_for_function("() => !document.querySelector('#reinitBtn')?.disabled")
+    assert stub.init_posts == [
+        {
+            "force": True,
+            "llm_concurrency": 3,
+            "init_timeout_minutes": 60,
+        }
+    ]
+    assert chromium_page.locator("#reinitStatus").inner_text() == detail
+
+
+@pytest.mark.parametrize("surface", ["setup", "desktop"])
 def test_web_e2e_bangumi_only_without_username_still_reaches_backend(
     guided_init_server: tuple[str, GuidedInitStub],
     chromium_page: Any,
@@ -1553,6 +1663,7 @@ def test_web_e2e_bangumi_only_renders_backend_rejection_naming_the_extension(
     text = reason.inner_text()
     assert "Bangumi" in text
     assert "个人令牌" in text
+    assert "公开用户名" in text
     # The extension tier is named, not just token / username.
     assert "bgm.tv" in text
     assert start.is_enabled()

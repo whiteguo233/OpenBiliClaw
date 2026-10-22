@@ -679,3 +679,13 @@ async def test_background_call_budget_reset_starts_fresh_window() -> None:
     async with gate.slot(caller="soul.preference"):
         pass
     assert gate.background_call_count(3600) == 1
+
+
+def test_blue_fish_reply_caller_is_known_maintenance() -> None:
+    """The fish's single model call must not be an "unknown caller"."""
+    from openbiliclaw.llm.concurrency import LLMConcurrencyGate, LLMTrafficClass
+
+    gate = LLMConcurrencyGate()
+
+    assert gate.classify("fish.comment_reply") is LLMTrafficClass.MAINTENANCE
+    assert "fish.comment_reply" not in gate._warned_unknown_callers  # noqa: SLF001

@@ -52,7 +52,7 @@ class SourceAuthContract(BaseModel):
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、web、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、web、tiktok（未配置 Cookie 时）、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
@@ -139,6 +139,12 @@ GitHub 还可只从固定的 `OPENBILICLAW_GITHUB_TOKEN` 读取，不接受可�
 **去抖条目随凭据变更失效。** 每平台 10 秒去抖是为了防连点自造风控，但它按**平台**存结果。修复路径恰好会撞上：验一份死 cookie（窗口以 `failed` 武装）→ 粘贴一份能用的 → 10 秒内再点「测试连接」→ 原样回放那条旧的失败。用户读到的是「修了也没用」，下一步多半是把那份真正能用的 cookie 删掉。凭据一旦真正落盘（两条写入路径都会），`note_credential_changed()` 立即清掉该平台的去抖条目。同理，`asyncio.CancelledError` 继承自 `BaseException`，`except Exception` 抓不到——前端 fetch 被取消或上层超时会让 in-flight 标记残留到 60 秒上限，期间每次点击都只回「验证正在进行中」，而那次验证早已停止。
 
 **无法校验的绝不伪造。** 小红书、知乎与 Linux.do 后端只存一个 bool、零字节 cookie，其写入显式返回 `checked="none"` 加 `unverified_reason`，而不是假装校验过。
+
+**传输失败不是凭据的证据，但也曾把用户锁死。** 活体探针撞上代理/网络故障时，`validation_network` 拒绝落盘对多数平台仍然正确——没有什么会替用户复检一份未校验的凭据。B 站是例外：账号同步循环每轮都会用存储的 Cookie 真实拉取（-101 → `auth_expired`），它就是复检兜底。因此 B 站写入在传输失败时先短退避重试两次探针（`_NETWORK_PROBE_RETRIES`），仍不通则**以显式 unverified 标记落盘**（`CredentialVerdict.unverified=True`，统一与旧版响应都带 `unverified_reason`，旧版 `/api/bilibili/cookie` 另加 `unverified: true` 纯增量字段并把 `message` 换成门禁的诚实文案，verdict 以 `network_error=True` 记录而非干净失败）；平台明确回「未登录」（真实 -101）依旧拒绝。这条逃生门解决的是真实死锁：用户唯一的出网路径与探针不同（flaky 代理）时，扩展一直在退避重试一个永远不会被接受的修复。
+
+**init 期间的 B 站 Cookie 暂存而非丢弃。** guided init 活跃时 `/api/bilibili/cookie` 对异值推送返回 200 + `error_code="cookie_staged"` 并把 Cookie 暂存到 `data/runtime/staged_bilibili_cookie.json`（`source_auth/staged.py`），init 终态与 `/api/init-completed` 经 `_write_source_credential` 正常应用；直接落盘成功的写入会清掉更旧的暂存值。`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段）让桌面 Web 显示「已暂存，初始化完成后自动应用」，而不是只在扩展 service worker 控制台可见。
+
+**凭据落盘即清旧账，重建失败必留痕。** B 站凭据经 `_credential_landed` 真正落盘时，会调用 `AccountSyncService.clear_auth_expired_state()` 清掉 `account_sync_state.json` 里残留的 `auth_expired` issue——持久化的错误不允许活得比它的原因更久（此前唯一清理点是「完整跑完一轮同步」，暂停或崩溃循环的 daemon 永远到不了）。写入后的运行时重建失败不再被 `suppress(Exception)` 吞掉：ERROR 带 traceback 记日志，并把 slug 记入 `pending_runtime_rebuilds`，下一次写入（包括此前是纯 no-op 的相同 Cookie 重投）会重试重建。
 
 **活体缓存按凭据判定，不按平台。** 写入门会复用 60 秒内的**正面**结论（抖音 `msToken` 频繁轮换，插件每次启动都重发整个 jar，每次都探测就是自造风控）。但复用只对**同一份凭据**成立：只按平台取缓存时，旧 cookie 的成功结论会替另一份结构完整却已失效的 cookie 背书，于是无效凭据一个网络请求都不发就落了盘——「无效凭据绝不落盘」在用户唯一看不见的那种情况下失效。`ProbeVerdict.credential_fingerprint` 存的是该平台**登录态字段**的 SHA-256（B 站 `SESSDATA`/`bili_jct`/`DedeUserID`，抖音 `sessionid`/`sessionid_ss`/`sid_tt`），字段名直接取自 `CREDENTIAL_SPECS` 的校验门，所以「什么算同一份凭据」与「校验门要求什么」不可能漂移；`msToken` 不在其中，轮换因此仍然命中缓存。写入门用 `peek_matching()`（**严格**：指纹不符或缺失一律重探，因为猜错的代价是死凭据落盘）；状态端点用 `contradicts()`（**宽松**：只有明确不符才丢弃，缺失指纹仍显示；展示仍受 6 小时可见证据窗口约束，而凭据写入绝不会借用这个长窗口）。命中缓存的结论**不重新记录**，否则每次插件重发都会顺延自己的有效期，一份凭据可以永远「刚刚验证过」而实际从未复验。
 
@@ -298,6 +304,37 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 统一验证动作登记为 `VERIFY_ACTIONS["v2ex"] = "live_probe"`，相关契约回归见
 `tests/test_source_auth_contract.py`。
 
+## TikTok 的接入
+
+TikTok 是「匿名可用 + 可选可验证凭据」形态（与 Bangumi 同族）。Web API 后端以 TikTok 自己
+签发的**访客身份**读取公开推荐流 / 创作者 / 话题标签列表，访客身份是完整合法的运行模式，
+因此 `auth_required` 恒为 `False`、`legacy_state` 恒为 `no_auth`：无 Cookie 时返回与 YouTube
+同形的 `credential=none` / `verify_method=none`。
+
+可选登录 Cookie（`[sources.tiktok].cookie_env`，默认 `OPENBILICLAW_TIKTOK_COOKIE`，兜底
+`data/tiktok_cookie.json`）解锁关键词搜索（访客身份被上游 gate，2026-10-03 实测）与更高限额。
+配置后契约报 `credential=present`（origin `env` / `data_file`）+ `verify_method=live_probe`：
+主动探针调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳，
+`probe_tiktok_login`），`{"message":"success"}` 为 verified，401/403 或显式 error 为 failed，
+传输失败与风控空响应一律 indeterminate（绝不误判为失效）。`VERIFY_ACTIONS["tiktok"]` 相应登记为
+`live_probe`，动作恒定而方法的读数随有无凭据变化（与 Bangumi 同一 action-vs-method 拆分）。
+
+凭据写入门面同步开通：`CREDENTIAL_SPECS["tiktok"]` 结构门要求 sessionid / sessionid_ss /
+sid_tt 至少其一（访客 jar 只有 ttwid / msToken），live gate 复用同一探针，
+`POST /api/sources/tiktok/credential` 与 `PUT /api/config` 两个写入面验证强度一致，落盘
+`data/tiktok_cookie.json`。
+
+## Instagram 的接入
+
+Instagram 使用现有 capability-specific contract，不新增第二套鉴权模型：
+
+- `discover` 为 `optional-credential`：没有登录心跳仍可排队匿名 topic / creator 任务；已有会话时允许被动读取直接 topic 页返回的公开媒体。扩展在线属于 transport readiness，不会被伪装成持有账号凭据。
+- `profile` / `bootstrap` 为 `login-required`，只在扩展最近观察到 `sessionid` 存在时进入可执行状态；心跳 payload 只有 `logged_in: bool`。
+- `cookie-sync` 为 optional readiness。`sessionid` value、`csrftoken` 和 `ds_user_id` 不进入 API、数据库或日志。
+- 个人任务要求同源账户表单用户名与新鲜 SSR `PolarisViewer.data.username` 一致，且外层 `id` 与 `data.id` 是同一非零数字串；匿名/冲突/缺失拒绝。心跳不是 identity evidence，账号 ID 仅用于 account key 和隔离事件。
+
+凭据表单使用 extension-only `login_state` 描述符。验证动作是 `browser_heartbeat`，只验证最近的本地观察证据，不现场请求 Instagram。登录墙、challenge 或任务失败更新任务/发现健康状态，不能反向把匿名 discover 标成需要登录。
+
 ## 新增平台的强制契约
 
 新平台必须在 `providers.py` 填全契约字段、在 `verify.py` 的 `VERIFY_ACTIONS` 登记动作，否则过不了 `tests/test_source_auth_contract.py` 的参数化测试。若动作是 `browser_heartbeat`，还必须同步登记 `_BROWSER_HEARTBEAT_PREFIXES`，提供对应数据库 getter、extension runtime-stream event handler 与来源专属 round-trip test；未知 slug 必须 fail closed，不能落到某个既有平台的 else 分支。
@@ -313,3 +350,18 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 - `src/openbiliclaw/web/shared/source-status.js`（三端共享渲染）
 - `scripts/source_contract_metrics.py`（CI 量化门）
 - `tests/test_source_auth_contract.py`、`tests/test_douyin_login_probe.py`
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 的 passport heartbeat verified 只证明会话有效；搜索可用性须由单独真实搜索验收证明，不由凭据验证状态推导。
+
+### TikTok 的 capability 与账号任务边界（2026-10-11）
+
+公开 discover 仍为 ready；profile/bootstrap/incremental/native-save 独立使用登录态 readiness。passport Cookie 探针只证明会话，不证明浏览器列表可采集。任务还必须从当前 viewer 专属证据确认本人列表；DOM observed claims 不标记 verified。后端绑定首个账号的 opaque key，拒绝跨账号画像混合，普通 smoke 不绑定全局账号。Cookie 仍按原有统一凭据路径存储，不能描述成“后端不接触 Cookie”。
+
+### TikTok Cookie 更新后的客户端刷新
+
+`persist_credential("tiktok", "cookie", ...)` 比较保存前后的有效凭据（env 仍优先于文件），通过 `PersistResult.runtime_dirty` 通知 API。有效值变化后，统一写入口经现有 lane handoff 重建捕获 Cookie 的运行时客户端，挂载登录态搜索；重复上报及 env 覆盖下的文件变更不触发重建。公开请求/响应字段保持兼容。
+
+TikTok 的凭据刷新关闭 `run_post_reload_llm_work`：更新搜索客户端不会顺带发起额外模型预热/画像学习，仍按现有 scheduler 与 lane 策略恢复后台组件。

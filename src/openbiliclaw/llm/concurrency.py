@@ -388,7 +388,13 @@ _KNOWN_MAINTENANCE_PREFIXES = (
     "soul.",
     "sources.",
 )
-_MAINTENANCE_CALLERS: set[str] = set()
+_MAINTENANCE_CALLERS: set[str] = {
+    # Blue Fish Lab: one reply per scheduled pass. It is daemon work (not
+    # interactive, not supply), so it shares the maintenance lane instead of
+    # being classified as an unknown caller.
+    "fish.comment_reply",
+    "fish.owner_notice",
+}
 
 
 class LLMConcurrencyGate:

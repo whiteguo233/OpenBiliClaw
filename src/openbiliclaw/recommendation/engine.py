@@ -489,6 +489,7 @@ class RecommendationEngine:
         serve_snapshot_store: ServeSnapshotStore | None = None,
         serve_outbox: ServeOutbox | None = None,
         reply_style: str = "",
+        output_language: str = "",
     ) -> None:
         self._llm = llm
         self._database = database
@@ -522,6 +523,9 @@ class RecommendationEngine:
         # Free-text reply-style instruction (issue #255) for the expression
         # tone blocks; empty (default) keeps prompts byte-identical.
         self._reply_style = " ".join(str(reply_style or "").split())
+        # Canonical locale for recommendation copy; empty keeps the historical
+        # Chinese-only prompts for tests and standalone callers.
+        self._output_language = str(output_language or "").strip()
         self._copy_pending_callback: Callable[[str], None] | None = None
         self._expression_batch_concurrency = max(1, min(16, int(expression_batch_concurrency)))
         # ``0`` is the compatibility/rollback contract: drain the durable
@@ -4073,6 +4077,7 @@ class RecommendationEngine:
             tone_profile=tone_profile,
             source_platform=batch[0].source_platform if batch else "bilibili",
             reply_style=self._reply_style,
+            output_language=self._output_language,
         )
 
         complete_structured = self._llm.complete_structured_task
@@ -4465,6 +4470,7 @@ class RecommendationEngine:
             tone_profile=tone_profile,
             source_platform=content.source_platform or "bilibili",
             reply_style=self._reply_style,
+            output_language=self._output_language,
         )
         try:
             complete_structured = self._llm.complete_structured_task

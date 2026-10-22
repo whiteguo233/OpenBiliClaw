@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
@@ -195,7 +196,13 @@ class FollowingUser:
 
 @dataclass
 class CommentInfo:
-    """Basic comment info."""
+    """Basic comment info.
+
+    ``rpid`` / ``root`` / ``parent`` are the ids needed to answer a comment
+    inside its thread: ``root`` is the thread's top-level reply and
+    ``parent`` the reply being answered. They default to 0 so older callers
+    that only read ``message`` / ``uname`` keep working unchanged.
+    """
 
     mid: int
     uname: str
@@ -204,6 +211,32 @@ class CommentInfo:
     ctime: int = 0
     reply_count: int = 0
     avatar: str = ""
+    rpid: int = 0
+    root: int = 0
+    parent: int = 0
+
+
+# B站 caps a reply page regardless of ``ps``; 20 is the documented page size.
+_COMMENT_PAGE_SIZE = 20
+# Paging is bounded so one fish turn can never turn into an unbounded walk
+# through a hot comment section.
+_COMMENT_MAX_PAGES = 5
+
+
+def _comment_from_reply(reply: dict[str, Any]) -> CommentInfo:
+    """Project one ``/x/v2/reply/main`` reply object onto :class:`CommentInfo`."""
+    return CommentInfo(
+        mid=_int_value(reply.get("mid")),
+        uname=str(_json_object(reply.get("member", {})).get("uname", "")),
+        message=str(_json_object(reply.get("content", {})).get("message", "")),
+        like_count=_int_value(reply.get("like")),
+        ctime=_int_value(reply.get("ctime")),
+        reply_count=_int_value(reply.get("rcount")),
+        avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+        rpid=_int_value(reply.get("rpid")),
+        root=_int_value(reply.get("root")),
+        parent=_int_value(reply.get("parent")),
+    )
 
 
 class BilibiliAPIClient:
@@ -214,6 +247,8 @@ class BilibiliAPIClient:
     """
 
     _BASE_URL = "https://api.bilibili.com"
+    # Private messages live on a different host (same cookie / csrf).
+    _VC_BASE_URL = "https://api.vc.bilibili.com"
     DEFAULT_USER_AGENT: ClassVar[str] = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -709,6 +744,22 @@ class BilibiliAPIClient:
         query = urlencode(sanitized)
         sanitized["w_rid"] = hashlib.md5((query + mixin_key).encode()).hexdigest()
         return sanitized
+
+    async def get_space_profile(self, mid: int) -> dict[str, Any]:
+        """Return a public user profile (``name`` / ``mid`` / ``sign``) by mid.
+
+        Uses the WBI-signed ``/x/space/wbi/acc/info`` endpoint, which answers
+        anonymously. The Blue Fish Lab needs the owner's nickname to @ them
+        when the owner's own cookie has expired; it must not require that
+        cookie just to read a public display name.
+        """
+
+        target = int(mid)
+        if target <= 0:
+            raise ValueError("mid 不合法")
+        img_key, sub_key = await self._get_wbi_keys()
+        params = self._sign_wbi_params({"mid": target}, img_key=img_key, sub_key=sub_key)
+        return await self._get_json("/x/space/wbi/acc/info", params=params)
 
     async def get_nav_info(self) -> NavInfo:
         """Get the current login state from Bilibili nav API."""
@@ -1668,26 +1719,47 @@ class BilibiliAPIClient:
         return _json_list(data.get("list", []))
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
-        """Get the top comments for a video."""
+        """Get up to ``limit`` top comments for a video, following cursor pages.
+
+        B站's ``/x/v2/reply/main`` returns at most one page per request and
+        silently caps ``ps``, so the only way to actually receive ``limit``
+        comments is to walk ``cursor.next``. Paging stops on the API's
+        ``is_end`` flag, on a missing/zero cursor (the old single-page shape),
+        on an empty page, or after :data:`_COMMENT_MAX_PAGES` pages — a hot
+        comment section must not turn one fish turn into N requests.
+        """
         video = await self.get_video_info(bvid)
-        data = await self._get_json(
-            "/x/v2/reply/main",
-            params={"oid": video.aid, "type": 1, "mode": 3, "ps": limit},
-        )
-        replies = _json_list(data.get("replies", []))
-        comments = [
-            CommentInfo(
-                mid=int(reply.get("mid", 0)),
-                uname=str(_json_object(reply.get("member", {})).get("uname", "")),
-                message=str(_json_object(reply.get("content", {})).get("message", "")),
-                like_count=int(reply.get("like", 0)),
-                ctime=int(reply.get("ctime", 0)),
-                reply_count=int(reply.get("rcount", 0)),
-                avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+        comments: list[CommentInfo] = []
+        next_page = 0
+        seen_pages: set[int] = set()
+        for _ in range(_COMMENT_MAX_PAGES):
+            remaining = max(0, int(limit) - len(comments))
+            if remaining == 0:
+                break
+            if next_page in seen_pages:
+                break
+            seen_pages.add(next_page)
+            data = await self._get_json(
+                "/x/v2/reply/main",
+                params={
+                    "oid": video.aid,
+                    "type": 1,
+                    "mode": 3,
+                    "ps": min(_COMMENT_PAGE_SIZE, remaining),
+                    "next": next_page,
+                },
             )
-            for reply in replies
-        ]
-        return comments[:limit]
+            replies = _json_list(data.get("replies", []))
+            if not replies:
+                break
+            comments.extend(_comment_from_reply(reply) for reply in replies)
+            cursor = _json_object(data.get("cursor", {}))
+            if bool(cursor.get("is_end", False)):
+                break
+            next_page = _int_value(cursor.get("next"))
+            if next_page <= 0:
+                break
+        return comments[: max(0, int(limit))]
 
     async def get_video_relation_state(self, bvid: str) -> dict[str, Any]:
         """Get the logged-in user's like/coin/favorite/watch-later state."""
@@ -1818,6 +1890,116 @@ class BilibiliAPIClient:
         if parent is not None and int(parent) > 0:
             data["parent"] = str(int(parent))
         return await self._post_json("/x/v2/reply/add", data=data)
+
+    async def get_reply_notifications(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent ``回复我的 / @我`` notifications for this account.
+
+        ``/x/msgfeed/reply`` is the B站 message-center feed. Each item carries
+        ``item.at_details`` (the users @-ed in that comment), ``item.subject_id``
+        (the commented object id — video comments use ``aid``) and ``user``
+        (the commenter). The Blue Fish owner-notice integration check reads
+        this feed to prove a mention really arrived; production code does not
+        depend on it.
+
+        Args:
+            limit: Maximum number of newest items to return.
+
+        Returns:
+            Raw notification items, newest first.
+        """
+
+        data = await self._get_json(
+            "/x/msgfeed/reply",
+            params={"build": 0, "mobi_app": "web", "platform": "web"},
+        )
+        items = data.get("items")
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)][: max(0, int(limit))]
+
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]:
+        """Send one text private message from this account to ``uid``.
+
+        The chat endpoint lives on ``api.vc.bilibili.com`` (not the main API
+        host) and uses the same session cookie + csrf token as the comment
+        API. Used by the Blue Fish Lab's "private message the owner" delivery
+        channel.
+
+        Args:
+            uid: Receiver mid.
+            text: Plain-text body (B站 caps a message at 1000 characters).
+
+        Returns:
+            The decoded ``data`` object.
+
+        Raises:
+            BilibiliAPIError: upstream rejected the message (rate limit, risk
+                control, receiver restrictions, …).
+            BilibiliAuthExpiredError: the cookie is no longer logged in.
+        """
+
+        target = int(uid)
+        if target <= 0:
+            raise ValueError("私信接收者 mid 不合法")
+        body = str(text).strip()
+        if not body:
+            raise ValueError("私信内容不能为空")
+        if len(body) > 1000:
+            raise BilibiliAPIError("私信内容过长（最多 1000 字）")
+        sender = _cookie_value(self._cookie, "DedeUserID")
+        if not sender:
+            raise BilibiliAuthExpiredError(
+                "发送私信需要登录 Cookie（缺少 DedeUserID）",
+                code=-101,
+            )
+        csrf = self._csrf_token()
+        await self._respect_rate_limit()
+        try:
+            resp = await self._client.post(
+                f"{self._VC_BASE_URL}/web_im/v1/web_im/send_msg",
+                data={
+                    "msg[sender_uid]": sender,
+                    "msg[receiver_id]": str(target),
+                    "msg[receiver_type]": "1",
+                    "msg[msg_type]": "1",
+                    "msg[msg_status]": "0",
+                    "msg[content]": json.dumps({"content": body}, ensure_ascii=False),
+                    "msg[timestamp]": str(int(time.time())),
+                    # B站 rejects a message without a device id with
+                    # ``-400 请求错误``. Derive a stable one from the sender so
+                    # every message from this account looks like one device.
+                    "msg[dev_id]": "web_" + hashlib.md5(f"fish:{sender}".encode()).hexdigest()[:16],
+                    "csrf": csrf,
+                    "csrf_token": csrf,
+                },
+                headers={"referer": "https://www.bilibili.com"},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._sanitized_http_error("POST", "web_im/send_msg", exc) from exc
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid JSON on web_im/send_msg") from exc
+        if not isinstance(payload, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        try:
+            code = int(payload.get("code", 0))
+        except (TypeError, ValueError) as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid code on web_im/send_msg") from exc
+        if code == -101:
+            raise BilibiliAuthExpiredError("Bilibili login required to send a message", code=code)
+        if code != 0:
+            raise BilibiliAPIError(
+                str(payload.get("message") or "send private message failed"), code=code
+            )
+        data = payload.get("data")
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        return cast("dict[str, Any]", data)
 
     async def delete_comment(self, bvid: str, rpid: int) -> None:
         """Delete one of the current user's comments (``/x/v2/reply/del``)."""

@@ -422,6 +422,7 @@ class RuntimeStatusResponse(BaseModel):
     recommendation_count: int
     pending_signal_events: int
     last_refresh_at: str = ""
+    discovery_failure_message: str = ""
     last_notification_at: str = ""
     unread_count: int
     pool_available_count: int = 0
@@ -467,6 +468,10 @@ class RuntimeStatusResponse(BaseModel):
     last_account_sync_issues: list[dict[str, str]] = Field(default_factory=list)
     last_account_sync_message: str = ""
     last_account_sync_severity: str = ""
+    # True while a bilibili cookie pushed during guided init sits staged on
+    # disk, waiting to be applied when init completes (fix/auth-expired-
+    # deadlock: previously such pushes were 409-dropped silently).
+    bilibili_cookie_staged: bool = False
     event_lane_depth: int = 0
     event_lane_active: bool = False
     event_lane_paused: bool = False
@@ -661,7 +666,8 @@ class BilibiliCookieResponse(BaseModel):
 
     ``error_code`` lets the extension pick a smart retry cadence
     (network errors → quick retry, expired cookie → wait for next
-    login). Empty when ``ok=True``.
+    login). Empty on a fully applied success; ``cookie_staged`` is the
+    one code paired with ``ok=True`` (accepted but applied after init).
     """
 
     ok: bool
@@ -675,7 +681,19 @@ class BilibiliCookieResponse(BaseModel):
     #   "empty_cookie"           — payload was empty
     #   "cookie_invalid"         — Bilibili says cookie is bad / expired
     #   "validation_network"     — backend couldn't reach api.bilibili.com
+    #   "cookie_staged"          — guided init is running; the cookie was
+    #                              persisted to the staging file and applies
+    #                              automatically when init completes
+    # ``cookie_staged`` is the one code that accompanies ``ok=True``: the
+    # backend accepted responsibility for the value but has not applied it.
     error_code: str = ""
+    # Additive honesty fields for the unverified-persist outcome (a transport
+    # failure on the validation probe): the cookie WAS stored, so ``ok`` stays
+    # True, but ``authenticated`` stays False and these two say why. The
+    # extension only reads ``ok``/``authenticated``/``error_code`` today, so
+    # older versions behave exactly as before.
+    unverified: bool = False
+    unverified_reason: str = ""
 
 
 class DouyinCookieIn(BaseModel):
@@ -811,6 +829,20 @@ class WeiboLoginStateResponse(BaseModel):
     updated_at: str = ""
 
 
+class InstagramLoginStateIn(BaseModel):
+    """Privacy-preserving Instagram sessionid presence heartbeat."""
+
+    logged_in: StrictBool
+
+
+class InstagramLoginStateResponse(BaseModel):
+    """Result of persisting the Instagram browser login heartbeat."""
+
+    ok: bool = True
+    logged_in: bool
+    updated_at: str = ""
+
+
 class XStatusResponse(BaseModel):
     """Current X (Twitter) source health (spec §7).
 
@@ -920,6 +952,7 @@ class SourcesStatusResponse(BaseModel):
     xiaohongshu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     douyin: SourceStatusItem = Field(default_factory=SourceStatusItem)
     youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    tiktok: SourceStatusItem = Field(default_factory=SourceStatusItem)
     twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
     zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     reddit: SourceStatusItem = Field(default_factory=SourceStatusItem)
@@ -927,8 +960,9 @@ class SourcesStatusResponse(BaseModel):
     github: SourceStatusItem = Field(default_factory=SourceStatusItem)
     linuxdo: SourceStatusItem = Field(default_factory=SourceStatusItem)
     v2ex: SourceStatusItem = Field(default_factory=SourceStatusItem)
-    web: SourceStatusItem = Field(default_factory=SourceStatusItem)
     weibo: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    instagram: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    web: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class SourceVerifyResponse(BaseModel):
@@ -1095,6 +1129,7 @@ class SourcesCredentialsResponse(BaseModel):
     xiaohongshu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     douyin: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     youtube: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    tiktok: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     twitter: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     zhihu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     reddit: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
@@ -1102,8 +1137,9 @@ class SourcesCredentialsResponse(BaseModel):
     github: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     linuxdo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     v2ex: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
-    web: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     weibo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    instagram: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    web: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -1338,6 +1374,7 @@ ExtensionNativeSaveE2EPlatform = Literal[
     "twitter",
     "zhihu",
     "reddit",
+    "tiktok",
 ]
 _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = {
     "youtube": {"favorite": "OpenBiliClaw", "watch_later": "YouTube Watch Later"},
@@ -1346,6 +1383,7 @@ _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = 
     "twitter": {"favorite": "X Bookmarks", "watch_later": "X Bookmarks"},
     "zhihu": {"favorite": "知乎收藏", "watch_later": "知乎收藏"},
     "reddit": {"favorite": "Reddit Saved", "watch_later": "Reddit Saved"},
+    "tiktok": {"favorite": "TikTok Favorites", "watch_later": "TikTok Favorites"},
 }
 _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "youtube": re.compile(r"[A-Za-z0-9_-]{11}"),
@@ -1354,6 +1392,7 @@ _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "twitter": re.compile(r"[0-9]{5,30}"),
     "zhihu": re.compile(r"(?:question|answer|article):[0-9]+"),
     "reddit": re.compile(r"t[13]_[a-z0-9]+"),
+    "tiktok": re.compile(r"[0-9]{6,30}"),
 }
 _EXTENSION_NATIVE_SAVE_E2E_ERROR_CODES: dict[NativeSaveStatusOut, frozenset[str]] = {
     "pending": frozenset({""}),
@@ -2379,6 +2418,27 @@ class YoutubeSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 3
 
 
+class TiktokSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    incremental_enabled: bool = False
+    mode: str = "auto"
+    # Resolved optional login Cookie header (env override, else
+    # data/tiktok_cookie.json); masked on the way out. Guest identity is a
+    # legitimate mode, so an empty cookie is not an error state.
+    cookie: str = ""
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    tags: list[str] = Field(default_factory=list)
+    creators: list[str] = Field(default_factory=list)
+    daily_feed_budget: int = 3
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
 class TwitterSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     mode: str = "cookie"
@@ -2576,12 +2636,23 @@ class WebProbeResponse(BaseModel):
     candidates: list[WebProbeCandidateOut] = Field(default_factory=list)
 
 
+class InstagramSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    source_modes: list[str] = Field(default_factory=lambda: ["topic", "creator"])
+    daily_topic_budget: int = Field(default=60, ge=0)
+    daily_creator_budget: int = Field(default=30, ge=0)
+    request_interval_seconds: int = Field(default=3, ge=1, le=30)
+    min_interval_minutes: int = Field(default=10, ge=0)
+    bootstrap_limit: int = Field(default=300, ge=1, le=300)
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
     xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+    tiktok: TiktokSourceConfigOut = Field(default_factory=TiktokSourceConfigOut)
     twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
     zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
     reddit: RedditSourceConfigOut = Field(default_factory=RedditSourceConfigOut)
@@ -2589,8 +2660,9 @@ class SourcesConfigOut(BaseModel):
     github: GitHubSourceConfigOut = Field(default_factory=GitHubSourceConfigOut)
     linuxdo: LinuxdoSourceConfigOut = Field(default_factory=LinuxdoSourceConfigOut)
     v2ex: V2EXSourceConfigOut = Field(default_factory=V2EXSourceConfigOut)
-    web: WebSourceConfigOut = Field(default_factory=WebSourceConfigOut)
     weibo: WeiboSourceConfigOut = Field(default_factory=WeiboSourceConfigOut)
+    instagram: InstagramSourceConfigOut = Field(default_factory=InstagramSourceConfigOut)
+    web: WebSourceConfigOut = Field(default_factory=WebSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
@@ -2613,6 +2685,7 @@ class SchedulerConfigOut(BaseModel):
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = 60
     eval_min_batch_size: int = Field(default=15, ge=1, le=90)
     eval_max_wait_seconds: float = Field(default=90.0, ge=0.0, le=600.0)

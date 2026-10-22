@@ -309,7 +309,7 @@ async def test_cookie_settings_keep_full_rebuild_even_when_coalesced_with_agent_
     monkeypatch.setattr(asyncio, "create_task", create_task)
     pending_agent = None
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
     ) as client:
         response = await client.put(
             "/api/config", json={"sources": {"twitter": {"cookie": new_cookie}}}

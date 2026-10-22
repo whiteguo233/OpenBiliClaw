@@ -274,7 +274,7 @@ def test_put_config_preserves_reddit_extension_backend(
     )
 
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     resp = client.put(
         "/api/config",

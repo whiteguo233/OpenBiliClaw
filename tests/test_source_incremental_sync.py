@@ -76,6 +76,7 @@ class _FakeDatabase:
             "reddit_tasks",
             "linuxdo_tasks",
             "v2ex_tasks",
+            "tiktok_tasks",
         ):
             self.conn.execute(
                 f"CREATE TABLE {table} ("
@@ -108,6 +109,7 @@ def _harness(
         "reddit": ("reddit_tasks", "bootstrap_events"),
         "linuxdo": ("linuxdo_tasks", "bootstrap_events"),
         "v2ex": ("v2ex_tasks", "bootstrap_profile"),
+        "tiktok": ("tiktok_tasks", "bootstrap_profile"),
     }
 
     def make_enqueue(source: str) -> Any:
@@ -177,6 +179,7 @@ def _complete(database: _FakeDatabase, source: str, task_id: str) -> None:
         "reddit": "reddit_tasks",
         "linuxdo": "linuxdo_tasks",
         "v2ex": "v2ex_tasks",
+        "tiktok": "tiktok_tasks",
     }[source]
     database.conn.execute(f"UPDATE {table} SET status = 'completed' WHERE id = ?", (task_id,))
     database.conn.commit()
@@ -188,6 +191,36 @@ def test_v2ex_incremental_four_table_registry_is_complete() -> None:
         "v2ex_tasks",
         "bootstrap_profile",
     )
+
+
+def test_tiktok_incremental_four_table_registry_is_complete() -> None:
+    assert "tiktok" in SOURCE_ORDER
+    table, task_type, enqueue = scheduler_module._TASK_SPECS["tiktok"]
+    assert (table, task_type) == ("tiktok_tasks", "bootstrap_profile")
+    assert callable(enqueue)
+    assert scheduler_module._SOURCE_CONFIG_ALIASES["tiktok"] == ("tiktok",)
+    assert scheduler_module._SOURCE_INTERVAL_FIELDS["tiktok"] == "tiktok_incremental_hours"
+
+
+@pytest.mark.asyncio
+async def test_tiktok_incremental_sync_can_be_explicitly_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, database, memory, _presence, _clock, kicks = _harness(
+        monkeypatch,
+        config=SchedulerConfig(
+            source_incremental_enabled=True,
+            tiktok_incremental_hours=24,
+        ),
+        enabled={source: source == "tiktok" for source in SOURCE_ORDER},
+    )
+
+    result = await scheduler.tick()
+
+    assert (result.reason, result.source, result.created) == ("created", "tiktok", True)
+    assert memory.state["source_incremental"]["last_attempt_at"].keys() == {"tiktok"}  # type: ignore[index,union-attr]
+    assert database.conn.execute("SELECT COUNT(*) FROM tiktok_tasks").fetchone()[0] == 1
+    assert kicks == ["tiktok"]
 
 
 @pytest.mark.asyncio

@@ -92,50 +92,50 @@ async def _request_exa(query: str, limit: int) -> dict[str, Any]:
     try:
         # A wall-clock deadline also bounds a server that keeps sending tiny chunks.
         async with asyncio.timeout(SEARCH_TIMEOUT_SECONDS):
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(SEARCH_TIMEOUT_SECONDS, connect=5.0),
-                follow_redirects=False,
-                **outbound_httpx_kwargs(),
-            ) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(
+                    timeout=httpx.Timeout(SEARCH_TIMEOUT_SECONDS, connect=5.0),
+                    follow_redirects=False,
+                    **outbound_httpx_kwargs(),
+                ) as client,
+                client.stream(
                     "POST",
                     EXA_MCP_URL,
                     headers={"Accept": "application/json, text/event-stream"},
                     json=payload,
-                ) as response:
-                    if response.status_code != 200:
-                        if response.status_code == 429:
-                            raise WebSearchError("Exa 网页搜索暂时限流（HTTP 429），请稍后重试。")
-                        raise WebSearchError(
-                            f"Exa 网页搜索请求失败（HTTP {response.status_code}），未取得结果。"
-                        )
-                    media_type = (
-                        response.headers.get("content-type", "").split(";")[0].strip().lower()
+                ) as response,
+            ):
+                if response.status_code != 200:
+                    if response.status_code == 429:
+                        raise WebSearchError("Exa 网页搜索暂时限流（HTTP 429），请稍后重试。")
+                    raise WebSearchError(
+                        f"Exa 网页搜索请求失败（HTTP {response.status_code}），未取得结果。"
                     )
-                    if media_type not in {"application/json", "text/event-stream"}:
-                        raise WebSearchError("Exa 网页搜索返回了不支持的响应格式，未取得结果。")
-                    data = bytearray()
-                    pending = b""
-                    async for chunk in response.aiter_bytes():
-                        data.extend(chunk)
-                        if len(data) > MAX_RESPONSE_BYTES:
-                            raise WebSearchError("Exa 网页搜索响应超过大小限制，请缩小查询范围。")
-                        if media_type == "text/event-stream":
-                            pending += chunk
-                            # Split complete SSE events without waiting for the connection
-                            # to close after the matching JSON-RPC response has arrived.
-                            while match := re.search(rb"\r?\n\r?\n", pending):
-                                event, pending = pending[: match.start()], pending[match.end() :]
-                                result = _decode_sse_event(event)
-                                if result is not None:
-                                    return result
+                media_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                if media_type not in {"application/json", "text/event-stream"}:
+                    raise WebSearchError("Exa 网页搜索返回了不支持的响应格式，未取得结果。")
+                data = bytearray()
+                pending = b""
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > MAX_RESPONSE_BYTES:
+                        raise WebSearchError("Exa 网页搜索响应超过大小限制，请缩小查询范围。")
                     if media_type == "text/event-stream":
-                        result = _decode_sse_event(pending)
-                    else:
-                        result = _decode_rpc(bytes(data))
-                    if result is None:
-                        raise WebSearchError("Exa 网页搜索未返回完整的搜索响应，请稍后重试。")
-                    return result
+                        pending += chunk
+                        # Split complete SSE events without waiting for the connection
+                        # to close after the matching JSON-RPC response has arrived.
+                        while match := re.search(rb"\r?\n\r?\n", pending):
+                            event, pending = pending[: match.start()], pending[match.end() :]
+                            result = _decode_sse_event(event)
+                            if result is not None:
+                                return result
+                if media_type == "text/event-stream":
+                    result = _decode_sse_event(pending)
+                else:
+                    result = _decode_rpc(bytes(data))
+                if result is None:
+                    raise WebSearchError("Exa 网页搜索未返回完整的搜索响应，请稍后重试。")
+                return result
     except (TimeoutError, httpx.TimeoutException):
         raise WebSearchError("Exa 网页搜索超时，未取得结果，请稍后重试。") from None
     except httpx.HTTPError as exc:

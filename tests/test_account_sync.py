@@ -2432,3 +2432,150 @@ def test_exclusive_file_lock_released_when_holder_process_dies(tmp_path: Path) -
 
     with exclusive_file_lock(lock_path, blocking=False) as acquired:
         assert acquired is True
+
+
+@dataclass
+class _NavProbeClient(_FakeClient):
+    """A client with a nav probe, as the real ``BilibiliAPIClient`` has."""
+
+    nav_login: bool = True
+    nav_error: Exception | None = None
+    nav_calls: int = 0
+
+    async def get_nav_info(self) -> Any:
+        from openbiliclaw.bilibili.api import NavInfo
+
+        self.nav_calls += 1
+        if self.nav_error is not None:
+            raise self.nav_error
+        return NavInfo(is_login=self.nav_login, uname="tester", mid=42)
+
+
+def _auth_expired_memory() -> _FakeMemoryManager:
+    memory = _FakeMemoryManager()
+    memory.state["last_sync_error"] = "账号登录已失效 (-101)"
+    memory.state["last_sync_error_kind"] = "auth_expired"
+    memory.state["last_sync_issues"] = [
+        {"stage": "bilibili_history", "kind": "auth_expired"},
+        {"stage": "profile_analysis", "kind": "timeout"},
+    ]
+    return memory
+
+
+def test_clear_auth_expired_state_drops_persisted_issue() -> None:
+    """A fresh cookie must retire the persisted auth_expired banner state."""
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _auth_expired_memory()
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=_FakeClient(history_items=[], favorites=[], following=[]),
+        soul_engine=_FakeSoulEngine(),
+    )
+
+    assert service.clear_auth_expired_state() is True
+    assert memory.state["last_sync_error"] == ""
+    assert memory.state["last_sync_error_kind"] == ""
+    # Only the auth_expired entries go; unrelated issues stay.
+    assert memory.state["last_sync_issues"] == [{"stage": "profile_analysis", "kind": "timeout"}]
+    # Idempotent: nothing left to clear.
+    assert service.clear_auth_expired_state() is False
+
+
+def test_clear_auth_expired_state_noop_without_auth_expired() -> None:
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _FakeMemoryManager()
+    memory.state["last_sync_issues"] = [{"stage": "profile_analysis", "kind": "timeout"}]
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=_FakeClient(history_items=[], favorites=[], following=[]),
+        soul_engine=_FakeSoulEngine(),
+    )
+    assert service.clear_auth_expired_state() is False
+    assert memory.state["last_sync_issues"] == [{"stage": "profile_analysis", "kind": "timeout"}]
+
+
+async def test_paused_tick_clears_stale_auth_expired_when_nav_logged_in() -> None:
+    """Paused on LLM work, the tick still re-validates auth: a fixed cookie
+    clears the stale banner instead of waiting for the first unpaused tick."""
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _auth_expired_memory()
+    client = _NavProbeClient(history_items=[], favorites=[], following=[], nav_login=True)
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=client,
+        soul_engine=_FakeSoulEngine(),
+        llm_work_allowed=lambda: False,
+    )
+
+    result = await service.sync_if_due()
+
+    assert result["reason"] == "llm_paused"
+    assert client.nav_calls == 1
+    assert memory.state["last_sync_error_kind"] == ""
+    assert memory.state["last_sync_issues"] == [{"stage": "profile_analysis", "kind": "timeout"}]
+
+
+async def test_paused_tick_keeps_auth_expired_when_nav_logged_out() -> None:
+    """A definitive 'still logged out' keeps the issue — it is not stale."""
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _auth_expired_memory()
+    client = _NavProbeClient(history_items=[], favorites=[], following=[], nav_login=False)
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=client,
+        soul_engine=_FakeSoulEngine(),
+        llm_work_allowed=lambda: False,
+    )
+
+    result = await service.sync_if_due()
+
+    assert result["reason"] == "llm_paused"
+    assert memory.state["last_sync_error_kind"] == "auth_expired"
+
+
+async def test_paused_tick_keeps_auth_expired_when_probe_unreachable() -> None:
+    """A transport failure is no verdict either way; state stays untouched."""
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _auth_expired_memory()
+    client = _NavProbeClient(
+        history_items=[],
+        favorites=[],
+        following=[],
+        nav_error=httpx.ConnectError("proxy down"),
+    )
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=client,
+        soul_engine=_FakeSoulEngine(),
+        llm_work_allowed=lambda: False,
+    )
+
+    result = await service.sync_if_due()
+
+    assert result["reason"] == "llm_paused"
+    assert memory.state["last_sync_error_kind"] == "auth_expired"
+
+
+async def test_paused_tick_without_auth_expired_does_not_probe() -> None:
+    """No persisted auth_expired → no network call: the 5-minute poll loop
+    must not probe bilibili on every paused tick."""
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    memory = _FakeMemoryManager()
+    client = _NavProbeClient(history_items=[], favorites=[], following=[])
+    service = AccountSyncService(
+        memory_manager=memory,
+        bilibili_client=client,
+        soul_engine=_FakeSoulEngine(),
+        llm_work_allowed=lambda: False,
+    )
+
+    result = await service.sync_if_due()
+
+    assert result["reason"] == "llm_paused"
+    assert client.nav_calls == 0

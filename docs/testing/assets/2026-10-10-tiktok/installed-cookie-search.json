@@ -1,0 +1,10 @@
+{
+  "installed_cookie_sync": true,
+  "sync_source": "runtime-stream-request",
+  "authenticated": true,
+  "network_error": false,
+  "isolated_data": true,
+  "search_count": 3,
+  "search_status": "PASS",
+  "source_commit": "11ccce379a9bf48063e9de28fb6d4f388b063a13"
+}

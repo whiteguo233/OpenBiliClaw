@@ -249,7 +249,7 @@ class TestStreamAgentReply:
         )
         assert legacy[1:3] == legacy_history
         assert "时间标签仅供理解上下文" not in legacy[0]["content"]
-        assert "请使用苏格拉底式对话风格" in legacy[0]["content"]
+        assert "先回应当前需求；仅当用户主动要求探索时" in legacy[0]["content"]
 
     async def test_streams_loop_events_and_records_history(self) -> None:
         loop, llm = _loop(
@@ -377,10 +377,14 @@ class TestStreamAgentReply:
         assert "一句话只讲必要要点" in system
         assert "不用长串逗号、括号堆成伪短答" in system
         assert "除非用户要求，不展示内部置信度、权重等数据" in system
-        # Skill-specific interviews and write/approval rules remain authoritative.
+        assert "同一需求默认最多澄清一轮" in system
+        assert "连续提问最多两轮后先总结" in system
+        assert "仅选择访谈角色不代表每轮都要采访" in system
+        # Skills retain tools and write/approval rules, with bounded exploration.
         assert skill.system_prompt in system
         if skill_name == "taste-explorer":
-            assert "苏格拉底式的追问" in system
+            assert "完成标准是已有足够信息" in system
+            assert "温和而执着" not in system
         # Proportionality is inferred in the existing completion, without a
         # classifier call or a reduced budget that could truncate hard tasks.
         assert call["max_tokens"] == 4096

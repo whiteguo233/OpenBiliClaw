@@ -16,7 +16,7 @@ from .cheaperinference_provider import CheaperInferenceProvider
 from .claude_provider import ClaudeProvider
 from .dashscope_provider import DashScopeEmbeddingProvider
 from .gemini_provider import GeminiProvider, gemini_sdk_available
-from .ollama_provider import OllamaProvider
+from .ollama_provider import OllamaEmbeddingProvider, OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
 from .orcarouter_provider import OrcaRouterProvider
@@ -328,7 +328,7 @@ def build_embedding_service(
             if name in _EMBEDDING_CAPABLE_PROVIDERS and name not in fallback_order:
                 fallback_order.append(name)
 
-        chosen_provider: LLMProvider | None = None
+        chosen_provider: LLMProvider | OllamaEmbeddingProvider | None = None
         chosen_name = ""
         chosen_model = ""
         for candidate in fallback_order:
@@ -412,7 +412,16 @@ def build_embedding_service(
             cache_high_watermark=float(getattr(emb_cfg, "cache_high_watermark", 0.9) or 0.9),
             cache_low_watermark=float(getattr(emb_cfg, "cache_low_watermark", 0.7) or 0.7),
         )
-    except Exception:
+    except Exception as exc:
+        # Project rule 7: propagate the real cause. A bare ``return None``
+        # here is how issue #318 hid a packaging-level SDK failure behind a
+        # generic "embedding 服务未能构建" and a permanent init 409.
+        logger.warning(
+            "Embedding service could not be built (%s): %s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -421,7 +430,7 @@ def _build_dedicated_embedding_provider(
     emb_cfg: Any,
     config: Config,
     requested_name: str,
-) -> tuple[LLMProvider, str] | None:
+) -> tuple[LLMProvider | OllamaEmbeddingProvider, str] | None:
     """Construct a dedicated provider instance for embedding calls.
 
     Returns ``(provider, effective_model)`` or ``None`` if the candidate
@@ -520,11 +529,13 @@ def _build_dedicated_embedding_provider(
             base_url = "http://127.0.0.1:11434/v1"
         if not base_url.rstrip("/").endswith("/v1"):
             base_url = base_url.rstrip("/") + "/v1"
+        # Embedding-only provider: raw httpx to Ollama's native
+        # ``/api/embeddings``. It deliberately does NOT build the chat SDK
+        # client that OllamaProvider inherits (issue #318).
         return (
-            OllamaProvider(
-                api_key=api_key or "ollama",
-                model=effective_model,
+            OllamaEmbeddingProvider(
                 base_url=base_url,
+                model=effective_model,
             ),
             effective_model,
         )
@@ -660,7 +671,7 @@ def _embedding_endpoint(
     provider_name: str,
     emb_cfg: Any,
     config: Config,
-    provider: LLMProvider,
+    provider: LLMProvider | OllamaEmbeddingProvider,
 ) -> str:
     """Return the endpoint actually used by a dedicated embedding provider."""
     for attr in ("base_url", "_base_url"):

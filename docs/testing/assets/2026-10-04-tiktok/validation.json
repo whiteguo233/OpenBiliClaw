@@ -1,0 +1,49 @@
+{
+  "full_scan": {
+    "passed": 10029,
+    "failed": 5,
+    "skipped": 65,
+    "seconds": 2056.17,
+    "note": "Scan began before final main version merge and final fixes. Not a single green final-tree run."
+  },
+  "corrective_regression_batch": {
+    "passed": 178,
+    "failed": 0
+  },
+  "final_security_cli_notices_version_batch": {
+    "passed": 118,
+    "failed": 0
+  },
+  "focused_source_planner_inspiration_batch": {
+    "passed": 244,
+    "failed": 0
+  },
+  "extension": {
+    "passed": 1536,
+    "failed": 0,
+    "chrome_build_assets": true,
+    "firefox_build_assets": true,
+    "version": "0.3.226"
+  },
+  "ruff": "passed",
+  "mypy": {
+    "source_files": 313,
+    "passed": true
+  },
+  "config_show_exit": 0,
+  "ci_baseline": {
+    "head": "1c632c29fdaf0a797a7be9552225e8ca20e8b3c9",
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/37207105480",
+    "conclusion": "success",
+    "pytest_passed": 9970,
+    "pytest_skipped": 111,
+    "pytest_failed": 0,
+    "guided_init_passed": 39,
+    "windows": "success",
+    "firefox": "success"
+  },
+  "metadata_fix_regression": {
+    "passed": 157,
+    "failed": 0
+  }
+}

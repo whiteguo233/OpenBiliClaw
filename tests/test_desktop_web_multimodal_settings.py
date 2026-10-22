@@ -61,7 +61,7 @@ def test_desktop_web_advanced_panel_round_trips_evaluator_mode() -> None:
 def test_desktop_advanced_panel_owns_all_moved_controls_and_recommendation_fields() -> None:
     html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
     advanced = re.search(
-        r'<div id="settingsPanelAdvanced"[\s\S]*?</div>\s*\n\s*<div id="settingsPanelGeneral"',
+        r'<div id="settingsPanelAdvanced"[\s\S]*?</div>\s*\n\s*<div id="settingsPanelFish"',
         html,
     )
     assert advanced is not None
@@ -149,8 +149,17 @@ def test_desktop_settings_tabs_have_tabpanel_contract_and_advanced_registration(
     js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
     css = (ROOT / "src/openbiliclaw/web/desktop/assets/css/app.css").read_text(encoding="utf-8")
 
-    tab_names = ("Models", "Sources", "Scheduler", "Advanced", "General", "Frontend", "Logging")
-    assert len(re.findall(r'class="settings-tab(?:\s|")', html)) == 7
+    tab_names = (
+        "Models",
+        "Sources",
+        "Scheduler",
+        "Advanced",
+        "Fish",
+        "General",
+        "Frontend",
+        "Logging",
+    )
+    assert len(re.findall(r'class="settings-tab(?:\s|")', html)) == 8
     for name in tab_names:
         tab_start = html.index(f'id="settingsTab{name}"')
         tab_html = html[tab_start : html.index("</button>", tab_start) + len("</button>")]
@@ -169,8 +178,10 @@ def test_desktop_settings_tabs_have_tabpanel_contract_and_advanced_registration(
     assert "tab.tabIndex = isActive ? 0 : -1" in js
     assert 'tab.addEventListener("click"' in js
     assert ".settings-tab:focus-visible" in css
-    assert "grid-template-columns: repeat(7, minmax(0, 1fr))" in css
-    assert "grid-template-columns: repeat(7, minmax(92px, 1fr))" in css
+    # Columns size to their label so English tabs ("Advanced Features") stay
+    # on one line; the container scrolls horizontally instead of wrapping.
+    assert "grid-template-columns: repeat(8, minmax(max-content, 1fr))" in css
+    assert "grid-template-columns: repeat(8, minmax(92px, 1fr))" in css
     assert "overflow-x: auto" in css
 
 

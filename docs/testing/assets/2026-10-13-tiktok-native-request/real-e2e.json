@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-13",
+  "baseline": "8070c731",
+  "scope": "capability-increment",
+  "verdict": "incremental only",
+  "native_favorite": {
+    "authorized_video_id": "7433494591833247008",
+    "ui_attempt_count": 4,
+    "captured_final_post_count": 1,
+    "precondition": "exact authorized video; unselected bookmark before each UI attempt",
+    "interaction": "CDP native click; no API replay or unfavorite",
+    "request": {
+      "path": "/api/item/collect/",
+      "method": "POST",
+      "action": "1",
+      "itemId_matches_authorized_target": true,
+      "http_status": 200,
+      "status_code": 0,
+      "statusCode": 0,
+      "status_msg": "",
+      "duration_ms": 343
+    },
+    "notice_dismissed": true,
+    "wait_after_final_click_ms": 3000,
+    "immediate": "gold bookmark",
+    "actual_reload": "ready complete; bookmark white/unselected",
+    "verdict": "FAIL: native website mutation did not persist even after completed request"
+  },
+  "regression": {
+    "bug": "optimistic selected state released runner before native request completed",
+    "before": "focused regression FAIL: 0 waits instead of 4",
+    "after": "content plus runner hold reload until exact native request resource timing completes, then require fresh-document membership",
+    "gate": "same-origin /api/item/collect/, action=1, exact itemId, startTime after watcher, fetch/XHR responseEnd > 0",
+    "completion_is_not_success": true,
+    "no_observer": "no click; fail closed",
+    "no_completion": "bounded confirmation failure; never success"
+  },
+  "validation": {
+    "focused_extension": "61 passed",
+    "all_extension": "1814 passed after allowing loopback listener",
+    "backend_selected": "347 passed; 5 local-proxy tests blocked by sandbox listener, same 5 passed on retry",
+    "typecheck": "PASS",
+    "chrome_build_assets": "PASS",
+    "firefox_build_assets": "PASS",
+    "ruff": "PASS",
+    "mypy": "318 source files PASS"
+  },
+  "remaining": {
+    "history": "prior observed web UI has no history entry; not re-tested in this run",
+    "profile": "BLOCKED: no nonempty current-account signal accepted",
+    "periodic_incremental": "BLOCKED: no real nonempty account acceptance"
+  },
+  "cleanup": {
+    "original_diagnostic_page_reloaded": true,
+    "passive_probe_absent": true,
+    "owned_trace_tab_closed": true,
+    "browser_leases_released": true,
+    "raw_cookies_or_network_bodies_saved": false
+  },
+  "deployment": {
+    "installed_extension": "NOT_UPDATED in this run",
+    "source_and_builds": "PASS",
+    "full_source_e2e": "NOT_PASS"
+  }
+}

@@ -42,9 +42,12 @@ def test_source_incremental_docs_cover_configuration_and_eight_source_staging() 
         "RedditTaskQueue",
         "LinuxdoTaskQueue",
         "V2EXTaskQueue",
+        "InstagramTaskQueue",
         "WeiboTaskQueue",
     ):
         assert queue_name in storage_docs
+    assert "### 七来源任务结果 staging" not in storage_docs
+    assert "### 六来源任务结果 staging" not in storage_docs
     assert "### 五来源任务结果 staging" not in storage_docs
     assert "### 四来源任务结果 staging" not in storage_docs
 

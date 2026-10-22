@@ -254,6 +254,11 @@ class AccountSyncService:
         # and flag update so a paused tick cannot falsely announce that the
         # first history fetch is about to start.
         if self.llm_work_allowed is not None and not self.llm_work_allowed():
+            # The fetch stages stay paused (guided init owns the bootstrap
+            # path), but a persisted ``auth_expired`` must still be re-checked
+            # against the live cookie — otherwise a cookie fixed mid-pause
+            # leaves the stale banner up until the first tick after unpause.
+            await self._refresh_auth_state_while_paused()
             return {
                 "synced": False,
                 "new_event_count": 0,
@@ -1105,6 +1110,60 @@ class AccountSyncService:
             self.memory_manager.save_account_sync_state(state)
         except Exception:
             logger.debug("Failed to persist profile-analysis error", exc_info=True)
+
+    def clear_auth_expired_state(self) -> bool:
+        """Drop persisted ``auth_expired`` state once its cause is gone.
+
+        Called when a fresh bilibili cookie lands or a live re-check finds
+        the current cookie logged in again. The next completed tick
+        re-derives every issue from real fetch results, so clearing here
+        can only remove a *stale* banner, never a true one. Returns True
+        when persisted state changed.
+        """
+        state = self.memory_manager.load_account_sync_state()
+        issues = self._normalize_sync_issues(state.get("last_sync_issues", []))
+        kept = [issue for issue in issues if issue["kind"] != "auth_expired"]
+        changed = len(kept) != len(issues)
+        if str(state.get("last_sync_error_kind", "")) == "auth_expired":
+            state["last_sync_error"] = ""
+            state["last_sync_error_kind"] = ""
+            changed = True
+        if not changed:
+            return False
+        state["last_sync_issues"] = kept
+        self.memory_manager.save_account_sync_state(state)
+        logger.info("account_sync: cleared persisted auth_expired state (cookie usable again)")
+        return True
+
+    async def _refresh_auth_state_while_paused(self) -> None:
+        """Re-check a persisted ``auth_expired`` against the live nav endpoint.
+
+        Only the stale-banner case pays the network call: nothing is probed
+        while the persisted state carries no ``auth_expired``. A nav answer
+        of "logged in" clears the stale state; a definitive expiry, a
+        transport failure, or a client without a nav probe all leave it
+        untouched (no verdict is no evidence either way).
+        """
+        state = self.memory_manager.load_account_sync_state()
+        kind = str(state.get("last_sync_error_kind", ""))
+        issues = self._normalize_sync_issues(state.get("last_sync_issues", []))
+        if kind != "auth_expired" and all(issue["kind"] != "auth_expired" for issue in issues):
+            return
+        probe = getattr(self.bilibili_client, "get_nav_info", None)
+        if not callable(probe):
+            return
+        try:
+            nav = await probe()
+        except BilibiliAuthExpiredError:
+            return
+        except Exception:
+            logger.debug(
+                "account_sync: paused auth re-check could not reach bilibili",
+                exc_info=True,
+            )
+            return
+        if bool(getattr(nav, "is_login", False)):
+            self.clear_auth_expired_state()
 
     def get_runtime_status(self) -> dict[str, object]:
         """Expose lightweight account sync runtime fields."""

@@ -33,6 +33,7 @@ def broker() -> AsyncMock:
         ("twitter", "watch_later", "favorite", "X Bookmarks"),
         ("zhihu", "watch_later", "favorite", "知乎收藏"),
         ("reddit", "favorite", "favorite", "Reddit Saved"),
+        ("tiktok", "watch_later", "favorite", "TikTok Favorites"),
     ],
 )
 def test_extension_adapter_route_matrix(
@@ -62,9 +63,11 @@ def test_extension_adapter_factory_is_ordered_and_immutable(broker: AsyncMock) -
         "twitter",
         "zhihu",
         "reddit",
+        "tiktok",
     ]
     assert [adapter.capability.supports_named_collection for adapter in adapters] == [
         True,
+        False,
         False,
         False,
         False,
@@ -112,6 +115,12 @@ async def test_extension_adapter_rejects_cross_platform_item_before_enqueue(
         ("twitter", "x", "123", "https://x.com/example/status/123"),
         ("zhihu", "zhihu", "456", "https://www.zhihu.com/question/456"),
         ("reddit", "reddit", "t3_abc", "https://www.reddit.com/comments/abc/demo/"),
+        (
+            "tiktok",
+            "tiktok",
+            "7234567890123456789",
+            "https://www.tiktok.com/@creator/video/7234567890123456789",
+        ),
     ],
 )
 async def test_adapter_definition_slug_matches_broker_wake_slug(

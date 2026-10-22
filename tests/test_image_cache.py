@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -185,6 +186,17 @@ def test_is_allowed_image_url() -> None:
     assert is_allowed_image_url(BILI) is True
     assert is_allowed_image_url(XHS) is True
     assert is_allowed_image_url("https://lain.bgm.tv/pic/cover/l/demo.jpg") is True
+    # TikTok cover CDNs (all three regional suffixes).
+    assert (
+        is_allowed_image_url("https://p16-sign.tiktokcdn.com/tos-maliva-avt-0068/x~tpl.image")
+        is True
+    )
+    assert (
+        is_allowed_image_url("https://p16-sign-va.tiktokcdn-us.com/tos-useast5-avt-0068-tx/x")
+        is True
+    )
+    assert is_allowed_image_url("https://p16-sign.tiktokcdn-eu.com/tos-alisg-avt-0068/x") is True
+    assert is_allowed_image_url("https://eviltiktokcdn.com/a.jpg") is False  # boundary
     # content_cache.cover_url forms: protocol-relative and http normalize to https.
     assert is_allowed_image_url(BILI_PROTO_RELATIVE) is True
     assert is_allowed_image_url(BILI_HTTP) is True
@@ -263,6 +275,10 @@ class _FakeHTTPX:
 
 @pytest.fixture
 def fake_httpx(monkeypatch: pytest.MonkeyPatch) -> _FakeHTTPX:
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.image_cache.resolve_public_addresses",
+        AsyncMock(return_value=("1.1.1.1",)),
+    )
     fake = _FakeHTTPX()
     fake.install(monkeypatch)
     return fake
@@ -441,16 +457,13 @@ async def test_fetch_routes_cn_cdn_direct_and_overseas_by_network_mode(
     await fetch_cover_bytes(yt)
     await fetch_cover_bytes(bgm)
 
-    cn_kwargs = fake_httpx.client_kwargs[0]
-    assert cn_kwargs["trust_env"] is False  # xhscdn → direct under every mode
-    assert "proxy" not in cn_kwargs
-
-    for index in (1, 2):  # ytimg / lain.bgm.tv → [network] policy
-        kwargs = fake_httpx.client_kwargs[index]
-        for key, value in overseas_kwargs.items():
-            assert kwargs.get(key) == value
-        if "proxy" not in overseas_kwargs:
-            assert "proxy" not in kwargs
+    # Proxy mounts must not bypass the pinned transport. It selects routing
+    # per hop using the original CDN host, independently from this client flag.
+    assert all(kwargs["trust_env"] is False for kwargs in fake_httpx.client_kwargs)
+    transports = [kwargs["transport"] for kwargs in fake_httpx.client_kwargs]
+    assert transports[0].is_direct("sns-webpic-qc.xhscdn.com") is True
+    assert transports[1].is_direct("i.ytimg.com") is False
+    assert transports[2].is_direct("lain.bgm.tv") is False
 
 
 async def test_fetch_cover_bytes_rejects_non_whitelisted() -> None:

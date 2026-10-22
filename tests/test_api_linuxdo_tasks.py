@@ -87,7 +87,13 @@ def linuxdo_api(
 
     runtime_context.rebuild_from_config = _rebuild_from_config
     runtime_context.restart_background_tasks = _restart_background_tasks
-    return TestClient(app), database, memory, hub, cfg
+    return (
+        TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        database,
+        memory,
+        hub,
+        cfg,
+    )
 
 
 def test_linuxdo_discovery_task_records_result_without_profile_propagation_and_ignores_retry(

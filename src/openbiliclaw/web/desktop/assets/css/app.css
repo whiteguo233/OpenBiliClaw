@@ -304,13 +304,15 @@
     a { color: inherit; text-decoration: none; }
     .app-shell { min-height: 100vh; overflow-x: clip; display: flex; flex-direction: column; }
     .app-body { display: flex; flex: 1; min-height: 0; }
-    .topbar { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(280px, 560px) auto; align-items: center; gap: var(--space-4); padding: var(--space-4) clamp(var(--space-4), 3vw, var(--space-8)); background: color-mix(in oklab, var(--bg), transparent 6%); backdrop-filter: blur(18px); box-shadow: 0 -12px 12px 12px color-mix(in oklab, var(--accent), transparent 40%); }
+    .topbar { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 560px) auto; align-items: center; gap: var(--space-4); padding: var(--space-4) clamp(var(--space-4), 3vw, var(--space-8)); background: color-mix(in oklab, var(--bg), transparent 6%); backdrop-filter: blur(18px); box-shadow: 0 -12px 12px 12px color-mix(in oklab, var(--accent), transparent 40%); }
     .top-left { display: flex; align-items: center; gap: var(--space-4); min-width: 0; justify-self: start; }
     .brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-    .brand-copy { display: grid; gap: 3px; min-width: 0; }
+    /* English/Traditional subtitles are wider than the Chinese source; clip
+       with an ellipsis instead of letting the brand column push into search. */
+    .brand-copy { display: grid; gap: 3px; min-width: 0; overflow: hidden; }
     .brand-mark { width: 42px; height: 42px; display: block; border-radius: var(--radius-md); object-fit: cover; background: #fb7299; box-shadow: none; }
-    .brand-title { display: block; font-family: var(--font-display); font-size: var(--text-xl); line-height: 1; font-weight: 700; letter-spacing: -0.03em; white-space: nowrap; }
-    .brand-sub { display: block; color: var(--muted); font-size: var(--text-sm); line-height: 1.2; white-space: nowrap; }
+    .brand-title { display: block; font-family: var(--font-display); font-size: var(--text-xl); line-height: 1; font-weight: 700; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .brand-sub { display: block; color: var(--muted); font-size: var(--text-sm); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .search { width: min(100%, 560px); justify-self: center; display: grid; grid-template-columns: 1fr auto; align-items: center; border: 2px solid var(--border-soft); background: var(--surface); border-radius: var(--radius-pill); box-shadow: var(--elev-ring), 0 0 0 0px transparent; transition: box-shadow var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }
     .search:focus-within { border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 8px 3px color-mix(in oklab, var(--contrast-strong), transparent 35%); }
     .search input { width: 100%; border: 0; background: transparent; padding: 13px var(--space-5); color: var(--fg); }
@@ -1210,8 +1212,10 @@
     .chat-markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
     .chat-input { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); position: sticky; bottom: 0; background: var(--bg); padding-top: var(--space-3); }
     .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
-    .settings-tabs { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-1); overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
-    .settings-tab { min-height: 38px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--muted); font-weight: 750; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
+    /* English tab labels are wider than Chinese; let columns size to content
+       and scroll horizontally rather than wrapping to two lines. */
+    .settings-tabs { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: repeat(8, minmax(max-content, 1fr)); gap: var(--space-2); padding: var(--space-1); overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
+    .settings-tab { min-height: 38px; white-space: nowrap; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--muted); font-weight: 750; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
     .settings-tab:hover { background: var(--accent); color: var(--accent-on); box-shadow: 0 0 5px 1px color-mix(in oklab, var(--accent), transparent 40%); }
     .settings-tab:active { background: var(--accent-strong); color: var(--accent-on); transform: scale(0.97); box-shadow: 0 0 5px 1px color-mix(in oklab, var(--accent), transparent 40%); }
     .settings-tab.is-active { background: var(--accent); color: var(--accent-on); }
@@ -1223,6 +1227,14 @@
     .settings-advanced-section-head { display: grid; gap: 4px; }
     .settings-advanced-section-head h3 { margin: 0; color: var(--fg); }
     .settings-advanced-section .settings-note-inline { margin: 0; }
+    /* QR login: force a light plate so the black-on-transparent SVG stays
+       scannable in dark mode. */
+    .fish-qr-box { display: flex; justify-content: center; padding: var(--space-2); }
+    .fish-qr-box[hidden] { display: none; }
+    .fish-qr-box img { width: 180px; height: 180px; padding: 10px; border-radius: var(--radius-md); background: #fff; }
+    .fish-report { margin-top: var(--space-3); }
+    .fish-report summary { cursor: pointer; color: var(--muted); font-weight: 700; }
+    .fish-report pre { margin: var(--space-2) 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.6; }
     .settings-advanced-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
     .settings-advanced-toggle { display: flex; align-items: center; gap: var(--space-3); min-width: 0; min-height: 42px; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font-weight: 650; }
     .settings-advanced-toggle input { width: auto; min-width: 18px; margin: 0; accent-color: var(--accent); }
@@ -1425,6 +1437,7 @@
     .source-card-logo[data-source-logo="reddit"] { background: #ff4500; }
     .source-card-logo[data-source-logo="bangumi"] { background: #f09199; }
     .source-card-logo[data-source-logo="web"] { background: #2563eb; }
+    .source-card-logo[data-source-logo="instagram"] { background: #c13584; }
     .source-card-head { min-width: 0; display: grid; gap: 4px; }
     .source-card-name { color: var(--fg); font-weight: 750; line-height: 1.25; }
     .source-card .source-status-badges { justify-content: flex-start; }
@@ -1759,7 +1772,7 @@
       .drawer-head, .modal-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
       .drawer-head h2, .modal-head h2 { font-size: clamp(28px, 7vw, 40px); }
       .chat-input { grid-template-columns: minmax(0, 1fr) auto; }
-      .settings-tabs { grid-template-columns: repeat(7, minmax(92px, 1fr)); }
+      .settings-tabs { grid-template-columns: repeat(8, minmax(92px, 1fr)); }
       .content-page, .profile-page { max-width: 100%; }
       .content-page-head, .profile-page-head { align-items: start; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); }
       .chat-page { height: 100%; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr) auto; }

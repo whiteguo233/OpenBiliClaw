@@ -26,6 +26,7 @@ from openbiliclaw.sources.source_bootstrap import (
     enqueue_dy_bootstrap,
     enqueue_linuxdo_bootstrap,
     enqueue_reddit_bootstrap,
+    enqueue_tiktok_bootstrap,
     enqueue_v2ex_bootstrap,
     enqueue_xhs_bootstrap,
     enqueue_yt_bootstrap,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SOURCE_ORDER = ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "v2ex")
+SOURCE_ORDER = ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "v2ex", "tiktok")
 _ACTIVE_STATUSES = frozenset({"pending", "in_progress"})
 _TASK_SPECS: dict[str, tuple[str, str, Callable[..., BootstrapEnqueueResult]]] = {
     "xhs": ("xhs_tasks", "bootstrap_profile", enqueue_xhs_bootstrap),
@@ -48,6 +49,7 @@ _TASK_SPECS: dict[str, tuple[str, str, Callable[..., BootstrapEnqueueResult]]] =
     "reddit": ("reddit_tasks", "bootstrap_events", enqueue_reddit_bootstrap),
     "linuxdo": ("linuxdo_tasks", "bootstrap_events", enqueue_linuxdo_bootstrap),
     "v2ex": ("v2ex_tasks", "bootstrap_profile", enqueue_v2ex_bootstrap),
+    "tiktok": ("tiktok_tasks", "bootstrap_profile", enqueue_tiktok_bootstrap),
 }
 _SOURCE_CONFIG_ALIASES: dict[str, tuple[str, ...]] = {
     "xhs": ("xhs", "xiaohongshu"),
@@ -57,6 +59,7 @@ _SOURCE_CONFIG_ALIASES: dict[str, tuple[str, ...]] = {
     "reddit": ("reddit",),
     "linuxdo": ("linuxdo",),
     "v2ex": ("v2ex",),
+    "tiktok": ("tiktok",),
 }
 _SOURCE_CONFIG_NAMES: dict[str, str] = {
     "xhs": "xiaohongshu",
@@ -66,6 +69,7 @@ _SOURCE_CONFIG_NAMES: dict[str, str] = {
     "reddit": "reddit",
     "linuxdo": "linuxdo",
     "v2ex": "v2ex",
+    "tiktok": "tiktok",
 }
 _SOURCE_INTERVAL_FIELDS = {
     "xhs": "xhs_incremental_hours",
@@ -75,6 +79,7 @@ _SOURCE_INTERVAL_FIELDS = {
     "reddit": "reddit_incremental_hours",
     "linuxdo": "linuxdo_incremental_hours",
     "v2ex": "v2ex_incremental_hours",
+    "tiktok": "tiktok_incremental_hours",
 }
 
 

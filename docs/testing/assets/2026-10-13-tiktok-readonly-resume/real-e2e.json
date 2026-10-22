@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-13",
+  "baseline": "d0fbabc5",
+  "scope": "capability-increment validation",
+  "verdict": "blocked",
+  "installed_production_sha256": "206e517b18a5462c8ae8742812dab6c57304ccf8e5397f5e9ccb7632d6e0524d",
+  "backend": "normal create_app, loopback 8420, isolated config/data/SQLite, real model and network config unchanged",
+  "native_write_attempts_this_run": 0,
+  "browser_direct_control": "Chrome listed, tab query timed out; manual-click comparison unavailable",
+  "scope_timeline": [
+    {
+      "elapsed_seconds": 0.0,
+      "ready": "complete",
+      "access": "logged_out",
+      "viewerPresent": false,
+      "ownProfile": false,
+      "rootFound": false
+    },
+    {
+      "elapsed_seconds": 9.1,
+      "ready": "complete",
+      "access": "signed_in",
+      "viewerPresent": true,
+      "ownProfile": false,
+      "rootFound": false
+    },
+    {
+      "elapsed_seconds": 16.3,
+      "ready": "complete",
+      "access": "signed_in",
+      "viewerPresent": true,
+      "ownProfile": true,
+      "rootFound": false
+    },
+    {
+      "elapsed_seconds": 23.7,
+      "ready": "complete",
+      "access": "signed_in",
+      "viewerPresent": true,
+      "ownProfile": true,
+      "rootFound": true
+    }
+  ],
+  "read_only_cases": [
+    {
+      "build": "production initial read",
+      "error": "task_timeout",
+      "scope_counts": null,
+      "scope_statuses": {
+        "tt_collect": "failed"
+      },
+      "scope_complete": {
+        "tt_collect": false
+      }
+    },
+    {
+      "build": "temporary read-only shape probe; unchanged account implementation",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "build": "restored production final read",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      },
+      "authorized_item_present": false,
+      "task_status": "completed"
+    }
+  ],
+  "remaining": {
+    "persisted_native_favorite": "NOT_CONFIRMED; diagnostic and final production collect were empty/complete",
+    "profile_init_nonempty": "BLOCKED; no real nonempty account signals",
+    "periodic_incremental": "BLOCKED; no initialized real profile",
+    "history": "NOT_RUN this follow-up; preceding production history_entry_not_found remains unresolved"
+  },
+  "validation": {
+    "documentation_index": "5 passed",
+    "git_diff_check": "PASS"
+  },
+  "cleanup": {
+    "production_package_restored_and_digest_verified": true,
+    "temporary_instrumentation_absent": true,
+    "isolated_services_stopped": true,
+    "private_config_cookies_database_logs_and_diagnostics_removed": true,
+    "temporary_dependency_symlink_removed": true
+  }
+}

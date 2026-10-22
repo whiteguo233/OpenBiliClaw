@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "OpenBiliClaw",
-    "version": "0.3.225",
+    "version": "0.3.231",
     "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
     "permissions": [
         "activeTab",
@@ -16,6 +16,8 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
+        "https://*.instagram.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",
@@ -100,6 +102,15 @@
         },
         {
             "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "dist/content/tiktok.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
                 "*://*.youtube.com/*"
             ],
             "js": [
@@ -153,6 +164,25 @@
                 "dist/content/v2ex.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "dist/content/instagram.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "dist/main/instagram-response-tap.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
         },
         {
             "matches": [

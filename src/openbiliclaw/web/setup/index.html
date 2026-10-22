@@ -119,15 +119,44 @@
     @media (max-width: 480px) {
       .model-discovery-row { grid-template-columns: 1fr; }
       .model-discovery-row button { width: 100%; }
+    .setup-language { margin-left: auto; }
+    .setup-language select {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      padding: 4px 10px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
     }
   </style>
+  <script src="/shared/i18n.js"></script>
 </head>
   <body>
-    <!-- weibo is included in the shared guided-init roster; its bootstrap
-         readiness is read from prerequisites.source_capabilities. -->
+    <!-- weibo, instagram and tiktok are included in the shared guided-init
+         roster; bootstrap readiness is read from
+         prerequisites.source_capabilities. -->
   <div class="card">
     <div class="head">
       <div class="brand"><img class="mark" src="/m/icon-maskable-192.png" alt=""><span>OpenBiliClaw</span></div>
+      <label class="setup-language" for="setupLanguage">
+        <span class="sr-only">语言 / Language</span>
+        <select id="setupLanguage" aria-label="语言 / Language" data-i18n-skip>
+          <option value="zh-Hans">简体中文</option>
+          <option value="zh-Hant">繁體中文</option>
+          <option value="en">English</option>
+        </select>
+      </label>
       <div class="steps">
         <div class="dot active" data-dot="0"></div>
         <div class="dot" data-dot="1"></div>
@@ -279,6 +308,66 @@
   <script src="/shared/source-status.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
+
+    const SETUP_LOCALE_KEY = "openbiliclaw.locale";
+    let guardLocaleApplied = false;
+
+    function setupRuntime() {
+      return globalThis.OpenBiliClawI18n;
+    }
+
+    async function applySetupLocale(language, { persist = false } = {}) {
+      const runtime = setupRuntime();
+      const normalized = runtime ? runtime.normalizeLocale(language) : language || "zh-Hans";
+      try {
+        localStorage.setItem(SETUP_LOCALE_KEY, normalized);
+      } catch {}
+      const select = $("#setupLanguage");
+      if (select) select.value = normalized;
+      if (!runtime) return normalized;
+      try {
+        await runtime.setLocale(normalized);
+      } catch (error) {
+        console.warn("setup: locale switch failed", error);
+      }
+      if (persist) {
+        try {
+          await fetch("/api/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ language: normalized }),
+          });
+        } catch (error) {
+          console.warn("setup: could not persist language", error);
+        }
+      }
+      return normalized;
+    }
+
+    (function bootstrapSetupLocale() {
+      const runtime = setupRuntime();
+      if (!runtime) return;
+      let initial = "zh-Hans";
+      try {
+        initial = localStorage.getItem(SETUP_LOCALE_KEY) || document.documentElement.lang || "zh-Hans";
+      } catch {}
+      void runtime
+        .init({ locale: initial, basePath: "/i18n/ui/" })
+        .then(() => {
+          // Only mirror the cached locale into the picker. Re-applying it here
+          // can land after the /api/config response and silently overwrite the
+          // backend language (the picker then disagreed with the page).
+          if (guardLocaleApplied) return;
+          const select = $("#setupLanguage");
+          if (select && runtime.locale) select.value = runtime.locale;
+        })
+        .catch((error) => console.warn("setup: locale init failed", error));
+      document.addEventListener("change", (event) => {
+        if (event.target && event.target.id === "setupLanguage") {
+          void applySetupLocale(event.target.value, { persist: true });
+        }
+      });
+    })();
     async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -363,7 +452,7 @@
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
       invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
-      no_profile_signal_sources: "所选来源暂时没有可用的个人画像信号；请按该来源提示补充个人令牌、公开用户名，或先在对应网站登录并连接扩展（如 bgm.tv）。",
+      no_profile_signal_sources: "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
       linuxdo_bootstrap_not_ready: "Linux.do 公开发现无需登录；收藏、点赞和阅读记录初始化需要浏览器已登录 linux.do。",
       v2ex_bootstrap_not_ready: "V2EX 账号初始化尚未就绪。请在浏览器登录 v2ex.com，并保持 OpenBiliClaw 扩展已连接。",
       invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
@@ -383,6 +472,7 @@
       discovery_timeout: "画像已生成，但首轮内容池整理超时。",
       discovery_partial: "画像已生成，但首轮内容池本次未完成。",
       douyin_degraded: "抖音已采数据已用于画像，但至少一个账号范围的分页未完整完成。",
+      tiktok_degraded: "TikTok 已采数据已用于画像，但至少一个账号范围的分页未完整完成。",
       internal_error: "初始化过程中出错了，请稍后重试。",
       interrupted: "上次初始化被打断（后端重启），可重试。",
       cancelled: "初始化已取消。",
@@ -966,6 +1056,14 @@
       return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
     }
 
+    function initStartErrorText(details, fallback) {
+      // Admission is backend-owned; shared codes cannot name a specific source.
+      // setInitReason renders this bounded guidance as plain text.
+      const detail = typeof details?.detail === "string" ? details.detail.trim().slice(0, 2000) : "";
+      return detail || describeInitReason(details?.error || details?.reason)
+        || fallback || "初始化没能启动，请稍后重试。";
+    }
+
     function initStatusReasonText(status) {
       const reason = String(status?.reason || "");
       const detail = String(status?.detail || "").trim();
@@ -975,6 +1073,7 @@
         "discovery_timeout",
         "discovery_partial",
         "douyin_degraded",
+        "tiktok_degraded",
       ];
       if (detail && (detailFirst.includes(reason) || detail.startsWith("画像分析失败："))) {
         return detail;
@@ -1364,6 +1463,7 @@
           "discovery_timeout",
           "discovery_partial",
           "douyin_degraded",
+          "tiktok_degraded",
         ].includes(reason) ||
           detail.startsWith("画像分析失败："))
       ) return detail;
@@ -1861,7 +1961,7 @@
         }, 60000);
         startBody = await r.json().catch(() => ({}));
         if (!r.ok) {
-          throw new Error(startBody.detail || describeInitReason(startBody.error || startBody.reason) || `HTTP ${r.status}`);
+          throw new Error(initStartErrorText(startBody, `HTTP ${r.status}`));
         }
       } catch (e) {
         renderInitChecklist(status, selected);
@@ -1953,6 +2053,10 @@
         if (r.ok) {
           const data = await r.json();
           const currentConfig = configView(data);
+          if (currentConfig?.language) {
+            guardLocaleApplied = true;
+            void applySetupLocale(currentConfig.language);
+          }
           const llm = currentConfig?.llm || {};
           configLoaded = true;
           backendDegraded = currentConfig?.degraded === true;

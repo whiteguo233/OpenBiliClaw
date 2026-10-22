@@ -89,6 +89,18 @@ _PLATFORM_STYLE_MARKERS: dict[str, tuple[str, ...]] = {
         "breakdown",
         "interview",
     ),
+    "tiktok": (
+        "challenge",
+        "trend",
+        "satisfying",
+        "asmr",
+        "pov",
+        "howto",
+        "diy",
+        "hack",
+        "facts",
+        "transition",
+    ),
     "reddit": (
         "discussion",
         "tips",
@@ -119,7 +131,7 @@ _PLATFORM_STYLE_MARKERS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-_ENGLISH_SCRIPT_PLATFORMS = {"youtube", "reddit", "twitter", "x"}
+_ENGLISH_SCRIPT_PLATFORMS = {"youtube", "tiktok", "reddit", "twitter", "x"}
 
 
 class LensFamily(StrEnum):

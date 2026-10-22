@@ -52,6 +52,15 @@ _NATIVE_CASES = {
         ),
         NativeSaveRoute("favorite", "favorite", "Reddit Saved"),
     ),
+    "tiktok": (
+        SavedItemInput(
+            "tiktok",
+            "7234567890123456789",
+            "https://www.tiktok.com/@creator/video/7234567890123456789",
+            "video",
+        ),
+        NativeSaveRoute("favorite", "favorite", "TikTok Favorites"),
+    ),
 }
 
 
@@ -396,6 +405,7 @@ def test_cross_slug_native_legacy_uuid_collision_mutates_neither_row(
         ("reddit", "items"),
         ("zhihu", "items"),
         ("yt", "items"),
+        ("tiktok", "videos"),
     ],
 )
 def test_owned_native_result_validates_before_touching_legacy_collections(
@@ -444,7 +454,7 @@ def test_native_save_source_api_is_documented() -> None:
         "docs/modules/runtime.md": "extension_native_save_broker",
         "docs/modules/saved-sync.md": "global native ownership",
         "docs/modules/init.md": "legacy discovery/bootstrap queues",
-        "docs/modules/api-auth.md": "十个 state-changing GET `/next-task`",
+        "docs/modules/api-auth.md": "十一个 state-changing GET `/next-task`",
         "docs/architecture.md": "/api/sources/{xhs,dy,yt,x,zhihu,reddit}",
         "docs/spec.md": "native_save multiplex",
         "docs/architecture-overview.md": "八来源 source task multiplex",

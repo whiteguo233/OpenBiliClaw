@@ -8,8 +8,9 @@
 # 新建一个 provider_type = "ollama" 的实例，并把实例 ID 放入 default_chain。
 
 [general]
-# Language for Agent output (zh / en)
-language = "zh"
+# 界面 / CLI / 新生成内容的语言：zh-Hans（简体中文）、zh-Hant（繁體中文・台灣）、en（English）。
+# 旧值如 zh / en-US 仍可读取，运行时会规范化为上面的 id；未知值在保存配置时被拒绝。
+language = "zh-Hans"
 # Data directory (relative to project root)
 data_dir = "data"
 
@@ -25,6 +26,14 @@ port = 8420
 # 局域网/远程访问的可选密码门禁。本机（127.0.0.1 直连）默认始终免登录。
 [api.auth]
 # 是否开启密码登录门禁。
+# 安全警告：enabled = false 且 host 绑定 0.0.0.0（默认组合）时，历史记录、画像、
+# 推荐和点赞/评论/关注等写接口对同一网络中的任何人完全开放（零鉴权）。
+# B 站凭据接口（/api/bilibili/auth/import|export|session）与设置写/探测接口
+# （PUT /api/config、/api/config/probe-service、/api/config/discover-models）
+# 不受此开关影响：它们始终要求本机访问或已登录会话，远程调用一律 403
+#（issue #299、#300）。
+# 只要端口可被局域网或公网访问，强烈建议设为 true 并用
+# `openbiliclaw set-password` 设置密码。
 enabled = false
 # 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
 password_hash = ""
@@ -366,6 +375,40 @@ request_interval_seconds = 2
 # YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
 min_interval_minutes = 3
 
+# ── TikTok 专用配置（实验性）──
+# 主后端是 TikTok Web API（访客身份 + 请求签名，curl_cffi Chrome TLS 指纹），
+# 无需登录、不依赖浏览器扩展；yt-dlp 仅作兜底（创作者/话题标签列表）。
+# 发现面：推荐流（For You）+ 话题标签列表 + 创作者视频列表；配置登录 cookie
+# 后可尝试关键词搜索（需单独验证可用性，默认不启用）。未配置搜索时，关键词规划器产出
+# 的词会被映射为话题标签而不是搜索词。
+# enabled=false 时 pool_source_shares 中的 tiktok 配额会被丢弃（避免池子卡在低于目标）。
+# TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
+[sources.tiktok]
+enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
+# 后端选择："auto"（默认，Web API 优先、失败回退 yt-dlp）| "web"（仅 Web API）| "ytdlp"（仅 yt-dlp）。
+# Web API 后端走访客身份 + 请求签名（curl_cffi Chrome TLS 指纹），实测匿名可用：
+# 推荐流 / 创作者列表 / 话题标签列表；关键词搜索被上游 gate，需要登录 cookie。
+mode = "auto"
+# 可选登录 cookie 环境变量（优先级高于 data/tiktok_cookie.json）；不配置也能以访客身份运行，
+# 配置后挂载关键词搜索；会话有效不证明搜索可用或更高限额。切勿伪造 msToken。
+cookie_env = "OPENBILICLAW_TIKTOK_COOKIE"
+# Web API 请求携带的地区 / 时区参数，应匹配你的网络出口地区；被风控 gate（空响应）时首先检查这两项。
+region = "JP"
+tz_name = "Asia/Tokyo"
+# 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
+tags = []
+# 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
+creators = []
+daily_feed_budget = 3                    # 推荐流每日拉取上限（高曝光，建议压低）；0 = 不设每日上限
+daily_search_budget = 3                  # 关键词搜索每日上限；搜索需登录 Cookie（有账号风险，默认不启用）
+daily_tag_budget = 0                     # 0 = 不设每日上限
+daily_user_budget = 0                    # 0 = 不设每日上限
+request_interval_seconds = 2             # 每个 Web 请求的间隔，formal/inspiration 共用持久状态
+# TikTok producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
+min_interval_minutes = 3
+
 # ── X (Twitter) 专用配置 ──
 # 设为 false 后：后端不再生成 X 搜索/推荐流/账号订阅任务，
 # pool_source_shares 中的 twitter 配额会被丢弃（避免池子卡在低于目标）。
@@ -536,6 +579,23 @@ daily_creator_budget = 30
 request_interval_seconds = 3
 min_interval_minutes = 10
 
+# ── Instagram 公开发现 + 登录态初始化（只读）──
+# topic / creator 发现由浏览器执行可选登录的只读任务；初始化时可读取当前账号最近的
+# liked / saved / following。扩展只同步 sessionid 是否存在的布尔心跳，不上传 Cookie。
+# 首版个人信号为 init-only，不注册后台周期增量。
+[sources.instagram]
+enabled = false
+source_modes = ["topic", "creator"]
+daily_topic_budget = 60               # 每日实际保留的 topic 候选上限；0 = 不设上限
+daily_creator_budget = 30             # 每日实际保留的 creator 候选上限；0 = 不设上限
+request_interval_seconds = 3          # 扩展对上游分页请求的最小间隔（1..30 秒）
+min_interval_minutes = 10             # producer 两次有产出运行的最小间隔
+bootstrap_limit = 300                 # 每个个人 scope 最多读取 300 条
+recommendation_date_preset = "all"    # 与其它来源共用日期准入；默认不过滤
+recommendation_date_start = ""
+recommendation_date_end = ""
+recommendation_date_weight = 0.5
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -585,6 +645,7 @@ douyin_incremental_hours = 0
 # reddit_incremental_hours = 24
 # linuxdo_incremental_hours = 24
 # v2ex_incremental_hours = 24
+# tiktok_incremental_hours = 24
 # --- Runtime refresh tuning ---
 refresh_check_interval_seconds = 60      # Main loop poll interval; values <15 fallback
 # eval_min_batch_size = 15               # Coalesce trickle candidates into fuller eval batches; 1..90
@@ -646,6 +707,7 @@ bilibili = 5
 xiaohongshu = 1
 douyin = 1
 youtube = 1
+tiktok = 1
 twitter = 1
 zhihu = 1
 reddit = 1
@@ -655,6 +717,7 @@ linuxdo = 1
 v2ex = 1
 web = 1
 weibo = 1
+instagram = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──
 # 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词
@@ -698,6 +761,7 @@ inspiration_search_enabled = true
 # Exa 不可用/返回空时再用 You.com 兜底，最后是 Serply。远端 MCP 需要在本机
 # mcporter 配置里有 `exa` 和 / 或 `you` server；填写 exa_api_key / you_api_key /
 # serply_api_key 后则直连 HTTP API。
+# 可选加入 "parallel"：匿名 Parallel Search MCP grounding，无需 API Key；默认链不变。
 inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
 # Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
 # 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter

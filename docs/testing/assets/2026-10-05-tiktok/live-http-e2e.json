@@ -1,0 +1,95 @@
+{
+  "port": 18477,
+  "cookie_present": false,
+  "degraded": false,
+  "profile": "synthetic science interest",
+  "scheduler_enabled": false,
+  "pipeline": {
+    "discovered": 4,
+    "reason": "ok",
+    "enqueued": 4,
+    "evaluated": 4,
+    "cached": 3,
+    "rejected": 1
+  },
+  "copy_ready": 3,
+  "candidate_statuses": {
+    "cached": 3,
+    "rejected_low_score": 1
+  },
+  "manual_run_controls": {
+    "scheduler": false,
+    "producer_enabled_once": true,
+    "inline_real_evaluation": true,
+    "eval_min_batch": 1,
+    "profile": "synthetic science interest"
+  },
+  "keywords": [
+    [
+      "science",
+      "used"
+    ]
+  ],
+  "llm_calls": [
+    [
+      "openai_compatible",
+      "sensenova-6.8-flash-lite",
+      "discovery.evaluate_batch",
+      1
+    ],
+    [
+      "openai_compatible",
+      "deepseek-v4-flash",
+      "recommendation.write_expression",
+      1
+    ]
+  ],
+  "actual_http_items": 3,
+  "desktop_config_save": {
+    "mode": "auto",
+    "region": "US",
+    "daily_feed_budget": 4,
+    "applied": true
+  },
+  "upstream_account_mutations": 0,
+  "desktop_enabled_toggle": {
+    "off_observed": true,
+    "on_observed": true
+  },
+  "local_saves": {
+    "favorite": [
+      {
+        "source_platform": "tiktok",
+        "content_id": "7627535512651238686",
+        "sync_status": "unsupported"
+      }
+    ],
+    "watch_later": [
+      {
+        "source_platform": "tiktok",
+        "content_id": "7565560736500485398",
+        "sync_status": "unsupported"
+      }
+    ]
+  },
+  "invalid_credential_live": {
+    "http": 200,
+    "accepted": false,
+    "persisted": false,
+    "checked": "live_probe",
+    "error_code": "cookie_invalid",
+    "message": "TikTok 拒绝了该 Cookie（passport beat: error）。",
+    "unverified_reason": "",
+    "credential_file_exists": false
+  },
+  "validation": {
+    "pytest_affected": 199,
+    "ruff": "pass",
+    "mypy": "313 source files, pass"
+  },
+  "browser": "Playwright Chrome, separate unauthenticated profile; real HTTP backend, no response fixtures",
+  "installed_extension": "not verified: connected-browser inventory unavailable",
+  "mobile_source_credentials": "no platform credential management entry in current mobile UI",
+  "base_commit": "0a65d30c0172a54db260a3fb3dc3bd363328c772",
+  "code_change": "forward keywords and keyword_ids to default discovery phase 2"
+}

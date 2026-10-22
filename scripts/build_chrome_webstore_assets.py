@@ -14,12 +14,17 @@ PLATFORMS = (
     "B站",
     "小红书",
     "抖音",
+    "TikTok",
     "YouTube",
     "X",
     "知乎",
     "Reddit",
+    "Linux.do",
+    "微博",
     "Bangumi",
     "V2EX",
+    "GitHub",
+    "Instagram",
 )
 
 BG = "#11151E"
@@ -95,7 +100,7 @@ def _brand(image: Image.Image, draw: ImageDraw.ImageDraw, index: int) -> None:
         icon = icon_source.convert("RGBA").resize((44, 44), Image.Resampling.LANCZOS)
     image.alpha_composite(icon, (58, 38))
     draw.text((116, 42), "OpenBiliClaw", font=FONT_BRAND, fill=INK)
-    draw.text((116, 68), "本地优先的九来源内容 Agent", font=FONT_SMALL, fill=MUTED)
+    draw.text((116, 68), "本地优先的十四来源内容 Agent", font=FONT_SMALL, fill=MUTED)
     draw.text((1168, 48), f"0{index} / 03", font=FONT_KICKER, fill=MUTED)
 
 
@@ -136,6 +141,20 @@ def _chip(
     draw.rounded_rectangle((x, y, x + width, y + 42), radius=21, fill=fill, outline=outline)
     draw.text((x + 17, y + 9), label, font=FONT_CHIP, fill=color)
     return x + width
+
+
+def _draw_platform_chips(draw: ImageDraw.ImageDraw, *, x: int, y: int) -> int:
+    start_x = x
+    row_y = y
+    colors = ((PINK_SOFT, PINK), (BLUE_SOFT, BLUE), (GREEN_SOFT, GREEN))
+    for index, label in enumerate(PLATFORMS):
+        width = _text_width(draw, label, FONT_CHIP) + 34
+        if x > start_x and x + width > 1220:
+            x = start_x
+            row_y += 50
+        fill, color = colors[index % len(colors)]
+        x = _chip(draw, x, row_y, label, fill=fill, color=color, outline=fill) + 10
+    return row_y + 42
 
 
 def _rounded_screenshot(
@@ -188,18 +207,12 @@ def _base(index: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
 
 def build_local_platform_slide(source_dir: Path) -> Image.Image:
     image, draw = _base(1)
-    draw.text((60, 112), "NINE SOURCES · ONE PRIVATE AGENT", font=FONT_KICKER, fill=ORANGE)
+    draw.text((60, 112), "14 SOURCES · ONE PRIVATE AGENT", font=FONT_KICKER, fill=ORANGE)
     draw.text((60, 144), "本地私有的", font=font(46, bold=True), fill=INK)
-    draw.text((60, 202), "九来源内容 Agent", font=font(46, bold=True), fill=INK)
+    draw.text((60, 202), "十四来源内容 Agent", font=font(46, bold=True), fill=INK)
     draw.text((60, 268), "把分散的信息流，变成真正懂你", font=FONT_SUBTITLE, fill=MUTED)
     draw.text((60, 302), "且可反馈的跨平台推荐。", font=FONT_SUBTITLE, fill=MUTED)
-    x, y = 60, 354
-    colors = ((PINK_SOFT, PINK), (BLUE_SOFT, BLUE), (GREEN_SOFT, GREEN))
-    for index, label in enumerate(PLATFORMS):
-        fill, color = colors[index % len(colors)]
-        x = _chip(draw, x, y, label, fill=fill, color=color, outline=fill) + 10
-        if index == 3:
-            x, y = 60, y + 54
+    _draw_platform_chips(draw, x=60, y=354)
     draw.rounded_rectangle((60, 468, 475, 688), radius=26, fill="#FFFFFFD9", outline=LINE)
     draw.text((84, 496), "你的数据，不是我们的数据", font=font(23, bold=True), fill=INK)
     for offset, text in enumerate(
@@ -246,7 +259,7 @@ def build_recommendation_slide(source_dir: Path) -> Image.Image:
     _headline(
         draw,
         "Cross-platform recommendations",
-        "一次浏览，汇合九个来源",
+        "一次浏览，汇合十四个来源",
         "统一筛选、解释推荐理由，再用喜欢、不感兴趣和对话继续校准。",
         x=60,
         y=112,
@@ -322,15 +335,8 @@ def build_settings_slide(source_dir: Path) -> Image.Image:
     return image.convert("RGB")
 
 
-def _platform_row(draw: ImageDraw.ImageDraw, *, x: int, y: int) -> None:
-    colors = (
-        ("#41243A", "#FF8CB0"),
-        ("#1E3854", "#7BB7FF"),
-        ("#163F35", "#5AD6AD"),
-    )
-    for index, label in enumerate(PLATFORMS):
-        fill, color = colors[index % len(colors)]
-        x = _chip(draw, x, y, label, fill=fill, color=color, outline=fill) + 10
+def _platform_row(draw: ImageDraw.ImageDraw, *, x: int, y: int) -> int:
+    return _draw_platform_chips(draw, x=x, y=y)
 
 
 def _status_legend(draw: ImageDraw.ImageDraw, *, x: int, y: int) -> None:
@@ -349,14 +355,15 @@ def _status_legend(draw: ImageDraw.ImageDraw, *, x: int, y: int) -> None:
 
 def build_hero_slide(source_dir: Path) -> Image.Image:
     image, draw = _base(1)
-    draw.text((60, 112), "九来源内容推荐，", font=font(48, bold=True), fill=INK)
+    draw.text((60, 112), "十四来源内容推荐，", font=font(48, bold=True), fill=INK)
     draw.text((60, 170), "数据默认留在本机", font=font(48, bold=True), fill=INK)
     draw.text((62, 234), "有头图、有理由，也能继续反馈调教。", font=FONT_SUBTITLE, fill=MUTED)
-    _platform_row(draw, x=60, y=272)
+    chips_bottom = _platform_row(draw, x=60, y=272)
+    screenshot_top = chips_bottom + 12
     _rounded_screenshot(
         image,
         source_dir / "desktop-recommend.png",
-        (58, 334, 1222, 746),
+        (58, screenshot_top, 1222, 746),
         centering=(0.61, 0.28),
         radius=24,
     )

@@ -316,7 +316,7 @@ test("native save content runtime evicts the oldest completed outcome after 256 
   }
 });
 
-test("native save docs identify all six executors and current Zhihu target semantics", () => {
+test("native save docs identify seven executors and current Zhihu target semantics", () => {
   const runtime = readFileSync(resolve("../docs/modules/runtime.md"), "utf8");
   const changelog = readFileSync(resolve("../docs/changelog.md"), "utf8");
   const architecture = readFileSync(resolve("../docs/architecture.md"), "utf8");
@@ -338,10 +338,10 @@ test("native save docs identify all six executors and current Zhihu target seman
   assert.match(runtime, /createXiaohongshuBrowserEnvironment/);
   assert.match(runtime, /createDouyinBrowserEnvironment/);
   assert.match(runtime, /6\/6 executor 已接/);
-  assert.match(extensionModule, /6\/6 executor.*(?:已接入|真实账号验证)/);
-  assert.match(extensionModule, /Reddit \/ X \/ YouTube \/ 小红书 \/ 抖音 \/ 知乎六个 executor 均已接入并完成 fixture/);
+  assert.match(extensionModule, /7\/7 executor.*(?:已接入|真实账号验证)/);
+  assert.match(extensionModule, /Reddit \/ X \/ YouTube \/ 小红书 \/ 抖音 \/ 知乎 \/ TikTok 七个 executor 均已接入并完成 fixture/);
   assert.doesNotMatch(extensionModule, /其它平台账号写入 adapter 仍属后续计划/);
-  assert.match(savedSyncModule, /6\/6 executor.*(?:已接入|真实账号验证)/);
+  assert.match(savedSyncModule, /7\/7 executor.*(?:已接入|真实账号验证)/);
   assert.match(savedSyncModule, /知乎.*知乎收藏.*(?:不再|不).*命名/s);
   assert.doesNotMatch(savedSyncModule, /扩展 executor 尚未实现/);
 });

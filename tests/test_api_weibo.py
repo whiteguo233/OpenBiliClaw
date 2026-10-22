@@ -261,7 +261,9 @@ def test_weibo_config_api_get_put_and_disk_reload_round_trip_every_field(
         "scheduler": {"pool_source_shares": {"weibo": 7}},
     }
     with TestClient(
-        create_app(memory_manager=object(), database=object(), soul_engine=object())
+        create_app(memory_manager=object(), database=object(), soul_engine=object()),
+        client=("127.0.0.1", 5000),
+        base_url="http://127.0.0.1:8420",
     ) as client:
         initial = client.get("/api/config").json()
         response = client.put("/api/config", json=payload)
@@ -321,7 +323,9 @@ def test_weibo_config_api_rejects_invalid_modes(
     monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
     database = Database(tmp_path / "weibo-invalid-modes.db")
     database.initialize()
-    with TestClient(create_app(database=database)) as client:
+    with TestClient(
+        create_app(database=database), client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+    ) as client:
         cases = [
             ({"source_modes": "search"}, "微博 source_modes 必须是数组"),
             ({"source_modes": []}, "微博 source_modes 包含不支持的值"),
@@ -346,7 +350,9 @@ def test_weibo_config_api_rejects_invalid_numbers(
     monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
     database = Database(tmp_path / "weibo-invalid-numbers.db")
     database.initialize()
-    with TestClient(create_app(database=database)) as client:
+    with TestClient(
+        create_app(database=database), client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+    ) as client:
         for field in (
             "daily_search_budget",
             "daily_hot_budget",

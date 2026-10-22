@@ -1,0 +1,8 @@
+{
+  "platform": "tiktok",
+  "action": "favorite",
+  "content_id": "7433494591833247008",
+  "expected_target": "TikTok Favorites",
+  "task_status": "failed",
+  "error_code": "native_confirmation_not_observed"
+}

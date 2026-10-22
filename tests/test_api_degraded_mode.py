@@ -126,7 +126,7 @@ def test_degraded_config_put_recovers_runtime_in_process_without_restart(
     _save_project_config(monkeypatch, tmp_path, _invalid_config(tmp_path))
     app = create_app()
 
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420") as client:
         assert client.get("/api/recommendations").status_code == 503
 
         response = client.put(
@@ -181,7 +181,7 @@ def test_degraded_config_put_keeps_guard_and_rolls_back_if_in_process_rebuild_fa
         fail_rebuild,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420") as client:
         response = client.put(
             "/api/config",
             json={"llm": {"openai": {"api_key": "sk-new-valid-key"}}},
@@ -224,7 +224,7 @@ def test_degraded_config_put_keeps_recovered_runtime_if_background_restart_fails
         fail_background_restart,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420") as client:
         response = client.put(
             "/api/config",
             json={
@@ -427,7 +427,7 @@ def test_degraded_mode_allows_draft_llm_recovery_probes_and_model_discovery(
             "routes": {},
         }
     }
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     # The degraded context still owns the shared gate needed by a real draft
     # probe; it intentionally does not construct any business LLM service.
@@ -565,7 +565,9 @@ def test_in_process_degraded_recovery_stays_normal_after_later_restart(
 ) -> None:
     _clear_llm_env(monkeypatch)
     _save_project_config(monkeypatch, tmp_path, _invalid_config(tmp_path))
-    with TestClient(create_app()) as degraded_client:
+    with TestClient(
+        create_app(), client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+    ) as degraded_client:
         response = degraded_client.put(
             "/api/config",
             json={

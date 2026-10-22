@@ -105,9 +105,10 @@
 | 显式聊天笔记 | ✅ | agent_notes 命名空间支持检索、带旧值校验的写/删；文件锁内原子发布，普通系统重建保留笔记，旧快照不能复活已删项；有界引用用于后续 Agent chat |
 | 对话学习状态 | ✅ | `dialogue` 事件 + `insight_candidates.json`，支撑聊天信号的受控学习 |
 | 持续刷新状态 | ✅ | `discovery_runtime.json` 记录候选池刷新、通知游标、最近处理事件位置、正向/负向 probe 冷却、probe distance 历史和短期探索 buffer |
+| 首轮内容池恢复凭据 | ✅ | `init_discovery_resolution.json` 仅保存一个已恢复 init run_id；与调度状态分文件避免旧快照覆盖。文件锁内重查当前 init owner 和真实供给，恢复后消费/重启不复活旧故障，不修改原始 init 结果。 |
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
 | 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、已见 ID 集合、签名、最近错误，以及最多 8 个去重后的 `{stage,kind}` 结构化同步问题 |
-| 多源 bootstrap 去重与周期状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博已进入事件路径的 bootstrap identity key，每源按响应顺序保留最新 5,000 个；V2EX key 带后端 resolved username 前缀，微博与 Linux.do 另存账号 key。`source_incremental` 只调度前七个扩展任务来源（不含微博），保存 round-robin cursor、逐源最后真实创建时间和当前 active task。所有写入经 `update_source_bootstrap_state()` 的文件锁 + 原子 replace，避免并发 task-result / scheduler 丢更新 |
+| 多源 bootstrap 去重与周期状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博 / Instagram已进入事件路径的 bootstrap identity key，每源按响应顺序保留最新 5,000 个；V2EX key 带后端 resolved username 前缀，微博与 Linux.do 另存账号 key，Instagram 按不可逆 current-account key 隔离且只支持 init/on-demand。`source_incremental` 只调度前七个扩展任务来源（不含微博与 Instagram），保存 round-robin cursor、逐源最后真实创建时间和当前 active task。所有写入经 `update_source_bootstrap_state()` 的文件锁 + 原子 replace，避免并发 task-result / scheduler 丢更新 |
 | 用户画像覆盖层 | ✅ | `profile_overrides.json` 存用户对画像的手动编辑（文本/标量固定 + 列表/兴趣树增删）；`load/save_profile_overrides` 读写，`sync_profile_files` 渲染人类可读镜像前叠加覆盖层，确保编辑在画像重建后仍反映在 `soul_profile.md/.json` |
 | 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊、兴趣猜测内聊和避雷探针内聊的 pending/completed/failed 状态 |
 | JSON 状态原子读写 | ✅ | `memory/json_state.py` 提供共享同一进程内锁/跨进程文件锁的 `read_json_state()` 与 `update_json_state()`，写侧再以 `os.replace` 发布（Windows 下对瞬时 `PermissionError` 带随机抖动的指数退避重试）；`discovery_runtime.json` 的 probe 反馈历史、冷却 map、短期探索 buffer 等运行态通过 mutator 更新并合并旧快照，避免安装包常驻进程/后台任务并发保存时丢掉用户点击反馈。对话锚在 LLM 返回后的 ref+generation 二次校验使用锁内读，因此不会观察到写到一半的代次。 |
@@ -119,6 +120,8 @@ GitHub 的公开 starred 初始化不经过扩展任务或 `source_bootstrap_sta
 ## 公开 API
 
 ### MemoryManager
+
+`load_resolved_init_discovery_run()` 读取唯一恢复 run ID；`record_resolved_init_discovery_run(run_id)` 在原子 JSON 文件锁内验证当前失败 init 与实际可用供给，成功返回 `True`。重复已确认 run 不重写，旧 owner 不覆盖较新 run。由 runtime-status 初次确认供给时调用，是明确有界的本地 reconciliation，而非上游请求或新推荐写入。
 
 ```python
 from openbiliclaw.memory.manager import MemoryManager
@@ -436,7 +439,7 @@ data/memory/
 |------|------|-----------|
 | `feedback_state.json` | 记录反馈处理游标、v1 rollout provenance 与 owner-v2 cutover fence，避免升级重放和稳态重复分析 | SoulEngine |
 | `account_sync_state.json` | 历史/收藏/关注的增量同步游标、同秒历史 bvid 集合、收藏 bvid 集合、关注 mid 集合、签名，以及有界的分阶段错误诊断 | AccountSyncService |
-| `source_bootstrap_state.json` | 八个扩展账号来源（XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博）的有界已传播 identity key，以及七个周期回拉来源（不含微博）的 cursor / attempt / active-task 状态；GitHub 不使用此文件 | FastAPI source task endpoints / SourceIncrementalSync |
+| `source_bootstrap_state.json` | 九个扩展账号来源（XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博 / Instagram）的有界已传播 identity key，以及七个周期回拉来源（不含微博与 Instagram）的 cursor / attempt / active-task 状态；GitHub 不使用此文件 | FastAPI source task endpoints / SourceIncrementalSync |
 | `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题、近期 probe domain / axis / distance 历史、显式 probe feedback 历史、短期探索 buffer | RefreshController / OpenClaw / FastAPI |
 | `avoidance_state.json` | 不喜欢领域探针的 active/cooldown 列表和生命周期状态 | AvoidanceSpeculator / FastAPI |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
@@ -500,7 +503,7 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 12. **候选池运行状态分层**：`discovery_runtime.json` 只负责刷新与通知游标，不与 `feedback_state.json`、`insight_candidates.json` 或画像数据混存
 13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
 14. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标、已见 ID 集合、稳定签名与有界的 `{stage,kind}` 错误清单，既避免每轮全量重灌事件层和同秒历史游标导致重复画像分析，也让 runtime-status 无需解析原始异常文本即可定位失败环节
-15. **多源 bootstrap 去重与调度状态独立持久化**：`source_bootstrap_state.json` 保存 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博已见 bootstrap identity key（每源最新 5,000）及七个周期来源的 `source_incremental` 调度投影，不塞进画像 JSON；V2EX key 额外按 resolved username 隔离。`update_source_bootstrap_state(mutator)` 在同一进程锁、跨进程文件锁内读改写并以 `os.replace` 发布。task-result 保留首份 canonical 原始结果，durable ingress 成功后再按响应顺序写 seen-key，失败时不翻 terminal，可由租约重领修复；V2EX 收藏撤回作为 `feedback/retraction` 弱证据进入同一事件层，折价历史 positive 而不删除事实。GitHub starred init 直接生成 `favorite` 事件，不占用这份扩展任务状态，也不声明增量调度。
+15. **多源 bootstrap 去重与调度状态独立持久化**：`source_bootstrap_state.json` 保存 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博 / Instagram已见 bootstrap identity key（每源最新 5,000）及七个周期来源的 `source_incremental` 调度投影，不塞进画像 JSON；V2EX key 额外按 resolved username 隔离，Instagram 按不可逆 current-account key 隔离且不登记周期调度。`update_source_bootstrap_state(mutator)` 在同一进程锁、跨进程文件锁内读改写并以 `os.replace` 发布。task-result 保留首份 canonical 原始结果，durable ingress 成功后再按响应顺序写 seen-key，失败时不翻 terminal，可由租约重领修复；V2EX 收藏撤回作为 `feedback/retraction` 弱证据进入同一事件层，折价历史 positive 而不删除事实。GitHub starred init 直接生成 `favorite` 事件，不占用这份扩展任务状态，也不声明增量调度。
 
 ### 显式聊天笔记与自动记忆
 

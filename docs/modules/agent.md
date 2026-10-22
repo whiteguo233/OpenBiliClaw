@@ -30,6 +30,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 在无工具配置下逐 token 输出（工具回合保持一次性最终回复）；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
 | M3 扩展工具集（含 Web probe 共 18 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
 | 公开网页与聊天笔记 | ✅ | search_web/read_webpage 按需联网并保留来源；agent_notes 可检索、CAS 更正和审批删除，后续聊天按权限注入有界引用 |
+| 对话收敛 | ✅ | 所有角色共享需求优先规则；口味探寻师只在用户主动探索时访谈，信息够用即总结，连续两轮提问后先收敛。详见下文 Skill 体系 |
 | 会话聊天风格 | ✅ | 六种表达模板独立于功能角色；会话持久化、发送时冻结，三端选择与示例预览，工具权限保持 |
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
@@ -300,12 +301,14 @@ source=builtin|custom）与 `SkillCatalog`（`get` / `default` /
 `agent_tool_registry.subset(skill.tools)` + `suggest_skill` 元工具；system
 prompt = 按当前请求调整深度的共享聊天人设 ⊕ skill 人设 ⊕ 其他 skill 清单
 （`_layer_skill_system_prompt()`，dialogue.py）⊕ **Agent 工作纪律**
-（`_AGENT_LOOP_GROUND_RULES`，所有 skill 共享的三条硬约束：① 工具纪律——
+（`_AGENT_LOOP_GROUND_RULES`，所有 skill 共享的工作约束：① 工具纪律——
 已有对话足以回答时无需为补充背景查询画像或记忆，仅查必要数据并复用本轮结果；
 需要查询或修改数据必须实际发起 tool_call，严禁在正文描述/编造工具调用与结果，没调
 工具就不得声称查过/改过；② 记忆归属——记忆/画像/历史来自跨会话共享底座，
 无明确依据不得断言行事发生在本对话；③ 会话边界——「本对话/第一回合」指
-当前会话，上下文窗口只是当前会话近期）。会话中切换就是下一回合带
+当前会话，上下文窗口只是当前会话近期；④ 外部资料仅作引用；⑤ 审批卡表示待批准，
+不能冒称执行成功；⑥ 回复完成——重申共享收敛规则，结果后直接结束，不追加偏好问题
+或「要不要我……」式邀请）。会话中切换就是下一回合带
 新的 `skill` 值；**agent 建议切换**走 `suggest_skill` 元工具
 （`agent/tools/skill_tools.py`）：模型输出工具调用（`skill` + `reason`），
 前端把该 `tool_call` 事件渲染成切换卡片，用户确认后以下一回合的 `skill`
@@ -314,9 +317,11 @@ prompt = 按当前请求调整深度的共享聊天人设 ⊕ skill 人设 ⊕ �
 共享聊天人设由 `build_socratic_dialogue_prompt(..., socratic=False)` 提供：简单问题
 直接答清楚，寒暄/致谢一句结束，简单事实给结果；尊重用户指定长度，每句只保留必要要点，
 不把长串逗号/括号当作简答。摘要默认不输出内部置信度/权重，但保留影响结论的不确定性；
-复杂任务充分分析并执行必要步骤。澄清只针对影响
-正确性/执行的缺口或当前访谈角色的探索需求，不给每个角色叠加无条件的苏格拉底追问。
-`taste-explorer` 自身的访谈职责不变。此调整在原有模型调用中生效，没有关键词路由
+复杂任务充分分析并执行必要步骤。所有角色遵循共享对话收敛规则（见 [LLM 公开 API](llm.md#公开-api)）：
+明确需求直接满足，模糊但能做先给结果；普通聊天同一需求默认最多澄清一轮。
+`taste-explorer` 仅在用户主动要求探索或同意访谈时提问，信息够用即总结，连续两轮后
+先给结论并自然结束，不附带新问题；仅切换角色不触发强制访谈。
+此调整在原有模型调用中生效，没有关键词路由
 或额外分类调用，不降低工具、步数、输出 token 或实例 reasoning 预算。
 
 ### 服务层入口
@@ -527,6 +532,7 @@ recipe，并引导到支持确认卡的新版聊一聊或设置页，防止从�
 Exa 结果解析器与 `[network]` 出站路由，不依赖本机 mcporter 或新增密钥配置。公开端点有上游限流，依据 [Exa 官方 MCP 文档](https://exa.ai/docs/get-started/exa-mcp)。
 仅发送模型为本次请求给出的 query；没有后台自动附加画像、历史或笔记的逻辑。
 上游限流、协议错误、超时与真正空结果分别报告，不隐式串联多家服务拉长等待。
+HTTP 客户端和流式响应共用一个异步上下文，按响应、客户端的逆序关闭，外层总时限继续覆盖完整请求。
 
 `read_webpage` 只读取公开 HTTP(S) 的 HTML/纯文本；不会执行页面 JavaScript、
 携带登录 Cookie、访问私网或读取本地文件。每次重定向重新校验地址，连接固定
