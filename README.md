@@ -445,7 +445,7 @@ OpenBiliClaw 不保存你的平台密码，也不替你绕过登录。需登录�
 | **GitHub** | 无需登录；可选填公开用户名读取公开 starred repositories，PAT 只用于提额和 `/user` 身份核验 | 未填身份时仍可匿名 search / ranked / latest discovery，但不能把 GitHub 作为唯一画像初始化来源；不读取浏览器 Cookie |
 | **TikTok（正式可用）** | 公开发现无需登录；关键词搜索需已登录浏览器插件同步凭据 | 默认关闭；非空账号画像及站内收藏尚未完整验收 |
 | **Instagram** | 显式启用来源；插件默认包含站点访问权限，个人初始化需在同一浏览器登录 | 匿名公开页可用性受站点限制；未登录不能导入本人点赞/收藏/关注；需要可访问海外站点的浏览器网络 |
-| **自定义网站 / Web** | 在聊一聊提供网址和内容意图；需要登录时进入后端接管页手动登录并继续试跑，成功后审批启用 | 桌面、插件 popup、移动 Web 均可单独管理名称、份额、间隔与启停；按执行环境使用 HTTP / Playwright，旧公开 recipe 兼容保留；不保证任意网站成功 |
+| **自定义网站与 RSS / Web** | 在聊一聊提供网站或 RSS/Atom/JSON Feed 网址和内容意图；需要登录时进入后端接管页手动登录并继续试跑，成功后审批启用 | 桌面、插件 popup、移动 Web 均可单独管理名称、份额、间隔与启停；按执行环境使用 HTTP / Playwright，旧公开 recipe 兼容保留；不保证任意网站成功 |
 
 小红书、抖音、YouTube、知乎和 Linux.do 走 Chrome 插件任务链路，Reddit 日常 discovery 默认走随后端安装的 rdt-cli、初始化信号仍走插件，X 的 discovery 走服务端 cookie 重放；GitHub 则始终由后端官方 REST client 只读公开 repository，不进入插件任务。Linux.do 上游请求全部在真实站点 tab 内以同源 GET 执行，`_t` 只作登录布尔，Cookie 值和原始响应不会上传。Reddit/X、YouTube、小红书、抖音与知乎原生保存 executor 已 6/6 接入并通过 fixture 测试；2026-07-14 的真实账号回归中，六平台 favorite 与 watch-later/fallback 均得到 `synced/already_synced`。当前知乎收藏页已使用全局 `收藏 / 已收藏` 切换，目标文案为 `知乎收藏`；已收藏初始态和二次验证都严格只读，扩展不会重复点击保存。Linux.do 与 GitHub 不提供任何站内写回。`[sources.browser].cdp_url` 只服务历史 `web_extract` 浏览器实验；旧版公开 Web recipe 使用匿名有界 HTTP，不使用 CDP，也不会在失败时隐式回退到浏览器；动态网站另走经试跑和确认的 HTTP / Playwright workflow。
 
@@ -675,7 +675,7 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 远程 Android / iOS App：`App（内嵌 tsnet）→ 用户 tailnet → 电脑端 Go tsnet helper → 127.0.0.1:<有效 server port> → FastAPI`；入网控制流为 `本机设置页 → PUT /api/config（凭据只写）→ 私有单次暂存 → stdin → helper`。有效端口通常为 `[api].port`，也跟随启动参数 / 桌面 `OPENBILICLAW_PORT` 覆盖；入口默认关闭，电脑无需系统 Tailscale，无 Funnel/Serve，节点身份和暂存凭据都不进入迁移包。
 
-动态网站：`聊一聊草稿 / 试跑 → 审批启用 → 独立 source_id / 份额 / 间隔 → 同站多个版本化 workflow → HTTP / Playwright → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
+动态网站与 RSS / Atom / JSON Feed：`聊一聊草稿 / 试跑 → 审批启用 → 独立 source_id / 份额 / 间隔 → 同站多个版本化 workflow → HTTP / Playwright → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
 
 旧版 `probe_web_source/create_source` 与公开 Feed/Sitemap/listing recipe 继续使用匿名 HTTP；其不支持登录和 JavaScript 的限制只属于兼容路径。Ego 仅保留可选执行器边界，当前不可用，宿主 bridge 未接入。
 
@@ -723,11 +723,11 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 | **V2EX** | 搜索 · Node · Tab · 热门 · 最新 | 官方匿名 API / JSON Feed；PAT 可选增强 API 2.0，Topic 为无封面文字卡 |
 | **GitHub** | starred repositories 初始化 · 搜索 · 排名 · 最新 | 官方 REST API；匿名可用、PAT 可选，强制只读公开 repository，无封面文字卡 |
 | **Instagram** | topic / creator 发现 · 点赞 / 收藏 / 关注初始化 | v0.3.227 起提供、默认关闭；同一浏览器登录后有界导入本人信号，Cookie 不出浏览器；推荐卡收藏仅本地保存。[实测范围](docs/platform-source-acceptance.instagram.md) |
-| **自定义网站 / Web** | 聊天描述目标 · 试跑样例 · 人工登录接管 · 审批启用 · 定期发现 | 每站独立份额，同站可有多个版本化 HTTP / Playwright workflow；复用普通候选评估与推荐池，旧 Feed/Sitemap/listing recipe 继续兼容（[边界](docs/modules/web.md)） |
+| **自定义网站与 RSS / Web** | 聊天描述目标 · 试跑样例 · 人工登录接管 · 审批启用 · 定期发现 | 每站独立份额，同站可有多个版本化 HTTP / Playwright workflow；复用普通候选评估与推荐池，旧 Feed/Sitemap/listing recipe 继续兼容（[边界](docs/modules/web.md)） |
 
-在「聊一聊」中提供网址与想看的内容，`prepare_discovery_source/trial_discovery_source` 建立持久草稿并试跑；`activate_discovery_source/manage_discovery_source` 通过确认卡后才启用或修改。需要登录时在独立接管页操作，不向聊天或设置粘贴密码、Cookie。桌面、popup、移动 Web 的来源卡可直接保存用户修改、启停、重新登录和查看运行；每站份额与内置平台平级，不再从旧 Web 份额二次分摊。
+在「聊一聊」中提供网站或 RSS/Atom/JSON Feed 网址与想看的内容，`prepare_discovery_source/trial_discovery_source` 建立持久草稿并试跑；`activate_discovery_source/manage_discovery_source` 通过确认卡后才启用或修改。需要登录时在独立接管页操作，不向聊天或设置粘贴密码、Cookie。桌面、popup、移动 Web 的来源卡可直接保存用户修改、启停、重新登录和查看运行；每站份额与内置平台平级，不再从旧 Web 份额二次分摊。
 
-HTTP / Playwright 能力受运行环境、网站登录和页面结构约束。内容发现严格限定原站；页面中观察到的公共静态资源 origin 可单独放行，跨站登录 origin 则须用户在接管页明确选择，仅在人工登录期间允许，不扩大内容发现范围。不能承诺任意网站成功。Ego 当前报告不可用，宿主 bridge 未接入。自动化与隔离页面测试不等于所有平台或网站的真实验收，详见[动态网站验收记录](docs/platform-source-acceptance.dynamic-web.md)。
+HTTP / Playwright 能力受运行环境、网站登录和页面结构约束。网页发现限定批准范围；订阅请求域与文章链接域分别确认，Feed 不自动抓取链接的文章页；页面中观察到的公共静态资源 origin 可单独放行，跨站登录 origin 则须用户在接管页明确选择，仅在人工登录期间允许，不扩大内容发现范围。不能承诺任意网站成功。Ego 当前报告不可用，宿主 bridge 未接入。自动化与隔离页面测试不等于所有平台或网站的真实验收，详见[动态网站验收记录](docs/platform-source-acceptance.dynamic-web.md)。
 
 发现之后的统一流程：
 

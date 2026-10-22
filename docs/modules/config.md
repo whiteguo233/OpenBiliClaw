@@ -656,8 +656,11 @@ daemon，保留当前 v2 文件和自动备份，再由操作者显式把导出�
 ### `[sources.<name>]` 发布日期偏好
 
 所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `tiktok` / `twitter` / `zhihu` /
-`reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo`）都支持以下四个字段，默认
+`reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo` / `instagram` / `web`）都支持以下四个字段，默认
 `"all"` = 不按发布日期过滤：
+
+`web` 的四个字段经 TOML 与配置 API 往返，统一作用于旧 Web recipe 与动态网站/Feed 的候选准入；
+本轮自定义来源卡片只管理份额和频率，未添加每个动态实例的日期编辑器。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -730,16 +733,22 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 ### 动态网站来源策略（数据库）
 
+网站、RSS、Atom、JSON Feed 均由聊一聊建立并试跑，确认启用后在三端设置的“自定义来源”
+管理名称、推荐比例（1–20）、间隔（5–10080 分钟）、启停与归档。类型从已固化流程推导，
+无需用户选择 HTTP 或浏览器。保存某一来源或刷新列表保留其他卡片未保存的字段；
+主动关闭/离开设置不保存这些临时编辑。关闭自动调度后，显式“换一批”仍可补充启用来源，
+但会尊重失败/限流冷却；配置策略不影响已有浏览器会话引用。
+
 聊天中确认的新网站以 `custom_<uuid>` 注册在应用数据库，不向 `[sources]` 增加任意 TOML 平台键。每个来源独立拥有 `target_share`（1–20，默认 1）、`interval_minutes`（5–10080，默认 30）和启停状态；同一网站可以有多个流程，也可拆成不同来源共享一个适用登录引用。名称、比例、周期与开关可直接修改；入口、目标和账号变化走新试跑/确认。
 
-配置读取策略 `effective_pool_source_shares(config, database=...)` 合并这些实例和内置平台份额；动态来源不聚合到旧 `[sources.web]` 的 `web` 份额，未知 custom ID 也不能通过手写 scheduler keys 预留配额。归档来源从列表与调度中移除，历史内容保留。浏览器凭据由执行宿主的 session profile 保存；注册表只保存不透明引用。执行器参数见下面的 `[sources.browser]`。
+配置读取策略 `effective_pool_source_shares(config, database=...)` 合并这些实例和内置平台份额；动态来源不聚合到旧 `[sources.web]` 的 `web` 份额，未知 custom ID 也不能通过手写 scheduler keys 预留配额。归档来源从列表与调度中移除，历史内容保留。浏览器凭据由执行宿主的 session profile 保存；注册表只保存不透明引用。动态浏览器流程由后端管理独立 profile，不使用下面历史实验的 CDP 设置。
 
 ### `[sources.browser]`
 
 历史 `web_extract` / 自定义网页实验使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
 
-> 当前正式通用 Web 来源不读取本段：canonical Web 只运行匿名、recipe-bounded 的
-> `feed / sitemap / listing` HTTP lane，不使用 CDP、Playwright、登录 Cookie 或 JavaScript。
+> 动态网站与旧匿名 Web recipe 都不读取本段。动态流程使用独立管理的 Playwright 会话；
+> 旧 `feed / sitemap / listing` recipe 保持匿名 HTTP，不使用 CDP、登录 Cookie 或 JavaScript。
 > 小红书和抖音稳定链路也走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。
 
 | 键 | 类型 | 默认值 | 说明 |

@@ -1,5 +1,7 @@
 # 动态 Web Discover 来源验收
 
+续建进度与最新结果见[2026-10-22 网站与 RSS 完成验收](testing/2026-10-22-dynamic-sources-completion.md)。下文为历史验收，不能代替续建后的结果。
+
 日期：2026-10-02 至 2026-10-03。范围：`capability-increment`，发现能力与登录接管；不包括账号历史导入、互动事件或站内发布/收藏。契约：[dynamic-web](platform-source-contract.dynamic-web.toml)。兼容的公开 HTTP recipe 仍遵守 [web](platform-source-contract.web.toml)。
 
 本轮已验证真实网站的自然语言浏览器建源、持久化后无模型重复执行，以及真实完整服务中的聊天审批、定时发现、真实模型评估和重启保留。此前独立 Feed 推荐与反馈证据仍单列。仍非全范围完成声明：Ego Lite 执行桥接未接入，真实账号及目标安装环境不能以本机 fixture 代替。完整服务的操作与隔离说明见[同日复验](testing/2026-10-03-dynamic-source-live-e2e.md)。

@@ -122,6 +122,8 @@ def test_put_config_persists_bounded_public_web_transport_settings(monkeypatch, 
                     "max_response_bytes": 1_500_000,
                     "max_redirects": 3,
                     "lease_seconds": 600,
+                    "recommendation_date_preset": "last_7_days",
+                    "recommendation_date_weight": 1.0,
                 }
             }
         },
@@ -134,6 +136,22 @@ def test_put_config_persists_bounded_public_web_transport_settings(monkeypatch, 
     assert saved.max_response_bytes == 1_500_000
     assert saved.max_redirects == 3
     assert saved.lease_seconds == 600
+    assert saved.recommendation_date_preset == "last_7_days"
+    assert saved.recommendation_date_weight == 1.0
+    exposed = client.get("/api/config").json()["sources"]["web"]
+    assert exposed["recommendation_date_preset"] == "last_7_days"
+    assert exposed["recommendation_date_weight"] == 1.0
+
+
+def test_put_config_rejects_invalid_web_date_preferences(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+    before = config_path.read_bytes()
+    response = client.put(
+        "/api/config", json={"sources": {"web": {"recommendation_date_preset": "invalid"}}}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "invalid_web_recommendation_date"
+    assert config_path.read_bytes() == before
 
 
 def test_put_config_rejects_unbounded_public_web_transport_settings(monkeypatch, tmp_path) -> None:

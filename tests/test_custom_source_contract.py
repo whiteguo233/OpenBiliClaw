@@ -438,7 +438,7 @@ async def test_custom_producer_keyword_provenance(database):
 
 
 @pytest.mark.parametrize("failure", ["exhausted", "lease_busy", "login_required", "queue_full"])
-async def test_custom_producer_keyword_failures_preserve_retry(database, failure):
+async def test_custom_producer_keyword_failures_preserve_retry(database, failure, monkeypatch):
     browser_result = (
         BrowserWorkflowResult(status="login_required", scope_complete=False)
         if failure == "login_required"
@@ -477,7 +477,9 @@ async def test_custom_producer_keyword_failures_preserve_retry(database, failure
         coordinator.requeue_transient.assert_not_called()
     elif failure == "lease_busy":
         executor.run.assert_not_awaited()
-        coordinator.rollback.assert_called_once_with(coordinator.keywords["explore"])
+        assert result["reason"] == "in_flight"
+        coordinator.claim.assert_not_called()
+        coordinator.rollback.assert_not_called()
         coordinator.requeue_transient.assert_not_called()
     else:
         assert result["reason"] == ("degraded" if failure == "queue_full" else "login_required")
@@ -485,6 +487,12 @@ async def test_custom_producer_keyword_failures_preserve_retry(database, failure
         coordinator.rollback.assert_not_called()
         if failure == "queue_full":
             sink.return_value = 1
+            assert (await producer.produce_if_due(force=True))["reason"] == "backoff"
+            current = service.store.get_workflow(workflow["workflow_id"])
+            monkeypatch.setattr(
+                "openbiliclaw.sources.workflow_store.time",
+                SimpleNamespace(time=lambda: current["next_run_at"] + 1),
+            )
             assert (await producer.produce_if_due(force=True))["enqueued"] == 1
             assert (
                 database.conn.execute("SELECT COUNT(*) FROM custom_workflow_seen").fetchone()[0]

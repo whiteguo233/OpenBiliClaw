@@ -758,6 +758,9 @@ class DiscoveryCandidatePipeline:
             # first-pool wave to the daemon's minimum coalescing batch size.
             batch_size = min(requested, batch_size)
         claim_limit = self._effective_eval_claim_limit(batch_size)
+        if flush:
+            # An explicit caller budgets the whole wave, not each daemon worker.
+            claim_limit = min(batch_size, claim_limit)
         if batch_size <= 0:
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         if self._pool_full():

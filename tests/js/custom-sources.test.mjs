@@ -56,6 +56,7 @@ function setup(handler = async () => ({}), initialExecutors = []) {
     },
   });
   return { api: context.OpenBiliClawCustomSources, root, calls, opened, changes, manager,
+    setRows(value) { rows = value; },
     rejectReads() { rejectRead = true; },
     timers,
     setExecutors(value) { executors = value; },
@@ -65,6 +66,77 @@ function setup(handler = async () => ({}), initialExecutors = []) {
   };
 }
 async function settle() { for (let i = 0; i < 4; i++) await new Promise(setImmediate); }
+
+test("saving one source keeps another source's unsaved edits while showing the saved server values", async () => {
+  const second = { ...source, source_id: "second", name: "Second" };
+  const h = setup(async (_path, options, setRows) => {
+    const saved = { ...source, ...JSON.parse(options.body), name: "Saved name" };
+    setRows([saved, second]);
+    return { source: saved };
+  });
+  h.setRows([source, second]);
+  await h.manager.load();
+  h.inputs()[0].value = "submitted name";
+  h.inputs()[3].value = "Unsaved second";
+  h.inputs()[4].value = "11";
+  h.inputs()[5].value = "90";
+  h.button("保存来源设置").handlers.click();
+  await settle();
+  assert.deepEqual(h.inputs().map((input) => input.value), ["Saved name", "4", "30", "Unsaved second", "11", "90"]);
+});
+
+test("refresh, pause, added sources and archive preserve edits on surviving cards", async () => {
+  const second = { ...source, source_id: "second", name: "Second" };
+  let rows = [source, second];
+  const h = setup(async (_path, options, setRows) => {
+    if (options.method === "PATCH") rows = [{ ...rows[0], ...JSON.parse(options.body) }, ...rows.slice(1)];
+    if (options.method === "DELETE") rows = rows.slice(1);
+    setRows(rows); return {};
+  });
+  h.setRows(rows); await h.manager.load();
+  h.inputs()[0].value = "Unsaved first";
+  h.inputs()[4].value = "12";
+  h.button("停用").handlers.click(); await settle();
+  assert.equal(h.inputs()[0].value, "Unsaved first");
+  assert.equal(h.inputs()[4].value, "12");
+  rows.push({ ...source, source_id: "third", name: "New source" });
+  h.setRows(rows); await h.manager.load();
+  assert.equal(h.inputs()[4].value, "12");
+  assert.equal(h.inputs()[6].value, "New source");
+  h.button("归档").handlers.click(); await settle();
+  assert.deepEqual(h.inputs().map((input) => input.value), ["Second", "12", "30", "New source", "4", "30"]);
+  h.rejectReads(); await h.manager.load();
+  assert.equal(h.inputs()[1].value, "12");
+});
+
+test("refresh during a pending save keeps the card disabled and prevents duplicate writes", async () => {
+  let finish;
+  const h = setup(() => new Promise((resolve) => { finish = resolve; }));
+  await h.manager.load();
+  h.inputs()[0].value = "Pending name";
+  h.button("保存来源设置").handlers.click();
+  await h.manager.load();
+  assert.equal(h.button("保存来源设置").disabled, true);
+  h.button("保存来源设置").handlers.click();
+  assert.equal(h.calls.filter((call) => call.options.method === "PATCH").length, 1);
+  h.setRows([{ ...source, name: "Pending name" }]);
+  finish({ source: { ...source, name: "Pending name" } }); await settle();
+  assert.equal(h.inputs()[0].value, "Pending name");
+  assert.equal(h.button("保存来源设置").disabled, false);
+});
+
+test("failed writes remain visible and editable after a concurrent list refresh", async () => {
+  let fail;
+  const h = setup(() => new Promise((_resolve, reject) => { fail = reject; }));
+  await h.manager.load();
+  h.inputs()[0].value = "Keep this edit";
+  h.button("保存来源设置").handlers.click();
+  await h.manager.load();
+  fail(new Error("保存失败，请重试")); await settle();
+  assert.match(h.root.textContent, /保存失败，请重试/);
+  assert.equal(h.inputs()[0].value, "Keep this edit");
+  assert.equal(h.button("保存来源设置").disabled, false);
+});
 
 test("one source edit persists independent share and cadence without changing content platform or config", async () => {
   const h = setup(async (_path, options, setRows) => {
@@ -123,6 +195,21 @@ test("list renders untrusted names as text and source weights stay separate", as
   assert.equal(h.api.sourceName({ source_name: "Research", source_platform: "web" }), "Research");
 });
 
+test("source manager offers website and feed links through chat and renders friendly discovery kinds", async () => {
+  const h = setup();
+  h.setRows([{ ...source, workflows: [
+    { kind: "feed", executor: "http" }, { kind: "sitemap", executor: "http" },
+    { kind: "listing", executor: "http" }, { kind: "browser", executor: "playwright" },
+    { executor: "http" }, { executor: "playwright" },
+  ] }]);
+  await h.manager.load();
+  assert.ok(h.button("去聊一聊添加来源"));
+  assert.match(h.root.textContent, /网址或 RSS、Atom、JSON Feed 订阅链接/);
+  for (const label of ["订阅源", "站点地图", "网页列表", "浏览器网页", "网页或订阅"]) assert.ok(h.root.textContent.includes(label));
+  const workflows = descendants(h.root).find((node) => node.tagName === "details");
+  assert.doesNotMatch(workflows.textContent, /http|playwright/);
+});
+
 test("public HTTP workflows do not offer browser re-login", async () => {
   const h = setup(async (_path, _options, setRows) => {
     setRows([{ ...source, workflows: [{ executor: "http", intent: "公开订阅", status: "ready" }] }]);
@@ -160,7 +247,7 @@ test("archive and pause are different source operations; runs remain read-only",
   h.button("停用").handlers.click(); await settle();
   assert.ok(h.button("启用"));
   h.button("归档").handlers.click(); await settle();
-  assert.match(h.root.textContent, /还没有自定义网站/);
+  assert.match(h.root.textContent, /还没有自定义来源/);
   assert.ok(h.calls.some((call) => call.options.method === "DELETE"));
 });
 

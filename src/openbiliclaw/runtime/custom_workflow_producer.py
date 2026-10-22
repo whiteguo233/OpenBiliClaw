@@ -27,7 +27,7 @@ class CustomWorkflowProducer:
     service: Any = None
 
     async def produce_if_due(
-        self, *, limit: int | None = None, force: bool = False
+        self, *, limit: int | None = None, force: bool = False, defer_evaluation: bool = False
     ) -> dict[str, Any]:
         service = self.service or WorkflowService(
             self.database,
@@ -41,8 +41,9 @@ class CustomWorkflowProducer:
             "discovered": 0,
             "enqueued": 0,
             "reason": "throttled",
+            "workflow_results": {},
         }
-        if not source or not source["enabled"]:
+        if not source or not source["enabled"] or source.get("archived"):
             payload["reason"] = "disabled"
             return payload
         remaining = min(50, max(1, int(limit or 20)))
@@ -50,6 +51,11 @@ class CustomWorkflowProducer:
         for workflow in service.store.list_workflows(self.source_id):
             if remaining <= 0:
                 break
+            workflow_id = workflow["workflow_id"]
+            unavailable = service.store.unavailable_reason(workflow_id, force=force)
+            if unavailable:
+                payload["workflow_results"][workflow_id] = unavailable
+                continue
             claimed: list[Any] = []
             query = ""
             if workflow["query_mode"] == "interest":
@@ -64,7 +70,7 @@ class CustomWorkflowProducer:
                             keyword_kind="regular" if kind == "explore" else "explore",
                         )
                 if not claimed:
-                    payload["reason"] = "keyword_unavailable"
+                    payload["workflow_results"][workflow_id] = "keyword_unavailable"
                     continue
                 query = claimed[0].keyword
             parameters = service.parameters(workflow, query)
@@ -77,6 +83,9 @@ class CustomWorkflowProducer:
             if run is None:
                 for keyword in claimed:
                     coordinator.rollback(keyword)
+                payload["workflow_results"][workflow_id] = (
+                    service.store.unavailable_reason(workflow_id, force=force) or "in_flight"
+                )
                 continue
             payload["ran"] = True
             try:
@@ -141,6 +150,7 @@ class CustomWorkflowProducer:
             payload["enqueued"] += outcome["enqueued_count"]
             remaining -= outcome["enqueued_count"]
             payload["reason"] = outcome["status"]
+            payload["workflow_results"][workflow_id] = outcome["status"]
             if claimed:
                 if outcome["status"] in {"ok", "empty", "not_modified"}:
                     coordinator.mark_used(claimed)
@@ -153,7 +163,20 @@ class CustomWorkflowProducer:
                 and self.llm_service is not None
             ):
                 await self._repair(service, workflow)
-        if payload["enqueued"] and not self.candidate_evaluation_owned_by_coordinator:
+        reasons = list(payload["workflow_results"].values())
+        payload["reason"] = next(
+            (
+                reason
+                for reason in reasons
+                if reason not in {"ok", "empty", "not_modified", "throttled"}
+            ),
+            payload["reason"] if payload["ran"] else (reasons[0] if reasons else "not_configured"),
+        )
+        if (
+            payload["enqueued"]
+            and not self.candidate_evaluation_owned_by_coordinator
+            and not defer_evaluation
+        ):
             drain = getattr(self.candidate_pipeline, "drain_pending", None)
             get_profile = getattr(self.soul_engine, "get_profile", None)
             if callable(drain) and callable(get_profile):
@@ -199,7 +222,7 @@ class CustomWorkflowProducer:
                 draft[key] = current[key]
         draft = service.store.save_draft(draft)
         try:
-            repaired = await service.author_browser(draft)
+            repaired = await service.author_browser(draft, background=True)
             if repaired.get("status") == "ready":
                 source = service.sources.get_source(self.source_id)
                 # A repair cannot silently change account, dynamic query policy,

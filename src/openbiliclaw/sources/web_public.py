@@ -1377,11 +1377,60 @@ def _discovered_web_item(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class WebFeedPage:
+    """Feed candidates and reference-only scope diagnostics; never network authority."""
+
+    items: tuple[DiscoveredContent, ...]
+    content_origins: tuple[str, ...]
+    unapproved_content_origins: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class _FeedReferenceScope:
+    origins: list[str]
+    observe: bool = False
+    unapproved: list[str] = field(default_factory=list)
+
+    def resolve(self, raw_url: str, base_url: str) -> str | None:
+        # Deferred import avoids the recipe/compiler dependency cycle. Reuse
+        # its strict public-host checks even though these URLs are only links.
+        from openbiliclaw.sources.web_recipe import _normalize_public_url
+
+        try:
+            url = canonicalize_web_url(
+                _normalize_public_url(
+                    urljoin(base_url, raw_url), field="feed item URL", allow_dedicated=True
+                )
+            )
+        except (ValueError, WebFetchError):
+            return None
+        parts = urlsplit(url)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        if origin not in self.origins:
+            if self.observe and len(self.origins) < 8:
+                self.origins.append(origin)
+            else:
+                if origin not in self.unapproved and len(self.unapproved) < 8:
+                    self.unapproved.append(origin)
+                return None
+        return url
+
+
+def _feed_title(title: object, description: object) -> str:
+    """Use actual entry text for titleless posts, without generating new claims."""
+    title_text = _plain_text(title, limit=300)
+    if title_text:
+        return title_text
+    excerpt = _plain_text(description, limit=121)
+    return excerpt[:120].rstrip() + "…" if len(excerpt) > 120 else excerpt
+
+
 def _parse_xml_feed(
     document: bytes | str,
     *,
     base_url: str,
-    allowed_origins: Collection[str],
+    scope: _FeedReferenceScope,
     limit: int,
 ) -> list[DiscoveredContent]:
     root = _safe_xml_root(document, expected_roots={"feed", "rdf", "rss"})
@@ -1392,19 +1441,18 @@ def _parse_xml_feed(
         if _local_name(str(entry.tag)) not in {"entry", "item"}:
             continue
         source_row_count += 1
+        if source_row_count > WEB_MAX_FEED_ENTRIES:
+            break
         raw_url = _feed_link(entry)
         if not raw_url.strip():
             continue
-        try:
-            content_url = canonicalize_web_url(
-                urljoin(base_url, raw_url), allowed_origins=allowed_origins
-            )
-        except WebFetchError:
-            continue
-        title = _first_child_text(entry, "title")
-        if not title or content_url in seen_urls:
+        content_url = scope.resolve(raw_url, base_url)
+        if content_url is None or len(items) >= limit:
             continue
         description = _first_child_text(entry, "content", "encoded", "summary", "description")
+        title = _feed_title(_first_child_text(entry, "title"), description)
+        if not title or content_url in seen_urls:
+            continue
         published_value = _first_child_text(entry, "published", "pubdate", "updated")
         items.append(
             _discovered_web_item(
@@ -1417,11 +1465,7 @@ def _parse_xml_feed(
             )
         )
         seen_urls.add(content_url)
-        if len(items) >= limit:
-            break
-        if len(seen_urls) >= WEB_MAX_FEED_ENTRIES:
-            break
-    if source_row_count and not items:
+    if source_row_count and not items and not scope.unapproved:
         raise WebParseError(
             "schema_changed",
             "Web feed contained entries but none were usable within the recipe scope",
@@ -1447,7 +1491,7 @@ def _parse_json_feed(
     document: bytes | str,
     *,
     base_url: str,
-    allowed_origins: Collection[str],
+    scope: _FeedReferenceScope,
     limit: int,
 ) -> list[DiscoveredContent]:
     text = _decode_document(document)
@@ -1475,14 +1519,8 @@ def _parse_json_feed(
                 raw_url = raw_id
         if not raw_url:
             continue
-        try:
-            content_url = canonicalize_web_url(
-                urljoin(base_url, raw_url), allowed_origins=allowed_origins
-            )
-        except WebFetchError:
-            continue
-        title = _plain_text(raw_item.get("title"), limit=300)
-        if not title or content_url in seen_urls:
+        content_url = scope.resolve(raw_url, base_url)
+        if content_url is None or len(items) >= limit:
             continue
         description = (
             raw_item.get("content_text")
@@ -1490,6 +1528,9 @@ def _parse_json_feed(
             or raw_item.get("summary")
             or ""
         )
+        title = _feed_title(raw_item.get("title"), description)
+        if not title or content_url in seen_urls:
+            continue
         items.append(
             _discovered_web_item(
                 content_url=content_url,
@@ -1501,14 +1542,54 @@ def _parse_json_feed(
             )
         )
         seen_urls.add(content_url)
-        if len(items) >= limit:
-            break
-    if source_row_count and not items:
+    if source_row_count and not items and not scope.unapproved:
         raise WebParseError(
             "schema_changed",
             "Web JSON Feed contained entries but none were usable within the recipe scope",
         )
     return items
+
+
+def parse_web_feed_page(
+    document: bytes | str,
+    *,
+    content_type: str,
+    base_url: str,
+    allowed_origins: Collection[str],
+    content_origins: Collection[str] | None = None,
+    observe_content_origins: bool = False,
+    limit: int = 20,
+) -> WebFeedPage:
+    """Parse one bounded feed; observed article origins never authorize HTTP requests.
+
+    The authoring probe may observe at most eight reference origins. Scheduled
+    runs use the saved exact set and report newly encountered origins, including
+    entries beyond the requested candidate limit, without enlarging that set.
+    """
+    canonicalize_web_url(base_url, allowed_origins=allowed_origins)
+    references = list(dict.fromkeys(content_origins or allowed_origins))
+    if not references or len(references) > 8:
+        raise WebParseError("invalid_recipe", "Feed content scope must contain 1..8 origins")
+    _allowed_origin_set(references)
+    scope = _FeedReferenceScope(references, observe=observe_content_origins)
+    bounded_limit = min(WEB_MAX_FEED_ENTRIES, max(1, int(limit)))
+    media_type = content_type.split(";", 1)[0].strip().casefold()
+    raw = document if isinstance(document, bytes) else document.encode("utf-8", errors="replace")
+    prefix = raw.lstrip()[:256].lower()
+    if media_type in _HTML_CONTENT_TYPES:
+        raise WebParseError("unsupported_content_type", "Expected a feed but received HTML")
+    if media_type in _JSON_CONTENT_TYPES or (
+        media_type in _GENERIC_CONTENT_TYPES and prefix.startswith(b"{")
+    ):
+        items = _parse_json_feed(document, base_url=base_url, scope=scope, limit=bounded_limit)
+    elif media_type in _XML_CONTENT_TYPES or (
+        media_type in _GENERIC_CONTENT_TYPES
+        and prefix.startswith((b"<?xml", b"<rss", b"<feed", b"<rdf"))
+    ):
+        items = _parse_xml_feed(document, base_url=base_url, scope=scope, limit=bounded_limit)
+    else:
+        raise WebParseError("unsupported_content_type", "Web source is not a supported feed")
+    return WebFeedPage(tuple(items), tuple(scope.origins), tuple(scope.unapproved))
 
 
 def parse_web_feed(
@@ -1519,35 +1600,20 @@ def parse_web_feed(
     allowed_origins: Collection[str],
     limit: int = 20,
 ) -> list[DiscoveredContent]:
-    """Parse a bounded RSS, Atom, or JSON Feed into Web candidates."""
-
-    canonicalize_web_url(base_url, allowed_origins=allowed_origins)
-    bounded_limit = min(WEB_MAX_FEED_ENTRIES, max(1, int(limit)))
-    media_type = content_type.split(";", 1)[0].strip().casefold()
-    raw = document if isinstance(document, bytes) else document.encode("utf-8", errors="replace")
-    prefix = raw.lstrip()[:256].lower()
-    if media_type in _HTML_CONTENT_TYPES:
-        raise WebParseError("unsupported_content_type", "Expected a feed but received HTML")
-    if media_type in _JSON_CONTENT_TYPES or (
-        media_type in _GENERIC_CONTENT_TYPES and prefix.startswith(b"{")
-    ):
-        return _parse_json_feed(
-            document,
-            base_url=base_url,
-            allowed_origins=allowed_origins,
-            limit=bounded_limit,
+    """Compatibility parser for recipes whose content and request scopes coincide."""
+    result = parse_web_feed_page(
+        document,
+        content_type=content_type,
+        base_url=base_url,
+        allowed_origins=allowed_origins,
+        limit=limit,
+    )
+    if not result.items and result.unapproved_content_origins:
+        raise WebParseError(
+            "schema_changed",
+            "Web feed contained entries but none were usable within the recipe scope",
         )
-    if media_type in _XML_CONTENT_TYPES or (
-        media_type in _GENERIC_CONTENT_TYPES
-        and prefix.startswith((b"<?xml", b"<rss", b"<feed", b"<rdf"))
-    ):
-        return _parse_xml_feed(
-            document,
-            base_url=base_url,
-            allowed_origins=allowed_origins,
-            limit=bounded_limit,
-        )
-    raise WebParseError("unsupported_content_type", "Web source is not a supported feed")
+    return list(result.items)
 
 
 def _normalized_sitemap_lastmod(value: str) -> str:
@@ -1897,36 +1963,56 @@ def discover_feed_urls(
     page_url: str,
     allowed_origins: Collection[str],
     limit: int = 8,
+    allow_cross_origin: bool = False,
 ) -> list[str]:
-    """Return deterministic RSS/Atom/JSON Feed autodiscovery links."""
+    """Observe explicit feed advertisements, without granting request authority.
+
+    Typed alternate links take priority over visible RSS/Atom/JSON Feed links.
+    Cross-origin observation is opt-in; the probe separately validates/fetches
+    each observed URL with a new exact-origin transport and the shared budget.
+    """
+    from openbiliclaw.sources.web_recipe import _normalize_public_url
 
     canonicalize_web_url(page_url, allowed_origins=allowed_origins)
     root = _parse_html_tree(document)
     urls: list[str] = []
     seen: set[str] = set()
-    for node in _walk_html(root):
-        if node.tag != "link":
-            continue
-        rel = frozenset(node.attrs.get("rel", "").casefold().split())
-        media_type = node.attrs.get("type", "").split(";", 1)[0].strip().casefold()
-        if "alternate" not in rel or media_type not in (_XML_CONTENT_TYPES | _JSON_CONTENT_TYPES):
-            continue
-        raw_href = node.attrs.get("href", "").strip()
-        if not raw_href:
-            continue
-        try:
-            url = canonicalize_web_url(
-                urljoin(page_url, raw_href),
-                allowed_origins=allowed_origins,
-            )
-        except WebFetchError:
-            continue
-        if url in seen:
-            continue
-        seen.add(url)
-        urls.append(url)
-        if len(urls) >= min(32, max(1, int(limit))):
-            break
+    nodes = list(_walk_html(root))
+    for tag in ("link", "a"):
+        for node in nodes:
+            if node.tag != tag:
+                continue
+            rel = frozenset(node.attrs.get("rel", "").casefold().split())
+            media_type = node.attrs.get("type", "").split(";", 1)[0].strip().casefold()
+            typed_feed = media_type in (_XML_CONTENT_TYPES | _JSON_CONTENT_TYPES)
+            if tag == "link" and ("alternate" not in rel or not typed_feed):
+                continue
+            if (
+                tag == "a"
+                and not typed_feed
+                and not re.search(
+                    r"\b(?:rss|atom|json\s*feed)\b", _node_text(node, limit=160), re.IGNORECASE
+                )
+            ):
+                continue
+            raw_href = node.attrs.get("href", "").strip()
+            if not raw_href:
+                continue
+            try:
+                url = canonicalize_web_url(
+                    _normalize_public_url(
+                        urljoin(page_url, raw_href), field="feed link", allow_dedicated=True
+                    ),
+                    allowed_origins=None if allow_cross_origin else allowed_origins,
+                )
+            except (ValueError, WebFetchError):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+            if len(urls) >= min(32, max(1, int(limit))):
+                return urls
     return urls
 
 

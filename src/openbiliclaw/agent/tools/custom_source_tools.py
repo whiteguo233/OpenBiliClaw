@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from openbiliclaw.api.custom_sources import public_draft
-from openbiliclaw.sources.workflow_service import WorkflowService
+from openbiliclaw.sources.workflow_service import WorkflowService, workflow_presentation
 
 from .registry import Tool
 
@@ -34,6 +34,7 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
                 "name": source["name"],
                 "enabled": source["enabled"],
                 "target_share": source["target_share"],
+                "interval_minutes": source["interval_minutes"],
                 "detail": "来源已保存；后续抓取仍需经过现有 Discover 评估才能入池。",
             },
             ensure_ascii=False,
@@ -45,20 +46,64 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
         if not draft.get("trial_success") or draft.get("status") != "ready":
             raise ValueError("草稿尚未试跑成功，不能提交启用审批")
         source = current.resolve_draft_source(draft)
+        existing_workflow = (
+            current.store.get_workflow(str(draft["workflow_id"]))
+            if draft.get("workflow_id")
+            else None
+        )
+        if draft.get("published_workflow_id"):
+            applied = current.store.get_workflow(draft["published_workflow_id"])
+            return (
+                f"来源「{source['name'] if source else draft['name']}」的草稿已应用。\n"
+                f"流程：{applied['workflow_id']}，当前版本 v{applied['version']}。\n"
+                "重复执行保留当前来源和流程，不新增流程或覆盖后续版本。"
+            )
         share = source["target_share"] if source else args.get("target_share", 1)
         interval = source["interval_minutes"] if source else args.get("interval_minutes", 30)
         _validate_policy(share=share, interval=interval)
         name = str(source["name"] if source else draft["name"])
         action = "添加发现流程到" if source else "启用发现来源"
+        update_note = ""
+        if existing_workflow is not None:
+            action = "更新发现流程于"
+            update_note = (
+                f"\n流程：{existing_workflow['workflow_id']}，"
+                f"版本 v{existing_workflow['version']} → v{existing_workflow['version'] + 1}"
+                f"\n原发现目标：{existing_workflow['intent']}"
+                "\n替换该流程并保留已处理内容记录；来源的其他流程不变。"
+            )
         state = "（来源当前停用，添加流程后仍保持停用）" if source and not source["enabled"] else ""
         merge_note = (
             "\n同站来源若已存在，将追加流程并保留该来源的比例、间隔和启停状态。"
             if not source and not draft.get("separate_source")
             else ""
         )
+        presentation = workflow_presentation(draft)
+        kind = {
+            "feed": "订阅源（RSS / Atom / JSON Feed）",
+            "sitemap": "站点地图",
+            "listing": "网页列表",
+            "browser": "浏览器网页",
+        }.get(presentation["kind"], "网站")
+        scope = ""
+        if presentation["kind"] == "feed":
+            scope = (
+                f"\n订阅请求范围：{'、'.join(presentation['request_origins'])}"
+                f"\n文章链接范围：{'、'.join(presentation['content_origins'])}"
+                "（仅接收订阅中给出的内容与链接，不自动读取文章页）"
+            )
+        if existing_workflow is not None:
+            previous = workflow_presentation(existing_workflow)
+            scope += (
+                f"\n原请求范围：{'、'.join(previous['request_origins'])}"
+                f"\n更新后请求范围：{'、'.join(presentation['request_origins'])}"
+                f"\n原内容链接范围：{'、'.join(previous['content_origins'])}"
+                f"\n更新后内容链接范围：{'、'.join(presentation['content_origins'])}"
+            )
         return (
-            f"{action}「{name}」{state}\n"
+            f"{action}「{name}」{state}{update_note}\n"
             f"网址：{draft['entry_url']}\n"
+            f"类型：{kind}{scope}\n"
             f"发现目标：{draft['intent']}\n"
             f"推荐比例：{share}；抓取间隔：{interval} 分钟{merge_note}"
         )
@@ -109,9 +154,13 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
             name="prepare_discovery_source",
             permission_level="soft_write",
             handler=prepare,
-            description="根据用户网址和自然语言发现目标建立持久草稿并试跑；不会启用来源。"
-            "自动选 HTTP 或浏览器。需要登录时把 takeover_url 给用户操作，绝不索取密码/Cookie。"
-            "同站默认一个来源多个流程；separate_source=true 才拆为独立配比来源。",
+            description="根据用户的网站或 RSS/Atom/JSON Feed 网址和自然语言目标建立草稿并试跑；"
+            "不会启用来源。用户只要求订阅整个 Feed 时，intent 可为‘跟踪该订阅的新内容’。"
+            "自动识别采集方式，无需用户选择技术类型。需要登录时把 takeover_url 给用户操作，"
+            "绝不索取密码/Cookie。"
+            "同站默认一个来源多个流程；separate_source=true 才拆为独立配比来源。"
+            "更新既有流程或订阅范围时先 list_sources 获取ID，再传 source_id+workflow_id；"
+            "试跑后仍需 activate 审批，只有 source_id 时会追加新流程。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -119,6 +168,7 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
                     "intent": {"type": "string"},
                     "name": {"type": "string"},
                     "source_id": {"type": "string"},
+                    "workflow_id": {"type": "string"},
                     "executor": {"type": "string", "enum": ["auto", "http", "playwright", "ego"]},
                     "separate_source": {"type": "boolean"},
                 },
@@ -144,9 +194,10 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
             approval_summary=activation_summary,
             handler=activate,
             description=(
-                "将试跑成功的草稿启用为独立 Discover 来源；调用生成真实审批卡，批准后生效。"
+                "将试跑成功的草稿启用为 Discover 来源或更新指定既有流程；"
+                "调用生成真实审批卡，批准后生效。"
             ),
-            impact_hint="启用网站发现流程，按已有 Discover 比例与评估规则定期补充内容。",
+            impact_hint="启用或更新网站、订阅源流程，按已有 Discover 比例与评估规则补充内容。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -197,17 +248,19 @@ def _bounded_summary(result: dict[str, Any], config: Any) -> str:
         key: result[key]
         for key in (
             "draft_id",
+            "workflow_id",
+            "base_version",
             "status",
             "takeover_url",
             "name",
-            "executor",
+            "kind",
             "detail",
             "sample_items",
         )
         if key in result
     }
     value["sample_items"] = value.get("sample_items", [])[:2]
-    for optional in ("sample_items", "detail", "name", "executor"):
+    for optional in ("sample_items", "detail", "name", "kind"):
         encoded = json.dumps(value, ensure_ascii=False)
         if len(encoded) <= budget:
             return encoded

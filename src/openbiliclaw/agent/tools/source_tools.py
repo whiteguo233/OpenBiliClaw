@@ -15,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES
 from openbiliclaw.sources.web_probe import probe_public_web_url
 from openbiliclaw.sources.web_recipe import build_web_recipe
 
@@ -23,7 +24,9 @@ from .registry import Tool, ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-def build_source_tool_registry(database: Any, *, config: Any = None) -> ToolRegistry:
+def build_source_tool_registry(
+    database: Any, *, config: Any = None, dynamic_web_sources: bool = False
+) -> ToolRegistry:
     """Bind source tools; Web creation shares the API recipe compiler and approval gate."""
     probe_admission = threading.BoundedSemaphore(value=2)
     return ToolRegistry(
@@ -31,12 +34,17 @@ def build_source_tool_registry(database: Any, *, config: Any = None) -> ToolRegi
             Tool(
                 name="create_source",
                 description=(
-                    "创建内容源订阅；调用会生成确认卡，批准后才保存。"
+                    "创建已有平台的关键词订阅；调用会生成确认卡，批准后才保存。"
+                    "网站、RSS、Atom、JSON Feed 必须使用 prepare_discovery_source，"
+                    "试跑后用 activate_discovery_source 获得独立配比来源。"
+                    if dynamic_web_sources
+                    else "创建内容源订阅；调用会生成确认卡，批准后才保存。"
                     "Web 先调用 probe_web_source，再原样使用候选 create_source_arguments；"
                     "仅支持公开 feed/sitemap/listing，不支持登录或执行脚本。"
                 ),
                 permission_level="hard_write",
                 impact_hint="新增一个内容源订阅，会参与后续的内容发现与推荐。",
+                approval_summary=_platform_source_summary if dynamic_web_sources else None,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -156,6 +164,26 @@ def build_source_tool_registry(database: Any, *, config: Any = None) -> ToolRegi
             ),
         ]
     )
+
+
+def _platform_source_summary(args: dict[str, Any]) -> str:
+    """Route new chat subscriptions without invalidating persisted legacy approvals."""
+    source_type = str(args.get("source_type", "web")).strip().lower()
+    if (
+        source_type in {"web", "rss", "atom", "feed", "jsonfeed", "json_feed"}
+        or args.get("strategy", "search") != "search"
+        or str(args.get("url", "")).strip()
+    ):
+        raise ValueError(
+            "网站和订阅源请先调用 prepare_discovery_source；试跑成功后调用 "
+            "activate_discovery_source，才能建立独立比例、定期采集和配置管理的来源。"
+        )
+    if source_type not in CANONICAL_SOURCE_FAMILIES or not str(args.get("query", "")).strip():
+        raise ValueError(
+            "已有平台订阅需要有效平台类型与搜索关键词；网站或 Feed 请用 prepare_discovery_source。"
+        )
+    name = str(args.get("name") or f"{source_type}-{args.get('query', '')}")
+    return f"新增平台订阅「{name}」\n平台：{source_type}\n关键词：{args.get('query', '')}"
 
 
 async def _probe_web_source(
@@ -313,6 +341,12 @@ def _list_sources(db: Any, _args: dict[str, Any]) -> str:
                 f"启用: {source['enabled']} 独立比例: {source['target_share']} "
                 f"间隔: {source['interval_minutes']} 分钟 状态: {source['health']['status']}"
             )
+            for workflow in source["workflows"]:
+                lines.append(
+                    f"  流程 ID: {workflow['workflow_id']} 版本: {workflow['version']} "
+                    f"类型: {workflow['kind']} 状态: {workflow['status']} "
+                    f"目标: {workflow['intent']}"
+                )
     for r in recipes:
         status = "✅" if r["enabled"] else "⏸️"
         config = json.dumps(r.get("config") or {}, ensure_ascii=False, sort_keys=True)

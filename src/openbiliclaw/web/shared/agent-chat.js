@@ -49,10 +49,10 @@
   }
 
   const DISCOVERY_TOOL_LABELS = {
-    prepare_discovery_source: "准备网站发现",
-    trial_discovery_source: "试跑网站发现",
-    activate_discovery_source: "启用网站来源",
-    manage_discovery_source: "修改网站来源",
+    prepare_discovery_source: "准备内容来源",
+    trial_discovery_source: "试跑内容来源",
+    activate_discovery_source: "启用内容来源",
+    manage_discovery_source: "修改内容来源",
   };
 
   function toolDisplayName(name) {

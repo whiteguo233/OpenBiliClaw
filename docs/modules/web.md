@@ -2,10 +2,29 @@
 
 ## 动态网站来源与兼容订阅
 
-新增网站从「聊一聊」开始：用户说明网址与内容意图，Agent 建立草稿、试跑并展示样例；
+新增网站、RSS、Atom 或 JSON Feed 从「聊一聊」开始：用户说明网址与内容意图，Agent 建立草稿、试跑并展示样例；
 需要登录时引导到独立的浏览器接管页。确认启用后，每个网站有稳定 `source_id`，按自己的
 间隔运行发现任务，并以独立 `target_share` 参与候选池分配。一个网站可以包含多个
 workflow；不把这些网站当成旧版 Web 总份额下的子权重。
+
+例如在「聊一聊」输入「把 `https://example.com/feed.xml` 加为来源，关注它的全部更新，
+每 30 分钟采集一次，份额设为 2」。Agent 补问缺少的信息，将自然语言意图整理为可复跑
+流程，试跑后展示样例与启用确认卡；用户批准才进入调度。之后可在设置的「自定义来源」
+调整名称、份额、频率或停用，也可继续通过聊一聊管理。份额影响推荐池分配；内容仍须通过
+统一评估，采集成功不保证每一条内容都入池。
+
+Feed 可以直接提交订阅地址，也可从网页中已观察到的 alternate 或明确订阅链接发现。
+订阅托管域与文章域分开：`allowed_origins` 仅授权实际订阅请求；`content_origins`
+记录最多 8 个已观察到的公共文章 origin，只允许接收 Feed 内的正文和链接，不自动请求
+文章页、图片或附件。确认卡展示这两种范围。运行时出现新文章域会保留已授权候选并报告
+`degraded`，不提交完整检查点。通过聊一聊指定原来源与流程重新准备、试跑并批准后，
+以新版本替换该流程并保留 seen/运行历史，不新增重复调度；仅指定来源仍表示追加流程。
+审批时展示旧/新范围，版本已变化的旧草稿需重新准备。无标题但有正文的条目
+从清理后的实际正文生成短标题；只读取有界当前 Feed，不保证补齐历史或所有分页。
+格式依据：[RSS 2.0](https://www.rssboard.org/rss-specification) 允许 item 仅有 description，
+[JSON Feed 1.1](https://www.jsonfeed.org/version/1.1/) 的 title 与 next_url 均为可选字段。
+专用平台域仅在明确解析并成功试跑 Feed 后可建为自定义订阅；平台 HTML 仍用原生适配器，
+不会继承平台凭据。旧匿名 recipe 的默认专用域拒绝规则保留。
 
 动态工具为 `prepare_discovery_source`（建立持久草稿并试跑）和
 `trial_discovery_source`（继续试跑），两者是 `soft_write`；
@@ -14,7 +33,9 @@ workflow；不把这些网站当成旧版 Web 总份额下的子权重。
 来源 API；归档另有界面确认。完整工具边界见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
 
 三端设置共用 `shared/custom-sources.js/.css`，管理名称、份额、频率、启停、归档、
-最近运行和重新登录。推荐与惊喜 DTO 保留 `source_id/source_name`，网站名用于显示，
+最近运行和重新登录；类型显示为订阅源、站点地图、网页列表或浏览器网页。
+操作某来源后保留其他来源未保存的编辑；操作失败保留当前输入。登录截图轮询与用户输入串行，
+会话失效显示重新打开入口。推荐与惊喜 DTO 保留 `source_id/source_name`，网站名用于显示，
 内容平台仍是 `web`。API 草稿、试跑、启用和登录接管协议见 [API 模块](api.md#动态网站来源)。
 运行记录的 `enqueued_count` 显示为「入队待评估」，仅表示已交给候选评估队列；
 不表示已通过评分或进入可推荐库存。旧版 HTTP recipe 的运行计数遵守同一语义。
@@ -69,7 +90,7 @@ CI 的 `web-guided-init-e2e` job 在安装 Chromium 后同时执行
 | Sitemap / Sitemap Index | ✅ | 有界轮转子 sitemap，并按 `detail_fetch_limit` 读取公开 HTML 详情；`lastmod` 只用于 sitemap 元数据，不冒充发布时间 |
 | 静态 HTML Listing | ✅ | 使用受限、可审计的 selector plan 解析列表，可有界补取详情页；不运行脚本 |
 | Typed recipe 与图形编辑器 | ✅ | 后端只接受固定字段和 `feed/sitemap/listing`，拒绝客户端写入 ID、状态、游标、验证器和其它未知字段；桌面 Web 与插件设置页提供同一安全字段集的创建、启停和删除界面 |
-| 聊一聊新增来源 | ✅ | 默认口味伙伴 / 系统管家可 `probe_web_source` 只读生成一个草稿，再调用 `create_source` 生成审批卡；批准后复用 typed compiler 保存；重复相同 recipe 不重新启用已停用项。桌面 / 移动 / 插件共用，CLI chat 排除 |
+| 旧聊天审批兼容 | ✅ | 既有 `create_source` 审批仍可执行；新聊天网站 / Feed 统一走动态来源 prepare → activate，避免落入旧 Web 聚合份额。已有平台关键词订阅继续使用 create_source |
 | 粘贴 URL 自动探测 | ✅ | 桌面 Web、插件与 `probe-web` CLI 只读识别直接 Feed/Sitemap、HTML alternate Feed、同源 `/sitemap.xml` 和保守的重复静态列表；展示样例后由用户采用并再次显式保存，不自动创建或启用 recipe |
 | 匿名安全传输 | ✅ | 精确 origin allowlist、逐请求/逐跳公共 DNS 校验、socket DNS pin、robots fail-closed、无环境代理和无 Cookie |
 | 后台调度 | ✅ | `WebDiscoveryProducer` 原子领取到期 recipe，按 recipe cadence、权重和有界请求预算补充统一候选池 |
@@ -82,23 +103,20 @@ CI 的 `web-guided-init-e2e` job 在安装 Chromium 后同时执行
 | 登录态 / JS 页面 | 不支持 | 不使用 CDP、Playwright、浏览器扩展或 Ego Lite，不执行 JavaScript，也不绕过登录墙或 challenge |
 | 画像初始化 / 站内写入 | 不支持 | Web 内容只进入 discovery candidate；不生成账号行为事件，不修改上游收藏、书签或订阅 |
 
-### 对话新增 Web 来源（capability increment）
+### 历史聊天审批兼容
 
-桌面 Web、移动 Web 与插件的「聊一聊」共用同一 Agent 工具与已有审批卡。默认口味伙伴和
-系统管家都可执行以下链路；CLI `chat` 仍走旧对话路径，本轮不接入该 Agent 能力，CLI 用户
-可使用独立的 `probe-web`、`discover-web` 与 `discover --source web` 命令。
+以下是已有匿名 HTTP recipe 的历史审批路径。桌面 Web、移动 Web 与插件的新聊天请求
+统一走本页开头的 `prepare_discovery_source` → `activate_discovery_source`；新建旧路径审批
+会收到纠正指引。CLI `chat` 未接入动态来源 Agent 工具，CLI 用户仍可使用独立的
+`probe-web`、`discover-web` 与 `discover --source web` 命令管理旧 HTTP recipe 路径。
 
 ```text
-用户提供公开 URL → probe_web_source(url, strategy?) [read]
-                   → 一个推荐候选 + available_strategies + 最多 2 个样例
-                   → 完整 create_source_arguments（扁平 typed Web 配置）
-                   → create_source(source_type="web", ...) [hard_write]
-                   → 持久审批卡 → 用户批准 → build_web_recipe → source_recipes
-                   → 到期 WebDiscoveryProducer → 统一候选评估 / 推荐
+历史持久审批卡 → 用户批准 → create_source(source_type="web", ...)
+                → build_web_recipe → source_recipes
+                → 到期 WebDiscoveryProducer → 统一候选评估 / 推荐
 ```
 
-Agent 展示草稿后调用 `create_source` 生成具体审批卡，不先追加一轮口头批准。
-probe、拒绝审批与待审批状态都不保存来源或开始调度；批准后的执行仍经过同一 compiler、
+历史审批的拒绝与待审批状态不保存来源或开始调度；批准后的执行仍经过同一 compiler、
 exact-origin / robots / public DNS + socket pin 边界。同样的 recipe 重复创建会返回已有项，
 不会借此重新启用用户已停用的来源。Web 仍为匿名公开 discovery-only；不读取登录态、
 不执行 JavaScript，也不生成账号画像初始化事件。
@@ -256,10 +274,10 @@ Web state 和 seen ledger。
 
 ### `feed`
 
-接受 RSS、Atom 和 JSON Feed。条目 URL 必须仍在 recipe allowlist 内；越界或无可用 URL 的
+接受 RSS、Atom 和 JSON Feed。条目 URL 必须在 recipe 的 `content_origins` 内（旧数据默认使用请求 allowlist）；越界或无可用 URL 的
 条目不会获得权限。HTTP `ETag` / `Last-Modified` 在完整成功后进入状态账本，后续可发送条件
 请求；`304` 记为 `not_modified`。真正零条目的 envelope 才能确认 `empty`：只要 RSS/Atom/JSON
-Feed envelope 非空，却没有任何 usable same-origin row（包括 JSON Feed `items` 中全是非 object
+Feed envelope 非空，却没有任何 usable authorized-origin row（包括 JSON Feed `items` 中全是非 object
 值），就返回 `schema_changed` / degraded，不得伪装 affirmative empty 或推进 validator。
 
 每轮最多扫描 `max_items` 个 feed row，但 candidate allocation 可能更小；producer 按 allocation

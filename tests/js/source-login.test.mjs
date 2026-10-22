@@ -15,7 +15,7 @@ class Element {
 }
 
 async function setup(handler = () => null, search = "?draft_id=fixture/draft") {
-  const elements = Object.fromEntries(["status", "screen", "fields", "login-origins", "value", "fill", "refresh", "resume"]
+  const elements = Object.fromEntries(["status", "screen", "fields", "login-origins", "value", "fill", "refresh", "resume", "reopen"]
     .map((id) => [id, new Element(id === "fields" ? "select" : "div")]));
   const calls = [], intervals = [];
   const snapshot = { blocked_navigation_origins: ["https://login.synthetic.example"], elements: [
@@ -101,8 +101,55 @@ test("successful trial stops screenshot polling and points new sources back to c
   assert.equal(h.calls.length, before);
 });
 
+test("successful workflow update trial requires chat approval without claiming the source resumed", async () => {
+  const h = await setup((path) => path.endsWith("/resume")
+    ? { ok: true, json: async () => ({ status: "ready", requires_activation: true }) } : null);
+  h.elements.resume.handlers.click();
+  await settle();
+  assert.equal(h.elements.status.textContent, "试跑成功，请返回聊天确认更新。");
+  assert.doesNotMatch(h.elements.status.textContent, /已恢复/);
+  assert.ok(h.calls.every((call) => !call.path.endsWith("/activate")));
+  const before = h.calls.length;
+  h.intervals[0](); await settle();
+  assert.equal(h.calls.length, before);
+});
+
 test("initial load with missing draft id reports the problem without sending a request", async () => {
   const h = await setup(undefined, "");
   assert.equal(h.elements.status.textContent, "缺少来源草稿 ID");
+  h.intervals[0](); await settle();
   assert.equal(h.calls.length, 0);
+});
+
+test("a user fill waits for screenshot polling instead of being dropped, and clears its local secret immediately", async () => {
+  let finish, hold = false;
+  const h = await setup((path) => path.endsWith("/screenshot") && hold
+    ? new Promise((resolve) => { finish = resolve; }) : null);
+  hold = true;
+  h.intervals[0](); await settle();
+  h.elements.value.value = "queued-secret";
+  h.elements.fill.handlers.click();
+  assert.equal(h.elements.value.value, "");
+  hold = false;
+  finish({ ok: true, blob: async () => ({}) }); await settle();
+  const actions = h.calls.filter((call) => call.path.endsWith("/action"));
+  assert.equal(actions.length, 1);
+  assert.deepEqual(actions[0].body, { action: "fill", selector: "#password", value: "queued-secret" });
+});
+
+test("expired screenshots expose a reopen action that starts a new takeover", async () => {
+  let expired = false;
+  const h = await setup((path) => path.endsWith("/screenshot") && expired
+    ? { ok: false, status: 409, json: async () => ({ detail: "登录窗口已过期" }) } : null);
+  expired = true;
+  h.intervals[0](); await settle();
+  assert.equal(h.elements.reopen.hidden, false);
+  assert.match(h.elements.status.textContent, /重新打开/);
+  const before = h.calls.length;
+  h.intervals[0](); await settle();
+  assert.equal(h.calls.length, before, "expired sessions stop background polling");
+  expired = false;
+  h.elements.reopen.handlers.click(); await settle();
+  assert.equal(h.calls.filter((call) => call.path.endsWith("/takeover")).length, 2);
+  assert.equal(h.elements.reopen.hidden, true);
 });

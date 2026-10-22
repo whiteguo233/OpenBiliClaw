@@ -561,6 +561,8 @@ bootstrap_max_pages_per_scope = 20
 # 不执行网页脚本，也不会把网页内容交给浏览器 Agent。Ego Lite 仅预留为未来可选 transport。
 [sources.web]
 enabled = true
+# 可选 recommendation_date_preset/start/end/weight 与其它来源相同；默认 all。
+# 此来源族的日期配置统一作用于旧 Web recipe 和动态网站/Feed 候选。
 request_timeout_seconds = 15
 max_response_bytes = 2097152
 max_redirects = 5

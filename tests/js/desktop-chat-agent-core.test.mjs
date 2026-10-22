@@ -36,7 +36,7 @@ test("desktop discovery progress shares readable tool labels and preserves sourc
     { type: "approval_request", step: 2, tool_name: "activate_discovery_source", approval_id: "ap_web", arguments: { draft_id: "opaque" }, summary: "启用 Research · https://example.com · 论文更新 · 3 份 / 30 分钟" },
   ]);
   const markup = agentProcessMarkup(model);
-  assert.match(markup, /准备网站发现/);
+  assert.match(markup, /准备内容来源/);
   assert.match(markup, /Research · https:\/\/example.com · 论文更新 · 3 份 \/ 30 分钟/);
   assert.match(markup, /data-approval-action="approve"/);
 });

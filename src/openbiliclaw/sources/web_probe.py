@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from urllib.parse import unquote, urljoin, urlsplit
 
+from openbiliclaw.sources.platforms import infer_source_platform_from_url
 from openbiliclaw.sources.web_public import (
     WEB_DEFAULT_MAX_BYTES,
     HTMLListingPlan,
@@ -27,7 +28,7 @@ from openbiliclaw.sources.web_public import (
     infer_html_listing_plan,
     parse_html_detail,
     parse_sitemap,
-    parse_web_feed,
+    parse_web_feed_page,
 )
 from openbiliclaw.sources.web_recipe import build_web_recipe
 
@@ -138,13 +139,16 @@ class _FetchBudget:
             ) from exc
 
 
-def _validated_target(url: str) -> tuple[str, tuple[str, ...]]:
+def _validated_target(
+    url: str, *, allow_dedicated_feed: bool = False
+) -> tuple[str, tuple[str, ...]]:
     compiled = build_web_recipe(
         {
             "name": "Web URL probe",
             "strategy": "feed",
             "config": {"entry_url": url},
-        }
+        },
+        allow_dedicated_feed=allow_dedicated_feed,
     )
     config = compiled["config"]
     return str(config["entry_url"]), tuple(str(value) for value in config["allowed_origins"])
@@ -171,8 +175,11 @@ def _recipe_payload(
     entry_url: str,
     page_title: str,
     listing_plan: HTMLListingPlan | None = None,
+    content_origins: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     config: dict[str, Any] = {"entry_url": entry_url}
+    if content_origins is not None:
+        config["content_origins"] = list(content_origins)
     if listing_plan is not None:
         config["listing"] = _listing_config(listing_plan)
     payload: dict[str, Any] = {
@@ -184,7 +191,7 @@ def _recipe_payload(
     }
     # Keep suggestions honest: any probe/code drift that produces a recipe the
     # save compiler rejects must fail locally instead of reaching the client.
-    build_web_recipe(payload)
+    build_web_recipe(payload, allow_dedicated_feed=strategy == "feed")
     return payload
 
 
@@ -218,16 +225,20 @@ def _feed_candidate(
     allowed_origins: tuple[str, ...],
     method: Literal["direct", "html_alternate"],
     page_title: str,
+    observe_content_origins: bool = False,
 ) -> WebProbeCandidate | None:
     try:
-        items = parse_web_feed(
+        page = parse_web_feed_page(
             artifact.body,
             content_type=artifact.content_type,
             base_url=artifact.final_url,
             allowed_origins=allowed_origins,
+            observe_content_origins=observe_content_origins,
             limit=WEB_PROBE_MAX_SAMPLES,
         )
     except WebParseError:
+        return None
+    if not page.items and page.unapproved_content_origins and not observe_content_origins:
         return None
     return WebProbeCandidate(
         strategy="feed",
@@ -237,13 +248,14 @@ def _feed_candidate(
         detail=(
             "The submitted URL is a supported RSS, Atom, or JSON Feed."
             if method == "direct"
-            else "The page advertises a supported same-origin RSS, Atom, or JSON Feed."
+            else "The page advertises a supported RSS, Atom, or JSON Feed."
         ),
-        sample_items=tuple(_sample_item(item) for item in items[:WEB_PROBE_MAX_SAMPLES]),
+        sample_items=tuple(_sample_item(item) for item in page.items[:WEB_PROBE_MAX_SAMPLES]),
         recipe=_recipe_payload(
             strategy="feed",
             entry_url=artifact.final_url,
             page_title=page_title,
+            content_origins=page.content_origins if observe_content_origins else None,
         ),
     )
 
@@ -326,15 +338,20 @@ async def probe_public_web_url(
     max_response_bytes: int = WEB_DEFAULT_MAX_BYTES,
     max_redirects: int = 5,
     transport_factory: WebProbeTransportFactory = SafeWebTransport,
+    allow_dedicated_feed: bool = False,
+    observe_feed_scopes: bool = False,
 ) -> WebProbeResult:
     """Suggest bounded public-Web recipes for one user-approved URL.
 
     The function performs no database writes, carries no credentials, permits
-    only the exact origin compiled from ``url``, and uses at most four target
-    fetches (plus the transport's one cached robots policy request).
+    at most two explicitly advertised feed origins in addition to ``url``,
+    and uses at most four target fetches. Each origin has a bounded robots
+    check and every request/redirect still passes public DNS/socket validation.
     """
 
-    requested_url, allowed_origins = _validated_target(url)
+    requested_url, allowed_origins = _validated_target(
+        url, allow_dedicated_feed=allow_dedicated_feed
+    )
     total_timeout_seconds = max(0.1, float(timeout_seconds))
     budget = _FetchBudget(
         deadline=asyncio.get_running_loop().time() + total_timeout_seconds,
@@ -363,6 +380,7 @@ async def probe_public_web_url(
                 allowed_origins=allowed_origins,
                 method="direct",
                 page_title="",
+                observe_content_origins=observe_feed_scopes,
             )
             if direct_feed is not None:
                 return WebProbeResult(
@@ -372,6 +390,15 @@ async def probe_public_web_url(
                     final_url=artifact.final_url,
                     page_title="",
                     candidates=(direct_feed,),
+                )
+            if infer_source_platform_from_url(requested_url):
+                return WebProbeResult(
+                    status="no_match",
+                    detail="This platform URL must be an explicit supported public feed.",
+                    requested_url=requested_url,
+                    final_url=artifact.final_url,
+                    page_title="",
+                    candidates=(),
                 )
             direct_sitemap = _sitemap_candidate(
                 artifact=artifact,
@@ -433,23 +460,37 @@ async def probe_public_web_url(
                     page_url=artifact.final_url,
                     allowed_origins=allowed_origins,
                     limit=WEB_PROBE_MAX_ALTERNATE_FEEDS,
+                    allow_cross_origin=observe_feed_scopes,
                 )
             except WebParseError:
                 alternate_urls = []
             for alternate_url in alternate_urls:
                 try:
-                    alternate_artifact = await budget.fetch(
-                        transport,
-                        alternate_url,
-                        expected="feed",
+                    feed_url, feed_origins = _validated_target(
+                        alternate_url, allow_dedicated_feed=allow_dedicated_feed
                     )
-                except WebFetchError:
+                    if feed_origins == allowed_origins:
+                        alternate_artifact = await budget.fetch(
+                            transport, feed_url, expected="feed"
+                        )
+                    else:
+                        async with transport_factory(
+                            allowed_origins=feed_origins,
+                            timeout_seconds=total_timeout_seconds,
+                            default_max_bytes=max_response_bytes,
+                            max_redirects=max_redirects,
+                        ) as feed_transport:
+                            alternate_artifact = await budget.fetch(
+                                feed_transport, feed_url, expected="feed"
+                            )
+                except (WebFetchError, ValueError):
                     continue
                 candidate = _feed_candidate(
                     artifact=alternate_artifact,
-                    allowed_origins=allowed_origins,
+                    allowed_origins=feed_origins,
                     method="html_alternate",
                     page_title=page_title,
+                    observe_content_origins=observe_feed_scopes,
                 )
                 if candidate is not None:
                     append_candidate(candidate)

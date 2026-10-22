@@ -22,6 +22,8 @@ test("popup and desktop load shared manager and put custom shares beside platfor
     assert.match(html, /shared\/custom-sources\.css/);
     assert.equal((html.match(/id="customSourceManager"/g) || []).length, 1);
     assert.match(html, /与.*来源平级/);
+    assert.match(html, /自定义来源/);
+    assert.match(html, /网址或 RSS、Atom、JSON Feed 订阅链接/);
     const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
     assert.equal(new Set(ids).size, ids.length);
   }

@@ -360,6 +360,9 @@ _INTERACTIVE_CALLERS = {
     # be parked behind the empty-pool refill reservation.
     "agent.chat",
     "agent.task",
+    # User-owned source setup must work before the first source can refill an
+    # empty pool. Automatic workflow repair retains its maintenance caller.
+    "sources.web.workflow.interactive",
 }
 _EXPRESSION_CALLERS = {
     "recommendation.expression",

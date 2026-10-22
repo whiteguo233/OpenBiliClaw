@@ -760,6 +760,14 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### 动态网站候选
 
+RSS、Atom、JSON Feed 与网页使用相同实例身份和候选管线。用户手动“换一批”在自动调度
+关闭时仍可补充启用的自定义来源；interest 流程先准备统一关键词，再 claim 执行。
+Instagram 与自定义来源的手动波分别结算；某一波采集/评估/文案异常会保留失败提示，并让其他来源继续。
+手动只绕过正常周期，保留实例启停、登录、配额、租约和错误/限流退避；不会绕过失败冷却。
+原料已占满配额时不继续抓取，但仍有界评估现有待评估候选，并等待推荐文案 flush 完成。
+`DiscoveryCandidatePipeline.drain_pending(flush=True, batch_size=N)` 的 N 是整轮总预算，
+不会被后台最小聚合批次或评估并发再次放大；后台非 flush 批次继续使用既有并发策略。
+
 `DiscoveredContent.source_id/source_name` 和 `DiscoveryCandidateWrite` 的同名字段将网站实例从 producer 传入持久候选、cache 与推荐 DTO。`source_platform` 仍是 `web`；流程 ID、版本和运行 ID 属于 `source_metadata`，不成为另一份内容身份。
 
 `DiscoveryCandidatePipeline.enqueue_candidates()` 在过滤已知内容前记录来源证据；同站不同流程或不同来源发现相同 URL 时只保留一条候选。共享 evaluator、时效判断、分数阈值和两轮 share-aware admission 不变，来源实例只影响配额归属。正常发现与灵感探索均从当前画像规划查询，按实例 claim `regular` / `explore` 词池，再通过同一个流程执行器发现候选。

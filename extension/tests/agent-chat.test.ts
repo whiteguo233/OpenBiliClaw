@@ -40,15 +40,15 @@ test("website discovery progress uses plain labels while approvals retain the du
     { type: "tool_call", step: 2, tool_name: "trial_discovery_source", arguments: { draft_id: "opaque" } },
   ]);
   const progress = renderAgentRunMarkup(run);
-  assert.match(progress, /准备网站发现/);
-  assert.match(progress, /试跑网站发现/);
+  assert.match(progress, /准备内容来源/);
+  assert.match(progress, /试跑内容来源/);
   const [record] = normalizeApprovalList({ items: [{
     approval_id: "approval-source", tool_name: "activate_discovery_source", status: "pending",
     arguments: { draft_id: "opaque", target_share: 3 },
     summary: ["启用「Research <site>」", "https://example.com/feed", "目标：论文更新；3 份，每 30 分钟发现"].join("\n"),
   }] });
   const markup = renderApprovalCardMarkup(record);
-  assert.match(markup, /需要批准：启用网站来源/);
+  assert.match(markup, /需要批准：启用内容来源/);
   assert.match(markup, /Research &lt;site&gt;/);
   assert.match(markup, /<br>/);
   assert.match(markup, /https:\/\/example.com\/feed/);

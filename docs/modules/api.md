@@ -182,6 +182,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 独立占比与间隔，可持有多个发现 workflow；推荐 DTO 添加 `source_id/source_name`，
 惊喜单条、批量、手动推送和后台推送同样保留这两个字段，缺失时为兼容的空字符串；
 内容平台仍为 `source_platform="web"`。三端显示网站名，各站点与内置平台平级分配候选池。
+`/api/config` 的 `sources.web` 与其他来源一样往返并校验 `recommendation_date_preset/start/end/weight`，默认 `all`；日期策略按 Web 族统一准入，并非动态实例各自编辑。
 旧 `/api/sources` typed HTTP recipe 的兼容边界见下一节。
 
 | 方法与路径 | 契约 |
@@ -191,12 +192,22 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 | `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
 | `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
 | `GET /api/custom-sources/{source_id}/runs` | `{items}`；摘要包括 `run_id,workflow_id,version,executor,status,started_at,completed_at,discovered_count,enqueued_count,error` |
-| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,separate_source?,session_id?}`，executor 为 `auto/http/playwright/ego`；创建待试跑草稿，尚不启用定期发现 |
+| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`，executor 为 `auto/http/playwright/ego`；创建待试跑草稿，尚不启用定期发现 |
 | `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
 | `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
 | `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管，返回 `draft_id,takeover_url,…` |
 
 草稿公开响应含 `draft_id,status,source_id?,name,intent,executor,sample_items,detail`，
+更新草稿另含 `workflow_id,base_version,requires_activation`；同时传 `source_id+workflow_id` 才更新既有流程，
+服务端校验归属、读取当前版本，拒绝未知/跨来源流程及 `separate_source=true`。
+`base_version/requires_activation` 是只读响应字段，客户端不能指定。只传 `source_id` 仍为追加流程。
+成功试跑后调用 activate 才以版本 CAS 替换流程；保留 seen 与运行历史，清除旧租约/错误/检查点。
+审批后版本若已变化则拒绝执行，需重新准备；已发布草稿重复执行保持幂等。
+登录 `/drafts/{draft_id}/resume` 会恢复试跑；更新草稿即使返回 ready 也不自动发布，
+仍须调用 activate 确认替换，原有已批准流程的重新登录恢复保留自动发布行为。
+草稿和每个 workflow 摘要另含从存储计划推导的 `kind,request_origins,content_origins`；
+`kind` 为 `feed/sitemap/listing/browser`，未编译草稿为空字符串，旧行无需迁移。
+请求域是网络权限，Feed 的文章域仅为链接接收范围。
 按草稿状态可另含 `entry_url,takeover_url,query_mode,trial_success`，不回传内部 workflow 或会话凭据。
 `status` 为 `ready/needs_login/needs_details/failed`。`health` 提供
 `status,last_error,last_success_at,next_run_at`，workflow 摘要提供

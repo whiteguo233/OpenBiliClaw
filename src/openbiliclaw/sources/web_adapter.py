@@ -26,7 +26,7 @@ from openbiliclaw.sources.web_public import (
     parse_html_detail,
     parse_html_listing,
     parse_sitemap,
-    parse_web_feed,
+    parse_web_feed_page,
     validate_html_listing_plan,
 )
 
@@ -158,6 +158,7 @@ class WebSourceAdapter:
                         transport,
                         entry_url=entry_url,
                         allowed_origins=allowed_origins,
+                        content_origins=config.get("content_origins"),
                         limit=bounded_limit,
                         state=committed,
                     )
@@ -204,6 +205,7 @@ class WebSourceAdapter:
         *,
         entry_url: str,
         allowed_origins: list[str],
+        content_origins: list[str] | None,
         limit: int,
         state: dict[str, Any],
     ) -> SourceFetchResult:
@@ -217,17 +219,31 @@ class WebSourceAdapter:
         )
         if artifact.not_modified:
             return _artifact_result(artifact, status="not_modified", items=[])
-        items = parse_web_feed(
+        page = parse_web_feed_page(
             artifact.body,
             content_type=artifact.content_type,
             base_url=artifact.final_url,
             allowed_origins=allowed_origins,
+            content_origins=content_origins,
             limit=limit,
         )
+        if content_origins is not None and page.unapproved_content_origins:
+            return SourceFetchResult(
+                status="degraded",
+                items=list(page.items),
+                scope_complete=False,
+                error_code="content_scope_changed",
+                detail="订阅中出现未批准的文章域名，请重新试跑并确认范围："
+                + ", ".join(page.unapproved_content_origins),
+            )
+        if not page.items and page.unapproved_content_origins:
+            raise WebParseError(
+                "schema_changed", "Feed entries were outside the configured content scope"
+            )
         return _artifact_result(
             artifact,
-            status="ok" if items else "empty",
-            items=items,
+            status="ok" if page.items else "empty",
+            items=list(page.items),
         )
 
     async def _fetch_listing(

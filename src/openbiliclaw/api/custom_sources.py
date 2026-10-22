@@ -24,6 +24,7 @@ class DraftIn(BaseModel):
     name: str = Field(default="", max_length=200)
     executor: str = "auto"
     source_id: str = ""
+    workflow_id: str = ""
     separate_source: bool = False
     session_id: str = ""
 
@@ -228,7 +229,11 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
             await close(draft_id)
             manager = service()
             draft = await manager.trial(draft_id)
-            if draft.get("workflow_id") and draft["status"] == "ready":
+            if (
+                draft.get("workflow_id")
+                and draft["status"] == "ready"
+                and not draft.get("requires_activation")
+            ):
                 # Re-login resumes the already approved workflow and source policy.
                 manager.store.publish(draft_id, draft["source_id"])
             return public_draft(draft)
@@ -251,6 +256,9 @@ def public_draft(draft: dict[str, Any]) -> dict[str, Any]:
         "draft_id",
         "status",
         "source_id",
+        "workflow_id",
+        "base_version",
+        "requires_activation",
         "name",
         "intent",
         "executor",
@@ -262,4 +270,8 @@ def public_draft(draft: dict[str, Any]) -> dict[str, Any]:
         "trial_success",
         "suggested_login_origins",
     }
-    return {key: value for key, value in draft.items() if key in fields}
+    from openbiliclaw.sources.workflow_service import workflow_presentation
+
+    return {key: value for key, value in draft.items() if key in fields} | workflow_presentation(
+        draft
+    )

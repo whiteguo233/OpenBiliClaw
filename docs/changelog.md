@@ -2,7 +2,12 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
-## 未发布：动态网站来源与浏览器发现流程（2026-10-22）
+## 未发布：动态网站与 RSS 发现来源（2026-10-22）
+
+- **网站和订阅源统一新增**：聊一聊添加网站、RSS、Atom、JSON Feed，试跑后确认启用，独立比例、频率和来源管理共用 Discovery；新聊天不再误入旧 Web 聚合订阅。支持已观察到的跨域订阅链接、独立文章链接范围和正文生成缺失标题；范围变化报告降级而不丢失检查点。
+- **交互建源不再被补池阻塞**：用户准备/重试来源的模型请求使用交互优先级，空推荐池时无需等待后台维护放行；自动流程修复仍按维护优先级执行。手动刷新中某个平台失败也不再阻断其他来源。
+- **手动补池与管理修复**：自动调度关闭时“换一批”仍能执行自定义来源，先准备所需关键词，再有界评估并等待推荐文案；保留限流/失败退避。配置操作保留其他来源的未保存编辑，登录轮询不再吞掉用户输入，三端提供网站与 RSS 入口及可读类型标签。
+- **来源流程恢复与日期兼容**：既有流程可明确指定后重新试跑和审批，按版本替换并保留去重记录，避免修复时留下重复任务；Web 族接入主线公共日期配置、API 校验和候选准入，默认仍接受全部日期。
 
 - **当前主线整合**：合入 `8b99ed46`（v0.3.231），保留 Instagram/TikTok、聊天多语言、显式补池和配置热重载，同时保留动态来源的独立份额、身份与三端管理；合并 Web 与封面网络依赖约束为 `httpx[socks]>=0.28,<1`。
 - **真实产品链路复验**：使用隔离完整服务、真实模型与网站，验证聊天审批建源、独立份额保存和正常定时发现；三端运行记录将待评估入队数与最终入池区分。CI 已安装 Chromium 的任务补充执行真实浏览器 workflow 回归。逐项结果与外站、安装环境限制见[动态网站验收记录](platform-source-acceptance.dynamic-web.md)。
@@ -17,7 +22,6 @@
 - **旧版匿名 HTTP recipe：discovery-only Phase A**：Web 现在以 canonical `source_platform="web"` 接入统一来源注册表、候选池、runtime 状态与三端文字卡。桌面 Web 与插件「设置 → 平台源 → 公开 Web」新增 recipe editor，可列出 runtime、创建 `feed / sitemap / listing`、编辑 exact origins / cadence / 上限 / 受限 selector、单条启停或删除，并原样显示后端 422；权威 CRUD 仍为 `/api/sources`。首版只支持匿名公开 RSS / Atom / JSON Feed、Sitemap / 一层 Sitemap Index 与静态 HTML Listing；正式 producer 按 recipe cadence / 权重公平领取 token-fenced lease，候选 enqueue 成功后才写 recipe seen，只有完整 `ok / empty / not_modified` 推进 ETag、Last-Modified 或 sitemap cursor。Sitemap 失败恢复采用 root + child 两层 topology clean sweep；正常 positional cursor 也绑定 root/当前 child 的 URL-order fingerprint，newest-first 头插或顺序变化时只从受影响的稳定边界重扫，不跳过新 URL。Feed/listing 每轮有界扫描 `max_items` 并按 allocation 分批 handoff，backlog 清空前不提交 validator；非空 feed/sitemap 却无 usable same-origin rows 一律 schema degraded，HTML 超过 25,000 nodes / depth 256 / 512 listing scopes 或共享 selector/text 工作预算一律 `document_too_complex` fail closed。安全传输固定 exact-origin allowlist、逐跳公共 DNS 校验、validated socket 地址 pin、robots fail-closed、无环境代理 / Cookie，以及 timeout、响应体、redirect、MIME 与 parser 上限。为让“已校验地址就是实际连接地址”成为受支持的生产边界，`httpx[socks]` 约束为 `>=0.27,<1`，并把直接 import 的 `httpcore>=1,<2` 明确列为默认依赖、离线更新 `uv.lock`；pip/uv/Docker/桌面安装自动携带，不增加独立服务或浏览器步骤。`/api/sources/status` 分开表达 legacy `no_auth` 与 discovery health，从未运行不假报 ready；Web 没有 credential、verify、初始化或站内写入能力。CLI 的 `discover --source web [--limit] [--force]` 复用真实 adapter / producer / candidate pipeline 正式补池，并对 partial / disabled / no-recipes / error 返回非零；`discover-web --recipe-id ...` 保留为不写 candidate / seen / checkpoint / memory 的单 recipe preview。此兼容 HTTP recipe 链路仍不支持探测后自动保存、站内搜索、递归 crawl、登录态、JavaScript / CDP / Playwright；历史 `web_extract` 浏览器 + LLM 实验不进入 typed API 或 formal producer。动态 workflow 的 Playwright 路径独立于该限制；Ego Lite 当前执行器仍报告不可用，待可满足网络隔离边界的宿主 bridge 接入后再评估。
 
 
-## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
 ## v0.3.231：Instagram 与 TikTok 正式可用（2026-10-22）
 
 - **Instagram 与 TikTok 转正式来源**：两者不再标注实验性。README、项目首页、模块文档、隐私说明、商店 listing 与 AMO 元数据统一为「正式可用、默认关闭、需在设置中显式启用」；能力范围不变（Instagram topic / creator 发现 + 登录态有界只读初始化；TikTok 访客 feed / hashtag / creator + 登录后关键词搜索），已知限制（TikTok 站内收藏暂缓、非空账号画像与周期增量、Firefox 登录态待验；Instagram 完整 Likes 历史、双账号、Firefox 登录态与手机真机待验）保留为明确的「已知限制」，不再用「实验性」描述。

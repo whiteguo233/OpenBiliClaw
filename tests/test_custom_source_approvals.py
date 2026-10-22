@@ -234,3 +234,34 @@ async def test_empty_trusted_summary_fails_closed(summary: Any) -> None:
     events = [event async for event in loop.run(system_instruction="s", user_message="u")]
     assert store.list() == [] and executed == []
     assert any(event.type == "tool_result" and not event.ok for event in events)
+
+
+def test_feed_approval_discloses_stored_request_and_article_scopes(tmp_path: Path) -> None:
+    app, ctx, store, service = _setup(tmp_path)
+    from openbiliclaw.sources.web_recipe import build_web_recipe
+
+    ready = draft(
+        service,
+        workflow=build_web_recipe(
+            {
+                "name": "Hosted Feed",
+                "strategy": "feed",
+                "config": {
+                    "entry_url": "https://feeds.example.net/rss",
+                    "allowed_origins": ["https://feeds.example.net"],
+                    "content_origins": ["https://example.com"],
+                },
+            }
+        ),
+    )
+    _set_loop(ctx, store, "activate_discovery_source", {"draft_id": ready["draft_id"]})
+    with TestClient(app) as client:
+        events = _submit_chat(client)
+        summary = next(data["summary"] for event, data in events if event == "approval_request")
+    assert "类型：订阅源（RSS / Atom / JSON Feed）" in summary
+    assert "订阅请求范围：https://feeds.example.net" in summary
+    assert "文章链接范围：https://example.com" in summary
+    assert "不自动读取文章页" in summary
+    assert ready["session_id"] not in summary
+    assert '"executor"' not in summary
+    assert service.sources.list_sources() == []

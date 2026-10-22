@@ -2,7 +2,7 @@
 # Audit is registration evidence only. Real execution evidence: platform-source-acceptance.dynamic-web.md.
 "schema_version" = 2
 "canonical_slug" = "web"
-"display_name" = "自定义 Web Discover 来源"
+"display_name" = "自定义网站与 RSS Discover 来源"
 "integration_level" = "capability-increment"
 "host_policy" = "recipe-allowlist"
 "aliases" = []
@@ -17,7 +17,7 @@
 "fallback_owner" = "none"
 "requires_overseas_network" = false
 "routed_by_network_mode" = false
-"network_policy" = "Compiled public HTTP or portable read-only browser plans. Content navigation and extraction are restricted to approved exact origins; public DNS/IP validation and bounded execution are enforced by each available executor. Only explicit human takeover accepts credential input; secrets stay in private browser profiles. Unsupported Ego capabilities are reported unavailable, never silently enabled."
+"network_policy" = "Compiled public HTTP or portable read-only browser plans. Content navigation and extraction are restricted to approved exact origins; public DNS/IP validation and bounded execution are enforced by each available executor. Feed request origins and article-reference origins are separate: only observed public references are accepted, with no automatic article, image or enclosure fetch. New unapproved origins report degraded without committing complete checkpoints. Dedicated-platform domains are accepted only after positive Feed parsing and successful trial. Only explicit human takeover accepts credential input; secrets stay in private browser profiles. Unsupported Ego capabilities are reported unavailable, never silently enabled."
 
 ["transport"."capability_routes"]
 "discover" = "backend:hybrid:per-workflow-auth:exact-origin"
@@ -116,7 +116,7 @@
 "lease" = "Backend workflow claims freeze active version and parameters under a token-fenced finite lease."
 "idle_deadline" = "Each HTTP operation has a bounded timeout and a stalled run loses its finite backend lease."
 "absolute_deadline" = "Bounded browser plan timeout, HTTP page/detail budgets and at most two authoring-repair attempts; interactive takeover expires after 15 minutes."
-"retry" = "Login expiry pauses that workflow until human resume; transient failures back off; selector repair must trial successfully before activating a new version."
+"retry" = "Login expiry pauses that workflow until human resume; transient failures back off, including during explicit refresh; manual refresh bypasses normal cadence only; selector repair must trial successfully before activating a new version."
 "buffer" = "Only bounded normalized metadata and scrubbed observation enter drafts. Browser credentials and manual form input are never serialized to model tools or workflow storage."
 
 ["smoke"]

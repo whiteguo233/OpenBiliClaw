@@ -2575,7 +2575,7 @@ class WeiboSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 10
 
 
-class WebSourceConfigOut(BaseModel):
+class WebSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = True
     request_timeout_seconds: int = Field(default=15, ge=1, le=60)
     max_response_bytes: int = Field(default=2_097_152, ge=65_536, le=5_000_000)

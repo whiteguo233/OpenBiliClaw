@@ -21,6 +21,11 @@
     return STATUS_LABELS[text(value)] || text(value) || "等待首次发现";
   }
 
+  function workflowLabel(flow) {
+    const labels = { feed: "订阅源", sitemap: "站点地图", listing: "网页列表", browser: "浏览器网页" };
+    return labels[text(flow.kind)] || (["playwright", "ego"].includes(flow.executor) ? "浏览器网页" : "网页或订阅");
+  }
+
   function formatTime(value) {
     if (!value) return "";
     const raw = text(value);
@@ -28,14 +33,14 @@
     const stamp = numeric ? Number(value) * (Number(value) < 1e12 ? 1000 : 1) : raw;
     const date = new Date(stamp);
     if (!Number.isFinite(date.getTime())) return raw;
-    return date.toLocaleString("zh-CN", {
+    return date.toLocaleString(global.OpenBiliClawI18n?.locale || "zh-CN", {
       year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
     });
   }
 
   function shareEntries(items) {
     return array(items).map((source) => ({
-      key: text(source.source_id), label: text(source.name) || "未命名网站",
+      key: text(source.source_id), label: text(source.name) || "未命名来源",
       weight: Number(source.target_share) || 1, enabled: source.enabled !== false,
     }));
   }
@@ -82,6 +87,8 @@
     let installing = false;
     let installRequest = false;
     let executorSnapshot = [];
+    const editors = new Map();
+    const pending = new Set();
     function node(tag, className, value) {
       const element = doc.createElement(tag);
       if (className) element.className = className;
@@ -95,7 +102,7 @@
       return element;
     }
     const toolbar = node("div", "custom-source-toolbar");
-    const add = button("去聊一聊添加网站", () => onChat());
+    const add = button("去聊一聊添加来源", () => onChat());
     const refresh = button("刷新来源", () => void load());
     toolbar.append(add, refresh);
     const message = node("p", "custom-source-message");
@@ -106,7 +113,8 @@
     executorArea.setAttribute("aria-live", "polite");
     const list = node("div", "custom-source-list");
     root.classList.add("custom-source-manager");
-    root.replaceChildren(toolbar, message, executorArea, list);
+    const help = node("p", "custom-source-note", "提供网址或 RSS、Atom、JSON Feed 订阅链接，并说明想看的内容。试跑后由你确认启用，再定期发现。");
+    root.replaceChildren(toolbar, help, message, executorArea, list);
 
     function announce(value, failed = false) {
       message.textContent = value;
@@ -208,9 +216,18 @@
     }
 
     function render() {
+      const edits = new Map();
+      for (const [id, editor] of editors) {
+        const changed = {};
+        for (const [key, input] of Object.entries(editor.inputs)) {
+          if (input.value !== String(editor.source[key] ?? "")) changed[key] = input.value;
+        }
+        edits.set(id, changed);
+      }
+      editors.clear();
       list.replaceChildren();
       if (!items.length) {
-        list.append(node("p", "custom-source-note", "还没有自定义网站。到聊一聊说明网址和想看的内容，试跑确认后即可定期发现。"));
+        list.append(node("p", "custom-source-note", "还没有自定义来源。到聊一聊添加网站或订阅链接。"));
         return;
       }
       for (const source of items) {
@@ -219,7 +236,9 @@
         const card = node("article", "custom-source-card");
         card.dataset.sourceId = id;
         const title = node("div", "custom-source-title");
-        title.append(node("strong", "", text(source.name) || "未命名网站"));
+        const heading = node("strong", "", text(source.name) || "未命名来源");
+        heading.setAttribute("data-i18n-skip", "");
+        title.append(heading);
         const status = node("span", "custom-source-status", source.enabled === false ? "已停用" : statusLabel(source.health?.status));
         status.dataset.status = text(source.health?.status);
         title.append(status);
@@ -234,24 +253,34 @@
         const workflows = array(source.workflows);
         const details = node("details", "custom-source-workflows");
         details.append(node("summary", "", `${workflows.length} 个发现任务`));
-        workflows.forEach((flow) => details.append(node("p", "custom-source-note",
-          `${text(flow.intent) || "发现内容"} · ${text(flow.executor)} · ${statusLabel(flow.status)}`)));
+        workflows.forEach((flow) => {
+          const row = node("p", "custom-source-note custom-source-workflow");
+          const intent = node("span", "", text(flow.intent) || "发现内容");
+          if (text(flow.intent)) intent.setAttribute("data-i18n-skip", "");
+          row.append(intent, node("span", "custom-source-kind", workflowLabel(flow)), node("span", "", statusLabel(flow.status)));
+          details.append(row);
+        });
         card.append(details);
         const fields = node("div", "custom-source-fields");
         const name = field("来源名称", source.name, "text", { maxlength: 200 });
         const share = field("候选池占比（份）", source.target_share, "number", { min: 1, max: 20, step: 1, inputmode: "numeric" });
         const interval = field("发现间隔（分钟）", source.interval_minutes, "number", { min: 5, max: 10080, step: 1, inputmode: "numeric" });
+        const inputs = { name: name.input, target_share: share.input, interval_minutes: interval.input };
+        for (const [key, value] of Object.entries(edits.get(id) || {})) inputs[key].value = value;
+        editors.set(id, { source, inputs, card });
         fields.append(name.wrapper, share.wrapper, interval.wrapper);
         card.append(fields);
         const actions = node("div", "custom-source-actions");
         const local = node("p", "custom-source-message");
         local.setAttribute("role", "status");
         local.tabIndex = -1;
+        editors.get(id).local = local;
         const runs = node("div", "custom-source-runs");
         let busy = false;
         async function perform(operation, success) {
-          if (busy || disposed) return;
+          if (busy || pending.has(id) || disposed) return;
           busy = true;
+          pending.add(id);
           const controls = Array.from(card.querySelectorAll("button, input"));
           controls.forEach((control) => { control.disabled = true; });
           local.textContent = "正在处理…";
@@ -259,18 +288,23 @@
           try {
             await operation();
             if (!disposed) {
-              local.textContent = success;
-              local.dataset.tone = "success";
+              const current = editors.get(id)?.local || local;
+              current.textContent = success;
+              current.dataset.tone = "success";
             }
           } catch (error) {
             if (!disposed) {
-              local.textContent = errorMessage(error);
-              local.dataset.tone = "error";
-              local.focus();
+              const current = editors.get(id)?.local || local;
+              current.textContent = errorMessage(error);
+              current.dataset.tone = "error";
+              current.focus();
             }
           } finally {
             busy = false;
-            controls.forEach((control) => { control.disabled = false; });
+            pending.delete(id);
+            const mounted = editors.get(id)?.card;
+            (mounted ? Array.from(mounted.querySelectorAll("button, input")) : controls)
+              .forEach((control) => { control.disabled = false; });
           }
         }
         const update = (patch) => request(path, {
@@ -282,7 +316,20 @@
           let patch;
           try { patch = sourcePatch({ name: name.input.value, target_share: share.input.value, interval_minutes: interval.input.value }); }
           catch (error) { local.textContent = errorMessage(error); local.dataset.tone = "error"; local.focus(); return; }
-          void perform(async () => { await update(patch); await reloadAfterMutation("来源设置已保存。"); }, "已保存。");
+          void perform(async () => {
+            const result = await update(patch);
+            // Only acknowledge this successful write. Other cards, and any
+            // newer edits, retain their own unsaved values across the reload.
+            const editor = editors.get(id);
+            if (editor) {
+              const saved = { ...editor.source, ...patch, ...result?.source };
+              for (const [key, input] of Object.entries(editor.inputs)) {
+                if (input.value === String(patch[key])) input.value = String(saved[key]);
+              }
+              editor.source = saved;
+            }
+            await reloadAfterMutation("来源设置已保存。");
+          }, "已保存。");
         });
         const toggle = button(source.enabled === false ? "启用" : "停用", () => void perform(async () => {
           await update({ enabled: source.enabled === false }); await reloadAfterMutation("来源状态已更新。");
@@ -309,13 +356,15 @@
           ].filter(Boolean).join(" · "))));
         }, "已读取最近运行。"));
         const archive = button("归档", () => {
-          if (!global.confirm(`归档「${text(source.name)}」并停止后续发现？`)) return;
+          const prompt = `归档「${text(source.name)}」并停止后续发现？`;
+          if (!global.confirm(global.OpenBiliClawI18n?.translate(prompt) || prompt)) return;
           void perform(async () => { await request(path, { method: "DELETE" }); await reloadAfterMutation("来源已归档。"); }, "已归档。");
         });
         actions.append(save, toggle);
         if (workflows.some((flow) => ["playwright", "ego"].includes(flow.executor))) actions.append(login);
         actions.append(history, archive);
         card.append(actions, local, runs);
+        if (pending.has(id)) card.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
         list.append(card);
       }
     }
@@ -341,7 +390,7 @@
         if (refreshSources) {
           items = array(result?.items);
           render();
-          announce(items.length ? `共 ${items.length} 个网站；各自占比与内置来源平级。` : "");
+          announce(items.length ? `共 ${items.length} 个自定义来源；各自占比与内置来源平级。` : "");
           onChange(items);
         } else if (wasInstalling && !installing) {
           const browser = array(result?.executors).find((executor) => executor?.id === "playwright");

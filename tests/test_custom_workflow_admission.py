@@ -119,7 +119,7 @@ def test_mixed_date_exclusion_and_retained_candidate_complete_one_frontier(hando
     assert store.get_workflow(workflow["workflow_id"])["cursor"] == {"etag": "mixed"}
 
 
-def test_queue_pressure_keeps_eligible_content_and_frontier_retryable(handoff):
+def test_queue_pressure_keeps_eligible_content_and_frontier_retryable(handoff, monkeypatch):
     database, store, workflow, pipeline = handoff
     _set_date_policy(database)
     items = [_item(workflow, "retry", "2026-05-01T00:00:00Z")]
@@ -135,6 +135,11 @@ def test_queue_pressure_keeps_eligible_content_and_frontier_retryable(handoff):
     assert database.conn.execute("SELECT COUNT(*) FROM custom_workflow_seen").fetchone()[0] == 0
     current = store.get_workflow(workflow["workflow_id"])
     assert current["cursor"] == {} and current["last_error"] == "candidate_queue_full"
+    assert store.claim(workflow["workflow_id"], {}, force=True) is None
+    monkeypatch.setattr(
+        "openbiliclaw.sources.workflow_store.time",
+        SimpleNamespace(time=lambda: current["next_run_at"] + 1),
+    )
 
     second = store.complete(
         store.claim(workflow["workflow_id"], {}, force=True),

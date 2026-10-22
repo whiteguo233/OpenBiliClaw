@@ -91,6 +91,7 @@ class CustomSourceStore:
         enabled: bool = True,
         session_id: str = "",
         commit: bool = True,
+        allow_dedicated_feed: bool = False,
     ) -> dict[str, Any]:
         """Create or replace one explicitly identified source, even on the same origin."""
         source_id = source_id or f"custom_{uuid.uuid4().hex}"
@@ -116,7 +117,9 @@ class CustomSourceStore:
             raise ValueError("enabled must be a boolean")
         if not isinstance(session_id, str) or len(session_id) > 200:
             raise ValueError("Invalid session reference")
-        url = _normalize_public_url(entry_url, field="entry_url")
+        url = _normalize_public_url(
+            entry_url, field="entry_url", allow_dedicated=allow_dedicated_feed
+        )
         parsed = urlsplit(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         current = self.get_source(source_id)
@@ -168,7 +171,11 @@ class CustomSourceStore:
             raise ValueError("Unknown custom source")
         values = {key: current[key] for key in _FIELDS}
         values.update(fields)
-        return self.upsert_source(source_id=source_id, commit=commit, **values)
+        # Policy updates reuse the immutable, previously validated source
+        # identity; callers cannot introduce a new dedicated-platform URL here.
+        return self.upsert_source(
+            source_id=source_id, commit=commit, allow_dedicated_feed=True, **values
+        )
 
     def archive_source(self, source_id: str) -> bool:
         """Hide a source and stop scheduling while retaining its durable history."""

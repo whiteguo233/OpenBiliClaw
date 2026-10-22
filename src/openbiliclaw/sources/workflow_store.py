@@ -155,7 +155,7 @@ class WorkflowStore:
     def get_workflow(self, workflow_id: str) -> dict[str, Any]:
         row = self.database.conn.execute(
             "SELECT w.*, v.payload, s.status,s.next_run_at,s.last_error,s.last_success_at, "
-            "s.consecutive_failures,s.cursor_json FROM custom_workflows w "
+            "s.consecutive_failures,s.cursor_json,s.lease_until FROM custom_workflows w "
             "JOIN custom_workflow_versions v ON w.workflow_id=v.workflow_id "
             "AND w.active_version=v.version JOIN custom_workflow_state s "
             "ON s.workflow_id=w.workflow_id WHERE w.workflow_id=?",
@@ -176,6 +176,43 @@ class WorkflowStore:
         ).fetchall()
         return [self.get_workflow(str(row[0])) for row in rows]
 
+    @staticmethod
+    def _healthy_cadence(workflow: Mapping[str, Any]) -> bool:
+        return (
+            workflow["status"] in {"ready", "ok", "empty", "not_modified", "running"}
+            and not workflow["last_error"]
+            and not workflow["consecutive_failures"]
+        )
+
+    def unavailable_reason(self, workflow_id: str, *, force: bool = False) -> str:
+        """Explain the current run gate without claiming or exposing stored errors."""
+        workflow = self.get_workflow(workflow_id)
+        source = self.database.conn.execute(
+            "SELECT enabled, archived FROM custom_sources WHERE source_id=?",
+            (workflow["source_id"],),
+        ).fetchone()
+        if not source or not source[0] or source[1] or not workflow.get("enabled", True):
+            return "disabled"
+        if workflow["status"] == "login_required":
+            return "login_required"
+        now = time.time()
+        if workflow["lease_until"] > now:
+            return "in_flight"
+        if workflow["next_run_at"] > now:
+            healthy = self._healthy_cadence(workflow)
+            if not healthy:
+                error = str(workflow["last_error"]).lower()
+                return (
+                    "rate_limited"
+                    if workflow["status"] == "rate_limited"
+                    or "429" in error
+                    or "rate_limit" in error
+                    else "backoff"
+                )
+            if not force:
+                return "throttled"
+        return ""
+
     def claim(
         self,
         workflow_id: str,
@@ -188,16 +225,20 @@ class WorkflowStore:
         with self.transaction() as conn:
             now = time.time()
             workflow = self.get_workflow(workflow_id)
-            source = conn.execute(
-                "SELECT enabled FROM custom_sources WHERE source_id=?", (workflow["source_id"],)
-            ).fetchone()
-            if not source or not source[0] or workflow["status"] == "login_required":
+            if self.unavailable_reason(workflow_id, force=force):
                 return None
             token = str(uuid.uuid4())
             changed = conn.execute(
                 "UPDATE custom_workflow_state SET lease_token=?,lease_until=?,status='running' "
                 "WHERE workflow_id=? AND lease_until<=? AND (? OR next_run_at<=?)",
-                (token, now + lease_seconds, workflow_id, now, force, now),
+                (
+                    token,
+                    now + lease_seconds,
+                    workflow_id,
+                    now,
+                    force and self._healthy_cadence(workflow),
+                    now,
+                ),
             ).rowcount
             if not changed:
                 return None

@@ -221,8 +221,8 @@ async function openMobileSettings(opener) {
       </select>
     </label>
     <section class="mobile-source-settings" aria-labelledby="mobile-custom-sources-title">
-      <h3 id="mobile-custom-sources-title">内容来源</h3>
-      <p class="mobile-settings-hint">在对话中添加网站，在这里管理已添加的来源。目标份额与内置来源一起分配，数值越大，候选内容占比越高。</p>
+      <h3 id="mobile-custom-sources-title">自定义来源</h3>
+      <p class="mobile-settings-hint">在聊一聊提供网址或 RSS、Atom、JSON Feed 订阅链接，试跑后确认启用。在这里管理各来源的份额、频率与状态；份额与内置来源平级。</p>
       <div id="mobile-custom-sources"></div>
     </section>
     <section class="mobile-sync-settings" aria-labelledby="mobile-saved-sync-title">

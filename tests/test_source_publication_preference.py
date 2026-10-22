@@ -76,6 +76,38 @@ def test_instagram_date_preference_reaches_shared_admission(tmp_path: Path) -> N
     ).eligible
 
 
+def test_web_date_preference_round_trips_and_filters_custom_candidates(tmp_path: Path) -> None:
+    from openbiliclaw.config import source_date_preferences
+    from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+    config = Config()
+    config.sources.web.recommendation_date_preset = "last_7_days"
+    config.sources.web.recommendation_date_weight = 1.0
+    path = tmp_path / "web.toml"
+    save_config(config, path)
+    preferences = source_date_preferences(load_config(path))
+    assert preferences["web"].preset == "last_7_days"
+    assert preferences["web"].weight == 1.0
+    database = Database(tmp_path / "web.db")
+    database.initialize()
+    database.set_source_publication_date_preferences(preferences)
+    try:
+        source = CustomSourceStore(database).upsert_source(
+            name="Feed", entry_url="https://example.com/feed.xml", intent="全部更新"
+        )
+        item = DiscoveredContent(
+            bvid="web:expired",
+            title="Old feed item",
+            source_platform="web",
+            source_id=source["source_id"],
+            published_at="2000-01-01T00:00:00Z",
+        )
+        write = discovered_content_to_candidate_write(item)
+        assert database.enqueue_discovery_candidates([write]) == 0
+    finally:
+        database.close()
+
+
 def test_filter_candidates_for_eval_removes_out_of_window_before_eval() -> None:
     now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
     recent = DiscoveredContent(

@@ -21689,6 +21689,7 @@ def create_app(
                     max_response_bytes=cfg.sources.web.max_response_bytes,
                     max_redirects=cfg.sources.web.max_redirects,
                     lease_seconds=cfg.sources.web.lease_seconds,
+                    **_source_date_pref_out_kwargs(cfg.sources.web),
                 ),
                 weibo=WeiboSourceConfigOut(
                     enabled=cfg.sources.weibo.enabled,
@@ -24515,6 +24516,10 @@ def create_app(
                 web_data = sources_data.get("web")
                 if isinstance(web_data, dict):
                     allowed_web_fields = {
+                        "recommendation_date_preset",
+                        "recommendation_date_start",
+                        "recommendation_date_end",
+                        "recommendation_date_weight",
                         "enabled",
                         "request_timeout_seconds",
                         "max_response_bytes",
@@ -24695,6 +24700,7 @@ def create_app(
                 "linuxdo": cfg.sources.linuxdo,
                 "v2ex": cfg.sources.v2ex,
                 "weibo": cfg.sources.weibo,
+                "web": cfg.sources.web,
             }
             for slug, source_cfg in source_config_by_slug.items():
                 source_data = sources_data.get(slug)

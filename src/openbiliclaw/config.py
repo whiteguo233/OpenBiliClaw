@@ -1526,7 +1526,7 @@ class WeiboSourceConfig(SourceDatePreferenceConfig):
 
 
 @dataclass
-class WebSourceConfig:
+class WebSourceConfig(SourceDatePreferenceConfig):
     """Global kill switch and transport ceilings for public Web recipes.
 
     The switch defaults on because creating an explicit, validated recipe is
@@ -2790,6 +2790,7 @@ def _build_config(
         v2ex=v2ex_raw,
         weibo=weibo_raw,
         instagram=instagram_raw,
+        web=web_raw,
     )
     _warn_suspicious_budgets(sources)
 
@@ -4502,6 +4503,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "v2ex",
     "weibo",
     "instagram",
+    "web",
 )
 
 
@@ -6265,6 +6267,7 @@ def _render_config_toml(
             f"max_response_bytes = {config.sources.web.max_response_bytes}",
             f"max_redirects = {config.sources.web.max_redirects}",
             f"lease_seconds = {config.sources.web.lease_seconds}",
+            *_render_source_date_preference_lines(config.sources.web),
             "",
             "[sources.weibo]",
             f"enabled = {_toml_bool(config.sources.weibo.enabled)}",

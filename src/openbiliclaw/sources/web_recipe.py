@@ -48,6 +48,7 @@ _CONFIG_FIELDS = frozenset(
     {
         "entry_url",
         "allowed_origins",
+        "content_origins",
         "interval_minutes",
         "max_items",
         "max_pages",
@@ -144,6 +145,7 @@ def build_web_recipe(
     *,
     recipe_id: str | None = None,
     created_by: str = "user",
+    allow_dedicated_feed: bool = False,
 ) -> dict[str, Any]:
     """Validate and compile a client payload into a backend-owned Web recipe.
 
@@ -180,7 +182,10 @@ def build_web_recipe(
             "client-owned config fields are not allowed: " + ", ".join(unknown_config)
         )
 
-    entry_url = _normalize_public_url(raw_config.get("entry_url"), field="entry_url")
+    dedicated_feed = allow_dedicated_feed and strategy == "feed"
+    entry_url = _normalize_public_url(
+        raw_config.get("entry_url"), field="entry_url", allow_dedicated=dedicated_feed
+    )
     entry_origin = _origin_for(entry_url)
     raw_origins = raw_config.get("allowed_origins", ())
     if isinstance(raw_origins, str) or not isinstance(raw_origins, Sequence):
@@ -189,7 +194,9 @@ def build_web_recipe(
         raise WebRecipeValidationError("allowed_origins may contain at most 8 origins")
     allowed_origins = [entry_origin]
     for raw_origin in raw_origins:
-        normalized = _normalize_public_url(raw_origin, field="allowed_origins")
+        normalized = _normalize_public_url(
+            raw_origin, field="allowed_origins", allow_dedicated=dedicated_feed
+        )
         normalized_parts = urlsplit(normalized)
         try:
             raw_fragment = urlsplit(str(raw_origin or "").strip()).fragment
@@ -204,6 +211,31 @@ def build_web_recipe(
         origin = _origin_for(normalized)
         if origin not in allowed_origins:
             allowed_origins.append(origin)
+
+    content_origins: list[str] | None = None
+    if "content_origins" in raw_config:
+        if strategy != "feed":
+            raise WebRecipeValidationError("content_origins is only supported for feeds")
+        raw_content_origins = raw_config["content_origins"]
+        if (
+            isinstance(raw_content_origins, (str, bytes))
+            or not isinstance(raw_content_origins, Sequence)
+            or not 1 <= len(raw_content_origins) <= 8
+        ):
+            raise WebRecipeValidationError("content_origins must contain 1..8 exact public origins")
+        content_origins = []
+        for raw_origin in raw_content_origins:
+            # References may point to built-in platforms; they are never
+            # fetched through this grant and receive no platform credentials.
+            normalized = _normalize_public_url(
+                raw_origin, field="content_origins", allow_dedicated=True
+            )
+            parts = urlsplit(normalized)
+            if parts.path not in {"", "/"} or parts.query or urlsplit(str(raw_origin)).fragment:
+                raise WebRecipeValidationError("content_origins must contain exact origins")
+            origin = _origin_for(normalized)
+            if origin not in content_origins:
+                content_origins.append(origin)
 
     interval_minutes = _bounded_int(
         raw_config.get("interval_minutes", 30),
@@ -268,6 +300,8 @@ def build_web_recipe(
         "max_pages": max_pages,
         "detail_fetch_limit": detail_fetch_limit,
     }
+    if content_origins is not None:
+        compiled_config["content_origins"] = content_origins
     if listing:
         compiled_config["listing"] = listing
     compiled_config["plan_version"] = WEB_RECIPE_PLAN_VERSION
@@ -324,7 +358,7 @@ def _bounded_int(value: object, *, field: str, bounds: tuple[int, int]) -> int:
     return result
 
 
-def _normalize_public_url(value: object, *, field: str) -> str:
+def _normalize_public_url(value: object, *, field: str, allow_dedicated: bool = False) -> str:
     text = str(value or "").strip()
     if (
         not text
@@ -386,7 +420,7 @@ def _normalize_public_url(value: object, *, field: str) -> str:
         for label in labels
     ):
         raise WebRecipeValidationError(f"{field} contains an invalid hostname")
-    if infer_source_platform_from_url(f"{scheme}://{ascii_host}"):
+    if not allow_dedicated and infer_source_platform_from_url(f"{scheme}://{ascii_host}"):
         raise WebRecipeValidationError(
             f"{field} belongs to a dedicated source adapter, not generic Web"
         )

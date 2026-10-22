@@ -210,6 +210,17 @@ chat scope 且当前角色含 read_memory 才注入，不进入 system 指令或
 
 ### 动态网站来源的对话与管理
 
+网站、RSS、Atom、JSON Feed 的新订阅统一使用 prepare → trial/ready → activate。
+用户给出 Feed 并要求订阅全部更新时，直接使用“跟踪该订阅的新内容”试跑；仅追问缺失信息。
+`build_source_tool_registry(dynamic_web_sources=True)` 在新审批登记前阻止 Web/Feed 走
+旧 `create_source`（包括伪装为平台类型的 feed/URL 订阅），并返回动态工具指引；旧已批准操作仍可 dispatch，平台关键词订阅不受影响。
+Feed 的审批摘要从存储计划导出类型、请求域和文章链接域，明确不自动抓取文章页。
+工具的有界试跑摘要用 `kind` 表达内容类型；激活响应包含实际保存的间隔。
+修改既有流程（包括 Feed 新文章域）时，先 `list_sources` 取得流程 ID、版本、目标与状态，
+再向 prepare 传 `source_id+workflow_id`。服务端确定基线版本，可信审批摘要展示流程 ID、
+旧→新版本、发现目标及请求/内容范围；批准后替换原流程，保留已处理内容和其他流程。
+仅传 `source_id` 仍然追加流程。并发更新使草稿过期时重新准备，不让模型指定版本。
+
 动态来源的启用与管理工具由服务端 `approval_summary` 从已保存的草稿或来源生成确认摘要，
 明确列出网站、目标和实际份额/间隔；摘要随审批记录保存，不要求模型重复传入展示字段。
 三端显示四个工具的中文进度标签，审批回放保留同一份具体摘要。
@@ -230,36 +241,23 @@ chat scope 且当前角色含 read_memory 才注入，不进入 system 指令或
 抓取的候选仍须经过现有 Discover 评估才能入池。
 
 桌面、popup 和移动端的来源设置复用 `shared/custom-sources.js`，显示健康状态与
-最近运行，可按网站单独调整份额和发现间隔、启停、归档或重新登录。「去聊一聊添加网站」
+最近运行，可按网站单独调整份额和发现间隔、启停、归档或重新登录。「去聊一聊添加来源」
 返回既有会话入口。来源管理 API 与草稿状态见 [API 动态网站来源](api.md#动态网站来源)。
 推荐展示 `source_name`，内容平台仍为 `web`；每个动态网站的候选池份额与内置平台平级。
 设置页点击保存或启停是用户直接操作，按站点调用管理 API；它不经过聊天工具确认卡，
 归档另有界面确认。Playwright 不可用时，设置页提供显式「安装浏览器」入口；安装请求
 被接受不代表安装成功，界面根据后续执行器状态显示结果，不由 Agent 静默安装。
 
-以下 `probe_web_source/create_source` 流程是保留的**旧版匿名 HTTP recipe 路径**；
+以下 `probe_web_source/create_source` 描述保留的**旧版匿名 HTTP recipe 路径**和已存审批回放；新聊天订阅已统一路由到动态工具。
 它的公开页面限制与 CLI chat 排除不代表动态网站来源的完整产品范围。
 
-### 旧版对话新增 Web recipe（capability increment）
+### 旧版 Web recipe 审批兼容
 
-桌面 Web、移动 Web 与插件的「聊一聊」共用同一 Agent 工具与已有审批卡。默认口味伙伴和
-系统管家都可执行以下链路；CLI `chat` 仍走旧对话路径，本轮不接入该 Agent 能力，CLI 用户
-可使用独立的 `probe-web`、`discover-web` 与 `discover --source web` 命令。
-
-```text
-用户提供公开 URL → probe_web_source(url, strategy?) [read]
-                   → 一个推荐候选 + available_strategies + 最多 2 个样例
-                   → 完整 create_source_arguments（扁平 typed Web 配置）
-                   → create_source(source_type="web", ...) [hard_write]
-                   → 持久审批卡 → 用户批准 → build_web_recipe → source_recipes
-                   → 到期 WebDiscoveryProducer → 统一候选评估 / 推荐
-```
-
-Agent 展示草稿后调用 `create_source` 生成具体审批卡，不先追加一轮口头批准。
-probe、拒绝审批与待审批状态都不保存来源或开始调度；批准后的执行仍经过同一 compiler、
-exact-origin / robots / public DNS + socket pin 边界。同样的 recipe 重复创建会返回已有项，
-不会借此重新启用用户已停用的来源。Web 仍为匿名公开 discovery-only；不读取登录态、
-不执行 JavaScript，也不生成账号画像初始化事件。
+旧 `probe_web_source` 保留只读候选、最多两条样例和完整 `create_source_arguments`，
+用于检查已有匿名 recipe。低层 registry 仍支持 typed compiler，既有持久审批执行时也保留
+原 handler；新聊天 registry 在登记旧 Web 创建审批前返回动态工具指引，不新增聚合订阅。
+旧 API 编辑器和 CLI `probe-web`、`discover-web`、`discover --source web` 保持兼容。
+其重复创建不重新启用停用项，公开 HTTP 网络边界不变；CLI `chat` 仍是旧对话路径。
 
 ### Skill 体系（M4）
 

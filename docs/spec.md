@@ -354,8 +354,8 @@ XHS/DY/YT/Zhihu/Reddit/Linux.do/V2EX/Weibo task final: canonical staged result (
 V2EX identity ladder: PAT verified > browser observed > config/accepted
                     → mismatch pauses account projection only
                     → resolved identity-scoped seen/affinity + complete favorite 2-miss outbox
-Dynamic website chat → prepare/trial → approval → source_id (independent share/cadence)
-                     → same-site versioned workflows → HTTP / Playwright → ordinary pending_eval → pool
+Website / RSS / Atom / JSON Feed chat → prepare/trial → approval → source_id (independent share/cadence)
+                     → same-site versioned workflows → HTTP feeds/listings / Playwright → ordinary pending_eval → pool
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      Ego executor unavailable; optional host bridge not integrated

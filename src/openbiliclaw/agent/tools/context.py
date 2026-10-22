@@ -63,7 +63,9 @@ def build_agent_tool_registry(ctx: AgentToolContext) -> ToolRegistry:
     """
     registry = ToolRegistry()
     if ctx.database is not None:
-        source_registry = build_source_tool_registry(ctx.database, config=ctx.config)
+        source_registry = build_source_tool_registry(
+            ctx.database, config=ctx.config, dynamic_web_sources=True
+        )
         for name in source_registry.names:
             tool = source_registry.get(name)
             if tool is not None:

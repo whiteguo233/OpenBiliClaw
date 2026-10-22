@@ -20,6 +20,8 @@
 .custom-source-workflows summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 13px; }
 .custom-source-workflows summary::before { content: "▸"; margin-right: 6px; }
 .custom-source-workflows[open] summary::before { content: "▾"; }
+.custom-source-workflow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.custom-source-kind { font-weight: 600; }
 .custom-source-login-link { display: inline-flex; align-items: center; min-height: 44px; }
 .custom-source-share-peers { display: flex; flex-wrap: wrap; gap: 8px; }
 .custom-source-share-peer { padding: 6px 10px; border: 1px solid var(--border, #8885); border-radius: 8px; font-size: 13px; overflow-wrap: anywhere; }

@@ -245,7 +245,7 @@ async def test_periodic_handoff_dedupes_and_preserves_canonical_identity(service
 
 
 @pytest.mark.asyncio
-async def test_failed_handoff_does_not_mark_seen_or_advance_cursor(service):
+async def test_failed_handoff_does_not_mark_seen_or_advance_cursor(service, monkeypatch):
     source = service.activate(draft(service)["draft_id"])
     service.fetch = AsyncMock(return_value=SourceFetchResult(items=[item()], cursor={"page": 2}))
 
@@ -261,6 +261,11 @@ async def test_failed_handoff_does_not_mark_seen_or_advance_cursor(service):
     workflow = service.store.list_workflows(source["source_id"])[0]
     assert workflow["cursor"] == {}
     pipeline.enqueue_candidates = lambda items, **_: len(items)
+    assert (await producer.produce_if_due(force=True))["reason"] == "backoff"
+    monkeypatch.setattr(
+        "openbiliclaw.sources.workflow_store.time",
+        SimpleNamespace(time=lambda: workflow["next_run_at"] + 1),
+    )
     assert (await producer.produce_if_due(force=True))["enqueued"] == 1
 
 
@@ -306,7 +311,7 @@ def test_api_projects_public_state_and_rejects_scope_mutation(service):
 
 
 @pytest.mark.asyncio
-async def test_queue_pressure_leaves_unaccepted_items_retryable(service):
+async def test_queue_pressure_leaves_unaccepted_items_retryable(service, monkeypatch):
     source = service.activate(draft(service)["draft_id"])
     service.fetch = AsyncMock(return_value=SourceFetchResult(items=[item()], cursor={"next": 2}))
     pipeline = SimpleNamespace(enqueue_candidates=lambda items, **_: 0)
@@ -317,6 +322,11 @@ async def test_queue_pressure_leaves_unaccepted_items_retryable(service):
     workflow = service.store.list_workflows(source["source_id"])[0]
     assert workflow["cursor"] == {}
     pipeline.enqueue_candidates = lambda items, **_: len(items)
+    assert (await producer.produce_if_due(force=True))["reason"] == "backoff"
+    monkeypatch.setattr(
+        "openbiliclaw.sources.workflow_store.time",
+        SimpleNamespace(time=lambda: workflow["next_run_at"] + 1),
+    )
     assert (await producer.produce_if_due(force=True))["enqueued"] == 1
 
 
@@ -598,7 +608,8 @@ async def test_repair_trial_cannot_publish_after_source_is_disabled(service):
         )
     )
 
-    async def complete_trial(prepared):
+    async def complete_trial(prepared, *, background):
+        assert background is True
         service.sources.update_source(source["source_id"], enabled=False)
         prepared.update(status="ready", trial_success=True)
         return service.store.save_draft(prepared, draft_id=prepared["draft_id"])

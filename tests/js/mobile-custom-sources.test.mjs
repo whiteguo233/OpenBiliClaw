@@ -69,6 +69,8 @@ test("mobile settings mounts source management independently of saved-sync confi
   await h.context.openMobileSettings({});
   assert.equal(h.managers.length, 1);
   assert.equal(h.managers[0].loads, 1);
+  assert.match(h.nodes[1].innerHTML, /自定义来源/);
+  assert.match(h.nodes[1].innerHTML, /网址或 RSS、Atom、JSON Feed 订阅链接/);
   const { options } = h.managers[0];
   assert.equal(options.baseUrl, "https://claw.example");
   assert.equal(options.root, h.nodes[1].querySelector("#mobile-custom-sources"));
