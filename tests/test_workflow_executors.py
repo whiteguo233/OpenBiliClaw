@@ -235,6 +235,29 @@ async def test_real_browser_collects_paginates_and_applies_metadata(
     assert result.scope_complete
 
 
+async def test_real_browser_uses_ready_runtime_without_separate_headless_shell(
+    tmp_path: Path, fixture_site: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from playwright.async_api import BrowserType, Error
+
+    runtime = browser_runtime_status()
+    launch = BrowserType.launch_persistent_context
+
+    async def without_headless_shell(self: BrowserType, *args: Any, **kwargs: Any) -> Any:
+        # Model an installation with the reported full Chromium available, but
+        # without Playwright's separately selected default headless-shell binary.
+        if kwargs.get("executable_path") != runtime["executable_path"]:
+            raise Error("Separate headless-shell executable is unavailable")
+        return await launch(self, *args, **kwargs)
+
+    monkeypatch.setattr(BrowserType, "launch_persistent_context", without_headless_shell)
+    executor = _executor(tmp_path, fixture_site)
+    assert executor.availability()["available"]
+    result = await executor.run(_plan(fixture_site), session_id="ready-runtime")
+    assert result.status == "ok", result
+    assert [item.title for item in result.items] == ["First", "Second"]
+
+
 async def test_real_browser_reports_blocked_script_without_response_secrets(
     tmp_path: Path, fixture_site: str
 ) -> None:

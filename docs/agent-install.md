@@ -936,6 +936,9 @@ openbiliclaw browser install
 openbiliclaw browser install --with-system-deps
 ```
 
+Workflows launch the same full Chromium executable reported by the readiness check,
+including in headless mode; a separate headless-shell installation is not required.
+
 The desktop build bundles Playwright's Node driver; the same command and the settings
 installation action download Chromium without invoking a system Python interpreter.
 Docker builds install the default driver, Chromium and its Linux dependencies, storing

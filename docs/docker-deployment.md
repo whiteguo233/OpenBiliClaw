@@ -526,6 +526,7 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 
 镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
 `/opt/openbiliclaw-browsers`，运行时使用 headless 模式，无须桌面环境或宿主 Mac。
+执行器启动就绪检查返回的完整 Chromium；headless 模式不依赖另一个 headless shell 文件。
 网站登录通过应用的人工接管页面完成，使用专属浏览器 profile；profile 保存在
 应用数据目录，继续使用现有数据卷，重启容器后仍可复用登录状态。
 

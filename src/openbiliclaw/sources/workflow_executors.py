@@ -771,7 +771,8 @@ class PlaywrightWorkflowExecutor:
         plan = compile_browser_workflow(plan.to_dict())
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", session_id):
             raise BrowserWorkflowExecutionError("invalid_session", "Browser session ID is invalid")
-        if not self.availability()["available"]:
+        runtime = self.availability()
+        if not runtime["available"]:
             raise BrowserWorkflowExecutionError(
                 "executor_unavailable", "Install openbiliclaw[browser] and Chromium"
             )
@@ -808,7 +809,10 @@ class PlaywrightWorkflowExecutor:
             context = await playwright.chromium.launch_persistent_context(
                 str(profile),
                 headless=self.headless,
-                executable_path=self.executable_path,
+                # Launch the same full Chromium that readiness inspected.
+                # Otherwise headless mode silently selects a separate shell,
+                # with different installation and website compatibility.
+                executable_path=str(runtime["executable_path"]),
                 env={
                     key: value
                     for key, value in os.environ.items()

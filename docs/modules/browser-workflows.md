@@ -14,7 +14,7 @@
 | 登录会话 | 后端生成的不透明 session ID 对应独立 profile；退出后保存 Cookie，下次执行复用 |
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
-| 可移植执行 | Playwright Chromium 支持桌面、Python CLI、Linux 服务器和 amd64/arm64 Docker |
+| 可移植执行 | Playwright 完整 Chromium 支持桌面、Python CLI、Linux 服务器和 amd64/arm64 Docker；就绪检查与实际启动使用同一可执行文件 |
 | Ego Lite | 检测宿主 CLI 并返回明确不可用原因；尚无满足隔离与网络约束的 Ego Lite 执行适配器，不声称已完成该能力 |
 
 ## 公共接口
@@ -37,6 +37,8 @@
   明确的登录墙或待授权跳转证据优先进入人工接管；先前可选资源失败不能遮蔽这些证据。
 - `BrowserWorkflowSession.act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。
 - `browser_runtime_status()` 检查匹配的 Chromium 文件是否存在；仅装 Python 模块不算就绪。
+  `PlaywrightWorkflowExecutor` 默认启动该完整 Chromium；显式 `executable_path` 仍优先。
+  无界面模式不再隐式选择另一份 headless shell，避免就绪检测与执行不一致及站点兼容差异。
 - `install_browser_runtime(with_system_deps=False)` 调用随 Playwright 打包的 Node driver，
   适用于冻结桌面程序，不依赖 `sys.executable -m playwright`。
 
@@ -74,6 +76,7 @@ Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连�
 或使用设置页的安装按钮。`[browser]` extra 继续作为兼容别名。Linux
 缺少系统库时由管理员使用 `--with-system-deps`。桌面构建包含匹配的 Node driver，
 Chromium 按用户安装；Docker 在构建时安装浏览器和系统库。
+只需安装匹配的完整 Chromium；工作流不依赖单独的 headless shell 文件。
 
 浏览器 profile 是登录凭据存储，应与应用数据一起保留并限制本机访问权限。不要把
 profile、Cookie、截图或接管输入写入流程版本、模型提示、公共日志或代码仓库。
