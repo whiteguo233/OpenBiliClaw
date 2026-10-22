@@ -1,6 +1,6 @@
 # 动态 Web Discover 来源验收
 
-续建进度与最新结果见[2026-10-22 网站与 RSS 完成验收](testing/2026-10-22-dynamic-sources-completion.md)。下文为历史验收，不能代替续建后的结果。
+续建进度见[2026-10-22 网站与 RSS 完成验收](testing/2026-10-22-dynamic-sources-completion.md)；最新真实浏览器聊天、Luna 评分及 7 张来源名推荐卡结果见[同日哔哩轻小说验收](testing/2026-10-22-bilinovel-chat-e2e.md)。下文为历史验收，不能代替续建后的结果。
 
 日期：2026-10-02 至 2026-10-03。范围：`capability-increment`，发现能力与登录接管；不包括账号历史导入、互动事件或站内发布/收藏。契约：[dynamic-web](platform-source-contract.dynamic-web.toml)。兼容的公开 HTTP recipe 仍遵守 [web](platform-source-contract.web.toml)。
 

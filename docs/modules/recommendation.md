@@ -24,7 +24,7 @@ HTTPS URL。
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 自定义网站来源显示与独立库存 | ✅ | 普通推荐、惊喜单条/批量及手动/后台推送均保留 `source_id/source_name` 与 canonical `web` 身份；来源筛选按实例核对，重复 URL 只计一次库存，收藏/稍后再看继续共用原内容键。 |
+| 自定义网站来源显示与独立库存 | ✅ | 普通推荐、惊喜单条/批量及手动/后台推送均保留 `source_id/source_name` 与 canonical `web` 身份；内部实例份额独立，公开 Web 平台库存与定向续页合并各实例，重复 URL 只计一次库存，收藏/稍后再看继续共用原内容键。 |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
@@ -128,7 +128,7 @@ cover bonus 仍由前者单独控制。
 
 ### 自定义网站归属
 
-`Recommendation.content` 经 `DiscoveredContent.source_id/source_name` 保留网站实例。池读取和 scoped serve 使用实例 ID 作为配额/筛选键；内容的 `source_platform=web` 与 `item_key` 继续用于打开、反馈及保存。`RecommendationOut`、`WatchLaterItem`、`FavoriteItem` 暴露同名显示字段，默认空字符串保持旧来源兼容。
+`Recommendation.content` 经 `DiscoveredContent.source_id/source_name` 保留网站实例。内部配额和实例定向读取使用实例 ID；公开平台库存、`append` / `reshuffle` 的 `source_platform=web` 则合并旧 Web recipe 与各动态网站，不能把实例 ID 当作公开平台名。内容的 `item_key` 继续用于打开、反馈及保存。`RecommendationOut`、`WatchLaterItem`、`FavoriteItem` 暴露实例显示字段，默认空字符串保持旧来源兼容。
 
 多个来源发现同一个 URL 时，卡片只有一份 canonical 内容，`source_metadata.source_provenance` 保存多个发现来源。首个入库实例持有一份库存额度，后续发现不重复占用来源份额或创建独立反馈；修改来源名称不改变内容键。归档移除后续调度资格，历史推荐和本地保存仍保留。
 
@@ -267,6 +267,7 @@ GET /api/recommendations/platform-availability
 
 - 供 PC Web 平台 Tab 显示"该平台还有几条可立即推荐"，与 `count_pool_candidates()` / `serve()` 完全同口径
 - `total_available == sum(by_platform.values())` 由 storage 单次隔离快照保证；"全部" Tab 的数字取自同一份 snapshot 的 `total_available`
+- `by_platform` 使用 canonical 平台键。各动态网站库存合并到 `web`，来源实例仍独立记账并在卡片保留 `source_name`；公开平台筛选不接受 `custom_*` 实例 ID。引擎的最终平台检查与库存读取使用相同口径，避免 Web 显示库存却筛选不到内容。
 - 零库存平台可省略，前端对已启用但缺失的键显示 `0`
 - 读取异常返回可诊断 5xx；前端保留上一次成功值，首次尚未成功读取时显示未知态，不把失败伪装成 `0`
 - 该接口是只读的，刷新库存不消费候选池，也不会重载或覆盖已经 append 的推荐卡片

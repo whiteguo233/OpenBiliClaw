@@ -75,7 +75,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。 |
+| 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。公开平台库存合并到 canonical `web`，内部实例配额仍独立。 |
 | 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |
 | 推荐读取事务内复用 | ✅ | 隔离快照和库存读取复用同一事务的动态阈值及相同 SQL 原始行；每次仍执行完整资格过滤与独立 topic window，事务结束清空。 |
 | Tailnet 节点身份 / helper / 待用凭据迁移隔离 | ✅ | `data/tailnet/` 同时属于导出排除根与目标应用保留根；`.obcbackup` 不含 tsnet 私钥、状态或 `.bootstrap-credential.json`。后者只在本机设置页提交后以私有权限等待下一次启动，仅在 helper 进入 `ready` 后删除（失败/卡住保留以便重试）。目标保留根含嵌套 symlink 时 fail closed。`data/bin/` 的任何大小写变体在导出与导入都被排除；只保留目标机 exact native helper 普通文件，POSIX 还要求原文件可执行再恢复 `0700`，来源包不能迁入 executable。 |
@@ -125,7 +125,7 @@
 | 持久化已看去重 | ✅ | `seen_items(item_key)` 保存所有已知 `view / favorite / like / coin` 的 canonical `source_platform:content_id`，B 站同时向旧调用方暴露 raw BVID。单条 `insert_event()` 与批量 `insert_events_batch()` 都通过各自独立短连接在事件事务内同步 upsert 账本；初始化会按 `seen_items_backfill_state` 增量回填旧事件。可换、raw、评估、平台库存与 delight 打分/计数/出队路径读取这份无界账本，`get_recent_viewed_*` 仅作为兼容别名，不再代表“最近 N 条”。`mark_delight_seen()` 供三端“× / 看过了”先写 canonical ledger、再消费惊喜状态。 |
 | 统一 admission 分数门 | ✅ | 推荐池读取、raw/headroom 统计、topic/franchise 分布、suppressed 复活、delight 候选和历史推荐读取都会应用统一最低分；初始化会清理旧低分 `content_cache` / `recommendations` 脏数据。 |
 | 惊喜文案就绪门与通道占位排除 | ✅ | `get_pool_candidates_needing_delight_score()` 只领取 `pool_expression / pool_topic_label` 已同时生成且未命中 `seen_items` 的行；`update_delight_score()` 再以条件写入拒绝未就绪或非正式文案快照，因此推荐词生成前不会形成任何 delight 状态。`get_delight_candidates()` / `count_delight_candidates()` 继续只返回精确同步快照并硬排除已看身份；`include_delivered=True` 的重灌路径会额外把“已推送但用户尚未看过（`delight_seen=0`）”的候选保留在队列里，而默认主动推送/CLI 路径仍只取 `delight_notified=0`。evaluator 的内部 `relevance_reason` 不能进入惊喜状态或展示出口。`get_pool_candidates()` / `count_pool_candidates()` 统一排除已送达惊喜，或 delight 分数达动态阈值且正式文案快照已同步的行。动态阈值自身也不再把已看历史算进样本；默认底线为 `0.75`，copy-ready 样本不少于 150 条时按 Top 10% 边界抬高，样本不足或边界未超过底线时回退底线——高分同质池仍使用 Top 10% 边界，避免普通推荐池被惊喜占位清空（issue #220）；backfill 会修复旧版 reason/hook 快照。 |
-| 平台定向候选读取 | ✅ | `get_pool_candidates_for_platform(platform, limit=5)` 直接从 canonical available 集合（`_load_available_pool_candidate_rows_on(..., full_rows=True)`）取整行，与 `count_pool_candidates()` 共用 servability / `seen_items` / linkability / delight / topic-window 守卫与排序，因此 `strict_platform_candidates(p) ⊆ available_candidates_for(p)` 恒成立。平台过滤用 `_pool_source_family(source, source_platform)` 在 Python 侧归类而非裸列比较——`source_platform` 为空的 legacy 行要靠 `zhihu-hot` / `xhs-extension-task` 之类策略前缀才能归族，裸列比较会漏掉它们并破坏 `total == sum(by_platform)`。别名（`xhs`/`zh`）先 canonical 化，空值沿用 bilibili 默认。同时服务 serve 窗口的平台保底与 PC Web 的平台定向推荐请求；`list_servable_pool_platforms()` 返回当前可服务候选的去重平台 token（同口径守卫）。 |
+| 平台定向候选读取 | ✅ | `get_pool_candidates_for_platform(platform, limit=5)` 直接从 canonical available 集合（`_load_available_pool_candidate_rows_on(..., full_rows=True)`）取整行，与 `count_pool_candidates()` 共用 servability / `seen_items` / linkability / delight / topic-window 守卫与排序，因此 `strict_platform_candidates(p) ⊆ available_candidates_for(p)` 恒成立。公开平台过滤用 `_pool_row_content_family()` 在 Python 侧归类而非裸列比较，内部调用另保留按注册实例 ID 精确读取——`source_platform` 为空的 legacy 行要靠 `zhihu-hot` / `xhs-extension-task` 之类策略前缀才能归族，裸列比较会漏掉它们并破坏 `total == sum(by_platform)`。别名（`xhs`/`zh`）先 canonical 化，空值沿用 bilibili 默认。同时服务 serve 窗口的平台保底与 PC Web 的平台定向推荐请求；`list_servable_pool_platforms()` 返回当前可服务候选的去重平台 token（同口径守卫）。 |
 | 平台库存快照 | ✅ | `load_pool_platform_availability()` / `load_pool_platform_availability_async()` 在独立短连接的单次只读事务里物化一次 canonical available 集合，返回 `PoolPlatformAvailability(total_available, by_platform)`。两个数字出自同一份行集合，`total_available == sum(by_platform.values())` 是结构性成立而非两次独立查询的巧合（后者可能观察到不同 WAL 状态）。零库存平台不出现在 `by_platform` 中，由调用方按已启用来源补 `0`。 |
 | `style_key` 历史值迁移 | ✅ | `Database.initialize()` 会把 `content_cache` / `discovery_candidates` 中已知旧内容风格 key 迁移到新的观看模式 key；写入 `cache_content()` 和 `update_discovery_candidate_evaluations()` 时也会归一化已知旧值。 |
 | 封面粘性保护 | ✅ | `cache_content()` upsert 对 `cover_url` 用 `COALESCE(NULLIF(excluded,''), 现值)`——带空封面的重摄入（如互动数据刷新、事件驱动 related-chain）不再抹掉已有好封面，与 `author_name` / `body_text` 同一保护策略（v0.3.162+）。 |
@@ -149,6 +149,8 @@ fresh servable pool predicate，并可按 embedding fingerprint、正维度和 s
 `upsert_source` / `update_source` 的服务端 `commit=False` 让写入加入发布流程的外层事务，默认仍使用数据库短写提交。schema 创建与 `archived` 列迁移幂等。`content_source_provenance` 以 `(item_key, source_id)` 唯一，重复候选即使被 shared pipeline 过滤也保留证据；`get_content_source_provenance(item_key)` 返回来源 ID 与显示名。
 
 内容仍使用 `source_platform=web` 和原 `item_key`；`source_id` 仅决定库存归属与显示来源，不参与 canonical 内容、收藏或反馈键。同 URL 由首个入库实例占一次库存，后续发现追加 provenance；`source_metadata.source_provenance` 和候选 raw payload 同步保留该列表。计数、claim 优先级、raw caps、admission、维护淘汰按实例分桶；未注册 ID 不能写入自定义候选或预留 quota。推荐/保存列表按 canonical 键关联显示字段，重命名不改内容身份。
+
+`load_pool_platform_availability()` 按内容的 canonical 平台汇总，所有动态网站计入 `web`，不暴露实例 ID 为平台键。`get_pool_candidates_for_platform("web")` 与 `load_pool_serve_snapshot(source_platform="web")` 使用相同内容平台范围；内部调用仍可传已注册实例 ID 精确读取自己的库存。这不改变按来源计算配额的方法，公开 HTTP 平台参数也不新增实例 ID 值。
 
 
 `Database.set_chat_session_persona(session_id, persona=...) -> bool` 原子保存一个会话的
@@ -773,7 +775,7 @@ assert len(rows) <= snapshot.by_platform.get("zhihu", 0)
 行为说明：
 
 - `total_available` 与 `count_pool_candidates()` 同口径（fresh、非 dislike、达 admission floor、文案与分类齐全、链接可用、未被 delight 认领、未进推荐历史、未命中持久化已看账本，并遵循当前 topic window）。
-- `by_platform` 用 `_pool_source_family()` 归类，兼容 `source_platform` 为空的 legacy `source_strategy` 前缀行。
+- `by_platform` 用 `_pool_row_content_family()` 归类，兼容 `source_platform` 为空的 legacy `source_strategy` 前缀行，并将动态网站合并到 `web`。实例配额继续使用 source-ID-first 的 `_pool_row_source_family()`，两种归属不可混用。
 - 计数与平台定向选片来自**同一份** canonical 行集合，不存在「Tab 显示有货但选片器取不到」的分叉。这里的必然推论是：被全局 topic window 挤出的行既不计数也不可选——它本来就不是库存。
 - 读取走独立短连接，不把进程共享连接交给线程；读取失败向上抛出，由 API 转成可诊断 5xx，绝不返回全零。
 

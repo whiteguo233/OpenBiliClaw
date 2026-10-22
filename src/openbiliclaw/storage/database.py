@@ -1574,6 +1574,12 @@ def _pool_row_source_family(row: Any, strategy_key: str = "source") -> str:
     )
 
 
+def _pool_row_content_family(row: Any) -> str:
+    """Return the canonical tab/filter family, independently of quota ownership."""
+    value = dict(row)
+    return _source_family(value.get("source"), value.get("source_platform"))
+
+
 def _normalize_source_platform_key(source_platform: object) -> str:
     """Return the canonical source key used in cross-source content IDs."""
     return normalize_source_platform(source_platform)
@@ -2831,7 +2837,7 @@ class Database:
             isolated.close()
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
-            counts[_pool_row_source_family(row)] += 1
+            counts[_pool_row_content_family(row)] += 1
         return PoolPlatformAvailability(
             total_available=len(rows),
             by_platform=dict(counts),
@@ -8776,10 +8782,12 @@ class Database:
         _viewed_content_keys: set[str] | None = None,
         _available_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return canonical available rows belonging to one source family.
+        """Return available rows for a canonical platform or internal source ID.
 
-        The platform filter is applied in Python on ``_pool_source_family``
-        rather than in SQL: a row's family also derives from legacy
+        Public platform filters use content family, so ``web`` includes every
+        custom source while inventory quotas remain owned by each source ID.
+        Internal callers can still select one registered source's inventory.
+        The filter is applied in Python rather than in SQL: family also derives from legacy
         ``source`` strategy prefixes (``zhihu-hot``, ``xhs-extension-task``)
         when ``source_platform`` is blank, so a raw column comparison would
         silently drop stocked legacy rows and break the
@@ -8806,7 +8814,7 @@ class Database:
         )
         selected: list[dict[str, Any]] = []
         for row in rows:
-            if _pool_row_source_family(row) != canonical:
+            if canonical not in {_pool_row_content_family(row), _pool_row_source_family(row)}:
                 continue
             selected.append(row)
             if limit is not None and len(selected) >= limit:
