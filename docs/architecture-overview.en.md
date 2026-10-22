@@ -167,8 +167,9 @@ Chat → prepare_discovery_source → scrubbed observation / compiled plan / tri
 Settings → names / shares / cadence / enabled state / run history
 ```
 
-New ordinary webpages automatically prepare an isolated official Ego Lite host through
-`EgoSetupManager` (install → onboarding → native handshake), then start it on demand.
+macOS installation and deployed server/desktop startup automatically prepare an isolated
+official Ego Lite host through `EgoSetupManager` (install → onboarding → native handshake).
+The API owns a background preparation task; prepared installations are reused and start on demand.
 Positively parsed RSS/Atom/JSON Feed uses HTTP. Setup failures never trigger Playwright fallback. Persisted legacy
 workflows retain their executor. The native adapter currently targets a local macOS host;
 real onboarding and end-to-end acceptance remain pending in the

@@ -1351,7 +1351,10 @@ def main() -> None:
 
     import uvicorn
 
-    app = create_app()
+    # Prepare managed Ego during desktop deployment, after migration and
+    # single-instance guards resolve the active data directory. The API owns
+    # the background task; selftests and worker children do not opt in.
+    app = create_app(prepare_ego_on_startup=True)
     use_tray = _should_use_tray()
     config_kwargs = {"access_log": False} if use_tray else {}
     config = uvicorn.Config(app, host=host, port=port, log_level="info", **config_kwargs)

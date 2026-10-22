@@ -1,6 +1,7 @@
 """Managed setup safety/lifecycle; protocol fixtures are not live Ego acceptance."""
 
 import asyncio
+import errno
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -511,6 +512,102 @@ def test_stale_progress_is_reported_interrupted_without_writing(manager):
     before = manager._state_path.read_bytes()
     assert manager.status()["detail"] == "ego_setup_interrupted"
     assert manager._state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("initially_running", [True, False])
+async def test_stop_waits_for_debug_port_after_main_pid_disappears(
+    manager, monkeypatch, initially_running
+):
+    elapsed, signals, probes = stop_fixture(manager, monkeypatch, initially_running)
+    await manager._stop()
+    assert elapsed[0] >= 0.3
+    assert probes and probes[-1] == "closed"
+    assert len(signals) == int(initially_running)
+    assert manager._state()["pid"] is None
+    assert manager._state()["ready_pid"] is None
+    assert manager._state()["debug_port"] == 0
+
+
+async def test_stop_preserves_diagnostic_until_debug_port_closes(manager, monkeypatch):
+    elapsed, signals, probes = stop_fixture(manager, monkeypatch, True, port_closes=False)
+    original = manager._state_path.read_bytes()
+    with pytest.raises(EgoSetupError, match="ego_setup_debug_port_still_open"):
+        await manager._stop()
+    assert 5.99 <= elapsed[0] < 6.2
+    assert probes and set(probes) == {"open"}
+    assert len(signals) == 1
+    assert manager._state_path.read_bytes() == original
+
+
+async def test_stop_does_not_clear_state_or_escalate_when_host_stays_alive(manager, monkeypatch):
+    elapsed, signals, probes = stop_fixture(manager, monkeypatch, True, pid_exits=False)
+    original = manager._state_path.read_bytes()
+    with pytest.raises(EgoSetupError, match="ego_setup_host_did_not_exit"):
+        await manager._stop()
+    assert 5.99 <= elapsed[0] < 6.2
+    assert not probes
+    assert len(signals) == 1
+    assert manager._state_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("connect_errno", [errno.ETIMEDOUT, 9999])
+async def test_stop_never_treats_unconfirmed_connection_errors_as_closed(
+    manager, monkeypatch, connect_errno
+):
+    elapsed, signals, probes = stop_fixture(manager, monkeypatch, True, connect_errno=connect_errno)
+    original = manager._state_path.read_bytes()
+    with pytest.raises(EgoSetupError, match="ego_setup_debug_port_still_open"):
+        await manager._stop()
+    assert 5.99 <= elapsed[0] < 6.2
+    assert probes and set(probes) == {"unconfirmed"}
+    assert len(signals) == 1
+    assert manager._state_path.read_bytes() == original
+
+
+def stop_fixture(
+    manager, monkeypatch, initially_running, *, port_closes=True, pid_exits=True, connect_errno=None
+):
+    from types import SimpleNamespace
+
+    from openbiliclaw.sources import ego_setup
+
+    manager.root.mkdir()
+    manager._write(pid=96976, ready_pid=None, debug_port=54677)
+    elapsed, signals, probes = [0.0], [], []
+
+    def pid():
+        return 96976 if initially_running and (not signals or not pid_exits) else None
+
+    async def sleep(seconds):
+        elapsed[0] += seconds
+
+    class Probe:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def settimeout(self, seconds):
+            assert 0 < seconds <= 0.2
+
+        def connect_ex(self, address):
+            assert address == ("127.0.0.1", 54677)
+            if connect_errno is not None:
+                probes.append("unconfirmed")
+                return connect_errno
+            opened = not port_closes or elapsed[0] < 0.3
+            probes.append("open" if opened else "closed")
+            return 0 if opened else errno.ECONNREFUSED
+
+    monkeypatch.setattr(manager, "_pid", pid)
+    monkeypatch.setattr(ego_setup.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(ego_setup, "socket", SimpleNamespace(socket=Probe))
+    monkeypatch.setattr(
+        ego_setup, "time", SimpleNamespace(monotonic=lambda: elapsed[0], time=ego_setup.time.time)
+    )
+    monkeypatch.setattr(ego_setup.asyncio, "sleep", sleep)
+    return elapsed, signals, probes
 
 
 async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(monkeypatch):

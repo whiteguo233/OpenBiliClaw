@@ -2141,8 +2141,9 @@ def create_app(
     account_sync_service: Any | None = None,
     auto_update_service: Any | None = None,
     project_stats_service: Any | None = None,
+    prepare_ego_on_startup: bool = False,
 ) -> FastAPI:
-    """Create the local backend API app."""
+    """Create the API; deployment entry points enable owned Ego preparation."""
     from openbiliclaw.api.runtime_context import (
         _LIVE_AGENT_CONFIG_FIELDS,
         RuntimeContext,
@@ -25377,7 +25378,8 @@ def create_app(
                 ctx.database,
                 config=getattr(ctx, "config", None),
                 llm_service=getattr(ctx, "llm_service", None),
-            )
+            ),
+            prepare_ego_on_startup=prepare_ego_on_startup,
         )
     )
 

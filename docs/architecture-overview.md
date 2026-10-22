@@ -186,11 +186,12 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
        → CustomWorkflowProducer → HTTP Feed 或 Ego Lite 原生任务空间
        → 统一待评估池 → 真实评估与文案 → 来源名推荐卡
 设置页 → 来源配置 / 启停 / 频率 / 份额 / 运行历史
-首次网页建源 / 设置页提前准备 → EgoSetupManager → 官方安装 / 专用首次设置 / 原生握手
+源码安装 / 桌面首启 / 服务部署 → EgoSetupManager → 官方安装 / 专用首次设置 / 原生握手
 后续网页采集 → 已初始化宿主按需启动 → 原生 Ego 任务空间
 ```
 
-新普通网页自动准备并按需启动专用 Ego Lite，真实 Feed 使用 HTTP；准备失败不回退到 Playwright。
+macOS 部署自动准备专用 Ego Lite，普通网页按需启动宿主，真实 Feed 使用 HTTP；
+API 后台准备不阻塞界面，已准备环境不重复安装；准备失败不回退到 Playwright。
 原生桥当前连接本机 macOS 宿主，验收状态见[专门记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
 以下为旧匿名 HTTP recipe 的兼容链路：
 

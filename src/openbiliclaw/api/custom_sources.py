@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from openbiliclaw.sources.browser_workflow import workflow_url
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,7 +58,11 @@ def _ego_setup_manager(service: Any) -> Any:
     return EgoSetupManager(Path(service.database._db_path).resolve().parent)
 
 
-def create_custom_sources_router(service_factory: Callable[[], WorkflowService]) -> APIRouter:
+def create_custom_sources_router(
+    service_factory: Callable[[], WorkflowService],
+    *,
+    prepare_ego_on_startup: bool = False,
+) -> APIRouter:
     """Share live runtime dependencies; takeover handles stay inside this API worker."""
     router = APIRouter(prefix="/api/custom-sources")
     sessions: dict[str, Any] = {}
@@ -77,7 +84,11 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
 
     async def prepare_ego_runtime(manager: Any) -> None:
         try:
-            await manager.prepare()
+            result = await manager.prepare()
+            if result.get("available") is True:
+                logger.info("Managed Ego Lite preparation completed")
+            elif result.get("setup_state") != "preparing":
+                logger.warning("Managed Ego Lite preparation did not complete; see source status")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -85,10 +96,43 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
             ego_prepare_error.update(
                 setup_state="failed", detail=f"Ego Lite 准备失败：{type(exc).__name__}"
             )
+            logger.warning("Managed Ego Lite preparation failed (%s)", type(exc).__name__)
+
+    def schedule_ego_preparation(manager: Any) -> None:
+        nonlocal ego_prepare_task
+        if ego_prepare_task is None or ego_prepare_task.done():
+            ego_prepare_error.clear()
+            ego_prepare_task = asyncio.create_task(
+                prepare_ego_runtime(manager), name="ego_deployment_prepare"
+            )
+
+    @router.on_event("startup")
+    async def prepare_deployed_ego() -> None:
+        # Only actual desktop/CLI server entry points opt in. Constructing an
+        # app for inspection, an embedded consumer or a worker never installs.
+        # Keep setup in an owned task so the UI can report progress immediately.
+        if not prepare_ego_on_startup:
+            return
+        try:
+            manager = _ego_setup_manager(service())
+            status = manager.status()
+            if status.get("managed") is not True or status.get("platform_supported") is not True:
+                return
+            if status.get("setup_state") == "preparing":
+                return
+            if status.get("setup_state") == "ready" and status.get("installed") is True:
+                # Prepared/offline is sufficient at deployment startup. Actual
+                # collection starts that host when needed; don't launch it here.
+                return
+            schedule_ego_preparation(manager)
+        except Exception as exc:
+            ego_prepare_error.update(
+                setup_state="failed", detail=f"Ego Lite 准备失败：{type(exc).__name__}"
+            )
+            logger.warning("Managed Ego Lite preparation could not start (%s)", type(exc).__name__)
 
     @router.post("/executors/ego/prepare", status_code=202)
     async def prepare_ego() -> dict[str, Any]:
-        nonlocal ego_prepare_task
         manager = _ego_setup_manager(service())
         status = manager.status()
         if status.get("managed") is not True:
@@ -97,9 +141,7 @@ def create_custom_sources_router(service_factory: Callable[[], WorkflowService])
             raise HTTPException(409, str(status.get("detail", "当前环境不支持准备 Ego Lite。")))
         if status.get("setup_state") == "ready" and status.get("available") is True:
             return dict(status)
-        if ego_prepare_task is None or ego_prepare_task.done():
-            ego_prepare_error.clear()
-            ego_prepare_task = asyncio.create_task(prepare_ego_runtime(manager))
+        schedule_ego_preparation(manager)
         return ego_setup_status()
 
     async def install_runtime() -> None:

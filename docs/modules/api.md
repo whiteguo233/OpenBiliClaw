@@ -188,7 +188,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 | 方法与路径 | 契约 |
 |---|---|
 | `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；Ego 返回 `id,installed,available,platform_supported,connection_state,setup_state,phase,managed,detail,network_guarantee,dns_pinned`；纯只读状态检查不安装、不启动应用或首次设置，已安装不等于原生握手成功 |
-| `POST /api/custom-sources/executors/ego/prepare` | 显式提前准备或重试托管 Ego；HTTP `202` 返回准备状态，同一 worker 复用正在执行的任务，跨进程由管理器锁协调；外部宿主或不支持的系统返回 `409`；成功准备不等于网站试跑成功 |
+| `POST /api/custom-sources/executors/ego/prepare` | 显式准备或重试托管 Ego；HTTP `202` 返回准备状态，同一 worker 复用正在执行的任务，跨进程由管理器锁协调；外部宿主或不支持的系统返回 `409`；成功准备不等于网站试跑成功 |
 | `POST /api/custom-sources/executors/playwright/install` | 历史 Playwright 流程的显式维护入口，新来源 UI 不调用；接受后 HTTP `202`、`{status:"installing"}`，旧执行器状态通过 `installing/ready/failed` 表达 |
 | `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
 | `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
@@ -220,12 +220,24 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 设置页的保存、启停和「准备 Ego Lite」按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
 归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
 
-普通网页的聊天工具、CLI 和 `POST /drafts` 共用 `WorkflowService.prepare`：macOS 上首次需要
-Ego 时自动准备本应用的私有宿主，无需先点击设置按钮；安装与初始化发生在页面观察的
-60 秒预算之外。已准备的宿主离线时，实际打开会话会按需启动。HTTP Feed 不进入这条
-准备路径；准备失败或环境不支持时返回真实原因，不改用 Playwright。
+实际 CLI `start` / `serve-api` 与桌面首次启动使用
+`create_app(prepare_ego_on_startup=True)`，在 router startup 中为尚未准备完成的 macOS
+托管环境安排一次后台准备，不等待聊天，也不阻塞 HTTP/UI 就绪。该参数默认
+为 `False`，嵌入、自检或仅构建应用不安装；worker 子进程不启用。桌面入口先完成
+迁移、单实例检查与最终配置重读，准备器使用实际数据库父目录。
+上述 API、桌面和 CLI 服务启动检查在 `ready` 且 `installed=true` 时跳过，
+即使宿主 offline 也不会重下或启动；
+已有 preparing 不重复排队。失败在同进程不循环重试，下次实际服务启动会再尝试；
+退出时取消并等待本进程拥有的准备任务。设置按钮与 CLI 保留显式重试入口。
 
-共享设置组件展示准备状态；「准备 Ego Lite」用于提前准备或失败后重试。
+源码本机安装在依赖完成后、`--skip-start` 返回前使用安装环境准备 macOS Ego；
+重跑安装仍执行显式 `sources prepare-ego` 和握手验证，必要时启动离线宿主，不适用上述服务启动跳过规则。
+普通网页的聊天工具、CLI 和 `POST /drafts` 仍共用 `WorkflowService.prepare` 补救未完成
+的环境；安装与初始化发生在页面观察的 60 秒预算之外。已准备宿主离线时，实际打开
+会话才按需启动。HTTP Feed 不依赖这条准备路径；准备失败或环境不支持时返回真实原因，
+不改用 Playwright。
+
+共享设置组件展示部署准备状态；「准备 Ego Lite」用于显式准备或失败后重试。
 `setup_state` 为 `idle/preparing/ready/failed/unsupported`，`phase` 标明
 `download/verify/install/onboarding/restart/handshake/ready` 等阶段。仅准备进行中且组件
 可见时每 3 秒轮询 GET，停止显示或销毁后停止轮询；刷新不覆盖来源卡片未保存的输入。

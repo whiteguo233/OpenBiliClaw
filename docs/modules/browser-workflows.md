@@ -5,7 +5,8 @@
 RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap / 静态列表
 与已保存的 Playwright 流程保留兼容；更新流程默认沿用原执行器，不自动迁移。
 
-首次添加网页自动准备专用 Ego Lite，后续采集按需启动已准备的宿主。
+macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，不必等添加网页。
+服务部署启动也会补齐尚未准备的环境；后续采集按需启动已准备的宿主。
 真实验收及平台限制见[本轮记录](../testing/2026-10-22-ego-lite-discovery-e2e.md)；
 安装检测和历史 Playwright 记录不计作 Ego 网站执行证据。
 
@@ -20,7 +21,7 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
 | Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
-| 托管准备 | 首次网页建源自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；设置页和 CLI 可提前准备或重试 |
+| 托管准备 | 源码安装及桌面首次启动自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；网页建源、设置页和 CLI 保留重试 |
 | 环境边界 | 当前适配器连接本机 macOS Ego 宿主；未验收 Windows，不提供 Linux/Docker 远程桥接 |
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
 
@@ -34,7 +35,10 @@ RSS / Atom / JSON Feed 选择 HTTP，普通网页选择 `ego`。旧 HTTP Sitemap
   返回 `BrowserWorkflowResult`，明确区分成功、已证实为空、需要登录、降级和失败。
 - `EgoSetupManager(data_dir).prepare()` 安装与初始化；`status()` 只读，
   `connection()` 返回专用 CLI／宿主／profile，`ensure_running()` 只启动已初始化的宿主。
-  data_dir 为当前数据库父目录；网页首次准备在页面运行预算以外执行，Feed 不进入此路径。
+  data_dir 为当前数据库父目录；源码 bootstrap 在依赖安装后调用，主 API 的部署启动
+  通过 `create_app(prepare_ego_on_startup=True)` 排队后台准备。
+  `create_app()` 默认不安装，供嵌入、自检与独立 worker 使用。
+  前台网页建源兜底准备在页面运行预算以外执行，Feed 请求本身不触发此路径。
 - `open_session(plan, session_id=..., interactive=False, observation_only=False)`
   打开入口但不执行采集。`observation_only` 可以在跨域跳转被阻止后保留页面供观察；
   不会授权该跳转。
@@ -109,14 +113,24 @@ Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连�
 
 ## 安装与维护
 
-新网站首次建源在运行后端的同一台 Mac 自动准备[官方 Ego Lite](https://lite.ego.app/download)。
+源码安装在依赖安装完成后自动准备[官方 Ego Lite](https://lite.ego.app/download)，
+即使选择暂不启动服务也会执行。正式 macOS DMG 为拖拽安装，没有安装后执行钩子，
+因此在安装后首次启动时准备；`start` / `serve-api` 部署同样会补齐环境。
+主 API 在实际数据库和迁移锁确定后拥有一个后台任务，下载期间 HTTP 与设置界面可用。
+服务启动检查发现已准备且应用存在时直接跳过，不为该检查启动浏览器；
+重新运行源码安装器仍调用 `prepare-ego` 验证原生握手，可能启动离线宿主。
+失败后下次服务启动重试，
+同一进程内没有自动重试循环。退出服务会取消并等待其未完成的准备任务。
 专用应用和 profile 位于数据库旁的 `ego-managed/`，无需填写 CLI 路径、服务名或启动参数。
-设置页“准备 Ego Lite”和 `openbiliclaw sources prepare-ego` 可提前准备／重试。
+设置页“准备 Ego Lite”和 `openbiliclaw sources prepare-ego` 保留手动重试；
+直接添加网页也仍能补齐准备。
 完整安装包缓存于专用目录。镜像内缺应用/CLI 或明确签名不符时清除自身常规缓存，
 下一次准备会重新下载；系统信任拒绝、超时、取消或无法确定原因的挂载失败保留缓存，
 不自动循环下载。准备流程验证官方签名与系统信任，在专用首次设置页面跳过数据导入和可选订阅，
 关闭默认浏览器、Dock 和崩溃报告选项。仅准备期间开放已验证的 loopback CDP，
 完成后关闭调试端口、重启并核验真实原生连接；正常采集使用原生接口。
+停止过程在同一个 6 秒预算内等待主进程与调试端口共同关闭，主进程先退出不代表端口已关闭；
+未确认关闭仍报告失败并保留诊断，不额外杀死其它进程或放宽就绪条件。
 遇到未知设置页面或校验失败明确报告，不通过隐藏偏好跳过设置或取消系统隔离属性。
 官方另有 Windows beta，但当前 Python 适配器尚未支持它；Linux/Docker 不运行托管准备。
 

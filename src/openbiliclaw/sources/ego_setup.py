@@ -8,6 +8,7 @@ External OPENBILICLAW_EGO_* hosts are never installed, stopped, or reconfigured.
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
@@ -406,22 +407,37 @@ class EgoSetupManager:
 
     async def _stop(self) -> None:
         pid = self._pid()
-        if not pid:
-            return
         debug_port = self._state().get("debug_port", 0)
-        with suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
-        for _ in range(60):
-            if self._pid() != pid:
-                if isinstance(debug_port, int) and debug_port:
+        has_debug_port = isinstance(debug_port, int) and bool(debug_port)
+        if not pid and not has_debug_port:
+            return
+        if pid:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+        # Chromium's listener can outlive its main process briefly. Both must
+        # close within the same exit budget, including recovery when the saved
+        # main PID already disappeared before this cleanup attempt.
+        deadline = time.monotonic() + 6
+        while True:
+            main_exited = not pid or self._pid() != pid
+            port_closed = not has_debug_port
+            if main_exited:
+                if has_debug_port:
                     with socket.socket() as probe:
-                        probe.settimeout(0.2)
-                        if probe.connect_ex(("127.0.0.1", debug_port)) == 0:
-                            raise EgoSetupError("ego_setup_debug_port_still_open")
-                self._write(pid=None, ready_pid=None, debug_port=0)
-                return
-            await asyncio.sleep(0.1)
+                        probe.settimeout(min(0.2, max(0.001, deadline - time.monotonic())))
+                        port_closed = (
+                            probe.connect_ex(("127.0.0.1", debug_port)) == errno.ECONNREFUSED
+                        )
+                if port_closed:
+                    self._write(pid=None, ready_pid=None, debug_port=0)
+                    return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.1, remaining))
         # Do not destroy a profile or kill an unverified/reused PID to recover.
+        if main_exited:
+            raise EgoSetupError("ego_setup_debug_port_still_open")
         raise EgoSetupError("ego_setup_host_did_not_exit")
 
     async def _handshake(self) -> None:

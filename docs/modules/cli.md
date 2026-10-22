@@ -1791,7 +1791,7 @@ $ openbiliclaw db-repair
 | --- | --- |
 | `sources list` | 来源独立比例、流程与健康状态 |
 | `sources ego-status` | 只读返回托管 Ego 的 JSON 准备状态；不安装、不启动或打开首次设置 |
-| `sources prepare-ego` | 显式提前准备或重试私有 Ego 环境；返回完整 JSON，只有 ready 且 available 才退出 0，否则退出 1 |
+| `sources prepare-ego` | 显式准备或重试私有 Ego 环境；返回完整 JSON，只有 ready 且 available 才退出 0，否则退出 1 |
 | `sources prepare URL --intent '自然语言发现目标'` | 观察网站并建草稿、试跑；`--executor auto/ego/http`（新网页使用 Ego Lite，Feed 自动选 HTTP），`--separate` 可拆分独立来源 |
 | `sources trial DRAFT_ID` | 重试已有草稿，不启用调度 |
 | `sources activate DRAFT_ID --share 2 --interval 30` | 明确启用已成功试跑的流程；已有来源保留原比例和启停 |
@@ -1801,11 +1801,14 @@ $ openbiliclaw db-repair
 | `sources run SOURCE_ID --limit 20` | 单次有界抓取与现有候选评估；持续定时运行依赖 `start` / `serve-api` |
 | `browser install` | 为既有旧版 Playwright 流程安装对应 Chromium；不是新网页来源的 Ego Lite 安装入口 |
 
-在 macOS 上，`sources prepare` 与图形端聊天共用自动准备流程：首次普通网页任务会下载并
-验证官方 Ego Lite，在当前数据库目录的 `ego-managed` 下安装应用、初始化私有 profile
-并验证原生连接，无需先运行 `prepare-ego`。安装与初始化不占用页面观察的 60 秒预算。
-`prepare-ego` 仅用于提前准备或失败后重试；已准备的宿主退出后，实际网页任务会按需启动。
-状态查询不触发这些动作。自动初始化跳过浏览数据导入，不设默认浏览器、不添加 Dock、
+macOS 上的本机源码安装会在依赖完成后、`--skip-start` 返回前自动准备 Ego。
+实际 `start` / `serve-api` 启动服务时也会在后台补齐未完成环境，不阻塞 HTTP/UI，
+无需先聊天或手动运行 `prepare-ego`。准备使用当前数据库目录的 `ego-managed`，下载并
+验证官方应用、初始化私有 profile 并验证原生连接。API、桌面和 CLI 服务启动检查在
+`ready` 且已安装时跳过，包括 offline 状态，不重新下载或唤醒宿主；源码安装重跑仍调用
+显式 `sources prepare-ego` 验证握手，必要时启动宿主。失败不在同进程循环，下次服务启动会重试。
+`sources prepare` 与图形端聊天保留自动补救，安装不占用页面观察的 60 秒预算；
+`prepare-ego` 可显式准备或重试。实际网页任务按需启动已准备宿主，状态查询不触发这些动作。自动初始化跳过浏览数据导入，不设默认浏览器、不添加 Dock、
 不启用崩溃报告，也不代用户登录网站。当前只支持 macOS；失败或不支持时说明原因，
 不会回退到其他浏览器。RSS/Atom/JSON Feed 不依赖 Ego。
 

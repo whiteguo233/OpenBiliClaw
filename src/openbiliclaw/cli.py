@@ -1261,7 +1261,7 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
         recommendation_transport = ensure_recommendation_transport_env(load_config().data_path)
 
-    api_app = create_app()
+    api_app = create_app(prepare_ego_on_startup=True)
     state = getattr(api_app, "state", None)
     if bool(getattr(state, "degraded", False)):
         issues = []

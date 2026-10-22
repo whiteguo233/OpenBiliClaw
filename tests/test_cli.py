@@ -2134,13 +2134,20 @@ def test_run_api_server_prints_degraded_mode_panel(
         Console(file=output, force_terminal=False, width=120),
         raising=False,
     )
-    monkeypatch.setattr(api_app, "create_app", lambda: fake_app)
+    app_calls = []
+
+    def create_deployed_app(**kwargs):
+        app_calls.append(kwargs)
+        return fake_app
+
+    monkeypatch.setattr(api_app, "create_app", create_deployed_app)
     monkeypatch.setattr(
         "uvicorn.run",
         lambda app, **kwargs: run_calls.append({"app": app, **kwargs}),
     )
 
     cli_module._run_api_server(host="127.0.0.1", port=8420)
+    assert app_calls == [{"prepare_ego_on_startup": True}]
 
     rendered = output.getvalue()
     assert "降级模式" in rendered or "Degraded mode" in rendered

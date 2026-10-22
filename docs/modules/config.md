@@ -747,11 +747,16 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 新网页的 `auto` 和 `ego` 使用官方 Ego Lite；只有实际识别成功的 RSS/Atom/JSON Feed 自动使用 HTTP。更新已有流程时 `auto` 保留该流程执行器，避免悄然迁移。新建不接受 Playwright，已有旧流程仍按原执行器运行。
 
-默认使用托管宿主，无需新增 `config.toml` 配置。macOS 上首次普通网页准备会自动下载并
-验证官方应用，在**当前 SQLite 数据库所在目录的 `ego-managed`** 下安装、初始化私有
-profile 和 named host，再验证原生连接；安装不占用页面观察预算。设置页「准备 Ego Lite」
-或 `openbiliclaw sources prepare-ego` 可提前完成或重试这一步。已初始化的宿主退出后，
-实际网页任务按需启动；只读状态查询不下载、不启动应用、不打开首次设置。
+默认在部署阶段准备托管宿主，无需新增 `config.toml` 开关。macOS 本机源码安装在依赖
+安装后、`--skip-start` 返回前自动准备；桌面包在安装后首次启动、CLI `start` / `serve-api`
+在实际服务启动时，于后台补齐未完成的环境，不等待聊天且不阻塞 HTTP/UI。
+准备会下载并验证官方应用，在**当前 SQLite 数据库所在目录的 `ego-managed`** 下安装、
+初始化私有 profile 和 named host，再验证原生连接；使用迁移和配置重读后的实际数据根。
+API、桌面和 CLI 服务启动检查在 `ready` 且已安装时跳过，即使宿主已退出也不重下或启动。
+源码安装重跑仍调用显式 `sources prepare-ego` 验证握手，必要时启动宿主。同进程失败不循环重试，
+下次服务启动会重试；设置页「准备 Ego Lite」或 `openbiliclaw sources prepare-ego` 也可重试。
+聊天网页准备仍可补救未完成环境，安装不占用页面观察预算。实际网页任务按需启动已准备
+宿主；只读状态查询不下载、不启动应用、不打开首次设置。
 自动初始化跳过个人浏览数据导入，不设默认浏览器、不添加 Dock、不启用崩溃报告。
 当前托管与原生执行只支持 macOS；Linux/Docker 和 Windows 不因安装 Python 依赖而获得此能力。
 

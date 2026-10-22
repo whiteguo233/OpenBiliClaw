@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from openbiliclaw.api import custom_sources
 
 
-def _fixture(monkeypatch, tmp_path, *, managed=True, supported=True):
+def _fixture(monkeypatch, tmp_path, *, managed=True, supported=True, deployment=False):
     state = {
         "managed": managed,
         "setup_state": "idle" if supported else "unsupported",
@@ -52,7 +52,11 @@ def _fixture(monkeypatch, tmp_path, *, managed=True, supported=True):
         ),
     )
     app = FastAPI()
-    app.include_router(custom_sources.create_custom_sources_router(lambda: service))
+    app.include_router(
+        custom_sources.create_custom_sources_router(
+            lambda: service, prepare_ego_on_startup=deployment
+        )
+    )
     return app, calls, started, release
 
 
@@ -87,6 +91,86 @@ def test_prepare_is_explicit_and_deduplicates_active_requests(monkeypatch, tmp_p
         assert ego["setup_state"] == "preparing" and ego["phase"] == "onboarding"
         assert ego["detail"] == "Preparing private host"
         release.set()
+
+
+def test_deployment_prepares_before_any_chat_without_blocking_http(monkeypatch, tmp_path):
+    app, calls, started, release = _fixture(monkeypatch, tmp_path, deployment=True)
+    assert calls == []  # Building the app alone still has no install side effects.
+    with TestClient(app) as client:
+        assert started.wait(1)
+        assert not release.is_set()
+        response = client.get("/api/custom-sources")
+        assert response.status_code == 200
+        ego = next(row for row in response.json()["executors"] if row["id"] == "ego")
+        assert ego["setup_state"] == "preparing"
+        assert client.post("/api/custom-sources/executors/ego/prepare").status_code == 202
+        assert calls == ["prepare"]
+        release.set()
+
+
+def test_prepared_offline_deployment_does_not_reinstall_or_start_host(monkeypatch, tmp_path):
+    app, calls, _, _ = _fixture(monkeypatch, tmp_path, deployment=True)
+    setup = custom_sources._ego_setup_manager(None)
+    state = setup.status()
+    state.update(setup_state="ready", installed=True, available=False, connection_state="offline")
+    setup.status = lambda: dict(state)
+    with TestClient(app) as client:
+        assert client.get("/api/custom-sources").status_code == 200
+    assert calls == []
+
+
+def test_deployment_does_not_touch_external_or_unsupported_hosts(monkeypatch, tmp_path):
+    for managed, supported in [(False, True), (True, False)]:
+        app, calls, _, _ = _fixture(
+            monkeypatch, tmp_path, deployment=True, managed=managed, supported=supported
+        )
+        with TestClient(app) as client:
+            assert client.get("/api/custom-sources").status_code == 200
+        assert calls == []
+
+
+def test_failed_deployment_retries_once_at_next_start_and_remains_readable(monkeypatch, tmp_path):
+    app, calls, started, _ = _fixture(monkeypatch, tmp_path, deployment=True)
+    setup = custom_sources._ego_setup_manager(None)
+    state = setup.status()
+    state.update(setup_state="failed", detail="ego_setup_interrupted")
+    setup.status = lambda: dict(state)
+
+    async def fail():
+        calls.append("prepare")
+        started.set()
+        raise RuntimeError("private-local-path-and-credentials")
+
+    setup.prepare = fail
+    with TestClient(app) as client:
+        assert started.wait(1)
+        for _ in range(3):
+            ego = next(
+                row
+                for row in client.get("/api/custom-sources").json()["executors"]
+                if row["id"] == "ego"
+            )
+            assert ego["setup_state"] == "failed"
+            assert "private-local" not in ego["detail"]
+        assert calls == ["prepare"]
+
+
+def test_deployment_shutdown_cancels_its_pending_preparation(monkeypatch, tmp_path):
+    app, _, started, _ = _fixture(monkeypatch, tmp_path, deployment=True)
+    setup = custom_sources._ego_setup_manager(None)
+    cancelled = threading.Event()
+
+    async def prepare():
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        finally:
+            cancelled.set()
+
+    setup.prepare = prepare
+    with TestClient(app):
+        assert started.wait(1)
+    assert cancelled.wait(1)
 
 
 def test_external_host_cannot_be_prepared_or_have_its_status_overwritten(monkeypatch, tmp_path):

@@ -646,6 +646,7 @@ def test_run_reports_auto_wired_embedding_from_config(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(bootstrap, "prepare_ego_for_deployment", lambda *_: {"status": "skipped"})
     (tmp_path / "config.toml").write_text(
         "\n".join(
             [
@@ -1003,6 +1004,7 @@ def test_run_interactive_confirm_collects_full_human_install_choices(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(bootstrap, "prepare_ego_for_deployment", lambda *_: {"status": "skipped"})
     _write_minimal_config(tmp_path)
     args = bootstrap.build_arg_parser().parse_args(
         [
@@ -1401,6 +1403,7 @@ def test_run_blocks_auto_init_when_pre_init_service_check_fails(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(bootstrap, "prepare_ego_for_deployment", lambda *_: {"status": "skipped"})
     _write_minimal_config(tmp_path, embedding_provider="ollama", embedding_model="bge-m3")
     args = bootstrap.build_arg_parser().parse_args(
         [
@@ -1751,3 +1754,225 @@ def test_llm_preset_keeps_explicit_non_compat_provider_as_conflict(
         ]
     )
     assert bootstrap.apply_llm_preset_args(args) == 2
+
+
+@pytest.fixture
+def mac_ego_deployment(monkeypatch):
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    for name in ("BROWSER", "SERVER_NAME", "PROFILE"):
+        monkeypatch.delenv("OPENBILICLAW_EGO_" + name, raising=False)
+    monkeypatch.setattr(bootstrap, "detect_uv", lambda: True)
+
+
+@pytest.mark.parametrize(
+    "mode,platform,external,reason",
+    [
+        ("docker", "darwin", "", "docker_runtime_unsupported"),
+        ("local", "linux", "", "platform_unsupported"),
+        ("local", "win32", "", "platform_unsupported"),
+        ("local", "darwin", "BROWSER", "external_host"),
+        ("local", "darwin", "SERVER_NAME", "external_host"),
+        ("local", "darwin", "PROFILE", "external_host"),
+    ],
+)
+def test_ego_deployment_skip_never_spawns(
+    tmp_path, monkeypatch, mac_ego_deployment, mode, platform, external, reason
+):
+    monkeypatch.setattr(bootstrap.sys, "platform", platform)
+    if external:
+        monkeypatch.setenv("OPENBILICLAW_EGO_" + external, "explicit-private-value")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Skipped Ego preparation must not spawn a process")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", forbidden)
+    assert bootstrap.prepare_ego_for_deployment(tmp_path, mode) == {
+        "status": "skipped",
+        "reason": reason,
+        "available": False,
+    }
+
+
+def test_prepare_and_backend_use_same_runtime_and_project_root(
+    tmp_path, monkeypatch, mac_ego_deployment
+):
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "/another-instance")
+    monkeypatch.setenv("OPENBILICLAW_RUNTIME_DATA_DIR", "/another-instance/data")
+    monkeypatch.setenv("OPENBILICLAW_GENERAL_DATA_DIR", "custom-data")
+
+    def spawn(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"setup_state": "ready", "available": True}, indent=2)
+        )
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", spawn)
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", spawn)
+    monkeypatch.setattr(bootstrap, "_probe_port_open", lambda *_: False)
+    assert bootstrap.prepare_ego_for_deployment(tmp_path, "local")["status"] == "ready"
+    bootstrap.start_local_backend(tmp_path, "127.0.0.1", 18444)
+    assert calls[0][0] == ["uv", "run", "openbiliclaw", "sources", "prepare-ego"]
+    assert calls[1][0] == [
+        "uv",
+        "run",
+        "openbiliclaw",
+        "serve-api",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "18444",
+    ]
+    for _, kwargs in calls:
+        assert kwargs["cwd"] == str(tmp_path)
+        assert kwargs["env"]["OPENBILICLAW_PROJECT_ROOT"] == str(tmp_path.resolve())
+        assert kwargs["env"]["OPENBILICLAW_GENERAL_DATA_DIR"] == "custom-data"
+        assert "OPENBILICLAW_RUNTIME_DATA_DIR" not in kwargs["env"]
+    assert os.environ["OPENBILICLAW_PROJECT_ROOT"] == "/another-instance"
+    calls[1][1]["stdout"].close()
+
+
+@pytest.mark.parametrize("use_executable", [True, False])
+def test_ego_deployment_uses_venv_when_uv_unavailable(tmp_path, monkeypatch, use_executable):
+    monkeypatch.setattr(bootstrap, "detect_uv", lambda: False)
+    executable = tmp_path / ".venv" / ("Scripts" if os.name == "nt" else "bin") / "openbiliclaw"
+    executable.parent.mkdir(parents=True)
+    if use_executable:
+        executable.touch()
+    command = bootstrap.local_runtime_command(tmp_path)
+    assert command == (
+        [str(executable)]
+        if use_executable
+        else [
+            str(executable.with_name("python.exe" if os.name == "nt" else "python")),
+            "-m",
+            "openbiliclaw.cli",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "returncode,payload,detail",
+    [
+        (
+            1,
+            {"setup_state": "failed", "detail": "ego_setup_signature_invalid"},
+            "ego_setup_signature_invalid",
+        ),
+        (0, {"setup_state": "ready", "available": False}, "ego_setup_not_ready"),
+        (1, {"setup_state": "failed", "detail": "secret private path"}, "ego_setup_not_ready"),
+        (1, None, "ego_setup_command_failed"),
+    ],
+)
+def test_ego_deployment_failure_never_prints_raw_child_output(
+    tmp_path, monkeypatch, capsys, mac_ego_deployment, returncode, payload, detail
+):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=returncode,
+            stdout="secret private log\n" + json.dumps(payload, indent=2),
+            stderr="secret private stderr",
+        ),
+    )
+    result = bootstrap.prepare_ego_for_deployment(tmp_path, "local")
+    assert result == {"status": "failed", "detail": detail, "available": False}
+    assert "secret" not in capsys.readouterr().out + json.dumps(result)
+
+
+@pytest.mark.parametrize("timeout", [True, False])
+def test_ego_deployment_command_exception_is_safe(
+    tmp_path, monkeypatch, mac_ego_deployment, timeout
+):
+    def failed(*args, **kwargs):
+        if timeout:
+            raise bootstrap.subprocess.TimeoutExpired("private command", 1800)
+        raise OSError("private executable path")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", failed)
+    result = bootstrap.prepare_ego_for_deployment(tmp_path, "local")
+    assert result["detail"] == ("ego_setup_timeout" if timeout else "ego_setup_runtime_unavailable")
+    assert result["status"] == "failed" and "private" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("skip_start", [True, False])
+def test_deployment_preparation_failure_does_not_block_install_or_backend(
+    tmp_path, monkeypatch, capsys, skip_start
+):
+    _write_minimal_config(tmp_path)
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-start" if skip_start else "--skip-health-check",
+            "--skip-ollama-setup",
+        ]
+    )
+    calls = []
+    monkeypatch.setattr(bootstrap, "ensure_repo_checkout", lambda *_: tmp_path)
+    monkeypatch.setattr(bootstrap, "ensure_config_toml", lambda *_: tmp_path / "config.toml")
+    monkeypatch.setattr(bootstrap, "local_install", lambda *_: calls.append("dependencies"))
+    monkeypatch.setattr(bootstrap, "start_local_backend", lambda *_: calls.append("backend"))
+
+    def prepare(project_dir, mode):
+        assert project_dir == tmp_path and mode == "local"
+        calls.append("ego")
+        return {"status": "failed", "detail": "ego_setup_timeout", "available": False}
+
+    monkeypatch.setattr(bootstrap, "prepare_ego_for_deployment", prepare)
+    assert bootstrap.run(args) == 0
+    assert calls == ["dependencies", "ego"] + ([] if skip_start else ["backend"])
+    output = capsys.readouterr().out
+    events = [
+        json.loads(line.removeprefix("BOOTSTRAP_STATUS: "))
+        for line in output.splitlines()
+        if line.startswith("BOOTSTRAP_STATUS: ")
+    ]
+    ego = next(event for event in events if event["message"] == "ego_preparation")
+    assert ego["status"] == "warning" and ego["details"]["available"] is False
+    assert events[-1]["message"] == ("skipped_start" if skip_start else "health_check_skipped")
+    assert "other installation steps will continue" in output
+
+
+@pytest.mark.parametrize(
+    "state,reason,expected",
+    [
+        ("ready", "", "native connection verified"),
+        ("failed", "ego_setup_timeout", "website discovery is not ready"),
+        ("skipped", "external_host", "did not alter or verify it"),
+        ("skipped", "docker_runtime_unsupported", "runtime cannot run native Ego"),
+    ],
+)
+def test_shell_summary_keeps_ego_result_after_backend_complete(tmp_path, state, reason, expected):
+    import subprocess
+
+    script = (Path(__file__).resolve().parents[1] / "scripts/install.sh").read_text()
+    runner = tmp_path / "summary.sh"
+    runner.write_text(
+        script.rsplit('main "$@"', 1)[0] + '\nBOOTSTRAP_LOG="$1"\nprint_install_summary\n'
+    )
+    log = tmp_path / "events.log"
+    log.write_text(
+        "\n".join(
+            "BOOTSTRAP_STATUS: " + json.dumps(event)
+            for event in [
+                {
+                    "status": "warning",
+                    "message": "ego_preparation",
+                    "details": {"status": state, "reason": reason},
+                },
+                {"status": "complete", "message": "backend_healthy", "details": {}},
+            ]
+        )
+    )
+    result = subprocess.run(
+        ["bash", str(runner), str(log)], capture_output=True, text=True, check=True
+    )
+    assert expected in result.stdout

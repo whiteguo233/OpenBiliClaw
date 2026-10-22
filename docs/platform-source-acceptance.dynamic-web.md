@@ -14,6 +14,11 @@ Playwright 验收替代。现已在真实官方宿主完成首次设置、哔哩
 历史成功不提升为 Ego 成功。新增执行器的证据与平台边界单列于
 [Ego Lite 验收记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
 
+2026-10-23 已将托管 Ego 准备提前到源码安装、实际服务启动及桌面安装后首次启动。
+本轮真实服务证实无需聊天即可自动触发，准备期间 API 保持可用；但全新部署在系统
+信任校验或应用复制阶段超时，尚未完成至 `ready` 的验收。源码回归及 wheel 一致性
+通过不代替该门槛，详见[安装部署准备验收](testing/2026-10-23-ego-deployment-preparation.md)。
+
 ## 工作区与数据边界
 
 - 分支：`feat/dynamic-discovery-sources`。

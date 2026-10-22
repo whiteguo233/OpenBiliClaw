@@ -524,9 +524,12 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 
 ### 自定义网站来源的浏览器执行
 
-新建普通网页来源使用 Ego Lite。macOS 原生后端在首次网页准备时自动下载、验证并
-初始化私有宿主，设置中的「准备 Ego Lite」或 `sources prepare-ego` 仅用于提前准备或
-重试；已初始化的宿主按需启动，GET 状态没有这些副作用。
+新建普通网页来源使用 Ego Lite。macOS 本机源码安装在依赖完成后自动准备，桌面包首次
+启动和实际 `start` / `serve-api` 在后台补齐未完成环境，无需等首次聊天。
+API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，即使 offline 也不唤醒；
+源码安装重跑仍显式准备和验证握手，必要时启动宿主。失败后下一次服务启动重试，同进程不循环。
+设置中的「准备 Ego Lite」或 `sources prepare-ego` 可显式重试，聊天仍可补救未完成环境。
+已初始化的宿主可由实际网页任务或源码安装的显式握手启动，GET 状态没有这些副作用。
 但当前托管准备与原生适配器都只支持 macOS：Linux Docker 没有 Ego 宿主或远程桥接，
 即使 Docker 运行在 Mac 上，容器仍报告 `platform_supported=false` / `setup_state=unsupported`。
 容器中不能使用托管准备按钮，准备 API 返回 409，也不会自动改用 Playwright。

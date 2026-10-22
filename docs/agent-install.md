@@ -925,16 +925,30 @@ system-level package the user must consent to.
 ### Dynamic website discovery browser runtime
 
 New dynamic websites use the official Ego Lite host through its native Node/CDP API.
-On macOS, the first ordinary website preparation in chat, `sources prepare`, or the
-source-draft API automatically downloads and verifies the official app, installs it in
-`<active database directory>/ego-managed`, initializes a private profile and named host,
-and verifies its native connection. No separate user onboarding is required. Installation
-and initialization happen before the bounded 60-second page observation. This does not
-automatically activate a source: trial samples and activation approval still follow.
+On macOS, deployment prepares Ego automatically, without waiting for the first chat.
+Local source bootstrap runs preparation with the installed runtime after dependency
+installation and before returning for `--skip-start`. The desktop app prepares on its
+first launch after installation: a drag-installed DMG has no post-install script to run
+at copy time. Actual `openbiliclaw start` / `serve-api` entry points also schedule one
+background preparation for an unfinished environment, while HTTP and the UI start normally.
 
-The settings action **Prepare Ego Lite** and the command below are optional ways to prepare
-early or retry a failure. A prepared host starts again when an actual website task needs
-it; the user does not have to keep it running. Status reads do not install or launch it.
+Preparation downloads and verifies the official app, installs it in
+`<active database directory>/ego-managed`, initializes a private profile and named host,
+and verifies its native connection. It uses the effective runtime data directory after
+migration and configuration resolution. No separate user onboarding is required.
+API, desktop and CLI service-start checks skip a ready, installed environment even when
+its host is offline: those checks do not redownload or wake it. Rerunning local source
+installation still invokes explicit `sources prepare-ego` and verifies the native handshake,
+starting the host if needed. A failed attempt is retried at the next service start, with no
+retry loop in the current process. The API owns and cancels its preparation task on shutdown.
+
+The settings action **Prepare Ego Lite** and the command below remain explicit retry paths.
+Chat, `sources prepare`, and the source-draft API can still complete an unfinished setup;
+that work happens before the bounded 60-second page observation. Actual website tasks start
+a prepared host on demand, so the user need not keep it running. Status reads do not install
+or launch it. Embedded `create_app()` defaults to no deployment preparation; selftests and
+worker children do not install. No new user configuration switch is required. Browser
+preparation never activates a source: trial samples and activation approval still follow.
 
 ```bash
 openbiliclaw sources ego-status   # read-only managed setup state
