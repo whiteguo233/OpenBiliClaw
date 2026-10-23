@@ -890,6 +890,8 @@ popup 打开设置时，移动 Web 打开设置弹层时调用 `GET /api/custom-
 随后 DELETE。最近运行通过 `GET /{source_id}/runs` 读取，来源卡片与运行列表不做
 周期刷新，打开设置也不触发站点探测。插件与移动端请求 helper 接受 DELETE 的 JSON
 成功响应，也将无响应体的 HTTP `204` 视为成功并返回 `null`。
+列表 GET 则必须含 `items` 与 `executors` 数组；共享组件拒绝不完整响应并保留来源卡、
+编辑值、份额和执行器状态。保存成功与后续刷新失败分别反馈，不把空响应当成来源已清空。
 
 保存与启停按钮是用户显式操作，直接调用管理 API；聊天工具
 `prepare_discovery_source/trial_discovery_source` 为 `soft_write`，

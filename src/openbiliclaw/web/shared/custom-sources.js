@@ -389,6 +389,11 @@
       try {
         const result = await request("/custom-sources", { method: "GET", cache: "no-store" });
         if (disposed || current !== revision) return false;
+        // A failed body decode can surface as null from a client's request
+        // adapter. Only a complete list envelope may replace confirmed state.
+        if (!Array.isArray(result?.items) || !Array.isArray(result?.executors)) {
+          throw new Error("来源列表响应不完整，已保留当前来源，请重试刷新。");
+        }
         renderExecutors(result?.executors);
         if (refreshSources) {
           items = array(result?.items);

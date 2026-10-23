@@ -18,6 +18,7 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 动态网站来源管理 | ✅ | 来源设置独立列出每个自定义网站，复用 `shared/custom-sources.js`；可保存名称、候选池占比、发现间隔，启停、归档、查看最近运行与重新登录。每个网站在占比总览中与内置平台平级；推荐/惊喜卡展示 `source_name`，内容平台仍为 `web`。旧版公开 Feed/Sitemap/listing 编辑器继续保留 |
+| 来源刷新响应校验 | ✅ | `GET /api/custom-sources` 必须同时含 `items`、`executors` 数组才替换页面状态；不完整响应保留来源卡、编辑、份额总览和 Ego 状态。写入成功但刷新失败分别提示，不误报来源被清空 |
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |
 | M8 会话列表 | ✅ | 侧栏（新建/切换/内联改名/归档/显示已归档），默认会话徽标，`active_turns>0` 活跃圆点，标题与预览轮询刷新（复用 2.5s 共享聊天轮询），当前会话持久化到 localStorage |
 | M8 skill 切换 | ✅ | 会话条 skill chip（图标+名称）弹出角色选择浮层（`GET /api/chat/skills`），按会话记忆选择、下一回合生效；`suggest_skill` 工具调用渲染为切换卡（一键切换/忽略） |

@@ -43,6 +43,7 @@ function setup(handler = async () => ({}), initialExecutors = []) {
   let rows = [{ ...source }];
   let executors = initialExecutors;
   let rejectRead = false;
+  let invalidRead;
   const manager = context.OpenBiliClawCustomSources.createManager({
     root, baseUrl: "https://local.example/api", onChat() {},
     openUrl(url) { opened.push(url); }, onChange(items) { changes.push(items); },
@@ -50,6 +51,7 @@ function setup(handler = async () => ({}), initialExecutors = []) {
       calls.push({ path, options });
       if (path === "/custom-sources") {
         if (rejectRead) throw new Error("来源列表连接超时");
+        if (invalidRead !== undefined) return invalidRead;
         return { items: rows, executors };
       }
       return handler(path, options, (items) => { rows = items; });
@@ -58,6 +60,7 @@ function setup(handler = async () => ({}), initialExecutors = []) {
   return { api: context.OpenBiliClawCustomSources, root, calls, opened, changes, manager,
     setRows(value) { rows = value; },
     rejectReads() { rejectRead = true; },
+    setReadResponse(value) { invalidRead = value; },
     timers,
     setExecutors(value) { executors = value; },
     poll() { const entry = timers.entries().next().value; assert.ok(entry); timers.delete(entry[0]); entry[1](); },
@@ -66,6 +69,30 @@ function setup(handler = async () => ({}), initialExecutors = []) {
   };
 }
 async function settle() { for (let i = 0; i < 4; i++) await new Promise(setImmediate); }
+
+test("a malformed post-save refresh preserves source cards, edits, shares and executor readiness", async () => {
+  for (const invalid of [null, "<html>error</html>", {}, { items: null, executors: [] }, { items: [] }]) {
+    const h = setup(async (_path, options, setRows) => {
+      const saved = { ...source, ...JSON.parse(options.body) };
+      setRows([saved]);
+      h.setReadResponse(invalid);
+      return { source: saved };
+    }, [{ id: "ego", available: true }]);
+    await h.manager.load();
+    h.inputs()[1].value = "7";
+    h.button("保存来源设置").handlers.click();
+    await settle();
+    assert.equal(h.inputs().length, 3, "invalid refresh must not mean an empty source list");
+    assert.equal(h.inputs()[1].value, "7");
+    assert.match(h.root.textContent, /Ego Lite 已就绪/);
+    assert.match(h.root.textContent, /来源设置已保存。列表刷新失败/);
+    assert.equal(h.changes.length, 1, "keep the last confirmed share overview");
+    assert.equal(h.button("保存来源设置").disabled, false);
+    h.setReadResponse(undefined);
+    assert.equal(await h.manager.load(), true);
+    assert.equal(h.changes.at(-1)[0].target_share, 7);
+  }
+});
 
 test("saving one source keeps another source's unsaved edits while showing the saved server values", async () => {
   const second = { ...source, source_id: "second", name: "Second" };
