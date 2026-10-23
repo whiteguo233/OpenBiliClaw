@@ -73,6 +73,11 @@ export async function start(config) {
         noteBlock(url,document,'origin_or_network_blocked');
         await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid); return;
       }
+      if(document && responseStatusCode>=200 && responseStatusCode<300) {
+        // A successful replacement document supersedes an earlier guest/error
+        // page; keep script/resource errors and all access-block diagnostics.
+        diagnostic.resource_failures=diagnostic.resource_failures.filter(x=>x.resource_type!=='Document');
+      }
       if(responseStatusCode>=400 && diagnostic.resource_failures.length<16) {
         const row={origin:origin(url),status:responseStatusCode,resource_type:resourceType};
         if(!diagnostic.resource_failures.some(x=>JSON.stringify(x)===JSON.stringify(row))) diagnostic.resource_failures.push(row);
@@ -109,16 +114,29 @@ export async function start(config) {
   const snapshot=async()=>{const value=await evaluate(SNAPSHOT_JS);return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
   const navigate=async url=>{
     if(!await approve({url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
+    const previousLoader=(await rpc('Page.getFrameTree')).frameTree.frame.loaderId;
     const result=await rpc('Page.navigate',{url});
     if(result.errorText) throw Error(diagnostic.login_wall?'login_required':'ego_navigation_failed');
     const end=Date.now()+30000;
+    let stableDocument='', stableSince=0;
     while(Date.now()<end) {
       if(diagnostic.fatal_error)throw Error(diagnostic.fatal_error);
       const tree=await rpc('Page.getFrameTree');
       const state=await evaluate('()=>({ready:document.readyState,url:location.href})');
-      const committed=result.loaderId ? tree.frameTree.frame.loaderId===result.loaderId : state.url===new URL(url).href;
-      if(committed && state.url!=='about:blank' && ['interactive','complete'].includes(state.ready)) {
-        if(!await approve({url:state.url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed'); return;
+      const loader=tree.frameTree.frame.loaderId;
+      const committed=result.loaderId ? loader===result.loaderId || loader!==previousLoader : state.url===new URL(url).href;
+      // A fully loaded guest/interstitial document can immediately redirect.
+      // Reset a bounded settling window on each document change, including a
+      // replacement loader that committed before our first poll. Every request
+      // and the final URL still pass the normal origin/network authorization.
+      if(committed && state.url!=='about:blank' && state.ready==='complete') {
+        const identity=JSON.stringify([loader,state.url]);
+        if(identity!==stableDocument){stableDocument=identity;stableSince=Date.now();}
+        if(Date.now()-stableSince>=1500) {
+          if(!await approve({url:state.url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed'); return;
+        }
+      } else {
+        stableDocument=''; stableSince=0;
       }
       await new Promise(resolve=>setTimeout(resolve,100));
     }

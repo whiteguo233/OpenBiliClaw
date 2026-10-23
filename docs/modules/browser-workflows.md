@@ -22,6 +22,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
 | Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
+| 页面观察 | 导航在 30 秒内等待文档完成并稳定 1.5 秒，自动跳转后重新计时；长表格／文章列表分散抽样，保留带 ID 链接的真实 class selector |
 | 托管准备 | 源码安装及桌面首次启动自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；网页建源、设置页和 CLI 保留重试 |
 | 首次设置恢复 | 下载传输与安全系统命令有界重试；设置响应超时后停止自己的宿主，再观察现有步骤继续，不要求用户重启 |
 | 用户采集上限 | 明确的中英文条数／页数上限在试采前收紧并保存；日期、频率不当作条数；Feed 同样执行 |
@@ -33,6 +34,8 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 - `compile_browser_workflow(payload) -> BrowserWorkflowPlan`：保存前、运行前均校验。
 - `WorkflowService.prepare()` / `author_browser()` 在编译后用用户明确的采集上限收紧预算，
   同一计划用于试采和发布。只读网站观察不能提高这些上限；已有版本不被静默迁移。
+  生成提示要求同时检查行与子链接上的排除标记、用户指定的反例；证据不足应补问。
+  这是生成约束，不是任意自然语言条件的确定性验证器，启用前仍需核对样例。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
 - `WorkflowStore.pending_draft_summaries()` 返回最近 10 条未应用草稿的有界名称、网址、
   目标、状态与 ID；聊天 `list_sources` 可在重启后恢复草稿，不要求用户记住内部 ID。
@@ -48,14 +51,20 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   前台网页建源兜底准备在页面运行预算以外执行，Feed 请求本身不触发此路径。
 - `open_session(plan, session_id=..., interactive=False, observation_only=False)`
   打开入口但不执行采集。`observation_only` 可以在跨域跳转被阻止后保留页面供观察；
-  不会授权该跳转。
+  不会授权该跳转。原生导航等待当前文档完成并稳定 1.5 秒，文档 URL／loader 变化时
+  重新计时；允许观察已经完成的后续 loader，仍逐请求及最终 URL 检查访问边界。
+  总导航预算保持 30 秒，不保证捕获在稳定窗口之后才启动的任意延迟跳转。
 - 会话的 `snapshot()` 返回有限的 tag、selector、文字和链接信息，
   不包含输入框值或 URL query；优先保留主内容及搜索／登录控件，并提供实际
   parent、ancestor、前后兄弟及相对 child-link selector。数组顺序不是 DOM 邻接证据。
+  元素与 child-link 的 `class_selector` 保留真实 tag/class，即使它有独立 ID。
+  在最多 500 个可见表格行／文章容器中保留前 4 个、对余下分散取最多 12 个结构样本及其首尾链接，
+  避免导航和置顶区占满观察；总元素数仍最多 100，采集预算不随观察样本改变。
   同时返回 `blocked_resource_origins` 和
   `blocked_navigation_origins`，供用户判断是否增加授权。
   `resource_failures` 有界保留资源 origin、类型、HTTP 失败状态及固定网络
-  错误码；不包含 URL query、响应正文或 Cookie。核心资源失败导致页面完全没有
+  错误码；不包含 URL query、响应正文或 Cookie。主文档随后成功返回 2xx 时清除过期
+  文档错误，仍保留脚本等资源失败和所有访问拦截诊断。核心资源失败导致页面完全没有
   可见文字／控件时，建源直接报告访问失败，不把空白页面误判为需要更多用户信息。
   明确的登录墙或待授权跳转证据优先进入人工接管；先前可选资源失败不能遮蔽这些证据。
 - 会话的 `act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。

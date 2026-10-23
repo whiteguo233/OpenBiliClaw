@@ -38,6 +38,15 @@ Never invent selectors. Use observed DOM, real links and GET search forms.
 Observation elements are a priority-ordered flat list, not adjacent DOM siblings.
 Use path_selector, parent_path_selector, ancestor_selectors and child_links to
 choose the observed content container and its relative link selector. Only use
+class_selector as actual tag/class evidence, including on elements whose primary
+selector is a unique ID. Prefer reusable observed classes over per-item IDs.
+User exclusions are mandatory: inspect the observed rows AND their child links
+for the classes/structure distinguishing unwanted samples. A row-level exclusion
+alone does not exclude a highlighted child link. Check the proposed selector
+against every observed negative example named by the user; do not claim an item
+is excluded if that selector still matches it. If the observed structure cannot
+express the requested exclusions, return needs_details instead of a broad plan.
+Only use
 sibling combinators when previous_sibling_selector or next_sibling_selector
 explicitly proves that relation; never infer adjacency from array order.
 Scope item_selector to the observed result/list container. Every matched item

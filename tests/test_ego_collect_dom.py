@@ -28,3 +28,22 @@ def test_native_collection_resolves_item_relative_fields(mode: str) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"mode": mode, "count": 1, "unchanged_plan": True}
+
+
+def test_native_observation_preserves_reusable_classes_on_id_links() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for the native DOM reader fixture")
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            node,
+            str(root / "tests/fixtures/ego_snapshot_dom.mjs"),
+            str(root / "src/openbiliclaw/sources/ego_dom.mjs"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

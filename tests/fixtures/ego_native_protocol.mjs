@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
 const [hostPath,directory]=process.argv.slice(2);
 const calls=[];
-let focused=false, hidden=true, documentUrl='https://allowed.example/old', loader='old', navigation=false, polls=0;
+let focused=false, hidden=true, documentUrl='https://allowed.example/old', loader='old', navigation=false, polls=0, redirectMode='', generation=0;
 class Input {set value(v){this.stored=v;} get value(){return this.stored;}}
 const input=new Input();Object.assign(input,{tagName:'INPUT',getClientRects:()=>[{}],getBoundingClientRect:()=>({x:0,y:0,width:20,height:10}),focus:()=>{focused=true;},dispatchEvent:()=>{},getAttribute:()=>null,classList:[],children:[],querySelectorAll:()=>[]});
 const body={...input,tagName:'BODY',querySelectorAll:()=>[]};
@@ -17,11 +17,12 @@ globalThis.ego={
   createTaskSpace:async()=>({id:71}),useTaskSpace:()=>{},
   createTab:async()=>({targetId:'owned-tab'}),getBrowserVersion:async()=>({currentVersion:'fixture'}),
   sendCDPMessage:raw=>{const msg=JSON.parse(raw);calls.push(msg);
-    if(msg.method==='Page.navigate'){navigation=true;polls=0;}
-    if(msg.method==='Page.getFrameTree' && navigation && ++polls>=2){loader='new';documentUrl='https://allowed.example/new';}
+    if(msg.method==='Page.navigate'){navigation=true;polls=0;generation++;redirectMode=msg.params.url.includes('redirect')?msg.params.url:'';loader='old';documentUrl='https://allowed.example/old';}
+    if(msg.method==='Page.getFrameTree' && navigation && ++polls>=2){loader='new-'+generation;documentUrl='https://allowed.example/new';}
+    if(redirectMode && (polls>=5 || redirectMode.endsWith('fast-redirect'))){loader='redirected-'+generation;documentUrl='https://allowed.example/topics';}
     const result=msg.method==='Target.attachToTarget'?{sessionId:'owned-session'}:
       msg.method==='Page.getFrameTree'?{frameTree:{frame:{id:'main-frame',loaderId:loader}}}:
-      msg.method==='Page.navigate'?{loaderId:'new'}:
+      msg.method==='Page.navigate'?{loaderId:'new-'+generation}:
       msg.method==='Runtime.evaluate'?{result:{value:vm.runInNewContext(msg.params.expression,context)}}:{};
     queueMicrotask(()=>ego.onCDPMessage(JSON.stringify({id:msg.id,result})));},
 };
@@ -40,7 +41,25 @@ assert.equal((await command('query',{selector:'input'})).visible,false);
 assert.equal((await command('snapshot')).login_wall,false);
 hidden=false;await command('fill',{selector:'input',value:'fixture only'});assert(focused);
 await command('navigate',{url:'https://allowed.example/new'});assert(polls>=2);assert.equal(documentUrl,'https://allowed.example/new');
+// A complete guest interstitial can replace itself after initial commit.
+await command('navigate',{url:'https://allowed.example/redirect'});
+assert.equal(documentUrl,'https://allowed.example/topics','do not observe the complete guest interstitial');
+// Redirect may commit before the first navigation poll sees the initial loader.
+await command('navigate',{url:'https://allowed.example/fast-redirect'});
+assert.equal(documentUrl,'https://allowed.example/topics');
 const paused=(id,url,extra={})=>ego.onCDPMessage(JSON.stringify({method:'Fetch.requestPaused',sessionId:'owned-session',params:{requestId:id,request:{url,method:'GET'},resourceType:'Document',frameId:'main-frame',...extra}}));
+const waitResponse=async id=>{
+  const until=Date.now()+1000;
+  while(!calls.some(c=>c.method==='Fetch.continueResponse' && c.params.requestId===id) && Date.now()<until)await new Promise(r=>setTimeout(r,5));
+};
+paused('failed-script','https://allowed.example/app.js',{resourceType:'Script',responseStatusCode:404,responseHeaders:[]});
+await waitResponse('failed-script');
+paused('guest-page','https://allowed.example/',{responseStatusCode:403,responseHeaders:[]});
+await waitResponse('guest-page');
+assert((await command('diagnostics')).resource_failures.some(x=>x.status===403));
+paused('final-page','https://allowed.example/',{responseStatusCode:200,responseHeaders:[]});
+await waitResponse('final-page');
+assert.deepEqual((await command('diagnostics')).resource_failures,[{origin:'https://allowed.example',status:404,resource_type:'Script'}],'successful final document supersedes only guest response');
 paused('allowed','https://allowed.example/');
 paused('private','http://127.0.0.1/private');
 paused('redirect','https://allowed.example/',{responseStatusCode:302,responseHeaders:[{name:'Location',value:'http://127.0.0.1/private'}]});
@@ -48,7 +67,7 @@ paused('response','https://allowed.example/',{responseStatusCode:200,responseHea
 paused('iframe','https://ads.example/',{frameId:'child-frame'});
 paused('oversize','https://allowed.example/',{responseStatusCode:200,responseHeaders:[{name:'Content-Length',value:'5000000'}]});
 const until=Date.now()+3000;
-while(calls.filter(c=>['Fetch.continueRequest','Fetch.continueResponse','Fetch.failRequest'].includes(c.method)).length<6 && Date.now()<until)await new Promise(r=>setTimeout(r,5));
+while(calls.filter(c=>['Fetch.continueRequest','Fetch.continueResponse','Fetch.failRequest'].includes(c.method)).length<9 && Date.now()<until)await new Promise(r=>setTimeout(r,5));
 const action=id=>calls.find(c=>c.params.requestId===id)?.method;
 assert.equal(action('allowed'),'Fetch.continueRequest');
 assert.equal(action('private'),'Fetch.failRequest');
@@ -61,4 +80,4 @@ assert(authorizations.some(x=>x.url==='http://127.0.0.1/private' && x.redirect))
 client.write(JSON.stringify({id:999,operation:'close'})+'\n');
 await running;
 assert(calls.some(c=>c.method==='Target.closeTarget' && c.params.targetId==='owned-tab'));
-console.log(JSON.stringify({paused_requests:6,redirect_blocked:true,closed_owned_tab:true}));
+console.log(JSON.stringify({paused_requests:9,redirect_blocked:true,closed_owned_tab:true}));

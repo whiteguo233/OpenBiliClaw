@@ -182,7 +182,7 @@ def test_native_request_response_redirect_guard_protocol():
         )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "paused_requests": 6,
+        "paused_requests": 9,
         "redirect_blocked": True,
         "closed_owned_tab": True,
     }

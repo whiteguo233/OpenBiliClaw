@@ -4,6 +4,9 @@ export const SNAPSHOT_JS = String.raw`() => {
   const visible = e => { if (!e || !e.getClientRects().length) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
+  const classSelector = e => e.tagName.toLowerCase() + [...e.classList]
+    .filter(x => /^[a-zA-Z_][\w-]{0,50}$/.test(x)).slice(0,3)
+    .map(x => '.' + CSS.escape(x)).join('');
   const selector = e => {
     if (!e) return '';
     if (e.id && e.id.length <= 80) return '#' + CSS.escape(e.id);
@@ -33,17 +36,26 @@ export const SNAPSHOT_JS = String.raw`() => {
   const tags='a,button,input,form,article,section,ul,li,p,span.meta,time,h1,h2,h3';
   const controls=[...document.querySelectorAll('input,form,button,textarea,select')]
     .filter(visible).slice(0,20);
+  // Repeated result rows can follow a long header or pinned section. Sample
+  // across the list instead of letting the first hundred links hide its tail.
+  const containers=[...document.querySelectorAll('tr,[role=row],article')].filter(visible).slice(0,500);
+  const head=containers.slice(0,4), rest=containers.slice(4), count=Math.min(12,rest.length);
+  const samples=[...head,...Array.from({length:count},(_,i)=>rest[Math.round(i*(rest.length-1)/Math.max(1,count-1))])];
+  const structured=samples.flatMap(e=>{
+    const links=[...e.querySelectorAll('a[href]')].filter(visible);
+    return [e,...links.slice(0,2),...links.slice(-2)];
+  });
   const content=[...main.querySelectorAll(tags)].filter(visible).slice(0,80);
   const remaining=[...document.querySelectorAll(tags)].filter(visible).slice(0,100);
-  const chosen=[...new Set([...controls,...content,...remaining])].slice(0,100);
+  const chosen=[...new Set([...controls,...structured,...content,...remaining])].slice(0,100);
   const rows=chosen.map(e=>{
     const ancestors=[];
     for(let a=e.parentElement;a && a!==document.body && ancestors.length<3;a=a.parentElement)
       ancestors.push(selector(a));
     const childLinks=[...e.querySelectorAll('a[href]')].filter(visible).slice(0,3).map(a=>({
-      selector:path(a,e),href:safeUrl(a.href),text:text(a).slice(0,120)
+      selector:path(a,e),class_selector:classSelector(a),href:safeUrl(a.href),text:text(a).slice(0,120)
     })).filter(a=>a.selector);
-    return {tag:e.tagName.toLowerCase(),selector:selector(e),path_selector:path(e),
+    return {tag:e.tagName.toLowerCase(),selector:selector(e),class_selector:classSelector(e),path_selector:path(e),
       text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',type:e.getAttribute('type')||'',
       method:e.tagName==='FORM'?(e.method||'get'):'',
       action:e.tagName==='FORM'?safeUrl(e.action):'',
