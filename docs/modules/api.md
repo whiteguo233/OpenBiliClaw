@@ -196,7 +196,9 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 | `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`；新来源 executor 为 `auto/http/ego`，普通网页使用 Ego，明确解析为 Feed 才自动选 HTTP；更新旧流程时 auto 保留原执行器；创建待试跑草稿，尚不启用定期发现 |
 | `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
 | `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
-| `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管，返回 `draft_id,takeover_url,…` |
+| `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管；同一来源已有活跃的已批准流程登录窗口时复用其草稿，返回 `draft_id,takeover_url,…` |
+
+| `POST /api/custom-sources/drafts/{draft_id}/close` | 幂等释放人工登录窗口，返回 `{ok:true}`；保留网站凭据，不试跑、不发布、不改变来源启用状态；原生页面退出时调用，异常断连由 15 分钟会话超时兜底 |
 
 草稿公开响应含 `draft_id,status,source_id?,name,intent,executor,sample_items,detail`，
 更新草稿另含 `workflow_id,base_version,requires_activation`；同时传 `source_id+workflow_id` 才更新既有流程，

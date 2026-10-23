@@ -661,3 +661,36 @@ async def test_background_repair_keeps_original_user_limits_when_intent_omitted_
     repaired = service.store.get_workflow(workflow["workflow_id"])
     assert repaired["version"] == 2
     assert repaired["scope_limits"] == {"max_items": 2, "max_pages": 1}
+
+
+def test_login_reuses_live_session_and_close_releases_without_publication(service):
+    source = service.activate(draft(service, executor="ego")["draft_id"])
+    other = service.activate(
+        draft(service, executor="ego", name="Other", separate_source=True)["draft_id"]
+    )
+    session = SimpleNamespace(close=AsyncMock(), snapshot=AsyncMock(return_value={"elements": []}))
+    service.observe_session = AsyncMock(return_value=(session, {"elements": []}))
+    service.trial = AsyncMock()
+    before = service.store.list_workflows(source["source_id"])
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+    with TestClient(app) as client:
+        login_path = f"/api/custom-sources/{source['source_id']}/login"
+        pending = client.post(login_path).json()
+        path = f"/api/custom-sources/drafts/{pending['draft_id']}"
+        assert client.post(f"{path}/takeover").status_code == 200
+        assert client.post(login_path).json()["draft_id"] == pending["draft_id"]
+        assert client.post(f"{path}/takeover").status_code == 200
+        service.observe_session.assert_awaited_once()
+        assert (
+            client.post(f"/api/custom-sources/{other['source_id']}/login").json()["draft_id"]
+            != pending["draft_id"]
+        )
+        assert client.post(f"{path}/close").json() == {"ok": True}
+        assert client.post(f"{path}/close").status_code == 200
+        session.close.assert_awaited_once()
+        assert client.get(f"{path}/screenshot").status_code == 409
+        assert client.post(login_path).json()["draft_id"] != pending["draft_id"]
+        assert client.post("/api/custom-sources/drafts/unknown/close").status_code == 200
+    service.trial.assert_not_awaited()
+    assert service.store.list_workflows(source["source_id"]) == before

@@ -255,10 +255,28 @@ def create_custom_sources_router(
 
     @router.post("/{source_id}/login")
     async def login(source_id: str) -> dict[str, Any]:
-        try:
-            return public_draft(service().login_draft(source_id))
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        async with admission:
+            manager = service()
+            # Reopening after a disconnected app must not contend with its own lock.
+            for draft_id in sessions:
+                draft = manager.store.get_draft(draft_id)
+                if (
+                    draft.get("source_id") == source_id
+                    and draft.get("workflow_id")
+                    and not draft.get("requires_activation")
+                ):
+                    return public_draft(draft)
+            try:
+                return public_draft(manager.login_draft(source_id))
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+
+    @router.post("/drafts/{draft_id}/close")
+    async def close_login(draft_id: str) -> dict[str, bool]:
+        """Release interactive control without trial, publication or logout."""
+        async with admission:
+            await close(draft_id)
+        return {"ok": True}
 
     @router.post("/drafts/{draft_id}/takeover")
     async def takeover(draft_id: str, payload: TakeoverIn | None = None) -> dict[str, Any]:
