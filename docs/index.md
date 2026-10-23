@@ -41,6 +41,7 @@
 - [Ego 自动部署与真实聊天复验](testing/2026-10-23-ego-live-deployment-e2e.md) — 官方联网下载、首次设置失败恢复、真实聊天审批、10 条发现 / 8 条入池及自然去重；Feed、设置与安装边界分列
 - [Ego 安装恢复与采集上限修复](testing/2026-10-23-ego-reliability-fixes.md) — 同次安装有界恢复、聊天原话预算及 RSS / Ego 真实复验
 - [Ego 真实页面建源复验](testing/2026-10-23-ego-real-ui-e2e.md) — 聊天输入、审批、正式 Discovery、模型入池与比例管理；列表刷新保护修复，原生连接瞬态失败及自动恢复如实记录
+- [手机来源返回与聊天建源真实验收](testing/2026-10-24-mobile-source-live-e2e.md) — Ego 手机页面真实接管、试采、聊天审批和推荐展示；独立列明 Flutter 原生端与完整周期未验收
 - [NGA Ego 聊天建源验收](testing/2026-10-23-nga-ego-e2e.md) — 访客自动跳转、列表结构观察及真实聊天建源；明确区分技术试采成功与语义筛选达标
 - [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
 - [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
