@@ -40,6 +40,12 @@ _EXTERNAL_ENV = (
 # pass Apple signature/Gatekeeper checks for Citro Labs' exact signing identity.
 _DOWNLOAD = "https://cdn.ego.app/setup/macos/{arch}/egolite-fHoqgZ74bOEM.dmg"
 _MAX_DOWNLOAD = 512 * 1024 * 1024
+_RETRY_DELAYS = (1.0, 3.0)
+# Real cold-install evidence: a slow official download consumed about 16 minutes.
+# Reserve initialization time separately so completed installation cannot starve
+# the final native handshake; each phase still has a hard cancellation budget.
+_INSTALL_TIMEOUT = 1200
+_CONNECT_TIMEOUT = 300
 _DETAILS = {
     "idle": "Prepare an isolated Ego Lite browser for OpenBiliClaw",
     "download": "Downloading the official Ego Lite application",
@@ -85,6 +91,23 @@ async def _command(*args: str, timeout: float = 30) -> str:
 
 def _external() -> bool:
     return any(os.environ.get(name) for name in _EXTERNAL_ENV)
+
+
+async def _retry_command(*args: str, timeout: float = 30) -> str:
+    """Retry only timed-out, read-only or idempotent setup commands.
+
+    Callers must not use this for mounting, browser actions or other operations
+    whose outcome needs reconciliation. An actual OS refusal is never retried.
+    """
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            return await _command(*args, timeout=timeout * (attempt + 1))
+        except TimeoutError:
+            if attempt == len(_RETRY_DELAYS):
+                raise
+            logger.info("Retrying timed-out Ego setup command %s", Path(args[0]).name)
+            await asyncio.sleep(_RETRY_DELAYS[attempt])
+    raise AssertionError("unreachable")
 
 
 class EgoSetupManager:
@@ -223,17 +246,19 @@ class EgoSetupManager:
 
     async def _verify(self, app: Path) -> None:
         try:
-            await _command("/usr/bin/codesign", "--verify", "--deep", "--strict", str(app))
+            await _retry_command("/usr/bin/codesign", "--verify", "--deep", "--strict", str(app))
         except EgoSetupError as exc:
             raise EgoSetupError("ego_setup_signature_invalid") from exc
-        identity = await _command("/usr/bin/codesign", "-dv", "--verbose=4", str(app))
+        identity = await _retry_command("/usr/bin/codesign", "-dv", "--verbose=4", str(app))
         if not re.search(r"(?m)^TeamIdentifier=JGQLC6YQYJ$", identity) or not re.search(
             r"(?m)^Identifier=com\.citrolabs\.ego\.lite$", identity
         ):
             raise EgoSetupError("ego_setup_signature_mismatch")
         # Never strip quarantine or override an actual OS trust decision.
         try:
-            await _command("/usr/sbin/spctl", "--assess", "--type", "execute", str(app), timeout=90)
+            await _retry_command(
+                "/usr/sbin/spctl", "--assess", "--type", "execute", str(app), timeout=90
+            )
         except EgoSetupError as exc:
             raise EgoSetupError("ego_setup_system_trust_required") from exc
 
@@ -243,8 +268,30 @@ class EgoSetupManager:
             raise EgoSetupError("ego_setup_unsupported_architecture")
         async with asyncio.timeout(900):
             async with httpx.AsyncClient(trust_env=False, timeout=30) as client:
+                url = _DOWNLOAD.format(arch=arch)
+                headers = {"Accept-Encoding": "identity"}
+                metadata = await client.head(url, headers=headers)
+                if metadata.status_code not in {405, 501}:
+                    metadata.raise_for_status()
+                    length = int(metadata.headers.get("content-length", "0"))
+                    if length > _MAX_DOWNLOAD:
+                        raise EgoSetupError("ego_setup_download_too_large")
+                    etag = metadata.headers.get("etag", "")
+                    if (
+                        length >= 4 * 1024 * 1024
+                        and metadata.headers.get("accept-ranges") == "bytes"
+                        and etag.startswith('"')
+                        and etag.endswith('"')
+                    ):
+                        try:
+                            await self._download_ranges(client, url, path, length, etag)
+                            return
+                        except EgoSetupError as exc:
+                            if str(exc) != "ego_setup_ranges_unsupported":
+                                raise
+                            path.unlink(missing_ok=True)
                 # No redirects to arbitrary hosts and no external installer script execution.
-                async with client.stream("GET", _DOWNLOAD.format(arch=arch)) as response:
+                async with client.stream("GET", url, headers=headers) as response:
                     response.raise_for_status()
                     size = 0
                     with path.open("xb") as target:
@@ -253,6 +300,56 @@ class EgoSetupManager:
                             if size > _MAX_DOWNLOAD:
                                 raise EgoSetupError("ego_setup_download_too_large")
                             target.write(chunk)
+
+    async def _download_ranges(
+        self, client: httpx.AsyncClient, url: str, path: Path, length: int, etag: str
+    ) -> None:
+        """Fetch four disjoint ranges of one immutable official image.
+
+        Each stream has its own file descriptor. A failed stream cancels and
+        joins the others before the caller can discard any partial file.
+        """
+        with path.open("xb") as target:
+            target.truncate(length)
+
+        async def transfer(start: int, end: int) -> None:
+            headers = {
+                "Range": f"bytes={start}-{end}",
+                "If-Match": etag,
+                "Accept-Encoding": "identity",
+            }
+            async with client.stream("GET", url, headers=headers) as response:
+                response.raise_for_status()
+                if response.status_code == 200:
+                    raise EgoSetupError("ego_setup_ranges_unsupported")
+                if (
+                    response.status_code != 206
+                    or response.headers.get("content-range") != f"bytes {start}-{end}/{length}"
+                    or response.headers.get("etag") != etag
+                ):
+                    raise EgoSetupError("ego_setup_invalid_download_range")
+                received = 0
+                with path.open("r+b") as target:
+                    target.seek(start)
+                    async for chunk in response.aiter_bytes():
+                        received += len(chunk)
+                        if received > end - start + 1:
+                            raise EgoSetupError("ego_setup_invalid_download_range")
+                        target.write(chunk)
+                if received != end - start + 1:
+                    raise EgoSetupError("ego_setup_incomplete_download_range")
+
+        tasks = [
+            asyncio.create_task(transfer(length * i // 4, length * (i + 1) // 4 - 1))
+            for i in range(4)
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _install(self) -> None:
         if self.app.exists():
@@ -291,7 +388,7 @@ class EgoSetupManager:
                     raise EgoSetupError("ego_setup_bundle_missing")
                 self._phase("install")
                 staged = temporary / "ego lite.app"
-                await _command("/usr/bin/ditto", str(source), str(staged), timeout=120)
+                await _retry_command("/usr/bin/ditto", str(source), str(staged), timeout=120)
                 self._check_bundle_links(staged)
                 # Official 0.6.0.16 DMGs contain Finder metadata which strict
                 # codesign rejects. Apple QA1940 documents this condition. Remove
@@ -299,7 +396,7 @@ class EgoSetupManager:
                 # quarantine/provenance and still require full strict verification.
                 # https://developer.apple.com/library/archive/qa/qa1940/_index.html
                 for attribute in ("com.apple.FinderInfo", "com.apple.ResourceFork"):
-                    await _command("/usr/bin/xattr", "-dr", attribute, str(staged))
+                    await _retry_command("/usr/bin/xattr", "-dr", attribute, str(staged))
                 self._phase("verify")
                 await self._verify(staged)
                 if not (staged / self.executable.relative_to(self.app)).is_file():
@@ -307,8 +404,8 @@ class EgoSetupManager:
                 staged.rename(self.app)
             except EgoSetupError as exc:
                 # Only our regular cache is disposable. The next explicit
-                # prepare downloads again; trust refusals, timeout and
-                # cancellation keep the image and never trigger retries.
+                # prepare downloads again; trust refusals, exhausted timeout
+                # retries and cancellation keep the image.
                 if (
                     str(exc)
                     in {
@@ -340,7 +437,25 @@ class EgoSetupManager:
         if not cache.exists():
             self._phase("download")
             downloaded = temporary / "installer.dmg"
-            await self._download(downloaded)
+            for attempt in range(len(_RETRY_DELAYS) + 1):
+                try:
+                    await self._download(downloaded)
+                    break
+                except (httpx.HTTPError, TimeoutError) as exc:
+                    retryable = isinstance(exc, (httpx.TransportError, TimeoutError)) or (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and (
+                            exc.response.status_code in {408, 429}
+                            or exc.response.status_code >= 500
+                        )
+                    )
+                    if not retryable or attempt == len(_RETRY_DELAYS):
+                        raise
+                    # Only our uncommitted partial file is removed. A cached
+                    # complete installer is never discarded for a timeout.
+                    downloaded.unlink(missing_ok=True)
+                    logger.info("Retrying interrupted official Ego download")
+                    await asyncio.sleep(_RETRY_DELAYS[attempt])
             if not downloaded.is_file() or not 0 < downloaded.stat().st_size <= _MAX_DOWNLOAD:
                 raise EgoSetupError("ego_setup_invalid_download")
             downloaded.chmod(0o600)
@@ -494,6 +609,46 @@ class EgoSetupManager:
             debug_port=0,
         )
 
+    async def _connect_host(self) -> None:
+        """Resume known setup pages after a verified stop; never replay a lost click."""
+        for attempt in range(len(_RETRY_DELAYS) + 1):
+            try:
+                if not self._state().get("initialized"):
+                    self._phase("onboarding")
+                    # Recover only our own incomplete setup, never an external host.
+                    await self._stop()
+                    port = await self._launch(debugging=True)
+                    try:
+                        try:
+                            await complete_onboarding(port)
+                        except EgoOnboardingError as exc:
+                            # A crash after clicking Finish can leave a completed
+                            # profile without our handshake marker. Its absent setup
+                            # page is not success; verify via the no-debug CLI below.
+                            if str(exc) != "ego_setup_page_unavailable":
+                                raise
+                    finally:
+                        self._phase("restart")
+                        await self._stop()
+                self._phase("handshake")
+                if not self._pid():
+                    await self._launch(debugging=False)
+                await self._handshake()
+                return
+            except (TimeoutError, EgoSetupError, EgoOnboardingError) as exc:
+                retryable = isinstance(exc, TimeoutError) or str(exc) in {
+                    "ego_setup_host_timeout",
+                    "ego_setup_transition_timeout",
+                    "ego_setup_action_timeout",
+                }
+                if not retryable or attempt == len(_RETRY_DELAYS):
+                    raise
+                # A fresh connection observes the current UI step. It does not
+                # resend the previous action after an uncertain receipt.
+                await self._stop()
+                logger.info("Recovering a transient Ego initialization timeout")
+                await asyncio.sleep(_RETRY_DELAYS[attempt])
+
     async def _operate(self, *, initialize: bool) -> dict[str, Any]:
         if _external() or sys.platform != "darwin":
             return self.status()
@@ -516,28 +671,10 @@ class EgoSetupManager:
                 return self.status()
             try:
                 if initialize:
-                    await self._install()
-                if not self._state().get("initialized"):
-                    self._phase("onboarding")
-                    # Recover only our own incomplete setup, never an external host.
-                    await self._stop()
-                    port = await self._launch(debugging=True)
-                    try:
-                        try:
-                            await complete_onboarding(port)
-                        except EgoOnboardingError as exc:
-                            # A crash after clicking Finish can leave a completed
-                            # profile without our handshake marker. Its absent setup
-                            # page is not success; verify via the no-debug CLI below.
-                            if str(exc) != "ego_setup_page_unavailable":
-                                raise
-                    finally:
-                        self._phase("restart")
-                        await self._stop()
-                self._phase("handshake")
-                if not self._pid():
-                    await self._launch(debugging=False)
-                await self._handshake()
+                    async with asyncio.timeout(_INSTALL_TIMEOUT):
+                        await self._install()
+                async with asyncio.timeout(_CONNECT_TIMEOUT):
+                    await self._connect_host()
             except asyncio.CancelledError:
                 with suppress(Exception):
                     await self._stop()

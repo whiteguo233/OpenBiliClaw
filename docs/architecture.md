@@ -115,7 +115,7 @@ GitHub account scope: PAT `/user` verified > explicit public username accepted
                       └─ public starred repositories → favorite events → guided init
 
 Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile chat)
-        → prepare / trial (soft_write) → bounded samples → activate / manage approval (hard_write)
+        → original user limits + prepare / trial (soft_write) → capped plan and bounded samples → activate / manage approval (hard_write)
         → custom source_id + independent share/cadence → same-site versioned workflows
         → CustomWorkflowProducer → HTTP feed or native Ego Lite executor → ordinary pending_eval → evaluated pool
         → source_id/source_name attribution; source_platform remains web

@@ -217,7 +217,7 @@ class CustomWorkflowProducer:
             )
         }
         draft.update(base_version=current["version"], status="draft", trial_success=False)
-        for key in ("resource_origins", "login_origins", "requires_login"):
+        for key in ("resource_origins", "login_origins", "requires_login", "scope_limits"):
             if key in current:
                 draft[key] = current[key]
         draft = service.store.save_draft(draft)

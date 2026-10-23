@@ -227,7 +227,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 迁移、单实例检查与最终配置重读，准备器使用实际数据库父目录。
 上述 API、桌面和 CLI 服务启动检查在 `ready` 且 `installed=true` 时跳过，
 即使宿主 offline 也不会重下或启动；
-已有 preparing 不重复排队。失败在同进程不循环重试，下次实际服务启动会再尝试；
+已有 preparing 不重复排队。单次准备内有界恢复暂时失败；最终失败后不无限排队，下次实际服务启动会再尝试；
 退出时取消并等待本进程拥有的准备任务。设置按钮与 CLI 保留显式重试入口。
 
 源码本机安装在依赖完成后、`--skip-start` 返回前使用安装环境准备 macOS Ego；
@@ -631,3 +631,14 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 - `PUT /api/config` 的 `language` 接受规范 id 与已知别名（`zh`、`zh-TW`、`en-US`…），
   落盘前规范化；未知值返回 `400 unsupported_language` 并列出支持值。
 - `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
+
+## 动态来源预算与安装恢复（2026-10-23）
+
+已实现：草稿的公开 presentation 增加 `max_items/max_pages`，来自真实编译计划，
+尚无可执行计划时为 0；启用确认摘要展示该预算。HTTP 草稿输入不增加
+`request_limits` 字段，此参数仅由聊天 dispatch 的用户原话约束提供。
+`scope_limits` 随草稿和发布工作流持久化，更新／修复继承它。
+
+部署准备的一次调用内会有限恢复下载、幂等系统命令和宿主初始化超时；只有最终失败
+才落 `failed`。API 不再排队无限重试，已有 ready/installed 的环境仍跳过启动准备。
+安装预算 1200 秒，初始化与连接独立预算 300 秒，未放宽签名、监听归属和握手校验。

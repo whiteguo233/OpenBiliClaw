@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,10 @@ the previous plan within the same approved entry, origin and discovery intent.
 Plan: {"version":1,"entry_url":entry_url,"allowed_origins":[the exact origin],
 "steps":[...],"auth":{"required":false,"ready_selector":"","login_selector":""},
 "budgets":{"max_items":20,"max_pages":3,"timeout_seconds":45}}.
+The numbers in that example are defaults, not the user's requirements. Respect
+explicit item/page limits in user intent and the supplied intent_limits. Put
+limits only in plan.budgets, never in a step. Do not invent pagination when the
+user only wants the first page. The server will cap budgets before the trial.
 Steps: goto(url, may use {query}/{date_from}/{date_to}); fill_search(selector,value);
 submit_search(selector of GET form); click_link(selector of link with href);
 wait_for(selector); collect(item_selector,link_selector,title_selector,
@@ -76,6 +81,61 @@ account, topic, or discovery goal. Keep genuinely empty separate from access fai
 """
 
 
+def discovery_scope_limits(
+    intent: str, request_limits: Mapping[str, int] | None = None
+) -> dict[str, int]:
+    """Extract explicit collection upper bounds, never numbers from website data.
+
+    This is a conservative guard for common Chinese/English quantity phrases,
+    not a general language parser. Other goals still belong to the author model.
+    Multiple bounds can only narrow the scope; dates and intervals are not items.
+    """
+    number = r"[0-9]+|[零〇一二两三四五六七八九十百]+"
+    prefix = (
+        r"(?:最多|至多|不超过|不多于|上限(?:为|是)?|限(?:制)?(?:为)?|"
+        r"前|采集|抓取|获取|收集|只取|仅取)"
+    )
+    patterns = (
+        rf"{prefix}\s*({number})\s*(?P<unit>条|篇|部|本|项|个(?:内容|条目|结果|作品)|页)",
+        r"(?:at most|up to|no more than|maximum of|limit(?:ed)? to|first|top|only)\s+"
+        r"([0-9]+)\s+(?P<unit>items?|articles?|books?|novels?|entries|results?|posts?|stories|pages?)\b",
+    )
+    limits = dict(request_limits or {})
+    if any(
+        key not in {"max_items", "max_pages"} or type(value) is not int or value < 1
+        for key, value in limits.items()
+    ):
+        raise ValueError("invalid discovery scope limits")
+    for pattern in patterns:
+        for match in re.finditer(pattern, intent, re.IGNORECASE):
+            raw = match[1]
+            if raw.isascii() and raw.isdigit():
+                value = int(raw)
+            else:
+                digits = {char: value for value, char in enumerate("零一二三四五六七八九")}
+                digits.update({"〇": 0, "两": 2})
+                value = current = 0
+                for char in raw:
+                    if char in {"十", "百"}:
+                        value += (current or 1) * (10 if char == "十" else 100)
+                        current = 0
+                    else:
+                        current = digits[char]
+                value += current
+            if value < 1:
+                raise ValueError("采集条数和页数上限必须大于零")
+            field = "max_pages" if match["unit"].lower() in {"页", "page", "pages"} else "max_items"
+            limits[field] = min(value, limits.get(field, value))
+    if re.search(
+        r"(?:首页|第一页)(?:的)?\s*前|(?:只|仅)(?:取|看|采集|抓取)?(?:首页|第一页)|"
+        r"不翻页|only (?:the )?first page",
+        intent,
+        re.IGNORECASE,
+    ):
+        limits["max_pages"] = 1
+    return limits
+
+
 def _compile_http_recipe(workflow: Mapping[str, Any]) -> dict[str, Any]:
     raw = dict(workflow["workflow"])
     return build_web_recipe(
@@ -93,7 +153,13 @@ def workflow_presentation(workflow: Mapping[str, Any]) -> dict[str, Any]:
     Old rows need no migration. Uncompiled drafts have an empty kind instead
     of claiming they already contain a working browser or feed workflow.
     """
-    result: dict[str, Any] = {"kind": "", "request_origins": [], "content_origins": []}
+    result: dict[str, Any] = {
+        "kind": "",
+        "request_origins": [],
+        "content_origins": [],
+        "max_items": 0,
+        "max_pages": 0,
+    }
     if not workflow.get("workflow"):
         return result
     try:
@@ -104,6 +170,8 @@ def workflow_presentation(workflow: Mapping[str, Any]) -> dict[str, Any]:
                 kind=recipe["strategy"],
                 request_origins=list(config["allowed_origins"]),
                 content_origins=list(config.get("content_origins", config["allowed_origins"])),
+                max_items=config["max_items"],
+                max_pages=config["max_pages"],
             )
         else:
             plan = compile_browser_workflow(workflow["workflow"])
@@ -111,6 +179,8 @@ def workflow_presentation(workflow: Mapping[str, Any]) -> dict[str, Any]:
                 kind="browser",
                 request_origins=list(plan.allowed_origins),
                 content_origins=list(plan.allowed_origins),
+                max_items=plan.budgets.max_items,
+                max_pages=plan.budgets.max_pages,
             )
     except (KeyError, TypeError, ValueError):
         pass
@@ -221,6 +291,7 @@ class WorkflowService:
         workflow_id: str = "",
         separate_source: bool = False,
         session_id: str = "",
+        request_limits: Mapping[str, int] | None = None,
     ) -> dict[str, Any]:
         """Observe user scope, save a draft and trial it without scheduling discovery."""
         url = workflow_url(url)
@@ -262,6 +333,7 @@ class WorkflowService:
             "entry_url": url,
             "origin": origin,
             "intent": intent.strip(),
+            "scope_limits": discovery_scope_limits(intent, request_limits),
             "name": name.strip() or (source or {}).get("name") or urlsplit(url).hostname,
             "source_id": (source or {}).get("source_id", ""),
             "separate_source": separate_source,
@@ -281,9 +353,12 @@ class WorkflowService:
                 base_version=current_workflow["version"],
                 requires_activation=True,
             )
-            for key in ("resource_origins", "login_origins", "requires_login"):
+            for key in ("resource_origins", "login_origins", "requires_login", "scope_limits"):
                 if key in current_workflow:
-                    draft[key] = current_workflow[key]
+                    if key == "scope_limits":
+                        draft[key] = {**current_workflow[key], **draft[key]}
+                    else:
+                        draft[key] = current_workflow[key]
         draft = self.store.save_draft(draft)
         if executor in {"auto", "http"}:
             try:
@@ -327,7 +402,14 @@ class WorkflowService:
                         else None
                     )
                 if index is not None:
-                    recipe = candidates[index]["recipe"]
+                    recipe = _compile_http_recipe({"workflow": candidates[index]["recipe"]})
+                    config = dict(recipe["config"])
+                    for key, cap in draft["scope_limits"].items():
+                        config[key] = min(config[key], cap)
+                    config["detail_fetch_limit"] = min(
+                        config["detail_fetch_limit"], config["max_items"]
+                    )
+                    recipe["config"] = config
                     draft.update(executor="http", workflow=recipe)
                     self.store.save_draft(draft, draft_id=draft["draft_id"])
                     return await self.trial(draft["draft_id"])
@@ -479,6 +561,9 @@ class WorkflowService:
                     "entry_url": draft["entry_url"],
                     "origin": draft["origin"],
                     "intent": draft["intent"],
+                    "intent_limits": discovery_scope_limits(
+                        draft["intent"], draft.get("scope_limits")
+                    ),
                     "observation": observation,
                     "previous_plan": draft.get("workflow"),
                     "previous_trial": {
@@ -504,6 +589,14 @@ class WorkflowService:
                     raw_plan.get("auth", {}), login_origins=draft.get("login_origins", [])
                 )
                 plan = compile_browser_workflow(raw_plan)
+                # Compile first so invalid fields/types cannot be hidden by
+                # normalization. Persist the bounded plan used by the trial.
+                bounded = plan.to_dict()
+                for key, cap in discovery_scope_limits(
+                    draft["intent"], draft.get("scope_limits")
+                ).items():
+                    bounded["budgets"][key] = min(bounded["budgets"][key], cap)
+                plan = compile_browser_workflow(bounded)
                 if plan.entry_url != draft["entry_url"] or set(plan.allowed_origins) != {
                     draft["origin"]
                 }:
@@ -713,7 +806,7 @@ class WorkflowService:
             )
         }
         draft.update(base_version=current["version"], status="needs_login", trial_success=False)
-        for key in ("resource_origins", "login_origins", "requires_login"):
+        for key in ("resource_origins", "login_origins", "requires_login", "scope_limits"):
             if key in current:
                 draft[key] = current[key]
         draft = self.store.save_draft(draft)

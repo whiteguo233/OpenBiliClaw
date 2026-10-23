@@ -621,3 +621,43 @@ async def test_repair_trial_cannot_publish_after_source_is_disabled(service):
     await producer.produce_if_due(force=True)
     service.author_browser.assert_awaited_once()
     assert service.store.get_workflow(workflow["workflow_id"])["version"] == 1
+
+
+async def test_background_repair_keeps_original_user_limits_when_intent_omitted_them(service):
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/feed",
+        "allowed_origins": ["https://example.com"],
+        "budgets": {"max_items": 2, "max_pages": 1},
+        "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+    }
+    source = service.activate(
+        draft(
+            service,
+            executor="ego",
+            workflow=plan,
+            scope_limits={"max_items": 2, "max_pages": 1},
+        )["draft_id"]
+    )
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    service.fetch = AsyncMock(
+        return_value=SourceFetchResult(
+            status="failed", scope_complete=False, error_code="extraction_unverified"
+        )
+    )
+
+    async def complete_trial(prepared, *, background):
+        assert background is True
+        assert prepared["scope_limits"] == {"max_items": 2, "max_pages": 1}
+        prepared.update(status="ready", trial_success=True)
+        return service.store.save_draft(prepared, draft_id=prepared["draft_id"])
+
+    service.author_browser = AsyncMock(side_effect=complete_trial)
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], object(), service=service, llm_service=object()
+    )
+    await producer.produce_if_due(force=True)
+    service.author_browser.assert_awaited_once()
+    repaired = service.store.get_workflow(workflow["workflow_id"])
+    assert repaired["version"] == 2
+    assert repaired["scope_limits"] == {"max_items": 2, "max_pages": 1}

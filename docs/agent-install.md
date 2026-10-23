@@ -939,8 +939,13 @@ migration and configuration resolution. No separate user onboarding is required.
 API, desktop and CLI service-start checks skip a ready, installed environment even when
 its host is offline: those checks do not redownload or wake it. Rerunning local source
 installation still invokes explicit `sources prepare-ego` and verifies the native handshake,
-starting the host if needed. A failed attempt is retried at the next service start, with no
-retry loop in the current process. The API owns and cancels its preparation task on shutdown.
+starting the host if needed. Transient download failures and safe command timeouts recover
+inside the same preparation call (up to three attempts, 1/3-second backoff; command budgets
+scale to 1/2/3 times their initial values). Installation has a 1200-second deadline; initialization and the native connection have a separate 300-second deadline.
+A timed-out setup action is not replayed: the owned host is stopped, then a fresh connection
+observes the actual page and resumes. Explicit signature/trust refusals and unknown screens
+remain failures. Exhausted failures can retry explicitly or at the next service start.
+The API owns and cancels its preparation task on shutdown.
 
 The settings action **Prepare Ego Lite** and the command below remain explicit retry paths.
 Chat, `sources prepare`, and the source-draft API can still complete an unfinished setup;
@@ -1006,3 +1011,5 @@ origins, methods and public DNS; it does not pin the host's socket resolution. S
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+
+macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。

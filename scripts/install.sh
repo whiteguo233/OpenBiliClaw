@@ -749,7 +749,8 @@ PY
         *) echo "  Ego Lite preparation was not confirmed; check its status in settings." ;;
     esac
     echo "  On supported macOS runtimes, the backend can prepare Ego in the background."
-    echo "  To retry: run openbiliclaw sources prepare-ego using this installation's runtime and project root."
+    echo "  Transient setup timeouts retry automatically; no service restart is needed. Installation is bounded to 20 minutes; initialization/connection has a separate 5-minute budget."
+    echo "  To retry after a terminal failure: run openbiliclaw sources prepare-ego using this installation's runtime and project root."
     echo "  Prepared Ego starts on demand; RSS/Atom/JSON Feed need no browser."
     echo "  See: $INSTALL_DIR/docs/modules/browser-workflows.md"
     echo ""

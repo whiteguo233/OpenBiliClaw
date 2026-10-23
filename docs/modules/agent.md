@@ -35,6 +35,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
 | M7 L2 审批门 | ✅ | `agent/approvals.py`：loop 拦截 hard_write 调用 → `approval_request` SSE 事件 + durable 审批记录（JSON 文件存储，免迁移）；`/api/chat/approvals` 端点批准（立即返回 + 后台任务二次 dispatch 真执行，幂等）/拒绝；审计落 `profile_update_ledger`。见下文「L2 审批门（M7）」 |
+| 用户原话采集上限 | ✅ | 工具 dispatch 临时绑定当前用户原话；条数／页数约束独立于模型转述，试采和正式采集复用受限计划，确认卡显示实际预算。 |
 | 来源审批可信摘要 | ✅ | `Tool.approval_summary` 在参数校验后读取实际草稿/来源，再写入既有审批 summary；名称、URL、目标与实际份额/间隔随 SSE 与 replay 持久化，读取失败不落卡。 |
 
 ## 聊天风格：与功能角色独立
@@ -559,3 +560,13 @@ HTTP 客户端和流式响应共用一个异步上下文，按响应、客户端
 三端继续使用现有工具过程、Markdown 来源链接及审批卡；CLI `chat` 和 OpenClaw
 legacy 对话不切换到 AgentLoop，不在本次新增工具覆盖范围。后台任务保持 read-only，
 可查询公开网页，但不会直接写/删记忆。
+
+## 来源工具的原话约束
+
+`tool_user_message: ContextVar[str]` 仅在 `AgentLoop` 的单次 `ToolRegistry.dispatch`
+期间绑定，`finally` 恢复，避免并发会话串值。来源 prepare 从该上下文提取明确的
+条数／页数，与模型 `intent` 中的约束取较小值，以内部 `request_limits` 参数传入
+`WorkflowService.prepare()`；模型不能自行填写此参数。只持久化数字 `scope_limits`，
+不因这项机制额外保存完整原话。试采、重新编制和后台修复保留约束；启用摘要及工具
+有界结果显示已编译的 `max_items/max_pages`，不以展示的两个样例代替实际预算。
+本机制识别常见中英文显式数字上限，不声称处理任意自然语言或跨轮指代；历史版本不回写。

@@ -123,3 +123,92 @@ async def test_platform_label_cannot_route_feed_into_legacy_platform_recipes(dat
     assert not failure.ok and "prepare_discovery_source" in failure.text
     assert store.list() == []
     assert database.get_all_recipes() == []
+
+
+async def test_chat_item_limit_survives_model_omitting_it_from_tool_intent(database, monkeypatch):
+    import json
+
+    import httpx
+
+    from tests.test_custom_feed_workflow import FEED_URL, _service
+
+    body = json.dumps(
+        {
+            "version": "https://jsonfeed.org/version/1.1",
+            "items": [
+                {"id": str(i), "url": f"https://feeds.example.com/post/{i}", "title": f"Post {i}"}
+                for i in range(8)
+            ],
+        }
+    ).encode()
+    service = _service(
+        database,
+        monkeypatch,
+        lambda _: httpx.Response(
+            200, content=body, headers={"Content-Type": "application/feed+json"}
+        ),
+    )
+    monkeypatch.setattr(
+        "openbiliclaw.agent.tools.custom_source_tools.WorkflowService", lambda *a, **kw: service
+    )
+    registry = build_agent_tool_registry(AgentToolContext(database=database))
+    llm = FakeAgentLLM(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    _tool_call(
+                        "prepare_discovery_source",
+                        {
+                            "url": FEED_URL,
+                            "intent": "跟踪该订阅的新内容",
+                            "executor": "http",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(content="试采完成"),
+        ]
+    )
+    events = await _collect(
+        AgentLoop(llm, registry),
+        system_instruction="Manage sources",
+        user_message=f"添加 {FEED_URL} 为来源，每轮最多 2 条文章。",
+    )
+    result = next(e for e in events if e.type == "tool_result")
+    assert result.ok, result.text
+    draft = service.store.get_draft(json.loads(result.text)["draft_id"])
+    assert draft["workflow"]["config"]["max_items"] == 2
+    assert len(draft["sample_items"]) == 2
+
+
+async def test_tool_user_message_is_isolated_between_concurrent_turns_and_reset():
+    import asyncio
+
+    from openbiliclaw.agent.tools.registry import Tool, ToolRegistry, tool_user_message
+
+    async def handler(args):
+        before = tool_user_message.get()
+        await asyncio.sleep(0)
+        assert tool_user_message.get() == before
+        return before
+
+    registry = ToolRegistry([Tool(name="scope", description="scope", handler=handler)])
+
+    async def turn(message):
+        llm = FakeAgentLLM(
+            [
+                LLMResponse(content="", tool_calls=[_tool_call("scope", {})]),
+                LLMResponse(content="done"),
+            ]
+        )
+        events = await _collect(
+            AgentLoop(llm, registry), system_instruction="scope", user_message=message
+        )
+        return next(e.text for e in events if e.type == "tool_result")
+
+    assert await asyncio.gather(turn("每轮最多2条"), turn("每轮最多7条")) == [
+        "每轮最多2条",
+        "每轮最多7条",
+    ]
+    assert tool_user_message.get() == ""

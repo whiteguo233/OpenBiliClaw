@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
 logger = logging.getLogger(__name__)
+
+# Set only around one dispatch, never supplied through model arguments. Context
+# isolation keeps simultaneous chat turns from borrowing each other's scope.
+tool_user_message: ContextVar[str] = ContextVar("tool_user_message", default="")
 
 PermissionLevel = Literal["read", "soft_write", "hard_write"]
 

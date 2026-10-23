@@ -752,3 +752,226 @@ async def test_native_cdp_fixture_uses_only_setup_controls_and_disables_options(
     assert all(not box["checked"] for box in states[-1]["checkboxes"])
     assert actions[4]["button"] == "稍后设置"
     assert actions[-1]["complete"]
+
+
+async def test_one_prepare_recovers_transient_trust_timeout_without_user_restart(
+    manager, monkeypatch
+):
+    from openbiliclaw.sources import ego_setup
+
+    download = installer_lifecycle(manager, monkeypatch, "")
+    original_command = ego_setup._command
+    attempts = 0
+
+    async def command(*args, **kwargs):
+        nonlocal attempts
+        if args[0] == "/usr/sbin/spctl":
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError
+        return await original_command(*args, **kwargs)
+
+    monkeypatch.setattr(ego_setup, "_command", command)
+    monkeypatch.setattr(ego_setup.asyncio, "sleep", AsyncMock())
+    result = await manager.prepare()
+    assert result["setup_state"] == "ready" and result["available"]
+    assert attempts == 2
+    assert download.await_count == 1
+
+
+@pytest.mark.parametrize("step", ["/usr/bin/ditto", "/usr/bin/codesign", "/usr/sbin/spctl"])
+async def test_setup_command_timeouts_are_bounded_and_retain_cache(manager, monkeypatch, step):
+    from openbiliclaw.sources import ego_setup
+
+    download = installer_lifecycle(manager, monkeypatch, "")
+    original_command = ego_setup._command
+    timeouts = []
+
+    async def command(*args, **kwargs):
+        if args[0] == step:
+            timeouts.append(kwargs["timeout"])
+            raise TimeoutError
+        return await original_command(*args, **kwargs)
+
+    monkeypatch.setattr(ego_setup, "_command", command)
+    monkeypatch.setattr(ego_setup.asyncio, "sleep", AsyncMock())
+    result = await manager.prepare()
+    assert result["setup_state"] == "failed" and result["detail"] == "ego_setup_timeout"
+    assert len(timeouts) == 3 and timeouts == [timeouts[0] * n for n in (1, 2, 3)]
+    assert download.await_count == 1 and (manager.root / "installer.dmg").exists()
+    assert not manager._state().get("initialized")
+
+
+async def test_interrupted_download_recovers_in_one_prepare(manager, monkeypatch):
+    import httpx
+
+    download = installer_lifecycle(manager, monkeypatch, "")
+    original = download.side_effect
+    count = 0
+
+    async def interrupted(path):
+        nonlocal count
+        count += 1
+        assert not path.exists()
+        if count == 1:
+            path.write_bytes(b"partial")
+            raise httpx.ReadTimeout("private download response")
+        await original(path)
+
+    download.side_effect = interrupted
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.sleep", AsyncMock())
+    result = await manager.prepare()
+    assert result["available"] and download.await_count == 2
+    assert (manager.root / "installer.dmg").read_bytes() == b"complete fixture dmg"
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), EgoOnboardingError("ego_setup_action_timeout")])
+async def test_prepare_reobserves_setup_after_stopping_uncertain_host(manager, monkeypatch, error):
+    calls = fake_lifecycle(manager, monkeypatch)
+    complete = AsyncMock(side_effect=[error, None])
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", complete)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.sleep", AsyncMock())
+    result = await manager.prepare()
+    assert result["available"] and calls.count("install") == 1
+    assert calls.count("debug") == 2 and calls.count("handshake") == 1
+    assert calls[calls.index("debug") + 1] == "stop"
+    assert complete.await_count == 2
+
+
+async def test_install_deadline_stops_recovery_and_releases_lock(manager, monkeypatch):
+    fake_lifecycle(manager, monkeypatch)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._INSTALL_TIMEOUT", 0.01)
+    entered = asyncio.Event()
+
+    async def install():
+        entered.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_install", install)
+    result = await manager.prepare()
+    assert entered.is_set() and result["detail"] == "ego_setup_timeout"
+    assert manager.status()["setup_state"] == "failed"
+    # Cancellation must release the process lock for a later explicit attempt.
+    monkeypatch.setattr(manager, "_install", AsyncMock())
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", AsyncMock())
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._INSTALL_TIMEOUT", 1)
+    assert (await manager.prepare())["available"]
+
+
+@pytest.mark.parametrize("mode", ["ranges", "ignored", "wrong_range", "wrong_etag", "short"])
+async def test_official_download_ranges_require_exact_identity_and_complete_bytes(
+    manager, monkeypatch, tmp_path, mode
+):
+    import httpx
+
+    data = bytes(range(256)) * (4 * 1024 * 1024 // 256)
+    etag = '"official-image"'
+    requests = []
+    active = 0
+    concurrent = asyncio.Event()
+
+    async def respond(request):
+        nonlocal active
+        requests.append(request)
+        headers = {"Content-Length": str(len(data)), "Accept-Ranges": "bytes", "ETag": etag}
+        if request.method == "HEAD":
+            return httpx.Response(200, headers=headers)
+        span = request.headers.get("Range")
+        if not span:
+            assert mode == "ignored"
+            return httpx.Response(200, content=data, headers=headers)
+        assert request.headers["If-Match"] == etag
+        start, end = map(int, span.removeprefix("bytes=").split("-"))
+        active += 1
+        if active == 4:
+            concurrent.set()
+        await asyncio.wait_for(concurrent.wait(), timeout=1)
+        if mode == "ignored":
+            return httpx.Response(200, content=b"ignored")
+        headers["Content-Range"] = f"bytes {start}-{end}/{len(data)}"
+        if mode == "wrong_range":
+            headers["Content-Range"] = f"bytes 0-{end}/{len(data)}"
+        if mode == "wrong_etag":
+            headers["ETag"] = '"changed-image"'
+        body = data[start : end + 1]
+        if mode == "short":
+            body = body[:-1]
+        return httpx.Response(206, headers=headers, content=body)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "openbiliclaw.sources.ego_setup.httpx.AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw),
+    )
+    manager.root.mkdir()
+    temporary = tmp_path / "transfer"
+    temporary.mkdir()
+    if mode in {"ranges", "ignored"}:
+        cache = await manager._cached_installer(temporary)
+        assert cache.read_bytes() == data and concurrent.is_set()
+        assert len(requests) == (5 if mode == "ranges" else 6)
+    else:
+        with pytest.raises(EgoSetupError, match="download_range"):
+            await manager._cached_installer(temporary)
+        assert not (manager.root / "installer.dmg").exists()
+
+
+async def test_failed_range_joins_other_transfers_before_partial_cleanup(
+    manager, monkeypatch, tmp_path
+):
+    import httpx
+
+    finished = asyncio.Event()
+    started = asyncio.Event()
+
+    async def respond(request):
+        if request.headers["Range"].startswith("bytes=0-"):
+            await started.wait()
+            raise httpx.ReadTimeout("fixture")
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            finished.set()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(httpx.ReadTimeout):
+            await manager._download_ranges(
+                client, "https://cdn.ego.app/image", tmp_path / "partial", 100, '"same"'
+            )
+    assert finished.is_set()
+
+
+async def test_slow_install_does_not_consume_native_connection_budget(manager, monkeypatch):
+    fake_lifecycle(manager, monkeypatch)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._INSTALL_TIMEOUT", 0.3)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._CONNECT_TIMEOUT", 0.3)
+    connect = manager._connect_host
+
+    async def install():
+        await asyncio.sleep(0.2)
+
+    async def slow_connect():
+        await asyncio.sleep(0.2)
+        await connect()
+
+    monkeypatch.setattr(manager, "_install", install)
+    monkeypatch.setattr(manager, "_connect_host", slow_connect)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", AsyncMock())
+    assert (await manager.prepare())["available"]
+
+
+async def test_connection_deadline_is_bounded_and_stops_owned_host(manager, monkeypatch):
+    fake_lifecycle(manager, monkeypatch)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._CONNECT_TIMEOUT", 0.01)
+    monkeypatch.setattr(manager, "_install", AsyncMock())
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", AsyncMock())
+
+    async def handshake():
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_handshake", handshake)
+    result = await manager.prepare()
+    assert result["detail"] == "ego_setup_timeout"
+    assert result["setup_state"] == "failed" and not result["available"]
+    assert manager._state().get("pid") is None

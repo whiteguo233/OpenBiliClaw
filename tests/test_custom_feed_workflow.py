@@ -434,3 +434,37 @@ def test_feed_scope_observation_is_bounded_and_never_includes_private_references
     assert (
         "https://intranet.local" not in result.content_origins + result.unapproved_content_origins
     )
+
+
+async def test_explicit_feed_item_limit_caps_trial_and_scheduled_discovery(database, monkeypatch):
+    body = json.dumps(
+        {
+            "version": "https://jsonfeed.org/version/1.1",
+            "title": "Journal",
+            "items": [
+                {"id": str(i), "url": f"https://feeds.example.com/post/{i}", "title": f"Post {i}"}
+                for i in range(12)
+            ],
+        }
+    ).encode()
+    service = _service(
+        database,
+        monkeypatch,
+        lambda _: httpx.Response(
+            200, content=body, headers={"Content-Type": "application/feed+json"}
+        ),
+    )
+    draft = await service.prepare(url=FEED_URL, intent="每次最多两条新文章", executor="http")
+    assert draft["status"] == "ready" and len(draft["sample_items"]) == 2
+    assert draft["workflow"]["config"]["max_items"] == 2
+    source = service.activate(draft["draft_id"], interval_minutes=5)
+    producer = CustomWorkflowProducer(
+        database,
+        source["source_id"],
+        DiscoveryCandidatePipeline(database, SimpleNamespace()),
+        service=service,
+        candidate_evaluation_owned_by_coordinator=True,
+    )
+    outcome = await producer.produce_if_due(limit=20)
+    assert outcome["discovered"] == outcome["enqueued"] == 2
+    assert database.conn.execute("SELECT COUNT(*) FROM discovery_candidates").fetchone()[0] == 2

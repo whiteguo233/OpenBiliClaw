@@ -673,6 +673,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 动态流程采集预算 | ✅ | 正式执行复用试采的受限计划；后台修复携带持久化 `scope_limits`，模型重编制不能提高用户明确上限。 |
 | 动态来源身份贯通 | ✅ | `DiscoveredContent` 与候选写入携带 `source_id/source_name`；共享 pipeline 按实例做配额，按 canonical URL 去重，保留跨来源 provenance。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
 | 5.1 搜索策略 | ✅ | compact 画像生成搜索词（关闭 thinking / core-memory 注入）+ 6 小时 query 缓存 + B 站搜索 + `bvid` 去重 + `DiscoveredContent` 映射 |
@@ -1540,3 +1541,10 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 公开 API：`ParallelInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `parallel` 名称装配。单次搜索在同一绝对期限内完成 MCP 初始化与调用，支持 JSON / SSE，限制响应大小，取消向上传播。工具错误、限流或空结果进入已有后备链。摘录只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。
 
 该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
+
+## 动态流程修复的预算契约
+
+`CustomWorkflowProducer` 在重建待修复草稿时保留可选 `scope_limits`，与站点权限和
+原工作流一起传递；`WorkflowService.author_browser()` 再次编译并收紧预算。
+这不改变 producer 的公共调用参数、入池门槛或去重规则。Feed 的 `max_items`、
+`max_pages` 与详情抓取数也在 prepare 阶段收紧，试采样例不会直接入池。

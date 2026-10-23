@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from openbiliclaw.llm.base import LLMResponseError
 
-from .tools.registry import validate_tool_arguments
+from .tools.registry import tool_user_message, validate_tool_arguments
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -355,7 +355,11 @@ class AgentLoop:
                         }
                     )
                     continue
-                result = await registry.dispatch(call.name, call.arguments)
+                message_token = tool_user_message.set(user_message)
+                try:
+                    result = await registry.dispatch(call.name, call.arguments)
+                finally:
+                    tool_user_message.reset(message_token)
                 content, truncated = self._truncate_result(result.content)
                 if not result.ok:
                     logger.info(

@@ -675,9 +675,9 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 远程 Android / iOS App：`App（内嵌 tsnet）→ 用户 tailnet → 电脑端 Go tsnet helper → 127.0.0.1:<有效 server port> → FastAPI`；入网控制流为 `本机设置页 → PUT /api/config（凭据只写）→ 私有单次暂存 → stdin → helper`。有效端口通常为 `[api].port`，也跟随启动参数 / 桌面 `OPENBILICLAW_PORT` 覆盖；入口默认关闭，电脑无需系统 Tailscale，无 Funnel/Serve，节点身份和暂存凭据都不进入迁移包。
 
-动态网站与 RSS / Atom / JSON Feed：`部署自动准备 Ego（macOS 网页）/ Feed 直接 HTTP → 聊一聊草稿与试跑 → 审批启用 → 独立 source_id / 份额 / 间隔 → 版本化 workflow 定期发现 → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
+动态网站与 RSS / Atom / JSON Feed：`部署自动准备 Ego（macOS 网页）/ Feed 直接 HTTP → 用户原话上限 + 聊一聊草稿与试跑 → 实际预算审批启用 → 独立 source_id / 份额 / 间隔 → 版本化 workflow 定期发现 → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
 
-macOS 网页环境：`源码安装 / 桌面首启 / 实际服务启动 → 自动补齐未完成的 Ego 环境 → 官方下载 / 签名校验 → 当前数据库目录 ego-managed 内安装及私有 profile 初始化 → 无调试端口的原生握手`；服务后台准备不阻塞 HTTP/UI；API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，不唤醒离线宿主。源码安装重跑则仍显式准备并验证握手，必要时会启动宿主，实际网页任务也可按需启动。失败后下次服务启动重试，状态 GET 只读。初始化不导入日常浏览数据、不设默认浏览器、不添加 Dock、不启用崩溃报告，也不代登录网站。
+macOS 网页环境：`源码安装 / 桌面首启 / 实际服务启动 → 自动补齐未完成的 Ego 环境 → 官方下载 / 签名校验 → 当前数据库目录 ego-managed 内安装及私有 profile 初始化 → 无调试端口的原生握手`；服务后台准备不阻塞 HTTP/UI；API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，不唤醒离线宿主。源码安装重跑则仍显式准备并验证握手，必要时会启动宿主，实际网页任务也可按需启动。暂时失败在同次准备内有限恢复，最多三次尝试、安装预算 20 分钟、首次连接独立预算 5 分钟；真实信任拒绝仍失败。状态 GET 只读。初始化不导入日常浏览数据、不设默认浏览器、不添加 Dock、不启用崩溃报告，也不代登录网站。
 
 旧版 `probe_web_source/create_source` 与公开 Feed/Sitemap/listing recipe 继续使用匿名 HTTP；其不支持登录和 JavaScript 的限制只属于兼容路径。新网页通过官方 Ego Lite 宿主执行；自动准备失败或环境不支持时明确报告原因，不改用 Playwright。已有旧版 Playwright 流程保留兼容。
 
@@ -731,7 +731,7 @@ macOS 网页环境：`源码安装 / 桌面首启 / 实际服务启动 → 自�
 
 HTTP / Ego Lite 能力受运行环境、网站登录和页面结构约束。网页发现限定批准范围；订阅请求域与文章链接域分别确认，Feed 不自动抓取链接的文章页；页面中观察到的公共静态资源 origin 可单独放行，跨站登录 origin 则须用户在接管页明确选择，仅在人工登录期间允许，不扩大内容发现范围。不能承诺任意网站成功。
 
-Ego 托管准备与原生执行当前仅支持 macOS，准备时机已提前到部署阶段：源码安装在依赖安装后执行，桌面包在安装后首次打开时执行，实际 `start` / `serve-api` 启动也会在后台补齐未完成环境。DMG 拖拽没有安装脚本，复制应用本身不会执行准备。无需等首次聊天或新增配置开关；API、桌面和 CLI 服务启动检查遇到已安装且 ready 的环境不重下、不唤醒离线宿主；源码安装重跑仍执行显式准备和握手验证，可能启动宿主。失败后可重启服务、点击「准备 Ego Lite」或运行 `openbiliclaw sources prepare-ego` 重试，聊天仍可补救。RSS 无需 Ego。显式设置任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 则退出托管，不自动改动外部宿主。Linux/Docker、Windows 暂无此原生能力，不会自动改用其他浏览器。
+Ego 托管准备与原生执行当前仅支持 macOS，准备时机已提前到部署阶段：源码安装在依赖安装后执行，桌面包在安装后首次打开时执行，实际 `start` / `serve-api` 启动也会在后台补齐未完成环境。DMG 拖拽没有安装脚本，复制应用本身不会执行准备。无需等首次聊天或新增配置开关；API、桌面和 CLI 服务启动检查遇到已安装且 ready 的环境不重下、不唤醒离线宿主；源码安装重跑仍执行显式准备和握手验证，可能启动宿主。下载／安全系统命令和首次设置的暂时超时会在同次准备内有限恢复，无需用户重启。预算耗尽或明确失败后可点击「准备 Ego Lite」或运行 `openbiliclaw sources prepare-ego` 重试，聊天仍可补救。RSS 无需 Ego。显式设置任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 则退出托管，不自动改动外部宿主。Linux/Docker、Windows 暂无此原生能力，不会自动改用其他浏览器。
 
 自动化与隔离页面测试不等于所有平台或网站的真实验收，详见[动态网站验收记录](docs/platform-source-acceptance.dynamic-web.md)。
 

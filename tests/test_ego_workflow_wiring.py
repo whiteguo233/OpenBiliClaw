@@ -397,3 +397,50 @@ async def test_trial_exposes_bounded_real_description_to_api_and_chat(setup, des
     assert service.store.get_draft(draft["draft_id"])["sample_items"][0] == sample
     fetched = await service.fetch(draft)
     assert fetched.items[0].description == description
+
+
+async def test_explicit_item_limit_survives_default_model_budget_trial_and_publication(setup):
+    service, executor, _, _ = setup
+    service.llm_service.complete_structured_task.return_value = LLMResponse(
+        content=json.dumps({"plan": dict(PLAN, budgets={"max_items": 20})})
+    )
+    draft = await service.prepare(url=URL, intent="每轮只取首页前 10 部作品。", executor="ego")
+    assert draft["status"] == "ready"
+    assert draft["workflow"]["budgets"]["max_items"] == 10
+    assert executor.run.call_args.args[0].budgets.max_items == 10
+    source = service.activate(draft["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    assert workflow["workflow"]["budgets"]["max_items"] == 10
+
+
+@pytest.mark.parametrize(
+    "intent,expected",
+    [
+        ("每轮只取首页前 10 部作品。", {"max_items": 10, "max_pages": 1}),
+        ("最多十篇文章，最多两页", {"max_items": 10, "max_pages": 2}),
+        ("每次抓取三条更新，不翻页", {"max_items": 3, "max_pages": 1}),
+        ("Only the first page, at most 4 books", {"max_items": 4, "max_pages": 1}),
+        ("up to 10 items and at most 2 pages", {"max_items": 10, "max_pages": 2}),
+        ("最近10天更新的书，每5分钟发现一次", {}),
+        ("Discover books published in 2026", {}),
+    ],
+)
+def test_explicit_scope_limits_do_not_confuse_dates_or_schedule(intent, expected):
+    from openbiliclaw.sources.workflow_service import discovery_scope_limits
+
+    assert discovery_scope_limits(intent) == expected
+
+
+async def test_item_limit_does_not_broaden_stricter_model_or_repair_budget(setup):
+    service, executor, _, _ = setup
+    service.llm_service.complete_structured_task.return_value = LLMResponse(
+        content=json.dumps({"plan": dict(PLAN, budgets={"max_items": 3})})
+    )
+    draft = await service.prepare(url=URL, intent="每轮最多10条", executor="ego")
+    assert draft["workflow"]["budgets"]["max_items"] == 3
+    service.llm_service.complete_structured_task.return_value = LLMResponse(
+        content=json.dumps({"plan": dict(PLAN, budgets={"max_items": 40})})
+    )
+    repaired = await service.author_browser(draft, background=True)
+    assert repaired["workflow"]["budgets"]["max_items"] == 10
+    assert executor.run.call_args.args[0].budgets.max_items == 10

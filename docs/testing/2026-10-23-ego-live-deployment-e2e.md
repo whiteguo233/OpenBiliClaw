@@ -139,3 +139,6 @@ UI TaskSpace 2 已按技能要求完成且未保留页面。最后通过产品�
 
 本轮为 macOS Intel 真实源码部署；不宣称冻结桌面安装包、Apple Silicon、Windows、
 Linux/Docker、外站账号登录或任意网站已验收。未合入 main、推送或发布。
+
+后续修复见[同次安装恢复与采集上限复验](2026-10-23-ego-reliability-fixes.md)；
+本文件中的安装重启过程及上限失败仍保留为当时的真实结果。

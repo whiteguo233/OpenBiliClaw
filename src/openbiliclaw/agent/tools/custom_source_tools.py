@@ -6,9 +6,13 @@ import json
 from typing import Any
 
 from openbiliclaw.api.custom_sources import public_draft
-from openbiliclaw.sources.workflow_service import WorkflowService, workflow_presentation
+from openbiliclaw.sources.workflow_service import (
+    WorkflowService,
+    discovery_scope_limits,
+    workflow_presentation,
+)
 
-from .registry import Tool
+from .registry import Tool, tool_user_message
 
 
 def build_custom_source_tools(ctx: Any) -> list[Tool]:
@@ -18,7 +22,11 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
         return WorkflowService(ctx.database, config=ctx.config, llm_service=ctx.llm_service)
 
     async def prepare(args: dict[str, Any]) -> str:
-        result = public_draft(await service().prepare(**args))
+        result = public_draft(
+            await service().prepare(
+                **args, request_limits=discovery_scope_limits(tool_user_message.get())
+            )
+        )
         return _bounded_summary(result, ctx.config)
 
     async def trial(args: dict[str, Any]) -> str:
@@ -105,6 +113,7 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
             f"网址：{draft['entry_url']}\n"
             f"类型：{kind}{scope}\n"
             f"发现目标：{draft['intent']}\n"
+            f"每轮采集上限：{presentation['max_items']} 条，{presentation['max_pages']} 页\n"
             f"推荐比例：{share}；抓取间隔：{interval} 分钟{merge_note}"
         )
 
@@ -156,6 +165,7 @@ def build_custom_source_tools(ctx: Any) -> list[Tool]:
             handler=prepare,
             description="根据用户的网站或 RSS/Atom/JSON Feed 网址和自然语言目标建立草稿并试跑；"
             "不会启用来源。用户只要求订阅整个 Feed 时，intent 可为‘跟踪该订阅的新内容’。"
+            "intent 必须保留用户的条数、页数及不翻页等限制，不得省略。"
             "网页通过 Ego Lite 采集；自动识别成功的 Feed 使用 HTTP。Ego 不可用时报告原因，"
             "不会替换浏览器。需要登录时把 takeover_url 给用户操作，"
             "绝不索取密码/Cookie。"
@@ -255,6 +265,8 @@ def _bounded_summary(result: dict[str, Any], config: Any) -> str:
             "takeover_url",
             "name",
             "kind",
+            "max_items",
+            "max_pages",
             "detail",
             "sample_items",
         )
