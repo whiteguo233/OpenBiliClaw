@@ -193,8 +193,30 @@ function openMobileSourceLogin(value) {
   }
   // Login creation is asynchronous. Same-tab navigation also works when the
   // mobile browser blocks windows opened after the original tap has finished.
+  if (!["/web/source-login.html", "/m/desktop/source-login.html"].includes(url.pathname)
+    || !url.searchParams.get("draft_id")) {
+    throw new Error("登录入口无效，请刷新来源列表后重试。");
+  }
+  // The mobile StaticFiles mount already serves this same page under /m/.
+  // Keep the takeover inside the installed PWA's scope.
+  url.pathname = "/m/desktop/source-login.html";
   window.location.assign(url.href);
 }
+
+function handleMobileSourceLoginClick(event) {
+  const anchor = event.target?.closest?.("a[href]");
+  if (!anchor || event.defaultPrevented || event.button !== 0
+    || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  let url;
+  try { url = new URL(anchor.href, window.location.origin); } catch { return; }
+  if (url.origin !== window.location.origin || url.pathname !== "/web/source-login.html"
+    || url.username || url.password || !url.searchParams.get("draft_id")) return;
+  event.preventDefault();
+  openMobileSourceLogin(url.href);
+}
+
+// Covers links rendered in chat as well as the source manager's fallback link.
+document.addEventListener("click", handleMobileSourceLoginClick);
 
 async function openMobileSettings(opener) {
   closeMobileSettings?.();

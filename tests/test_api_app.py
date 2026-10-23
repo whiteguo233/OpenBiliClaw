@@ -1670,6 +1670,17 @@ class TestBackendAPI:
             '<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=4">'
         ) in response.text
 
+    def test_mobile_source_login_reuses_page_inside_pwa_scope(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+        mobile = client.get("/m/desktop/source-login.html?draft_id=test")
+        desktop = client.get("/web/source-login.html?draft_id=test")
+        assert mobile.status_code == desktop.status_code == 200
+        assert mobile.text == desktop.text
+        assert 'id="return-to-app"' in mobile.text
+
     def test_mobile_web_manifest_is_installable_and_assets_resolve(self) -> None:
         from fastapi.testclient import TestClient
 

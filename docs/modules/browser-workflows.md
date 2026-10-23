@@ -18,6 +18,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 流程编译 | `version=1`；只接受导航、搜索、等待、链接和最终采集；拒绝代码、秘密字段、临时 snapshot ref 和越界预算 |
 | 动态参数 | `query`、`date_from`、`date_to` 每轮替换；URL 参数进行编码 |
 | 标准提取 | 标题、URL、作者、发布时间、摘要；支持下一页、循环检测、条数和页数限制 |
+| 手机登录返回 | 移动网页/PWA 的设置和聊天入口保留在 `/m/` 范围，接管页返回 `/m/#/chat`；桌面行为不变，Flutter 原生 APP 单独验收 |
 | 登录会话 | 不透明 session ID 映射到应用拥有的 Ego task space 和固定 profile ID；同一 Ego profile 的 Cookie 可共享，task space 仅隔离页面 |
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
@@ -37,6 +38,9 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   生成提示要求同时检查行与子链接上的排除标记、用户指定的反例；证据不足应补问。
   这是生成约束，不是任意自然语言条件的确定性验证器，启用前仍需核对样例。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
+- 登录接管页面复用现有静态挂载：`/web/source-login.html?draft_id=...` 返回桌面；
+  `/m/desktop/source-login.html?draft_id=...` 返回手机对话。只按固定页面路径选择目标，
+  不接收自定义返回地址；不改变登录、试跑或审批 API。
 - `WorkflowStore.pending_draft_summaries()` 返回最近 10 条未应用草稿的有界名称、网址、
   目标、状态与 ID；聊天 `list_sources` 可在重启后恢复草稿，不要求用户记住内部 ID。
 - `EgoLiteWorkflowExecutor(profile_root).run(plan, session_id=..., parameters=...)`

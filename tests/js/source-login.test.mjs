@@ -14,8 +14,8 @@ class Element {
   get options() { return this.children; }
 }
 
-async function setup(handler = () => null, search = "?draft_id=fixture/draft") {
-  const elements = Object.fromEntries(["status", "screen", "fields", "login-origins", "value", "fill", "refresh", "resume", "reopen"]
+async function setup(handler = () => null, search = "?draft_id=fixture/draft", pathname = "/web/source-login.html") {
+  const elements = Object.fromEntries(["status", "screen", "fields", "login-origins", "value", "fill", "refresh", "resume", "reopen", "return-to-app"]
     .map((id) => [id, new Element(id === "fields" ? "select" : "div")]));
   const calls = [], intervals = [];
   const snapshot = { blocked_navigation_origins: ["https://login.synthetic.example"], elements: [
@@ -27,7 +27,7 @@ async function setup(handler = () => null, search = "?draft_id=fixture/draft") {
       querySelector: (selector) => elements[selector.slice(1)], querySelectorAll: () => [],
       createElement: (tag) => new Element(tag),
     },
-    location: { search }, URLSearchParams,
+    location: { search, pathname }, URLSearchParams,
     URL: { createObjectURL: () => "blob:fixture", revokeObjectURL() {} },
     setInterval(fn) { intervals.push(fn); },
     async fetch(path, options) {
@@ -152,4 +152,14 @@ test("expired screenshots expose a reopen action that starts a new takeover", as
   h.elements.reopen.handlers.click(); await settle();
   assert.equal(h.calls.filter((call) => call.path.endsWith("/takeover")).length, 2);
   assert.equal(h.elements.reopen.hidden, true);
+});
+
+test("mobile takeover returns to mobile chat even with an untrusted return URL", async () => {
+  const h = await setup(undefined, "?draft_id=fixture&return_to=https://evil.example", "/m/desktop/source-login.html");
+  assert.equal(h.elements["return-to-app"].href, "/m/#/chat");
+  assert.equal(h.elements["return-to-app"].textContent, "返回手机对话");
+});
+test("desktop takeover keeps its desktop return destination", async () => {
+  const h = await setup();
+  assert.equal(h.elements["return-to-app"].href, "/web/");
 });

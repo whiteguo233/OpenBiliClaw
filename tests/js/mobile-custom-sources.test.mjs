@@ -60,7 +60,7 @@ function harness({ fetchConfig = async () => ({ saved_sync: {} }), managerAvaila
       },
     } : undefined,
   });
-  vm.runInContext(`let closeMobileSettings = null;\n${fn("openMobileSourceLogin")}\n${fn("openMobileSettings")}`, context);
+  vm.runInContext(`let closeMobileSettings = null;\n${fn("openMobileSourceLogin")}\n${fn("handleMobileSourceLoginClick")}\n${fn("openMobileSettings")}`, context);
   return { context, calls, navigation, managers, nodes, body, focus };
 }
 
@@ -116,7 +116,7 @@ test("mobile login takeover stays on the backend origin and needs no popup permi
   const h = harness();
   await h.context.openMobileSettings({});
   h.managers[0].options.openUrl("/web/source-login.html?draft_id=abc");
-  assert.equal(h.navigation[0], "https://claw.example/web/source-login.html?draft_id=abc");
+  assert.equal(h.navigation[0], "https://claw.example/m/desktop/source-login.html?draft_id=abc");
   for (const value of ["", "javascript:alert(1)", "https://other.example/login", "//other.example/login", "https://name:secret@claw.example/login"]) {
     assert.throws(() => h.managers[0].options.openUrl(value));
   }
@@ -169,4 +169,24 @@ test("mobile recommendation and delight cards use custom source labels and load 
   const html = readFileSync(new URL("../../src/openbiliclaw/web/index.html", import.meta.url), "utf8");
   assert.match(html, /href="\/shared\/custom-sources\.css"/);
   assert.ok(html.indexOf('src="/shared/custom-sources.js"') < html.indexOf('src="js/app.js"'));
+});
+
+test("chat login links use the mobile takeover, ordinary and external links stay untouched", () => {
+  const h = harness();
+  function click(href, overrides = {}) {
+    let prevented = false;
+    h.context.handleMobileSourceLoginClick({
+      target: { closest: () => ({ href }) }, button: 0,
+      preventDefault() { prevented = true; }, ...overrides,
+    });
+    return prevented;
+  }
+  assert.ok(click("https://claw.example/web/source-login.html?draft_id=chat-1"));
+  assert.deepEqual(h.navigation, ["https://claw.example/m/desktop/source-login.html?draft_id=chat-1"]);
+  for (const href of ["https://outside.example/web/source-login.html?draft_id=1", "/web/", "/web/source-login.html", "https://user:pass@claw.example/web/source-login.html?draft_id=1"]) {
+    assert.equal(click(href), false);
+  }
+  assert.equal(click("/web/source-login.html?draft_id=1", { ctrlKey: true }), false);
+  assert.equal(h.navigation.length, 1);
+  assert.match(appSource, /document\.addEventListener\("click", handleMobileSourceLoginClick\)/);
 });
