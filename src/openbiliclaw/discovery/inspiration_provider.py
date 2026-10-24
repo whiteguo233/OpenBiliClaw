@@ -598,6 +598,11 @@ class BingRssInspirationProvider:
             # Deliberately NOT wired to openbiliclaw.network — same split as
             # the image cache's CN-CDN branch.
             trust_env=False,
+            # www.bing.com geo-redirects CN clients to cn.bing.com with a 302;
+            # the default redirect policy raised on it, so every bing_rss
+            # grounding failed in CN (found by a live request on 2026-10-24).
+            # The hop is a same-service GET with no credentials to leak.
+            follow_redirects=True,
             transport=transport,
             headers={
                 "user-agent": (

@@ -426,6 +426,47 @@ async def test_bing_rss_provider_parses_real_shaped_rss() -> None:
     ]
 
 
+async def test_bing_rss_follows_the_cn_geo_redirect() -> None:
+    """A live CN request gets 302 to cn.bing.com; grounding must follow it."""
+
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.host == "www.bing.com":
+            return httpx.Response(
+                302,
+                headers={"location": "https://cn.bing.com/search?q=test+query&format=rss&count=3"},
+            )
+        return httpx.Response(
+            200,
+            content=(
+                b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<rss version="2.0"><channel><title>Bing: test query</title>'
+                b"<item><title>Redirected result</title>"
+                b"<link>https://example.test/cn</link>"
+                b"<description>cn edge</description></item>"
+                b"</channel></rss>"
+            ),
+        )
+
+    provider = BingRssInspirationProvider(transport=httpx.MockTransport(handler))
+
+    items = await provider.search("test query", limit=3)
+
+    assert [url.split("?")[0] for url in seen] == [
+        "https://www.bing.com/search",
+        "https://cn.bing.com/search",
+    ]
+    assert items == [
+        ExaPreviewItem(
+            title="Redirected result",
+            url="https://example.test/cn",
+            highlights=("cn edge",),
+        )
+    ]
+
+
 def test_parse_you_search_payload_accepts_structured_results() -> None:
     payload = json.dumps(
         {

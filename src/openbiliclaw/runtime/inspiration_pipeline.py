@@ -100,6 +100,23 @@ def _is_max_tokens_error(exc: BaseException) -> bool:
     return any(marker in text for marker in _MAX_TOKENS_ERROR_MARKERS)
 
 
+def _grounding_source_label(provider: object) -> str:
+    """Name the backend that served the last probe.
+
+    A fallback chain reports the backend that actually answered through
+    ``last_search_provider``; a chain with a single backend returns that
+    provider directly, so fall back to its ``backend_alias`` instead of
+    reporting ``none`` for real Keenable / Bing grounding (found in a live
+    dry-run on 2026-10-24).
+    """
+
+    for attribute in ("last_search_provider", "backend_alias"):
+        label = str(getattr(provider, attribute, "") or "").strip()
+        if label:
+            return label
+    return "none"
+
+
 class InspirationKeywordPipeline:
     """Search-inspired keyword orchestration (moved out of ``KeywordPlanner``)."""
 
@@ -1851,9 +1868,7 @@ class InspirationKeywordPipeline:
                         exc_info=True,
                     )
                     continue
-                grounding_source = str(
-                    getattr(provider, "last_search_provider", "") or "none"
-                ).strip()
+                grounding_source = _grounding_source_label(provider)
                 if grounding_source != "local_cache":
                     ledger["searches"] = _ledger_int(ledger["searches"]) + 1
                 for seed in derive_inspiration_seeds(

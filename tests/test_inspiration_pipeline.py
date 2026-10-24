@@ -13,13 +13,17 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from openbiliclaw.config import DiscoveryConfig, derive_inspiration_breadth_params
 from openbiliclaw.discovery.inspiration import AxisRow, ExaPreviewItem, SecondaryInterest
-from openbiliclaw.runtime.inspiration_pipeline import InspirationKeywordPipeline
+from openbiliclaw.runtime.inspiration_pipeline import (
+    InspirationKeywordPipeline,
+    _grounding_source_label,
+)
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
 
@@ -33,6 +37,20 @@ _LINUXDO = "linuxdo"
 _WEIBO = "weibo"
 _V2EX = "v2ex"
 _CLOCK = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+
+
+def test_grounding_source_label_prefers_the_backend_that_served() -> None:
+    tree = SimpleNamespace(last_search_provider="keenable", backend_alias="fallback")
+    assert _grounding_source_label(tree) == "keenable"
+
+
+def test_grounding_source_label_falls_back_to_a_solo_provider_alias() -> None:
+    solo = SimpleNamespace(backend_alias="keenable")
+    assert _grounding_source_label(solo) == "keenable"
+
+
+def test_grounding_source_label_reports_none_for_unlabelled_providers() -> None:
+    assert _grounding_source_label(object()) == "none"
 
 
 @dataclass

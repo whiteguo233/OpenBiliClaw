@@ -1691,3 +1691,25 @@ grounding key，`InspirationGroundingKeys.from_discovery_config(section)` 从 `[
 行为不变：默认链与别名解析结果、未配置 key 时的 mcporter 回退、V2EX 外部召回白名单
 （`local_cache` / `platform_sources` 仍被排除）、Keenable 匿名与 keyed 端点选择均与之前一致；
 V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍返回 `None`，不会回落到默认链。
+
+### 真实请求验收与两处修复（2026-10-24）
+
+| 已实现功能 | 状态 |
+|---|---|
+| `bing_rss` 跟随 `www.bing.com → cn.bing.com` 的 302 重定向，默认链免 key 兜底恢复可用 | ✅ |
+| 单后端链的 `grounding_source` 回退 `backend_alias`，不再记为 `none` | ✅ |
+
+以真实端点与真实 LLM 跑了一轮 keyword inspiration 链路（Keenable 匿名 / keyed 401 / V2EX 外部召回 /
+CLI dry-run / fallback 冷却），过程与未覆盖项见[真实请求验收](../testing/2026-10-24-inspiration-live-requests.md)。
+两处真实失败已在本分支修复：
+
+- `BingRssInspirationProvider` 原先用 httpx 默认的 `follow_redirects=False`，而国内网络访问
+  `https://www.bing.com/search?…&format=rss` 会先收到 302 到 `cn.bing.com`，`raise_for_status()`
+  每次抛错 —— `bing_rss` 又在默认后端链里，等于免 key 的兜底一直不可用。现在跟随重定向；
+  该跳转是同服务 GET、不带凭据，`trust_env=False` 的直连策略不变。真实请求复验 5 条 / 0.69 s。
+- `grounding_source` 原先只读 fallback 链的 `last_search_provider`，单后端链（如
+  `inspiration_search_backends = ["keenable"]`）直接返回 provider 本身，报告与 ledger 因此把真实
+  Keenable grounding 记成 `none`、`provider_successes` 为空。现在 `_grounding_source_label()` 回退
+  到 `backend_alias`，单后端与多后端的来源归属口径一致（`provider_successes` 仍只由 fallback 链
+  汇总，单后端不计数，属计数口径而非归属问题）。
+
