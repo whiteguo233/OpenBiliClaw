@@ -8,8 +8,10 @@ No executable page or host program is accepted from workflow/model data.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -37,8 +39,26 @@ from openbiliclaw.sources.browser_workflow import (
 from openbiliclaw.sources.ego_setup import EgoSetupManager
 from openbiliclaw.sources.web_public import _is_global_address, _system_resolver
 
+logger = logging.getLogger(__name__)
+
 _LOCKS: dict[str, asyncio.Lock] = {}
 _READY: dict[str, tuple[int, str]] = {}
+# A managed Ego host is expensive to start and is shared by every workflow in
+# this data directory. Keep it warm briefly, then stop it once no session lease
+# is held in any process. Browser processes previously stayed alive until the
+# next reboot, burning a renderer for days.
+_IDLE_STOP_SECONDS = 120.0
+_IDLE_TASKS: dict[str, asyncio.Task[None]] = {}
+_EXIT_REAPERS: set[str] = set()
+
+
+def _idle_stop_seconds() -> float:
+    raw = os.environ.get("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "")
+    try:
+        value = float(raw) if raw.strip() else _IDLE_STOP_SECONDS
+    except ValueError:
+        value = _IDLE_STOP_SECONDS
+    return min(max(value, 0.0), 86400.0)
 
 
 def _error(code: str, detail: str = "") -> Exception:
@@ -157,8 +177,20 @@ class EgoLiteWorkflowSession:
         self._guards: set[asyncio.Task[None]] = set()
         self._process: asyncio.subprocess.Process | None = None
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
+        self._lease: Any | None = None
+        self._started = False
+
+    def _ensure_lease(self) -> None:
+        """Hold a cross-process shared lease before any managed host is spawned."""
+        if self._lease is not None or not self.executor.managed:
+            return
+        if not self.executor._setup.executable.is_file():
+            return
+        self._lease = self.executor._setup.acquire_session_lease()
+        self.executor._install_exit_reaper()
 
     async def start(self, state_file: Path, state: dict[str, Any]) -> None:
+        self._ensure_lease()
         self._temporary = tempfile.TemporaryDirectory(prefix="obc-ego-", dir="/tmp")
         directory = Path(self._temporary.name)
         directory.chmod(0o700)
@@ -229,6 +261,7 @@ class EgoLiteWorkflowSession:
             config["socket"], limit=8 * 1024 * 1024
         )
         self._reader_task = asyncio.create_task(self._read(reader))
+        self._started = True
         await self._open_entry()
 
     async def _open_entry(self) -> None:
@@ -473,17 +506,20 @@ class EgoLiteWorkflowSession:
         )
 
     async def close(self) -> None:
-        """Always disconnect the owned host socket, even if its close RPC fails."""
+        """Release the owned tab, socket and session lease even if close RPC fails."""
         if self._closed:
             return
         self._closed = True
+        close_failed = False
+        had_lease = self._lease is not None
         try:
             if self._writer:
                 try:
                     async with asyncio.timeout(3):
                         await self.command("close")
                 except Exception:
-                    pass
+                    close_failed = True
+                    logger.warning("Ego host did not confirm removal of its owned tab")
                 finally:
                     self._writer.close()
             for task in self._guards:
@@ -507,10 +543,18 @@ class EgoLiteWorkflowSession:
                             self._process.kill()
                         await self._process.wait()
         finally:
+            if self._lease is not None:
+                self.executor._setup.release_session_lease(self._lease)
+                self._lease = None
             if self._temporary:
                 self._temporary.cleanup()
             if self.lock.locked():
                 self.lock.release()
+            if had_lease or self._started:
+                # A tab that refused to close keeps rendering even after the
+                # native host exits, so a failed close shortens the idle grace
+                # and the managed browser is stopped outright.
+                self.executor._schedule_idle_stop(grace=0.0 if close_failed else None)
 
 
 class EgoLiteWorkflowExecutor:
@@ -569,6 +613,63 @@ class EgoLiteWorkflowExecutor:
             "dns_pinned": False,
         }
 
+    def _install_exit_reaper(self) -> None:
+        """Stop our managed host on interpreter shutdown when no session is live."""
+        if not self.managed:
+            return
+        key = str(self._setup.root)
+        if key in _EXIT_REAPERS:
+            return
+        _EXIT_REAPERS.add(key)
+        setup = self._setup
+
+        def reap() -> None:
+            try:
+                lease = setup.try_exclusive_session_lease()
+            except Exception:
+                return
+            if lease is None:
+                return
+            try:
+                setup.stop_sync()
+            except Exception:
+                logger.info("Managed Ego host was not stopped at interpreter exit")
+            finally:
+                setup.release_session_lease(lease)
+
+        atexit.register(reap)
+
+    def _schedule_idle_stop(self, *, grace: float | None = None) -> None:
+        """Stop the managed host once no session lease is held in any process."""
+        if not self.managed:
+            return
+        key = str(self._setup.root)
+        delay = _idle_stop_seconds() if grace is None else max(grace, 0.0)
+        previous = _IDLE_TASKS.pop(key, None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        _IDLE_TASKS[key] = asyncio.create_task(self._stop_when_idle(key, delay))
+
+    async def _stop_when_idle(self, key: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            lease = self._setup.try_exclusive_session_lease()
+            if lease is None:
+                logger.info("Keeping the managed Ego host: a session is still active")
+                return
+            try:
+                await self._setup.stop()
+                logger.info("Stopped the idle managed Ego host")
+            finally:
+                self._setup.release_session_lease(lease)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Idle stop of the managed Ego host failed", exc_info=False)
+        finally:
+            if _IDLE_TASKS.get(key) is asyncio.current_task():
+                _IDLE_TASKS.pop(key, None)
+
     async def open_session(
         self,
         plan: BrowserWorkflowPlan,
@@ -582,16 +683,6 @@ class EgoLiteWorkflowExecutor:
             raise _error("invalid_session")
         if self.server_name and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.server_name):
             raise _error("invalid_host")
-        if self.managed and not self._setup.status()["available"]:
-            await self._setup.ensure_running()
-        status = self.availability()
-        if (
-            not status["installed"]
-            or not status["platform_supported"]
-            or status["connection_state"] == "offline"
-            or (self.managed and not status["available"])
-        ):
-            raise _error("executor_unavailable", str(status["detail"]))
         if self.profile_root.is_symlink():
             raise _error("invalid_session")
         self.profile_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -607,6 +698,19 @@ class EgoLiteWorkflowExecutor:
             self, plan, interactive=interactive, lock=lock, observation_only=observation_only
         )
         try:
+            # Take the lease before ensure_running() so an idle reaper in another
+            # process cannot stop the host between launch and attachment.
+            session._ensure_lease()
+            if self.managed and not self._setup.status()["available"]:
+                await self._setup.ensure_running()
+            status = self.availability()
+            if (
+                not status["installed"]
+                or not status["platform_supported"]
+                or status["connection_state"] == "offline"
+                or (self.managed and not status["available"])
+            ):
+                raise _error("executor_unavailable", str(status["detail"]))
             state = (
                 json.loads(path.read_text())
                 if path.exists()

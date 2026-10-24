@@ -582,14 +582,18 @@ async def test_stop_preserves_diagnostic_until_debug_port_closes(manager, monkey
     assert manager._state_path.read_bytes() == original
 
 
-async def test_stop_does_not_clear_state_or_escalate_when_host_stays_alive(manager, monkeypatch):
+async def test_stop_escalates_then_preserves_state_when_host_never_exits(manager, monkeypatch):
+    import signal
+
     elapsed, signals, probes = stop_fixture(manager, monkeypatch, True, pid_exits=False)
     original = manager._state_path.read_bytes()
     with pytest.raises(EgoSetupError, match="ego_setup_host_did_not_exit"):
         await manager._stop()
-    assert 5.99 <= elapsed[0] < 6.2
+    # A browser that ignores SIGTERM must not keep a renderer alive forever;
+    # the verified identity is killed only after the graceful budget expires.
+    assert signals == [(96976, signal.SIGTERM), (96976, signal.SIGKILL)]
+    assert 8.9 <= elapsed[0] < 9.5
     assert not probes
-    assert len(signals) == 1
     assert manager._state_path.read_bytes() == original
 
 

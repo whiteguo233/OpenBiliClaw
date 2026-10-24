@@ -169,6 +169,10 @@ export async function start(config) {
       let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);
         let msg;try{msg=JSON.parse(line);}catch{connection.destroy();return;}
         if(msg.authorized!==undefined){const g=guards.get(msg.id);if(g){clearTimeout(g.timer);guards.delete(msg.id);g.resolve(msg.authorized===true);}continue;}
+        // Acknowledge close before tearing down the socket: the caller's 3s
+        // close budget must not fail merely because this reply raced teardown,
+        // otherwise every run looks like a leaked tab and skips the idle grace.
+        if(msg.operation==='close') {send({id:msg.id,result:true});setTimeout(()=>void close(),0);continue;}
         const fn=Object.hasOwn(commands,msg.operation)?commands[msg.operation]:null;
         Promise.resolve().then(()=>{if(!fn)throw Error('invalid_operation');if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);return fn(msg.arguments||{});}).then(result=>{if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);send({id:msg.id,result});}).catch(e=>send({id:msg.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_operation_failed'}));
       }});

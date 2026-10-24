@@ -22,7 +22,7 @@ import tempfile
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import httpx
 
@@ -122,6 +122,61 @@ class EgoSetupManager:
             "Contents/Frameworks/ego Framework.framework/Versions/Current/Helpers/ego-browser"
         )
         self._state_path = self.root / "setup.json"
+
+    @property
+    def session_lock_path(self) -> Path:
+        """Cross-process lease file: shared while any session is live."""
+        return self.root / "sessions.lock"
+
+    def _open_session_lock(self) -> BinaryIO:
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
+        path = self.session_lock_path
+        if path.is_symlink():
+            raise EgoSetupError("ego_setup_invalid_directory")
+        handle = path.open("a+b")
+        path.chmod(0o600)
+        return handle
+
+    def acquire_session_lease(self) -> BinaryIO:
+        """Hold one shared lease for the lifetime of a workflow session.
+
+        The lease is advisory and cross-process: an idle reaper may stop the
+        managed host only after every session process has released it.
+        """
+        import fcntl
+
+        handle = self._open_session_lock()
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+        except BaseException:
+            handle.close()
+            raise
+        return handle
+
+    def try_exclusive_session_lease(self) -> BinaryIO | None:
+        """Return an exclusive lease only when no live session holds one."""
+        import fcntl
+
+        handle = self._open_session_lock()
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            return None
+        except BaseException:
+            handle.close()
+            raise
+        return handle
+
+    @staticmethod
+    def release_session_lease(handle: BinaryIO) -> None:
+        import fcntl
+
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
     def _state(self) -> dict[str, Any]:
         if self.root.is_symlink() or self._state_path.is_symlink():
@@ -530,7 +585,7 @@ class EgoSetupManager:
             await asyncio.sleep(0.25)
         raise EgoSetupError("ego_setup_host_timeout")
 
-    async def _stop(self) -> None:
+    async def _stop(self, *, exit_budget: float = 6.0) -> None:
         pid = self._pid()
         debug_port = self._state().get("debug_port", 0)
         has_debug_port = isinstance(debug_port, int) and bool(debug_port)
@@ -539,31 +594,61 @@ class EgoSetupManager:
         if pid:
             with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
-        # Chromium's listener can outlive its main process briefly. Both must
-        # close within the same exit budget, including recovery when the saved
-        # main PID already disappeared before this cleanup attempt.
-        deadline = time.monotonic() + 6
-        while True:
-            main_exited = not pid or self._pid() != pid
-            port_closed = not has_debug_port
-            if main_exited:
-                if has_debug_port:
-                    with socket.socket() as probe:
-                        probe.settimeout(min(0.2, max(0.001, deadline - time.monotonic())))
-                        port_closed = (
-                            probe.connect_ex(("127.0.0.1", debug_port)) == errno.ECONNREFUSED
-                        )
-                if port_closed:
-                    self._write(pid=None, ready_pid=None, debug_port=0)
-                    return
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(0.1, remaining))
+
+        def settled() -> bool:
+            if pid and self._pid() == pid:
+                return False
+            if not has_debug_port:
+                return True
+            with socket.socket() as probe:
+                probe.settimeout(0.2)
+                return probe.connect_ex(("127.0.0.1", debug_port)) == errno.ECONNREFUSED
+
+        async def wait_settled(budget: float) -> bool:
+            deadline = time.monotonic() + budget
+            while not settled():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                await asyncio.sleep(min(0.1, remaining))
+            return True
+
+        if await wait_settled(max(exit_budget, 0.0)):
+            self._write(pid=None, ready_pid=None, debug_port=0)
+            return
+        # A graceful shutdown can hang behind a crashed renderer or a stuck
+        # profile lock. Escalate only against the exact process identity that
+        # was verified above, so a recycled PID is never killed.
+        if pid and self._pid() == pid:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+            if await wait_settled(3.0):
+                self._write(pid=None, ready_pid=None, debug_port=0)
+                return
         # Do not destroy a profile or kill an unverified/reused PID to recover.
-        if main_exited:
-            raise EgoSetupError("ego_setup_debug_port_still_open")
-        raise EgoSetupError("ego_setup_host_did_not_exit")
+        if pid and self._pid() == pid:
+            raise EgoSetupError("ego_setup_host_did_not_exit")
+        raise EgoSetupError("ego_setup_debug_port_still_open")
+
+    def stop_sync(self, *, wait: float = 2.0) -> None:
+        """Best-effort stop for interpreter shutdown; never touches external hosts."""
+        if _external() or sys.platform != "darwin":
+            return
+        pid = self._pid()
+        if not pid:
+            return
+        with suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + max(wait, 0.0)
+        while time.monotonic() < deadline:
+            if self._pid() != pid:
+                break
+            time.sleep(0.1)
+        if self._pid() == pid:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        with suppress(Exception):
+            self._write(pid=None, ready_pid=None, debug_port=0)
 
     async def _handshake(self) -> None:
         pid = self._pid()
@@ -702,3 +787,34 @@ class EgoSetupManager:
     async def ensure_running(self) -> dict[str, Any]:
         """At actual work time, restart only a previously initialized managed host."""
         return await self._operate(initialize=False)
+
+    async def stop(self, *, exit_budget: float = 6.0) -> dict[str, Any]:
+        """Stop our managed host after work ends; external hosts stay untouched.
+
+        Serialized with prepare/ensure_running through the setup lock, so an
+        idle stop can never race a launch. Callers decide *when* stopping is
+        safe (for example only while holding the exclusive session lease).
+        """
+        if _external() or sys.platform != "darwin":
+            return self.status()
+        if not self._state().get("initialized") and not self._pid():
+            return self.status()
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
+        import fcntl
+
+        lock_path = self.root / "setup.lock"
+        if lock_path.is_symlink():
+            raise EgoSetupError("ego_setup_invalid_directory")
+        with lock_path.open("a") as lock:
+            lock_path.chmod(0o600)
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                logger.info("Ego host stop deferred: setup is busy")
+                return self.status()
+            try:
+                await self._stop(exit_budget=exit_budget)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        return self.status()
