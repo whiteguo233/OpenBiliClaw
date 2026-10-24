@@ -159,6 +159,7 @@ def test_fixed_host_resources_are_packaged_and_have_no_model_code_operation():
     )
     assert "requestStage:'Request'" in host and "requestStage:'Response'" in host
     assert "globalThis.ego" in host and "sendCDPMessage" in host
+    assert "if(!config.interactive)" in host and "windowState:'minimized'" in host
     assert 'from "playwright' not in host and "from 'playwright" not in host
     assert "x.name===config.task_name && x.ownership==='agent'" in host
     assert "claimTaskSpace" not in host and "completeTaskSpace" not in host

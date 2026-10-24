@@ -81,6 +81,35 @@ async def test_launch_retries_temporary_listener_probe_timeout(manager, monkeypa
 
 
 @pytest.mark.parametrize(
+    "debugging,expected",
+    [(False, "--no-startup-window"), (True, "about:blank")],
+)
+async def test_launch_keeps_background_work_windowless(manager, monkeypatch, debugging, expected):
+    from types import SimpleNamespace
+
+    manager.root.mkdir(parents=True)
+    running = {"value": False}
+    captured = {}
+
+    async def spawn(*args, **kwargs):
+        running["value"] = True
+        captured["args"] = args
+        return SimpleNamespace(pid=202, returncode=None)
+
+    async def command(*args, **kwargs):
+        port = manager._state()["debug_port"]
+        return f"p202\nf5\nn127.0.0.1:{port}\n"
+
+    monkeypatch.setattr(manager, "_pid", lambda: 202 if running["value"] else None)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.sleep", AsyncMock())
+    await manager._launch(debugging=debugging)
+    assert expected in captured["args"]
+    assert ("about:blank" in captured["args"]) is debugging
+
+
+@pytest.mark.parametrize(
     "heading,buttons,expected",
     [
         ("ego(lite) 是 AI Agent 运行网页自动化最快的浏览器", ["开始使用"], "开始使用"),

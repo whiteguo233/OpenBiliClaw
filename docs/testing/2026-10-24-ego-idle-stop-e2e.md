@@ -52,6 +52,21 @@
   成功，最终 `stop()` 后无残留 `--ego-server-name=obc-*` 进程。
 - 复现脚本 `/tmp/obc-ego-e2e-20261024/e2e.py`，原始日志同目录。
 
+### 静默后台运行（真实窗口检查）
+
+- 托管宿主正常启动改为 `--no-startup-window`，首次设置仍用可见的调试窗口；
+  启动后 WindowServer 中没有任何 ego 窗口。
+- 非交互会话创建 tab 后立即通过 CDP `Browser.setWindowBounds(..., minimized)`
+  收回窗口，关闭 tab 前再收回一次，避免最后一个 tab 关闭后留下空窗口。
+- 交互式登录接管不最小化：真实检查中窗口可见，截图 305,201 字节成功；关闭后窗口
+  立即消失。最小化窗口下 `Page.captureScreenshot` 会报 "Cannot capture a
+  screenshot while the window is minimized"，因此该策略只用于非交互路径，登录
+  截图链路不受影响。
+- 真实采集全程以 10 Hz 采样 WindowServer 可见窗口：0 次命中；采集、空闲回收、
+  重启复用均正常。另以 50 Hz 采样系统前台应用，全程仍是 Chrome，后台采集不抢焦点。
+  交互窗口可见但不主动激活，登录由产品截图/操作接口驱动。
+- 同一会话内页面导航、`document.readyState`、DOM 采集在最小化窗口中工作正常。
+
 ### 边界
 
 - 本轮只验证一个真实站点与托管宿主生命周期，未重跑完整产品聊天建源、模型评估与

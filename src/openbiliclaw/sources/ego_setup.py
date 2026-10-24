@@ -540,7 +540,9 @@ class EgoSetupManager:
                 listener.bind(("127.0.0.1", 0))
                 port = int(listener.getsockname()[1])
             args += ["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={port}"]
-        args.append("about:blank")
+        # Background work must not flash a browser window on screen. Onboarding
+        # still opens its debug UI, which the bounded automation drives.
+        args.append("about:blank" if debugging else "--no-startup-window")
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.DEVNULL,

@@ -145,7 +145,15 @@ export async function start(config) {
   const fill=async arg=>evaluate(`a=>{const es=document.querySelectorAll(a.selector);if(es.length!==1)return false;const e=es[0];if(!['INPUT','TEXTAREA'].includes(e.tagName))return false;e.focus();const p=e.tagName==='INPUT'?HTMLInputElement.prototype:HTMLTextAreaElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(e,a.value);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return true;}`,arg);
   const close=async()=>{
     if(closing)return; closing=true;
-    try {if(target) await rpc('Target.closeTarget',{targetId:target},null);}catch{}
+    try {if(target) {
+      // Closing the last tab can leave an empty visible window behind, so put
+      // the session window away before releasing it, including login windows.
+      try {
+        const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
+        await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
+      } catch {}
+      await rpc('Target.closeTarget',{targetId:target},null);
+    }}catch{}
     for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('ego_session_closed'));}pending.clear();
     for(const g of guards.values()){clearTimeout(g.timer);g.resolve(false);}guards.clear();
     for(const s of sockets)s.end();server.close();clearTimeout(lifetime);finish();
@@ -188,6 +196,14 @@ export async function start(config) {
     ego.useTaskSpace(task.id);
     const tab=native(await ego.createTab('about:blank'));target=tab.targetId;
     session=(await rpc('Target.attachToTarget',{targetId:target,flatten:true},null)).sessionId;
+    // Background discovery must never put a page on screen. Interactive login
+    // keeps its window because the user has to see and drive it.
+    if(!config.interactive) {
+      try {
+        const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
+        await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
+      } catch {}
+    }
     await rpc('Page.enable'); await rpc('Network.enable');
     await rpc('Network.setBypassServiceWorker',{bypass:true});await rpc('Network.setCacheDisabled',{cacheDisabled:true});
     await rpc('Network.setBlockedURLs',{urls:['ws://*','wss://*','file://*','ftp://*']});
