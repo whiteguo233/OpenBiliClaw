@@ -21,6 +21,7 @@ import tempfile
 import time
 import uuid
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -169,6 +170,7 @@ class EgoLiteWorkflowSession:
     ) -> None:
         self.executor, self.plan, self.interactive, self.lock = executor, plan, interactive, lock
         self.observation_only = observation_only
+        self.capture_observation = False
         self._stopped_observation: dict[str, Any] | None = None
         self.pages_visited = 0
         self._closed = False
@@ -434,6 +436,12 @@ class EgoLiteWorkflowSession:
         items: list[BrowserWorkflowItem] = []
         seen: set[str] = set()
         pages: set[str] = set()
+        evidence: dict[str, Any] = {
+            "item_selector": step["item_selector"],
+            "link_selector": step["link_selector"],
+            "samples": [],
+        }
+        captured = {"collection_evidence": evidence} if self.capture_observation else {}
         for index in range(self.plan.budgets.max_pages):
             if await self.login_required():
                 return BrowserWorkflowResult(
@@ -444,7 +452,14 @@ class EgoLiteWorkflowSession:
                     False,
                     self.pages_visited,
                 )
-            data = await self.command("collect", step=step, limit=self.plan.budgets.max_items)
+            data = await self.command(
+                "collect",
+                step=step,
+                limit=self.plan.budgets.max_items,
+                **({"capture_evidence": True} if self.capture_observation else {}),
+            )
+            if self.capture_observation:
+                evidence["context"] = data.get("collection_context")
             invalid = False
             for raw in data["items"]:
                 try:
@@ -470,9 +485,15 @@ class EgoLiteWorkflowSession:
                         raw["description"],
                     )
                 )
+                if self.capture_observation and isinstance(raw.get("evidence"), dict):
+                    evidence["samples"].append({**raw["evidence"], "url": url})
                 if len(items) >= self.plan.budgets.max_items:
                     return BrowserWorkflowResult(
-                        "ok", tuple(items), scope_complete=False, pages_visited=self.pages_visited
+                        "ok",
+                        tuple(items),
+                        scope_complete=False,
+                        pages_visited=self.pages_visited,
+                        observation=captured,
                     )
             if invalid or (not data["items"] and not data["empty"]):
                 observation = await self.snapshot()
@@ -480,6 +501,8 @@ class EgoLiteWorkflowSession:
                     observation["href_selector_repairs"] = data["href_selector_repairs"]
                 if data.get("item_href_selector_repair"):
                     observation["item_href_selector_repair"] = data["item_href_selector_repair"]
+                if data.get("collection_diagnostics"):
+                    observation["collection_diagnostics"] = data["collection_diagnostics"]
                 return BrowserWorkflowResult(
                     "degraded" if items else "failed",
                     tuple(items),
@@ -491,7 +514,10 @@ class EgoLiteWorkflowSession:
                 )
             if not data["next"]:
                 return BrowserWorkflowResult(
-                    "ok" if items else "empty", tuple(items), pages_visited=self.pages_visited
+                    "ok" if items else "empty",
+                    tuple(items),
+                    pages_visited=self.pages_visited,
+                    observation=captured,
                 )
             if data["next"] in pages:
                 return BrowserWorkflowResult(
@@ -510,6 +536,7 @@ class EgoLiteWorkflowSession:
             tuple(items),
             scope_complete=False,
             pages_visited=self.pages_visited,
+            observation=captured,
         )
 
     async def close(self) -> None:
@@ -744,6 +771,7 @@ class EgoLiteWorkflowExecutor:
         *,
         session_id: str,
         parameters: WorkflowParameters | None = None,
+        capture_observation: bool = False,
     ) -> BrowserWorkflowResult:
         from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
@@ -751,7 +779,13 @@ class EgoLiteWorkflowExecutor:
         try:
             async with asyncio.timeout(plan.budgets.timeout_seconds):
                 session = await self.open_session(plan, session_id=session_id)
-                return await session.execute(parameters or WorkflowParameters())
+                session.capture_observation = capture_observation
+                result = await session.execute(parameters or WorkflowParameters())
+                if capture_observation and result.status == "ok" and result.items:
+                    result = replace(
+                        result, observation={**result.observation, **await session.snapshot()}
+                    )
+                return result
         except BrowserWorkflowExecutionError as exc:
             return BrowserWorkflowResult(
                 "login_required" if exc.code == "login_required" else "failed",

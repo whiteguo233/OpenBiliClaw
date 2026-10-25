@@ -98,7 +98,8 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
     elements:rows,login_wall:[...document.querySelectorAll('input[type=password]')].some(visible)};
 }`;
 
-export const COLLECT_JS = String.raw`({step,limit}) => {
+export const COLLECT_JS = String.raw`({step,limit,capture_evidence=false}) => {
+  try {
   const field = (node,sel) => {
     const selector=sel.trim();
     if(selector===':scope') return node;
@@ -109,6 +110,17 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
   const visible = e => { if (!e || !e.getClientRects().length) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
+  const evidenceNode=e=>({tag:(e?.tagName||'').toLowerCase(),
+    id:/^[A-Za-z_][\w-]{0,79}$/.test(e?.id||'')?e.id:'',
+    classes:[...(e?.classList||[])].filter(c=>/^[A-Za-z_][\w-]{0,50}$/.test(c)).slice(0,10),
+    text:['INPUT','TEXTAREA','SELECT','FORM'].includes(e?.tagName)?'':
+      (e?.innerText||e?.textContent||'').trim().slice(0,500)});
+  const evidenceLink=e=>{let prefix='';try {
+    const raw=e?.getAttribute('href')||'', url=new URL(raw,location.href);
+    if(raw.trim() && ['http:','https:'].includes(url.protocol) && !url.username && !url.password) {
+      const value=raw.split(/[?#]/,1)[0];prefix=value.trim()?value.slice(0,300):'';
+    }
+  }catch{} return {...evidenceNode(e),href_attribute_prefix:prefix};};
   const matchedNodes=[...document.querySelectorAll(step.item_selector)], nodes=matchedNodes.slice(0,limit);
   // Also prove the inverse spelling mistake in a zero-row list predicate.
   // Only one terminal :has(simple anchor[href^="/path"]) is supported: every
@@ -166,16 +178,36 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
     return {title:text(node,step.title_selector||step.link_selector).slice(0,500),url:a?.href||'',
       author_name:step.author_selector?text(node,step.author_selector).slice(0,200):'',
       published_at:(t?.getAttribute(step.published_attribute)||t?.textContent||'').slice(0,100),
-      description:step.description_selector?text(node,step.description_selector).slice(0,2000):''};
+      description:step.description_selector?text(node,step.description_selector).slice(0,2000):'',
+      ...(capture_evidence?{evidence:{row:evidenceNode(node),link:evidenceLink(a)}}:{})};
   });
   const next=step.next_selector?document.querySelector(step.next_selector):null;
   const empty=step.empty_selector?visible(document.querySelector(step.empty_selector)):false;
   let repairs=[];
   let itemRepair=null;
+  let collectionContext=null;
   try {if(items.some(item=>!item.url || !item.title))repairs=hrefRepairs();}catch{}
   try {if(!items.length && !empty)itemRepair=itemHrefRepair();}catch{}
+  if(capture_evidence) {
+    const base=step.item_selector.split(':has(',1)[0], selected=new Set(matchedNodes);
+    if(/^[A-Za-z#.][A-Za-z0-9_#.\s>+~-]*$/.test(base)) {
+      const envelope=[...document.querySelectorAll(base)], excluded=envelope.filter(e=>!selected.has(e));
+      collectionContext={base_selector:base,base_match_count:envelope.length,
+        item_match_count:matchedNodes.length,excluded_row_count:excluded.length,
+        excluded_rows:excluded.slice(0,10).map(e=>({row:evidenceNode(e),
+          links:[...e.querySelectorAll('a[href]')].slice(0,3).map(evidenceLink)}))};
+    }
+  }
   return {items,empty,next:next?.href||'',...(repairs.length?{href_selector_repairs:repairs}:{}),
-    ...(itemRepair?{item_href_selector_repair:itemRepair}:{})};
+    ...(itemRepair?{item_href_selector_repair:itemRepair}:{}),
+    ...(capture_evidence?{collection_match_count:matchedNodes.length,collection_context:collectionContext}:{})};
+  } catch(error) {
+    // CSS parser failures are actionable plan evidence, not transport failures.
+    // Never expose the exception body, which can contain page/selector data.
+    if(error?.name==='SyntaxError')return {items:[],empty:false,next:'',
+      collection_diagnostics:{error:'invalid_css_selector'}};
+    throw error;
+  }
 }`;
 
 export const FORM_JS = String.raw`selector => {

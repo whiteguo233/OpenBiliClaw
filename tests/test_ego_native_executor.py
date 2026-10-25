@@ -59,7 +59,7 @@ async def test_native_guard_exact_scope_and_method(
     )
 
 
-@pytest.mark.parametrize("repair_kind", ["field", "item"])
+@pytest.mark.parametrize("repair_kind", ["field", "item", "syntax"])
 async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_path, repair_kind):
     lock = asyncio.Lock()
     await lock.acquire()
@@ -69,7 +69,11 @@ async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_p
     evidence = (
         {"href_selector_repairs": ["link_selector", "title_selector"]}
         if repair_kind == "field"
-        else {"item_href_selector_repair": {"origin": "https://books.example.com"}}
+        else (
+            {"item_href_selector_repair": {"origin": "https://books.example.com"}}
+            if repair_kind == "item"
+            else {"collection_diagnostics": {"error": "invalid_css_selector"}}
+        )
     )
 
     async def command(operation, **arguments):
@@ -92,6 +96,52 @@ async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_p
         "login_wall": False,
         **evidence,
     }
+    lock.release()
+
+
+async def test_capture_binds_only_valid_unique_budgeted_items_to_their_actual_rows(plan, tmp_path):
+    raw_plan = plan.to_dict()
+    raw_plan["budgets"]["max_items"] = 2
+    bounded = compile_browser_workflow(raw_plan)
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = EgoLiteWorkflowSession(
+        EgoLiteWorkflowExecutor(tmp_path), bounded, interactive=False, lock=lock
+    )
+    session.capture_observation = True
+
+    def item(url, row_id):
+        return {
+            "title": row_id,
+            "url": url,
+            "author_name": "",
+            "published_at": "",
+            "description": "",
+            "evidence": {"row": {"tag": "article", "id": row_id}, "link": {"tag": "a"}},
+        }
+
+    async def command(operation, **arguments):
+        if operation == "snapshot":
+            return {"login_wall": False}
+        assert operation == "collect" and arguments["capture_evidence"] is True
+        return {
+            "items": [
+                item("https://other.example/item/0", "foreign"),
+                item("https://books.example.com/book/1", "first"),
+                item("https://books.example.com/book/1", "duplicate"),
+                item("https://books.example.com/book/2", "second"),
+                item("https://books.example.com/book/3", "over-budget"),
+            ],
+            "empty": False,
+            "next": "",
+            "collection_context": {"item_match_count": 5},
+        }
+
+    session.command = command
+    result = await session.execute(WorkflowParameters())
+    rows = result.observation["collection_evidence"]["samples"]
+    assert [row["row"]["id"] for row in rows] == ["first", "second"]
+    assert [row["url"] for row in rows] == [item.url for item in result.items]
     lock.release()
 
 
@@ -185,6 +235,62 @@ async def test_run_total_budget_includes_native_start(plan, tmp_path, monkeypatc
     monkeypatch.setattr(executor, "open_session", slow)
     result = await executor.run(plan, session_id="owned")
     assert result.status == "failed" and result.error_code == "timeout"
+
+
+@pytest.mark.parametrize("capture", [False, True])
+async def test_candidate_observation_is_captured_before_owned_session_closes(
+    plan, tmp_path, monkeypatch, capture
+):
+    from types import SimpleNamespace
+
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    events = []
+
+    async def snapshot():
+        events.append("snapshot")
+        return {"title": "Current candidate page"}
+
+    async def close():
+        events.append("close")
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "ok", (BrowserWorkflowItem("A real result", "https://books.example.com/book/1"),)
+            )
+        ),
+        snapshot=snapshot,
+        close=close,
+    )
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    monkeypatch.setattr(executor, "open_session", AsyncMock(return_value=session))
+    result = await executor.run(plan, session_id="owned", capture_observation=capture)
+    assert result.observation == ({"title": "Current candidate page"} if capture else {})
+    assert events == (["snapshot", "close"] if capture else ["close"])
+
+
+async def test_candidate_snapshot_timeout_does_not_reuse_success_and_always_closes(
+    plan, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "ok", (BrowserWorkflowItem("Result", "https://books.example.com/book/1"),)
+            )
+        ),
+        snapshot=AsyncMock(side_effect=TimeoutError),
+        close=AsyncMock(),
+    )
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    monkeypatch.setattr(executor, "open_session", AsyncMock(return_value=session))
+    result = await executor.run(plan, session_id="owned", capture_observation=True)
+    assert result.status == "failed" and result.error_code == "timeout" and result.items == ()
+    session.close.assert_awaited_once()
 
 
 def test_fixed_host_resources_are_packaged_and_have_no_model_code_operation():
