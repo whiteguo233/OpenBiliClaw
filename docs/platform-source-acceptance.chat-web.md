@@ -1,5 +1,9 @@
 # 聊一聊添加公开 Web 来源：接手验收
 
+2026-10-25 原生 APP 的 NGA／Atom 聊天、审批、配置管理与 Ego 接管复测见
+[最新记录](testing/2026-10-25-native-real-retest-1507.md)。不同代码阶段、真实模型故障和
+新内容准入结果分别列出；下文仍为历史 Web／扩展验收。
+
 日期：2026-10-02。范围为现有 discovery-only Web 草稿的迁移与聊天 authoring
 `capability-increment`，不声称全平台账号接入。
 
