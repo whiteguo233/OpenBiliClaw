@@ -36,6 +36,7 @@ for(const [raw,prefix] of [
   ['https://forum.example/read?token=secret','https://forum.example/read'],
   ['//forum.example/read?token=secret','//forum.example/read'],
   ['../read?token=secret','../read'],
+  [' /read?token=secret',' /read'],[' /read ',' /read '],
   ['?token=secret',''],['#private',''],['javascript:secret()',''],
   ['https://person:password@forum.example/read?token=secret',''],
 ]) {

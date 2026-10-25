@@ -35,8 +35,8 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
   const matchesEntry = () => {try {return context?.entry_url ?
     new URL(location.href).href===new URL(context.entry_url).href : null;}catch{return null;}};
   const hrefPrefix = e => {try {
-    const raw=(e.getAttribute('href')||'').trim(), u=new URL(raw,location.href);
-    if(!raw || !['http:','https:'].includes(u.protocol) || u.username || u.password) return '';
+    const raw=e.getAttribute('href')||'', u=new URL(raw,location.href);
+    if(!raw.trim() || !['http:','https:'].includes(u.protocol) || u.username || u.password) return '';
     return raw.split(/[?#]/,1)[0].slice(0,300);
   }catch{return '';}};
   const text = e => ['INPUT','TEXTAREA','SELECT','FORM'].includes(e.tagName) ? '' :
