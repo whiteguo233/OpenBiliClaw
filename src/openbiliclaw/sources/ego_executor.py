@@ -478,6 +478,8 @@ class EgoLiteWorkflowSession:
                 observation = await self.snapshot()
                 if data.get("href_selector_repairs"):
                     observation["href_selector_repairs"] = data["href_selector_repairs"]
+                if data.get("item_href_selector_repair"):
+                    observation["item_href_selector_repair"] = data["item_href_selector_repair"]
                 return BrowserWorkflowResult(
                     "degraded" if items else "failed",
                     tuple(items),

@@ -32,6 +32,33 @@ if TYPE_CHECKING:
 
 
 _ABSOLUTE_HREF_PREFIX = re.compile(r"""\[href\^=(["'])(https?://[^"'\\\s?#]+)\1\]""")
+_ITEM_RELATIVE_HREF = re.compile(
+    r"""^([A-Za-z_*#.][A-Za-z0-9_*#.\s>+~-]*):has\((a(?:[.#][A-Za-z_][A-Za-z0-9_-]*)*)"""
+    r"""\[href\^=(["'])(/[A-Za-z0-9/_.~-]+)\3\]\)$"""
+)
+
+
+def _proven_item_href_repair(
+    plan: BrowserWorkflowPlan, evidence: object
+) -> BrowserWorkflowPlan | None:
+    """Rebuild a proven zero-row item predicate without removing any content filter."""
+    if not isinstance(evidence, dict) or not isinstance(evidence.get("origin"), str):
+        return None
+    origin = evidence["origin"]
+    if origin not in plan.allowed_origins or _origin(origin) != origin:
+        return None
+    raw = plan.to_dict()
+    collect = raw["steps"][-1]
+    match = _ITEM_RELATIVE_HREF.fullmatch(collect["item_selector"])
+    if not match:
+        return None
+    path = match[4]
+    if path.startswith("//") or any(part in {".", ".."} for part in path.split("/")):
+        return None
+    collect["item_selector"] = (
+        f"{match[1]}:has({match[2]}[href^={match[3]}{origin}{path}{match[3]}])"
+    )
+    return compile_browser_workflow(raw)
 
 
 def _proven_href_repair(plan: BrowserWorkflowPlan, fields: object) -> BrowserWorkflowPlan | None:
@@ -93,6 +120,8 @@ href is a resolved, redacted URL, not the literal HTML href attribute. For CSS h
 attribute selectors use the observed href_attribute_prefix (which retains relative
 versus absolute spelling) with ^=, or reusable classes; never invent redacted query
 values or assume href starts with the resolved origin. An empty prefix is no evidence.
+This applies to every href attribute condition, including :has() inside item_selector,
+not just link_selector/title_selector. Check the actual content anchor's raw prefix.
 Navigation or subsection links may appear beside content on the correct entry page.
 Their presence alone is not a scope mismatch: exclude them using observed structure
 and link prefixes when those distinguish the requested content.
@@ -763,7 +792,7 @@ class WorkflowService:
         )
 
     async def _trial_ego(self, draft: dict[str, Any]) -> SourceFetchResult:
-        """Trial once, then retry one evidence-proven field correction; never publish here."""
+        """Trial once, then retry one evidence-proven href correction; never publish here."""
         plan = compile_browser_workflow(draft["workflow"])
         executor = self.executor("ego")
         parameters = WorkflowParameters(**self.parameters(draft))
@@ -776,6 +805,10 @@ class WorkflowService:
             and not result.items
         ):
             repaired = _proven_href_repair(plan, result.observation.get("href_selector_repairs"))
+            if repaired is None:
+                repaired = _proven_item_href_repair(
+                    plan, result.observation.get("item_href_selector_repair")
+                )
             if repaired is not None:
                 result = await executor.run(
                     repaired, session_id=str(draft["session_id"]), parameters=parameters

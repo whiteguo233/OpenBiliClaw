@@ -110,6 +110,32 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
   const matchedNodes=[...document.querySelectorAll(step.item_selector)], nodes=matchedNodes.slice(0,limit);
+  // Also prove the inverse spelling mistake in a zero-row list predicate.
+  // Only one terminal :has(simple anchor[href^="/path"]) is supported: every
+  // other structural/path constraint survives, including navigation exclusions.
+  const itemHrefRepair=()=>{
+    if(matchedNodes.length)return null;
+    const match=step.item_selector.match(/^([A-Za-z_*#.][A-Za-z0-9_*#.\s>+~-]*):has\((a(?:[.#][A-Za-z_][A-Za-z0-9_-]*)*)\[href\^=(["'])(\/[A-Za-z0-9/_.~-]+)\3\]\)$/);
+    if(!match)return null;
+    const path=match[4], absolute=location.origin+path;
+    if(path.startsWith('//') || new URL(path,document.baseURI).href!==absolute)return null;
+    const anchorSelector=match[2]+'[href^='+match[3]+absolute+match[3]+']';
+    const corrected=match[1]+':has('+anchorSelector+')';
+    const rows=[...document.querySelectorAll(corrected)];
+    if(!rows.length || rows.length>100)return null;
+    const all=(node,sel)=>node.querySelectorAll(/^[>+~]/.test(sel)?':scope '+sel:sel);
+    const valid=rows.every(node=>{
+      const anchors=all(node,anchorSelector), links=all(node,step.link_selector),
+        titles=all(node,step.title_selector||step.link_selector);
+      if(anchors.length!==1 || links.length!==1 || titles.length!==1)return false;
+      const anchor=anchors[0];
+      return anchor===links[0] && anchor===titles[0] && anchor.tagName==='A' &&
+        (anchor.innerText||anchor.textContent||'').trim() &&
+        anchor.href.startsWith(absolute) &&
+        (anchor.getAttribute('href')||'').split(/[?#]/,1)[0]===absolute;
+    });
+    return valid?{origin:location.origin}:null;
+  };
   // A model can confuse resolved URLs with literal href attributes. Prove a
   // narrow correction against these exact rows; never use it during collection.
   // Query/hash constraints, escaped/compound selectors and mixed rows stay errors.
@@ -145,8 +171,11 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
   const next=step.next_selector?document.querySelector(step.next_selector):null;
   const empty=step.empty_selector?visible(document.querySelector(step.empty_selector)):false;
   let repairs=[];
+  let itemRepair=null;
   try {if(items.some(item=>!item.url || !item.title))repairs=hrefRepairs();}catch{}
-  return {items,empty,next:next?.href||'',...(repairs.length?{href_selector_repairs:repairs}:{})};
+  try {if(!items.length && !empty)itemRepair=itemHrefRepair();}catch{}
+  return {items,empty,next:next?.href||'',...(repairs.length?{href_selector_repairs:repairs}:{}),
+    ...(itemRepair?{item_href_selector_repair:itemRepair}:{})};
 }`;
 
 export const FORM_JS = String.raw`selector => {

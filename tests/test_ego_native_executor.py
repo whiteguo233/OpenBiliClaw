@@ -59,11 +59,17 @@ async def test_native_guard_exact_scope_and_method(
     )
 
 
-async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_path):
+@pytest.mark.parametrize("repair_kind", ["field", "item"])
+async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_path, repair_kind):
     lock = asyncio.Lock()
     await lock.acquire()
     session = EgoLiteWorkflowSession(
         EgoLiteWorkflowExecutor(tmp_path), plan, interactive=False, lock=lock
+    )
+    evidence = (
+        {"href_selector_repairs": ["link_selector", "title_selector"]}
+        if repair_kind == "field"
+        else {"item_href_selector_repair": {"origin": "https://books.example.com"}}
     )
 
     async def command(operation, **arguments):
@@ -71,10 +77,10 @@ async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_p
             return {"title": "Observed public list", "login_wall": False}
         assert operation == "collect"
         return {
-            "items": [{"title": "", "url": ""}],
+            "items": [{"title": "", "url": ""}] if repair_kind == "field" else [],
             "empty": False,
             "next": "",
-            "href_selector_repairs": ["link_selector", "title_selector"],
+            **evidence,
         }
 
     session.command = command
@@ -84,7 +90,7 @@ async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_p
     assert result.observation == {
         "title": "Observed public list",
         "login_wall": False,
-        "href_selector_repairs": ["link_selector", "title_selector"],
+        **evidence,
     }
     lock.release()
 
