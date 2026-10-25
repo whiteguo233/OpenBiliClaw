@@ -1,6 +1,6 @@
 // Fixed repository-authored DOM readers; workflow data never supplies JavaScript.
 
-export const SNAPSHOT_JS = String.raw`() => {
+export const SNAPSHOT_JS = String.raw`(context = null) => {
   const visible = e => { if (!e || !e.getClientRects().length) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
@@ -29,6 +29,16 @@ export const SNAPSHOT_JS = String.raw`() => {
   };
   const safeUrl = s => {try {const u=new URL(s,location.href);u.username='';u.password='';
     u.search='';u.hash='';return u.href;}catch{return '';}};
+  // Page identity is compared before redaction; no query, fragment or userinfo
+  // value crosses the observation boundary. A sanitized URL alone cannot
+  // distinguish two boards (or SPA routes) sharing the same path.
+  const matchesEntry = () => {try {return context?.entry_url ?
+    new URL(location.href).href===new URL(context.entry_url).href : null;}catch{return null;}};
+  const hrefPrefix = e => {try {
+    const raw=(e.getAttribute('href')||'').trim(), u=new URL(raw,location.href);
+    if(!raw || !['http:','https:'].includes(u.protocol) || u.username || u.password) return '';
+    return raw.split(/[?#]/,1)[0].slice(0,300);
+  }catch{return '';}};
   const text = e => ['INPUT','TEXTAREA','SELECT','FORM'].includes(e.tagName) ? '' :
     (e.innerText||'').trim().slice(0,180);
   const main = document.querySelector('main,[role=main],#main-content,#content,.main-content')
@@ -53,10 +63,12 @@ export const SNAPSHOT_JS = String.raw`() => {
     for(let a=e.parentElement;a && a!==document.body && ancestors.length<3;a=a.parentElement)
       ancestors.push(selector(a));
     const childLinks=[...e.querySelectorAll('a[href]')].filter(visible).slice(0,3).map(a=>({
-      selector:path(a,e),class_selector:classSelector(a),href:safeUrl(a.href),text:text(a).slice(0,120)
+      selector:path(a,e),class_selector:classSelector(a),href:safeUrl(a.href),
+      href_attribute_prefix:hrefPrefix(a),text:text(a).slice(0,120)
     })).filter(a=>a.selector);
     return {tag:e.tagName.toLowerCase(),selector:selector(e),class_selector:classSelector(e),path_selector:path(e),
-      text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',type:e.getAttribute('type')||'',
+      text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',
+      href_attribute_prefix:e.tagName==='A'?hrefPrefix(e):'',type:e.getAttribute('type')||'',
       method:e.tagName==='FORM'?(e.method||'get'):'',
       action:e.tagName==='FORM'?safeUrl(e.action):'',
       parent_selector:selector(e.parentElement),parent_path_selector:path(e.parentElement),
@@ -65,7 +77,9 @@ export const SNAPSHOT_JS = String.raw`() => {
       next_sibling_selector:selector(e.nextElementSibling),
       child_selectors:[...e.children].slice(0,6).map(selector),child_links:childLinks};
   });
-  return {url:safeUrl(location.href),title:document.title.slice(0,200),main_selector:selector(main),
+  return {url:safeUrl(location.href),url_matches_entry:matchesEntry(),
+    url_redactions:['userinfo','query','fragment'],
+    title:document.title.slice(0,200),main_selector:selector(main),
     elements:rows,login_wall:[...document.querySelectorAll('input[type=password]')].some(visible)};
 }`;
 

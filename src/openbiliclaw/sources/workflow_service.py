@@ -35,6 +35,18 @@ Return JSON {"plan": portable plan, "query_mode":"none"|"interest"|"fixed",
 If the page does not provide evidence to build the requested workflow, return
 {"needs_details":"one concise question about the missing user intent or URL"}.
 Never invent selectors. Use observed DOM, real links and GET search forms.
+Observation URL fields omit userinfo, query strings and fragments for privacy.
+A missing query in observation.url or href does NOT imply different navigation.
+When url_matches_entry is true, the actual page URL matched the supplied entry_url
+including its query and fragment before redaction. False means it differed; assess
+the observed title and structure without assuming a match. Null/absent is unknown.
+href is a resolved, redacted URL, not the literal HTML href attribute. For CSS href
+attribute selectors use the observed href_attribute_prefix (which retains relative
+versus absolute spelling) with ^=, or reusable classes; never invent redacted query
+values or assume href starts with the resolved origin. An empty prefix is no evidence.
+Navigation or subsection links may appear beside content on the correct entry page.
+Their presence alone is not a scope mismatch: exclude them using observed structure
+and link prefixes when those distinguish the requested content.
 Observation elements are a priority-ordered flat list, not adjacent DOM siblings.
 Use path_selector, parent_path_selector, ancestor_selectors and child_links to
 choose the observed content container and its relative link selector. Only use

@@ -23,7 +23,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
 | Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
-| 页面观察 | 导航在 30 秒内等待文档完成并稳定 1.5 秒，自动跳转后重新计时；长表格／文章列表分散抽样，保留带 ID 链接的真实 class selector |
+| 页面观察 | 导航在 30 秒内等待文档完成并稳定 1.5 秒，自动跳转后重新计时；长表格／文章列表分散抽样，保留带 ID 链接的真实 class selector、脱敏前的入口一致性和相对 href 属性前缀 |
 | 托管准备 | 源码安装及桌面首次启动自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；网页建源、设置页和 CLI 保留重试 |
 | 首次设置恢复 | 下载传输与安全系统命令有界重试；设置响应超时后停止自己的宿主，再观察现有步骤继续，不要求用户重启 |
 | 用户采集上限 | 明确的中英文条数／页数上限在试采前收紧并保存；日期、频率不当作条数；Feed 同样执行 |
@@ -62,6 +62,14 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   不包含输入框值或 URL query；优先保留主内容及搜索／登录控件，并提供实际
   parent、ancestor、前后兄弟及相对 child-link selector。数组顺序不是 DOM 邻接证据。
   元素与 child-link 的 `class_selector` 保留真实 tag/class，即使它有独立 ID。
+  Ego 观察额外提供 `url_matches_entry`：在页面内比较完整入口 URL（含 query 与
+  fragment）后只输出布尔值；未提供可比较入口时为 `null`。`url_redactions` 明示
+  `userinfo/query/fragment` 已移除，不能把脱敏后的同路径 URL 当作错误板块证据。
+  `href_attribute_prefix` 保留原 HTML href 在 query／fragment 之前的相对或绝对
+  写法，供 CSS `^=` 选择器使用；含 userinfo、非 HTTP(S) 或无路径前缀的链接返回空串。
+  `href` 仍是脱敏后的解析绝对 URL，不可直接当作原属性进行前缀匹配。
+  编制提示区分“正确入口内存在导航／子版块链接”和“实际入口不同”，继续要求用真实
+  结构排除反例；证据确实不足时仍返回 `needs_details`，不自动绕过补问或试采。
   在最多 500 个可见表格行／文章容器中保留前 4 个、对余下分散取最多 12 个结构样本及其首尾链接，
   避免导航和置顶区占满观察；总元素数仍最多 100，采集预算不随观察样本改变。
   同时返回 `blocked_resource_origins` 和

@@ -111,7 +111,7 @@ export async function start(config) {
     if(result.exceptionDetails) throw Error('ego_dom_error'); return result.result?.value;
   };
   const query = async selector => evaluate(`s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return {visible:!!e.getClientRects().length && r.width>0 && r.height>0 && style.visibility!=='hidden' && style.visibility!=='collapse',href:e.href||'',x:r.x+r.width/2,y:r.y+r.height/2};}`,selector);
-  const snapshot=async()=>{const value=await evaluate(SNAPSHOT_JS);return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
+  const snapshot=async()=>{const value=await evaluate(SNAPSHOT_JS,{entry_url:config.plan.entry_url});return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
   const navigate=async url=>{
     if(!await approve({url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
     const previousLoader=(await rpc('Page.getFrameTree')).frameTree.frame.loaderId;

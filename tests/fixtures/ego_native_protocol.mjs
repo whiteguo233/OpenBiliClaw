@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
 const [hostPath,directory]=process.argv.slice(2);
 const calls=[];
-let focused=false, hidden=true, documentUrl='https://allowed.example/old', loader='old', navigation=false, polls=0, redirectMode='', generation=0;
+let focused=false, hidden=true, documentUrl='https://allowed.example/old?board=7&token=private#feed', loader='old', navigation=false, polls=0, redirectMode='', generation=0;
 class Input {set value(v){this.stored=v;} get value(){return this.stored;}}
 const input=new Input();Object.assign(input,{tagName:'INPUT',getClientRects:()=>[{}],getBoundingClientRect:()=>({x:0,y:0,width:20,height:10}),focus:()=>{focused=true;},dispatchEvent:()=>{},getAttribute:()=>null,classList:[],children:[],querySelectorAll:()=>[]});
 const body={...input,tagName:'BODY',querySelectorAll:()=>[]};
@@ -26,7 +26,7 @@ globalThis.ego={
       msg.method==='Runtime.evaluate'?{result:{value:vm.runInNewContext(msg.params.expression,context)}}:{};
     queueMicrotask(()=>ego.onCDPMessage(JSON.stringify({id:msg.id,result})));},
 };
-const config={socket:directory+'/native.sock',ready:directory+'/ready.json',task_id:null,task_name:'owned',profile:'Default',interactive:false,plan:{auth:{login_origins:[]}}};
+const config={socket:directory+'/native.sock',ready:directory+'/ready.json',task_id:null,task_name:'owned',profile:'Default',interactive:false,plan:{entry_url:documentUrl,auth:{login_origins:[]}}};
 const {start}=await import(pathToFileURL(hostPath));
 const running=start(config);
 while(!fs.existsSync(config.ready))await new Promise(r=>setTimeout(r,5));
@@ -38,9 +38,14 @@ client.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){
   else if(results.has(m.id)){const p=results.get(m.id);results.delete(m.id);m.error?p.reject(Error(m.error)):p.resolve(m.result);}}});
 await new Promise(r=>client.once('connect',r));
 assert.equal((await command('query',{selector:'input'})).visible,false);
-assert.equal((await command('snapshot')).login_wall,false);
+const initialSnapshot=await command('snapshot');
+assert.equal(initialSnapshot.login_wall,false);
+assert.equal(initialSnapshot.url_matches_entry,true,'the host must pass the approved entry for exact comparison');
+assert.equal(initialSnapshot.url,'https://allowed.example/old');
+assert(!JSON.stringify(initialSnapshot).includes('private'));
 hidden=false;await command('fill',{selector:'input',value:'fixture only'});assert(focused);
 await command('navigate',{url:'https://allowed.example/new'});assert(polls>=2);assert.equal(documentUrl,'https://allowed.example/new');
+assert.equal((await command('snapshot')).url_matches_entry,false);
 // A complete guest interstitial can replace itself after initial commit.
 await command('navigate',{url:'https://allowed.example/redirect'});
 assert.equal(documentUrl,'https://allowed.example/topics','do not observe the complete guest interstitial');
