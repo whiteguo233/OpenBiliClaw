@@ -265,7 +265,10 @@ When previous_trial failed, use its diagnostics and the new observation to repai
 the previous plan within the same approved entry, origin and discovery intent.
 Plan: {"version":1,"entry_url":entry_url,"allowed_origins":[the exact origin],
 "steps":[...],"auth":{"required":false,"ready_selector":"","login_selector":""},
-"budgets":{"max_items":20,"max_pages":3,"timeout_seconds":45}}.
+"budgets":{"max_items":20,"max_pages":3,"timeout_seconds":default_timeout_seconds}}.
+Use the supplied default_timeout_seconds unless the user explicitly requests a
+different runtime limit. Ego's default covers cold native startup, initial
+navigation and one bounded recovery; do not replace it with the legacy 45s default.
 The numbers in that example are defaults, not the user's requirements. Respect
 explicit item/page limits in user intent and the supplied intent_limits. Put
 limits only in plan.budgets, never in a step. Do not invent pagination when the
@@ -731,7 +734,7 @@ class WorkflowService:
                     interactive=interactive,
                     observation_only=True,
                 ),
-                timeout=60,
+                timeout=120 if draft["executor"] == "ego" else 60,
             )
             try:
                 patterns = _requested_link_patterns(draft["entry_url"], draft["intent"])
@@ -826,6 +829,7 @@ class WorkflowService:
                     "entry_url": draft["entry_url"],
                     "origin": draft["origin"],
                     "intent": draft["intent"],
+                    "default_timeout_seconds": 120 if draft["executor"] == "ego" else 45,
                     "intent_limits": discovery_scope_limits(
                         draft["intent"], draft.get("scope_limits")
                     ),

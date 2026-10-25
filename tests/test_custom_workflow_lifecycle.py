@@ -1120,3 +1120,18 @@ async def test_source_status_probe_does_not_block_other_api_requests(service, mo
             release.set()
             result = await status
         assert result.status_code == 200 and result.json()["items"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("executor, expected", [("ego", 120), ("playwright", 45)])
+async def test_author_receives_executor_specific_runtime_default(service, executor, expected):
+    pending = draft(service, executor=executor, status="draft", workflow=None)
+    session = SimpleNamespace(close=AsyncMock())
+    service.observe_session = AsyncMock(return_value=(session, {"elements": []}))
+    service._json_task = AsyncMock(return_value={"needs_details": "No content rows observed"})
+    result = await service.author_browser(pending, background=True)
+    payload = service._json_task.await_args.args[1]
+    assert payload["default_timeout_seconds"] == expected
+    assert payload["intent"] == pending["intent"]
+    assert result["status"] == "needs_details"
+    session.close.assert_awaited_once()
