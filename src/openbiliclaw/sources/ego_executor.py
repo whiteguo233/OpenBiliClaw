@@ -53,6 +53,14 @@ _IDLE_TASKS: dict[str, asyncio.Task[None]] = {}
 _EXIT_REAPERS: set[str] = set()
 
 
+def _save_session_state(path: Path, state: dict[str, Any]) -> None:
+    """Keep the owned task identity even if native initialization is interrupted."""
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state))
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
 def _idle_stop_seconds() -> float:
     raw = os.environ.get("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "")
     try:
@@ -207,6 +215,7 @@ class EgoLiteWorkflowSession:
         config = {
             "socket": str(directory / "host.sock"),
             "ready": str(directory / "ready.json"),
+            "identity": str(directory / "identity.json"),
             "plan": self.plan.to_dict(),
             "interactive": self.interactive,
             "recover_missing_task": bool(
@@ -240,7 +249,16 @@ class EgoLiteWorkflowSession:
         # The executor's enclosing workflow timeout continues to cap the run.
         deadline = time.monotonic() + 30
         ready_file = directory / "ready.json"
+        identity_file = directory / "identity.json"
+        identity_saved = False
         while not ready_file.exists():
+            if not identity_saved and identity_file.exists():
+                identity = json.loads(identity_file.read_text())
+                if identity.get("task_name") != state["task_name"]:
+                    raise _error("ego_session_identity_changed")
+                state.update(task_id=identity["task_id"], host_pid=current_pid)
+                _save_session_state(state_file, state)
+                identity_saved = True
             if self._process.returncode is not None:
                 raise _error(
                     "ego_not_ready",
@@ -255,10 +273,7 @@ class EgoLiteWorkflowSession:
         ready = json.loads(ready_file.read_text())
         if ready.get("task_id") is not None:
             state.update(task_id=ready["task_id"], host_pid=current_pid)
-            temporary = state_file.with_suffix(".tmp")
-            temporary.write_text(json.dumps(state))
-            temporary.chmod(0o600)
-            temporary.replace(state_file)
+            _save_session_state(state_file, state)
         if ready.get("error"):
             raise _error(str(ready["error"]))
         pid = _host_pid(self.executor.server_name)
@@ -341,10 +356,16 @@ class EgoLiteWorkflowSession:
         await self.command("navigate", url=url)
         self.pages_visited += 1
 
-    async def snapshot(self) -> dict[str, Any]:
+    async def snapshot(
+        self, *, link_patterns: list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
         if self._stopped_observation is not None:
             return dict(self._stopped_observation)
-        value = await self.command("snapshot")
+        value = (
+            await self.command("snapshot", link_patterns=link_patterns)
+            if link_patterns
+            else await self.command("snapshot")
+        )
         return dict(value) if isinstance(value, dict) else {}
 
     async def screenshot(self) -> bytes:
@@ -715,6 +736,35 @@ class EgoLiteWorkflowExecutor:
         interactive: bool = False,
         observation_only: bool = False,
     ) -> EgoLiteWorkflowSession:
+        """Retry one managed pre-ready timeout after releasing the failed lease."""
+        from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
+
+        try:
+            return await self._open_session_once(
+                plan,
+                session_id=session_id,
+                interactive=interactive,
+                observation_only=observation_only,
+            )
+        except BrowserWorkflowExecutionError as exc:
+            if not self.managed or exc.code != "ego_connection_timeout":
+                raise
+            logger.info("Retrying managed Ego native initialization with the saved task identity")
+            return await self._open_session_once(
+                plan,
+                session_id=session_id,
+                interactive=interactive,
+                observation_only=observation_only,
+            )
+
+    async def _open_session_once(
+        self,
+        plan: BrowserWorkflowPlan,
+        *,
+        session_id: str,
+        interactive: bool,
+        observation_only: bool,
+    ) -> EgoLiteWorkflowSession:
         plan = compile_browser_workflow(plan.to_dict())
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", session_id):
             raise _error("invalid_session")
@@ -762,6 +812,7 @@ class EgoLiteWorkflowExecutor:
                 raise _error(
                     "ego_host_changed", "This login session belongs to a different Ego host"
                 )
+            _save_session_state(path, state)
             await session.start(path, state)
             return session
         except BaseException:

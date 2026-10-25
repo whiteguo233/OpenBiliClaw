@@ -13,7 +13,7 @@ link.getAttribute=name=>name==='href'?'/read?tid=123&token=secret':null;
 row.querySelectorAll=()=>[link];body.querySelectorAll=()=>[row,link];
 const document={body,title:'Forum',querySelector:()=>body,
   querySelectorAll:s=>s==='input[type=password]'||s==='input,form,button,textarea,select'?[]:[row,link]};
-const observe=(current,entry)=>vm.runInNewContext('('+SNAPSHOT_JS+')('+JSON.stringify({entry_url:entry})+')',
+const observe=(current,entry,link_patterns=[])=>vm.runInNewContext('('+SNAPSHOT_JS+')('+JSON.stringify({entry_url:entry,link_patterns})+')',
   {document,URL,location:{href:current},CSS:{escape:x=>x},getComputedStyle:()=>({visibility:'visible'})});
 const entry='https://forum.example/topics?section=7&token=private#results';
 const observation=observe(entry,entry);
@@ -53,6 +53,20 @@ assert.equal(observe('https://forum.example/topics?section=7&token=private#other
   'SPA fragments also affect exact page identity');
 assert.equal(JSON.stringify(observation).includes('secret'),false);
 assert.equal(JSON.stringify(observation).includes('private'),false);
+const patterns=[{path:'/read',query_key:'tid'},{path:'/read',query_key:'missing'},
+  {path:'/elsewhere',query_key:'tid'}];
+const checked=observe(entry,entry,patterns);
+const checks=checked.elements.find(x=>x.selector==='#item_1').href_query_checks;
+assert.equal(JSON.stringify(checked.requested_link_patterns),JSON.stringify(patterns));
+assert.deepEqual(JSON.parse(JSON.stringify(checks[0])),{
+  pattern_index:0,path_matches:true,query_key_present:true,
+  raw_key_after_question:true,raw_key_after_ampersand:false,
+});
+assert.equal(checks[1].query_key_present,false);
+assert.equal(checks[2].path_matches,false);
+assert.equal(checked.elements[0].child_links[0].href_query_checks[0].query_key_present,true);
+assert.equal(JSON.stringify(checked).includes('secret'),false);
+assert.equal(JSON.stringify(checked).includes('token'),false,'never enumerate other page query keys');
 for(const [raw,prefix] of [
   ['https://forum.example/read?token=secret','https://forum.example/read'],
   ['//forum.example/read?token=secret','//forum.example/read'],

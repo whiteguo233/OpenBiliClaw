@@ -51,6 +51,15 @@ async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
 
     async def tick(seconds):
         clock["now"] += seconds
+        if clock["now"] >= 5:
+            Path(config["identity"]).write_text(
+                json.dumps(
+                    {
+                        "task_id": 42,
+                        "task_name": "OpenBiliClaw-budget-test",
+                    }
+                )
+            )
         if ready_after is not None and clock["now"] >= ready_after:
             Path(config["ready"]).write_text(json.dumps({"task_id": 42, "version": "0.6.0.20"}))
         await real_sleep(0)
@@ -83,6 +92,7 @@ async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
                 await session.start(tmp_path / "state.json", state)
             assert clock["now"] <= 30.1
             session._open_entry.assert_not_awaited()
+            assert json.loads((tmp_path / "state.json").read_text())["task_id"] == 42
         else:
             await session.start(tmp_path / "state.json", state)
             assert state["task_id"] == 42
@@ -92,3 +102,87 @@ async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
     assert process.returncode == 0
     assert not lock.locked()
     assert session._temporary is None or not Path(session._temporary.name).exists()
+
+
+@pytest.mark.parametrize(
+    "managed,code",
+    [
+        (True, "ego_connection_timeout"),
+        (False, "ego_connection_timeout"),
+        (True, "ego_protocol_timeout"),
+        (True, "ego_session_identity_changed"),
+    ],
+)
+async def test_only_managed_unready_connection_retries_after_cleanup(
+    tmp_path, monkeypatch, managed, code
+):
+    plan = compile_browser_workflow(
+        {
+            "version": 1,
+            "entry_url": "https://forum.example/",
+            "allowed_origins": ["https://forum.example"],
+            "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+        }
+    )
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    executor.managed = managed
+    monkeypatch.setattr(executor, "_schedule_idle_stop", lambda **kwargs: None)
+    monkeypatch.setattr(executor._setup, "status", lambda: {"available": True})
+    monkeypatch.setattr(
+        executor,
+        "availability",
+        lambda: {
+            "installed": True,
+            "platform_supported": True,
+            "connection_state": "ready",
+            "available": True,
+        },
+    )
+    created = []
+    identities = []
+
+    async def start(session, state_file, state):
+        created.append(session)
+        identities.append(state["task_name"])
+        if len(created) == 1:
+            raise BrowserWorkflowExecutionError(code, "Native initialization failed before ready")
+        assert created[0]._closed and not session._closed
+        session._started = True
+
+    monkeypatch.setattr(EgoLiteWorkflowSession, "start", start)
+    if managed and code == "ego_connection_timeout":
+        session = await executor.open_session(plan, session_id="owned-session")
+        assert len(created) == 2
+        assert identities[0] == identities[1]
+        await session.close()
+    else:
+        with pytest.raises(BrowserWorkflowExecutionError):
+            await executor.open_session(plan, session_id="owned-session")
+        assert len(created) == 1
+    assert all(s._closed and not s.lock.locked() for s in created)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "cancelled"])
+async def test_managed_native_retry_is_bounded_and_preserves_cancellation(
+    tmp_path, monkeypatch, failure
+):
+    plan = compile_browser_workflow(
+        {
+            "version": 1,
+            "entry_url": "https://forum.example/",
+            "allowed_origins": ["https://forum.example"],
+            "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+        }
+    )
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    executor.managed = True
+    error = (
+        asyncio.CancelledError()
+        if failure == "cancelled"
+        else BrowserWorkflowExecutionError("ego_connection_timeout", "Not ready")
+    )
+    start = AsyncMock(side_effect=error)
+    monkeypatch.setattr(executor, "_open_session_once", start)
+    with pytest.raises(type(error)):
+        await executor.open_session(plan, session_id="bounded-session")
+    assert start.await_count == (1 if failure == "cancelled" else 2)

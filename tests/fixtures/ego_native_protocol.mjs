@@ -17,7 +17,11 @@ const context={document,location:{get href(){return documentUrl;}},URL,HTMLInput
 globalThis.ego={
   listProfiles:async()=>({profiles:[{id:'Default'}]}),
   createTaskSpace:async()=>({id:71}),useTaskSpace:()=>{},
-  createTab:async()=>({targetId:'owned-tab'}),getBrowserVersion:async()=>({currentVersion:'fixture'}),
+  createTab:async()=>{
+    assert.deepEqual(JSON.parse(fs.readFileSync(config.identity,'utf8')),{task_id:71,task_name:'owned'},
+      'persist task identity before any tab/CDP initialization');
+    return {targetId:'owned-tab'};
+  },getBrowserVersion:async()=>({currentVersion:'fixture'}),
   sendCDPMessage:raw=>{const msg=JSON.parse(raw);calls.push(msg);
     if(msg.method==='Browser.setWindowBounds') {
       assert.equal(msg.params.windowId,17,'only mutate the owned target window');
@@ -42,7 +46,7 @@ globalThis.ego={
       msg.method==='Runtime.evaluate'?{result:{value:vm.runInNewContext(msg.params.expression,context)}}:{};
     queueMicrotask(()=>ego.onCDPMessage(JSON.stringify({id:msg.id,result})));},
 };
-const config={socket:directory+'/native.sock',ready:directory+'/ready.json',task_id:null,task_name:'owned',profile:'Default',interactive:mode?.startsWith('interactive'),plan:{entry_url:documentUrl,auth:{login_origins:[]}}};
+const config={socket:directory+'/native.sock',ready:directory+'/ready.json',identity:directory+'/identity.json',task_id:null,task_name:'owned',profile:'Default',interactive:mode?.startsWith('interactive'),plan:{entry_url:documentUrl,auth:{login_origins:[]}}};
 const {start}=await import(pathToFileURL(hostPath));
 const running=start(config);
 while(!fs.existsSync(config.ready))await new Promise(r=>setTimeout(r,5));

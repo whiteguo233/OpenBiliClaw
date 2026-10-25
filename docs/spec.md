@@ -356,10 +356,12 @@ V2EX identity ladder: PAT verified > browser observed > config/accepted
                     → resolved identity-scoped seen/affinity + complete favorite 2-miss outbox
 Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial → budget approval → source_id (independent share/cadence)
                      Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → structural scope review → persist verified plan only
+                     User link hints → page-local boolean query checks → redacted authoring evidence
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
+                     Managed pre-ready timeout → cleanup → one retry with saved task identity within original total budget
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
                     → durable id mismatch pauses personal bootstrap only
@@ -703,9 +705,11 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Dynamic Web: 原话预算 + chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
 │  │   Ego 草稿失败 -> href 证据／原范围结构候选 -> 一次重试 -> 结构修正审核实际样例 -> 验证后保存 │ │
+│  │   用户链接模板 -> 页面内路径／参数布尔证据 -> 查询值仍脱敏               │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
+│  │   托管连接就绪前超时 → 清理 → 原总预算内复用身份重试一次         │ │
 │  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
 │  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │
 │  │   token-fenced lease + state/seen；此兼容路径不支持登录/JS/任意 crawl │ │

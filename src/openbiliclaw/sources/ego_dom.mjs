@@ -53,6 +53,20 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
     const prefix=raw.split(/[?#]/,1)[0];
     return prefix.trim()?prefix.slice(0,300):'';
   }catch{return '';}};
+  // Only compare hints already present in the user's intent. Do not enumerate
+  // other page query names or expose any query values.
+  const patterns=(Array.isArray(context?.link_patterns)?context.link_patterns:[])
+    .filter(p=>p && typeof p.path==='string' && p.path.startsWith('/') && p.path.length<=300
+      && !/[?#]/.test(p.path) && typeof p.query_key==='string' && /^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(p.query_key))
+    .slice(0,8);
+  const hrefQueryChecks = e => {try {
+    const raw=e.getAttribute('href')||'', u=new URL(raw,location.href);
+    if(!raw.trim() || !['http:','https:'].includes(u.protocol) || u.username || u.password) return [];
+    return patterns.map((p,index)=>({pattern_index:index,path_matches:u.pathname===p.path,
+      query_key_present:u.searchParams.has(p.query_key),
+      raw_key_after_question:raw.includes('?'+p.query_key+'='),
+      raw_key_after_ampersand:raw.includes('&'+p.query_key+'=')}));
+  }catch{return [];}};
   const text = e => ['INPUT','TEXTAREA','SELECT','FORM'].includes(e.tagName) ? '' :
     (e.innerText||'').trim().slice(0,180);
   const main = document.querySelector('main,[role=main],#main-content,#content,.main-content')
@@ -78,11 +92,12 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       ancestors.push(selector(a));
     const childLinks=[...e.querySelectorAll('a[href]')].filter(visible).slice(0,3).map(a=>({
       selector:path(a,e),class_selector:classSelector(a),href:safeUrl(a.href),
-      href_attribute_prefix:hrefPrefix(a),text:text(a).slice(0,120)
+      href_attribute_prefix:hrefPrefix(a),href_query_checks:hrefQueryChecks(a),text:text(a).slice(0,120)
     })).filter(a=>a.selector);
     return {tag:e.tagName.toLowerCase(),selector:selector(e),class_selector:classSelector(e),path_selector:path(e),
       text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',
       href_attribute_prefix:e.tagName==='A'?hrefPrefix(e):'',type:e.getAttribute('type')||'',
+      href_query_checks:e.tagName==='A'?hrefQueryChecks(e):[],
       method:e.tagName==='FORM'?(e.method||'get'):'',
       action:e.tagName==='FORM'?safeUrl(e.action):'',
       parent_selector:selector(e.parentElement),parent_path_selector:path(e.parentElement),
@@ -92,7 +107,7 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       child_selectors:[...e.children].slice(0,6).map(selector),child_links:childLinks};
   });
   return {url:safeUrl(location.href),url_matches_entry:matchesEntry(),
-    entry_url_comparison:compareEntry(),
+    entry_url_comparison:compareEntry(),requested_link_patterns:patterns,
     url_redactions:['userinfo','query','fragment'],
     title:document.title.slice(0,200),main_selector:selector(main),
     elements:rows,login_wall:[...document.querySelectorAll('input[type=password]')].some(visible)};

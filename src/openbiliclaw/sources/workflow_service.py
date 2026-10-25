@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from openbiliclaw.llm.json_utils import extract_llm_json_object
 from openbiliclaw.sources.browser_workflow import (
@@ -32,6 +32,27 @@ if TYPE_CHECKING:
 
 
 _ABSOLUTE_HREF_PREFIX = re.compile(r"""\[href\^=(["'])(https?://[^"'\\\s?#]+)\1\]""")
+
+
+def _requested_link_patterns(entry_url: str, intent: str) -> list[dict[str, str]]:
+    """Extract bounded, literal empty-value URL hints already supplied by the user."""
+    pattern = re.compile(
+        r"""(?<![A-Za-z0-9_./:-])(?P<path>/?[A-Za-z0-9_][A-Za-z0-9_./~-]{0,199})"""
+        r"""\?(?P<key>[A-Za-z_][A-Za-z0-9_]{0,31})=(?=$|[\s，。；、,;“”‘’"'）)])"""
+    )
+    result: list[dict[str, str]] = []
+    for match in pattern.finditer(intent[:8000]):
+        item = {
+            "path": urlsplit(urljoin(entry_url, match["path"])).path,
+            "query_key": match["key"],
+        }
+        if item not in result:
+            result.append(item)
+        if len(result) == 8:
+            break
+    return result
+
+
 _ITEM_RELATIVE_HREF = re.compile(
     r"""^([A-Za-z_*#.][A-Za-z0-9_*#.\s>+~-]*):has\((a(?:[.#][A-Za-z_][A-Za-z0-9_-]*)*)"""
     r"""\[href\^=(["'])(/[A-Za-z0-9/_.~-]+)\3\]\)$"""
@@ -204,6 +225,14 @@ href is a resolved, redacted URL, not the literal HTML href attribute. For CSS h
 attribute selectors use the observed href_attribute_prefix (which retains relative
 versus absolute spelling) with ^=, or reusable classes; never invent redacted query
 values or assume href starts with the resolved origin. An empty prefix is no evidence.
+requested_link_patterns contains only literal empty-value URL hints already in the
+user's intent. Each anchor's href_query_checks compares its full URL before redaction
+with those hints: require both path_matches and query_key_present. The
+raw_key_after_question / raw_key_after_ampersand booleans confirm the literal query-key delimiter usable in CSS;
+they reveal no values or other query names. Absent checks mean unknown, not missing.
+These checks prove key presence, not a query value or permission to broaden scope.
+Preserve such explicit key constraints in the saved selectors using observed raw
+spelling; do not demand user DOM evidence when these checks already establish it.
 This applies to every href attribute condition, including :has() inside item_selector,
 not just link_selector/title_selector. Check the actual content anchor's raw prefix.
 Navigation or subsection links may appear beside content on the correct entry page.
@@ -704,7 +733,12 @@ class WorkflowService:
                 timeout=60,
             )
             try:
-                observation = await session.snapshot()
+                patterns = _requested_link_patterns(draft["entry_url"], draft["intent"])
+                observation = (
+                    await session.snapshot(link_patterns=patterns)
+                    if patterns and draft["executor"] == "ego"
+                    else await session.snapshot()
+                )
                 observed = set(observation.get("blocked_resource_origins", []))
                 added = sorted(observed - resources)[: max(0, 8 - len(resources))]
                 if not added or attempt == 2:

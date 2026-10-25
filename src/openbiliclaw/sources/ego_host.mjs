@@ -114,7 +114,7 @@ export async function start(config) {
     if(result.exceptionDetails) throw Error('ego_dom_error'); return result.result?.value;
   };
   const query = async selector => evaluate(`s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return {visible:!!e.getClientRects().length && r.width>0 && r.height>0 && style.visibility!=='hidden' && style.visibility!=='collapse',href:e.href||'',x:r.x+r.width/2,y:r.y+r.height/2};}`,selector);
-  const snapshot=async()=>{const value=await evaluate(SNAPSHOT_JS,{entry_url:config.plan.entry_url});return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
+  const snapshot=async(arg={})=>{const value=await evaluate(SNAPSHOT_JS,{entry_url:config.plan.entry_url,link_patterns:arg.link_patterns});return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
   const restoreInteractiveWindow=async()=>{
     if(!config.interactive)return;
     let win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
@@ -221,6 +221,12 @@ export async function start(config) {
   let task;
   try {
     task=await workflowTaskSpace(ego,config);
+    // Publish the owned space before tab/CDP initialization, so a bounded
+    // pre-ready retry reuses it instead of creating another task space.
+    if(config.identity) {
+      fs.writeFileSync(config.identity+'.tmp',JSON.stringify({task_id:task.id,task_name:config.task_name}),{mode:0o600});
+      fs.renameSync(config.identity+'.tmp',config.identity);
+    }
     ego.useTaskSpace(task.id);
     const tab=native(await ego.createTab('about:blank'));target=tab.targetId;
     session=(await rpc('Target.attachToTarget',{targetId:target,flatten:true},null)).sessionId;

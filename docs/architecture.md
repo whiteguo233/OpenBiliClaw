@@ -115,6 +115,7 @@ GitHub account scope: PAT `/user` verified > explicit public username accepted
                       └─ public starred repositories → favorite events → guided init
 
 Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile chat)
+        → literal user link hints → page-local boolean matching evidence (query values stay redacted)
         → original user limits + prepare / trial (soft_write) → capped plan and bounded samples → activate / manage approval (hard_write)
           Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → scope review for structural repair → persist verified plan
         → custom source_id + independent share/cadence → same-site versioned workflows
@@ -123,6 +124,7 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
         login required → human /web/source-login.html takeover → resume + trial → same draft/workflow
         source settings cards (desktop / popup / mobile) → explicit management API actions
         macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces; no Playwright fallback
+          managed pre-ready timeout → cleanup → one retry with saved task identity, within the original total budget
 
 Legacy public HTTP recipe authoring (desktop / popup / CLI; init + degraded 可用)
         → POST /api/sources/web/probe → web_probe → exact-origin anonymous SafeWebTransport
