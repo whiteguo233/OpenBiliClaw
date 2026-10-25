@@ -889,8 +889,14 @@ class WorkflowService:
                     query=query,
                     detail=str(authored.get("detail", ""))[:500],
                 )
-        except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
-            draft.update(status="failed", detail=str(exc)[:400])
+        except TimeoutError:
+            draft.update(
+                status="failed",
+                trial_success=False,
+                detail="网页观察或流程编制超时，草稿已保留。请检查网站访问和模型服务后重试。",
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            draft.update(status="failed", trial_success=False, detail=str(exc)[:400])
         finally:
             if session is not None:
                 await session.close()

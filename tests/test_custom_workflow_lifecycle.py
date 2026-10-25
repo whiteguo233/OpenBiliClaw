@@ -1063,3 +1063,14 @@ def test_login_screenshot_error_is_recoverable_without_reopening_session(service
         recovered = client.get(f"{path}/screenshot")
         assert recovered.status_code == 200 and recovered.content == b"png image"
         service.observe_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_author_timeout_has_actionable_detail_and_preserves_draft(service):
+    pending = draft(service, executor="playwright", status="draft", workflow=None)
+    service.observe_session = AsyncMock(side_effect=TimeoutError())
+    result = await service.author_browser(pending)
+    assert result["status"] == "failed" and not result["trial_success"]
+    assert "超时" in result["detail"]
+    assert result["draft_id"] == pending["draft_id"]
+    assert service.store.get_draft(pending["draft_id"])["detail"] == result["detail"]
