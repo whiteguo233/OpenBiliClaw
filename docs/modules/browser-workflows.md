@@ -67,7 +67,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   `userinfo/query/fragment` 已移除，不能把脱敏后的同路径 URL 当作错误板块证据。
   `href_attribute_prefix` 保留原 HTML href 在 query／fragment 之前的相对或绝对
   写法（包括属性原有的首尾空白），供 CSS `^=` 选择器使用；含 userinfo、非 HTTP(S)
-  或无路径前缀的链接返回空串。
+  或无路径前缀（包括只有空白）的链接返回空串。
   `href` 仍是脱敏后的解析绝对 URL，不可直接当作原属性进行前缀匹配。
   编制提示区分“正确入口内存在导航／子版块链接”和“实际入口不同”，继续要求用真实
   结构排除反例；证据确实不足时仍返回 `needs_details`，不自动绕过补问或试采。

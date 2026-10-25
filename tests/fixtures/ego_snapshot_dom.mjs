@@ -37,7 +37,8 @@ for(const [raw,prefix] of [
   ['//forum.example/read?token=secret','//forum.example/read'],
   ['../read?token=secret','../read'],
   [' /read?token=secret',' /read'],[' /read ',' /read '],
-  ['?token=secret',''],['#private',''],['javascript:secret()',''],
+  ['?token=secret',''],['#private',''],[' ?token=secret',''],[' #private',''],
+  ['javascript:secret()',''],
   ['https://person:password@forum.example/read?token=secret',''],
 ]) {
   link.getAttribute=name=>name==='href'?raw:null;

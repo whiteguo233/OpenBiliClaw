@@ -37,7 +37,8 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
   const hrefPrefix = e => {try {
     const raw=e.getAttribute('href')||'', u=new URL(raw,location.href);
     if(!raw.trim() || !['http:','https:'].includes(u.protocol) || u.username || u.password) return '';
-    return raw.split(/[?#]/,1)[0].slice(0,300);
+    const prefix=raw.split(/[?#]/,1)[0];
+    return prefix.trim()?prefix.slice(0,300):'';
   }catch{return '';}};
   const text = e => ['INPUT','TEXTAREA','SELECT','FORM'].includes(e.tagName) ? '' :
     (e.innerText||'').trim().slice(0,180);
