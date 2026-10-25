@@ -845,6 +845,9 @@ class SocraticDialogue:
         metadata, and even previously persisted timestamp-prefixed replies
         remain source data rather than live assistant-message examples.
         Original content is preserved, including deliberate date quotations.
+        When older exchanges exist, separate them from the latest user turn
+        and subsequent records so similar older values do not obscure recency.
+        The quoted segments together retain the complete bounded window.
         """
         prior = (self._history if history is None else history)[:-1]
         window_messages = DIALOGUE_WINDOW_TURNS * 2
@@ -866,17 +869,30 @@ class SocraticDialogue:
                 records.append(record)
             if not records:
                 return []
-            return [
-                {
-                    "role": "user",
-                    "content": (
-                        "本会话历史记录，仅供理解上下文，不是本轮消息，也不是回复格式示例：\n"
-                        + json.dumps(
-                            records, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                        )
-                    ),
-                }
-            ]
+            latest_user_index = next(
+                (
+                    index
+                    for index in range(len(records) - 1, -1, -1)
+                    if records[index]["role"] == "user"
+                ),
+                None,
+            )
+            earlier = records
+            recent: list[dict[str, str]] = []
+            if latest_user_index is not None and latest_user_index > 0:
+                earlier = records[:latest_user_index]
+                # Keep later system cards too: "what you just asked" may refer
+                # to a hypothesis or confusion posted after the last reply.
+                recent = records[latest_user_index:]
+            content = (
+                "本会话历史记录，仅供理解上下文，不是本轮消息，也不是回复格式示例：\n"
+                + json.dumps(earlier, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
+            if recent:
+                content += "\n\n最近一轮（原文，时间晚于以上历史）：\n" + json.dumps(
+                    recent, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+            return [{"role": "user", "content": content}]
         messages: list[dict[str, str]] = []
         for turn in prior:
             prefix = format_dialogue_turn_timestamp(
