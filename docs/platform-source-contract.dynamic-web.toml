@@ -26,7 +26,7 @@
 "item_id" = "Canonical URL SHA-256 prefix as url-<24 lowercase hex>, stored under the canonical item key web:url-<24 lowercase hex>."
 "url" = "Absolute canonical http(s) item URL after host/port normalization, tracking-query removal, query sorting, and fragment removal; it must remain in the compiled HTTP recipe or browser workflow's approved content origins."
 "dedupe" = "Canonical URL identity remains web:url-<hash>. custom_<uuid> source_id is a quota/provenance identity, never part of item identity. One content row has one inventory owner and multiple source provenance records."
-"account_scope" = "Public workflows need no credential; an authenticated workflow requires its selected session and pauses on expiry. Opaque persistent session references may be shared by explicitly related same-origin source instances. A workflow fixes its session reference, goal, version and parameter mode; no upstream account identity is inferred from a cookie."
+"account_scope" = "Public workflows need no credential; an authenticated workflow requires its selected session and pauses on expiry. A new explicitly independent source defaults to its own opaque session/task space; explicitly selected same-origin sessions and updates may reuse their existing reference. Ego profile cookies remain shared. A workflow fixes its session reference, goal, version and parameter mode; no upstream account identity is inferred from a cookie."
 
 ["auth"]
 "mode" = "anonymous-with-optional-credentials"

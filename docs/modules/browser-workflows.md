@@ -19,7 +19,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 动态参数 | `query`、`date_from`、`date_to` 每轮替换；URL 参数进行编码 |
 | 标准提取 | 标题、URL、作者、发布时间、摘要；浏览器网页条目明确标为 `article`；支持下一页、循环检测、条数和页数限制 |
 | 手机登录返回 | 移动网页/PWA 的设置和聊天入口保留在 `/m/` 范围，接管页返回 `/m/#/chat`；桌面行为不变，Flutter 原生 APP 单独验收 |
-| 登录会话 | 不透明 session ID 映射到应用拥有的 Ego task space 和固定 profile ID；同一 Ego profile 的 Cookie 可共享，task space 仅隔离页面 |
+| 登录会话 | 不透明 session ID 映射到应用拥有的 Ego task space 和固定 profile ID；显式独立新来源默认新建会话，Ego profile 仍共享 Cookie；追加现有来源或显式选择旧会话时复用 |
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 人工窗口恢复 | 人工接管建页和截图前恢复自己复用的最小化窗口，并等待窗口实际恢复；后台采集从不执行窗口恢复 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
@@ -42,6 +42,8 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 
 - `compile_browser_workflow(payload) -> BrowserWorkflowPlan`：保存前、运行前均校验。
 - `WorkflowService.prepare()` / `author_browser()` 在编译后用用户明确的采集上限收紧预算，
+  `prepare(separate_source=True)` 的全新来源在没有显式会话引用时生成独立 session；
+  追加现有来源、更新流程或显式选择的同站会话继续复用，已有身份映射不被改写。
   同一计划用于试采和发布。只读网站观察不能提高这些上限；已有版本不被静默迁移。
   生成提示要求同时检查行与子链接上的排除标记、用户指定的反例；证据不足应补问。
   这是生成约束，不是任意自然语言条件的确定性验证器，启用前仍需核对样例。

@@ -1135,3 +1135,26 @@ async def test_author_receives_executor_specific_runtime_default(service, execut
     assert payload["intent"] == pending["intent"]
     assert result["status"] == "needs_details"
     session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("separate, explicit", [(True, False), (False, False), (True, True)])
+async def test_independent_source_does_not_inherit_another_sources_task_space(
+    service, separate, explicit
+):
+    existing = service.activate(draft(service)["draft_id"], target_share=1)
+    service.author_browser = AsyncMock(side_effect=lambda value: value)
+    prepared = await service.prepare(
+        url=existing["entry_url"],
+        intent="Observe this same public website",
+        executor="ego",
+        separate_source=separate,
+        session_id=existing["session_id"] if explicit else "",
+    )
+    if separate and not explicit:
+        assert prepared["session_id"] != existing["session_id"]
+        assert not prepared["source_id"]
+    else:
+        assert prepared["session_id"] == existing["session_id"]
+    assert service.sources.get_source(existing["source_id"])["session_id"] == existing["session_id"]
+    assert len(service.sources.list_sources()) == 1

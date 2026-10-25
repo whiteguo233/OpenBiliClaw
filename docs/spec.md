@@ -358,6 +358,7 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → structural scope review → persist verified plan only
                      User link hints → page-local boolean query checks → redacted authoring evidence
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
+                     Independent new source → own task-space session; shared Ego profile cookies, explicit reuse preserved
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
@@ -707,6 +708,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   Ego 草稿失败 -> href 证据／原范围结构候选 -> 一次重试 -> 结构修正审核实际样例 -> 验证后保存 │ │
 │  │   用户链接模板 -> 页面内路径／参数布尔证据 -> 查询值仍脱敏               │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
+│  │   独立新来源 -> 独立 task space 会话；profile Cookie 共享、显式会话可复用 │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
 │  │   托管初始只读打开超时 → 清理 → 原总预算内复用身份重试一次         │ │

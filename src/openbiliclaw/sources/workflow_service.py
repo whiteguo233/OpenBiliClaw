@@ -590,7 +590,12 @@ class WorkflowService:
             session_id
             or (current_workflow or {}).get("session_id")
             or (source or {}).get("session_id")
-            or next((s["session_id"] for s in same_site if s["session_id"]), str(uuid.uuid4()))
+            or (
+                next((s["session_id"] for s in same_site if s["session_id"]), "")
+                if not separate_source
+                else ""
+            )
+            or str(uuid.uuid4())
         )
         draft: dict[str, Any] = {
             "entry_url": url,

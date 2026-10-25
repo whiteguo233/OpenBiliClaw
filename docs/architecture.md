@@ -119,6 +119,7 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
         → original user limits + prepare / trial (soft_write) → capped plan and bounded samples → activate / manage approval (hard_write)
           Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → scope review for structural repair → persist verified plan
         → custom source_id + independent share/cadence → same-site versioned workflows
+          independent new source → own task-space session; same Ego profile cookies, explicit reuse preserved
         → CustomWorkflowProducer → HTTP feed or native Ego Lite executor → ordinary pending_eval → evaluated pool
         → source_id/source_name attribution; source_platform remains web
         login required → human /web/source-login.html takeover → resume + trial → same draft/workflow
