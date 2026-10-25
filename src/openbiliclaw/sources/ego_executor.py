@@ -235,7 +235,10 @@ class EgoLiteWorkflowSession:
             stderr=asyncio.subprocess.DEVNULL,
             **no_window_kwargs(),
         )
-        deadline = time.monotonic() + 15
+        # Initialization makes several native calls, each allowed 30 seconds by
+        # the host. A cold renderer can still be progressing after 15 seconds.
+        # The executor's enclosing workflow timeout continues to cap the run.
+        deadline = time.monotonic() + 30
         ready_file = directory / "ready.json"
         while not ready_file.exists():
             if self._process.returncode is not None:

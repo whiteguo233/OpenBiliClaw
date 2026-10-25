@@ -29,6 +29,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 页面观察 | 导航在 30 秒内等待文档完成并稳定 1.5 秒，自动跳转后重新计时；长表格／文章列表分散抽样，保留带 ID 链接的真实 class selector、脱敏前的入口一致性和相对 href 属性前缀 |
 | 托管准备 | 源码安装及桌面首次启动自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；网页建源、设置页和 CLI 保留重试 |
 | 首次设置恢复 | 下载传输与安全系统命令有界重试；设置响应超时后停止自己的宿主，再观察现有步骤继续，不要求用户重启 |
+| 原生会话就绪 | 初始化等待上限为 30 秒，允许冷启动超过旧的 15 秒；执行器仍由计划的整轮预算约束，取消或失败释放会话 |
 | 用户采集上限 | 明确的中英文条数／页数上限在试采前收紧并保存；日期、频率不当作条数；Feed 同样执行 |
 | 环境边界 | 当前适配器连接本机 macOS Ego 宿主；未验收 Windows，不提供 Linux/Docker 远程桥接 |
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
@@ -90,6 +91,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   目标、状态与 ID；聊天 `list_sources` 可在重启后恢复草稿，不要求用户记住内部 ID。
 - `EgoLiteWorkflowExecutor(profile_root).run(plan, session_id=..., parameters=...)`
   返回 `BrowserWorkflowResult`，明确区分成功、已证实为空、需要登录、降级和失败。
+  原生连接就绪最多等待 30 秒；该等待包含在现有计划的总执行预算内，不增加重试或放宽网络范围。
 - `EgoSetupManager(data_dir).prepare()` 安装与初始化；`status()` 只读，
   `connection()` 返回专用 CLI／宿主／profile，`ensure_running()` 只启动已初始化的宿主。
   data_dir 为当前数据库父目录；源码 bootstrap 在依赖安装后调用，主 API 的部署启动
