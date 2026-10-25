@@ -63,6 +63,34 @@ def item():
 
 
 @pytest.mark.asyncio
+async def test_browser_fetch_preserves_web_article_metadata(service):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/topics",
+        "allowed_origins": ["https://example.com"],
+        "steps": [{"action": "collect", "item_selector": "article", "link_selector": "h2 a"}],
+    }
+    executor = SimpleNamespace(
+        run=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "ok", (BrowserWorkflowItem("Forum topic", "https://example.com/read?tid=7"),)
+            )
+        )
+    )
+    service._executor_factory = lambda name: executor
+    workflow = draft(service, executor="ego", workflow=plan)
+
+    result = await service.fetch(workflow)
+
+    assert result.status == "ok" and len(result.items) == 1
+    assert result.items[0].content_type == "article"
+    assert result.items[0].source_platform == "web"
+    assert result.items[0].content_url == "https://example.com/read?tid=7"
+
+
+@pytest.mark.asyncio
 async def test_blank_login_resource_failure_does_not_ask_for_more_user_details(service):
     pending = draft(service, executor="playwright", status="draft", workflow=None)
     session = SimpleNamespace(close=AsyncMock())

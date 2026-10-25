@@ -909,6 +909,7 @@ class WorkflowService:
                     content_id=web_content_id(url),
                     source_platform="web",
                     source_strategy="web-workflow",
+                    content_type="article",
                     author_name=item.author_name,
                     published_at=item.published_at,
                     description=item.description,

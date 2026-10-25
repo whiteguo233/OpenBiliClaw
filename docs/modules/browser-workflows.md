@@ -17,7 +17,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | --- | --- |
 | 流程编译 | `version=1`；只接受导航、搜索、等待、链接和最终采集；拒绝代码、秘密字段、临时 snapshot ref 和越界预算 |
 | 动态参数 | `query`、`date_from`、`date_to` 每轮替换；URL 参数进行编码 |
-| 标准提取 | 标题、URL、作者、发布时间、摘要；支持下一页、循环检测、条数和页数限制 |
+| 标准提取 | 标题、URL、作者、发布时间、摘要；浏览器网页条目明确标为 `article`；支持下一页、循环检测、条数和页数限制 |
 | 手机登录返回 | 移动网页/PWA 的设置和聊天入口保留在 `/m/` 范围，接管页返回 `/m/#/chat`；桌面行为不变，Flutter 原生 APP 单独验收 |
 | 登录会话 | 不透明 session ID 映射到应用拥有的 Ego task space 和固定 profile ID；同一 Ego profile 的 Cookie 可共享，task space 仅隔离页面 |
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
@@ -41,6 +41,8 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   生成提示要求同时检查行与子链接上的排除标记、用户指定的反例；证据不足应补问。
   这是生成约束，不是任意自然语言条件的确定性验证器，启用前仍需核对样例。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
+- `WorkflowService.fetch()` 将浏览器提取结果转换为 `source_platform=web`、
+  `content_type=article`，供统一发现与推荐链路使用；不批量修改历史已入池条目。
 - `WorkflowService.trial(draft_id)` 对 Ego 的零条目 `extraction_unverified` 可消费
   `BrowserWorkflowResult.observation.href_selector_repairs`，仅在草稿试跑内重试一次。
   证据由固定 `COLLECT_JS` 针对原 `item_selector` 的全部匹配行生成（超过 100 行则不修正），只列出
