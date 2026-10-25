@@ -1158,3 +1158,22 @@ async def test_independent_source_does_not_inherit_another_sources_task_space(
         assert prepared["session_id"] == existing["session_id"]
     assert service.sources.get_source(existing["source_id"])["session_id"] == existing["session_id"]
     assert len(service.sources.list_sources()) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_preserves_failed_authoring_draft(service):
+    from openbiliclaw.llm.service import LLMProviderExecutionError
+
+    pending = draft(service, executor="ego", status="draft", workflow=None)
+    session = SimpleNamespace(close=AsyncMock())
+    service.observe_session = AsyncMock(return_value=(session, {"elements": []}))
+    service.llm_service = SimpleNamespace(
+        complete_structured_task=AsyncMock(
+            side_effect=LLMProviderExecutionError("Provider HTTP 502")
+        )
+    )
+    result = await service.author_browser(pending, background=True)
+    assert result["status"] == "failed" and not result["trial_success"]
+    assert "模型" in result["detail"] and "重试" in result["detail"]
+    assert service.store.get_draft(pending["draft_id"])["status"] == "failed"
+    session.close.assert_awaited_once()

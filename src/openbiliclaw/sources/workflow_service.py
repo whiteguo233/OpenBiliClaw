@@ -517,21 +517,26 @@ class WorkflowService:
     async def _json_task(
         self, instruction: str, data: Mapping[str, Any], *, background: bool = False
     ) -> dict[str, Any]:
+        from openbiliclaw.llm.service import LLMProviderExecutionError
+
         if self.llm_service is None:
             raise ValueError("a configured language model is required to author browser workflows")
-        response = await asyncio.wait_for(
-            self.llm_service.complete_structured_task(
-                system_instruction=instruction,
-                user_input=json.dumps(dict(data), ensure_ascii=False),
-                temperature=0.1,
-                max_tokens=4096,
-                caller=(
-                    "sources.web.workflow" if background else "sources.web.workflow.interactive"
+        try:
+            response = await asyncio.wait_for(
+                self.llm_service.complete_structured_task(
+                    system_instruction=instruction,
+                    user_input=json.dumps(dict(data), ensure_ascii=False),
+                    temperature=0.1,
+                    max_tokens=4096,
+                    caller=(
+                        "sources.web.workflow" if background else "sources.web.workflow.interactive"
+                    ),
+                    inject_core_memory=False,
                 ),
-                inject_core_memory=False,
-            ),
-            timeout=120,
-        )
+                timeout=120,
+            )
+        except LLMProviderExecutionError as exc:
+            raise RuntimeError("模型服务调用失败，请检查模型可用性后重试。") from exc
         value = extract_llm_json_object(
             response.content,
             item_predicate=lambda item: any(

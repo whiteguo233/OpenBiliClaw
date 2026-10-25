@@ -231,6 +231,8 @@ Ego 编制向模型提供 120 秒总预算默认建议（明确用户限制优�
 `POST /drafts` 的 `separate_source=true` 为没有显式来源／会话引用的新来源生成独立
 session ID，避免继承同站旧来源丢失、被接管或占用的 task space。追加来源／更新流程
 继续复用当前会话，显式传入的旧会话仍须属于同站。Ego profile 与 Cookie 共享规则不变。
+已知模型提供者执行失败按工作流失败处理，草稿保留为 `failed`、`trial_success=false`，
+提供可重试的模型错误说明；不会因此激活来源或返回未处理的 HTTP 500。
 
 设置页的保存、启停和「准备 Ego Lite」按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
 归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
