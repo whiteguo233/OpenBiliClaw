@@ -4,8 +4,10 @@ import net from 'node:net';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
-const [hostPath,directory]=process.argv.slice(2);
+const [hostPath,directory,mode]=process.argv.slice(2);
 const calls=[];
+let windowState='minimized', restoring=false, restorePolls=0, captureRace=mode==='interactive';
+let repeatedMinimization=mode==='interactive_stuck';
 let focused=false, hidden=true, documentUrl='https://allowed.example/old?board=7&token=private#feed', loader='old', navigation=false, polls=0, redirectMode='', generation=0;
 class Input {set value(v){this.stored=v;} get value(){return this.stored;}}
 const input=new Input();Object.assign(input,{tagName:'INPUT',getClientRects:()=>[{}],getBoundingClientRect:()=>({x:0,y:0,width:20,height:10}),focus:()=>{focused=true;},dispatchEvent:()=>{},getAttribute:()=>null,classList:[],children:[],querySelectorAll:()=>[]});
@@ -17,16 +19,30 @@ globalThis.ego={
   createTaskSpace:async()=>({id:71}),useTaskSpace:()=>{},
   createTab:async()=>({targetId:'owned-tab'}),getBrowserVersion:async()=>({currentVersion:'fixture'}),
   sendCDPMessage:raw=>{const msg=JSON.parse(raw);calls.push(msg);
+    if(msg.method==='Browser.setWindowBounds') {
+      assert.equal(msg.params.windowId,17,'only mutate the owned target window');
+      if(msg.params.bounds.windowState==='normal'){restoring=true;restorePolls=0;}
+      else windowState=msg.params.bounds.windowState;
+    }
+    if(msg.method==='Browser.getWindowForTarget' && restoring && ++restorePolls>=3) {
+      windowState='normal';restoring=false;
+    }
+    if(msg.method==='Page.captureScreenshot' && (captureRace || repeatedMinimization)) {windowState='minimized';captureRace=false;}
+    if(msg.method==='Page.captureScreenshot' && windowState==='minimized') {
+      queueMicrotask(()=>ego.onCDPMessage(JSON.stringify({id:msg.id,error:{message:'Cannot capture a screenshot while the window is minimized.'}})));return;
+    }
     if(msg.method==='Page.navigate'){navigation=true;polls=0;generation++;redirectMode=msg.params.url.includes('redirect')?msg.params.url:'';loader='old';documentUrl='https://allowed.example/old';}
     if(msg.method==='Page.getFrameTree' && navigation && ++polls>=2){loader='new-'+generation;documentUrl='https://allowed.example/new';}
     if(redirectMode && (polls>=5 || redirectMode.endsWith('fast-redirect'))){loader='redirected-'+generation;documentUrl='https://allowed.example/topics';}
-    const result=msg.method==='Target.attachToTarget'?{sessionId:'owned-session'}:
+    const result=msg.method==='Browser.getWindowForTarget'?{windowId:17,bounds:{windowState}}:
+      msg.method==='Page.captureScreenshot'?{data:'fixture-png'}:
+      msg.method==='Target.attachToTarget'?{sessionId:'owned-session'}:
       msg.method==='Page.getFrameTree'?{frameTree:{frame:{id:'main-frame',loaderId:loader}}}:
       msg.method==='Page.navigate'?{loaderId:'new-'+generation}:
       msg.method==='Runtime.evaluate'?{result:{value:vm.runInNewContext(msg.params.expression,context)}}:{};
     queueMicrotask(()=>ego.onCDPMessage(JSON.stringify({id:msg.id,result})));},
 };
-const config={socket:directory+'/native.sock',ready:directory+'/ready.json',task_id:null,task_name:'owned',profile:'Default',interactive:false,plan:{entry_url:documentUrl,auth:{login_origins:[]}}};
+const config={socket:directory+'/native.sock',ready:directory+'/ready.json',task_id:null,task_name:'owned',profile:'Default',interactive:mode?.startsWith('interactive'),plan:{entry_url:documentUrl,auth:{login_origins:[]}}};
 const {start}=await import(pathToFileURL(hostPath));
 const running=start(config);
 while(!fs.existsSync(config.ready))await new Promise(r=>setTimeout(r,5));
@@ -37,6 +53,23 @@ client.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){
   if(m.event==='authorize'){authorizations.push(m);client.write(JSON.stringify({id:m.id,authorized:m.url.startsWith('https://allowed.example/')})+'\n');}
   else if(results.has(m.id)){const p=results.get(m.id);results.delete(m.id);m.error?p.reject(Error(m.error)):p.resolve(m.result);}}});
 await new Promise(r=>client.once('connect',r));
+if(repeatedMinimization) {
+  await assert.rejects(command('screenshot'),/ego_window_minimized/);
+  assert.equal(calls.filter(c=>c.method==='Page.captureScreenshot').length,2,
+    'persistent concurrent minimization must fail within the retry bound');
+  repeatedMinimization=false;
+} else if(config.interactive) {
+  assert.equal(await command('screenshot'),'fixture-png','login must restore a reused minimized window');
+  assert.equal(calls.filter(c=>c.method==='Page.captureScreenshot').length,2,
+    'recover a concurrent minimization between ready check and capture once');
+  assert(restorePolls>=3,'wait until asynchronous window restoration has completed');
+  windowState='minimized';
+  assert.equal(await command('screenshot'),'fixture-png','restore again if the shared window was minimized later');
+} else {
+  await assert.rejects(command('screenshot'),/ego_window_minimized/);
+  assert(!calls.some(c=>c.method==='Browser.setWindowBounds' && c.params.bounds.windowState==='normal'),
+    'background discovery must never restore a window');
+}
 assert.equal((await command('query',{selector:'input'})).visible,false);
 const initialSnapshot=await command('snapshot');
 assert.equal(initialSnapshot.login_wall,false);

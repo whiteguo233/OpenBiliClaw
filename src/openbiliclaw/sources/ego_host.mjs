@@ -44,7 +44,7 @@ export async function start(config) {
   const rpc = (method, params={}, sid=session) => new Promise((resolve,reject)=>{
     const id=++serial;
     const timer=setTimeout(()=>{pending.delete(id);reject(Error('ego_protocol_timeout'));}, 30000);
-    pending.set(id,{resolve,reject,timer});
+    pending.set(id,{resolve,reject,timer,method});
     try { ego.sendCDPMessage(JSON.stringify({id,method,params,...(sid?{sessionId:sid}:{})})); }
     catch {clearTimeout(timer);pending.delete(id);reject(Error('ego_protocol_error'));}
   });
@@ -94,7 +94,10 @@ export async function start(config) {
     try {
       const event=JSON.parse(raw);
       if(event.id) { const p=pending.get(event.id); if(!p)return; clearTimeout(p.timer);pending.delete(event.id);
-        event.error?p.reject(Error('ego_protocol_error')):p.resolve(event.result); return; }
+        if(event.error) p.reject(Error(p.method==='Page.captureScreenshot' &&
+          event.error.message==='Cannot capture a screenshot while the window is minimized.'
+          ? 'ego_window_minimized' : 'ego_protocol_error'));
+        else p.resolve(event.result); return; }
       if(event.method==='Fetch.requestPaused') void guard(event.params,event.sessionId);
       if(event.method==='Target.attachedToTarget' && event.params.targetInfo.targetId!==target) {
         // Never resume a new worker, popup or OOPIF outside this one owned page.
@@ -112,6 +115,21 @@ export async function start(config) {
   };
   const query = async selector => evaluate(`s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return {visible:!!e.getClientRects().length && r.width>0 && r.height>0 && style.visibility!=='hidden' && style.visibility!=='collapse',href:e.href||'',x:r.x+r.width/2,y:r.y+r.height/2};}`,selector);
   const snapshot=async()=>{const value=await evaluate(SNAPSHOT_JS,{entry_url:config.plan.entry_url});return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
+  const restoreInteractiveWindow=async()=>{
+    if(!config.interactive)return;
+    let win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
+    if(win.bounds?.windowState!=='minimized')return;
+    await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'normal'}},null);
+    // macOS acknowledges restoration before the native window is drawable.
+    // Keep this inside the command budget and never restore background pages.
+    const deadline=Date.now()+3000;
+    while(Date.now()<deadline) {
+      win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
+      if(win.bounds?.windowState!=='minimized')return;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw Error('ego_window_unavailable');
+  };
   const navigate=async url=>{
     if(!await approve({url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
     const previousLoader=(await rpc('Page.getFrameTree')).frameTree.frame.loaderId;
@@ -159,7 +177,17 @@ export async function start(config) {
     for(const s of sockets)s.end();server.close();clearTimeout(lifetime);finish();
   };
   const commands={
-    snapshot, diagnostics:async()=>({...diagnostic}), screenshot:async()=> (await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,
+    snapshot, diagnostics:async()=>({...diagnostic}), screenshot:async()=>{
+      for(let attempt=0;attempt<2;attempt++) {
+        await restoreInteractiveWindow();
+        try {return (await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data;}
+        catch(error) {
+          // Another background session can minimize this shared native window
+          // after the ready check. Retry only this proven, read-only failure.
+          if(!config.interactive || error.message!=='ego_window_minimized' || attempt===1)throw error;
+        }
+      }
+    },
     navigate:async a=>navigate(a.url), query:async a=>query(a.selector),
     safe_search:async a=>evaluate(SEARCH_INPUT_JS,a.selector),
     form:async a=>evaluate(FORM_JS,a.selector), collect:async a=>evaluate(COLLECT_JS,a), fill,
@@ -203,7 +231,7 @@ export async function start(config) {
         const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
         await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
       } catch {}
-    }
+    } else await restoreInteractiveWindow();
     await rpc('Page.enable'); await rpc('Network.enable');
     await rpc('Network.setBypassServiceWorker',{bypass:true});await rpc('Network.setCacheDisabled',{cacheDisabled:true});
     await rpc('Network.setBlockedURLs',{urls:['ws://*','wss://*','file://*','ftp://*']});

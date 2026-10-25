@@ -165,7 +165,8 @@ def test_fixed_host_resources_are_packaged_and_have_no_model_code_operation():
     assert "claimTaskSpace" not in host and "completeTaskSpace" not in host
 
 
-def test_native_request_response_redirect_guard_protocol():
+@pytest.mark.parametrize("mode", ["background", "interactive", "interactive_stuck"])
+def test_native_request_response_redirect_guard_protocol(mode):
     import shutil
     import subprocess
     import tempfile
@@ -179,7 +180,10 @@ def test_native_request_response_redirect_guard_protocol():
     fixture = Path(__file__).parent / "fixtures" / "ego_native_protocol.mjs"
     with tempfile.TemporaryDirectory(prefix="ego-test-", dir="/tmp") as directory:
         result = subprocess.run(
-            [node, str(fixture), str(host), directory], capture_output=True, text=True, timeout=10
+            [node, str(fixture), str(host), directory, mode],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {

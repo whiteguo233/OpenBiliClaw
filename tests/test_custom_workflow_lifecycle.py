@@ -694,3 +694,33 @@ def test_login_reuses_live_session_and_close_releases_without_publication(servic
         assert client.post("/api/custom-sources/drafts/unknown/close").status_code == 200
     service.trial.assert_not_awaited()
     assert service.store.list_workflows(source["source_id"]) == before
+
+
+def test_login_screenshot_error_is_recoverable_without_reopening_session(service):
+    from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
+
+    pending = draft(service, executor="ego")
+    session = SimpleNamespace(
+        close=AsyncMock(),
+        screenshot=AsyncMock(
+            side_effect=[
+                BrowserWorkflowExecutionError(
+                    "ego_window_unavailable", "Login window is not ready"
+                ),
+                b"png image",
+            ]
+        ),
+    )
+    service.observe_session = AsyncMock(return_value=(session, {"elements": []}))
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+    path = f"/api/custom-sources/drafts/{pending['draft_id']}"
+    with TestClient(app) as client:
+        assert client.post(f"{path}/takeover").status_code == 200
+        failed = client.get(f"{path}/screenshot")
+        assert failed.status_code == 409
+        assert failed.json()["detail"] == "Login window is not ready"
+        assert failed.headers["cache-control"] == "no-store"
+        recovered = client.get(f"{path}/screenshot")
+        assert recovered.status_code == 200 and recovered.content == b"png image"
+        service.observe_session.assert_awaited_once()

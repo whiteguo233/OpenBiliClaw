@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from openbiliclaw.sources.browser_workflow import workflow_url
+from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
 logger = logging.getLogger(__name__)
 
@@ -317,8 +318,12 @@ def create_custom_sources_router(
         session = sessions.get(draft_id)
         if session is None:
             raise HTTPException(409, "Open the login window first")
+        try:
+            image = await session.screenshot()
+        except BrowserWorkflowExecutionError as exc:
+            raise HTTPException(409, exc.detail, headers={"Cache-Control": "no-store"}) from exc
         return Response(
-            await session.screenshot(),
+            image,
             media_type="image/png",
             headers={"Cache-Control": "no-store"},
         )

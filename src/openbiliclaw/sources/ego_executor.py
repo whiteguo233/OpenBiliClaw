@@ -69,6 +69,8 @@ def _error(code: str, detail: str = "") -> Exception:
         "ego_navigation_timeout": "Ego Lite navigation exceeded its time budget",
         "ego_protocol_timeout": "Ego Lite did not answer a browser command in time",
         "ego_protocol_error": "The installed Ego Lite did not accept a required browser command",
+        "ego_window_unavailable": "The Ego Lite login window is not ready; retry the screenshot",
+        "ego_window_minimized": "The Ego Lite login window was minimized; retry the screenshot",
         "ego_dom_error": (
             "Ego Lite could not read this page; the workflow selectors need verification"
         ),

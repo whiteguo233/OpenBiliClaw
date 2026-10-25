@@ -197,7 +197,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 | `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
 | `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
 | `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管；同一来源已有活跃的已批准流程登录窗口时复用其草稿，返回 `draft_id,takeover_url,…` |
-
+| `GET /api/custom-sources/drafts/{draft_id}/screenshot` | 返回实际 PNG、`Cache-Control: no-store`；Ego 先恢复人工会话的最小化窗口并等待完成。已知浏览器执行异常返回 409 和安全原因，保留同一会话供重试，不再成为未处理的 500 |
 | `POST /api/custom-sources/drafts/{draft_id}/close` | 幂等释放人工登录窗口，返回 `{ok:true}`；保留网站凭据，不试跑、不发布、不改变来源启用状态；原生页面退出时调用，异常断连由 15 分钟会话超时兜底 |
 
 草稿公开响应含 `draft_id,status,source_id?,name,intent,executor,sample_items,detail`，
