@@ -26,6 +26,27 @@ assert.equal(observation.elements[0].child_links[0].href_attribute_prefix,'/read
 assert.equal(observation.url,'https://forum.example/topics');
 assert.equal(observation.url_matches_entry,true,'query redaction must not suggest a different page');
 assert.equal(JSON.stringify(observation.url_redactions),JSON.stringify(['userinfo','query','fragment']));
+const extra=observe('https://forum.example/topics?section=7&token=private&rand=secret#results',entry);
+assert.equal(extra.url_matches_entry,false,'preserve exact comparison even when the website adds a nonce');
+assert.equal(JSON.stringify(extra.entry_url_comparison),JSON.stringify({
+  origin_matches:true,path_matches:true,requested_query_matches:true,
+  additional_query_parameters:1,requested_fragment_matches:true,additional_fragment:false,
+}),'distinguish a website-added query parameter from changing the requested section');
+for(const current of [
+  'https://forum.example/topics?section=8&token=private#results',
+  'https://forum.example/topics?token=private#results',
+  'https://forum.example/topics?section=7&section=8&token=private#results',
+]) assert.equal(observe(current,entry).entry_url_comparison.requested_query_matches,false);
+assert.equal(observe('https://other.example/topics?section=7&token=private#results',entry)
+  .entry_url_comparison.origin_matches,false);
+assert.equal(observe('https://forum.example/elsewhere?section=7&token=private#results',entry)
+  .entry_url_comparison.path_matches,false);
+assert.equal(observe('https://forum.example/topics?section=7&token=private#other',entry)
+  .entry_url_comparison.requested_fragment_matches,false);
+assert.equal(observe('https://forum.example/topics?section=7#results','https://forum.example/topics?section=7')
+  .entry_url_comparison.additional_fragment,true);
+assert.equal(JSON.stringify(extra).includes('secret'),false);
+assert.equal(JSON.stringify(extra).includes('private'),false);
 assert.equal(observe('https://forum.example/topics?section=8',entry).url_matches_entry,false,
   'a genuine change of board must remain distinguishable');
 assert.equal(observe('https://forum.example/topics?section=7&token=private#other',entry).url_matches_entry,false,

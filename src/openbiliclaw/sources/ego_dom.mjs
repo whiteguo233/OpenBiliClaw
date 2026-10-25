@@ -34,6 +34,19 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
   // distinguish two boards (or SPA routes) sharing the same path.
   const matchesEntry = () => {try {return context?.entry_url ?
     new URL(location.href).href===new URL(context.entry_url).href : null;}catch{return null;}};
+  const compareEntry = () => {try {
+    if(!context?.entry_url) return null;
+    const current=new URL(location.href), entry=new URL(context.entry_url);
+    const requestedKeys=[...new Set(entry.searchParams.keys())];
+    return {
+      origin_matches:current.origin===entry.origin,path_matches:current.pathname===entry.pathname,
+      requested_query_matches:requestedKeys.every(key=>
+        JSON.stringify(current.searchParams.getAll(key))===JSON.stringify(entry.searchParams.getAll(key))),
+      additional_query_parameters:[...current.searchParams.keys()].filter(key=>!entry.searchParams.has(key)).length,
+      requested_fragment_matches:!entry.hash || current.hash===entry.hash,
+      additional_fragment:!entry.hash && !!current.hash,
+    };
+  }catch{return null;}};
   const hrefPrefix = e => {try {
     const raw=e.getAttribute('href')||'', u=new URL(raw,location.href);
     if(!raw.trim() || !['http:','https:'].includes(u.protocol) || u.username || u.password) return '';
@@ -79,6 +92,7 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       child_selectors:[...e.children].slice(0,6).map(selector),child_links:childLinks};
   });
   return {url:safeUrl(location.href),url_matches_entry:matchesEntry(),
+    entry_url_comparison:compareEntry(),
     url_redactions:['userinfo','query','fragment'],
     title:document.title.slice(0,200),main_selector:selector(main),
     elements:rows,login_wall:[...document.querySelectorAll('input[type=password]')].some(visible)};

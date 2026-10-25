@@ -38,8 +38,16 @@ Never invent selectors. Use observed DOM, real links and GET search forms.
 Observation URL fields omit userinfo, query strings and fragments for privacy.
 A missing query in observation.url or href does NOT imply different navigation.
 When url_matches_entry is true, the actual page URL matched the supplied entry_url
-including its query and fragment before redaction. False means it differed; assess
-the observed title and structure without assuming a match. Null/absent is unknown.
+including its query and fragment before redaction. False means it differed, not
+necessarily that it left the requested scope. Null/absent is unknown.
+entry_url_comparison separates matching origin/path, preservation of all requested
+query values (including duplicates), and additional parameters added by the site.
+It also reports whether a requested fragment is preserved or a new one was added.
+When requested inputs are preserved, use the observed title, list and pagination
+evidence to judge the user's scope; do not reject solely for an added parameter.
+Added parameters are not automatic permission to change page, board or filters.
+Changed/removed requested values or a different origin/path require affirmative
+page evidence of the requested destination; never silently treat them as a match.
 href is a resolved, redacted URL, not the literal HTML href attribute. For CSS href
 attribute selectors use the observed href_attribute_prefix (which retains relative
 versus absolute spelling) with ^=, or reusable classes; never invent redacted query

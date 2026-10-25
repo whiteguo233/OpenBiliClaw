@@ -65,6 +65,11 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   Ego 观察额外提供 `url_matches_entry`：在页面内比较完整入口 URL（含 query 与
   fragment）后只输出布尔值；未提供可比较入口时为 `null`。`url_redactions` 明示
   `userinfo/query/fragment` 已移除，不能把脱敏后的同路径 URL 当作错误板块证据。
+  `entry_url_comparison` 进一步给出 origin/path 是否相同、请求中每个 query 参数的
+  完整多值是否保留、额外 query 参数个数，以及请求 fragment 保留／新增 fragment
+  的事实；不输出参数名或值。网站增加随机参数与原有板块参数被改变/移除分别表达。
+  编制器仍根据标题、列表和分页判断范围，新增参数本身既不是拒绝原因，也不是扩展
+  页面、板块或过滤条件的许可；完整 URL 的精确比对结果保持不变。
   `href_attribute_prefix` 保留原 HTML href 在 query／fragment 之前的相对或绝对
   写法（包括属性原有的首尾空白），供 CSS `^=` 选择器使用；含 userinfo、非 HTTP(S)
   或无路径前缀（包括只有空白）的链接返回空串。
