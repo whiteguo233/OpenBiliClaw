@@ -228,8 +228,9 @@ values or assume href starts with the resolved origin. An empty prefix is no evi
 requested_link_patterns contains only literal empty-value URL hints already in the
 user's intent. Each anchor's href_query_checks compares its full URL before redaction
 with those hints: require both path_matches and query_key_present. The
-raw_key_after_question / raw_key_after_ampersand booleans confirm the literal query-key delimiter usable in CSS;
-they reveal no values or other query names. Absent checks mean unknown, not missing.
+raw_key_after_question / raw_key_after_ampersand booleans confirm the literal query-key
+delimiter usable in CSS; they reveal no values or other query names.
+Absent checks mean unknown, not missing.
 These checks prove key presence, not a query value or permission to broaden scope.
 Preserve such explicit key constraints in the saved selectors using observed raw
 spelling; do not demand user DOM evidence when these checks already establish it.

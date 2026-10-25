@@ -349,6 +349,8 @@ class EgoLiteWorkflowSession:
         try:
             async with asyncio.timeout(32):
                 return await future
+        except TimeoutError as exc:
+            raise _error("ego_protocol_timeout") from exc
         finally:
             self._pending.pop(serial, None)
 
@@ -736,7 +738,7 @@ class EgoLiteWorkflowExecutor:
         interactive: bool = False,
         observation_only: bool = False,
     ) -> EgoLiteWorkflowSession:
-        """Retry one managed pre-ready timeout after releasing the failed lease."""
+        """Retry one managed opening timeout after releasing the failed lease."""
         from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
         try:
@@ -747,7 +749,10 @@ class EgoLiteWorkflowExecutor:
                 observation_only=observation_only,
             )
         except BrowserWorkflowExecutionError as exc:
-            if not self.managed or exc.code != "ego_connection_timeout":
+            if not self.managed or exc.code not in {
+                "ego_connection_timeout",
+                "ego_protocol_timeout",
+            }:
                 raise
             logger.info("Retrying managed Ego native initialization with the saved task identity")
             return await self._open_session_once(

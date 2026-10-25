@@ -361,7 +361,7 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
-                     Managed pre-ready timeout → cleanup → one retry with saved task identity within original total budget
+                     Managed opening timeout → cleanup → one retry with saved task identity within original total budget
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
                     → durable id mismatch pauses personal bootstrap only
@@ -709,7 +709,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
-│  │   托管连接就绪前超时 → 清理 → 原总预算内复用身份重试一次         │ │
+│  │   托管初始只读打开超时 → 清理 → 原总预算内复用身份重试一次         │ │
 │  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
 │  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │
 │  │   token-fenced lease + state/seen；此兼容路径不支持登录/JS/任意 crawl │ │

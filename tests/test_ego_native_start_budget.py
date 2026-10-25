@@ -150,7 +150,7 @@ async def test_only_managed_unready_connection_retries_after_cleanup(
         session._started = True
 
     monkeypatch.setattr(EgoLiteWorkflowSession, "start", start)
-    if managed and code == "ego_connection_timeout":
+    if managed and code in {"ego_connection_timeout", "ego_protocol_timeout"}:
         session = await executor.open_session(plan, session_id="owned-session")
         assert len(created) == 2
         assert identities[0] == identities[1]
@@ -186,3 +186,59 @@ async def test_managed_native_retry_is_bounded_and_preserves_cancellation(
     with pytest.raises(type(error)):
         await executor.open_session(plan, session_id="bounded-session")
     assert start.await_count == (1 if failure == "cancelled" else 2)
+
+
+async def test_python_command_timeout_is_a_native_protocol_timeout(tmp_path, monkeypatch):
+    plan = compile_browser_workflow(
+        {
+            "version": 1,
+            "entry_url": "https://forum.example/",
+            "allowed_origins": ["https://forum.example"],
+            "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+        }
+    )
+    session = EgoLiteWorkflowSession(
+        EgoLiteWorkflowExecutor(tmp_path), plan, interactive=False, lock=asyncio.Lock()
+    )
+    session._writer = SimpleNamespace(write=lambda data: None, drain=AsyncMock())
+
+    class Expired:
+        async def __aenter__(self):
+            raise TimeoutError()
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(asyncio, "timeout", lambda seconds: Expired())
+    with pytest.raises(BrowserWorkflowExecutionError) as caught:
+        await session.command("navigate", url=plan.entry_url)
+    assert caught.value.code == "ego_protocol_timeout"
+    assert not session._pending
+
+
+async def test_collection_protocol_timeout_does_not_replay_started_steps(tmp_path, monkeypatch):
+    plan = compile_browser_workflow(
+        {
+            "version": 1,
+            "entry_url": "https://forum.example/",
+            "allowed_origins": ["https://forum.example"],
+            "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+        }
+    )
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    executor.managed = True
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=BrowserWorkflowExecutionError(
+                "ego_protocol_timeout", "Collection did not answer"
+            )
+        ),
+        close=AsyncMock(),
+    )
+    open_once = AsyncMock(return_value=session)
+    monkeypatch.setattr(executor, "_open_session_once", open_once)
+    result = await executor.run(plan, session_id="bounded-collection")
+    assert result.status == "failed" and result.error_code == "ego_protocol_timeout"
+    open_once.assert_awaited_once()
+    session.execute.assert_awaited_once()
+    session.close.assert_awaited_once()

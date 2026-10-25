@@ -221,7 +221,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 `activate_discovery_source/manage_discovery_source` 为 `hard_write`，由聊天确认卡批准后调用。
 Ego 草稿观察可将 `intent` 中明确的空值链接模板转成有界 `requested_link_patterns`，
 链接的 `href_query_checks` 仅返回路径／参数存在及原属性分隔符布尔证据；查询值和其他
-参数名仍脱敏。该内部观察不增加 HTTP 请求字段或授权范围。托管原生连接就绪前超时
+参数名仍脱敏。该内部观察不增加 HTTP 请求字段或授权范围。托管原生连接或初始只读导航命令超时
 清理后自动重试一次，原任务身份及总预算保留；取消、外部宿主和身份错误不重试。
 
 设置页的保存、启停和「准备 Ego Lite」按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
