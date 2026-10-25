@@ -475,6 +475,9 @@ class EgoLiteWorkflowSession:
                         "ok", tuple(items), scope_complete=False, pages_visited=self.pages_visited
                     )
             if invalid or (not data["items"] and not data["empty"]):
+                observation = await self.snapshot()
+                if data.get("href_selector_repairs"):
+                    observation["href_selector_repairs"] = data["href_selector_repairs"]
                 return BrowserWorkflowResult(
                     "degraded" if items else "failed",
                     tuple(items),
@@ -482,7 +485,7 @@ class EgoLiteWorkflowSession:
                     "extraction_unverified",
                     False,
                     self.pages_visited,
-                    await self.snapshot(),
+                    observation,
                 )
             if not data["next"]:
                 return BrowserWorkflowResult(

@@ -23,6 +23,7 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 人工接管 | 同一会话提供 viewport PNG、脱敏 DOM snapshot、点击／输入／按键；只允许在显式 interactive 模式调用 |
 | 人工窗口恢复 | 人工接管建页和截图前恢复自己复用的最小化窗口，并等待窗口实际恢复；后台采集从不执行窗口恢复 |
 | 空结果 | 必须匹配明确的空结果元素；找不到内容且没有空结果证据会报告提取失败 |
+| 草稿字段修正 | Ego 首次试采失败时，只对实际匹配行证明的同源、无 query/hash 绝对 href 前缀误用做一次根相对修正与重试；成功且非空后才保存计划，已发布采集不自动改策略 |
 | Ego Lite | 官方 `ego-browser nodejs` 加载仓库固定脚本，通过 `ego.sendCDPMessage` 执行；没有 Playwright 中转或静默回退 |
 | 页面观察 | 导航在 30 秒内等待文档完成并稳定 1.5 秒，自动跳转后重新计时；长表格／文章列表分散抽样，保留带 ID 链接的真实 class selector、脱敏前的入口一致性和相对 href 属性前缀 |
 | 托管准备 | 源码安装及桌面首次启动自动下载官方应用、校验签名、完成专用 profile 首次设置并验证原生连接；网页建源、设置页和 CLI 保留重试 |
@@ -39,6 +40,17 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
   生成提示要求同时检查行与子链接上的排除标记、用户指定的反例；证据不足应补问。
   这是生成约束，不是任意自然语言条件的确定性验证器，启用前仍需核对样例。
 - `BrowserWorkflowPlan.to_dict()`：持久化格式，不包含账号密码或 Cookie。
+- `WorkflowService.trial(draft_id)` 对 Ego 的零条目 `extraction_unverified` 可消费
+  `BrowserWorkflowResult.observation.href_selector_repairs`，仅在草稿试跑内重试一次。
+  证据由固定 `COLLECT_JS` 针对原 `item_selector` 的全部匹配行生成（超过 100 行则不修正），只列出
+  `link_selector` / `title_selector`，不携带替代代码、URL query 或网页自由指令。
+  每一行必须原字段无匹配、保留其他 CSS 约束后唯一匹配 anchor、解析 URL 符合原前缀，
+  且真实 href 的根相对路径与原绝对 URL pathname 完全相同；修正后必须仍唯一命中原 anchor。
+  同页采集上限以外的混合行也会阻止修正；实际输出条目仍受原 `max_items` 限制。
+  后端独立重建这一窄变更，保留入口、origin、行选择器、其余步骤、查询、登录和预算。
+  带 query/hash、跨 origin、CSS 转义/函数/列表、非根相对属性、混合或歧义行均不自动修正。
+  第二次真实试采成功且得到同源非空条目才替换草稿计划；异常、再次失败或空结果保留原计划
+  并报告失败，不激活来源。正常 `fetch()` 与已发布定时采集严格执行保存的策略。
 - 登录接管页面复用现有静态挂载：`/web/source-login.html?draft_id=...` 返回桌面；
   `/m/desktop/source-login.html?draft_id=...` 返回手机对话。只按固定页面路径选择目标，
   不接收自定义返回地址；不改变登录、试跑或审批 API。

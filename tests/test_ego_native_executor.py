@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openbiliclaw.sources.browser_workflow import compile_browser_workflow
+from openbiliclaw.sources.browser_workflow import WorkflowParameters, compile_browser_workflow
 from openbiliclaw.sources.ego_executor import (
     EgoLiteWorkflowExecutor,
     EgoLiteWorkflowSession,
@@ -57,6 +57,36 @@ async def test_native_guard_exact_scope_and_method(
         )
         is allowed
     )
+
+
+async def test_failed_collection_retains_fixed_reader_field_evidence(plan, tmp_path):
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = EgoLiteWorkflowSession(
+        EgoLiteWorkflowExecutor(tmp_path), plan, interactive=False, lock=lock
+    )
+
+    async def command(operation, **arguments):
+        if operation == "snapshot":
+            return {"title": "Observed public list", "login_wall": False}
+        assert operation == "collect"
+        return {
+            "items": [{"title": "", "url": ""}],
+            "empty": False,
+            "next": "",
+            "href_selector_repairs": ["link_selector", "title_selector"],
+        }
+
+    session.command = command
+    result = await session.execute(WorkflowParameters())
+    assert result.status == "failed" and result.error_code == "extraction_unverified"
+    assert result.items == ()
+    assert result.observation == {
+        "title": "Observed public list",
+        "login_wall": False,
+        "href_selector_repairs": ["link_selector", "title_selector"],
+    }
+    lock.release()
 
 
 async def test_fresh_dns_check_rejects_rebinding_and_mixed_answers(plan, monkeypatch):

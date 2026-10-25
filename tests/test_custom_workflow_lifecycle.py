@@ -148,6 +148,199 @@ async def test_reauthor_receives_failed_trial_evidence_without_changing_user_sco
     assert author_input["intent"] == pending["intent"]
 
 
+@pytest.mark.asyncio
+async def test_ego_trial_repairs_only_proven_relative_href_fields_and_retries_once(service):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    before = 'td.content > a.topic[href^="https://example.com/read.php"]'
+    after = 'td.content > a.topic[href^="/read.php"]'
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/topics?board=7",
+        "allowed_origins": ["https://example.com"],
+        "budgets": {"max_items": 3, "max_pages": 1, "timeout_seconds": 45},
+        "steps": [
+            {
+                "action": "collect",
+                "item_selector": 'tr.topic:has(a[href^="/read.php"])',
+                "link_selector": before,
+                "title_selector": before,
+            }
+        ],
+    }
+    executor = SimpleNamespace(
+        run=AsyncMock(
+            side_effect=[
+                BrowserWorkflowResult(
+                    "failed",
+                    error_code="extraction_unverified",
+                    scope_complete=False,
+                    observation={"href_selector_repairs": ["link_selector", "title_selector"]},
+                ),
+                BrowserWorkflowResult(
+                    "ok", (BrowserWorkflowItem("A topic", "https://example.com/read.php?tid=1"),)
+                ),
+            ]
+        )
+    )
+    service._executor_factory = lambda name: executor
+    pending = draft(
+        service,
+        executor="ego",
+        workflow=plan,
+        status="draft",
+        trial_success=False,
+        entry_url=plan["entry_url"],
+    )
+
+    result = await service.trial(pending["draft_id"])
+
+    assert result["status"] == "ready" and result["trial_success"] is True
+    assert executor.run.await_count == 2
+    original = executor.run.call_args_list[0].args[0].to_dict()
+    corrected = executor.run.call_args_list[1].args[0].to_dict()
+    expected = dict(
+        original, steps=[dict(original["steps"][0], link_selector=after, title_selector=after)]
+    )
+    assert corrected == expected == result["workflow"]
+    assert result["sample_items"][0]["url"] == "https://example.com/read.php?tid=1"
+    assert service.sources.list_sources() == []
+    assert service.store.get_draft(pending["draft_id"])["workflow"] == corrected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "retry_outcome", ["failed", "exception", "empty", "degraded", "foreign_only"]
+)
+async def test_unsuccessful_ego_field_repair_preserves_original_plan(service, retry_outcome):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    selector = 'a.topic[href^="https://example.com/read.php"]'
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/topics?board=7",
+        "allowed_origins": ["https://example.com"],
+        "steps": [{"action": "collect", "item_selector": "tr.topic", "link_selector": selector}],
+    }
+    outcomes = {
+        "failed": BrowserWorkflowResult(
+            "failed", detail="Still invalid", error_code="extraction_unverified"
+        ),
+        "exception": RuntimeError("Native host disconnected"),
+        "empty": BrowserWorkflowResult("empty"),
+        "degraded": BrowserWorkflowResult(
+            "degraded",
+            (BrowserWorkflowItem("One", "https://example.com/read.php?tid=1"),),
+            error_code="extraction_unverified",
+        ),
+        "foreign_only": BrowserWorkflowResult(
+            "ok", (BrowserWorkflowItem("Other", "https://other.example/read.php?tid=1"),)
+        ),
+    }
+    executor = SimpleNamespace(
+        run=AsyncMock(
+            side_effect=[
+                BrowserWorkflowResult(
+                    "failed",
+                    error_code="extraction_unverified",
+                    scope_complete=False,
+                    observation={"href_selector_repairs": ["link_selector"]},
+                ),
+                outcomes[retry_outcome],
+            ]
+        )
+    )
+    service._executor_factory = lambda name: executor
+    pending = draft(
+        service,
+        executor="ego",
+        workflow=plan,
+        status="failed",
+        trial_success=False,
+        entry_url=plan["entry_url"],
+    )
+    result = await service.trial(pending["draft_id"])
+    assert result["status"] == "failed" and result["trial_success"] is False
+    assert executor.run.await_count == 2
+    assert result["workflow"] == plan
+    assert service.store.get_draft(pending["draft_id"])["workflow"] == plan
+    assert service.sources.list_sources() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selector,fields",
+    [
+        ('a[href^="https://other.example/read.php"]', ["link_selector"]),
+        ('a[href^="https://example.com/read.php?topic=safe"]', ["link_selector"]),
+        ('a[href^="https://example.com/read.php#safe"]', ["link_selector"]),
+        ('a.to\\pic[href^="https://example.com/read.php"]', ["link_selector"]),
+        ('a[href^="https://example.com/read.php" i]', ["link_selector"]),
+        ('a[href^="https://example.com/read.php"],a.other', ["link_selector"]),
+        ('a[href^="https://example.com/read.php"]', ["item_selector"]),
+        ('a[href^="https://example.com/read.php"]', [{"field": "link_selector"}]),
+    ],
+)
+async def test_ego_trial_rejects_unsupported_field_evidence(service, selector, fields):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowResult
+
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/topics",
+        "allowed_origins": ["https://example.com"],
+        "steps": [{"action": "collect", "item_selector": "tr.topic", "link_selector": selector}],
+    }
+    executor = SimpleNamespace(
+        run=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "failed",
+                error_code="extraction_unverified",
+                scope_complete=False,
+                observation={"href_selector_repairs": fields},
+            )
+        )
+    )
+    service._executor_factory = lambda name: executor
+    pending = draft(service, executor="ego", workflow=plan, status="failed", trial_success=False)
+    result = await service.trial(pending["draft_id"])
+    assert result["status"] == "failed" and result["workflow"] == plan
+    executor.run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_published_fetch_does_not_repair_selectors(service):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowResult
+
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/topics",
+        "allowed_origins": ["https://example.com"],
+        "steps": [
+            {
+                "action": "collect",
+                "item_selector": "tr.topic",
+                "link_selector": 'a[href^="https://example.com/read.php"]',
+            }
+        ],
+    }
+    executor = SimpleNamespace(
+        run=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "failed",
+                error_code="extraction_unverified",
+                scope_complete=False,
+                observation={"href_selector_repairs": ["link_selector"]},
+            )
+        )
+    )
+    service._executor_factory = lambda name: executor
+    workflow = draft(service, executor="ego", workflow=plan)
+    result = await service.fetch(workflow)
+    assert result.status == "failed" and result.items == []
+    assert workflow["workflow"] == plan
+    executor.run.assert_awaited_once()
+
+
 def test_draft_never_reserves_capacity_and_activation_is_idempotent(service):
     pending = draft(service, status="needs_login", trial_success=False)
     assert service.sources.list_sources() == []

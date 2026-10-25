@@ -355,6 +355,7 @@ V2EX identity ladder: PAT verified > browser observed > config/accepted
                     → mismatch pauses account projection only
                     → resolved identity-scoped seen/affinity + complete favorite 2-miss outbox
 Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial → budget approval → source_id (independent share/cadence)
+                     Ego trial failure → row-proven href field correction → one retrial → persist verified nonempty plan only
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
@@ -701,6 +702,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Dynamic Web: 原话预算 + chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
+│  │   Ego 草稿失败 -> 行内证据支持的 href 字段修正 -> 一次重试 -> 非空验证后保存 │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │

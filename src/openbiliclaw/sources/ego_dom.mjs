@@ -109,7 +109,32 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
   const visible = e => { if (!e || !e.getClientRects().length) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.visibility!=='collapse'; };
-  const items=[...document.querySelectorAll(step.item_selector)].slice(0,limit).map(node=>{
+  const matchedNodes=[...document.querySelectorAll(step.item_selector)], nodes=matchedNodes.slice(0,limit);
+  // A model can confuse resolved URLs with literal href attributes. Prove a
+  // narrow correction against these exact rows; never use it during collection.
+  // Query/hash constraints, escaped/compound selectors and mixed rows stay errors.
+  const hrefRepairs=()=>['link_selector','title_selector'].filter(key=>{
+    const selector=step[key];
+    if(!selector || !matchedNodes.length || matchedNodes.length>100 || /[\\(),]/.test(selector))return false;
+    const matches=[...selector.matchAll(/\[href\^=(["'])(https?:\/\/[^"'\\\s?#]+)\1\]/g)];
+    if(matches.length!==1)return false;
+    const match=matches[0], expected=match[2], url=new URL(expected);
+    if(url.origin!==location.origin || url.username || url.password || url.search || url.hash ||
+      url.href!==expected || !/^\/[A-Za-z0-9/_%.~-]+$/.test(url.pathname))return false;
+    const broad=selector.replace(match[0],'[href]');
+    const corrected=selector.replace(match[0],'[href^='+match[1]+url.pathname+match[1]+']');
+    return matchedNodes.every(node=>{
+      if(field(node,selector))return false; // Do not break already matching/mixed rows.
+      const candidates=[...node.querySelectorAll(/^[>+~]/.test(broad)?':scope '+broad:broad)];
+      if(candidates.length!==1)return false;
+      const candidate=candidates[0];
+      if(candidate.tagName!=='A' || !candidate.href.startsWith(expected) ||
+        (candidate.getAttribute('href')||'').split(/[?#]/,1)[0]!==url.pathname)return false;
+      const verified=[...node.querySelectorAll(/^[>+~]/.test(corrected)?':scope '+corrected:corrected)];
+      return verified.length===1 && verified[0]===candidate;
+    });
+  });
+  const items=nodes.map(node=>{
     const a=field(node,step.link_selector);
     const t=step.published_selector?field(node,step.published_selector):null;
     return {title:text(node,step.title_selector||step.link_selector).slice(0,500),url:a?.href||'',
@@ -119,8 +144,9 @@ export const COLLECT_JS = String.raw`({step,limit}) => {
   });
   const next=step.next_selector?document.querySelector(step.next_selector):null;
   const empty=step.empty_selector?visible(document.querySelector(step.empty_selector)):false;
-  return {items,empty,
-    next:next?.href||''};
+  let repairs=[];
+  try {if(items.some(item=>!item.url || !item.title))repairs=hrefRepairs();}catch{}
+  return {items,empty,next:next?.href||'',...(repairs.length?{href_selector_repairs:repairs}:{})};
 }`;
 
 export const FORM_JS = String.raw`selector => {
