@@ -1074,3 +1074,49 @@ async def test_author_timeout_has_actionable_detail_and_preserves_draft(service)
     assert "超时" in result["detail"]
     assert result["draft_id"] == pending["draft_id"]
     assert service.store.get_draft(pending["draft_id"])["detail"] == result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_source_status_probe_does_not_block_other_api_requests(service, monkeypatch):
+    import asyncio
+    import threading
+
+    import httpx
+
+    from openbiliclaw.api import custom_sources
+
+    entered, release = threading.Event(), threading.Event()
+
+    def executor(name):
+        def availability():
+            if name == "playwright":
+                entered.set()
+                release.wait(timeout=2)
+            return {"available": False, "installed": False}
+
+        return SimpleNamespace(availability=availability)
+
+    service._executor_factory = executor
+    monkeypatch.setattr(
+        custom_sources, "_ego_setup_manager", lambda manager: SimpleNamespace(status=lambda: {})
+    )
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+
+    @app.get("/responsive")
+    async def responsive():
+        return {"ok": True}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        status = asyncio.create_task(client.get("/api/custom-sources"))
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            response = await client.get("/responsive")
+            assert response.json() == {"ok": True}
+            assert not status.done(), "the slow status probe must not stall the API event loop"
+        finally:
+            release.set()
+            result = await status
+        assert result.status_code == 200 and result.json()["items"] == []

@@ -54,7 +54,9 @@ const client=net.connect(config.socket);
 let buffer='';const authorizations=[],results=new Map();let serial=1000;
 const command=(operation,args={})=>new Promise((resolve,reject)=>{const id=++serial;results.set(id,{resolve,reject});client.write(JSON.stringify({id,operation,arguments:args})+'\n');});
 client.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){const m=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);
-  if(m.event==='authorize'){authorizations.push(m);client.write(JSON.stringify({id:m.id,authorized:m.url.startsWith('https://allowed.example/')})+'\n');}
+  if(m.event==='authorize'){authorizations.push(m);
+    if(mode==='close_pending' && m.url.endsWith('/late-close'))continue;
+    client.write(JSON.stringify({id:m.id,authorized:m.url.startsWith('https://allowed.example/')})+'\n');}
   else if(results.has(m.id)){const p=results.get(m.id);results.delete(m.id);m.error?p.reject(Error(m.error)):p.resolve(m.result);}}});
 await new Promise(r=>client.once('connect',r));
 if(repeatedMinimization) {
@@ -119,7 +121,19 @@ assert.equal(action('oversize'),'Fetch.failRequest');
 assert.equal(action('iframe'),'Fetch.failRequest');
 const diagnostics=await command('diagnostics');assert.equal(diagnostics.unsupported_embedded_pages,1);assert(!diagnostics.blocked_navigation_origins.includes('https://ads.example'));assert.equal(diagnostics.fatal_error,'resource_budget_exceeded');
 assert(authorizations.some(x=>x.url==='http://127.0.0.1/private' && x.redirect));
+if(mode==='close_pending') {
+  paused('late-close','https://allowed.example/late-close');
+  const deadline=Date.now()+1000;
+  while(!authorizations.some(x=>x.url.endsWith('/late-close')) && Date.now()<deadline)
+    await new Promise(r=>setTimeout(r,5));
+  assert(authorizations.some(x=>x.url.endsWith('/late-close')));
+}
 client.write(JSON.stringify({id:999,operation:'close'})+'\n');
 await running;
+if(mode==='close_pending') {
+  await new Promise(r=>setTimeout(r,20));
+  assert(!calls.some(c=>c.params.requestId==='late-close'),
+    'a pending authorization must not send CDP commands after target closure');
+}
 assert(calls.some(c=>c.method==='Target.closeTarget' && c.params.targetId==='owned-tab'));
 console.log(JSON.stringify({paused_requests:9,redirect_blocked:true,closed_owned_tab:true}));

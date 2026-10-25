@@ -41,7 +41,8 @@ export async function start(config) {
     const value=origin(url); if(value && !diagnostic[key].includes(value) && diagnostic[key].length<16) diagnostic[key].push(value);
     if(document && config.plan.auth.login_origins.includes(value)) diagnostic.login_wall=true;
   };
-  const rpc = (method, params={}, sid=session) => new Promise((resolve,reject)=>{
+  const rpc = (method, params={}, sid=session, allowClosing=false) => new Promise((resolve,reject)=>{
+    if(closing && !allowClosing){reject(Error('ego_session_closed'));return;}
     const id=++serial;
     const timer=setTimeout(()=>{pending.delete(id);reject(Error('ego_protocol_timeout'));}, 30000);
     pending.set(id,{resolve,reject,timer,method});
@@ -49,10 +50,12 @@ export async function start(config) {
     catch {clearTimeout(timer);pending.delete(id);reject(Error('ego_protocol_error'));}
   });
   const approve = params => new Promise(resolve=>{
+    if(closing){resolve(false);return;}
     const id=++serial, timer=setTimeout(()=>{guards.delete(id);resolve(false);},6000);
     guards.set(id,{resolve,timer}); send({event:'authorize',id,...params});
   });
   const guard = async (params, sid) => {
+    if(closing)return;
     const {requestId,request,resourceType,frameId,responseStatusCode,responseHeaders}=params;
     let url=request.url, allowed=false;
     const document=resourceType==='Document';
@@ -98,6 +101,7 @@ export async function start(config) {
           event.error.message==='Cannot capture a screenshot while the window is minimized.'
           ? 'ego_window_minimized' : 'ego_protocol_error'));
         else p.resolve(event.result); return; }
+      if(closing)return;
       if(event.method==='Fetch.requestPaused') void guard(event.params,event.sessionId);
       if(event.method==='Target.attachedToTarget' && event.params.targetInfo.targetId!==target) {
         // Never resume a new worker, popup or OOPIF outside this one owned page.
@@ -167,10 +171,10 @@ export async function start(config) {
       // Closing the last tab can leave an empty visible window behind, so put
       // the session window away before releasing it, including login windows.
       try {
-        const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
-        await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
+        const win=await rpc('Browser.getWindowForTarget',{targetId:target},null,true);
+        await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null,true);
       } catch {}
-      await rpc('Target.closeTarget',{targetId:target},null);
+      await rpc('Target.closeTarget',{targetId:target},null,true);
     }}catch{}
     for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('ego_session_closed'));}pending.clear();
     for(const g of guards.values()){clearTimeout(g.timer);g.resolve(false);}guards.clear();

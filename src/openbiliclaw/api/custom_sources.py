@@ -181,7 +181,10 @@ def create_custom_sources_router(
         return service_factory()
 
     @router.get("")
-    async def list_sources() -> dict[str, Any]:
+    def list_sources() -> dict[str, Any]:
+        # Runtime inspection can spawn a bounded legacy-driver process or ps.
+        # Let FastAPI run this read-only handler in its worker pool, so polling
+        # cannot starve the native Ego authorization and command readers.
         manager = service()
         executors = [{"id": "http", "available": True, "detail": "公开 Feed / Sitemap / 静态列表"}]
         for name in ("playwright", "ego"):

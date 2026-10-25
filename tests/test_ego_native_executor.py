@@ -307,7 +307,9 @@ def test_fixed_host_resources_are_packaged_and_have_no_model_code_operation():
     assert "claimTaskSpace" not in host and "completeTaskSpace" not in host
 
 
-@pytest.mark.parametrize("mode", ["background", "interactive", "interactive_stuck"])
+@pytest.mark.parametrize(
+    "mode", ["background", "interactive", "interactive_stuck", "close_pending"]
+)
 def test_native_request_response_redirect_guard_protocol(mode):
     import shutil
     import subprocess
