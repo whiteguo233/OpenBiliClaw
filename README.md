@@ -75,7 +75,7 @@
 
 3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok、Instagram 需在「设置 → 来源」中手动开启；使用已装插件的浏览器登录，插件默认包含两者站点访问权限。TikTok 未登录可发现公开视频，登录后由插件同步凭据用于关键词搜索；Instagram 可只读导入本人点赞、收藏和关注。两者均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。连接与许可要求见 [TikTok](docs/modules/tiktok.md)、[Instagram](docs/modules/instagram.md)。
 
-4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在设置里填后端地址即可连接同一后端。
+4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在新版 App 设置里点「扫码连接」即可导入同一后端；Web / 插件二维码可切换局域网、Tailscale、公网，详见[手机扫码连接](docs/mobile-connection.md)。
 
 不在同一局域网时，`OpenBiliClaw-mobile` 的 **Android / iOS 原生 App** 已内嵌 `tsnet`，电脑端
 也可让 OpenBiliClaw 自己加入同一 tailnet；Web / Linux / macOS / Windows Flutter 客户端不在
@@ -652,6 +652,14 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 - 🔧 **完全可控** — 同类型 LLM 可配置多个独立渠道，拖拽全局 / 模块故障切换链；也可直接编辑画像、写自定义 Skill
 
 ## 🏛️ 架构概览
+
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → /m/ Mobile Web
+  → native App scanner → saved backend + direct / embedded Tailscale transport
+```
 
 扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。
 

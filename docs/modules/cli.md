@@ -1,5 +1,9 @@
 # CLI 命令参考
 
+## 手机访问与有效监听参数（2026-10-26）
+
+`start`、`serve-api`、安装脚本与内部 `_run_api_server()` 默认均为 `0.0.0.0`；显式配置 / 启动覆盖继续有效。实际 host / port 提供给 `GET /api/qr-info`，因此非默认端口也能生成手机链接。没有新 CLI 命令或配置字段，扫码入口位于桌面 Web / 插件「手机版」，参见[连接说明](../mobile-connection.md)。
+
 > 所有已实现的 `openbiliclaw` CLI 命令。
 >
 > 当前 CLI 已统一使用 Rich 输出：

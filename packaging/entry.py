@@ -1215,7 +1215,7 @@ def main() -> None:
             print("[OpenBiliClaw] 迁移恢复后的数据目录已被另一后端使用；本次拒绝启动。")
             return
 
-    default_host = "127.0.0.1"
+    default_host = "0.0.0.0"
     default_port = 8420
     if runtime_config is not None:
         default_host = str(
@@ -1300,7 +1300,7 @@ def main() -> None:
         runtime_config = load_config()
         configure_logging(runtime_config, sweep_unmanaged=False)
         _reconcile_packaged_autostart(runtime_config)
-        default_host = str(getattr(runtime_config.api, "host", "127.0.0.1") or "127.0.0.1")
+        default_host = str(getattr(runtime_config.api, "host", "0.0.0.0") or "0.0.0.0")
         default_port = int(getattr(runtime_config.api, "port", 8420) or 8420)
         host = os.environ.get("OPENBILICLAW_HOST", "").strip() or default_host
         port = int(os.environ.get("OPENBILICLAW_PORT", "").strip() or str(default_port))
@@ -1352,6 +1352,9 @@ def main() -> None:
     import uvicorn
 
     app = create_app()
+    if getattr(app, "state", None) is not None:
+        app.state.api_listen_host = host
+        app.state.api_listen_port = port
     use_tray = _should_use_tray()
     config_kwargs = {"access_log": False} if use_tray else {}
     config = uvicorn.Config(app, host=host, port=port, log_level="info", **config_kwargs)

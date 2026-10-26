@@ -4,6 +4,10 @@
 
 ## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
+- 补充手机连接的[真实环境验证](verification/2026-10-27-mobile-connection-live.md)：实际监听、LAN / Tailscale 请求、真实 DOM 二维码与原生 / WebView 验收入口，并逐项保留真机权限、系统 IPv6 自连和公网未验证边界。
+
+- 手机扫码连接：桌面 Web / 插件可选择局域网、系统 Tailscale、应用内 Tailnet、公网或自定义地址；回环地址不再覆盖 LAN 探测，无可用地址时禁用二维码和复制。`/api/qr-info` 兼容新增实际监听参数与 Tailnet 地址，桌面包异常回退统一默认 `0.0.0.0`。配套原生 App 增加扫码保存 / 重连，应用内节点通过 URL 参数选择内嵌连接；二维码容量扩展到 271 字节。使用与未发布的双仓库联动边界见[手机扫码连接](mobile-connection.md)。
+
 - 与[硅基流动（SiliconFlow）](https://www.siliconflow.cn)达成技术合作：对方为项目提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估，后台任务不再占用用户自己的 API 预算。GitHub Pages 项目首页、文档站与中英文 README 同步展示「Powered by SiliconFlow」合作标识；合作不改变推荐逻辑与本地优先的数据边界，详见[技术合作伙伴](partners.md)。
 
 - 后端、桌面与扩展统一发布 `0.3.232`，同步版本文件、uv lock、项目首页及中英文 README。Chrome Web Store / Firefox AMO 使用本版本现有发布通道提审；桌面、扩展与 Docker 状态分别核验，结果见 [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md)。推荐导演仍默认关闭，Jev 中文质量待独立实测，本次发版不将实现或结构测试等同于模型质量认证。

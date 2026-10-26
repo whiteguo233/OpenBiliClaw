@@ -288,6 +288,14 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → /m/ Mobile Web
+  → native App scanner → saved backend + direct / embedded Tailscale transport
+```
+
+```text
 packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
                                → /web/assets/desktop-bundle.js?v=… → one defer request from /web
 shared sources / original asset paths → mobile / extension; no Node build or install/config changes

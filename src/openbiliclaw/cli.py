@@ -1246,7 +1246,7 @@ def _install_sigterm_cleanup_hook() -> Callable[[], None]:
     return _restore
 
 
-def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
+def _run_api_server(*, host: str = "0.0.0.0", port: int = 8420) -> None:
     """Run the local FastAPI service used by the browser extension."""
     import uvicorn
 
@@ -1269,6 +1269,9 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
     api_app = create_app()
     state = getattr(api_app, "state", None)
+    if state is not None:
+        state.api_listen_host = host
+        state.api_listen_port = port
     if bool(getattr(state, "degraded", False)):
         issues = []
         for issue in list(getattr(state, "degraded_issues", [])):

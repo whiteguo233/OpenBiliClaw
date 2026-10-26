@@ -75,11 +75,7 @@ import { initAuthControl } from "./popup-auth-control.js";
 import { initExtLogin } from "./popup-ext-login.js";
 import { clearPopupSession, readPopupSessionToken } from "./popup-device-auth.js";
 import { initAutostartControl } from "./popup-autostart-control.js";
-import {
-  createQrSvgMarkup,
-  getMobileQrViewState,
-  isLoopbackMobileHost,
-} from "./popup-qr.js";
+import { createQrSvgMarkup } from "./popup-qr.js";
 import {
   createSavedToggleRegistry,
   captureSavedFocus,
@@ -418,6 +414,8 @@ const elements = {
   openWebButton: document.getElementById("openWebButton"),
   starButton: document.getElementById("starButton"),
   starCount: document.getElementById("starCount"),
+  mobileQrNetwork: document.getElementById("mobileQrNetwork"),
+  mobileQrPublicUrl: document.getElementById("mobileQrPublicUrl"),
   mobileQrButton: document.getElementById("mobileQrButton"),
   mobileQrOverlay: document.getElementById("mobileQrOverlay"),
   mobileQrBack: document.getElementById("mobileQrBack"),
@@ -3951,50 +3949,31 @@ function bindStarButton() {
   void loadStarCount();
 }
 
+let mobileQrPanel = null;
+let mobileQrRequest = 0;
 async function renderMobileQrPanel() {
+  const connection = globalThis.OBCMobileConnection;
+  if (!connection) return;
+  if (!mobileQrPanel) mobileQrPanel = connection.createPanel({
+    network: elements.mobileQrNetwork, publicInput: elements.mobileQrPublicUrl,
+    canvas: elements.mobileQrCode, url: elements.mobileQrUrl, hint: elements.mobileQrHint,
+    actions: [elements.mobileQrCopy, elements.mobileQrOpen], qr: { createQrSvgMarkup },
+    onUrlChange: (url) => { currentMobileWebUrl = url; },
+  });
+  const request = ++mobileQrRequest;
+  mobileQrPanel.loading();
   const endpoint = await getBackendEndpointConfig();
-
-  // When the configured host is loopback, ask the lightweight QR endpoint
-  // for the server's detected LAN IP. Unlike the full readiness endpoint,
-  // this endpoint does not wait for embedding readiness before the QR code can be rendered.
-  let effectiveEndpoint = endpoint;
-  if (isLoopbackMobileHost(endpoint.host)) {
-    try {
-      const scheme = endpoint.scheme === "https" ? "https" : "http";
-      const urlHost = endpoint.host.includes(":") && !endpoint.host.startsWith("[")
-        ? `[${endpoint.host}]`
-        : endpoint.host;
-      const base = `${scheme}://${urlHost}:${endpoint.port}`;
-      const resp = await fetch(`${base}/api/qr-info`, { signal: AbortSignal.timeout(2000) });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.lan_ip && !isLoopbackMobileHost(data.lan_ip)) {
-          effectiveEndpoint = { ...endpoint, host: data.lan_ip };
-        }
-      }
-    } catch {
-      // QR-info fetch failed — fall through with original endpoint.
-    }
+  let info = {};
+  try {
+    // Always discover both LAN and Tailscale, including on a public backend.
+    const base = connection.endpointUrl(endpoint);
+    const resp = await fetch(`${base}/api/qr-info`, { signal: AbortSignal.timeout(10000), cache: "no-store" });
+    if (resp.ok) info = await resp.json();
+  } catch {
+    // A reachable configured address remains usable when discovery is unavailable.
   }
-
-  const view = getMobileQrViewState(effectiveEndpoint);
-  currentMobileWebUrl = view.url;
-
-  if (elements.mobileQrCode instanceof HTMLElement) {
-    try {
-      elements.mobileQrCode.innerHTML = createQrSvgMarkup(view.url);
-    } catch (err) {
-      elements.mobileQrCode.textContent = "二维码生成失败";
-      console.error("Failed to render mobile QR:", err);
-    }
-  }
-  if (elements.mobileQrUrl instanceof HTMLElement) {
-    elements.mobileQrUrl.textContent = view.url;
-  }
-  if (elements.mobileQrHint instanceof HTMLElement) {
-    elements.mobileQrHint.textContent = view.hint;
-    elements.mobileQrHint.dataset.tone = view.tone;
-  }
+  if (request !== mobileQrRequest) return;
+  mobileQrPanel.update({ endpoint, info });
 }
 
 async function openMobileQrPanel() {
@@ -4060,7 +4039,7 @@ function bindMobileQr() {
   if (elements.mobileQrOpen instanceof HTMLButtonElement) {
     elements.mobileQrOpen.addEventListener("click", async () => {
       if (!currentMobileWebUrl) await renderMobileQrPanel();
-      openMobileWebUrl(currentMobileWebUrl);
+      if (currentMobileWebUrl) openMobileWebUrl(currentMobileWebUrl);
     });
   }
 }

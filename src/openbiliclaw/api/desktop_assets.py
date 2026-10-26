@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 # fixtures. This manifest must match the desktop HTML's dependency order.
 DESKTOP_SCRIPTS = (
     "/web/assets/js/mobile-qr.js",
+    "/shared/mobile-connection.js",
     "/web/assets/js/pending-actions.js",
     "/web/assets/js/saved-sync-core.js",
     "/shared/dialogue-confirmation.js",

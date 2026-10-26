@@ -48,7 +48,7 @@ def test_app_js_keeps_loopback_lan_ip_fallback() -> None:
     assert "ENDPOINTS.qrInfo" in body, "must ask the lightweight QR endpoint for its LAN IP"
     assert "ENDPOINTS.health" not in body, "QR drawer must not trigger readiness/embedding probes"
     assert "lan_ip" in body
-    assert "isLoopbackMobileHost" in body, "must warn when only a loopback address is available"
+    assert 'connection.hostKind(typedHost) !== "unavailable"' in body
     assert 'safeBind("#mobileQrBtn"' in _APP_JS
     assert 'safeBind("#mobileQrCopyBtn"' in _APP_JS
 
@@ -61,9 +61,9 @@ def test_mobile_qr_preserves_https_public_origin() -> None:
     body = _APP_JS.split("async function openMobileQrDrawer", 1)[1].split(
         'safeBind("#profileBtn"', 1
     )[0]
-    assert "pageHostIsReachable" in body
+    assert "mobileQrPanel.update" in body
     assert 'window.location.protocol === "https:" ? "https" : "http"' in body
-    assert "pageHostIsReachable ? def.host" in body
+    assert "? typedHost : def.host" in body
     assert "typedPort || def.port" in body
 
 
@@ -78,9 +78,9 @@ def test_mobile_qr_manual_backend_override_wins_over_lan_ip_and_origin() -> None
     body = _APP_JS.split("async function openMobileQrDrawer", 1)[1].split(
         'safeBind("#profileBtn"', 1
     )[0]
-    host_line = "const host = typedHost || (pageHostIsReachable ? def.host : (lanIp || def.host));"
-    assert host_line in body
-    assert "const port = typedPort || def.port;" in body
+    assert "const host = savedHostIsReachable ? typedHost : def.host;" in body
+    assert 'connection.hostKind(typedHost) !== "unavailable"' in body
+    assert "typedPort || def.port" in body
 
 
 def test_mobile_qr_drawer_requeries_lan_ip_on_every_open() -> None:

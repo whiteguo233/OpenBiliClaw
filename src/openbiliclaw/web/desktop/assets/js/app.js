@@ -13352,52 +13352,39 @@ ${cardFeedbackBarHtml()}`;
         window.setTimeout(() => { callout.hidden = true; }, 15000);
       }
     }
+    let mobileQrPanel = null;
+    let mobileQrRequest = 0;
     async function openMobileQrDrawer() {
       markMobileQrSeen();
       openPanel("mobileQrDrawer");
-      const canvas = $("#mobileQrCanvas");
-      const urlEl = $("#mobileQrUrl");
-      const hintEl = $("#mobileQrHint");
-      const qr = window.OBCMobileQr;
-      if (!canvas || !urlEl || !hintEl || !qr) return;
-      canvas.textContent = "";
-      urlEl.textContent = "正在获取局域网地址…";
-      hintEl.hidden = true;
-      hintEl.textContent = "";
-      // The backend knows its own LAN IP; the page host may be 127.0.0.1,
-      // which a phone cannot reach. Always re-query on open: the address moves
-      // when the user switches Wi-Fi or plugs in a dongle, and a sticky cache
-      // would keep encoding an unreachable host until a full page reload. The
-      // page-load prefetch is only a fallback for when this request fails.
-      const freshLanIp = String((await requestJson(ENDPOINTS.qrInfo))?.lan_ip || "").trim();
-      if (freshLanIp) _cachedLanIp = freshLanIp;
-      const lanIp = freshLanIp || _cachedLanIp;
+      const connection = window.OBCMobileConnection;
+      if (!connection || !window.OBCMobileQr) return;
+      if (!mobileQrPanel) mobileQrPanel = connection.createPanel({
+        network: $("#mobileQrNetwork"), publicInput: $("#mobileQrPublicUrl"),
+        canvas: $("#mobileQrCanvas"), url: $("#mobileQrUrl"), hint: $("#mobileQrHint"),
+        actions: [$("#mobileQrCopyBtn")], qr: window.OBCMobileQr,
+      });
+      mobileQrPanel.loading();
+      const request = ++mobileQrRequest;
+      // Fresh discovery on every open; a successful empty result clears stale Wi-Fi data.
+      const info = await requestJson(ENDPOINTS.qrInfo);
+      if (request !== mobileQrRequest) return;
+      if (info) _cachedLanIp = String(info.lan_ip || "");
       const def = locationApiDefault();
       const typedHost = (storageGet("openbiliclaw.webui.backendHost") || "").trim();
       const typedPort = (storageGet("openbiliclaw.webui.backendPort") || "").trim();
-      // A non-loopback page origin is already the address that reached this
-      // backend (including a public HTTPS gateway). Keep that origin instead
-      // of replacing it with the backend's private LAN IP. An explicitly
-      // configured backend address always wins, so users on campus networks
-      // with AP/client isolation can point the QR at a reachable IP or tunnel
-      // domain instead of the auto-detected LAN IP. Loopback pages still need
-      // the LAN-IP fallback when no manual address is configured.
-      const pageHostIsReachable = !qr.isLoopbackMobileHost(def.host);
-      const host = typedHost || (pageHostIsReachable ? def.host : (lanIp || def.host));
-      const port = typedPort || def.port;
-      const scheme = window.location.protocol === "https:" ? "https" : "http";
-      const url = qr.buildMobileWebUrl({ scheme, host, port });
-      urlEl.textContent = url;
-      if (qr.isLoopbackMobileHost(host)) {
-        hintEl.textContent =
-          "没拿到局域网 IP（后端可能只监听了本机地址）。手机打不开本机地址：请用 --host 0.0.0.0 启动后端，或手动把地址里的 127.0.0.1 换成电脑的局域网 IP。";
-        hintEl.hidden = false;
-      }
-      try {
-        canvas.innerHTML = qr.createQrSvgMarkup(url);
-      } catch {
-        canvas.textContent = "二维码生成失败，请直接复制上方链接。";
-      }
+      const savedHostIsReachable = typedHost && connection.hostKind(typedHost) !== "unavailable";
+      const host = savedHostIsReachable ? typedHost : def.host;
+      const pageHostIsReachable = connection.hostKind(def.host) !== "unavailable";
+      const port = pageHostIsReachable && !savedHostIsReachable ? def.port : typedPort || def.port;
+      const pagePrefix = String(window.location.pathname || "")
+        .replace(/\/web(?:\/index\.html)?\/?$/, "").replace(/\/+$/, "");
+      mobileQrPanel.update({
+        endpoint: { host, port,
+          basePath: host === def.host ? pagePrefix : "",
+          scheme: window.location.protocol === "https:" ? "https" : "http" },
+        info: info || {},
+      });
     }
     safeBind("#mobileQrBtn", "click", () => { closeSideDrawer(); void openMobileQrDrawer(); });
     safeBind("#mobileQrCalloutOpen", "click", () => { closeSideDrawer(); void openMobileQrDrawer(); });

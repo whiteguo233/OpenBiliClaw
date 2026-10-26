@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
   <script src="/web/assets/js/mobile-qr.js" defer></script>
+  <script src="/shared/mobile-connection.js" defer></script>
   <script src="/web/assets/js/pending-actions.js" defer></script>
   <script src="/web/assets/js/saved-sync-core.js" defer></script>
   <!-- Frontend helpers shared with the extension side panel (and, for source
@@ -1933,7 +1934,13 @@
     <div class="scrim" data-close="mobileQrDrawer"></div>
     <div class="drawer-panel mobile-qr-panel">
       <div class="drawer-head"><div><p class="eyebrow">Mobile web</p><h2>手机上也能用</h2></div><button class="icon-btn" data-close="mobileQrDrawer" type="button">×</button></div>
-      <p class="video-meta mobile-qr-lead">推荐点开直接拉起 B站 / 小红书等 App，躺着刷更顺手。</p>
+      <p class="video-meta mobile-qr-lead">相机打开网页版；App「扫码连接」填入后端。</p>
+      <label class="mobile-connection-field" for="mobileQrNetwork">连接网络
+        <select id="mobileQrNetwork" aria-describedby="mobileQrHint"></select>
+      </label>
+      <label class="mobile-connection-field" for="mobileQrPublicUrl">公网 / 自定义访问地址（可选）
+        <input id="mobileQrPublicUrl" type="url" placeholder="https://obc.example.com" autocomplete="off" spellcheck="false">
+      </label>
       <div class="mobile-qr-card">
         <div class="mobile-qr-canvas" id="mobileQrCanvas" aria-live="polite"></div>
         <code class="mobile-qr-url" id="mobileQrUrl"></code>
@@ -1942,8 +1949,8 @@
         </div>
       </div>
       <ol class="mobile-qr-steps" aria-label="使用步骤">
-        <li><span class="step-num">1</span>手机和这台电脑连同一个 WiFi</li>
-        <li><span class="step-num">2</span>用相机或浏览器扫码打开</li>
+        <li><span class="step-num">1</span>选择手机可访问的局域网、Tailscale 或公网地址</li>
+        <li><span class="step-num">2</span>用相机打开网页版，或在 App 设置中点「扫码连接」</li>
         <li><span class="step-num">3</span>「添加到主屏幕」，下次像 App 一样直接开</li>
       </ol>
       <p class="mobile-qr-hint" id="mobileQrHint" hidden></p>

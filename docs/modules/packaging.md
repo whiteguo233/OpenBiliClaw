@@ -1,5 +1,14 @@
 # Desktop packaging
 
+## Phone access defaults (2026-10-26)
+
+| Feature | Status | Contract |
+| --- | --- | --- |
+| Consistent listener default | Implemented | Normal config and recovery fallbacks use `0.0.0.0`; explicit configured or `OPENBILICLAW_HOST` loopback bindings are preserved. |
+| Effective QR port | Implemented | The packaged entry records its effective host / port on FastAPI state before serving `/api/qr-info`, including `OPENBILICLAW_PORT` overrides. |
+
+The bundled desktop Web offers LAN, Tailscale and public scan targets. A browser opens `/m/`; the companion App can import the same URL. No packaging dependency or signing change; details: [phone connections](../mobile-connection.md).
+
 ## Implemented features
 
 | Feature | Status | Contract |

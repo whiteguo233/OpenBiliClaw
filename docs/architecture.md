@@ -2,6 +2,14 @@
 
 ## 系统概览
 
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → /m/ Mobile Web
+  → native App scanner → saved backend + direct / embedded Tailscale transport
+```
+
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text

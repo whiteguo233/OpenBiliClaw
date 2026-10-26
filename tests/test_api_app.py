@@ -3158,7 +3158,7 @@ class TestBackendAPI:
         response = client.get("/api/qr-info")
 
         assert response.status_code == 200
-        assert response.json() == {"lan_ip": "192.168.1.7"}
+        assert response.json()["lan_ip"] == "192.168.1.7"
 
     def test_qr_info_endpoint_stays_available_in_degraded_mode(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3177,7 +3177,7 @@ class TestBackendAPI:
         response = client.get("/api/qr-info")
 
         assert response.status_code == 200
-        assert response.json() == {"lan_ip": "192.168.1.7"}
+        assert response.json()["lan_ip"] == "192.168.1.7"
 
     def test_qr_info_endpoint_detects_lan_ip_fresh_on_every_call(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3201,8 +3201,8 @@ class TestBackendAPI:
         first = client.get("/api/qr-info")
         second = client.get("/api/qr-info")
 
-        assert first.json() == {"lan_ip": "192.168.1.7"}
-        assert second.json() == {"lan_ip": "192.168.31.98"}
+        assert first.json()["lan_ip"] == "192.168.1.7"
+        assert second.json()["lan_ip"] == "192.168.31.98"
         # The fresh probe also refreshes the cache /api/health serves, so health
         # never regresses to the superseded address (a third _detect_lan_ip call
         # would exhaust the iterator and raise).

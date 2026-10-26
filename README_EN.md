@@ -61,6 +61,8 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 
 ## Quick Start
 
+Phone connections: Desktop Web / extension **Mobile** offers LAN, Tailscale and public QR links. The updated companion App can **Scan to connect**; phone cameras open Mobile Web. See [connection guide](docs/mobile-connection.md) for the coordinated backend / App update.
+
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
@@ -649,6 +651,14 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
+
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → /m/ Mobile Web
+  → native App scanner → saved backend + direct / embedded Tailscale transport
+```
 
 Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).
 

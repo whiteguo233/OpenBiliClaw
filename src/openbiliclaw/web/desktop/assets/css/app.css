@@ -388,8 +388,14 @@
     /* The QR share is a compact focused task — a centered dialog, not a
        full-height side sheet with dead space below the content. Doubled
        class beats the later-declared .drawer-panel base (right sheet). */
-    .drawer-panel.mobile-qr-panel { right: auto; left: 50%; top: 50%; translate: -50% -50%; width: min(420px, calc(100% - 32px)); height: auto; max-height: calc(100vh - 48px); border-radius: 28px; }
+    .drawer-panel.mobile-qr-panel { right: auto; bottom: auto; left: 50%; top: 50%; translate: -50% -50%; width: min(420px, calc(100% - 32px)); height: auto; max-height: calc(100vh - 48px); border-radius: 28px; }
     .mobile-qr-lead { margin: 0 0 var(--space-4); }
+    .mobile-qr-panel .drawer-head h2 { font-size: 32px; }
+    .mobile-connection-field { display: grid; gap: 6px; margin: 0 0 14px; font-size: 13px; color: var(--fg-2); }
+    .mobile-connection-field select, .mobile-connection-field input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--fg); font: inherit; }
+    .mobile-connection-field select { cursor: pointer; }
+    .mobile-connection-field :focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+    .mobile-qr-hint[data-tone="info"] { color: var(--fg-2); background: var(--surface); border-color: var(--border); }
     .mobile-qr-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-5); padding: var(--space-6) var(--space-5) var(--space-5); border: 1px solid var(--border-soft); border-radius: 20px; background: var(--surface); box-shadow: var(--elev-ring); }
     .mobile-qr-canvas svg { display: block; width: 188px; height: 188px; border-radius: 10px; }
     .mobile-qr-url { display: inline-block; max-width: 100%; padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg); font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-2); word-break: break-all; text-align: center; }
