@@ -164,3 +164,12 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
+
+### 可选赞助结构任务（默认关闭、未发布）
+
+```text
+consolidation input -> IPC v2 -> private fixed-task Runtime -> SiliconFlow HTTPS
+other tasks --------> configured BYOK / Ollama
+```
+
+签名策略携带 canonical system Prompt；Runtime 固定渲染 user Prompt，请求不能传任意消息、模型或目标地址。见[协议](plans/2026-10-27-sponsored-fixed-tasks.md)。

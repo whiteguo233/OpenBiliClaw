@@ -106,12 +106,9 @@ class SponsoredProvider:
     ) -> LLMResponse:
         """Run one Sponsored task and return the standardized response.
 
-        Object-schema contracts serialize ``user_payload`` to canonical JSON.
-        String-schema contracts (the pilot) require ``user_text`` so the caller
-        can send the unchanged legacy prompt message. ``system_prompt`` is
-        optional and exists for tests and drift checks; production callers must
-        omit it so the contract's canonical prompt is the only prompt the
-        runtime ever sees.
+        Fixed v2 tasks send only structured input. Optional user_text and
+        system_prompt are local drift checks against the legacy builder;
+        neither can override the runtime's signed/fixed renderer.
         """
 
         contract = self._resolve_contract(
@@ -138,11 +135,7 @@ class SponsoredProvider:
                 "id": request_id,
                 "task_id": contract.task_id,
                 "contract_version": contract.contract_version,
-                "messages": [
-                    {"role": "system", "content": contract.system_prompt},
-                    {"role": "user", "content": payload_text},
-                ],
-                "requested": {"max_tokens": contract.max_output_tokens},
+                "input": json.loads(payload_text),
             }
 
             try:
@@ -218,7 +211,11 @@ class SponsoredProvider:
     ) -> SponsoredTaskContract:
         by_task = self._registry.get(task_id) if task_id else None
         by_caller = self._registry.resolve_caller(caller) if caller else None
-        if by_task is None and by_caller is None:
+        if (
+            (task_id and by_task is None)
+            or (caller and by_caller is None)
+            or (by_task is None and by_caller is None)
+        ):
             raise SponsoredUnsupportedTaskError(
                 "task is not present in the sponsored policy",
                 task_id=task_id or caller,
@@ -243,32 +240,36 @@ class SponsoredProvider:
         contract: SponsoredTaskContract,
         user_text: str | None = None,
     ) -> str:
-        schema_type = contract.request_schema.get("type")
-        if schema_type == "string":
-            if not isinstance(user_text, str) or not user_text.strip():
-                raise SponsoredContractMismatchError(
-                    "string-schema sponsored task requires a non-empty user_text",
-                    task_id=contract.task_id,
+        from .consolidation_prompt import render_consolidation_user
+        from .sponsored_tasks import validate_task_input
+
+        if contract.task_id != "soul.consolidation" or contract.contract_version != 2:
+            raise SponsoredUnsupportedTaskError(
+                "unsupported fixed task/version", task_id=contract.task_id
+            )
+        try:
+            data = dict(payload)
+            text = json.dumps(
+                data, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False
+            )
+            if len(text.encode("utf-8")) > contract.max_input_bytes:
+                raise SponsoredRequestTooLargeError(
+                    "task input exceeds budget", task_id=contract.task_id
                 )
-            text = user_text
-        else:
-            if not isinstance(payload, Mapping):
-                raise SponsoredContractMismatchError(
-                    "sponsored user payload must be a JSON object",
-                    task_id=contract.task_id,
+            # Check the exact JSON representation that crosses the IPC boundary.
+            data = json.loads(text)
+            validate_task_input(data)
+            canonical_user = render_consolidation_user(**data)
+            if len(canonical_user.encode("utf-8")) > contract.max_input_bytes:
+                raise SponsoredRequestTooLargeError(
+                    "rendered input exceeds budget", task_id=contract.task_id
                 )
-            try:
-                text = json.dumps(
-                    dict(payload),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-            except (TypeError, ValueError) as exc:
-                raise SponsoredContractMismatchError(
-                    f"sponsored user payload is not JSON-serializable: {exc}",
-                    task_id=contract.task_id,
-                ) from exc
+            if user_text is not None and user_text != canonical_user:
+                raise ValueError("caller text differs from the fixed task renderer")
+        except (TypeError, ValueError, KeyError) as exc:
+            raise SponsoredContractMismatchError(
+                "invalid fixed task input", task_id=contract.task_id
+            ) from exc
         if len(text.encode("utf-8")) > contract.max_input_bytes:
             raise SponsoredRequestTooLargeError(
                 "sponsored user payload exceeds the contract input budget",
@@ -297,7 +298,7 @@ class SponsoredProvider:
                 self._stderr_task = asyncio.create_task(self._drain_stderr(process.stderr))
             try:
                 await self._handshake(process)
-            except SponsoredUnavailableError:
+            except (SponsoredUnavailableError, SponsoredContractMismatchError):
                 await self._stop_process()
                 raise
             except SponsoredError as exc:
@@ -329,6 +330,14 @@ class SponsoredProvider:
         ):
             raise SponsoredUnavailableError(
                 "runtime handshake was rejected (protocol/policy mismatch)"
+            )
+        contracts = hello.get("contracts")
+        if not isinstance(contracts, Mapping) or any(
+            contracts.get(contract.policy_key) != contract.system_prompt_sha256
+            for contract in self._registry
+        ):
+            raise SponsoredContractMismatchError(
+                "runtime policy does not match Core prompt contracts"
             )
         try:
             self._policy_version = int(hello.get("policy_version") or 0)
@@ -412,11 +421,7 @@ def _coerce_usage(raw: Any) -> dict[str, int] | None:
             usage[normalized_key] = int(value)
         except (TypeError, ValueError):
             continue
-    if (
-        "prompt_tokens" in usage
-        and "completion_tokens" in usage
-        and "total_tokens" not in usage
-    ):
+    if "prompt_tokens" in usage and "completion_tokens" in usage and "total_tokens" not in usage:
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
     return usage or None
 

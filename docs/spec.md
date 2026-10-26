@@ -285,6 +285,14 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
+可选赞助通道（默认关闭、未发布）：`画像合并结构数据 → IPC v2 → 私有固定任务 Runtime → SiliconFlow`；Runtime 从签名策略读取 system Prompt、按固定 renderer 构造旧 user Prompt；请求不能覆盖模型或 URL。协议见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。
+
+```text
+Core consolidation input -> IPC v2 -> fixed task + signed prompt -> SiliconFlow
+Core other tasks --------> configured BYOK / Ollama
+```
+
+
 ```text
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker

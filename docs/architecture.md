@@ -5,6 +5,10 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+pure consolidation_prompt -> business builder + sponsored registry (no SDK bootstrap)
+optional sponsored (default off): consolidation input -> framed IPC v2 -> private fixed-task runtime -> SiliconFlow
+                                  signed system + fixed renderer; no caller messages/HTTP overrides
+
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory

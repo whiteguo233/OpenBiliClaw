@@ -88,6 +88,12 @@ class SponsoredLedgerTamperedError(SponsoredError):
     code = "LEDGER_TAMPERED"
 
 
+class SponsoredPolicyInvalidError(SponsoredError):
+    """Signed policy is invalid or expired; sponsor must stop."""
+
+    code = "POLICY_INVALID"
+
+
 class SponsoredUpstreamError(SponsoredError):
     """SiliconFlow transport/5xx/failure after bounded retries."""
 
@@ -114,6 +120,7 @@ _ERROR_TYPES: dict[str, type[SponsoredError]] = {
         SponsoredLedgerTamperedError,
         SponsoredUpstreamError,
         SponsoredProtocolError,
+        SponsoredPolicyInvalidError,
     )
 }
 

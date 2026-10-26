@@ -87,3 +87,5 @@
 
 - [贡献指南](contributing.md) — 环境搭建、代码规范、文档更新要求
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
+
+- [Sponsored 固定任务 IPC v2（默认关闭、未发布）](plans/2026-10-27-sponsored-fixed-tasks.md) · [验收记录](testing/2026-10-27-sponsored-fixed-tasks.md)

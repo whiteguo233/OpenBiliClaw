@@ -1628,3 +1628,7 @@ $ openbiliclaw db-repair
 ### Stub 命令的输出约定
 
 当前仍是 stub 的命令会统一使用”开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
+
+### 画像合并的可选赞助协议
+
+`profile-consolidate` 参数保持不变。启用配套 Sponsored Runtime 时，后端将簇数据通过 IPC v2 发送为固定 soul.consolidation.v2 请求，默认仍走用户配置的模型。离线 `scripts/generate_sponsored_policy.py` 生成含 canonical system_prompt/hash 的无 Key 策略，需由私有发行流程签名；旧 v1 Runtime 不能混用。见[协议](../plans/2026-10-27-sponsored-fixed-tasks.md)。

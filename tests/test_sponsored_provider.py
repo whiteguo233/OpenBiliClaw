@@ -29,7 +29,10 @@ MOCK_RUNTIME_COMMAND = (
     "openbiliclaw.llm.sponsored_mock_runtime",
 )
 VALID_PAYLOAD = {"likes_clusters": [], "dislikes_clusters": []}
-VALID_USER_TEXT = "<likes_clusters>[]</likes_clusters>\n<dislikes_clusters>[]</dislikes_clusters>"
+VALID_USER_TEXT = (
+    "<likes_clusters>\n\n[]\n\n</likes_clusters>\n\n"
+    "<dislikes_clusters>\n\n[]\n\n</dislikes_clusters>"
+)
 
 
 async def test_execute_task_success() -> None:

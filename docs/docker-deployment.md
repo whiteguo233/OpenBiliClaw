@@ -507,3 +507,7 @@ curl -s http://127.0.0.1:8420/api/health | python -m json.tool
 ```
 
 v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。
+
+### 可选 Sponsored Runtime 协议兼容
+
+源码/AI 安装与 Docker 默认保持 `[llm.sponsored].enabled=false`，不引入私有二进制或 Rust 构建依赖。可选正式 bundle 需与 IPC v2 Core、签名 Policy 成套使用；旧 v1 不兼容，禁止用生产 `--public-key`/`--mock` 等开关放宽校验。桌面 bundle 的签名/公证和安装更新接入仍需发行验证；本分支不会自动启用赞助。见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。

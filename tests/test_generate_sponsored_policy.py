@@ -43,11 +43,8 @@ def test_generator_writes_signed_ready_policy(tmp_path: Path) -> None:
     assert policy["policy_version"] == 3
     assert policy["keys"] == []
     assert policy["core"] == {"min": "0.4.0", "max": "0.4.*"}
-    assert set(policy["tasks"]) == {"soul.consolidation.v1"}
-    assert (
-        policy["tasks"]["soul.consolidation.v1"]["model"]
-        == "THUDM/GLM-4-9B-0414"
-    )
+    assert set(policy["tasks"]) == {"soul.consolidation.v2"}
+    assert policy["tasks"]["soul.consolidation.v2"]["model"] == "THUDM/GLM-4-9B-0414"
 
 
 def test_generator_check_ignores_timestamps(tmp_path: Path) -> None:
@@ -91,7 +88,7 @@ def test_generator_check_fails_on_policy_drift(tmp_path: Path) -> None:
     )
 
     policy = json.loads(output.read_text(encoding="utf-8"))
-    policy["tasks"]["soul.consolidation.v1"]["system_prompt_sha256"] = "sha256:tampered"
+    policy["tasks"]["soul.consolidation.v2"]["system_prompt_sha256"] = "sha256:tampered"
     output.write_text(json.dumps(policy), encoding="utf-8")
 
     result = _run("--check", "--output", str(output))

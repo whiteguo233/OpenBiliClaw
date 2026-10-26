@@ -19,7 +19,7 @@ from .sponsored_errors import SponsoredProtocolError
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 _LENGTH_STRUCT = struct.Struct(">I")
 

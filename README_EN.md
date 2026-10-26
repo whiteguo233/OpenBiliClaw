@@ -636,6 +636,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
+Optional sponsored path (off by default, unreleased): `consolidation data → IPC v2 → private fixed-task runtime → SiliconFlow`. Requests carry bounded data; the runtime preserves the BYOK prompt and rejects arbitrary messages or HTTP overrides. [Protocol](docs/plans/2026-10-27-sponsored-fixed-tasks.md).
+
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:

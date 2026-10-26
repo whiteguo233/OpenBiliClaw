@@ -185,6 +185,7 @@ cache_low_watermark = 0.7
 # 官方发行版内置的 Sponsored Runtime。开源源码部署请保持 enabled=false。
 # 官方安装包把 runtime_path 指向包内的 obc-sponsored-runtime；该进程持有
 # SiliconFlow Sponsored Key，并按签名 policy 限制任务/模型/额度，只回退不中转。
+# IPC v2：当前仅画像合并固定结构请求；需匹配 v2 Runtime/签名 Policy，源码默认关闭。
 [llm.sponsored]
 enabled = false
 # 可执行文件路径或命令行（支持带参数）。为空 = Sponsored 不可用，完全走 BYOK/Ollama。

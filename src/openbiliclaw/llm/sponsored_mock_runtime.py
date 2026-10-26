@@ -1,6 +1,6 @@
 """Deterministic fake Sponsored Runtime used by tests and community builds.
 
-It implements the same v1 IPC protocol and performs the same local contract
+It implements the same v2 IPC protocol and performs the same local contract
 checks as the closed-source runtime, but has no network client and no API key.
 Run it as::
 
@@ -20,7 +20,10 @@ import json
 import os
 import sys
 import time
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 from typing import Any
 
 from .sponsored_protocol import PROTOCOL_VERSION, read_frame, write_frame
@@ -64,35 +67,24 @@ def _validate_execute(frame: Mapping[str, Any]) -> tuple[str, str, str]:
     if contract_version != contract.contract_version:
         raise ValueError("UNSUPPORTED_TASK")
 
-    messages = frame.get("messages")
-    if not isinstance(messages, list) or len(messages) != 2:
-        raise ValueError("CONTRACT_MISMATCH")
-    system_message, user_message = messages
-    if not isinstance(system_message, Mapping) or not isinstance(user_message, Mapping):
-        raise ValueError("CONTRACT_MISMATCH")
-    if system_message.get("role") != "system" or user_message.get("role") != "user":
-        raise ValueError("CONTRACT_MISMATCH")
-    if system_message.get("content") != contract.system_prompt:
-        raise ValueError("CONTRACT_MISMATCH")
+    from .consolidation_prompt import render_consolidation_user
+    from .sponsored_tasks import validate_task_input
 
-    user_text = user_message.get("content")
-    if not isinstance(user_text, str):
+    if set(frame) != {"type", "id", "task_id", "contract_version", "input"}:
         raise ValueError("CONTRACT_MISMATCH")
-    if len(user_text.encode("utf-8")) > contract.max_input_bytes:
-        raise ValueError("REQUEST_TOO_LARGE")
-    if contract.request_schema.get("type") == "string":
-        if not user_text.strip():
-            raise ValueError("CONTRACT_MISMATCH")
-        return contract.task_id, user_text, contract.model
-    try:
-        payload = json.loads(user_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError("CONTRACT_MISMATCH") from exc
+    payload = frame.get("input")
     if not isinstance(payload, dict):
         raise ValueError("CONTRACT_MISMATCH")
-    required = contract.request_schema.get("required")
-    if isinstance(required, list) and any(key not in payload for key in required):
-        raise ValueError("CONTRACT_MISMATCH")
+    try:
+        encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+        if len(encoded.encode("utf-8")) > contract.max_input_bytes:
+            raise ValueError("REQUEST_TOO_LARGE")
+        validate_task_input(payload)
+        user_text = render_consolidation_user(**payload)
+    except (TypeError, KeyError, ValueError) as exc:
+        if str(exc) == "REQUEST_TOO_LARGE":
+            raise
+        raise ValueError("CONTRACT_MISMATCH") from exc
     return contract.task_id, user_text, contract.model
 
 
@@ -128,6 +120,7 @@ def main() -> int:
             "runtime": MOCK_RUNTIME_VERSION,
             "core": str(hello.get("core") or ""),
             "policy_version": policy_version,
+            "contracts": {c.policy_key: c.system_prompt_sha256 for c in DEFAULT_SPONSORED_REGISTRY},
         },
     )
 

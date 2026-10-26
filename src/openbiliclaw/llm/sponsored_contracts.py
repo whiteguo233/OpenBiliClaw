@@ -80,9 +80,7 @@ class SponsoredTaskContract:
             if self.request_schema.get("minLength", 1) < 1:
                 raise SponsoredContractError("string request_schema must require content")
         else:
-            raise SponsoredContractError(
-                "request_schema must describe a JSON object or string"
-            )
+            raise SponsoredContractError("request_schema must describe a JSON object or string")
         if self.max_input_bytes <= 0:
             raise SponsoredContractError("max_input_bytes must be positive")
         if self.max_output_tokens <= 0:
@@ -119,6 +117,7 @@ class SponsoredTaskContract:
         """Return the signed-policy representation of this contract."""
 
         policy_task: dict[str, Any] = {
+            "system_prompt": self.system_prompt,
             "system_prompt_sha256": self.system_prompt_sha256,
             "message_topology": list(self.message_topology),
             "input_schema": dict(self.request_schema),

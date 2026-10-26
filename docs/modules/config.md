@@ -436,6 +436,8 @@ multimodal_enabled = true   # 封面 image-only 向量；与文本同一空间
 
 官方发行版内置的 **Sponsored Runtime**（`obc-sponsored-runtime`，闭源私有组件）。开源源码部署保持 `enabled=false`，完全走 BYOK / Ollama；官方安装包把 `runtime_path` 指向包内二进制，运行时持有 SiliconFlow Sponsored Key，并按签名 policy 限制 task / schema / model / token 与 per-install 配额。
 
+当前配套协议为 IPC v2 / soul.consolidation.v2，Core 与 Runtime 必须一起升级。原 v1 消息入口已关闭；默认开关与回退配置不变。
+
 核心边界：Sponsored 只接受 OpenBiliClaw 已定义的结构化后台任务，不提供通用 Chat；Prompt、画像、推荐数据**直连 SiliconFlow**，不经过 OpenBiliClaw 项目方服务器；Runtime 无端口、无遥测、默认不记录 Prompt/响应。
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -451,7 +453,7 @@ multimodal_enabled = true   # 封面 image-only 向量；与文本同一空间
 ```toml
 [llm.sponsored]
 enabled = true
-runtime_path = "/Applications/OpenBiliClaw.app/Contents/Resources/obc-sponsored-runtime"
+runtime_path = "/opt/openbiliclaw/sponsored/obc-sponsored-runtime --policy /opt/openbiliclaw/sponsored/sponsored-policy.json --signature /opt/openbiliclaw/sponsored/sponsored-policy.sig"
 fallback_to_user_provider = true
 notify_on_fallback = true
 request_timeout_seconds = 180.0

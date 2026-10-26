@@ -59,13 +59,13 @@ def test_pilot_contract_resolves_from_caller() -> None:
     contract = DEFAULT_SPONSORED_REGISTRY.resolve_caller("soul.consolidation")
     assert contract is not None
     assert contract.task_id == "soul.consolidation"
-    assert contract.policy_key == "soul.consolidation.v1"
+    assert contract.policy_key == "soul.consolidation.v2"
     assert DEFAULT_SPONSORED_REGISTRY.resolve_caller("general.chat") is None
 
 
-def test_pilot_schema_accepts_legacy_text_payload() -> None:
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "string"
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["minLength"] == 1
+def test_pilot_schema_requires_closed_structured_input() -> None:
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "object"
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["additionalProperties"] is False
 
 
 def test_pilot_output_budget_matches_legacy_flow() -> None:
@@ -134,14 +134,14 @@ def test_unsigned_policy_is_deterministic_and_complete() -> None:
     assert policy["keys"] == []
     assert policy["core"] == {"min": "0.4.0", "max": "0.4.*"}
 
-    task = policy["tasks"]["soul.consolidation.v1"]
+    task = policy["tasks"]["soul.consolidation.v2"]
     assert task["system_prompt_sha256"] == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
     assert task["message_topology"] == ["system", "user"]
     assert task["model"] == "THUDM/GLM-4-9B-0414"
     assert task["response_format"] == "json_object"
     assert task["limits"] == {"daily_requests": 200, "daily_tokens": 500_000}
-    assert task["input_schema"]["type"] == "string"
-    assert task["input_schema"]["minLength"] == 1
+    assert task["input_schema"]["type"] == "object"
+    assert task["input_schema"]["additionalProperties"] is False
 
     again = build_unsigned_policy(
         DEFAULT_SPONSORED_REGISTRY,

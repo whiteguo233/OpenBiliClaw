@@ -19,9 +19,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .consolidation_prompt import CONSOLIDATION_SYSTEM_PROMPT
 from .json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from .prompt_contracts import ensure_json_mode_contract
-from .prompts import build_profile_consolidation_prompt
 from .sponsored_contracts import SponsoredContractRegistry, SponsoredTaskContract
 
 # Free-only sponsorship constraint: the policy must use a model that costs
@@ -51,32 +51,108 @@ CONSOLIDATION_DAILY_REQUESTS = 200
 CONSOLIDATION_DAILY_TOKENS = 500_000
 
 
-# Sponsored v1 for this pilot sends the *legacy* tag-wrapped user message
-# unchanged. The runtime cannot re-derive that text without embedding prompt
-# logic in Rust, so the contract validates it as a size-bounded string while
-# still pinning the canonical system-prompt hash and task whitelist.
-SOUL_CONSOLIDATION_REQUEST_SCHEMA: dict[str, Any] = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "OpenBiliClaw sponsored request: soul.consolidation.v1 (legacy text)",
-    "type": "string",
-    "minLength": 1,
+# Closed field sets: the runtime validates the same fixed structure independently.
+_PAIR = {
+    "type": "array",
+    "minItems": 2,
+    "maxItems": 2,
+    "items": {"type": "string", "minLength": 1, "maxLength": 512},
+}
+_MEMBER = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "weight", "category"],
+    "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 256},
+        "weight": {"type": "number", "minimum": -1_000_000, "maximum": 1_000_000},
+        "category": {"type": "string", "maxLength": 128},
+    },
 }
 
 
+def _cluster_schema(member: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["cluster_id", "known_distinct_pairs", "members"],
+        "properties": {
+            "cluster_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "known_distinct_pairs": {"type": "array", "maxItems": 128, "items": _PAIR},
+            "members": {"type": "array", "minItems": 2, "maxItems": 128, "items": member},
+        },
+    }
+
+
+SOUL_CONSOLIDATION_REQUEST_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "OpenBiliClaw fixed consolidation v2",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["likes_clusters", "dislikes_clusters"],
+    "properties": {
+        "likes_clusters": {"type": "array", "maxItems": 32, "items": _cluster_schema(_MEMBER)},
+        "dislikes_clusters": {
+            "type": "array",
+            "maxItems": 32,
+            "items": _cluster_schema({"type": "string", "minLength": 1, "maxLength": 256}),
+        },
+    },
+}
+
+
+def validate_task_input(value: Any, schema: dict[str, Any] | None = None) -> None:
+    """Check the fixed schema before IPC; the private runtime repeats this check."""
+    import math
+
+    if schema is None:
+        validate_task_input(value, SOUL_CONSOLIDATION_REQUEST_SCHEMA)
+        if len(value["likes_clusters"]) + len(value["dislikes_clusters"]) > 32:
+            raise ValueError("at most 32 clusters are allowed")
+        return
+    kind = schema["type"]
+    if kind == "object":
+        if not isinstance(value, dict) or set(value) != set(schema["required"]):
+            raise ValueError("unknown or missing task input fields")
+        for key, child in schema["properties"].items():
+            validate_task_input(value[key], child)
+    elif kind == "array":
+        if not isinstance(value, list) or not schema.get("minItems", 0) <= len(value) <= schema.get(
+            "maxItems", 32
+        ):
+            raise ValueError("invalid task array length")
+        for item in value:
+            validate_task_input(item, schema["items"])
+    elif kind == "string":
+        if (
+            not isinstance(value, str)
+            or not schema.get("minLength", 0) <= len(value) <= schema["maxLength"]
+        ):
+            raise ValueError("invalid task text length")
+        if schema.get("minLength") and not value.strip():
+            raise ValueError("empty task field")
+    elif kind == "number":
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not schema["minimum"] <= value <= schema["maximum"]
+        ):
+            raise ValueError("invalid task number")
+
+
 # The sponsored contract intentionally reuses the legacy consolidation system
-# prompt and the legacy tag-wrapped user message unchanged. The runtime pins
-# the system-prompt hash and size but does not rewrite the text; BYOK/Ollama
-# and Sponsored therefore send byte-identical prompts for this task.
+# prompt and legacy tag-wrapped user message unchanged. The runtime uses
+# the signed system text and fixed tag/JSON renderer;
+# shared golden vectors prove byte-identical BYOK and Sponsored prompts.
 def build_soul_consolidation_system_prompt() -> str:
     """Return the exact canonical system prompt the provider must send.
 
-    ``build_profile_consolidation_prompt`` owns the static system text; the
-    empty payload arguments only exist to reach that static message. The JSON
-    mode normalization must match ``LLMService.complete_structured_task``.
+    The static text is shared with the business builder through the pure
+    ``consolidation_prompt`` module. JSON mode normalization must match
+    ``LLMService.complete_structured_task``.
     """
 
-    messages = build_profile_consolidation_prompt(likes_clusters=[], dislikes_clusters=[])
-    return ensure_json_mode_contract(messages[0]["content"])
+    return ensure_json_mode_contract(CONSOLIDATION_SYSTEM_PROMPT)
 
 
 def build_sponsored_registry() -> SponsoredContractRegistry:
@@ -84,7 +160,7 @@ def build_sponsored_registry() -> SponsoredContractRegistry:
     registry.register(
         SponsoredTaskContract(
             task_id="soul.consolidation",
-            contract_version=1,
+            contract_version=2,
             caller="soul.consolidation",
             system_prompt=build_soul_consolidation_system_prompt(),
             request_schema=SOUL_CONSOLIDATION_REQUEST_SCHEMA,

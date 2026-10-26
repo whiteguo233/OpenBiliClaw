@@ -4,6 +4,9 @@
 
 ## v0.3.224：自定义回复语气与设置页一键测试（2026-09-19）
 
+- Sponsored 可选分支升级固定任务 IPC v2：只传画像合并簇数据，拒绝任意消息/模型/URL 覆盖；Runtime 按签名 canonical Prompt 和固定 renderer 发送旧流程完全相同的 Prompt。同步两端 schema/golden、生产校验与发布协议；LLM 公开导出按需加载、mock 使用纯契约，避免重 SDK 启动导致握手超时；默认关闭，尚未发布。见[协议与兼容说明](plans/2026-10-27-sponsored-fixed-tasks.md)。
+
+
 ### 发布日期偏好软模式入库门修复（issue #257）
 
 - **修复配置 `[sources.<name>].recommendation_date_preset != "all"` 后软模式来源被静默饿死**：统一候选入队的 `_source_publication_date_candidate_is_eligible()` 此前取 `PublicationDateDecision.in_range` 判定，把「范围外」和「无法判定发布时间」都当成必须丢弃——软模式（`weight<1`，默认 0.5）同样被硬过滤，且 `published_at` 缺失的来源（YouTube 主路径、X、小红书等）在配置任意非 `all` 预设后候选全部在入库前被丢弃，`discovery_candidates` 不再新增、来源池恒为 0。现改按 `eligible` 准入：严格模式（`weight=1`）行为不变（`eligible == in_range`，仍排除范围外/无法解析时间的候选）；软模式保留候选入队。策略内联 LLM 评估路径的 `filter_candidates_for_eval()` 同步改为 `eligible`，与 raw 入库门一致。日期偏好统一在 discovery 层分流：`1 - weight` 分数乘数仍只作用于 B 站池/推荐打分路径，非 B 站来源软模式只保留候选、不降权（`docs/modules/config.md`）。该修复同时恢复 `docs/modules/discovery.md` 已记录的「缺失/异常值默认不影响候选入队」契约。回归测试：`tests/test_source_publication_preference.py` 新增「软模式保留范围外 + 缺失发布时间候选」「严格模式仍排除缺失时间」「内联评估软模式不预过滤」三条。
