@@ -77,6 +77,13 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
 202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
 
+`decision.providers.jev.base_url` 是设置更新的可选输入别名，与 `endpoint_url` 互斥；
+解析为完整原生 endpoint 后持久化，读取仍返回 `endpoint_url`。服务根或代理前缀追加
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。完整 endpoint 不允许误填进 Base 模式；
+自定义原生路径走 `endpoint_url`。相同解析目标可沿用 Token，新目标必须同时提供新 Token。
+只读 `discovery.jev_provider.base_url_supported=true` 声明此写入能力；旧后端未声明时
+共享表单保留完整地址模式，不发送可能被旧后端忽略的 Base 字段。协议、HTTPS 和凭据规则不变。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from openbiliclaw.config import validate_jev_evaluation_config
 from openbiliclaw.decision.context_budget import JevContextBudget, resolve_jev_context
 from openbiliclaw.decision.models import (
+    JEV_WIRE_VERSION,
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionEvidence,
@@ -303,6 +304,7 @@ class JevContentEvaluator:
     def cache_namespace(self) -> str:
         """Version the model, full rubric, serialization and configured vocabularies."""
         contract = {
+            "wire_contract": JEV_WIRE_VERSION,
             "model": self._model,
             "schema": _SCHEMA,
             "content_policy": CONTEXT_POLICY,

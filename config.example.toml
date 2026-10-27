@@ -60,12 +60,14 @@ extension_token_ttl_hours = 24
 
 # 独立的 typed decision provider，不复用聊天或 embedding 凭据。
 # enabled 仅允许创建 client；实际请求由下面的导演/过滤独立路由控制。
-# 这三段只通过 TOML 配置；修改后完整重启后端（API/推荐/发现子进程）生效。
-# Key 必须由后端启动环境继承；Docker 须显式映射环境变量并重建容器。
+# Jev 连接与完整评估可在 Web/插件/移动设置页保存并后台应用。
+# 直接改 TOML 仍需完整重启；沿用环境变量时 Docker 须映射并重建容器。
 [decision.providers.jev]
 enabled = false
 model = "jev-1.13.0"
 # 自建/中转也必须兼容 Jev 原生协议，不是 Chat Completions。
+# 设置页支持 Base URL（自动补 /v1/systemone；已有 /v1 不重复）或完整接口。
+# TOML 始终保存解析后的完整 endpoint_url，例如 https://openrouter.ai/api/v1/systemone。
 endpoint_url = "https://api.typesafe.ai/v1/systemone"
 # 可在 Web/插件连接区保存本机 Token；留空则读取环境变量。不要提交真实值。
 api_key = ""

@@ -3389,6 +3389,15 @@ def update_decision_config(current: DecisionConfig, update: object) -> DecisionC
     if not isinstance(values, dict):
         raise ConfigError("decision.providers.jev 必须是对象。")
     values = dict(values)
+    if "base_url" in values:
+        from openbiliclaw.decision.jev_provider import jev_endpoint_from_base_url
+
+        if "endpoint_url" in values:
+            raise ConfigError("Jev Base URL 与完整接口地址不能同时设置。")
+        try:
+            values["endpoint_url"] = jev_endpoint_from_base_url(values.pop("base_url"))
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
     clear = values.pop("clear_api_key", False)
     if type(clear) is not bool:
         raise ConfigError("clear_api_key 必须是布尔值。")

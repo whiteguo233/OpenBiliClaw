@@ -113,8 +113,9 @@ def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen]]
                 process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("address_mode", ["base", "endpoint"])
 def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
-    real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page
+    real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page, address_mode: str
 ) -> None:
     """The actual config transaction changes the running evaluator, not just TOML."""
     url, directory, _ = real_jev_app
@@ -125,7 +126,10 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.get_by_role("tab", name="高级功能").click()
         form = page.locator("#jevConnectionSettings")
         form.get_by_label("启用 Jev 服务连接", exact=True).check()
-        form.get_by_label("API URL（完整接口地址）", exact=True).fill(backend.url)
+        form.get_by_label("接口地址类型", exact=True).select_option(address_mode)
+        form.locator('[data-jev="endpoint_url"]').fill(
+            backend.url.removesuffix("/v1/systemone") if address_mode == "base" else backend.url
+        )
         form.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
         form.get_by_label("Token", exact=True).fill("synthetic-test-key")
         page.locator("#evalScorer").select_option("jev")

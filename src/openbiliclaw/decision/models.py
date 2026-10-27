@@ -5,14 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 DecisionPurpose = Literal["FILTER", "EVALUATE", "CHOOSE_PAIR", "AUDIT_DRAFT", "REPAIR_PAIR"]
 DecisionStatus = Literal["OK", "UNAVAILABLE", "INVALID"]
 # Wire rounding tolerance, not a semantic confidence or recommendation threshold.
 _WIRE_TOLERANCE = 1e-6
+# Transport compatibility version; consumers bind it into reusable evidence.
+JEV_WIRE_VERSION = "jev-wire-v2-2dp"
+# Real Jev/OpenRouter 1.14 replies (2026-10-27) round each probability and
+# score independently to 2 decimal places. Half a last-place unit is a wire
+# quantization bound, NOT a learned confidence/quality threshold. Preserve raw
+# values; only accept when some unrounded distribution could have produced them.
+_ROUNDING_HALF_UNIT = 0.005
 _Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 _Probability = Annotated[float, Field(ge=0, le=1)]
 
@@ -116,10 +126,50 @@ class DecisionRequest(_DecisionModel):
 
 
 def _validate_distribution(probabilities: dict[str, float]) -> None:
-    if not probabilities or not math.isclose(
+    if probabilities and math.isclose(
         math.fsum(probabilities.values()), 1.0, rel_tol=0, abs_tol=_WIRE_TOLERANCE
     ):
-        raise ValueError("probabilities must sum to one")
+        return
+    if probabilities and _two_decimal_wire(probabilities.values()):
+        bounds = [_rounding_interval(value) for value in probabilities.values()]
+        if math.fsum(low for low, _ in bounds) <= 1 <= math.fsum(high for _, high in bounds):
+            return
+    raise ValueError("probabilities must sum to one within wire rounding")
+
+
+def _two_decimal_wire(values: Iterable[float]) -> bool:
+    return all(abs(value * 100 - round(value * 100)) <= 1e-9 for value in values)
+
+
+def _rounding_interval(value: float) -> tuple[float, float]:
+    return max(0.0, value - _ROUNDING_HALF_UNIT), min(1.0, value + _ROUNDING_HALF_UNIT)
+
+
+def _rounded_score_possible(score: float, probabilities: dict[str, float]) -> bool:
+    """Exact linear extrema under per-value rounding intervals and sum(p)=1."""
+    if not _two_decimal_wire([score, *probabilities.values()]):
+        return False
+    bounds = [_rounding_interval(probabilities[str(i)]) for i in range(len(probabilities))]
+    remaining = 1 - math.fsum(low for low, _ in bounds)
+    if (
+        remaining < -_WIRE_TOLERANCE
+        or remaining > math.fsum(high - low for low, high in bounds) + _WIRE_TOLERANCE
+    ):
+        return False
+
+    def extremum(reverse: bool) -> float:
+        mass = max(0.0, remaining)
+        value = math.fsum(i * low for i, (low, _) in enumerate(bounds))
+        for i in sorted(range(len(bounds)), reverse=reverse):
+            extra = min(mass, bounds[i][1] - bounds[i][0])
+            value += i * extra
+            mass -= extra
+        return value
+
+    return (
+        extremum(False) <= score + _ROUNDING_HALF_UNIT + _WIRE_TOLERANCE
+        and extremum(True) >= score - _ROUNDING_HALF_UNIT - _WIRE_TOLERANCE
+    )
 
 
 class ChoiceAnswer(_DecisionModel):
@@ -157,7 +207,10 @@ class ScoreAnswer(_DecisionModel):
             raise ValueError("score levels must be consecutive and complete")
         _validate_distribution(self.probabilities)
         expected = math.fsum(int(key) * value for key, value in self.probabilities.items())
-        if not math.isclose(self.score, expected, rel_tol=0, abs_tol=_WIRE_TOLERANCE):
+        if self.score > len(self.legend) - 1 or (
+            not math.isclose(self.score, expected, rel_tol=0, abs_tol=_WIRE_TOLERANCE)
+            and not _rounded_score_possible(self.score, self.probabilities)
+        ):
             raise ValueError("score must equal its probability-weighted levels")
         return self
 
@@ -207,10 +260,16 @@ class DecisionEvidence(_DecisionModel):
         return self
 
 
+class _JevWireUsage(DecisionUsage):
+    cost: Annotated[float, Field(ge=0)] | None = None
+
+
 class _JevResponse(_DecisionModel):
     model: _Text
     answers: dict[str, DecisionAnswer]
-    usage: DecisionUsage
+    usage: _JevWireUsage
+    id: _Text | None = None
+    provider: _Text | None = None
 
 
 def parse_jev_response(
@@ -242,6 +301,9 @@ def parse_jev_response(
                 != {str(index): value for index, value in enumerate(question.criteria)}
             ):
                 raise ValueError("score legend differs")
-        return response.model, response.answers, response.usage
+        usage = DecisionUsage(
+            input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens
+        )
+        return response.model, response.answers, usage
     except (ValueError, TypeError, OverflowError):
         raise ValueError("invalid decision response") from None

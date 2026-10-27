@@ -82,6 +82,8 @@ def test_popup_saves_jev_connection_through_the_real_config_api(
     page.get_by_role("tab", name="高级功能").click()
     root = page.locator("#cfgJevConnectionSettings")
     root.get_by_label("启用 Jev 服务连接", exact=True).check()
+    root.get_by_label("接口地址类型", exact=True).select_option("base")
+    root.get_by_label("API Base URL", exact=True).fill("https://gateway.example.test/api")
     root.get_by_label("Token", exact=True).fill("synthetic-popup-token")
     page.locator("#cfgEvalScorer").select_option("jev")
     with page.expect_response(
@@ -94,3 +96,7 @@ def test_popup_saves_jev_connection_through_the_real_config_api(
     saved = client.get("/api/config").json()
     assert saved["discovery"]["eval_scorer"] == "jev"
     assert saved["discovery"]["jev_provider"]["ready"] is True
+    assert (
+        saved["discovery"]["jev_provider"]["endpoint_url"]
+        == "https://gateway.example.test/api/v1/systemone"
+    )

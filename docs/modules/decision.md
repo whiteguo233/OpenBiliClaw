@@ -55,7 +55,8 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 完整题组多候选合批 | 已实现，待实测 | 原文片段只传一次，公共规则/相同必需画像共享；配置题数、候选数、单题字节护栏。长内容本地摘录，不增加业务评估轮次 |
 | 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
 | 图形界面设置与服务探测 | 设置已实现，探测未提供 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；Token 不回显，不提供付费探测 |
-| 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
+| 兼容网关 | 已实现 | 配置页 Base / 完整 URL，不限制官方域名；已知网关元数据白名单、可证明的 2dp 舍入容差 |
+| 线上质量 / 中文效果 / 时延保证 | 未认证 | OpenRouter 固定 1.14 已通过有界真实链路与双预算测试，不等于语义质量或摘录无损认证 |
 
 ## 公共 API
 
@@ -107,6 +108,24 @@ state 接受有限数值组成的 JSON 文本 / 对象 / 数组，不支持多�
 数量上限已校验；调用层仍须控制总上下文 token 预算，不能视为已实现官方 tokenizer。
 
 ## 配置与调用生命周期
+
+### 兼容地址与返回精度
+
+`jev_endpoint_from_base_url(value)` 为设置层解析 SDK base，服务根/代理前缀补
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。Provider 仍只接收并使用明确的完整
+`endpoint_url`，不按域名自动选服务商或改模型；自定义原生路径保持原样。
+
+兼容 OpenRouter 的可选 `id`、`provider`、`usage.cost` 元数据（严格类型、费用有限且非负）；
+不向 DecisionEvidence 混入网关字段，未知额外字段继续拒绝。协议依据为
+[OpenRouter TypeSafe SDK 文档](https://openrouter.ai/docs/guides/community/typesafe-sdk)。
+2026-10-27 真实 Jev 1.14 返回概率和 score 各自按两位小数舍入；严格 1e-6 等式会误拒。
+现在只对全部处于 0.01 网格的返回，按每值 ±0.005（端点 clamp 到 0..1）的量化区间验证
+存在总和为 1 且期望落在 score 舍入区间内的分布。保留原值、不归一化、不重算 score；
+高精度返回仍用严格等式。该容差是实测 wire 精度边界，不是经验置信度或质量阈值。
+超界/非有限、错题、错类型、错选项、错 rubric、错模型仍拒绝。`JEV_WIRE_VERSION`
+进入完整评估缓存命名空间，避免重用不同校验合同的缓存。分数本身仍须业务标定。
+
+真实验证与局限见 [2026-10-27 验收](../verification/2026-10-27-jev-compatible-endpoint.md)。
 
 ```toml
 [decision.providers.jev]

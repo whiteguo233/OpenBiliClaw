@@ -2728,6 +2728,7 @@ class JevProviderReadinessOut(BaseModel):
     model: str = "jev-1.13.0"
     api_key_env: str = "TYPESAFE_API_KEY"
     endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    base_url_supported: bool = True
     api_key_configured: bool = False
     credential_source: str = "missing"
     timeout_seconds: float = 2.0

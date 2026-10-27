@@ -19,11 +19,14 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 缺少凭据或冲突配置；不把 Jev 塞进聊天模型列表。移动 Web 设置与 CLI 使用同一配置。
 
 Jev 连接配置区与 Web 共用 `web/shared/jev-settings.js/.css`，构建时按现有机制复制到
-`popup/shared/`：服务开关、完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
+`popup/shared/`：服务开关、Base URL / 完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
 超时/重试。`collectForm()` 合并公共表单的严格部分更新到 `decision.providers.jev`，
 后端原子校验/持久化/排队应用，可同次切换完整评估器。空 Token 保留，清除需明确勾选，
 更换 URL 必须重填，保存后输入框清空，缓存配置只有安全状态不含 Token。没有新 host permission
 或后台直连 Jev：请求仍从后端发出。Chrome API stub 的 Chromium 测试不是实际 MV3 安装验收。
+Base 模式允许任何兼容原生协议的可信网关，自动补 `/v1/systemone`（已有 `/v1` 不重复）；
+完整模式保留自定义路径。后端返回 `base_url_supported` 才开放 Base 编辑；其它凭据、安全
+和模型容量规则不变。桌面 Web 与移动 Web 使用同一表单，不单独维护服务商白名单。
 
 > popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
 

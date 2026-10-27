@@ -40,12 +40,15 @@
 高级设置新增 `eval_scorer=jev`（纯文本 / 受控分类实验模式），显示独立 provider readiness
 及与封面评估不兼容的说明；保存由后端统一校验。
 未知主题 / IP 不由 LLM 补全。插件高级设置和移动设置提供相同模式入口，CLI 展示同一配置。
-Jev 连接区可配置服务开关、完整 API URL、Token、固定模型、双上下文上限、每批候选数、
+Jev 连接区可配置服务开关、Base URL / 完整 API URL、Token、固定模型、双上下文上限、每批候选数、
 超时及传输重试。与评估模式可一次保存；Token 密码输入、留空保留、明确清除，保存后清空，
 只在后端本机 TOML 保存，不进入浏览器存储/读取响应。共享
 `web/shared/jev-settings.js` 的 `mount(root, evaluator).load(provider, evaluation)` / `collect()`
 也供插件与移动 Web 使用。更换 URL 必须重填 Token，换模型不继承旧容量；同样支持原有 env。
 readiness 与配置后台应用状态均不等于官方联网/质量验收；当前不提供付费探测按钮。
+地址类型明确区分 SDK Base URL 与完整原生接口。Base 自动补 `/v1/systemone`，已有 `/v1`
+不重复；例如 OpenRouter Base 为 `https://openrouter.ai/api`。保存后从 canonical endpoint
+恢复表示；旧自定义路径仍显示完整地址，不改写为官方服务。三端均由后端发送 Bearer Token。
 
 ## 概述
 

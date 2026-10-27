@@ -4,6 +4,8 @@
 
 ## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
+- Jev 三端设置新增 Base URL / 完整原生接口选择，复用 Token / 固定模型 / 上下文容量配置，不锁官方域名；旧完整地址保留，改目标须重填 Token。修复 OpenRouter 已知元数据与可证明的两位小数 wire 舍入兼容，保留严格题目/模型校验与失败不转 LLM。4 次真实请求、两组各 3 候选及 24KB/12KB 护栏通过，但准入结果不同，不宣称摘录无损或模型质量认证；见[验收边界](verification/2026-10-27-jev-compatible-endpoint.md)。
+
 - 与[硅基流动（SiliconFlow）](https://www.siliconflow.cn)达成技术合作：对方为项目提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估，后台任务不再占用用户自己的 API 预算。GitHub Pages 项目首页、文档站与中英文 README 同步展示「Powered by SiliconFlow」合作标识；合作不改变推荐逻辑与本地优先的数据边界，详见[技术合作伙伴](partners.md)。
 
 - 后端、桌面与扩展统一发布 `0.3.232`，同步版本文件、uv lock、项目首页及中英文 README。Chrome Web Store / Firefox AMO 使用本版本现有发布通道提审；桌面、扩展与 Docker 状态分别核验，结果见 [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md)。推荐导演仍默认关闭，Jev 中文质量待独立实测，本次发版不将实现或结构测试等同于模型质量认证。

@@ -45,9 +45,8 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
     root = page.locator("#mobileJevConnectionSettings")
     root.get_by_label("启用 Jev 服务连接", exact=True).check()
     root.get_by_label("Token", exact=True).fill("synthetic-mobile-token")
-    root.get_by_label("API URL（完整接口地址）", exact=True).fill(
-        "https://jev.example.test/v1/systemone"
-    )
+    root.get_by_label("接口地址类型", exact=True).select_option("base")
+    root.get_by_label("API Base URL", exact=True).fill("https://jev.example.test")
     root.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
     page.locator("#mobile-eval-scorer").select_option("jev")
     page.get_by_role("button", name="保存设置", exact=True).click()
@@ -59,8 +58,5 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
     page.locator(".mobile-settings-status").filter(has_text="设置已加载").wait_for()
     assert page.locator("#mobile-eval-scorer").input_value() == "jev"
     assert root.get_by_label("固定模型 ID", exact=True).input_value() == "jev-1.14.0"
-    assert (
-        root.get_by_label("API URL（完整接口地址）", exact=True).input_value()
-        == "https://jev.example.test/v1/systemone"
-    )
+    assert root.get_by_label("API Base URL", exact=True).input_value() == "https://jev.example.test"
     assert root.get_by_label("Token", exact=True).input_value() == ""

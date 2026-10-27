@@ -278,6 +278,15 @@ CLI `config-show` 展示开关、URL、模型、变量名、是否保存 Token �
 `context_limits` 是完整替换表，空对象恢复自动容量；三端共享表单保留其它模型条目，
 切换模型 ID 不继承上一模型的手动容量。配置校验不做付费探测，启用路由后的正常评估可能计费。
 
+设置页可选择 **Base URL / 完整接口地址**，不限制官方域名。Base URL 经
+`jev_endpoint_from_base_url()` 解析：服务根或代理前缀追加 `/v1/systemone`，以 `/v1`
+结尾只追加 `/systemone`，忽略末尾斜杠；OpenRouter 示例为 `https://openrouter.ai/api`。
+API 部分更新接受 `base_url` 作为 `endpoint_url` 的互斥输入别名；TOML 仍只保存完整
+`endpoint_url`，不是新增第二个持久字段。自定义 `/api/alpha/decisions` 等原生接口选择完整地址，
+不自动猜路径、不使用 Chat Completions。旧自定义路径保持原样。地址变化仍须重新填写 Token；
+仅切换等价 Base/完整表示不需要换 Token。未知网关模型仍须登记精确模型 ID 的双上下文容量，
+返回的实际模型必须与所选固定版本一致，不自动改模型或追随浮动别名。
+
 一个 runtime 的完整评估、发现过滤与逐对编排共享有界 client：默认最多 2 个 adapter 调用并发、
 32 个已接纳请求（包含运行和等待），排队计入请求的绝对 deadline；连续 5 次真实
 adapter 失败打开 30 秒熔断。排队超时与调用方取消不计入 provider 失败。参数是
