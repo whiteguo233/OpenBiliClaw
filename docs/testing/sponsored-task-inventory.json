@@ -1,0 +1,688 @@
+[
+  {
+    "file": "src/openbiliclaw/api/app.py",
+    "function": "_complete_probe",
+    "call": "registry.complete",
+    "family": "text/structured",
+    "route": "project helper / Registry -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/api/app.py",
+    "function": "_complete_probe",
+    "call": "registry.complete_provider",
+    "family": "probe",
+    "route": "explicit configured-provider connectivity check"
+  },
+  {
+    "file": "src/openbiliclaw/api/app.py",
+    "function": "_llm_judge_sentiment",
+    "call": "llm.complete_with_core_memory",
+    "family": "text",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_embed_related_interest_vectors",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_embedding_prefilter_analysis",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_embedding_prefilter_analysis",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_evaluate_batch_once",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_evaluate_batch_once",
+    "call": "multimodal_call",
+    "family": "vision",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_normalize_topic_groups",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_normalize_topic_groups",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_normalize_topic_keys",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_related_interests_for_batch_result",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_related_interests_for_content_result",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_warm",
+    "call": "embed_image",
+    "family": "embedding_image",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_warm",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "evaluate_content",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/learned_scorer.py",
+    "function": "score_batch",
+    "call": "service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/learned_scorer.py",
+    "function": "score_batch",
+    "call": "service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/douyin_direct.py",
+    "function": "_generate_keywords_llm",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/explore.py",
+    "function": "_generate_domains",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/explore.py",
+    "function": "_looks_too_similar_async",
+    "call": "self.embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/explore.py",
+    "function": "_looks_too_similar_async",
+    "call": "self.embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/search.py",
+    "function": "_generate_queries",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/x.py",
+    "function": "_llm_keywords",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/strategies/youtube.py",
+    "function": "_generate_queries",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "_collect_text",
+    "call": "_collect_text_with_last",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "_collect_text_with_last",
+    "call": "query",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "collect_json",
+    "call": "_collect_text",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_discovery_optimizer_agent",
+    "call": "_collect_text_with_last",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_discovery_optimizer_agent",
+    "call": "collect_json",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_eval_agent",
+    "call": "_collect_text",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_event_agent",
+    "call": "_collect_text",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_optimizer_agent",
+    "call": "_collect_text_with_last",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_optimizer_agent",
+    "call": "collect_json",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_persona_agent",
+    "call": "_collect_text",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/agents.py",
+    "function": "run_speculation_event_agent",
+    "call": "collect_json",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/discovery_evaluator.py",
+    "function": "_score_query_quality",
+    "call": "self._llm.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/discovery_evaluator.py",
+    "function": "_score_relevance",
+    "call": "self._llm.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/discovery_evaluator.py",
+    "function": "_score_specificity",
+    "call": "self._llm.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/discovery_scenario.py",
+    "function": "generate",
+    "call": "self._llm.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/evaluator.py",
+    "function": "_llm_semantic_score",
+    "call": "_collect_text",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/event_simulator.py",
+    "function": "simulate",
+    "call": "complete_project_task",
+    "family": "text/structured",
+    "route": "project helper / Registry -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/optimizer.py",
+    "function": "_explore_prompt",
+    "call": "complete_project_task",
+    "family": "text/structured",
+    "route": "project helper / Registry -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/optimizer.py",
+    "function": "_optimize_prompt",
+    "call": "complete_project_task",
+    "family": "text/structured",
+    "route": "project helper / Registry -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/persona_generator.py",
+    "function": "generate",
+    "call": "complete_project_task",
+    "family": "text/structured",
+    "route": "project helper / Registry -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/eval/persona_judge.py",
+    "function": "judge_speculations",
+    "call": "collect_json",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/eval/speculation_evaluator.py",
+    "function": "_llm_eval_speculation",
+    "call": "collect_json",
+    "family": "text/structured/tools",
+    "route": "evaluation sponsored agent -> SDK; Claude fallback"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/curator.py",
+    "function": "score_candidates_async",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/curator.py",
+    "function": "score_candidates_async",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/curator.py",
+    "function": "score_candidates_async",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/curator.py",
+    "function": "score_candidates_async",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/curator.py",
+    "function": "score_candidates_async",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_classify_batch",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_danmaku_anchor_vectors",
+    "call": "embedding.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_embed_with_titles",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_precompute_batch",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_prewarm_pool_covers",
+    "call": "embed_image",
+    "family": "embedding_image",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_select_relevant_interests",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_select_relevant_interests",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_try_generate_expression",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_vecs_for",
+    "call": "embed_image",
+    "family": "embedding_image",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_visual_anchor_vectors",
+    "call": "embedding.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_visual_cover_bonus",
+    "call": "embed_image",
+    "family": "embedding_image",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "_warm",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "prewarm_pool_danmaku",
+    "call": "embed_document",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "prewarm_pool_danmaku",
+    "call": "embed_document",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "prewarm_pool_danmaku",
+    "call": "embedding.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "prewarm_pool_danmaku",
+    "call": "embedding.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/recommendation/engine.py",
+    "function": "prewarm_pool_keyframes",
+    "call": "embed_image",
+    "family": "embedding_image",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/runtime/bilibili_producer.py",
+    "function": "generate_bili_search_keywords",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/runtime/inspiration_pipeline.py",
+    "function": "_invoke_axis_keyword_call",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/runtime/inspiration_pipeline.py",
+    "function": "_vector",
+    "call": "embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/runtime/keyword_planner.py",
+    "function": "_generate_for",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/avoidance_speculator.py",
+    "function": "_generate",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/awareness_analyzer.py",
+    "function": "analyze",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/awareness_analyzer.py",
+    "function": "analyze_with_confusions",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/category_migration.py",
+    "function": "_load_mapping_from_llm",
+    "call": "self._llm_service.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/consolidator.py",
+    "function": "_cluster",
+    "call": "self._embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/soul/consolidator.py",
+    "function": "_judge_batch",
+    "call": "execute_sponsored_or_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/dialogue.py",
+    "function": "_respond_with_tools",
+    "call": "service.complete_socratic_dialogue",
+    "family": "text",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/dialogue.py",
+    "function": "_respond_with_tools",
+    "call": "service.complete_with_tools",
+    "family": "tools",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/dialogue.py",
+    "function": "respond",
+    "call": "service.complete_socratic_dialogue",
+    "family": "text",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/dialogue_insight_analyzer.py",
+    "function": "extract",
+    "call": "self.registry.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/insight_analyzer.py",
+    "function": "analyze",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/layer_updaters.py",
+    "function": "_update_core",
+    "call": "profile_builder.registry.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/layer_updaters.py",
+    "function": "_update_role",
+    "call": "profile_builder.registry.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/layer_updaters.py",
+    "function": "_update_values",
+    "call": "profile_builder.registry.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/pool_purge.py",
+    "function": "_embedding_recall",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/soul/pool_purge.py",
+    "function": "_embedding_recall",
+    "call": "embedding_service.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/soul/pool_purge.py",
+    "function": "_llm_judge",
+    "call": "llm_service.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/posture_gate.py",
+    "function": "_judge",
+    "call": "self._registry.complete_structured_task",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/preference_analyzer.py",
+    "function": "_complete_cacheable_preference_task",
+    "call": "complete",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/profile_builder.py",
+    "function": "_build_from_summary",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/speculator.py",
+    "function": "_generate",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/soul/taxonomy.py",
+    "function": "resolve_category",
+    "call": "embed.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/soul/taxonomy.py",
+    "function": "resolve_category",
+    "call": "embed.embed",
+    "family": "embedding_text",
+    "route": "EmbeddingService -> sponsored adapter (isolated cache)"
+  },
+  {
+    "file": "src/openbiliclaw/sources/llm_extractor.py",
+    "function": "extract_content_from_page",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/sources/xhs_keyword_gen.py",
+    "function": "_llm_xhs_keywords",
+    "call": "complete_structured",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  }
+]

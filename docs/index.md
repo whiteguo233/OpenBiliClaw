@@ -89,3 +89,6 @@
 - [AGENTS.md](../AGENTS.md) — AI 代理开发规则（含文档更新强制要求）
 
 - [Sponsored 固定任务 IPC v2（默认关闭、未发布）](plans/2026-10-27-sponsored-fixed-tasks.md) · [验收记录](testing/2026-10-27-sponsored-fixed-tasks.md)
+
+- [Sponsored 全项目 SDK：覆盖清单与权限边界](plans/2026-10-27-sponsored-all-tasks.md) · [验收](testing/2026-10-27-sponsored-all-tasks.md)
+- [评测模块与赞助 agent](modules/evaluation.md)

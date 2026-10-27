@@ -4,7 +4,8 @@
 
 ## v0.3.224：自定义回复语气与设置页一键测试（2026-09-19）
 
-- Sponsored 可选分支升级固定任务 IPC v2：只传画像合并簇数据，拒绝任意消息/模型/URL 覆盖；Runtime 按签名 canonical Prompt 和固定 renderer 发送旧流程完全相同的 Prompt。同步两端 schema/golden、生产校验与发布协议；LLM 公开导出按需加载、mock 使用纯契约，避免重 SDK 启动导致握手超时；默认关闭，尚未发布。见[协议与兼容说明](plans/2026-10-27-sponsored-fixed-tasks.md)。
+- Sponsored 范围修正为全项目 SDK：六类操作覆盖业务分析/生成、工具/视觉、向量和评测旁路；纯赞助 registry、独立向量缓存、共享子进程、跨进程事务账本及分任务额度，发布要求获批免费额度模型清单与有限预算。默认仍关闭，未发版。见[设计](plans/2026-10-27-sponsored-all-tasks.md)。
+- Sponsored 前一阶段完成单画像合并 v2 的密钥、生产信任根与发布加固；本阶段已扩展为全项目 SDK，旧子契约保留兼容。前一阶段见[历史记录](testing/2026-10-27-sponsored-fixed-tasks.md)。
 
 
 ### 发布日期偏好软模式入库门修复（issue #257）

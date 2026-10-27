@@ -511,3 +511,5 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 ### 可选 Sponsored Runtime 协议兼容
 
 源码/AI 安装与 Docker 默认保持 `[llm.sponsored].enabled=false`，不引入私有二进制或 Rust 构建依赖。可选正式 bundle 需与 IPC v2 Core、签名 Policy 成套使用；旧 v1 不兼容，禁止用生产 `--public-key`/`--mock` 等开关放宽校验。桌面 bundle 的签名/公证和安装更新接入仍需发行验证；本分支不会自动启用赞助。见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。
+
+全项目 SDK 接线也覆盖文本、JSON、工具、视觉和独立向量任务，详情见[覆盖设计](plans/2026-10-27-sponsored-all-tasks.md)。默认源码/Docker 仍关闭；正式私有 bundle 需包含全套新增任务策略，并先核实免费额度实际覆盖的模型和预算，不能沿用单画像合并策略宣称全功能可用。

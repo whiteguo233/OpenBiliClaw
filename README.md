@@ -638,7 +638,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
-可选赞助通道（默认关闭、未发布）：`画像合并数据 → IPC v2 → 私有固定任务 Runtime → SiliconFlow`；只允许固定输入，业务 Prompt 与 BYOK 一致。[协议说明](docs/plans/2026-10-27-sponsored-fixed-tasks.md)。
+可选赞助 SDK（默认关闭、未发布）：`项目文本 / JSON / 工具 / 视觉 / 文本与图片向量 → 固定操作 IPC → 私有 Runtime → SiliconFlow`；覆盖全项目 LLM 入口，模型与出口由签名策略控制。[覆盖与边界](docs/plans/2026-10-27-sponsored-all-tasks.md)。
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 

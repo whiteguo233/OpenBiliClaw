@@ -165,11 +165,12 @@ main API ← validated response inventory / 2s active-client inventory watcher
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
 
-### 可选赞助结构任务（默认关闭、未发布）
+### 可选赞助 SDK（默认关闭、未发布）
 
 ```text
-consolidation input -> IPC v2 -> private fixed-task Runtime -> SiliconFlow HTTPS
-other tasks --------> configured BYOK / Ollama
+LLMService / Registry / eval / EmbeddingService
+ -> shared fixed-operation SDK -> IPC 2 / SDK contract3
+ -> private Runtime -> SiliconFlow chat + embeddings
 ```
 
-签名策略携带 canonical system Prompt；Runtime 固定渲染 user Prompt，请求不能传任意消息、模型或目标地址。见[协议](plans/2026-10-27-sponsored-fixed-tasks.md)。
+六类固定操作覆盖全项目文本、JSON、工具、视觉和文本/图片向量；保留旧合并contract2。业务消息来自Core，Runtime固定目标、签名模型与预算，不暴露任意HTTP转发。见[覆盖与边界](plans/2026-10-27-sponsored-all-tasks.md)。

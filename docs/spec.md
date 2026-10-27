@@ -285,11 +285,12 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
-可选赞助通道（默认关闭、未发布）：`画像合并结构数据 → IPC v2 → 私有固定任务 Runtime → SiliconFlow`；Runtime 从签名策略读取 system Prompt、按固定 renderer 构造旧 user Prompt；请求不能覆盖模型或 URL。协议见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。
+可选赞助 SDK（默认关闭、未发布）：`LLMService / Registry / eval / EmbeddingService → 固定操作 IPC → 私有 Runtime → SiliconFlow chat / embeddings`。六类操作保留业务消息，模型、目标和预算受签名策略/编译约束，覆盖见[全项目设计](plans/2026-10-27-sponsored-all-tasks.md)。
 
 ```text
-Core consolidation input -> IPC v2 -> fixed task + signed prompt -> SiliconFlow
-Core other tasks --------> configured BYOK / Ollama
+Core LLMService / Registry / eval / EmbeddingService
+ -> six fixed SDK operations -> private Runtime -> SiliconFlow chat + embeddings
+ -> configured BYOK / Ollama only on an explicitly permitted availability fallback
 ```
 
 

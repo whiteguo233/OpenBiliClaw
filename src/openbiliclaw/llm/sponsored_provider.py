@@ -190,10 +190,78 @@ class SponsoredProvider:
                 raw=response,
             )
 
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        caller: str = "",
+    ) -> LLMResponse:
+        """Use fixed SDK operations while preserving the application's full messages."""
+        if json_mode and messages and messages[0].get("role") == "system":
+            from .prompt_contracts import ensure_json_mode_contract
+
+            messages = [dict(m) for m in messages]
+            if isinstance(messages[0].get("content"), str):
+                messages[0]["content"] = ensure_json_mode_contract(messages[0]["content"])
+        vision = any(
+            isinstance(m.get("content"), list)
+            and any(isinstance(p, dict) and p.get("type") == "image_url" for p in m["content"])
+            for m in messages
+        )
+        operation = (
+            "vision"
+            if vision
+            else "tools"
+            if caller.endswith(".tools")
+            else "structured"
+            if json_mode
+            else "text"
+        )
+        return await self.execute_task(
+            task_id=f"llm.{operation}",
+            user_payload={
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
+                "caller": caller,
+            },
+        )
+
+    async def embedding(self, value: str, *, image: bool = False) -> list[float]:
+        """Return a validated vector in the signed model's fixed embedding space."""
+        import math
+
+        from .sponsored_operations import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+
+        response = await self.execute_task(
+            task_id="llm.embedding_image" if image else "llm.embedding_text",
+            user_payload={"image" if image else "text": value},
+        )
+        raw = response.raw or {}
+        vector = raw.get("embedding")
+        if (
+            response.model != EMBEDDING_MODEL
+            or not isinstance(vector, list)
+            or len(vector) != EMBEDDING_DIMENSIONS
+            or any(
+                isinstance(x, bool) or not isinstance(x, (float, int)) or not math.isfinite(x)
+                for x in vector
+            )
+            or not any(vector)
+        ):
+            raise SponsoredProtocolError("invalid embedding model/dimension/vector")
+        return [float(x) for x in vector]
+
     async def aclose(self) -> None:
         """Terminate the runtime child and release IPC resources."""
 
-        await self._stop_process()
+        async with self._request_lock:
+            await self._stop_process()
 
     async def __aenter__(self) -> SponsoredProvider:
         await self._ensure_started()
@@ -243,6 +311,20 @@ class SponsoredProvider:
         from .consolidation_prompt import render_consolidation_user
         from .sponsored_tasks import validate_task_input
 
+        if contract.operation != "consolidation":
+            from .sponsored_operations import validate_operation_input
+
+            try:
+                data = dict(payload)
+                text = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                if len(text.encode()) > contract.max_input_bytes:
+                    raise SponsoredRequestTooLargeError("SDK input exceeds signed ceiling")
+                validate_operation_input(
+                    data, contract.operation, max_tokens=contract.max_output_tokens
+                )
+                return text
+            except (TypeError, ValueError, KeyError) as exc:
+                raise SponsoredContractMismatchError("invalid fixed SDK operation input") from exc
         if contract.task_id != "soul.consolidation" or contract.contract_version != 2:
             raise SponsoredUnsupportedTaskError(
                 "unsupported fixed task/version", task_id=contract.task_id

@@ -91,6 +91,258 @@
     "keys": [],
     "policy_version": 2,
     "tasks": {
+      "llm.embedding_image.v3": {
+        "embedding_dimensions": 1024,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "image"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 12582912,
+        "max_output_tokens": 1,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "operation": "embedding_image",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: embedding_image.\n\njson",
+        "system_prompt_sha256": "sha256:dd095831ca2774a7a82f27088282c0928532645c50e42b48cfc105ee98ab2b6b",
+        "temperature": 0.2
+      },
+      "llm.embedding_text.v3": {
+        "embedding_dimensions": 1024,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 1,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "operation": "embedding_text",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: embedding_text.\n\njson",
+        "system_prompt_sha256": "sha256:03e9c414ec140cb1c515609e09df66acdc905e34edcd9075318af76d12700d1a",
+        "temperature": 0.2
+      },
+      "llm.structured.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "structured",
+        "priority": "core",
+        "response_format": "json_object",
+        "system_prompt": "OpenBiliClaw SDK operation: structured.\n\njson",
+        "system_prompt_sha256": "sha256:97f56db536d899693f892bf5802e2c63085fc688b69c8fd3ea61fb5958f6e9f9",
+        "temperature": 0.2
+      },
+      "llm.text.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "text",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: text.\n\njson",
+        "system_prompt_sha256": "sha256:18be66e257853fa3246569f1c6ceb3f0966ea3463bd15d44f09ee21609f113c6",
+        "temperature": 0.2
+      },
+      "llm.tools.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "tools",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: tools.\n\njson",
+        "system_prompt_sha256": "sha256:720100407301854d893a31f2634a6f09681dbb5f7310327703928989df32c34e",
+        "temperature": 0.2
+      },
+      "llm.vision.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 12582912,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "operation": "vision",
+        "priority": "core",
+        "response_format": "json_object",
+        "system_prompt": "OpenBiliClaw SDK operation: vision.\n\njson",
+        "system_prompt_sha256": "sha256:c9bef2d3666ae46d07e00998ab006f882abcf2e2c38bc3e010aa0b5ffe8be206",
+        "temperature": 0.2
+      },
       "soul.consolidation.v2": {
         "input_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",

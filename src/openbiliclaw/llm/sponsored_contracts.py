@@ -21,7 +21,7 @@ from typing import Any
 from .prompt_contracts import ensure_json_mode_contract
 
 _TASK_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$")
-_ALLOWED_RESPONSE_FORMATS = frozenset({"json_object"})
+_ALLOWED_RESPONSE_FORMATS = frozenset({"json_object", "text"})
 _ALLOWED_PRIORITIES = frozenset({"core", "optional"})
 _REQUIRED_MESSAGE_TOPOLOGY = ("system", "user")
 
@@ -51,6 +51,8 @@ class SponsoredTaskContract:
     temperature: float = 0.2
     response_format: str = "json_object"
     priority: str = "core"
+    operation: str = "consolidation"
+    embedding_dimensions: int = 0
     daily_requests: int | None = None
     daily_tokens: int | None = None
 
@@ -89,7 +91,9 @@ class SponsoredTaskContract:
             raise SponsoredContractError("model must not be empty")
         if not 0.0 <= self.temperature <= 2.0:
             raise SponsoredContractError("temperature must be within [0, 2]")
-        if self.response_format not in _ALLOWED_RESPONSE_FORMATS:
+        if self.response_format not in _ALLOWED_RESPONSE_FORMATS or (
+            self.operation == "consolidation" and self.response_format != "json_object"
+        ):
             raise SponsoredContractError(f"unsupported response_format: {self.response_format!r}")
         if self.priority not in _ALLOWED_PRIORITIES:
             raise SponsoredContractError(f"unsupported priority: {self.priority!r}")
@@ -128,6 +132,9 @@ class SponsoredTaskContract:
             "response_format": self.response_format,
             "priority": self.priority,
         }
+        if self.operation != "consolidation":
+            policy_task["operation"] = self.operation
+            policy_task["embedding_dimensions"] = self.embedding_dimensions
         limits: dict[str, int] = {}
         if self.daily_requests is not None:
             limits["daily_requests"] = self.daily_requests

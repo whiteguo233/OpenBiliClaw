@@ -24,15 +24,10 @@ from .json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from .prompt_contracts import ensure_json_mode_contract
 from .sponsored_contracts import SponsoredContractRegistry, SponsoredTaskContract
 
-# Free-only sponsorship constraint: the policy must use a model that costs
-# nothing on SiliconFlow. Measured against the unchanged legacy consolidation
-# prompt: DeepSeek-R1-0528-Qwen3-8B is the strongest free candidate when the
-# backend is available, but it currently returns 400 "Model does not exist"
-# for real consolidation payloads; Qwen/Qwen3-8B, GLM-Z1-9B-0414 and
-# Qwen2.5-7B-Instruct misattribute cluster members; Qwen3.5-4B returns 503;
-# Xing4.0-29B degenerates into repetition. GLM-4-9B-0414 is the only free model
-# that stays structurally usable, so it is the pilot default until the free
-# backend picture changes.
+# Historical consolidation pilot default, evaluated with its unchanged prompt.
+# This constant is not a claim that every SDK capability/model is free today.
+# Release tooling requires an independently reviewed account-grant model allowlist
+# and finite budgets for all six SDK operation families before signing a bundle.
 SPONSORED_MODEL = "THUDM/GLM-4-9B-0414"
 SPONSORED_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 
@@ -173,6 +168,10 @@ def build_sponsored_registry() -> SponsoredContractRegistry:
             daily_tokens=CONSOLIDATION_DAILY_TOKENS,
         )
     )
+    from .sponsored_operations import sdk_contracts
+
+    for contract in sdk_contracts():
+        registry.register(contract)
     return registry
 
 

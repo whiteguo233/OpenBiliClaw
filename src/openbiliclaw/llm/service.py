@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import shlex
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -538,7 +537,7 @@ class LLMService:
             messages.extend(history)
         messages.append({"role": "user", "content": user_content})
 
-        async def _do_llm_call() -> LLMResponse:
+        async def _do_user_call() -> LLMResponse:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return await self.registry.complete_chain(
@@ -568,6 +567,23 @@ class LLMService:
                 reasoning_effort=effective_reasoning_effort,
                 model=model,
             )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+
+            response = await try_sponsored_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=effective_reasoning_effort,
+                caller=caller,
+            )
+            if response is not None:
+                return response
+            with bypass_sponsored():
+                return await _do_user_call()
 
         try:
             async with self._provider_slot(
@@ -605,37 +621,9 @@ class LLMService:
 
         if self.sponsored_provider is not None:
             return self.sponsored_provider
+        from .sponsored_router import shared_sponsored_provider
 
-        from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
-
-        settings = current_sponsored_settings()
-        if settings.enabled and settings.has_runtime:
-            try:
-                command = shlex.split(settings.runtime_path)
-            except ValueError:
-                logger.warning("llm.sponsored.runtime_path is not a valid command line")
-                command = []
-            if command:
-                from .sponsored_provider import SponsoredProvider
-
-                try:
-                    self.sponsored_provider = SponsoredProvider(
-                        command,
-                        request_timeout=settings.request_timeout_seconds,
-                    )
-                    return self.sponsored_provider
-                except ValueError:
-                    logger.warning(
-                        "could not construct Sponsored Runtime from llm.sponsored config",
-                        exc_info=True,
-                    )
-
-        from .sponsored_provider import build_sponsored_provider_from_env
-
-        provider = build_sponsored_provider_from_env()
-        if provider is not None:
-            self.sponsored_provider = provider
-        return provider
+        return shared_sponsored_provider()
 
     def _record_usage(self, response: LLMResponse, *, caller: str) -> None:
         """Best-effort usage ledger write for paths that bypass complete()."""
@@ -684,7 +672,12 @@ class LLMService:
                     user_text=user_text,
                 )
             except SponsoredError as exc:
-                if not is_fallback_allowed(exc):
+                from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+                if (
+                    not is_fallback_allowed(exc)
+                    or not current_sponsored_settings().fallback_to_user_provider
+                ):
                     record_diagnostics_alert(
                         category="llm",
                         code="sponsored_contract_mismatch",
@@ -711,15 +704,23 @@ class LLMService:
                 self._record_usage(response, caller=caller)
                 return response
 
-        return await self.complete_structured_task(
-            system_instruction=fallback_system_instruction,
-            user_input=fallback_user_input,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            caller=caller,
-            reasoning_effort=reasoning_effort,
-            inject_core_memory=inject_core_memory,
-        )
+        async def complete_application_prompt() -> LLMResponse:
+            return await self.complete_structured_task(
+                system_instruction=fallback_system_instruction,
+                user_input=fallback_user_input,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                reasoning_effort=reasoning_effort,
+                inject_core_memory=inject_core_memory,
+            )
+
+        if contract is None or provider is None:
+            return await complete_application_prompt()
+        from .sponsored_router import bypass_sponsored
+
+        with bypass_sponsored():
+            return await complete_application_prompt()
 
     async def aclose(self) -> None:
         """Release the Sponsored Runtime child process, when one exists."""
@@ -727,6 +728,9 @@ class LLMService:
         provider = self.sponsored_provider
         if provider is not None:
             await provider.aclose()
+        from .sponsored_router import close_shared_provider
+
+        await close_shared_provider()
 
     async def complete_structured_task(
         self,
@@ -766,6 +770,10 @@ class LLMService:
 
     def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
         """Best-effort check for OpenAI-compatible vision-capable routes."""
+        from .sponsored_router import sponsored_enabled
+
+        if self.sponsored_provider is not None or sponsored_enabled():
+            return True
         routed_chain = self._resolve_module_chain(caller)
         bucket = self._route_bucket_for_caller(caller)
         module_route = self.module_overrides.get(bucket) if bucket is not None else None
@@ -870,7 +878,7 @@ class LLMService:
             messages.extend(cast("list[dict[str, Any]]", history))
         messages.append({"role": "user", "content": user_parts})
 
-        async def _do_llm_call() -> LLMResponse:
+        async def _do_user_call() -> LLMResponse:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return await self.registry.complete_chain(
@@ -900,6 +908,23 @@ class LLMService:
                 reasoning_effort=effective_reasoning_effort,
                 model=model,
             )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+
+            response = await try_sponsored_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=True,
+                reasoning_effort=effective_reasoning_effort,
+                caller=caller,
+            )
+            if response is not None:
+                return response
+            with bypass_sponsored():
+                return await _do_user_call()
 
         try:
             async with self._provider_slot(caller=caller):

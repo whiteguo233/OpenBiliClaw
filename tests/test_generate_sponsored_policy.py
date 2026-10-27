@@ -43,7 +43,10 @@ def test_generator_writes_signed_ready_policy(tmp_path: Path) -> None:
     assert policy["policy_version"] == 3
     assert policy["keys"] == []
     assert policy["core"] == {"min": "0.4.0", "max": "0.4.*"}
-    assert set(policy["tasks"]) == {"soul.consolidation.v2"}
+    assert set(policy["tasks"]) == {"soul.consolidation.v2"} | {
+        f"llm.{op}.v3"
+        for op in ("structured", "text", "tools", "vision", "embedding_text", "embedding_image")
+    }
     assert policy["tasks"]["soul.consolidation.v2"]["model"] == "THUDM/GLM-4-9B-0414"
 
 

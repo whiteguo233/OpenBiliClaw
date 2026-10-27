@@ -434,11 +434,11 @@ multimodal_enabled = true   # 封面 image-only 向量；与文本同一空间
 
 ### `[llm.sponsored]`
 
-官方发行版内置的 **Sponsored Runtime**（`obc-sponsored-runtime`，闭源私有组件）。开源源码部署保持 `enabled=false`，完全走 BYOK / Ollama；官方安装包把 `runtime_path` 指向包内二进制，运行时持有 SiliconFlow Sponsored Key，并按签名 policy 限制 task / schema / model / token 与 per-install 配额。
+可选配套的 **Sponsored Runtime**（`obc-sponsored-runtime`，私有组件，正式安装集成待验收）。开源源码部署保持 `enabled=false`，完全走 BYOK / Ollama；官方安装包把 `runtime_path` 指向包内二进制，运行时持有 SiliconFlow Sponsored Key，并按签名 policy 限制 task / schema / model / token 与 per-install 配额。
 
-当前配套协议为 IPC v2 / soul.consolidation.v2，Core 与 Runtime 必须一起升级。原 v1 消息入口已关闭；默认开关与回退配置不变。
+当前长度帧为 IPC 2；六类 SDK 操作使用 contract3，保留 soul.consolidation.v2，Core 与 Runtime 必须一起升级。原 v1 消息入口已关闭；默认开关与回退配置不变。
 
-核心边界：Sponsored 只接受 OpenBiliClaw 已定义的结构化后台任务，不提供通用 Chat；Prompt、画像、推荐数据**直连 SiliconFlow**，不经过 OpenBiliClaw 项目方服务器；Runtime 无端口、无遥测、默认不记录 Prompt/响应。
+核心边界：Sponsored 只接受定义的 SDK 操作，不暴露任意 HTTP 转发；Prompt、画像、推荐数据**直连 SiliconFlow**，不经过 OpenBiliClaw 项目方服务器；Runtime 无端口、无遥测、默认不记录 Prompt/响应。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -459,7 +459,7 @@ notify_on_fallback = true
 request_timeout_seconds = 180.0
 ```
 
-实现说明：`load_config_with_diagnostics()` 会把该段安装为进程级设置，`LLMService.execute_sponsored_task()` 在首次需要时懒加载 Runtime 子进程；开发环境仍可用 `OPENBILICLAW_SPONSORED_ENABLED` / `OPENBILICLAW_SPONSORED_RUNTIME` 作为兜底。
+实现说明：`load_config_with_diagnostics()` 会把该段安装为进程级设置，统一 `sponsored_router` 在 LLMService、Registry、评测或向量首次需要时懒加载共享 Runtime 子进程；开发环境仍可用 `OPENBILICLAW_SPONSORED_ENABLED` / `OPENBILICLAW_SPONSORED_RUNTIME` 作为兜底。
 
 #### 配置页服务探测 API（v0.3.114+）
 
@@ -1429,3 +1429,7 @@ cookie = ""
 - 非交互终端不会进入引导；服务器脚本、CI 或批量部署仍需预置 `config.toml` 和 Cookie
 - 如需手动编辑容器内配置，可使用 `docker cp` 导出 `/app/runtime/config.toml`，修改后再复制回去
 - 如需彻底清空 Docker 内状态，可执行 `docker compose down -v`
+
+### Sponsored 全项目范围（未发布）
+
+`llm.sponsored.enabled` 启用后覆盖全部业务 LLM 操作，并优先构建赞助 embedding；关闭后恢复原用户配置。没有新增用户侧 Key 或 Rust 依赖。`fallback_to_user_provider=false` 时可用性失败也不发用户模型请求；true 只允许约定的可用性回退，契约错误不回退。向量不跨空间回退，图片向量仍受 `llm.embedding.multimodal_enabled` 控制。所有新增操作的模型权限、是否属于赠送额度与质量需发行验收，见[全项目设计](../plans/2026-10-27-sponsored-all-tasks.md)。

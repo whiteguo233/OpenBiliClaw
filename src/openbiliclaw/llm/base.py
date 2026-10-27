@@ -746,14 +746,27 @@ class LLMRegistry:
         reasoning_effort: str | None = None,
     ) -> LLMResponse:
         """Execute a completion request with sequential provider fallback."""
-        return await self.complete_chain(
-            self._fallback_order(),
+        from .sponsored_router import bypass_sponsored, try_sponsored_completion
+
+        response = await try_sponsored_completion(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=json_mode,
             reasoning_effort=reasoning_effort,
+            caller="registry.direct",
         )
+        if response is not None:
+            return response
+        with bypass_sponsored():
+            return await self.complete_chain(
+                self._fallback_order(),
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=reasoning_effort,
+            )
 
     async def complete_chain(
         self,

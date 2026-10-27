@@ -636,7 +636,7 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
-Optional sponsored path (off by default, unreleased): `consolidation data → IPC v2 → private fixed-task runtime → SiliconFlow`. Requests carry bounded data; the runtime preserves the BYOK prompt and rejects arbitrary messages or HTTP overrides. [Protocol](docs/plans/2026-10-27-sponsored-fixed-tasks.md).
+Optional sponsored SDK (off by default, unreleased): `project text / JSON / tools / vision / text and image embeddings → fixed-operation IPC → private runtime → SiliconFlow`. It covers project LLM entry points; signed policy controls models, destinations and budgets. [Coverage and limits](docs/plans/2026-10-27-sponsored-all-tasks.md).
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 

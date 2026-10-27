@@ -79,8 +79,16 @@ def _validate_execute(frame: Mapping[str, Any]) -> tuple[str, str, str]:
         encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False)
         if len(encoded.encode("utf-8")) > contract.max_input_bytes:
             raise ValueError("REQUEST_TOO_LARGE")
-        validate_task_input(payload)
-        user_text = render_consolidation_user(**payload)
+        if contract.operation == "consolidation":
+            validate_task_input(payload)
+            user_text = render_consolidation_user(**payload)
+        else:
+            from .sponsored_operations import validate_operation_input
+
+            validate_operation_input(
+                payload, contract.operation, max_tokens=contract.max_output_tokens
+            )
+            user_text = encoded
     except (TypeError, KeyError, ValueError) as exc:
         if str(exc) == "REQUEST_TOO_LARGE":
             raise
@@ -168,6 +176,9 @@ def main() -> int:
                 "ok": True,
                 "content": content,
                 "model": model,
+                "embedding": ([1.0] + [0.0] * 1023)
+                if _task_id in {"llm.embedding_text", "llm.embedding_image"}
+                else None,
                 "usage": {"input_tokens": 100, "output_tokens": 20},
                 "error": None,
             },

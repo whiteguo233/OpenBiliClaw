@@ -30,7 +30,7 @@
 | v0.3.182+ 对话结算在线内所有权 | ✅ | API runtime 的 `SocraticDialogue(mode=queued)` 在唯一 `DialogueSettlementQueue` worker 内 await 回复后的完整 `learn_from_dialogue`，普通 chat settles 与锚 relation 在同一 worker 直接 apply；不 detached、不进 task registry，也不为整项套 300 秒队列 timeout，provider 自身有限 timeout 与 total gate 不变。探针对话的 sentiment classifier 也只在 `probe.reply.apply` job 内调用一次；弱正向只把 typed `ExplorationIntent` 交回 dispatcher，真实 exploration 写入在 permit 外沿用既有路径。CLI/OpenClaw 两处 `legacy_direct` 继续既有 detached learning，不进入此所有权域。 |
 | v0.3.164+ OpenAI-compatible JSON-object 合约 | ✅ | `LLMService.complete_structured_task()` 与 `complete_multimodal_structured_task()` 共享最小兼容层：已有大写 `JSON` 仅归一为小写 `json`；完全没有该 token 时只追加 `json`。这满足部分 OpenAI-compatible 端点对 `response_format=json_object` 的字面消息约束，不改变业务规则、画像、阈值、user 内容或 core-memory 排序；非结构化 `complete_with_core_memory()` 完全不改写 prompt。 |
 | LLM 包按需导入 | ✅ | 保持原公开 import 名称；协议/mock/策略生成只加载轻量契约，provider/service SDK 在实际访问对应导出时导入。画像合并静态 Prompt 与 user renderer 收于纯函数模块 `consolidation_prompt.py`，原 `prompts.build_profile_consolidation_prompt()` 仍为业务入口，golden 字节不变 |
-| Sponsored Runtime 固定任务 v2（未发布） | 🚧 | `SponsoredProvider.execute_task()` 只传结构化 input；当前仅 `soul.consolidation.v2`，严格字段/32簇/输入限额。真实 Runtime 固定任务 renderer，从签名 Policy 读取 canonical system Prompt，拒绝任意 messages、模型、URL 与 token 参数覆盖。Prompt 与旧 BYOK 字节一致，默认仍关闭；旧 v1 Runtime 需升级，不使用宽松兼容。策略生成新增 system_prompt；mock/私有 Rust 和共享 golden vectors 同步。详见 [固定任务协议](../plans/2026-10-27-sponsored-fixed-tasks.md)。 |
+| Sponsored 全项目 SDK（未发布） | 🚧 | 新增六类固定操作：文本、JSON、工具、视觉、文本与图片向量；覆盖 LLMService、Registry、裸 provider 评测、Claude 评测旁路与独立 EmbeddingService。保留旧画像合并 v2；共享子进程、严格载荷、显式回退、独立向量空间缓存，获批模型清单与有限预算是发布前置。见[完整覆盖](../plans/2026-10-27-sponsored-all-tasks.md) |
 | v0.3.185+ 401 终态化与归属可见 | ✅ | `llm.base.LLMAuthError` 携带 `provider_name` / `endpoint`；OpenAI 系（openai / deepseek / ollama / openrouter / openai_compatible）、Claude、Gemini 的 `_map_error()` 在 401 时统一抛出它并记 WARNING（含 base_url + 上游 body 摘要），三家 `_is_retryable()` 一致视其为终态、**零重试**（此前 401 被当作可重试的通用 `LLMProviderError`，每分片白跑 3 次，在 provider 后台留下大量被拒请求）。`describe_llm_failure()` 的鉴权文案改为指名「{provider}（{host}）拒绝了当前 API key」并提示临时 token 过期这一成因；host 经 `urlsplit().hostname` 提取，base_url 内联凭据不外泄。裸子串 `"401"` 判定收紧为 `_LLM_AUTH_STATUS_RE` 限定形式（`HTTP 401` / `Error code: 401` / `"code":401` / `status_code=401`，排除 4010/4011），避免 request id 或 402 余额不足回包里的 `401` 让 auth 桶盖掉 rate-limited 桶 |
 | OpenAI-compatible 非瞬态 4xx 快速失败 | ✅ | OpenAI 系把 400/403/404/405/422 映射为 provider 内部不可重试请求错误，仍保留原 HTTP 状态与响应体供 registry fallback 和用户诊断，但不再对同一个错误请求立即重发三次；`404 model route not found` 因而在一次请求后快速暴露，等待用户改模型名或路由。401 继续使用带 provider/endpoint 的专用鉴权错误，402/429 继续走 backoff；HTTP 5xx、timeout 与传输错误仍保留有界重试。`response_format` 400 的既有 json_schema 兼容重试发生在 flavor 层，不受 provider 传输重试终态化影响。 |
 | v0.3.162+ LLM 失败可操作说明 | ✅ | `llm.base.describe_llm_failure()` 沿异常 cause/context 链翻译上层错误；新增 authentication / unauthorized / unauthenticated / invalid API key / api key not valid 与限定形式 401 鉴权桶，并将 insufficient quota / quota / exhausted / 429 归入「额度用尽或被限流」桶，API 与 CLI 继续消费同一函数，不新增 init reason code |
@@ -635,8 +635,12 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 13. **Codex OAuth 使用独立官方传输**：`auth_mode="codex_oauth"` 不再给 `OpenAIProvider` 注入 Platform API token，而是构造 `CodexChatGPTProvider`，请求发往 `https://chatgpt.com/backend-api/codex/responses`（官方 Codex CLI 同款通道），401 时安全刷新并重试一次。该模式只允许官方 Codex 域名，防止 ChatGPT OAuth token 泄露给 OpenAI-compatible 代理或 `api.openai.com`。
 14. **失败分类先于批响应解析**：共享 classifier 保持 rate-limit / no-provider / auth / invalid-response 的特定语义优先级，并额外识别连接失败与 HTTP 500/502/503/504；调用方只把 provider transient 交给协调器退避，不把 JSON shape 错误误判成网络失败。
 
-### Sponsored 固定任务公开 API（可选、未发布）
+### 旧画像合并子契约 API（兼容保留、未发布）
 
-`execute_task(caller="soul.consolidation", user_payload={"likes_clusters": [...], "dislikes_clusters": [...]})` 只支持 contract2；user_text/system_prompt 仅作本地旧 Prompt 漂移检查。未知类型或嵌套额外字段失败；Runtime 对同一结构独立复核，不信任 Python 的校验结果。模型、目标和温度不能通过请求覆盖。
+`execute_task(caller="soul.consolidation", user_payload={"likes_clusters": [...], "dislikes_clusters": [...]})` 是保留的 contract2 入口；完整 SDK 见下节；user_text/system_prompt 仅作本地旧 Prompt 漂移检查。未知类型或嵌套额外字段失败；Runtime 对同一结构独立复核，不信任 Python 的校验结果。模型、目标和温度不能通过请求覆盖。
 
 `to_policy_task()` 输出 canonical system_prompt 与 hash，policy 生成仍无需任何 Key。新增请求类型必须补齐公共注册/结构、私有 renderer 与共享测试，不能只改签名 Policy 白名单。
+
+### 全项目赞助 SDK 接口
+
+`SponsoredProvider.complete(messages, temperature, max_tokens, json_mode, reasoning_effort, caller)` 按固定类型发送完整业务消息；`embedding(value, image=False)` 校验固定空间向量。调用者不能指定模型、URL、Header 或 Key。`sponsored_router.try_sponsored_completion()` 统一可用性回退；`complete_project_task()` 覆盖裸 provider eval；`build_llm_registry()` 允许纯赞助安装，并保留用户链作为回退。`sponsored_embedding.build_sponsored_embedding_service()` 构建隔离 provenance 的向量缓存，禁止在同一缓存空间混入用户模型。新入口需更新覆盖清单及 SDK/私有 Runtime 测试。

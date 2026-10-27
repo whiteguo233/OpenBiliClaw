@@ -706,3 +706,7 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 | 遗留队列恢复 | `ServeOutbox.append()` 用独立原子发布的 batch 文件；`claim_batches()` 将旧 JSONL 纳入独立批次，`acknowledge(batch)` 只删除该已提交批次。失败保留待重试，处理中新增批次不会被清空。升级时需一起重启旧 API / worker，不能混跑仍写旧 JSONL 的旧版本。 |
 
 公开 API：`ServeOutbox.read_all()/count()` 兼容读取遗留文件和新 spool；worker 排空流程使用逐批 ACK，`clear()` 只用于显式清理。普通推荐不再产生 outbox 记录；worker 快照仍可用于观察，不能作为已消费状态的权威来源。没有新增配置或依赖。
+
+## Sponsored SDK 子进程（可选、未发布）
+
+同一事件循环内的 LLMService、Registry 和 EmbeddingService 复用子进程；既有应用并发 gate 不变。不同工作进程各自建 Runtime，私有安装账本只对记账事务加锁，网络期间不独占锁；预留与结算重读 HMAC 状态，不丢并发额度。`LLMService.aclose()` 等待请求结束后关闭子进程。覆盖和发行约束见[全项目 SDK](../plans/2026-10-27-sponsored-all-tasks.md)。
