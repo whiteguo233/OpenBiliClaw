@@ -319,7 +319,10 @@ async def test_local_overflow_does_not_reach_the_real_socket(
         assert not backend.requests and not backend.records
         assert llm.calls == 0
         row = rows[0]
-        assert row["status"] == "pending_eval" and row["body_text"] == original
+        assert receipt["blocked"] == 1
+        assert row["status"] == "failed_eval" and row["body_text"] == original
+        assert row["eval_error"].startswith("input_budget_exhausted:")
+        assert row["eval_attempts"] == row["batch_eval_attempts"] == 0
 
 
 async def test_bridge_rejects_non_native_destinations_and_real_credentials() -> None:

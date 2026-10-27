@@ -231,3 +231,169 @@ async def test_candidate_claim_evaluation_admission_real_sqlite(
         assert row["temporal_evidence_complete"]
     assert len(adapter.calls) == 1
     db.close()
+
+
+async def test_input_budget_failure_parks_once_and_recovers_after_profile_change(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.config import JevEvaluationConfig
+    from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
+    from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
+
+    from .test_jev_full_evaluator import MODEL, NativeProvider
+
+    db = Database(tmp_path / "budget-failure.db")
+    db.initialize()
+    try:
+        db.enqueue_discovery_candidates(
+            [
+                DiscoveryCandidateWrite(
+                    candidate_key="bilibili:BVJEVBLOCK1",
+                    source_platform="bilibili",
+                    source_strategy="search",
+                    content_id="BVJEVBLOCK1",
+                    title="算法的基本原理",
+                )
+            ]
+        )
+        provider = NativeProvider()
+        evaluator = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+        pipeline = DiscoveryCandidatePipeline(
+            database=db, discovery_engine=make_engine(evaluator, database=db), pool_target_count=30
+        )
+        profile = SoulProfile(
+            preferences=PreferenceLayer(
+                interests=[InterestTag("算法", "编程", 0.9)],
+                disliked_topics=["禁止带货，但允许专业风险分析。" * 3000],
+            )
+        )
+        result = await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+        assert result.get("blocked") == 1
+        row = db.get_discovery_candidates_by_ids([1])[0]
+        assert row["status"] == "failed_eval"
+        assert row["eval_error"].startswith("input_budget_exhausted:")
+        assert row["batch_eval_attempts"] == 0
+        assert not provider.requests
+        from openbiliclaw.runtime.candidate_eval import CandidateEvalCoordinator
+
+        restarted = CandidateEvalCoordinator(
+            pipeline=pipeline,
+            snapshot_provider=lambda: {},
+            profile_provider=lambda: profile,
+        )
+        status = restarted.status_payload()
+        assert status["candidate_eval_input_budget_blocked"] == 1
+        assert status["candidate_eval_last_error"].startswith("input_budget_exhausted")
+        assert pipeline.claim_batch(limit=1) is None
+        # Generic startup/manual recovery must not mistake a deterministic
+        # local input failure for a transient provider outage.
+        assert pipeline.revive_failed_eval_candidates() == 0
+        for _ in range(3):
+            await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+        assert db.get_discovery_candidates_by_ids([1])[0]["batch_eval_attempts"] == 0
+        assert not provider.requests
+        profile.preferences.disliked_topics = ["禁止带货，但允许专业风险分析。"]
+        recovered = await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+        assert recovered["evaluated"] == 1
+        assert recovered["cached"] == 1
+        assert len(provider.requests) == 1
+        assert db.get_discovery_candidates_by_ids([1])[0]["status"] == "cached"
+    finally:
+        db.close()
+
+
+async def test_input_budget_failure_recovers_after_capacity_change(tmp_path: Path) -> None:
+    from openbiliclaw.config import JevEvaluationConfig
+    from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
+
+    from .test_jev_full_evaluator import MODEL, NativeProvider
+
+    db = Database(tmp_path / "capacity-recovery.db")
+    db.initialize()
+    try:
+        db.enqueue_discovery_candidates(
+            [
+                DiscoveryCandidateWrite(
+                    candidate_key="bilibili:BVJEVBLOCK2",
+                    source_platform="bilibili",
+                    source_strategy="search",
+                    content_id="BVJEVBLOCK2",
+                    title="算法的基本原理",
+                )
+            ]
+        )
+        provider = NativeProvider()
+        profile = _build_profile()
+        tiny = JevContentEvaluator(
+            provider, model=MODEL, config=JevEvaluationConfig(max_state_question_bytes=1000)
+        )
+        pipeline = DiscoveryCandidatePipeline(
+            database=db, discovery_engine=make_engine(tiny, database=db)
+        )
+        assert (await pipeline.drain_pending(profile=profile, batch_size=1, flush=True))[
+            "blocked"
+        ] == 1
+        assert not provider.requests
+        before = db.get_discovery_candidates_by_ids([1])[0]
+        same = DiscoveryCandidatePipeline(
+            database=db, discovery_engine=make_engine(tiny, database=db)
+        )
+        assert (await same.drain_pending(profile=profile, batch_size=1, flush=True))[
+            "evaluated"
+        ] == 0
+        assert db.get_discovery_candidates_by_ids([1])[0]["eval_error"] == before["eval_error"]
+        roomy = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+        replacement = DiscoveryCandidatePipeline(
+            database=db, discovery_engine=make_engine(roomy, database=db)
+        )
+        assert (await replacement.drain_pending(profile=profile, batch_size=1, flush=True))[
+            "cached"
+        ] == 1
+        assert len(provider.requests) == 1
+    finally:
+        db.close()
+
+
+async def test_input_budget_failure_does_not_discard_valid_batch_member(tmp_path: Path) -> None:
+    from openbiliclaw.config import JevEvaluationConfig
+    from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
+
+    from .test_jev_full_evaluator import MODEL, NativeProvider
+
+    db = Database(tmp_path / "mixed-budget.db")
+    db.initialize()
+    try:
+        db.enqueue_discovery_candidates(
+            [
+                DiscoveryCandidateWrite(
+                    candidate_key=f"bilibili:BVJEV{i}",
+                    source_platform="bilibili",
+                    source_strategy="search",
+                    content_id=f"BVJEV{i}",
+                    title="算法的基本原理",
+                    body_text="\n".join(f"条件{n}：除非验证否则不要使用。" for n in range(255))
+                    if i
+                    else "通用原理。",
+                )
+                for i in range(2)
+            ]
+        )
+        provider = NativeProvider()
+        evaluator = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+        pipeline = DiscoveryCandidatePipeline(
+            database=db, discovery_engine=make_engine(evaluator, database=db)
+        )
+        claim = pipeline.claim_batch(limit=2)
+        assert claim is not None
+        receipt = await pipeline.complete_claim(
+            await pipeline.evaluate_claim(claim, _build_profile())
+        )
+        assert receipt == {"evaluated": 1, "cached": 1, "rejected": 0, "stale": 0, "blocked": 1}
+        assert len(provider.requests) == 1 and len(provider.requests[0].questions) == 10
+        rows = db.get_discovery_candidates_by_ids([1, 2])
+        assert [row["status"] for row in rows] == ["cached", "failed_eval"]
+        assert rows[1]["temporal_evidence_complete"] == 0
+        assert rows[1]["evaluated_at"] is None
+        assert rows[1]["batch_eval_attempts"] == 0
+    finally:
+        db.close()

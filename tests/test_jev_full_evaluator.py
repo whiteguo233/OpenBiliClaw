@@ -23,6 +23,7 @@ from openbiliclaw.decision.models import (
     ScoreQuestion,
 )
 from openbiliclaw.discovery import jev_evaluator as evaluator_module
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 
 if TYPE_CHECKING:
@@ -225,7 +226,7 @@ async def test_packing_guards_do_not_split_or_silently_shorten_a_question(
         profile_summary={}, content_items=[ITEM, ITEM]
     )
     if "max_question_bytes" in guard:
-        assert rows == [None, None]
+        assert all(isinstance(row, InputBudgetFailure) for row in rows)
         assert not provider.requests
     else:
         assert all(row is not None for row in rows)
@@ -240,7 +241,7 @@ async def test_more_than_choice_limit_of_explicit_conditions_stays_pending() -> 
             {"body_text": "\n".join(f"条件{i}：除非验证否则不要使用。" for i in range(255))}
         ],
     )
-    assert result == [None]
+    assert len(result) == 1 and isinstance(result[0], InputBudgetFailure)
     assert not provider.requests
 
 
@@ -396,9 +397,10 @@ async def test_exact_byte_boundaries_include_questions_and_envelopes(budget: str
         await evaluator(exact, **{budget: bound}).evaluate(profile_summary={}, content_items=[ITEM])
     )[0] is not None
     over = NativeProvider()
-    assert await evaluator(over, **{budget: bound - 1}).evaluate(
+    failed = await evaluator(over, **{budget: bound - 1}).evaluate(
         profile_summary={}, content_items=[ITEM]
-    ) == [None]
+    )
+    assert len(failed) == 1 and isinstance(failed[0], InputBudgetFailure)
     assert not over.requests
 
 
@@ -408,16 +410,17 @@ async def test_long_cjk_candidate_rejected_without_network_or_truncation() -> No
         profile_summary={},
         content_items=[{**ITEM, "body_text": "汉" * 12_000}, ITEM],
     )
-    assert result[0] is None and result[1] is not None
+    assert isinstance(result[0], InputBudgetFailure) and isinstance(result[1], dict)
     assert len(provider.requests) == 1
     assert all(key.startswith("c1.") for key in provider.requests[0].questions)
 
 
 async def test_oversize_profile_fails_without_dropping_dislikes() -> None:
     provider = NativeProvider()
-    assert await evaluator(provider).evaluate(
+    failed = await evaluator(provider).evaluate(
         profile_summary={"dislikes": ["不能删去" * 3000]}, content_items=[ITEM, ITEM]
-    ) == [None, None]
+    )
+    assert len(failed) == 2 and all(isinstance(row, InputBudgetFailure) for row in failed)
     assert not provider.requests
 
 

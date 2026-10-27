@@ -1,5 +1,15 @@
 # 后端 API
 
+## Jev 预算停放诊断（2026-10-27）
+
+| 接口 / 字段 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/runtime-status` → `candidate_eval_input_budget_blocked` | ✅ | 新增整数，默认 0；表示持久化的输入预算停放数，读取不触发模型请求 |
+| `candidate_eval_last_error` | ✅ | 沿用已有字段，预算停放提供 `input_budget_exhausted` 原因及扩大容量/减少必需输入建议；不暴露画像、正文或 Token |
+
+现有 `PUT /api/config` / apply-status 仍是三端共用配置入口；保存不同容量后下一次有效唤醒重新检查停放项，
+保存相同设置不会重复付费评估。未新增配置字段、CLI 命令、安装依赖或付费探测开关。
+
 ## 抖音发现冷却与失败回传（issue #332）
 
 | 行为 | 状态 | 说明 |

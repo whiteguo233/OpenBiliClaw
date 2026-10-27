@@ -483,6 +483,7 @@ class RuntimeStatusResponse(BaseModel):
     candidate_eval_pending: int = 0
     candidate_eval_backoff_until: float = 0.0
     candidate_eval_last_error: str = ""
+    candidate_eval_input_budget_blocked: int = 0
     candidate_eval_last_batch_seconds: float = 0.0
     candidate_eval_last_cached: int = 0
     candidate_eval_last_rejected: int = 0

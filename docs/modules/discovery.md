@@ -14,7 +14,7 @@ Instagram discovery 使用 optional-credential：保留匿名 topic/creator 路�
 只替换相关性。`JevContentEvaluator.evaluate()` 用原生 Score / Choice 生成相关性、
 受控主题 / IP / 风格及完整时效证据组，统一经过现有验证、grounding、配额和准入。
 `ContentDiscoveryEngine` 的单条、批量与 `evaluate_cached_content_batch()` 旧池补评
-均走同一选择；API、CLI、OpenClaw 共用路由。失败返回 missing，留在待评估状态，
+均走同一选择；API、CLI、OpenClaw 共用路由。远端/暂态失败返回 missing，留在待评估状态，
 不缓存失败、不伪造零分标签、不隐式调用 LLM。推荐表达、搜索词生成仍是独立 LLM 任务。
 
 主题来自配置中的粗分类，IP 仅从配置词表选择；未识别保留空分类和受控诊断，
@@ -37,6 +37,11 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景
 移到共享 `profile` 一次。正偏好选择独立于批次同行；原有 LLM 评估视图和召回不变。
 
+2026-10-27 修复：必需画像先作为基线，剩余窗口的三分之一作为可选画像软额度，
+不再让大块避雷信息挤掉仍能放下的兴趣。软额度不足时可借用实际剩余空间加载完整兴趣事实；
+若源画像有正向兴趣但连一条都放不下，先减少可选原文片段，不发送“仅剩避雷”的误导性画像。
+这仍是工程分配，不是语义质量或任意长输入无损保证；缓存身份包含分配策略版本。
+
 共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
 已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
 含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
@@ -45,12 +50,24 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 单条超限时本地选择完整片段，保留开头/结尾、显式否定/条件/时间线索及邻句；不截字、
 不调用摘要模型。`text_coverage` 标记局部视图、源摘要、原始/已选片段数，片段附源字段
 和字符位置，日志只记源摘要、计数及选中字符范围。这些词法锚点不是语义完整性证明；不能保证任意
-长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则 missing；远端拒绝也按失败
+长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则返回 typed `InputBudgetFailure`；远端拒绝也按失败
 处理，不缩短后二次发送。
 每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
 问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
 成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
 字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
+
+| 公共接口 / 能力 | 合同 |
+|---|---|
+| `JevContentEvaluator.evaluate()` | 按输入对齐返回有效结果、`InputBudgetFailure` 或暂态 `None`；本地预算失败不伪造评分、不调用 LLM |
+| `ContentDiscoveryEngine.evaluation_context_fingerprint(profile)` | 对完整有效画像目录、负例、精确模型/容量/打包策略及 scorer 做 SHA-256，不含凭据或时钟 |
+| `DiscoveryCandidatePipeline.refresh_evaluation_context(profile)` | 仅上下文身份改变时有界重新入队预算停放项；同配置手动刷新/重启不会空重试 |
+| `DiscoveryCandidatePipeline.input_budget_blocked_count()` | 读取持久化停放数；claim 提交另报 `blocked`，不冒充 evaluated/rejected/stale |
+
+预算失败经程序内类型传递，按 claim token CAS 写为 `failed_eval` +
+`input_budget_exhausted:<context fingerprint>`；不增加模型/批次重试次数、不写有效评分或成功缓存。
+混合批次中的其它有效候选正常处理。画像、负例、容量、打包契约或显式 scorer 改变后才重新检查；
+不是定时重试，单独换 Token 或重复保存相同设置不算容量修复。详见[实测记录](../verification/2026-10-27-jev-compatible-endpoint.md)。
 
 配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
 [Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与

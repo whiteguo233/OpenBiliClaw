@@ -683,8 +683,10 @@ Jev connection: `shared Web / popup / mobile form → config API validation → 
 Jev text path: `full descriptions (no early 400-character trim) → budgeted whole-source excerpts → full-source cache identity`; originals stay unchanged.
 Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
 No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.
+Profile allocation reserves mandatory facts first, then loads whole positive-interest facts that fit, avoiding a dislikes-only projection.
 Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays
-in one batch; overflow reduces batch size first, and oversized mandatory inputs remain pending.
+in one batch; overflow reduces batch size first. Oversized mandatory inputs follow
+`InputBudgetFailure → lease-CAS failed_eval parking (no retry) → bounded requeue after context changes`.
 Shared rules and identical mandatory profile facts are sent once, without additional evaluation rounds.
 The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
 explicit unknowns and dual input guards. Failures never silently invoke an LLM. Settings can save a local token, with existing environment credentials still supported;

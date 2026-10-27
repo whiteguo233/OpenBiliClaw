@@ -7816,6 +7816,64 @@ class Database:
         )
         return int(cursor.rowcount)
 
+    def park_claimed_input_budget_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Park deterministic input refusals under the evaluator's exact lease.
+
+        Preserve any prior evidence; never manufacture a score or increment a
+        transport/batch retry count for work that did not reach the provider.
+        """
+        if re.fullmatch(r"input_budget_exhausted:[0-9a-f]{64}", reason) is None:
+            raise ValueError("invalid input budget failure identity")
+        ids = sorted({str(int(value)) for value in candidate_ids})
+        updated = 0
+        for chunk in _chunks(ids, 450):
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = self._execute_write(
+                f"""UPDATE discovery_candidates
+                    SET status = 'failed_eval', eval_error = ?,
+                        claimed_at = NULL, claim_token = NULL
+                    WHERE id IN ({placeholders})
+                      AND status = 'evaluating' AND claim_token = ?""",
+                (reason, *chunk, str(claim_token)),
+            )
+            updated += int(cursor.rowcount)
+        return updated
+
+    def count_input_budget_blocked_candidates(self) -> int:
+        """Count parked local refusals without exposing profile or content."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'input_budget_exhausted:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_input_budget_candidates(
+        self, *, context_fingerprint: str, limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE
+    ) -> int:
+        """Requeue bounded input refusals only for a different effective context."""
+        if re.fullmatch(r"[0-9a-f]{64}", context_fingerprint) is None:
+            raise ValueError("invalid evaluation context identity")
+        cursor = self._execute_write(
+            """UPDATE discovery_candidates
+               SET status = 'pending_eval', eval_error = '',
+                   eval_attempts = 0, batch_eval_attempts = 0,
+                   claimed_at = NULL, claim_token = NULL,
+                   last_seen_at = CURRENT_TIMESTAMP
+               WHERE id IN (
+                   SELECT id FROM discovery_candidates
+                   WHERE status = 'failed_eval'
+                     AND eval_error LIKE 'input_budget_exhausted:%'
+                     AND eval_error != ?
+                   ORDER BY id ASC LIMIT ?
+               )""",
+            (f"input_budget_exhausted:{context_fingerprint}", max(0, int(limit))),
+        )
+        return int(cursor.rowcount)
+
     def revive_failed_eval_candidates(
         self,
         *,
@@ -7862,6 +7920,7 @@ class Database:
                 WHERE status = 'failed_eval'
                   AND eval_revive_count < ?
                   AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'input_budget_exhausted:%'
                 ORDER BY id ASC
                 LIMIT ?
             )

@@ -211,6 +211,7 @@ class CandidateEvalCoordinator:
                     continue
                 self._backoff_until = 0.0
 
+                await self._refresh_evaluation_context()
                 self._run_pre_admit_hook()
                 snapshot = self._snapshot()
                 self._admit_evaluated(snapshot)
@@ -262,6 +263,13 @@ class CandidateEvalCoordinator:
         """Return stable runtime diagnostics for API and event payloads."""
 
         snapshot = self._snapshot()
+        blocked_count = 0
+        count = getattr(self.pipeline, "input_budget_blocked_count", None)
+        if callable(count):
+            try:
+                blocked_count = max(0, int(count()))
+            except Exception:
+                logger.debug("input budget status unavailable", exc_info=True)
         return {
             "candidate_eval_state": self.state,
             "candidate_eval_workers": self.worker_count,
@@ -270,7 +278,13 @@ class CandidateEvalCoordinator:
             "candidate_eval_backoff_until": self._backoff_until,
             "candidate_eval_supply_streak": self._supply_streak,
             "candidate_eval_supply_cooldown_until": self._supply_cooldown_until,
-            "candidate_eval_last_error": self.last_error,
+            "candidate_eval_input_budget_blocked": blocked_count,
+            "candidate_eval_last_error": self.last_error
+            or (
+                "input_budget_exhausted: increase context capacity or reduce mandatory input"
+                if blocked_count
+                else ""
+            ),
             "candidate_eval_last_batch_seconds": self.last_batch_seconds,
             "candidate_eval_last_cached": self.last_cached,
             "candidate_eval_last_rejected": self.last_rejected,
@@ -298,6 +312,19 @@ class CandidateEvalCoordinator:
                 else None
             ),
         )
+
+    async def _refresh_evaluation_context(self) -> None:
+        """Recover parked input failures after profile or evaluator changes."""
+        refresh = getattr(self.pipeline, "refresh_evaluation_context", None)
+        if not callable(refresh):
+            return
+        try:
+            profile = self.profile_provider()
+            if inspect.isawaitable(profile):
+                profile = await profile
+            refresh(profile)
+        except Exception:
+            logger.warning("input budget recovery context unavailable")
 
     def _fill_open_slots(self) -> float | None:
         while not self._stopping and len(self._workers) < self.worker_count:
@@ -390,7 +417,11 @@ class CandidateEvalCoordinator:
                 self._record_failure(exc)
                 continue
 
-            self.last_error = ""
+            self.last_error = (
+                "input_budget_exhausted: increase context capacity or reduce mandatory input"
+                if int(result.get("blocked", 0)) > 0
+                else ""
+            )
             self.last_batch_seconds = float(getattr(outcome, "elapsed_seconds", 0.0) or 0.0)
             self.last_cached = int(result.get("cached", 0))
             self.last_rejected = int(result.get("rejected", 0))

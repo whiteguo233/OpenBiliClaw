@@ -265,7 +265,7 @@ async def test_long_chinese_excerpts_are_evaluated_once_and_keep_original_source
             await runtime.aclose()
 
 
-async def test_long_chinese_candidate_is_pending_without_any_http_request(
+async def test_long_chinese_candidate_is_parked_without_any_http_request(
     database: Database, caplog: Any
 ) -> None:
     http_calls: list[httpx.Request] = []
@@ -292,8 +292,8 @@ async def test_long_chinese_candidate_is_pending_without_any_http_request(
             row = database.conn.execute(
                 "SELECT status, eval_error, body_text FROM discovery_candidates"
             ).fetchone()
-            assert row["status"] == "pending_eval"
-            assert row["eval_error"] == "evaluation_response_missing"
+            assert row["status"] == "failed_eval"
+            assert row["eval_error"].startswith("input_budget_exhausted:")
             assert row["body_text"] == body_text
             assert database.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0] == 0
             assert "input_budget_exhausted" in caplog.text

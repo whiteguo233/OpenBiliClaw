@@ -51,11 +51,14 @@ candidate full evaluator (settings switch; LLM default):
   Web / popup / mobile shared Jev connection form → config API → validated local settings
     → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
+    mandatory baseline + optional positive facts (borrow room before excerpting)
     + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
     → jev_context whole source spans / coverage → complete-question-group batch packing
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
     Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery
+  local input overflow → typed InputBudgetFailure → lease-CAS failed_eval (no retry)
+    → profile / negative evidence / evaluator context changed → bounded requeue
 
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤

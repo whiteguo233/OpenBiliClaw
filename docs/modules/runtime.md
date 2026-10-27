@@ -1,5 +1,17 @@
 # Runtime Module
 
+## Jev 输入预算失败恢复（2026-10-27）
+
+| 能力 / 公共接口 | 合同 |
+|---|---|
+| `CandidateEvalCoordinator` 唤醒/安全扫描 | 在 work-allowed 门控后、claim 前交由 pipeline 检查有效上下文；画像/负例/所选模型容量或 scorer 改变后有界恢复预算停放项 |
+| `status_payload().candidate_eval_input_budget_blocked` | 从 durable `failed_eval` 预算原因读取数量，coordinator 重建/重启后仍可观察 |
+| `status_payload().candidate_eval_last_error` | 预算停放显示 `input_budget_exhausted` 及扩大容量/减少必需输入建议；不是远端故障熔断 |
+
+相同设置的 startup/manual/config 唤醒不复活预算失败，不增加 batch/provider attempts；
+模型身份保持用户选择，不自动换模型或偷偷转 LLM。混合批次其它有效项继续入池。
+暂态远端故障仍沿用既有重试/退避；停放不是内容不相关，也不代表已完成评估。
+
 ## 封面显示副本缓存（2026-10-23）
 
 `image_cache.render_cover_for_display(data, content_type)` 在线程中生成 640px JPEG 显示副本，并按原始字节 SHA-256 与媒体类型存入线程安全 LRU；最多 128 项、16 MiB，只持有显示副本、不保留大尺寸原图。字节变化自动失效，超限淘汰最旧项，进程退出即释放。小图及解码失败继续返回原始字节，不改变原图磁盘缓存、CDN 抓取/SSRF 校验或预取策略。API 与独立 image_service 复用同一实现。

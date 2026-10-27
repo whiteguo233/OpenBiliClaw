@@ -31,6 +31,7 @@ from openbiliclaw.decision.models import (
     ScoreQuestion,
     parse_jev_response,
 )
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure
 from openbiliclaw.discovery.jev_context import (
     CONTEXT_POLICY,
     TEXT_FIELDS,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _SCHEMA = "jev-full-evaluation-v3"
+_PROFILE_ALLOCATION = "mandatory-plus-optional-third-positive-v2"
 _UNKNOWN = "u"
 _TEXT_FIELDS = TEXT_FIELDS
 _FAILURE_REASONS = frozenset(
@@ -311,6 +313,7 @@ class JevContentEvaluator:
             "config": asdict(self._config),
             "context_budget": self._context_budget.fingerprint,
             "profile_policy": PROFILE_CONTEXT_VERSION,
+            "profile_allocation": _PROFILE_ALLOCATION,
             "guard": _GUARD,
             "shared_guard": _SHARED_GUARD,
             "relevance": [_RELEVANCE_INSTRUCTIONS, _RELEVANCE_RUBRIC],
@@ -515,15 +518,25 @@ class JevContentEvaluator:
             if isinstance(value := candidate.item.get(key), str)
         ]
         minimum = select_profile_context(catalog, query_texts=queries, max_bytes=0)
+        if available < minimum.used_bytes:
+            return None
         # Engineering allocation, not a calibrated quality threshold. Fixed per
         # model/item, never tuned using batch peers (which would invalidate cache).
-        allowance = max(
-            minimum.used_bytes,
-            min(available, self._context_budget.max_state_question_bytes // 3),
-        )
+        # Mandatory facts are the baseline, not a competitor for the optional
+        # third. A large exclusion block must not consume the entire taste
+        # allowance while the actual native request still has room.
+        optional = max(0, self._context_budget.max_state_question_bytes - minimum.used_bytes)
+        allowance = min(available, minimum.used_bytes + optional // 3)
         projection = select_profile_context(catalog, query_texts=queries, max_bytes=allowance)
         if not projection.fits:
             return None
+        if catalog.get("interests") and not projection.included_interest_names:
+            # The share is soft: borrow available room for a whole source fact.
+            # If none fits, let local excerpt packing shorten optional content
+            # rather than silently evaluating a positive profile as dislikes-only.
+            projection = select_profile_context(catalog, query_texts=queries, max_bytes=available)
+            if not projection.fits or not projection.included_interest_names:
+                return None
         loaded = replace(candidate, profile_context=projection.payload)
         if not self._fits(self._request(base, [loaded], deadline)):
             return None
@@ -720,9 +733,9 @@ class JevContentEvaluator:
         source_context: str = "",
         negative_examples: list[dict[str, object]] | None = None,
         evaluated_at: str = "",
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[dict[str, Any] | InputBudgetFailure | None]:
         """Return an aligned complete cohort, with no LLM fallback or partial score."""
-        results: list[dict[str, Any] | None] = [None] * len(content_items)
+        results: list[dict[str, Any] | InputBudgetFailure | None] = [None] * len(content_items)
         if not content_items:
             return results
         deadline = time.monotonic() + self._config.budget_seconds
@@ -757,6 +770,8 @@ class JevContentEvaluator:
             for index, item in enumerate(items):
                 candidate = self._prepare_candidate(index, item, base, catalog, deadline)
                 if candidate is None:
+                    if time.monotonic() < deadline:
+                        results[index] = InputBudgetFailure()
                     continue
                 proposed = self._request(base, [*pending, candidate], deadline)
                 if len(pending) < self._config.max_candidates_per_request and self._fits(proposed):
@@ -772,6 +787,7 @@ class JevContentEvaluator:
                     pending = [candidate]
                 else:
                     logger.warning("Jev full evaluator candidate skipped: input_budget_exhausted")
+                    results[index] = InputBudgetFailure()
             if pending and len(batches) < self._config.max_calls:
                 batches.append((self._request(base, pending, deadline), pending))
         except (ValueError, TypeError, OverflowError, RecursionError):

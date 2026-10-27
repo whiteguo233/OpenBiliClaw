@@ -11,6 +11,7 @@ import pytest
 
 from openbiliclaw.config import JevEvaluationConfig
 from openbiliclaw.decision.context_budget import JevContextLimits, resolve_jev_context
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.soul.profile_views import PROFILE_CONTEXT_VERSION, build_profile_catalog
@@ -84,6 +85,36 @@ async def test_batched_candidates_share_explicit_exclusions_once() -> None:
     assert json.dumps(state, ensure_ascii=False).count("明确不看带货，除非只是批判分析") == 1
 
 
+@pytest.mark.parametrize("long_body", [False, True])
+async def test_large_mandatory_profile_does_not_erase_fitting_relevant_interest(
+    long_body: bool,
+) -> None:
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[InterestTag("算法", "编程", 0.9)],
+            disliked_topics=["禁止带货，只允许风险分析。" * 150],
+        )
+    )
+    provider = NativeProvider()
+    budget = resolve_jev_context(MODEL, {MODEL: JevContextLimits(48000, 24000)})
+    adapter = JevContentEvaluator(
+        provider, model=MODEL, config=JevEvaluationConfig(), context_budget=budget
+    )
+    candidate = {**ITEM, "title": "算法的基本原理"}
+    if long_body:
+        candidate["body_text"] = "\n".join(f"背景段落{i}讲解算法原理。" for i in range(450))
+    result = await adapter.evaluate(
+        profile_summary=build_profile_catalog(profile), content_items=[candidate]
+    )
+    assert result[0] is not None
+    assert len(provider.requests) == 1
+    request = provider.requests[0]
+    assert budget.fits_request(request)
+    assert request.state["profile"]["disliked_topics"] == profile.preferences.disliked_topics
+    names = [row["name"] for row in request.state["candidate_profiles"]["c0"]["interests"]]
+    assert "算法" in names
+
+
 async def test_selected_model_capacity_changes_projection_without_switching_model() -> None:
     loaded: list[dict[str, Any]] = []
     namespaces: list[str] = []
@@ -136,7 +167,7 @@ async def test_mandatory_profile_overflow_never_calls_provider(caplog: Any) -> N
     result = await adapter.evaluate(
         profile_summary=build_profile_catalog(profile), content_items=[ITEM]
     )
-    assert result == [None]
+    assert len(result) == 1 and isinstance(result[0], InputBudgetFailure)
     assert not provider.requests
     assert "mandatory_profile_too_large" in caplog.text
 

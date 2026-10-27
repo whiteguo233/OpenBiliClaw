@@ -1,5 +1,17 @@
 # 存储层
 
+## Jev 输入预算停放（2026-10-27）
+
+| 能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_input_budget_candidates(ids, claim_token=..., reason=...)` | 仅当前 `evaluating` 租约所有者可 CAS 停放为 `failed_eval`；reason 为预算原因与 64 位上下文摘要，清租约但保留已有证据，不增加 attempts |
+| `count_input_budget_blocked_candidates()` | 只读统计带预算原因的停放行，不返回画像或正文 |
+| `revive_input_budget_candidates(context_fingerprint=..., limit=500)` | 只重新入队上下文摘要不同的停放项；有界、清错误/租约/attempts，不消耗 transient 复活次数 |
+
+复用既有 `discovery_candidates.status/eval_error`，无 schema migration。
+通用 `revive_failed_eval_candidates()` 排除预算原因，避免同配置 startup/manual 唤醒反复空跑；
+旧租约迟到回写不能停放新 owner 的行。预算失败不写成功评分、时效证据或 `evaluated_at`。
+
 ## 概述
 
 `Database.has_current_recommendation_supply()` 提供首轮发现恢复判断所需的有界 `EXISTS` 证据：仅接纳达到入池分数、带展示文案、仍关联 fresh/shown 内容的推荐。`purged_by_reinit` 等退休历史即使保留在 recommendations 表，也不算当前画像已恢复供给。该方法不修改任何行。

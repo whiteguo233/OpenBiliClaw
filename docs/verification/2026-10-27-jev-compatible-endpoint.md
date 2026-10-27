@@ -1,5 +1,8 @@
 # Jev 可配置兼容端点验收（2026-10-27）
 
+本记录按阶段追加，保留历史失败。最新结果见[后续修复与真实恢复验收](#后续修复与真实恢复验收2026-10-27)：
+正向兴趣分配及本地超限空重试已修复，并以正式隔离进程＋真实请求验证容量恢复；未部署日常实例。
+
 ## 交付与数据边界
 
 - 桌面 Web / 插件 popup / 移动 Web 共用 Jev 连接表单，支持 Base URL 或完整原生接口、Token、固定模型与双上下文容量。选择候选评估器 `jev` 才替换完整评估；连接开关不擅自开启业务路由。
@@ -153,3 +156,85 @@ Jev 只接收候选标题/描述/正文等文本及元数据，不包含视频�
 65 项通过，但没有覆盖本轮的真实 mandatory-to-soft-budget 比例，不能据此覆盖失败结论。
 两个临时正式服务已停止；没有合并/推送、部署或重启日常实例。私密副本和完整现场仅保存在
 权限受限的本机 `/tmp/obc-jev-formal-*` 诊断目录，未提交；本节只保存脱敏指标与代码归因。
+
+## 后续修复与真实恢复验收（2026-10-27）
+
+本节为用户批准修复后的独立结果，不覆盖上节的失败记录。仍在独立 worktree，
+不修改或重启日常实例；固定 OpenRouter `typesafe/jev-1.14-20261014`，不切模型，
+Token 仅通过关闭终端回显的临时环境变量传递，不落配置、报告或仓库。
+
+### 修复合同
+
+1. `JevContentEvaluator._load_profile()` 的必需画像作为基线，可选兴趣按剩余窗口的
+   三分之一分配软额度；不足时借用实际剩余空间加载完整兴趣事实。源画像存在兴趣但
+   一条也装不下时继续本地减少可选原文，不以“只有避雷”冒充完整画像。
+   分配策略版本进入缓存身份；不使用摘要 LLM，不改原画像。
+2. 本地确定性预算失败使用程序内 `InputBudgetFailure`，不再折叠成远端 missing。
+   engine 绑定有效画像目录、负例、scorer、精确模型/容量/打包契约的 SHA-256 身份，
+   pipeline 按原 claim token CAS 停放 `failed_eval` + `input_budget_exhausted:<fingerprint>`。
+   不写成功评分/缓存，不增加 eval/batch attempts，不牵连混合批次中的有效项。
+3. 通用 transient 死信复活排除预算停放项；同画像/容量下手动刷新、重复保存、重启均不空跑。
+   下一次有效唤醒/安全扫描发现上下文身份改变才有界重新入队。
+   容量或画像改变可以恢复；只换 Token、时间流逝不表示原输入会变小。
+4. `/api/runtime-status` 增加只读 `candidate_eval_input_budget_blocked`，
+   沿用 `candidate_eval_last_error` 显示可操作原因；coordinator 重建仍可从 durable 行恢复诊断。
+
+### 红绿回归
+
+最小公开边界复现修复前为 `automatic_positive_interests=0`，而手动放回一条原始兴趣仍能通过双护栏；
+修复后为 1。新增短内容/长内容、大块必需画像、只停放一次、同配置不复活、画像缩小恢复、
+容量放宽恢复、混合批次有效项保留、重建状态读数，以及旧 claim 无权停放新 owner 等回归。
+相关 300 项测试通过；Ruff format/check 与 MyPy 363 个源文件通过，UI catalog 2920 条一致。
+
+扩大回归执行配置/API/画像、所有 Jev/decision 单元模块和候选管线/coordinator：
+初跑为 **1069 passed、3 failed、3 deselected**；三处失败均为协议假后端的旧
+`pending_eval` 断言，现改为 `failed_eval` + 明确预算原因、`blocked=1`、零请求/零 attempts，
+定向三项复测通过；随后整个 `test_jev_fake_backend.py` 加该 API 状态快照复测 **20 passed**。
+不是把远端 422 或暂态 missing 改成预算失败，它们仍检查 pending。
+新增状态字段还使全仓尝试中的一个严格 API 响应快照先失败；补上默认值 0 后已在上述扩大选择中通过。
+该全仓尝试在定位此失败后主动中断（847 passed、1 failed、178 deselected），
+不宣称全仓 pytest 全绿。真实凭据 integration 和 `login_codex_import` 未运行。
+
+```bash
+PYTHONPATH=src pytest -q tests/test_api_app.py::TestBackendAPI::test_runtime_status_endpoint_returns_runtime_summary tests/test_jev*.py tests/test_decision*.py tests/test_api_config_guards.py tests/test_api_config_probe.py tests/test_api_config_transactional.py tests/test_config.py tests/test_profile_views.py tests/test_profile_views_guards.py tests/test_on_demand_profile_views.py tests/test_discovery_candidate_store.py tests/test_discovery_candidate_pipeline.py tests/test_candidate_pipeline_admission.py tests/test_candidate_eval_coordinator.py -m 'not integration' --tb=short --disable-warnings
+PYTHONPATH=src pytest -q tests/test_jev_fake_backend.py::test_local_overflow_does_not_reach_the_real_socket
+```
+
+### 正式进程与真实请求
+
+使用正式 `create_app()`、lifespan、配置保存/应用、候选 coordinator、HTTP adapter 和 SQLite admission，
+未注入假的业务组件或推理响应。仅在 HTTP 边界被动检查请求预算、画像事实来源、必需项和片段出处。
+同一真实画像的 58,850-byte 文件副本，有效请求目录 24,686 bytes / 114 个兴趣；
+共享必需画像 7,375 bytes。两条真实视频快照来自日常数据库只读查询，另加一条明确标注的
+454 片段合成长文，保留“必须先备份；否则不适用”条件句。不是当天重新抓取的视频正文。
+
+| 阶段 | 双 UTF-8 护栏：请求 / state＋最长题 | 真实 POST | 实际请求 bytes（三条） | 实际最长单题 bytes（三条） | 所选兴趣数（三条） | 结果 |
+|---|---|---:|---|---|---|---|
+| 正常窗口候选 | 48,000 / 24,000 | 3 | 26,895 / 26,820 / 32,652 | 18,526 / 18,613 / 23,904 | 11 / 11 / 1 | 三条均有效落库；1 cached、2 rejected_low_score |
+| 收紧窗口 | 36,000 / 18,000 | 3 | 24,896 / 24,826 / 26,651 | 16,527 / 16,619 / 17,903 | 11 / 12 / 2 | 三条有效评估，均 rejected_low_score；不再兴趣归零 |
+| 必需输入装不下 | 24,000 / 12,000 | 0 | — | — | — | 三条预算停放，eval/batch attempts 均为 0 |
+| 同容量重复保存/唤醒 | 24,000 / 12,000 | 0 | — | — | — | 原三条仍停放，同 fingerprint，无重试；状态显示 blocked=3 |
+| 重启后保存放宽容量 | 48,000 / 24,000 | 3 | 26,895 / 26,820 / 32,652 | 18,526 / 18,613 / 23,904 | 11 / 11 / 1 | 同三条自动恢复，blocked 3→0；1 cached、2 rejected_low_score |
+
+九次真实响应均为固定模型、HTTP 200、每次十道完整问题；从未把同一候选拆成多轮付费评估。
+各请求完整保留必需画像，所选兴趣均来自源目录，原文 span 的字段/字符位置逐项匹配。
+长文在正常/收紧窗口分别选择 65/454、34/454 个完整片段，条件句均保留；这不是语义无损证明。
+本轮远端 usage 合计 **$0.004209072**（不含上节修复前费用），HTTP 延迟约 1.14–3.83 秒。
+三条低分/准入的差异不构成质量提升、阈值标定或确定性输出认证。
+
+### 验收脚本自身的失败与范围
+
+- 首次修复后正式运行取得三次有效响应且原三条都落库，但脚本按“全表恰好三条”等待；
+  正常后台又发现了 40 条内容，导致脚本整体超时。被动出处检查阻止了这些范围外候选的付费请求；
+  该次整体 `passed=false` 保留，不改成全流程通过。表中正常窗口只引用已核实的原三条结果。
+- 随后修正为按验收 cohort 等待，并通过现有 B 站专用代理配置阻止隔离环境无关站点抓取。
+  收紧/停放/同配置三个阶段通过；容量保存阶段超过脚本 8 秒读取期限，原报告仍为 `passed=false`。
+- 最后单独恢复原有停放数据库，**未重放前三阶段的付费评估**。延长验收客户端读取期限后，
+  先证实重启仍 blocked=3，再通过正式 `PUT /api/config` 保存放宽容量、等实际 applied，
+  自动恢复相同三条并确认 blocked=0；独立 `recovery-report.json` 为 `passed=true`。
+
+私密完整现场位于 `/tmp/obc-jev-fixed-20261027.oAOS3x` 与
+`/tmp/obc-jev-recovery-20261027.bHEfur`，未提交；文件扫描未发现 OpenRouter Token。
+源画像文件 hash 前后一致，源数据库只读，临时服务已结束。未验证真实安装版插件 MV3 操作、
+日常部署、推荐表达 LLM 或导演编排质量；没有为了让测试入池降低 0.60 阈值。
+双字节护栏仍是配置容量的保守工程映射，不是精确 tokenizer 或官方窗口上限探测。

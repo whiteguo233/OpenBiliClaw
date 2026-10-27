@@ -39,6 +39,22 @@ class CanonicalEvaluationPayloadError(ValueError):
 
 
 @dataclass(frozen=True)
+class InputBudgetFailure:
+    """Local deterministic refusal, never a model score or remote answer.
+
+    The engine binds the effective profile/evaluator context before persistence.
+    An unchanged context must not immediately retry the same oversized input.
+    """
+
+    context_fingerprint: str = ""
+
+    @property
+    def storage_reason(self) -> str:
+        """Stable, non-sensitive cause and recovery identity."""
+        return f"input_budget_exhausted:{self.context_fingerprint}"
+
+
+@dataclass(frozen=True)
 class CanonicalEvaluationBatch:
     """One request-scoped canonical sparse evaluator batch.
 
