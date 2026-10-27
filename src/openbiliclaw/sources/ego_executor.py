@@ -53,7 +53,7 @@ def _save_session_state(path: Path, state: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _error(code: str, detail: str = "") -> Exception:
+def _error(code: str, detail: str = "", *, navigation_error: Any = None) -> Exception:
     from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
     descriptions = {
@@ -75,9 +75,16 @@ def _error(code: str, detail: str = "") -> Exception:
         ),
         "login_required": "Website login needs user attention",
     }
-    return BrowserWorkflowExecutionError(
-        code, detail or descriptions.get(code, "Ego Lite could not complete the browser operation")
+    description = detail or descriptions.get(
+        code, "Ego Lite could not complete the browser operation"
     )
+    if (
+        code == "ego_navigation_failed"
+        and isinstance(navigation_error, str)
+        and re.fullmatch(r"net::ERR_[A-Z_]{1,64}", navigation_error)
+    ):
+        description += f" ({navigation_error})"
+    return BrowserWorkflowExecutionError(code, description)
 
 
 def _host_pid(server_name: str) -> int | None:
@@ -298,7 +305,12 @@ class EgoLiteWorkflowSession:
                     task.add_done_callback(self._guards.discard)
                 elif (future := self._pending.pop(message.get("id"), None)) is not None:
                     if message.get("error"):
-                        future.set_exception(_error(str(message["error"])))
+                        future.set_exception(
+                            _error(
+                                str(message["error"]),
+                                navigation_error=message.get("navigation_error"),
+                            )
+                        )
                     else:
                         future.set_result(message.get("result"))
         finally:

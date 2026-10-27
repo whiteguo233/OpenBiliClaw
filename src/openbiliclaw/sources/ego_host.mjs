@@ -135,10 +135,15 @@ export async function start(config) {
     throw Error('ego_window_unavailable');
   };
   const navigate=async url=>{
+    delete diagnostic.navigation_error;
     if(!await approve({url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
     const previousLoader=(await rpc('Page.getFrameTree')).frameTree.frame.loaderId;
     const result=await rpc('Page.navigate',{url});
-    if(result.errorText) throw Error(diagnostic.login_wall?'login_required':'ego_navigation_failed');
+    if(result.errorText) {
+      // Keep only a bounded Chromium enum, never its error text, URL or query.
+      if(/^net::ERR_[A-Z_]{1,64}$/.test(result.errorText)) diagnostic.navigation_error=result.errorText;
+      throw Error(diagnostic.login_wall?'login_required':'ego_navigation_failed');
+    }
     const end=Date.now()+30000;
     let stableDocument='', stableSince=0;
     while(Date.now()<end) {
@@ -214,7 +219,7 @@ export async function start(config) {
         // otherwise every run looks like a leaked tab and skips the idle grace.
         if(msg.operation==='close') {send({id:msg.id,result:true});setTimeout(()=>void close(),0);continue;}
         const fn=Object.hasOwn(commands,msg.operation)?commands[msg.operation]:null;
-        Promise.resolve().then(()=>{if(!fn)throw Error('invalid_operation');if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);return fn(msg.arguments||{});}).then(result=>{if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);send({id:msg.id,result});}).catch(e=>send({id:msg.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_operation_failed'}));
+        Promise.resolve().then(()=>{if(!fn)throw Error('invalid_operation');if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);return fn(msg.arguments||{});}).then(result=>{if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);send({id:msg.id,result});}).catch(e=>send({id:msg.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_operation_failed',...(e.message==='ego_navigation_failed' && diagnostic.navigation_error?{navigation_error:diagnostic.navigation_error}:{})}));
       }});
     connection.on('close',()=>void close());
     connection.on('error',()=>void close());

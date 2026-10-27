@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,16 @@ from openbiliclaw.sources.protocol import SourceFetchResult
 from openbiliclaw.sources.workflow_service import WorkflowService
 
 logger = logging.getLogger(__name__)
+
+
+def _run_error(result: SourceFetchResult) -> str:
+    """Retain a fixed Ego network reason without persisting browser error text."""
+    error = result.error_code or result.detail
+    if result.error_code == "ego_navigation_failed":
+        reason = re.search(r"\((net::ERR_[A-Z_]{1,64})\)$", result.detail)
+        if reason:
+            error += f" ({reason[1]})"
+    return error
 
 
 @dataclass
@@ -125,7 +136,7 @@ class CustomWorkflowProducer:
                     ),
                     interval_minutes=source["interval_minutes"],
                     limit=remaining,
-                    error=result.error_code or result.detail,
+                    error=_run_error(result),
                     scope_complete=result.scope_complete,
                     cursor={
                         "etag": result.etag,

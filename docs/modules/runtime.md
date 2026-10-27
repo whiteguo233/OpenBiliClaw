@@ -37,6 +37,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 动态网站来源独立调度 | ✅ | 注册的 `custom_<uuid>` 逐个参与现有 share/deficit 算法与来源锁；daemon 和 OpenClaw 一次性执行均接入同一候选评估链。普通与探索关键词以实例 ID 隔离，禁用或归档后停止新调度。 |
+| Ego 网络失败原因持久化 | ✅ | `CustomWorkflowProducer` 对 `ego_navigation_failed` 只追加经校验的 `net::ERR_*` 枚举至正式运行 `error` / 工作流 `last_error`，不保存页面原始错误文本；其他失败、调度退避、权限和网络路由保持原行为。 |
 | Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
 | 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
@@ -710,6 +711,13 @@ XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博八个插件�
 
 - 单任务内：`merge_result()` 合并 partial / final payload 时按 scope + 平台原生 ID / URL / title 去重，只把本次新增项返回给 API 传播。XHS 只接纳任务不可变 `scopes` 白名单内的 note 与整数计数；缺失 / 空列表按扩展默认回退为 saved / liked / xhs_history。`scope_counts` 以扩展报告值和已合并 scope-aware canonical 行数两者较大值为准，但最终受 `max_items_per_scope` 约束：两个互不重叠的 partial 可在预算内从各报 `saved=5` 累积为 `saved=10`；达到上限后先到的 canonical 行优先，后续同行、计数与未被 note 接纳的裸 URL 都被裁掉。已接纳同 identity note 的发布时间与首个有效 tokenized URL 可继续补齐，不占新额度。同一笔记同时出现在 saved/liked 仍保留为两个不同强信号，各自占用所属 scope 的预算。
 - 跨任务：API 在传播 bootstrap 事件前读取 `source_bootstrap_state.json`，跳过八个平台已经进入 durable event ingress 的 identity key；seen-key checkpoint 使用原子 read-modify-write，按扩展响应顺序为每源保留最新 5,000 个。这样 `fetch-*`、`init`、周期回拉或近期任务复用重复返回同一批收藏 / 历史时，不会再次插入行为事实或触发画像更新。各平台 final callback 先冻结首份 canonical result，随后依次修复 event ingress、seen state 和 terminal flip；任一步失败都保持 staged/nonterminal，供租约重领后从冻结结果重放。Linux.do scope 严格映射为 bookmarks→favorite、likes→like、read_history→view；V2EX key 额外带 resolved username 前缀，后端净化任务字段、执行 identity mismatch gate，并对账号分区 Node evidence / 收藏 snapshot effect 做幂等记录；微博 key 按已观察账号分区。
+
+### CustomWorkflowProducer
+
+`CustomWorkflowProducer.produce_if_due()` 的错误记录继续使用现有字符串字段；例如
+`ego_navigation_failed (net::ERR_CONNECTION_CLOSED)`。固定错误码仍在前，只有详情末尾
+符合有界枚举格式时追加该原因；URL、query 和任意页面文本不会从详情复制到运行历史。
+这项诊断不改变下一次执行时间，不会绕过 `backoff`、`login_required` 或来源启停门。
 
 ## 配置项
 
