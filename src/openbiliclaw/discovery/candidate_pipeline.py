@@ -439,8 +439,9 @@ class DiscoveryCandidatePipeline:
         *,
         profile: Any,
         batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
+        flush: bool = False,
     ) -> CandidateDrainResult:
-        """Evaluate one pending batch and admit accepted items into content_cache."""
+        """Evaluate one batch; explicit init may flush the coalescing delay only."""
 
         if self._drain_lock.locked():
             self.last_admitted_items = []
@@ -449,7 +450,9 @@ class DiscoveryCandidatePipeline:
                 post_admission_copy=PostAdmissionCopyReceipt(),
             )
         async with self._drain_lock:
-            result = await self._drain_pending_locked(profile=profile, batch_size=batch_size)
+            result = await self._drain_pending_locked(
+                profile=profile, batch_size=batch_size, flush=flush
+            )
         post_admission_copy = await self._notify_candidates_admitted(
             profile=profile,
             admitted=int(result.get("cached", 0) or 0),
@@ -529,6 +532,8 @@ class DiscoveryCandidatePipeline:
         if len(stored_tokens) == 1:
             token = stored_tokens.pop()
         items = tuple(row_to_discovered_content(row) for row in rows)
+        for row, item in zip(rows, items, strict=True):
+            item.semantic_filter_review = row.get("eval_error") == "semantic_filter_deferred"
         return CandidateEvalClaim(token=token, rows=tuple(rows), items=items)
 
     def claim_ready_batch(self, *, limit: int) -> CandidateEvalClaim | None:
@@ -562,7 +567,7 @@ class DiscoveryCandidatePipeline:
         return max(0.0, max_wait - max(0.0, float(self.time_fn()) - first_seen))
 
     async def evaluate_claim(self, claim: CandidateEvalClaim, profile: Any) -> CandidateEvalOutcome:
-        """Run only the LLM evaluation stage; this method performs no writes."""
+        """Run evaluator I/O and optional evidence audits, but never admit content."""
 
         started = self.time_fn()
         scores = await self.discovery_engine.evaluate_content_batch(
@@ -595,7 +600,7 @@ class DiscoveryCandidatePipeline:
         scores = list(outcome.scores)
         await self._normalize_evaluated_items(items)
         recently_viewed = self._recent_viewed_content_keys()
-        updated_ids = self._persist_evaluations(
+        updated_ids, deferred_count = self._persist_evaluations(
             rows,
             items,
             scores,
@@ -666,12 +671,15 @@ class DiscoveryCandidatePipeline:
         )
         self.last_admitted_items = list(admitted_items)
         confirmed_ids = set(durable_by_id)
-        return {
+        result = {
             "evaluated": len(confirmed_ids),
             "cached": cached,
             "rejected": rejected + admission_rejected,
-            "stale": len(rows) - len(confirmed_ids),
+            "stale": len(rows) - len(confirmed_ids) - deferred_count,
         }
+        if deferred_count:
+            result["deferred"] = deferred_count
+        return result
 
     def release_claim(
         self,
@@ -709,11 +717,28 @@ class DiscoveryCandidatePipeline:
         )
         return len(ids)
 
+    def revive_failed_eval_candidates(self) -> int:
+        """Re-queue dead-lettered candidates after an evaluator recovery.
+
+        Delegates to storage with the same getattr guard style as the other
+        durable hooks so test doubles without the method keep working.
+        """
+
+        revive = getattr(self.database, "revive_failed_eval_candidates", None)
+        if not callable(revive):
+            return 0
+        try:
+            return int(revive() or 0)
+        except Exception:
+            logger.debug("failed_eval candidate revival failed", exc_info=True)
+            return 0
+
     async def _drain_pending_locked(
         self,
         *,
         profile: Any,
         batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
+        flush: bool = False,
     ) -> dict[str, int]:
         """Evaluate one pending batch while the shared drain lock is held."""
 
@@ -731,7 +756,12 @@ class DiscoveryCandidatePipeline:
             )
 
         self.last_admitted_items = []
+        requested = max(0, int(batch_size))
         batch_size = self._effective_batch_size(batch_size)
+        if flush:
+            # Preserve caller and engine caps, but do not inflate an explicit
+            # first-pool wave to the daemon's minimum coalescing batch size.
+            batch_size = min(requested, batch_size)
         claim_limit = self._effective_eval_claim_limit(batch_size)
         if batch_size <= 0:
             return {"evaluated": 0, "cached": 0, "rejected": 0}
@@ -749,7 +779,7 @@ class DiscoveryCandidatePipeline:
             self.last_admitted_items = list(admitted_items)
             return {"evaluated": 0, "cached": retry_cached, "rejected": retry_rejected}
 
-        waiting_pending = self._waiting_pending_eval_count(batch_size)
+        waiting_pending = None if flush else self._waiting_pending_eval_count(batch_size)
         if waiting_pending is not None:
             self.last_admitted_items = list(admitted_items)
             return {
@@ -954,10 +984,14 @@ class DiscoveryCandidatePipeline:
         *,
         recently_viewed: set[str],
         claim_token: str | None = None,
-    ) -> set[int]:
+    ) -> tuple[set[int], int]:
         evaluations: list[dict[str, Any]] = []
         unresolved_ids: list[int] = []
+        deferred_ids: list[int] = []
         for row, item, score in zip(rows, items, scores, strict=True):
+            if item.semantic_filter_deferred:
+                deferred_ids.append(int(row["id"]))
+                continue
             if item.relevance_reason == "evaluation_response_missing":
                 unresolved_ids.append(int(row["id"]))
                 continue
@@ -1027,6 +1061,14 @@ class DiscoveryCandidatePipeline:
         )
         if claim_token is not None and callable(persist_claimed):
             updated_ids = set(persist_claimed(evaluations, claim_token=claim_token))
+            deferred_count = 0
+            if deferred_ids:
+                deferred_count = int(
+                    self.database.defer_claimed_semantic_filter_candidates(
+                        deferred_ids,
+                        claim_token=claim_token,
+                    )
+                )
             reset_claimed = getattr(
                 self.database, "reset_claimed_discovery_candidates_to_pending", None
             )
@@ -1039,11 +1081,19 @@ class DiscoveryCandidatePipeline:
                     max_batch_attempts=self.max_batch_eval_attempts,
                     increment_attempts=False,
                 )
-            return updated_ids
+            return updated_ids, deferred_count
+        if deferred_ids:
+            # Legacy adapters cannot prove ownership for a temporary refusal.
+            # Do not turn it into a permanent low-score result.
+            self._release_eval_claims(
+                [row for row in rows if int(row["id"]) in deferred_ids],
+                reason="semantic_filter_deferred",
+                increment_attempts=False,
+            )
         updated = int(self.database.update_discovery_candidate_evaluations(evaluations) or 0)
         if updated == len(evaluations):
-            return {int(evaluation["candidate_id"]) for evaluation in evaluations}
-        return set()
+            return {int(evaluation["candidate_id"]) for evaluation in evaluations}, 0
+        return set(), 0
 
     def _durable_candidate_rows(self, candidate_ids: set[int]) -> list[dict[str, Any]]:
         """Reload persisted rows before admission, failing closed if unavailable."""

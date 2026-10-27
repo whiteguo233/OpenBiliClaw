@@ -294,8 +294,8 @@
           <div class="lane-title">输入来源</div>
           <div class="lane-body">
             <article class="card blue">
-              <h3>六源扩展账号 bootstrap</h3>
-              <p>初始化或扩展在线周期回拉复用既有任务；六源全局串行，回传先经 staged durable ingress 和原子有界 seen-key，再由画像 owner 消费。</p>
+              <h3>八源扩展账号 bootstrap</h3>
+              <p>初始化或扩展在线周期回拉复用既有任务；跨来源任务全局串行，回传先经 staged durable ingress 和原子有界 seen-key，再由画像 owner 消费。Instagram 首版仅在初始化时拉取，不进入周期增量。</p>
               <ul>
                 <li>XHS: saved / liked / history</li>
                 <li>Douyin: post / collect / like / follow</li>
@@ -304,6 +304,7 @@
                 <li>Reddit: saved / upvoted / subscribed</li>
                 <li>Linux.do: bookmarks / likes / read history（同源 GET；Cookie 不上传）</li>
                 <li>V2EX: topics / replies / favorite topics / favorite nodes</li>
+                <li>Instagram: liked / saved / following（init-only；Cookie 不上传）</li>
                 <li>GitHub: public starred repositories → favorite（官方 REST；init/on-demand）</li>
               </ul>
               <p>V2EX 先按 PAT / 浏览器 / 用户接受身份做账号隔离；身份冲突暂停画像写入。收藏 scope 仅以完整快照推进缺失计数，连续两次确认后经持久 outbox 生成 retraction，重新出现则恢复。</p>

@@ -20,11 +20,14 @@ Everything here exists so that cannot happen again:
 
 **Rejection requires evidence.** A structural failure is evidence (a B站 jar
 without ``DedeUserID`` cannot log anyone in). An explicit platform "not logged
-in" is evidence. A transport failure is *not* evidence about the credential —
-but it is still a refusal to persist on the two platforms we can normally
-confirm, because a credential we were unable to check is exactly the thing this
-module exists to stop from landing silently. That refusal is reported as
-``validation_network``, the code the browser extension already backs off on.
+in" is evidence. A transport failure is *not* evidence about the credential.
+For platforms whose own sync loop re-validates the stored cookie on every
+cycle (B站, see ``_UNVERIFIED_PERSIST_SLUGS``) the candidate is persisted with
+an explicit ``unverified`` marker — refusing it deadlocked users whose only
+route to the platform differed from the probe's, and the sync loop is the
+backstop that still catches a genuinely dead cookie. Everywhere else the
+refusal stands, reported as ``validation_network``, the code the browser
+extension already backs off on.
 
 **What is not validated is named.** ``PUT /api/config`` keeps its own
 partial-update semantics — an empty or masked-echo field means "this field was
@@ -34,6 +37,7 @@ share one and only one notion of what makes a credential invalid.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -48,9 +52,26 @@ from openbiliclaw.api.source_auth.probe_cache import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from openbiliclaw.api.source_auth.verify import LiveProbeOutcome
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
+
+#: Platforms whose own background loop re-validates the stored credential on
+#: every cycle (B站 account sync turns a dead cookie into ``auth_expired``),
+#: so a candidate the probe could not *reach* the platform to check is safe
+#: to persist with an explicit unverified marker — the sync loop is the
+#: backstop that catches a genuinely dead one. Platforms without that loop
+#: keep refusing on transport failure: an unchecked credential must not land
+#: silently where nothing would ever re-check it.
+_UNVERIFIED_PERSIST_SLUGS = frozenset({"bilibili"})
+
+#: Extra probe attempts before a transport failure is accepted as such. The
+#: write gate's probe shares the user's network (often a flaky proxy), so one
+#: timeout says little; two cheap retries filter transient blips without
+#: turning a saving click into a long wait.
+_NETWORK_PROBE_RETRIES = 2
+_NETWORK_PROBE_BACKOFF_SECONDS = 0.5
 
 #: What a caller claims it is storing. ``token`` is deliberately separate from
 #: ``cookie``: 小红书's ``xsec_token`` is a per-note *content access* token, not
@@ -258,6 +279,29 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
         form_label="YouTube",
         help_text="YouTube 按公开源接入，不需要登录，也没有任何凭据要填。",
     ),
+    "tiktok": CredentialSpec(
+        slug="tiktok",
+        kinds=("cookie",),
+        # A guest TikTok jar carries ttwid / msToken but none of these; they
+        # are the same ByteDance session-cookie family 抖音's gate counts.
+        any_of_keys=("sessionid", "sessionid_ss", "sid_tt"),
+        invalid_message=(
+            "TikTok Cookie 缺少登录态字段（sessionid / sessionid_ss / sid_tt），未保存。"
+            "请在已登录的浏览器重新复制完整 Cookie。"
+        ),
+        live_gate=True,
+        form_kind="cookie_textarea",
+        form_label="TikTok Cookie（可选）",
+        form_placeholder="留空表示不覆盖现有 cookie（访客身份下无需配置）",
+        env_var_path="sources.tiktok.cookie_env",
+        env_var_default="OPENBILICLAW_TIKTOK_COOKIE",
+        login_url="https://www.tiktok.com/",
+        help_text=(
+            "TikTok 默认以访客身份读公开数据，无需登录；登录 Cookie 只用于解锁关键词搜索"
+            "与更高限额（登录态抓取有账号风险，见 TikTok 来源文档）。保存时会真的向 "
+            "TikTok 验证一次（passport 会话心跳），验证不通过不会落盘。"
+        ),
+    ),
     "bangumi": CredentialSpec(
         slug="bangumi",
         # ``kinds=()``: the unified write endpoint does not accept Bangumi's
@@ -357,6 +401,22 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
             "插件只同步是否登录，实际只读请求在微博页面内执行，不上传 Cookie。"
         ),
     ),
+    "instagram": CredentialSpec(
+        slug="instagram",
+        kinds=("login_state",),
+        opaque_credential=True,
+        unverified_reason=(
+            "Instagram Cookie 留在浏览器中；插件只上报 sessionid 是否存在，"
+            "后端不读取或保存 Cookie。"
+        ),
+        form_kind="extension_only",
+        form_label="Instagram 登录态",
+        login_url="https://www.instagram.com/",
+        help_text=(
+            "公开 topic/creator 发现无需登录。导入个人点赞、收藏和关注时，请在浏览器登录 "
+            "Instagram；插件只上报一个布尔登录状态。"
+        ),
+    ),
 }
 
 
@@ -374,6 +434,12 @@ class CredentialVerdict:
     message: str = ""
     checked: CheckDepth = "structural"
     unverified_reason: str = ""
+    #: True when the value was accepted WITHOUT a definitive live verdict:
+    #: the probe could not reach the platform at all. Distinct from
+    #: ``unverified_reason`` (which explains platforms with no live gate);
+    #: here a gate exists but transport failed, so the caller must record
+    #: the outcome as a network failure, never as a confirmed login.
+    unverified: bool = False
     # Live-probe extras, populated only when ``checked == "live_probe"``.
     authenticated: bool = False
     username: str = ""
@@ -423,6 +489,11 @@ class CredentialWriteOutcome:
     persisted: bool = False
     checked: CheckDepth = "none"
     unverified_reason: str = ""
+    #: True when the value was accepted WITHOUT a definitive live verdict
+    #: (transport failure on a platform whose sync loop re-validates). The
+    #: deprecated B站 cookie route projects this onto its response so the
+    #: extension can tell "stored unchecked" from "confirmed login".
+    unverified: bool = False
     cookie_names: tuple[str, ...] = ()
     authenticated: bool = False
     username: str = ""
@@ -525,6 +596,15 @@ def current_credential(slug: str, *, cfg: Config) -> str:
                     getattr(cfg.sources.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")
                 ),
             ).strip()
+        if slug == "tiktok":
+            from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+            return resolve_tiktok_cookie(
+                data_dir=cfg.data_path,
+                cookie_env=str(
+                    getattr(cfg.sources.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
+                ),
+            ).strip()
         if slug == "twitter":
             from openbiliclaw.sources.x_auth import resolve_x_cookie
 
@@ -573,6 +653,33 @@ def structural_verdict(slug: str, value: str) -> CredentialVerdict | None:
         message=spec.invalid_message or f"{slug} 凭据结构不完整，未保存。",
         checked="structural",
     )
+
+
+async def _probe_with_network_retries(
+    slug: str,
+    *,
+    cfg: Config,
+    cookie: str,
+    probes: LiveProbeCache,
+) -> LiveProbeOutcome:
+    """Run the live probe, retrying transport failures briefly.
+
+    Only slugs in ``_UNVERIFIED_PERSIST_SLUGS`` retry: there a network
+    outcome becomes an *accepted-unverified* write, so it is worth a second
+    look before settling for one. Elsewhere a transport failure refuses
+    either way, and retrying would only delay the refusal.
+    """
+    from openbiliclaw.api.source_auth.verify import run_live_probe
+
+    outcome = await run_live_probe(slug, cfg=cfg, cookie=cookie, probes=probes, record=False)
+    attempts = 0
+    while outcome.network_error and slug in _UNVERIFIED_PERSIST_SLUGS:
+        if attempts >= _NETWORK_PROBE_RETRIES:
+            break
+        attempts += 1
+        await asyncio.sleep(_NETWORK_PROBE_BACKOFF_SECONDS)
+        outcome = await run_live_probe(slug, cfg=cfg, cookie=cookie, probes=probes, record=False)
+    return outcome
 
 
 async def validate_credential(
@@ -712,14 +819,31 @@ async def validate_credential(
             from_cache=True,
         )
 
-    from openbiliclaw.api.source_auth.verify import run_live_probe
-
     # ``record=False``: the verdict is about a *candidate* that is not stored
     # yet. Recording it here would let a rejected paste overwrite the standing
     # verdict about the credential that is actually in use, so the caller
     # records only after the value lands.
-    outcome = await run_live_probe(slug, cfg=cfg, cookie=text, probes=probes, record=False)
+    outcome = await _probe_with_network_retries(slug, cfg=cfg, cookie=text, probes=probes)
     if outcome.network_error:
+        if slug in _UNVERIFIED_PERSIST_SLUGS:
+            # A transport failure is not evidence about the credential
+            # (invariant I3), and for these slugs refusing deadlocks users
+            # whose only route to the platform differs from the probe's:
+            # the extension keeps backing off on ``validation_network``
+            # while the account-sync loop — which re-validates the stored
+            # cookie on every tick — never gets a newer cookie to try.
+            # Persist with an explicit unverified marker instead; a
+            # definitive platform refusal below still refuses.
+            return CredentialVerdict(
+                ok=True,
+                message=(
+                    f"{outcome.message} 已按未验证 Cookie 保存；"
+                    "账号同步每轮会自动复检，失效时会提示重新登录。"
+                ),
+                checked="live_probe",
+                unverified=True,
+                unverified_reason="保存时无法连接平台完成登录验证，已按未验证凭据保存。",
+            )
         return CredentialVerdict(
             ok=False,
             error_code="validation_network",
@@ -766,6 +890,7 @@ def persist_credential(
             "linuxdo": "linuxdo",
             "v2ex": "v2ex",
             "weibo": "weibo",
+            "instagram": "instagram",
         }.get(slug, slug)
         setter = f"set_{prefix}_login_state"
         getter = f"get_{prefix}_login_state"
@@ -822,6 +947,17 @@ def persist_credential(
 
         DouyinCookieManager(cfg.data_path).set_cookie(text, source=source)
         return PersistResult(persisted=True, cookie_names=names)
+
+    if slug == "tiktok":
+        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+        previous = current_credential(slug, cfg=cfg)
+        TiktokCookieManager(cfg.data_path).set_cookie(text, source=source)
+        return PersistResult(
+            persisted=True,
+            cookie_names=names,
+            runtime_dirty=previous != current_credential(slug, cfg=cfg),
+        )
 
     if slug == "twitter":
         from openbiliclaw.sources.x_auth import XCookieManager

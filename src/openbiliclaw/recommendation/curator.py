@@ -407,7 +407,7 @@ class PoolCurator:
         candidates: list[DiscoveredContent],
         context: ScoringContext,
     ) -> dict[str, float]:
-        """Return a bvid → rec_score mapping for the given candidates.
+        """Return a scoring_key → rec_score mapping for the given candidates.
 
         The returned dict can be passed as ``score_override`` to the
         engine's diversified batch selector.
@@ -435,7 +435,7 @@ class PoolCurator:
                 score -= _AMPLIFICATION_OVER_BUDGET_PENALTY
 
             date_decision = self.publication_date_decision(item, now=context.now)
-            scores[item.bvid] = max(0.0, score * date_decision.score_multiplier)
+            scores[item.scoring_key] = max(0.0, score * date_decision.score_multiplier)
         return scores
 
     def build_temporal_ranking_shadow_audit(
@@ -453,7 +453,7 @@ class PoolCurator:
 
         items_by_id: dict[str, DiscoveredContent] = {}
         for item in candidates:
-            identity = str(item.bvid or "").strip()
+            identity = item.scoring_key
             if identity:
                 items_by_id[identity] = item
         if not items_by_id:
@@ -859,5 +859,5 @@ class PoolCurator:
                 score += self._feedback_adjustment(item, context.feedback)
 
             date_decision = self.publication_date_decision(item, now=context.now)
-            scores[item.bvid] = max(0.0, score * date_decision.score_multiplier)
+            scores[item.scoring_key] = max(0.0, score * date_decision.score_multiplier)
         return scores

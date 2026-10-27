@@ -1,13 +1,24 @@
 # Recommendation Director（推荐导演）完整规格
 
 **Created:** 2026-08-31  
-**Status:** Implementation-ready design baseline; implementation not started  
+**Revised:** 2026-09-26
+**Status:** Superseded in part by the three-mode design; requested modes, atomic screens, feedback and independent filtering integrated into main on 2026-10-22, disabled by default; not released, live quality unverified
 **Scope:** OpenBiliClaw recommendation strategy layer  
-**Evidence checked:** 2026-08-31  
+**Research sources checked:** 2026-08-31
+**Repository interfaces checked:** 2026-09-26
 **Source context:** `docs/architecture.md`, `docs/modules/recommendation.md`,
 `src/openbiliclaw/recommendation/engine.py`,
 `src/openbiliclaw/recommendation/curator.py`,
 `src/openbiliclaw/discovery/pool_snapshot.py`
+
+> **2026-09-26 三模式增补：** 最新需求见
+> [Jev 逐对编排、双速修正与纯 Agent 模式](2026-09-26-director-jev-modes.md)，
+> Jev 接口事实见 [官方能力核实](2026-09-26-jev-provider-research.md)。
+> 本文保留 batch/曝光/反馈、约束、提交、安全与审计底座；原有“Agent 不看候选、
+> 不选择具体卡片、仅一个低频 Planner 模式”等限制不再代表最新产品方案。
+> 增补文档 §14 列出了替代范围；本文 JSON 合同尚未升级到三模式，不能不经修订直接编码。
+> 三模式运行时、batch/反馈底座和独立过滤的实际边界见[实施进度](2026-09-26-director-implementation-progress.md)；
+> 本文原 JSON 仍为历史设计，最新可调用合同以[模块文档](../modules/director.md)为准。
 
 ## 1. 一句话决策
 
@@ -264,6 +275,8 @@ feed_mode, default_batch_size, client_instance_id
 
 明确的 item/creator/topic 排除先进入同步 session overlay，保护下一次 serve；不能等待 Planner。Director 只负责重新组织未来路径。
 
+IntentProjector 每次真正改变 session intent 或 suppression 时，须在同一事务更新 `session_policy_revision + session_view_digest + state_revision` 并追加 `SESSION_INTENT_UPDATED(session_projection.v1)`；TTL 自动到期解除 suppression 时写 `SESSION_SUPPRESSION_EXPIRED`，hysteresis 达退出阈值解除时仍写 `SESSION_INTENT_UPDATED` 并记录受控 reason。原始 note 不入 DecisionLog，event detail 只保存受控 target ID、来源 event ID 和 pre/post digest。无语义变化不 bump revision，也不制造假事件。
+
 ### 8.3 Director Context Builder
 
 负责生成稳定、紧凑、可缓存的输入，且必须：
@@ -357,6 +370,8 @@ Composer 是现有推荐引擎的扩展，而不是新 Agent：
 v1 不允许“半批 Director、半批 baseline”的混合提交。若一次 `ADVANCE_PLAN / APPEND_PLAN` 已 lease 某 slot，但 lane minimum 无法满足，系统丢弃全部 Director tentative rows，沿用已预留的 request/batch identity 重新提交一个纯 baseline batch，并在同一事务把该 slot 终结为 `SUBSTITUTED`、推进 cursor；它占用的是时间线位置，但不宣称履行任何 Director lane，也不计 Director adherence。无 active slot 的普通 baseline/recovery 才不消费 cursor。这样既不会用未声明 topic 偷偷补配额、污染归因，也不会让下次 ADVANCE 无限重试同一语义 slot。
 
 Whole-baseline 不能复用 Director 按 lane 定向构造的 SERVING ref。它必须从无 policy 的 normal baseline loader 重新取得 fresh snapshot，只共享最新 hard ConstraintSet 与 request claim；调用时设置 `fallback_depth=1 / director_hook=None`，禁止递归再次进入 Director fallback。Director 分支新增 all-or-nothing DAO/flag；普通 baseline 继续保留现有在硬约束后允许较短提交的语义，不能为实现 Director 偷改对照组。
+
+当前 `PoolCurator` 的跨批疲劳已使用提交/展示历史，部分放大惩罚还以 `COALESCE(presented_at, created_at)` 计算。v1 保留这些 baseline 选择语义；新增的 `PRESENTED` 只决定因果曝光和方向 reward 归因，不暗中把全局疲劳查询改为仅看 ack。若以后重定义疲劳，必须另做迁移和实验，不能混入 Director rollout。
 
 ### 8.11 Expression 与 Supply Bridge
 
@@ -485,6 +500,8 @@ DirectorInput 的 evidence catalog 只提供这些受控 type/target/polarity/ex
 ### 10.1 CandidateSetRef
 
 CandidateSetRef 是 Candidate Bus 的不可变引用。完整成员和冻结后的执行特征保存在服务端，引用及其 Planner 视图不携带候选 ID、标题、URL 或正文。
+
+2026-09 的排序键迁移后，现有 `PoolCurator`/MMR 内部 score dict 使用 `DiscoveredContent.scoring_key`（正常候选等于平台限定的 `item_key`，旧缺失行才回退 `bvid`）。CandidateSetRef 成员、跨源去重与 recommendation 归因仍以 canonical `item_key` 为权威；prepared snapshot adapter 必须把每个可执行 item 的 `item_key ↔ scoring_key` 显式配对并校验唯一，不能直接用 legacy `bvid` 当跨平台成员 ID，也不能把两个不同 `item_key` 因旧评分键碰撞合并。
 
 现有 `PoolDistributionSnapshot` 可以提供 deficit/saturation 起点，但只有边际分布，不能回答 “topic A + hands_on + 某平台 + 中时长” 是否同时有货；因此 CandidateSetRef builder 是新增能力，不是给旧 snapshot 换名字。
 
@@ -730,7 +747,7 @@ Planner 输入是完整的受控 JSON；示例：
         "evidence_ref": "profile:i_agent",
         "evidence_type": "PROFILE_ANCHOR",
         "target_type": "topic_id",
-        "target_ids": ["agent_memory", "agent_observability", "agent_tooling"],
+        "target_ids": ["agent_memory", "agent_tooling", "agent_observability"],
         "polarity": "POSITIVE",
         "expires_at": "2026-09-30T00:00:00Z"
       },
@@ -1234,7 +1251,7 @@ DirectorPlan 不变量：
 - Plan 本身不保存 `ACTIVE / COMMITTED` 等可变状态；状态在 PlanEnvelope、PlanSlotState 和 DecisionLog；
 - 已有 `COMMITTED / SUBSTITUTED / PRESENTED / CLOSED` 执行结果的 slot 永不改写；新 plan 可以 cancel 尚为 `PENDING` 的 slot，或通过递增 fencing token revoke 正在 `LEASED` 但尚未提交的 slot；
 - 相同 `planning_key` 只接受第一份合法结果；异步回包 basis 过期则记录 `STALE_REJECTED`。
-- 初始/新 horizon Plan 要求 `supersedes_plan_id = preserve_through_slot_seq = null`；replan Plan 要求二者同时非空，`supersedes_plan_id` 精确等于激活事务开始时的 current ACTIVE pointer，`preserve_through_slot_seq` 等于该 session 的 committed-through（包含 SUBSTITUTED 时间线位置），且 `horizon_start_slot_seq = preserve_through_slot_seq + 1`。旧 plan 的 terminal slots 不复制、不重建；任一边界不符则 stale reject；
+- 初始/新 horizon Plan 要求 `supersedes_plan_id = preserve_through_slot_seq = null`；replan Plan 要求二者同时非空，`supersedes_plan_id` 精确等于激活事务开始时的 current ACTIVE/DELIVERED pointer，`preserve_through_slot_seq` 等于该 session 的 committed-through（包含 SUBSTITUTED 时间线位置），且 `horizon_start_slot_seq = preserve_through_slot_seq + 1`。旧 plan 的 terminal slots 不复制、不重建；若旧 Plan 已 DELIVERED，激活事务还须关闭其剩余控制反馈窗口并把它置 SUPERSEDED；任一边界不符则 stale reject；
 
 `mode = SHADOW` 的合法 Plan 只以 `SHADOW_VALIDATED → SHADOW_EVALUATED` envelope 保存：不写 active plan pointer、不创建可 lease slot、不改变 DirectorSessionState，也不能被 enforce API 读取。切换到 enforce 后必须用新的 ENFORCE DirectorInput/planning_key 重新规划；禁止把历史 shadow artifact“升格”执行。只有 ENFORCE Plan 才能走 `VALIDATED → ACTIVE`。
 
@@ -1716,6 +1733,8 @@ DecisionLog 是 append-only 事件账本，不复制完整 Plan、候选或推�
   },
   "detail": {
     "detail_type": "batch_committed.v1",
+    "requested_execution_kind": "PLAN_SLOT",
+    "committed_execution_kind": "PLAN_SLOT",
     "execution_outcome": "DIRECTOR_COMMITTED",
     "served_count": 10,
     "planned_lane_counts": {"anchor_agent": 5, "adjacent_workflow": 3, "adjacent_feedback": 2},
@@ -1731,12 +1750,13 @@ DecisionLog 是 append-only 事件账本，不复制完整 Plan、候选或推�
 | event family | detail_type | 必填 refs / digest |
 |---|---|---|
 | `PLANNING_REQUESTED` | `planning_requested.v1` | planning_request_id + input_digest |
+| `PLANNING_DEFERRED` | `planning_deferred.v1` | planning_episode_id + terminal deferral reason；无 DirectorInput 时不要求 planning_request_id |
 | `PLANNING_FAILED` | `planning_failed.v1` | planning_request_id + input_digest + provider/error provenance |
 | `PLAN_PROPOSED` | `plan_proposed.v1` | planning_request_id + input/output digest + model provenance |
 | `PLAN_REJECTED` | `proposal_rejected.v1` | planning_request_id + proposal/output digest + validation codes；不得要求不存在的 plan ID |
 | `PLAN_ACCEPTED / PLAN_ACTIVATED` | `plan_validation.v1` | plan_id/revision + plan digest；activation 另带 pre/post state revision |
 | `EXPERIMENT_ASSIGNED` | `experiment_assigned.v1` | experiment/assignment object + unit hash |
-| `SLOT_LEASED / SLOT_LEASE_EXPIRED / SLOT_REVOKED / SLOT_CANCELED / SLOT_COMMITTED / SLOT_SUBSTITUTED / SLOT_PRESENTED / SLOT_CLOSED` | `slot_transition.v1` | plan/revision/slot + fencing token；commit/substitution/presentation/close 还需 batch |
+| `SLOT_LEASED / SLOT_LEASE_EXPIRED / SLOT_LEASE_RELEASED / SLOT_REVOKED / SLOT_CANCELED / SLOT_COMMITTED / SLOT_SUBSTITUTED / SLOT_PRESENTED / SLOT_CLOSED` | `slot_transition.v1` | plan/revision/slot + fencing token；commit/substitution/presentation/close 还需 batch |
 | `POLICY_COMPILED` | `policy_compiled.v1` | plan/slot + policy/ref/constraint IDs 与 input/output digests |
 | `POLICY_EVALUATED_SHADOW` | `shadow_evaluation.v1` | shadow plan + evaluation ID/digest，无 execution lease |
 | `SHADOW_EVALUATION_FAILED` | `shadow_failure.v1` | shadow plan + evaluation key + failure code，无 control-plane mutation |
@@ -1744,6 +1764,8 @@ DecisionLog 是 append-only 事件账本，不复制完整 Plan、候选或推�
 | `BATCH_PRESENTED` | `batch_presented.v1` | batch + presentation ID、coverage counts |
 | `BATCH_FALLBACK_PENDING / BATCH_BASELINE_CLAIMED / BATCH_CLOSED / BATCH_FAILED / REQUEST_CLAIM_EXPIRED / PRESENTATION_UNKNOWN` | `batch_lifecycle.v1` | batch + request digest + from/to status + reason code |
 | `GATE_DECIDED` | `gate_decided.v1` | gate + plan（可空）+ cursor range |
+| `SESSION_INTENT_UPDATED / SESSION_SUPPRESSION_EXPIRED` | `session_projection.v1` | session + pre/post state/policy revisions + source event refs |
+| `PROFILE_VIEW_UPDATED` | `profile_view_transition.v1` | profile + pre/post profile revision/digest + upstream generation |
 | `OVERRIDE_CONSUMED / OVERRIDE_EXPIRED` | `override_transition.v1` | gate + session/state revisions；consumed 另带 batch |
 | `PLAN_SUPERSEDED` | `plan_superseded.v1` | old/new plan refs + canceled/revoked counts |
 | `PLAN_DELIVERED / PLAN_COMPLETED / PLAN_EXPIRED / PLAN_FAILED` | `plan_lifecycle.v1` | plan/revision + from/to status + state revisions + close counts |
@@ -1756,7 +1778,10 @@ DecisionLog 是 append-only 事件账本，不复制完整 Plan、候选或推�
 实现时 `detail` 必须是 `Annotated[Union[...], Field(discriminator="detail_type")]`。各 v1 detail 的精确最小字段锁定如下（除 `detail_type` 外均不可换成自由 dict）：
 
 ```text
-planning_requested.v1 = planning_key, trigger_type, reason_codes, accept_until
+planning_requested.v1 = planning_episode_id, planning_key, trigger_type,
+                        reason_codes, accept_until
+planning_deferred.v1 = planning_episode_id, desired_context_version,
+                       terminal_reason, trigger_refs_digest, deferred_at
 planning_failed.v1 = failure_stage, error_code, provider, model(optional),
                      attempt, duration_ms, retryable
 plan_proposed.v1 = output_digest, provider, model, prompt_fingerprint,
@@ -1776,6 +1801,7 @@ shadow_evaluation.v1 = evaluation_key, virtual_policy_digest,
 shadow_failure.v1 = evaluation_key, failure_stage, error_code, duration_ms
 batch_committed.v1 = served_count, planned_lane_counts(optional for fallback),
                      realized_lane_counts, degradation_codes, duration_ms,
+                     requested_execution_kind, committed_execution_kind,
                      execution_outcome
 batch_presented.v1 = presentation_id, payload_digest, presented_count,
                      batch_count, presentation_status, late_ack
@@ -1785,6 +1811,14 @@ batch_lifecycle.v1 = from_status, to_status, reason_codes, request_id_digest,
                      closed_at(optional)
 gate_decided.v1 = gate_key, gate_policy_version, action, strength,
                   cursor_after, cursor_through, event_set_digest, reason_codes
+session_projection.v1 = operation, pre_state_revision, post_state_revision,
+                        pre_session_policy_revision, post_session_policy_revision,
+                        pre_session_view_digest, post_session_view_digest,
+                        target_ids, source_event_ids, suppression_expires_at(optional)
+profile_view_transition.v1 = projection_version, pre_profile_policy_revision,
+                             post_profile_policy_revision, pre_profile_view_digest,
+                             post_profile_view_digest, source_profile_generation,
+                             source_event_ids, changed_target_ids
 override_transition.v1 = action, override_mode, valid_until,
                          pre_state_revision, post_state_revision,
                          max_uses, remaining_uses_after,
@@ -1808,17 +1842,21 @@ reward_observed.v1 = assignment_id, reward_window_id, reward_version,
 
 `feedback_correction.v1.operation` 只能是 `CORRECT / RETRACT`，并必须和 event type 一致。它只追加新的事实和后续 reducer/cursor 影响，绝不改写原 feedback、Gate 或 reward 事件；若已关闭窗口，只进入长期学习/修正后的 reward version，不回滚已提交 batch。`batch_lifecycle.v1` 的 `BATCH_FALLBACK_PENDING` 只能是 `SELECTING_DIRECTOR → BASELINE_FALLBACK_PENDING`；`BATCH_BASELINE_CLAIMED` 可为 `BASELINE_FALLBACK_PENDING → BASELINE_SELECTING`（无 slot）、`SELECTING_DIRECTOR → BASELINE_SELECTING`（仍持有有效 slot、准备 whole-baseline substitution）或 `SELECTING_RECOVERY → BASELINE_SELECTING`（recovery reservation 已取消），detail 必须用 reason/binding disposition 区分。`REQUEST_CLAIM_EXPIRED` 只能从四种 selecting/pending 状态进入 FAILED；`PRESENTATION_UNKNOWN` 不改变 committed execution outcome，只冻结该 batch 的方向归因资格。`plan_lifecycle.v1` 的 event type、from/to status 与 reason 组合使用闭合 transition table 校验。detail 中 `reason_codes` 必须与顶层数组逐项相等；使用 singular reason 的 variant 则要求顶层恰为该 singleton。
 
+`session_projection.v1.operation` 只能为 `UPDATE_INTENT / EXPIRE_SUPPRESSION`，并分别与 SESSION_INTENT_UPDATED/SESSION_SUPPRESSION_EXPIRED 一一对应；两者 pre/post state 和 session policy revision 均恰好 +1，source_event_ids 可引用原 suppression 的来源事件但不存 note。`profile_view_transition.v1` 的 pre revision 从 0 开始、初建 pre digest 为 null，后续 revision 恰好 +1；只在 digest 真正变化时写事件。跨 session view 更新可在任何 runtime mode 下发生，日志 mode 记实际当前 mode，不能伪装成某个 FeedSession 的反馈。
+
 `batch_lifecycle.v1.binding_disposition` 只允许 `CLEAR_TO_NO_SLOT / RETAIN_VALID_SLOT / NONE`：FALLBACK_PENDING 必须 CLEAR_TO_NO_SLOT；从 pending claim baseline 必须 CLEAR_TO_NO_SLOT；直接 execution substitution 必须 RETAIN_VALID_SLOT 且带 execution fencing token；其它 batch lifecycle 必须 NONE。该字段与 Batch 的 plan/slot/reservation refs 做 equality/emptiness validator。
 
-`slot_transition.v1.lease_request_id` 对 SLOT_LEASED、SLOT_LEASE_EXPIRED、SLOT_COMMITTED、SLOT_SUBSTITUTED、SLOT_REVOKED 必填并等于该 transition 获取/消费/撤销的 request claim；对 CANCELED/PRESENTED/CLOSED 必须省略。event type 与 `to_status` 一一对应，唯一两个目标为 PENDING 的语义由 event type 区分：初建 PENDING 无 transition event，SLOT_LEASE_EXPIRED 是 LEASED→PENDING 且 fencing token 已递增。`from_status` 只允许 12.2 状态图中的边；presentation/close 使用 committed batch ref，不能再携带一个看似 active 的 lease。
+`slot_transition.v1.lease_request_id` 对 SLOT_LEASED、SLOT_LEASE_EXPIRED、SLOT_LEASE_RELEASED、SLOT_COMMITTED、SLOT_SUBSTITUTED、SLOT_REVOKED 必填并等于该 transition 获取/消费/撤销的 request claim；对 CANCELED/PRESENTED/CLOSED 必须省略。目标为 PENDING 的两种回边由 event type 区分：SLOT_LEASE_EXPIRED 仅 janitor 超时，SLOT_LEASE_RELEASED 仅执行失败后主动终结原 request；两者都是 LEASED→PENDING 且 fencing token 已递增。初建 PENDING 无 transition event。`from_status` 只允许 12.2 状态图中的边；presentation/close 使用 committed batch ref，不能再携带一个看似 active 的 lease。
 
-顶层枚举锁定为：`actor = PLANNER | VALIDATOR | PLAN_STORE | EXPERIMENT_ASSIGNER | COMPILER | COMPOSER | CLIENT_ACK | GATE | LEARNER | SYSTEM`；`mode = BASELINE | SHADOW | ENFORCE | RECOVERY`；`outcome = APPLIED | OBSERVED | REJECTED | STALE | FALLBACK | FAILED`。SHADOW/ENFORCE/RECOVERY 事件必须带创建 artifact 时的 `director_runtime_epoch`；Director-aware baseline fallback 也带触发 epoch，纯 legacy baseline 可为空。artifact digest 对对应 strict typed object 的无自引用 JCS 投影求 hash；不存在输入/输出的 variant 必须省略字段，不能填任意 placeholder。
+顶层枚举锁定为：`actor = PLANNER | VALIDATOR | PLAN_STORE | EXPERIMENT_ASSIGNER | COMPILER | COMPOSER | CLIENT_ACK | GATE | PROJECTOR | PROFILE_REDUCER | LEARNER | SYSTEM`；`mode = BASELINE | SHADOW | ENFORCE | RECOVERY`；`outcome = APPLIED | OBSERVED | REJECTED | STALE | FALLBACK | FAILED`。SHADOW/ENFORCE/RECOVERY 事件必须带创建 artifact 时的 `director_runtime_epoch`；Director-aware baseline fallback 也带触发 epoch，纯 legacy baseline 可为空。PROFILE_VIEW_UPDATED 是跨 FeedSession 的 profile 事件：其 `feed_session_id` 必须为 null，profile_id 必填；session projection 事件则两个 ID 均必填。artifact digest 对对应 strict typed object 的无自引用 JCS 投影求 hash；不存在输入/输出的 variant 必须省略字段，不能填任意 placeholder。
 
 逐事件幂等 key 投影也锁定：planning request=`planning_key`；planning failure=`planning_request_id+attempt+failure_stage+error_code`；proposal=`planning_request_id+output_digest`；validation=`planning_request_id+output_digest+validator_version+outcome`；activation=`plan_id+revision+pre_state_revision`；assignment=`assignment_id`；slot transition=`plan_id+slot_seq+to_status+fencing_token`；policy=`compile_key`；shadow success/failure=`evaluation_key+outcome`；batch commit=`batch_instance_id+request_id+execution_fencing_token`；presentation=`presentation_id+payload_digest`；batch lifecycle=`batch_instance_id+to_status+JCS(reason_codes)+request_id_digest`；Gate=`gate_key`；override=`gate_decision_id+action+post_state_revision`；supersede=`old_plan_id+new_plan_id+pre_state_revision`；plan lifecycle=`plan_id+revision+to_status+pre_state_revision`；session close=`feed_session_id+post_state_revision+close_reason`；feedback correction=`original_feedback_event_id+correction_event_id+operation`；reward=`batch_instance_id+assignment_id+reward_window_id+reward_version`。
 
+PLANNING_DEFERRED 的 key 是 `planning_episode_id + desired_context_version + terminal_reason`；无 Input 时 refs 只带 episode ID。`terminal_reason` 闭合为 `BUDGET_EXHAUSTED / HIGH_CHURN / SESSION_CLOSED / RUNTIME_DISABLED`，它不是 provider 错误，不伪造 PLANNING_FAILED。Projection 事件幂等 key 分别是 `feed_session_id + post_session_policy_revision + operation` 与 `profile_id + post_profile_policy_revision + projection_version`；它们的 pre/post digest、revision 和来源事件集合必须与同事务写入的状态逐值相等。SLOT_LEASE_RELEASED 的 key 在 slot transition 通式中额外带 `lease_request_id + reason_codes`，避免同一 fencing token 的失败释放与超时释放混淆。
+
 要求：
 
-- v1 event type 闭合枚举为 `PLANNING_REQUESTED / PLANNING_FAILED / PLAN_PROPOSED / PLAN_ACCEPTED / PLAN_REJECTED / PLAN_ACTIVATED / EXPERIMENT_ASSIGNED / POLICY_COMPILED / POLICY_EVALUATED_SHADOW / SHADOW_EVALUATION_FAILED / SLOT_LEASED / SLOT_LEASE_EXPIRED / SLOT_REVOKED / SLOT_CANCELED / SLOT_COMMITTED / SLOT_SUBSTITUTED / SLOT_PRESENTED / SLOT_CLOSED / BATCH_COMMITTED / BATCH_PRESENTED / BATCH_FALLBACK_PENDING / BATCH_BASELINE_CLAIMED / BATCH_CLOSED / BATCH_FAILED / REQUEST_CLAIM_EXPIRED / PRESENTATION_UNKNOWN / GATE_DECIDED / OVERRIDE_CONSUMED / OVERRIDE_EXPIRED / PLAN_SUPERSEDED / PLAN_DELIVERED / PLAN_COMPLETED / PLAN_EXPIRED / PLAN_FAILED / SESSION_CLOSED / FALLBACK_SERVED / FEEDBACK_CORRECTED / FEEDBACK_RETRACTED / REWARD_OBSERVED`；增加类型必须升级 schema/registry，不能在 v1 用自由字符串旁路；
+- v1 event type 闭合枚举为 `PLANNING_REQUESTED / PLANNING_DEFERRED / PLANNING_FAILED / PLAN_PROPOSED / PLAN_ACCEPTED / PLAN_REJECTED / PLAN_ACTIVATED / EXPERIMENT_ASSIGNED / POLICY_COMPILED / POLICY_EVALUATED_SHADOW / SHADOW_EVALUATION_FAILED / SLOT_LEASED / SLOT_LEASE_EXPIRED / SLOT_LEASE_RELEASED / SLOT_REVOKED / SLOT_CANCELED / SLOT_COMMITTED / SLOT_SUBSTITUTED / SLOT_PRESENTED / SLOT_CLOSED / BATCH_COMMITTED / BATCH_PRESENTED / BATCH_FALLBACK_PENDING / BATCH_BASELINE_CLAIMED / BATCH_CLOSED / BATCH_FAILED / REQUEST_CLAIM_EXPIRED / PRESENTATION_UNKNOWN / GATE_DECIDED / SESSION_INTENT_UPDATED / SESSION_SUPPRESSION_EXPIRED / PROFILE_VIEW_UPDATED / OVERRIDE_CONSUMED / OVERRIDE_EXPIRED / PLAN_SUPERSEDED / PLAN_DELIVERED / PLAN_COMPLETED / PLAN_EXPIRED / PLAN_FAILED / SESSION_CLOSED / FALLBACK_SERVED / FEEDBACK_CORRECTED / FEEDBACK_RETRACTED / REWARD_OBSERVED`；增加类型必须升级 schema/registry，不能在 v1 用自由字符串旁路；
 - `(event_type, idempotency_key)` 唯一；状态生效的日志与对应状态写入同一事务；
 - event type 必须唯一映射到上表的 detail variant；detail、顶层、`refs`、`provenance`、`experiment` 中重复出现的 ID、revision、digest、reason、provider/model/prompt、assignment/presentation 字段必须逐值相等。任何 mismatch 都拒绝整笔状态事务，不能以某一层为“近似真相”；
 - `experiment.assignment_probability` 是 assignment 时记录的真实实验分流概率；未随机分流时为 1，未进入实验时整个 experiment 为 null；`EXPERIMENT_ASSIGNED` 必须和 assignment 状态同事务；
@@ -1857,7 +1895,8 @@ PlanSlotState
 
 DirectorSessionOperational
   profile_id, feed_session_id, operational_revision,
-  plan_calls_used, budget_window_started_at,
+  plan_calls_used, provider_calls_total, context_churn_retries_used,
+  budget_window_started_at,
   last_replan_requested_at
 ```
 
@@ -1865,7 +1904,7 @@ DirectorSessionOperational
 
 语义字段闭合集合为：active plan/cursor/current batch、Gate cursor、session intent/suppression、applied Gate/override、replan invalidation 和 rollout exhausted。只有这些字段改变才 CAS `state_revision + 1`；同一事务改多个字段也只加 1。`DirectorSessionOperational` 的 cooldown 和调用预算只用自己的 `operational_revision` 或 SQL 原子计数/条件更新；FeedSession activity 用 `activity_revision`。它们都不递增 Director state revision，也不进入 Plan/Policy stale basis。预算扣减与 planning-request claim 同事务；activity touch 与 FeedSession `OPEN` 条件更新，cleanup CAS 失败时必须重读，避免关掉刚活跃的 session。Candidate/slot lease、Batch selecting claim、presentation/feedback queue 也各用自己的 key/revision。这样普通 heartbeat、预算记账或 lease timeout 不会让异步 Plan 无意义 stale。
 
-Profile 侧由新增的持久化 `RecommendationProfileView` reducer 拥有 `profile_policy_revision + profile_view_digest`：它从 Soul/profile 的可用于推荐字段确定性投影，语义 digest 改变时递增，不复用或覆盖 `MemoryManager.set_profile_change_callback()`。每一类可变对象都带自己上段指定的 revision/fencing/CAS；LLM 永远不能写这些对象。
+Profile 侧由新增的持久化 `RecommendationProfileView` reducer 拥有 `profile_policy_revision + profile_view_digest`：它从 Soul/profile 的可用于推荐字段确定性投影，语义 digest 改变时递增，并在同一事务追加 `PROFILE_VIEW_UPDATED(profile_view_transition.v1)`；不复用或覆盖 `MemoryManager.set_profile_change_callback()`。每一类可变对象都带自己上段指定的 revision/fencing/CAS；LLM 永远不能写这些对象。
 
 该 reducer 故意不把每次 Soul storage generation 直接等同于 Director policy revision。v1 stable projection 只纳入：用户显式长期约束；在本 session 前已经稳定存在的 active interest/style；或由至少两个不同事件 ID/来源确认后跨过 registry 阈值的新增偏好。现有单次 recommendation click 仍可立即更新 Soul，也进入当前 `session_summary`，但若只形成一次新证据，不改变 Director profile digest；第二个独立证据使 stable projection 变化时，才产生 `PROFILE_POLICY_CHANGED`。Reducer 保存 `source_profile_generation` 以便审计“上游变了但 Director view 未变”，阈值与投影版本必须可 replay。
 
@@ -1966,12 +2005,13 @@ DirectorProposal:  RECEIVED → ACCEPTED
                            └→ REJECTED / STALE_REJECTED
 
 PlanEnvelope:      VALIDATED → ACTIVE → DELIVERED → COMPLETED
-                                 │          │
-                                 ├─ TTL ────┴────────→ EXPIRED
+                                 │          ├─ TTL → EXPIRED
+                                 │          └─ newer plan → SUPERSEDED
+                                 ├─ TTL → EXPIRED
                                  ├─ rollout slot limit → COMPLETED
-                                 ├─ newer plan ──────→ SUPERSEDED
-                                 └─ invariant ───────→ FAILED
-                                 history is append-only
+                                 ├─ newer plan → SUPERSEDED
+                                 └─ invariant → FAILED
+                   history is append-only
 
 ShadowEnvelope:    SHADOW_VALIDATED → SHADOW_EVALUATED / FAILED
                    (never ACTIVE; never owns PlanSlotState)
@@ -1980,6 +2020,8 @@ ShadowEnvelope:    SHADOW_VALIDATED → SHADOW_EVALUATED / FAILED
 正式 `DirectorPlan` JSON 本身不可变。状态属于 PlanEnvelope；replan 创建新 plan，并 cancel 旧计划的 PENDING slot、revoke 尚未提交的 LEASED slot，绝不改写已有执行结果。
 
 最后一个 slot COMMITTED 或 SUBSTITUTED 时，同一事务把 PlanEnvelope 从 ACTIVE 置为 `DELIVERED`，但仍保留 active pointer，不立即触发下一 horizon。`DELIVERED → COMPLETED` 只在用户对最后批发起下一次 ADVANCE/APPEND 且服务器先处理完已到达 feedback、session 显式关闭，或 session/plan feedback window 到期时发生。完成事务关闭该 Plan 仍 open 的 batches 及对应 slot 聚合窗口，清空 active pointer/next slot、保留历史 committed-through、递增 state revision；若用户仍在请求内容，再以 `HORIZON_EXHAUSTED` enqueue 新规划，当前请求不等待 Planner而走 baseline/recovery。若下一次 ADVANCE 前仍无 presentation ack，先标 `PRESENTATION_UNKNOWN`，不能臆造最后批 reward。
+
+Gate 可因 DELIVERED Plan 最后一批的已呈现强反馈触发 replan；新 Plan 激活时以同一 fenced 事务执行 `DELIVERED → SUPERSEDED`，关闭旧 Plan 尚 open 的控制反馈窗口。原先的 `DELIVERED → COMPLETED` 条件只适用于没有被 supersede 的 Plan。
 
 唯一的 ACTIVE→COMPLETED 直达特例是 assignment 固化的 `execution_horizon_limit` 已达到：同事务 cancel 超出 rollout 上限的剩余 PENDING slots，reason=`ROLLOUT_SLOT_LIMIT`，关闭本次已提交 batch/slot 的控制反馈窗口，清 pointer并置 rollout exhausted；此时不要求 committed-through 等于原三-slot Plan 的最后 slot，也不把 canceled slots 计为 delivered。Phase 2 若需要效果统计，presentation/behavior 仍按 CLOSED late-event 规则进入 reward，不重新打开 Gate。
 
@@ -1991,7 +2033,7 @@ ShadowEnvelope:    SHADOW_VALIDATED → SHADOW_EVALUATED / FAILED
 PENDING ── CAS lease ─→ LEASED ── fenced Director commit ─→ COMMITTED ─┐
    ▲                      ├─ whole-baseline commit ─────→ SUBSTITUTED ─┼─ ack → PRESENTED → CLOSED
    │                      │                                           └──── close/no ack ───→ CLOSED
-   └──── lease timeout ───┤                                           │
+   └──── lease timeout/release ─┤                                     │
    └──── replan ────────→ CANCELED                                    │
                           └─ replan/hard conflict ──────→ REVOKED ─────┘ (no presentation)
 ```
@@ -2003,6 +2045,7 @@ PENDING ── CAS lease ─→ LEASED ── fenced Director commit ─→ COMM
 - `CLOSED` 表示关联 batch 的控制反馈窗口已因用户推进、deadline、Plan/session 结束而全部关闭；它不要求先 PRESENTED，且必须保留 immutable `execution_outcome`；
 - `CANCELED` 只允许从 `PENDING` 进入；`REVOKED` 只允许从 `LEASED` 进入。
 - lease timeout 只能由 janitor 对 `LEASED + matching lease_request_id/fencing_token + expired_at` 做 CAS：slot 清 owner/request/expiry、fencing token `+1` 后回 PENDING；同事务把仍匹配的 SELECTING_DIRECTOR claim 置 FAILED(reason=`REQUEST_CLAIM_EXPIRED`)并写 `SLOT_LEASE_EXPIRED + REQUEST_CLAIM_EXPIRED`。若 batch 已转 fallback pending、slot 已 revoked 或 token 不同，janitor 不得复位 slot；
+- 执行和整批 baseline 都未成功、但 lease 仍有效且请求要终结时，短事务执行 `LEASED → PENDING`、清 lease 字段、token `+1`，把 Batch/generation claim 置 FAILED，并写 `SLOT_LEASE_RELEASED(reason=EXECUTION_FAILED|AUDIT_FAILED) + BATCH_FAILED`；它不推进 cursor。已 revoke/cancel 的 slot 不允许 release，事务提交失败则交给 lease timeout janitor，不作无日志内存解锁；
 - 新 plan 激活与旧 PENDING cancel、旧 LEASED revoke 必须在同一事务完成；revoke 同时递增 fencing token 并清空 owner/expiry，因此任何持有旧 token 的 worker 在最终提交时必败。
 - 若旧 worker 的 fenced commit 与 replan 竞争，以数据库串行化顺序为准：commit 先赢会递增 state revision，因此基于旧 revision 的新 Plan activation 必须 `STALE_REJECTED`，再用新 basis 规划并从已提交 slot 之后开始；replan activation 先赢则在同事务 revoke lease，旧 commit 因 status/token/state revision 不匹配而整批放弃。
 
@@ -2025,7 +2068,7 @@ SELECTING_RECOVERY ────────────────────�
 
 失败规则：
 
-- Director commit 前失败：若随后 baseline 也未成功提交，释放 lease且不推进 slot；若 baseline 成功，则在其事务中把 leased slot 标为 SUBSTITUTED 并推进 cursor；
+- Director commit 前失败：若随后 baseline 也未成功提交，按 `SLOT_LEASE_RELEASED` 事务释放仍有效的 lease 且不推进 slot；若 baseline 成功，则在其事务中把 leased slot 标为 SUBSTITUTED 并推进 cursor；
 - commit 事务失败：整批失败，不标 shown，不推进 cursor；
 - commit 后 HTTP 响应丢失：批次仍是 `COMMITTED`，相同 request_id 只读返回它；不能再次选片；
 - 长时间无 presentation ack：批次保持 committed 但标 `PRESENTATION_UNKNOWN`，不能当曝光或负反馈；
@@ -2151,10 +2194,30 @@ hard safety / scope mismatch / stale lease
 - cooldown 中收到多个信号时合并为一个最新 session version；
 - 同一 StrategyStream 同时最多一个 planning task；
 - task 运行时新的强反馈只更新 desired context version；旧回包若 basis 落后则丢弃并按最新版本重跑一次；
-- 每个 session 默认最多 4 次 LLM plan call，超过后使用 Gate + baseline 到 session 结束。
+- 每个 session 最多 4 次正常 Planner provider 调用，另有最多 2 次由 batch commit 或弱反馈 CONTINUE Gate 独自造成 stale 的 context-churn 重试；实际 provider 调用总数最多 6 次，超过后使用 Gate + baseline 到 session 结束（18.1）。
 - 普通弱信号使用 hysteresis：达到进入阈值后，必须跌破更低的退出阈值才解除抑制，防止来回震荡。
 
 阈值是 v1 初始安全值，只有在 DecisionLog 中观察足够事件后才能调整，不能隐藏在 prompt 中。
+
+#### 14.3.1 `director-gate.v1` 确定性判定表
+
+Gate policy 是代码拥有的版本化 registry；版本进入 DirectorInput/Plan/Gate basis、planning_key、gate_key、`gate_decided.v1` 与 runtime execution config。任何阈值或优先级变化须升级版本并递增 runtime epoch。每次判定只使用同一事务冻结的 READY feedback event set、当前 PlanLane identity、capability/slot 状态和 session projection，按下表自上而下匹配第一项；相同输入必须生成相同 action/strength/reason。`PATCH` 只在目标 slot 为 PENDING 且修补后 feasibility 仍成立时输出，否则升为 REPLAN。
+
+| 条件（同一 FeedSession） | action / strength | reason |
+|---|---|---|
+| 当前 hard guard、scope 或 taxonomy/recipe/guardrail/Gate policy 与可执行 Plan 不兼容 | `REPLAN / HARD`；无 active Plan 则 `FALLBACK / HARD` | `PLAN_BASIS_INVALID` |
+| 用户结构化明确 block 一个受控 topic/style，或明确方向冲突的归一化 session 指令且 confidence ≥ 0.90 | `REPLAN / STRONG` | `EXPLICIT_SESSION_INTENT_CONFLICT` |
+| 同一 PlanLane 在 10 分钟内有至少 2 个不同 `item_key` 的已呈现显式 dislike | `REPLAN / MEDIUM` | `REPEATED_EXPLICIT_NEGATIVE` |
+| 同一 PlanLane 在 10 分钟内有至少 3 个不同 `item_key` 的已呈现 inferred negative，且每条 confidence ≥ 0.75 | `REPLAN / MEDIUM` | `REPEATED_INFERRED_NEGATIVE` |
+| 未来 ≥ 2 个 PENDING slot 缺少 minimum，或当前 slot 无合法 fallback lane 可恢复 minimum | `REPLAN / MEDIUM` | `MULTI_SLOT_SHORTAGE` |
+| 仅 1 个 PENDING slot 缺 minimum，受控 fallback lane 可恢复 | `PATCH / MEDIUM` | `SINGLE_SLOT_SHORTAGE` |
+| 单个已呈现 item 显式 dislike，未达到方向阈值 | 可行则 `PATCH / WEAK`，否则 `CONTINUE / WEAK`；item 级排除立即执行 | `SINGLE_ITEM_NEGATIVE` |
+| EXPLORE PlanLane 在 15 分钟内有至少 2 个不同 `item_key` 的已呈现正向确认 | `CONTINUE / MEDIUM`，在可回放的 feedback aggregation 中确认该 PlanLane，供下个 horizon 的 `recent_batches` 读取 | `EXPLORE_CONFIRMED` |
+| 其余合法输入 | `CONTINUE / WEAK` | `NO_DIRECTION_CHANGE` |
+
+计数先按 `(PlanLane, canonical item_key)` 去重：同一 item 的 like、save、重复点击最多贡献一份正向，优先采用最新未撤回的显式事件；同一 item 的重复 dislike 也只算一份。显式 session 指令不伪装成 item 曝光。retraction/correction 重算受影响窗口，但不改写已提交 Gate；若仍有 open Plan，则以新 event set 产生新 Gate。方向抑制进入后，须在最后一次负向之后 10 分钟无新负向、且收到至少 2 个不同 item 的已呈现正向，才解除普通行为抑制；显式 block 只能由用户明确撤销或 TTL 到期解除。窗口使用服务端接收时间、左闭右闭，边界相等时计入；并列 reason 按上表顺序取首项。未达到阈值的 save、click、dismiss、reshuffle 只记证据，不触发重规划。
+
+`director-reasons.v1` 必须至少登记上表的九个 reason code、`PATCH_OVERLAY_EXPIRED` 和本规格各 lifecycle/repair code；不同 event family 使用闭合子集。Gate 的 `reason_codes` 在 v1 恰好含命中的首个 code，不能由模型补充解释。确认/抑制聚合的来源 event IDs、PlanLane、窗口起止与 digest 要可 replay；同一 item 的 like+save、重复 dislike、撤回、窗口边界和两条独立正向的性质测试是 Gate 上线条件。
 
 ### 14.4 Planner 触发矩阵
 
@@ -2335,7 +2398,7 @@ Slot 21 deepen
 
 Slot 20 的 HCI lane 有两条分别获得 like 和 save（这里假设 Phase 0 已把 saved action 以 `recommendation_id + batch_instance_id` 接入 EventIngress；未接线时 save 不得进入 Gate）：
 
-- session state 将该 lane 标记为 `candidate_confirmed`；
+- 可回放的 feedback aggregation 将该 PlanLane 标记为 `candidate_confirmed`，下次 Context Builder 从聚合读取；
 - 如果当前计划已结束，下一次 plan 使用 `trigger.type = HORIZON_EXHAUSTED`，并携带 server-owned reason `CONFIRMED_EXPLORATION`；
 - 新方向先进入下一计划的高-anchor deepen arm，而不是立即写入长期 profile；
 - 后续由现有 Soul/cognition 根据更多证据决定是否长期晋升。
@@ -2384,7 +2447,9 @@ Slot 20 的 HCI lane 有两条分别获得 like 和 save（这里假设 Phase 0 
 
 ### 17.3 `recommendation_planning_requests` 与 proposals
 
-`recommendation_planning_requests` 保存 `planning_request_id`、UNIQUE planning_key、mode、canonical DirectorInput/input_digest、status、accept_until、attempt、claim owner/lease/fencing、provider route 和终态 proposal/plan ref。状态为 `QUEUED / RUNNING / ACCEPTED / REJECTED / STALE_REJECTED / FAILED`；跨进程 worker 通过 lease claim，同 key 只允许一个权威终态。最终 provider timeout/401/invalid JSON 等 FAILED 与 `PLANNING_FAILED(planning_failed.v1)` 同事务；有界 retry 的中间 attempt 可进 operational attempt table，但不能覆盖终态原因。
+`recommendation_planning_episodes` 是 outbox 与工程分母的权威：`planning_episode_id`、StrategyStream、runtime epoch、created/accept/closed times、`desired_context_version`、`trigger_refs_digest`、合并后的 reason codes、status (`QUEUED / RUNNING / ACCEPTED / REJECTED / STALE_REJECTED / FAILED / DEFERRED`)、terminal reason 和 accepted plan ref。每个 StrategyStream 最多一行未终态 episode；新触发在该行原子合并并提升 desired version，不因一次点击制造另一个分母。episode 在 Input 冻结前可因预算、高 churn、session close 或 runtime off 进入 DEFERRED，须同事务写 `PLANNING_DEFERRED`；关联的请求终态和 episode 终态也同事务落定。统计以 terminal episode 为单位，已合并的原始 trigger refs 只作 provenance，不重复计覆盖率。
+
+`recommendation_planning_requests` 保存 `planning_request_id`、`planning_episode_id` FK、UNIQUE planning_key、mode、canonical DirectorInput/input_digest、status、accept_until、attempt、claim owner/lease/fencing、provider route 和终态 proposal/plan ref。状态为 `QUEUED / RUNNING / ACCEPTED / REJECTED / STALE_REJECTED / FAILED`；一个 episode 可因 context-churn 有最多 3 个顺序请求，但同一时刻只有一个 RUNNING。跨进程 worker 通过 lease claim，同 key 只允许一个权威终态。最终 provider timeout/401/invalid JSON 等 FAILED 与 `PLANNING_FAILED(planning_failed.v1)` 同事务；有界 retry 的中间 attempt 可进 operational attempt table，但不能覆盖终态原因。
 
 `recommendation_director_proposals` 保存 `proposal_id`、planning_request_id、output_digest、canonical Proposal、model/prompt provenance、validation status/codes 和 received_at。合法、拒绝和 stale Proposal 都保留脱敏审计；LLM 回包先落 proposal/validation，再由激活 CAS 决定是否产生 Plan，不能只靠 plans.planning_key 在回包前 single-flight。
 
@@ -2459,13 +2524,25 @@ Slot 20 的 HCI lane 有两条分别获得 like 和 save（这里假设 Phase 0 
 | `batch_reservation_id` | STAY/recovery 权威 reservation ref；PLAN_SLOT 为空 |
 | `selection_owner/lease_expires_at/fallback_deadline/fencing_token` | selecting/fallback-pending request claim 的 crash recovery |
 | `execution_policy_type/execution_policy_id/candidate_set_ref_id` | COMPILED_POLICY / RECOVERY_POLICY / NONE 判别联合与执行快照绑定 |
+| `requested_execution_kind/committed_execution_kind/execution_outcome` | requested 固定为 PLAN_SLOT / STAY_PATCH / SAFE_RECOVERY / NORMAL_BASELINE；committed 仅成功时写，见下表；outcome 是不可变归因值 |
 | `requested_mode/committed_mode/status` | requested mode 不改写；committed mode 仅提交时写 baseline/enforce/recovery；status 为 selecting_director/selecting_recovery/baseline_fallback_pending/baseline_selecting/committed/presented/closed/failed |
 | `feedback_accept_until/presented_at/closed_at/close_reason/presentation_status` | frozen 控制反馈 deadline 与曝光/关闭生命周期 |
 | `realized_mix_json/fallback_codes` | 聚合执行结果 |
 
 STAY rows 对 `(origin_batch_id, patch_sequence)` 建 UNIQUE，且 origin_batch_id 始终指向 root Director batch而非上一 patch；previous batch 链尾另由 request fingerprint/current batch 校验。
 
-`execution_policy_type/id` 使用 XOR validator/FK：PLAN_SLOT/STAY_PATCH 必须 COMPILED_POLICY；SAFE_RECOVERY 必须 RECOVERY_POLICY；NORMAL_BASELINE 必须 NONE 且 policy ID 为空。Director-aware normal baseline 仍保存其 fresh candidate snapshot/ref 与 hard-constraint provenance；legacy 允许 ref 为空。不能把 recovery ID 塞进 `compiled_policy_id` 或靠 mode 猜表。
+请求开始时冻结 `requested_execution_kind`；成功提交时按下面的闭合映射写 `committed_execution_kind + execution_outcome + committed_mode`。失败行的 committed 三元组必须全空；COMMITTED/PRESENTED/CLOSED 行必须全有且以后不可改。Ack、reward 和 DecisionLog 按 committed kind 判别，并逐值校验这三个字段，不从 mode 或 nullable refs 猜测。
+
+| requested → committed | outcome / mode | policy 与归属 CHECK |
+|---|---|---|
+| `PLAN_SLOT → PLAN_SLOT` | `DIRECTOR_COMMITTED / enforce` | COMPILED_POLICY，plan/slot 非空，无 reservation |
+| `PLAN_SLOT → PLAN_SLOT_SUBSTITUTED` | `BASELINE_SUBSTITUTED / baseline` | NONE，plan/slot 与原有效 lease 非空，fresh baseline ref，Slot 同事务 SUBSTITUTED |
+| `STAY_PATCH → STAY_PATCH` | `STAY_COMMITTED / enforce` | COMPILED_POLICY，origin root/patch sequence 与 reservation 非空，next slot 不变 |
+| `SAFE_RECOVERY → SAFE_RECOVERY` | `RECOVERY_COMMITTED / recovery` | RECOVERY_POLICY，reservation 与 consumed Gate 非空，plan/slot 为空 |
+| `STAY_PATCH / SAFE_RECOVERY / PLAN_SLOT → NORMAL_BASELINE` | `BASELINE_COMMITTED / baseline` | NONE，Director lease/reservation 已清理，plan/slot 为空，保留 requested kind 与 Gate/失败 provenance |
+| `NORMAL_BASELINE → NORMAL_BASELINE` | `BASELINE_COMMITTED / baseline` | NONE，plan/slot/reservation 为空；Director-aware 有 fresh baseline ref |
+
+上述行是数据库 CHECK 可表达部分与事务 validator 的 XOR 合同；其余组合一律拒绝。`PLAN_SLOT → NORMAL_BASELINE` 只在原 slot 已被 fenced revoke/cancel 后发生；仍持有有效 slot 的执行缺货必须走 `PLAN_SLOT_SUBSTITUTED`。Legacy baseline 允许 candidate ref 为空，且 requested/committed kind 均为 NORMAL_BASELINE。不能把 recovery ID 塞进 `compiled_policy_id` 或靠 mode 猜表。
 
 `recommendation_batch_reservations` 是 STAY/RECOVERY 的权威执行租约：`batch_reservation_id` PK、`request_id` UNIQUE、`director_runtime_epoch`、owner、status (`HELD / COMMITTED / EXPIRED / CANCELED`)、fencing_token、expires_at、batch_instance_id。获取/重获使用 CAS 且 token 单调；CompiledPolicy/RecoveryPolicy 绑定此行。Batch 表保存 reservation ID，不能只复制 token/expiry 后失去 owner/status 真相。
 
@@ -2493,7 +2570,7 @@ STAY rows 对 `(origin_batch_id, patch_sequence)` 建 UNIQUE，且 origin_batch_
 - `state_revision`（本行唯一 optimistic-lock 版本）；
 - `session_policy_revision`（只在语义 session intent 变化时随 state revision 一起递增）。
 
-它是语义快状态，不替代 event log 或 Soul/Profile。另建 `recommendation_director_operational` 保存 LLM budget window/used、last replan requested 与独立 `operational_revision`；last activity/expiry 由 FeedSession + activity revision 拥有。feedback PlanLane counters 留在 projector/feedback queue 的可回放聚合，不混入 control-plane revision。
+它是语义快状态，不替代 event log 或 Soul/Profile。另建 `recommendation_director_operational` 保存 LLM budget window、`plan_calls_used/provider_calls_total/context_churn_retries_used`、last replan requested 与独立 `operational_revision`；last activity/expiry 由 FeedSession + activity revision 拥有。feedback PlanLane counters 留在 projector/feedback queue 的可回放聚合，不混入 control-plane revision。
 
 ### 17.11 `recommendation_director_events`
 
@@ -2525,6 +2602,8 @@ visibility_partition             # LEGACY_BASELINE | DIRECTOR_SESSION
 - `request_id` 的任一 `request-fingerprint.v1` 行为字段不同时返回冲突错误；数据库使用 `UNIQUE(request_id) WHERE request_id IS NOT NULL`，不是假设 legacy 都有复合键。
 - 每个生成请求按 execution branch 原子创建 `BatchInstance(status=SELECTING_DIRECTOR|SELECTING_RECOVERY|BASELINE_SELECTING)` 作为 request claim；相同 request 的并发重试只读取、等待或按规则接管这个 in-progress/terminal 对象。不同 request 若发现本 session 的 exact next slot 已 LEASED，返回 `SESSION_ADVANCE_IN_PROGRESS` 及正在选择的 batch ref，不得去 lease 后一个 PENDING slot。
 - 更强的不变量是每个 FeedSession 同时最多一个 active generation claim，覆盖 SELECTING_DIRECTOR、SELECTING_RECOVERY、BASELINE_FALLBACK_PENDING、BASELINE_SELECTING 以及 STAY/RECOVERY reservation；fallback pending 全程不释放该 mutex。相同 request 可读取/接管原 claim，不同 request 一律返回 `SESSION_GENERATION_IN_PROGRESS + active_batch_instance_id`，不能消费 next-batch override、创建另一 reservation 或并发提交第二个 current batch。只有 claim 对应 Batch COMMITTED/FAILED 后才原子释放。
+
+Planner trigger 可以在 generation claim 活跃时入 durable outbox，但 Context Builder 必须等该 claim COMMITTED/FAILED、`current_batch_instance_id` 和 state revision 已确定、当前 READY feedback 已由 Gate 处理后，才冻结 DirectorInput；对 session-start、horizon-exhausted、feedback replan 一律如此。worker 再等待 750 ms 的无新 generation claim/READY feedback 安静窗口，合并其间 trigger 为最新 desired version；不阻塞当前请求。规划期间若新的 baseline/recovery batch 或只记录弱反馈的 CONTINUE Gate 先提交，Plan activation CAS 按既有规则 stale，不能忽略新 context 继续激活旧计划。只有这些 non-policy context mutation 是唯一差异时才合并为一次 latest-context retry：provider 调用记真实成本与 `provider_calls_total`，但不扣正常 `plan_calls_used`。每 session 最多 4 次正常 provider 调用、另最多 2 次 context-churn retry，且 `provider_calls_total ≤ 6`；超过上限或持续没有安静窗口时本 session 安全走 baseline，等待下个 session 再尝试。profile/session policy、taxonomy、runtime epoch、REPLAN/PATCH 等变化造成的 stale 属正常预算，不冒充 context-churn。队列等待、无 provider 调用的合并和取消不计调用预算。必须测试 planner 请求与 baseline/recovery commit、弱 Gate 的两种串行顺序、连续快速请求、预算上限和 stale retry 幂等。
 
 ### 18.2 Plan 验收与 ENFORCE activation CAS
 
@@ -2566,20 +2645,24 @@ override 消费事务先复制 Gate provenance并执行 state revision `+1`；�
 最终 `BEGIN IMMEDIATE` 先执行所有分支共有的检查：generation claim owner/fencing、Batch status/request fingerprint、artifact/ref/constraint TTL、candidate exact membership、最新 eligibility，以及 current eligibility/temporal/amplification/admission/ranker versions。再按 discriminator 执行：
 
 - PLAN_SLOT：要求 global mode=ENFORCE，`runtime epoch == Plan == CompiledPolicy == Batch claim`，active plan/state revision/slot owner-request-token 全匹配，current taxonomy/recipe/guardrail/compiler versions 等于 policy；
-- STAY_PATCH：要求 global mode=ENFORCE/epoch 匹配，origin Plan 仍 ACTIVE/DELIVERED 且未 invalidated，root/latest patch chain、patch sequence 和 reservation owner/token/TTL 全匹配；不读取或推进 next slot；
+- PLAN_SLOT_SUBSTITUTED（PLAN_SLOT 失败后的 final outcome）：仍要求 global mode=ENFORCE、原 Plan/slot/state revision/lease owner-request-token/TTL 全有效，且未被 Gate/PATCH expiry/replan/runtime epoch 撤销；禁止 CompiledPolicy/RecoveryPolicy 引用，以 fresh normal baseline ref 和当前 hard rules 整批重选，提交时才推进原 slot；
+- STAY_PATCH：要求 global mode=ENFORCE/epoch 匹配，origin Plan 仍 ACTIVE/DELIVERED 且未 invalidated，root/latest patch chain、patch sequence 和 reservation owner/token/TTL 全匹配；current taxonomy/recipe/guardrail/compiler versions 等于 policy；不读取或推进 next slot；
 - SAFE_RECOVERY：不要求 active Plan 或 CompiledPolicy；要求 global mode=ENFORCE/epoch 匹配，Batch consumed Gate ID/mode/validity 与 RecoveryPolicy 完全相等，expected state revision=override consumption 后 revision，profile revision/view digest、taxonomy/anchor set、candidate/constraint refs、reservation owner/token/TTL 和全部 policy versions 匹配；
-- NORMAL_BASELINE：禁止 Plan/slot/CompiledPolicy/RecoveryPolicy；若由 override 进入，Batch consumed provenance 必须解析到已 APPLIED Gate 且证明 claim 时未过期。最终只按当前 baseline loader 与 hard rules提交，不要求 Director epoch 继续相同。
+- NORMAL_BASELINE（无槽）：禁止仍有效的 Plan/slot lease、CompiledPolicy/RecoveryPolicy 和 reservation；若由 override 进入，Batch consumed provenance 必须解析到已 APPLIED Gate 且证明 claim 时未过期。已撤销旧 Plan 的 ID 只可留在 failure provenance，不能作为 execution binding。最终只按当前 baseline loader 与 hard rules 提交，不要求 Director epoch 继续相同。
 
 对权威 survivor set 在事务内再次执行相应 verifier，不静默删选或换 item。成功提交的原子写集合为：
 
-- PLAN_SLOT：recommendations + server rank、pool shown、Batch COMMITTED(committed_mode=enforce)、Slot COMMITTED、session cursor、generation claim terminal，以及 `BATCH_COMMITTED + SLOT_COMMITTED`；
-- STAY_PATCH：recommendations + shown、Batch COMMITTED(enforce)、reservation/generation claim terminal 与 `BATCH_COMMITTED`；origin slot/cursor 不变；
-- SAFE_RECOVERY：recommendations + shown、Batch COMMITTED(recovery)、reservation/generation claim terminal 与 `BATCH_COMMITTED`；plan/slot/cursor 全为空/不变；
-- NORMAL_BASELINE：recommendations + shown、Batch COMMITTED(baseline)、generation claim terminal 与 `BATCH_COMMITTED/FALLBACK_SERVED`；plan/slot/cursor 全为空/不变。
+- PLAN_SLOT：recommendations + server rank、pool shown、Batch COMMITTED(`PLAN_SLOT`)、Slot COMMITTED、session cursor、generation claim terminal，以及 `BATCH_COMMITTED + SLOT_COMMITTED`；
+- STAY_PATCH：recommendations + shown、Batch COMMITTED(`STAY_PATCH`)、reservation/generation claim terminal 与 `BATCH_COMMITTED`；origin slot/cursor 不变；
+- SAFE_RECOVERY：recommendations + shown、Batch COMMITTED(`SAFE_RECOVERY`)、reservation/generation claim terminal 与 `BATCH_COMMITTED`；plan/slot/cursor 全为空/不变；
+- PLAN_SLOT_SUBSTITUTED：recommendations + shown、Batch COMMITTED(`PLAN_SLOT_SUBSTITUTED`)、Slot SUBSTITUTED、session cursor、generation claim terminal 与 `BATCH_COMMITTED + FALLBACK_SERVED + SLOT_SUBSTITUTED`；
+- NORMAL_BASELINE：recommendations + shown、Batch COMMITTED(`NORMAL_BASELINE`)、generation claim terminal 与 `BATCH_COMMITTED/FALLBACK_SERVED`；plan/slot/cursor 全为空/不变。
+
+上述每个 Director-aware 成功提交事务还必须把 `DirectorSessionState.current_batch_instance_id` 指向本次 Batch，并恰好递增 `state_revision +1`；没有 slot 的 baseline/recovery/STAY 也不例外。CompiledPolicy/RecoveryPolicy 的 expected state revision 绑定提交前值，最终 CAS 成功后才产生新值。Legacy 路径没有 DirectorSessionState，不作此写入。Batch 的三个 committed discriminator、Slot outcome、`BATCH_COMMITTED` detail 与 presentation ack 分支必须按 17.8 逐值相等。
 
 失败分支也锁定：PLAN_SLOT 只有在原 slot lease 仍有效且失败属于本次 compile/select/verify shortage 时，才能直接 `SELECTING_DIRECTOR → BASELINE_SELECTING`，用 fresh normal snapshot 成功提交后把 slot SUBSTITUTED；若 lease 被 REPLAN/supersede/PATCH expiry/runtime epoch 撤销，则转 BASELINE_FALLBACK_PENDING，后续 no-slot baseline。STAY 失效清 reservation后走 no-slot fallback或返回其显式合同错误，不触碰 origin slot。SAFE_RECOVERY 失效/失败则取消 reservation、`SELECTING_RECOVERY → BASELINE_SELECTING`，用相同 Batch/generation claim 走 normal baseline；baseline 也失败才 FAILED。任何 Director/recovery tentative rows 都先完整丢弃。
 
-presentation ack 在独立幂等事务按 committed execution kind 分支：PLAN_SLOT 或 SUBSTITUTED batch 更新关联 batch/slot/recommendations，并在 slot 首次进入 PRESENTED 时追加 `SLOT_PRESENTED`；STAY_PATCH、SAFE_RECOVERY 与 NORMAL_BASELINE 只更新新 batch/recommendations，绝不改 origin/next slot；每次合法 ack 都追加 `BATCH_PRESENTED`，状态与事件同事务。
+presentation ack 在独立幂等事务按 committed execution kind 分支：PLAN_SLOT 或 PLAN_SLOT_SUBSTITUTED batch 更新关联 batch/slot/recommendations，并在 slot 首次进入 PRESENTED 时追加 `SLOT_PRESENTED`；STAY_PATCH、SAFE_RECOVERY 与 NORMAL_BASELINE 只更新新 batch/recommendations，绝不改 origin/next slot；每次合法 ack 都追加 `BATCH_PRESENTED`，状态与事件同事务。
 
 若现有 DAO 暂时无法让这些表同事务提交，该 PR 不得进入 enforce；outbox 只能用于非权威异步派生，不可代替 slot fencing。
 
@@ -2805,13 +2888,19 @@ reward events + windows
 
 所有分母由 `engineering-denominator.v1` 版本化：eligible compile attempt 指合法且未 stale 的 Plan、受支持 limit/scope、fresh normal baseline 在最新 hard guards 后至少有 `requested_limit` 个 unique items、SERVING/Constraint refs 完整且没有 provider/DB 基础设施故障；不得因某个 lane 难、compiler 返回 shortfall 或最终 fallback 而把该样本移出分母。每次 DecisionLog 保存 `denominator_eligible + exclusion_code`，exclusion codes 使用闭合 registry并单独报告占比。
 
+另有不可事后缩小的上游分母 `eligible_planning_episode`：所有 mode=SHADOW/ENFORCE、FeedSession OPEN、受支持 surface/scope、runtime epoch 有效的 durable planning episode，从 17.3 outbox 首次入队时计数；同一 episode 的合并 trigger refs 不重复计数。它包含后来 provider 失败、schema reject、semantic reject、因同 session batch 或弱 Gate context commit 而 stale、budget 耗尽或被持续请求推迟的 episode；仅用户关闭 session、明确切 off、实验未分配 Director 等事前定义条件可排除，并记录 exclusion code。`fresh accepted Plan / eligible_planning_episode`、reject/stale、超时和 context-churn 分别报告。每次阶段晋级的窗口至少有 50 个 eligible planning episodes 和 100 个 eligible compile attempts；任一分母为零或低于样本下限时结果为 `NOT_EVALUABLE`，不得把空集合当 100% 通过。数值门槛是 v1 工程默认值，任何修改需先升级 denominator/acceptance registry 并在观察结果前登记。
+
 Allocation 同时报两种：ITT adherence 把所有 assigned Director attempts（含 substitution/failure）纳入；conditional adherence 只看 CompiledPolicy 在 exact ref 上标 `compile_status=EXACT` 的 target positions，分子是最终 rows 正确命中 planned lane 的位置数。不能用“有足够候选”做事后人工筛选。
 
 | 指标 | 进入下一阶段的门槛 |
 |------|--------------------|
 | hard guard violation | 0 |
 | schema + semantic validation determinism | 相同输入 100% 相同结果 |
+| planning episode terminalization | 100% 在 `accept_until + 30s` 内形成 typed accepted/rejected/stale/failed/deferred 终态；超时单列 |
+| fresh accepted Plan coverage（全部 eligible planning episodes） | ≥ 80%；provider/schema/semantic/stale/预算耗尽均留在分母 |
+| proposal reject + stale rate（全部 eligible planning episodes） | ≤ 20%；context-churn stale 单列 |
 | valid plan compile rate（engineering-denominator.v1） | ≥ 95%；全部 exclusion 同报 |
+| Director ITT whole-batch substitution/fallback | Phase 1B 报 virtual 值，Phase 2 起实际值 ≤ 10%；所有 assigned Director attempts 入分母 |
 | conditional allocation adherence / ITT adherence | conditional ≥ 90%；ITT 不设隐藏分母并持续报告 |
 | duplicate shown caused by Director | 0 |
 | same request_id commits multiple batches | 0 |
@@ -2837,9 +2926,10 @@ Allocation 同时报两种：ITT adherence 把所有 assigned Director attempts�
 - `recommendation_batches` 和 request idempotency；
 - side-effecting GET 明确映射为 baseline top-up；
 - presentation ack 接通已有 `presented`；
+- Director-aware click/like/save/dismiss 写入携带 `recommendation_id + batch_instance_id` 的 durable EventIngress/feedback queue 桥，并完成 behavior-before-ack 的等待归因；即使 Phase 0A 尚不开 Gate，也要保存可追溯事件；
 - 多 tab/scope 隔离和 fenced commit 骨架。
 
-退出条件：`mode=off` 行为兼容，且后台 GET、恢复、prefetch 均不会消费 slot。
+退出条件：`mode=off` 行为兼容，后台 GET、恢复、prefetch 均不会消费 slot，且呈现/点击/赞踩/收藏/忽略都能以 batch 和 recommendation 身份持久追溯。Phase 2 enforce 不得早于此桥完成。
 
 ### Phase 0B：taxonomy、合同与 replay harness
 
@@ -2921,6 +3011,7 @@ runtime manager 必须把这次切换持久化并递增 `director_runtime_epoch`
 - shortage repair 顺序；
 - hard guard 永远不可关闭；
 - Gate truth table；
+- `director-gate.v1` 的 confidence、10/15 分钟窗口、同 PlanLane 不同 item 去重、同 item like+save 只算一次、hysteresis 与并列优先级；
 - feedback lane attribution 与 IntentProjector target/scope；
 - PlanLane 完整 identity，禁止裸 lane_key 跨 slot 聚合；
 - plan TTL/revision/basis 判断；
@@ -2928,7 +3019,8 @@ runtime manager 必须把这次切换持久化并递增 `director_runtime_epoch`
 - Proposal 不能设置 plan ID、状态、role、hard filter 或候选 ID；
 - recipe/role/expression compatibility、rationale typed evidence predicate 和 taxonomy adjacency；
 - valid style enum 与 unknown content form 行为。
-- strict lifecycle/correction DecisionLog union、重复字段 equality validator 与 idempotency projection；
+- strict lifecycle/correction/PLANNING_DEFERRED DecisionLog union、重复字段 equality validator 与 idempotency projection；
+- `SESSION_INTENT_UPDATED/SESSION_SUPPRESSION_EXPIRED/PROFILE_VIEW_UPDATED` 的 revision/digest 与状态同事务相等；Batch requested/committed kind、outcome、policy/ref XOR；
 - 机械约束：时间、数组唯一/长度、prefer/avoid 互斥、capability truncated/count、digest/ID pattern；
 - runtime mode/epoch compatibility 和 Recovery frozen anchor-set binding。
 
@@ -2953,6 +3045,8 @@ runtime manager 必须把这次切换持久化并递增 `director_runtime_epoch`
 - 两个进程并发 advance 只有一个 fencing token 能提交；
 - 不同 request 抢 exact-next slot 时 loser 不得跳到下一 slot；
 - concurrent replan 不能让 superseded slot 漏提交；
+- DELIVERED Plan 被最后一批反馈触发的新 Plan supersede 时，旧反馈窗口关闭且同 session 仍只有一个执行 pointer；
+- Director 与 baseline 都失败时 `SLOT_LEASE_RELEASED` 原子释放 lease、终结 request 而不推进 cursor；失败事务由 janitor 超时接管；
 - REPLAN、PATCH expiry 与 runtime epoch 抢占 SELECTING_DIRECTOR 时都转可接管的 BASELINE_FALLBACK_PENDING，不消费 slot；
 - kill switch 与 final commit 并发按 runtime row 线性化；off→on 后旧 epoch Plan/Policy 永不可复活；
 - guardrail/taxonomy/recipe/constraint policy 热更新发生在 compile 后时，旧 policy final commit 必败；
@@ -2965,6 +3059,7 @@ runtime manager 必须把这次切换持久化并递增 `director_runtime_epoch`
 - shadow selector 零业务写入；
 - feedback 到达时 planner 仍运行；
 - stale LLM 回包被拒绝；
+- session-start/horizon/replan 的 Input 在当前 generation claim terminal 且 READY feedback 处理后才冻结；baseline/recovery 或弱 Gate commit 与规划竞态只形成有界 context-churn retry，不耗尽正常 4 次预算且总 provider 调用不超过 6；
 - restart 恢复 active plan；
 - platform-scoped lane 不泄漏跨平台候选；
 - 多 tab 默认不争同一个 session slot；
@@ -3036,7 +3131,7 @@ src/openbiliclaw/runtime/
 
 建议按可独立回滚的 PR 切分：
 
-1. **Baseline lifecycle**：FeedSession、BatchInstance、request idempotency、presentation ack、GET top-up 隔离。
+1. **Baseline lifecycle**：FeedSession、BatchInstance、request idempotency、presentation ack、click/like/save/dismiss 的 durable 身份事件桥、GET top-up 隔离。
 2. **Contracts + taxonomy**：models、schemas、Recipe Registry、topic IDs/adjacency、validator、文档、测试。
 3. **Candidate + persistence**：CandidateSetRef、plan/slot/policy/event/state 表。
 4. **Compiler + constrained selector shadow**：capability cube、targeted Candidate Bus、final verifier、replay。

@@ -282,9 +282,7 @@ def _ollama_start_serve_background() -> bool:
     # its model runner / llama-server child with it) instead of being orphaned.
     # Record the launch spec so restart routing reuses the default endpoint.
     global _managed_daemon
-    _managed_daemon = _ManagedDaemon(
-        proc, _DEFAULT_OLLAMA_ENDPOINT, managed_models_dir(), log_file
-    )
+    _managed_daemon = _ManagedDaemon(proc, _DEFAULT_OLLAMA_ENDPOINT, managed_models_dir(), log_file)
 
     for _ in range(30):
         if _ollama_is_running():

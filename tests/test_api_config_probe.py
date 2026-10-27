@@ -43,7 +43,9 @@ def _client_for_config(
     save_config(cfg, config_path)
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app), config_path
+    return TestClient(
+        app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+    ), config_path
 
 
 def _probe_base_config() -> Config:
@@ -59,6 +61,59 @@ def _probe_base_config() -> Config:
             ),
         )
     )
+
+
+@pytest.mark.parametrize("kind", ["llm", "embedding"])
+def test_config_probe_preserves_explicit_target_when_sponsor_is_enabled(
+    kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openbiliclaw.llm.sponsored_router import sponsored_bypassed
+    from openbiliclaw.sponsored_runtime_state import (
+        SponsoredRuntimeSettings,
+        reset_sponsored_settings,
+    )
+
+    calls: list[str] = []
+
+    class ProbeRegistry:
+        available_providers = ["openai"]
+        default_provider = "openai"
+
+        def is_chat_capable(self, name: str) -> bool:
+            return name == "openai"
+
+        async def complete_provider(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            assert sponsored_bypassed()
+            calls.append("llm")
+            return LLMResponse(content="OK", provider="openai", model="gpt-old")
+
+    class ProbeEmbedding:
+        async def probe(self) -> bool:
+            assert sponsored_bypassed()
+            calls.append("embedding")
+            return True
+
+    def build_chat(cfg: Config) -> ProbeRegistry:
+        assert cfg.llm.sponsored.enabled and sponsored_bypassed()
+        return ProbeRegistry()
+
+    def build_embedding(cfg: Config, registry: Any) -> ProbeEmbedding:
+        assert cfg.llm.sponsored.enabled and sponsored_bypassed()
+        return ProbeEmbedding()
+
+    monkeypatch.setattr("openbiliclaw.llm.registry.build_llm_registry", build_chat)
+    monkeypatch.setattr("openbiliclaw.llm.registry.build_embedding_service", build_embedding)
+    cfg = _probe_base_config()
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path="unused")
+    client, path = _client_for_config(monkeypatch, tmp_path, cfg)
+    before = path.read_bytes()
+    try:
+        response = client.post("/api/config/probe-service", json={"kind": kind, "config": {}})
+        assert response.status_code == 200 and response.json()["ok"] is True
+        assert calls == [kind] and path.read_bytes() == before
+        assert not sponsored_bypassed()
+    finally:
+        reset_sponsored_settings()
 
 
 def test_probe_llm_applies_unsaved_provider_payload_without_writing(

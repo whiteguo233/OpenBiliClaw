@@ -479,7 +479,63 @@ def test_external_search_provider_includes_keyless_bing_rss_backend(
     provider = build_v2ex_external_search_provider(config)
 
     assert provider is not None
-    assert provider.backend_alias == "bing_rss"
+    (inner,) = provider.providers
+    assert inner.backend_alias == "bing_rss"
+
+
+def test_external_search_provider_includes_parallel_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    expected = object()
+
+    def build(backends: object, **kwargs: object) -> object:
+        captured["backends"] = backends
+        return expected
+
+    monkeypatch.setattr(
+        "openbiliclaw.discovery.inspiration_provider.build_inspiration_search_provider",
+        build,
+    )
+    config = SimpleNamespace(
+        discovery=SimpleNamespace(
+            inspiration_search_enabled=True,
+            inspiration_search_backends=("local_cache", "parallel", "bing_rss"),
+        )
+    )
+
+    provider = build_v2ex_external_search_provider(config)
+
+    assert provider is expected
+    assert captured["backends"] == ("parallel", "bing_rss")
+
+
+def test_external_search_provider_includes_keenable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    expected = object()
+
+    def build(backends: object, **kwargs: object) -> object:
+        captured["backends"] = backends
+        captured["grounding_keys"] = kwargs.get("grounding_keys")
+        return expected
+
+    monkeypatch.setattr(
+        "openbiliclaw.discovery.inspiration_provider.build_inspiration_search_provider",
+        build,
+    )
+    config = SimpleNamespace(
+        discovery=SimpleNamespace(
+            inspiration_search_enabled=True,
+            inspiration_search_backends=("local_cache", "bing_rss", "keenable"),
+        )
+    )
+
+    provider = build_v2ex_external_search_provider(config)
+
+    assert provider is expected
+    assert captured["backends"] == ("bing_rss", "keenable")
 
 
 def test_external_search_provider_is_absent_without_configured_external_backend() -> None:

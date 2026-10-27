@@ -1,5 +1,9 @@
 """Tests for configuration management."""
 
+import json
+import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -75,6 +79,110 @@ account_sync_interval_hours = 6
 db_path = "data/openbiliclaw.db"
 """.strip(),
         encoding="utf-8",
+    )
+
+
+def _load_budget_config_in_fresh_process(config_path: Path) -> subprocess.CompletedProcess[str]:
+    """Observe public loader warnings without sharing once-per-process state."""
+    script = """
+import json
+import logging
+import sys
+from openbiliclaw.config import load_config
+
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+config = load_config(sys.argv[1])
+print(json.dumps({
+    "instagram": {
+        "daily_topic_budget": config.sources.instagram.daily_topic_budget,
+        "daily_creator_budget": config.sources.instagram.daily_creator_budget,
+    },
+    "daily_search_budgets": {
+        source: getattr(config.sources, source).daily_search_budget
+        for source in (
+            "xiaohongshu", "douyin", "youtube", "twitter", "zhihu",
+            "reddit", "bangumi", "linuxdo", "weibo",
+        )
+    },
+}))
+"""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("OPENBILICLAW_")}
+    env["PYTHONPATH"] = str(Path(config_module.__file__).resolve().parents[1])
+    env["OPENBILICLAW_PROJECT_ROOT"] = str(config_path.parent)
+    return subprocess.run(
+        [sys.executable, "-c", script, str(config_path)],
+        cwd=config_path.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize("field", ["daily_topic_budget", "daily_creator_budget"])
+@pytest.mark.parametrize("budget", [1, 4])
+def test_instagram_small_budget_warning_uses_retained_candidate_units(
+    tmp_path: Path, field: str, budget: int
+) -> None:
+    config = Config()
+    setattr(config.sources.instagram, field, budget)
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["instagram"][field] == budget
+    assert f"sources.instagram.{field}={budget}" in result.stderr
+    assert "每日保留候选条数上限" in result.stderr
+    assert "想不限条数请设为 0" in result.stderr
+    assert "每日任务次数上限" not in result.stderr
+
+
+def test_instagram_unlimited_budgets_are_preserved_without_warning(tmp_path: Path) -> None:
+    config = Config()
+    config.sources.instagram.daily_topic_budget = 0
+    config.sources.instagram.daily_creator_budget = 0
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["instagram"] == {
+        "daily_topic_budget": 0,
+        "daily_creator_budget": 0,
+    }
+    assert "sources.instagram." not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "xiaohongshu",
+        "douyin",
+        "youtube",
+        "twitter",
+        "zhihu",
+        "reddit",
+        "bangumi",
+        "linuxdo",
+        "weibo",
+    ],
+)
+def test_other_source_small_budget_warnings_keep_existing_units(
+    tmp_path: Path, source: str
+) -> None:
+    config = Config()
+    getattr(config.sources, source).daily_search_budget = 4
+    config_path = tmp_path / "config.toml"
+    save_config(config, config_path)
+
+    result = _load_budget_config_in_fresh_process(config_path)
+
+    assert json.loads(result.stdout)["daily_search_budgets"][source] == 4
+    assert result.stderr.strip() == (
+        f"config: sources.{source}.daily_search_budget=4 — "
+        "这是每日任务次数上限,不是开关;想不限次数请设为 0"
     )
 
 
@@ -204,6 +312,7 @@ class TestConfigDefaults:
             "xiaohongshu": 1,
             "douyin": 1,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 1,
             "zhihu": 1,
             "reddit": 1,
@@ -212,6 +321,7 @@ class TestConfigDefaults:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
 
     def test_bilibili_source_enabled_defaults_true(self) -> None:
@@ -1100,6 +1210,102 @@ def test_validate_runtime_config_requires_orcarouter_api_key() -> None:
         validate_runtime_config(config)
 
 
+def test_build_config_supports_requesty_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "requesty",
+                "requesty": {
+                    "api_key": "rqsty-test",
+                    "model": "openai/gpt-4o-mini",
+                    "base_url": "https://router.eu.requesty.ai/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "requesty"
+    assert config.llm.requesty.api_key == "rqsty-test"
+    assert config.llm.requesty.model == "openai/gpt-4o-mini"
+    assert config.llm.requesty.base_url == "https://router.eu.requesty.ai/v1"
+
+
+def test_build_config_supports_api_route_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "api_route",
+                "api_route": {
+                    "api_key": "test-key",
+                    "model": "gpt-5.5",
+                    "base_url": "https://global.api-route.com/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "api_route"
+    assert config.llm.api_route.api_key == "test-key"
+    assert config.llm.api_route.model == "gpt-5.5"
+    assert config.llm.api_route.base_url == "https://global.api-route.com/v1"
+
+
+def test_validate_runtime_config_requires_api_route_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="api_route",
+            api_route=LLMProviderConfig(model="gpt-5.5"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.api_route.api_key"):
+        validate_runtime_config(config)
+
+
+def test_build_config_supports_cheaperinference_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "cheaperinference",
+                "cheaperinference": {
+                    "api_key": "ci_live_test",
+                    "model": "claude-sonnet-5",
+                    "base_url": "https://api.cheaperinference.com/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "cheaperinference"
+    assert config.llm.cheaperinference.api_key == "ci_live_test"
+    assert config.llm.cheaperinference.model == "claude-sonnet-5"
+    assert config.llm.cheaperinference.base_url == "https://api.cheaperinference.com/v1"
+
+
+def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="cheaperinference",
+            cheaperinference=LLMProviderConfig(model="gpt-5.4-mini"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.cheaperinference.api_key"):
+        validate_runtime_config(config)
+
+
+def test_validate_runtime_config_requires_requesty_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="requesty",
+            requesty=LLMProviderConfig(api_key="", model="openai/gpt-4o-mini"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.requesty.api_key"):
+        validate_runtime_config(config)
+
+
 def test_build_config_supports_openai_compatible_provider() -> None:
     """v0.3.32+ — generic OpenAI-protocol-compatible provider with its
     own [llm.openai_compatible] block. Distinct from [llm.openai]."""
@@ -1746,6 +1952,7 @@ youtube = 3
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "tiktok": 1,
         "twitter": 1,
         "zhihu": 1,
         "reddit": 1,
@@ -1754,6 +1961,7 @@ youtube = 3
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 
@@ -2319,6 +2527,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "xiaohongshu": 2,
         "douyin": 2,
         "youtube": 1,
+        "tiktok": 2,
         "twitter": 3,
         "zhihu": 1,
         "reddit": 2,
@@ -2327,6 +2536,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
     save_config(config, config_path)
@@ -2337,6 +2547,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "xiaohongshu": 2,
         "douyin": 2,
         "youtube": 1,
+        "tiktok": 2,
         "twitter": 3,
         "zhihu": 1,
         "reddit": 2,
@@ -2345,6 +2556,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 
@@ -4331,3 +4543,147 @@ class TestUnifiedInterestLineFlag:
             example = tomllib.load(handle)
 
         assert example["scheduler"]["unified_interest_line"] is True
+
+
+class TestAgentConfig:
+    """``[agent]`` chat agent-loop budgets (M1)."""
+
+    def test_defaults(self) -> None:
+        config = Config()
+        assert config.agent.loop_enabled is True
+        assert config.agent.loop_max_steps == 64
+        assert config.agent.tool_result_max_chars == 4000
+
+    def test_loop_enabled_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.agent.loop_enabled = False
+        target = tmp_path / "config.toml"
+
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "loop_enabled = false" in rendered
+        assert loaded.agent.loop_enabled is False
+
+    def test_round_trip_through_toml(self, tmp_path: Path) -> None:
+        config = Config()
+        config.agent.loop_max_steps = 12
+        config.agent.tool_result_max_chars = 800
+        target = tmp_path / "config.toml"
+
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "[agent]" in rendered
+        assert "loop_max_steps = 12" in rendered
+        assert "tool_result_max_chars = 800" in rendered
+        assert loaded.agent.loop_max_steps == 12
+        assert loaded.agent.tool_result_max_chars == 800
+
+    def test_out_of_range_values_fall_back_to_defaults(self) -> None:
+        config = _build_config({"agent": {"loop_max_steps": 0, "tool_result_max_chars": 10}})
+        assert config.agent.loop_max_steps == 64
+        assert config.agent.tool_result_max_chars == 4000
+
+    def test_example_config_parses(self) -> None:
+        example_path = Path(__file__).parents[1] / "config.example.toml"
+
+        with example_path.open("rb") as handle:
+            example = tomllib.load(handle)
+
+        # The [agent] section ships with the defaults commented out.
+        assert "agent" in example
+
+
+class TestTiktokSourceConfig:
+    def test_tiktok_source_defaults(self) -> None:
+        config = Config()
+        assert config.sources.tiktok.enabled is False
+        assert config.sources.tiktok.mode == "auto"
+        assert config.sources.tiktok.cookie_env == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert config.sources.tiktok.region == "JP"
+        assert config.sources.tiktok.tz_name == "Asia/Tokyo"
+        assert config.sources.tiktok.daily_feed_budget == 3
+        assert config.sources.tiktok.daily_search_budget == 3
+
+    def test_tiktok_source_fields_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.tiktok.enabled = True
+        config.sources.tiktok.mode = "web"
+        config.sources.tiktok.cookie_env = "MY_TIKTOK_COOKIE"
+        config.sources.tiktok.tags = ("booktok",)
+        config.sources.tiktok.creators = ("@creator",)
+        config.sources.tiktok.daily_feed_budget = 5
+        config.sources.tiktok.daily_search_budget = 7
+        config.sources.tiktok.region = "US"
+        config.sources.tiktok.tz_name = "America/New_York"
+
+        config_path = tmp_path / "config.toml"
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.sources.tiktok.enabled is True
+        assert loaded.sources.tiktok.mode == "web"
+        assert loaded.sources.tiktok.cookie_env == "MY_TIKTOK_COOKIE"
+        assert loaded.sources.tiktok.tags == ("booktok",)
+        assert loaded.sources.tiktok.creators == ("@creator",)
+        assert loaded.sources.tiktok.daily_feed_budget == 5
+        assert loaded.sources.tiktok.daily_search_budget == 7
+        assert loaded.sources.tiktok.region == "US"
+        assert loaded.sources.tiktok.tz_name == "America/New_York"
+
+    def test_tiktok_empty_geo_values_fall_back_to_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[sources.tiktok]\nregion = ""\ntz_name = "  "\n', encoding="utf-8")
+        loaded = load_config(config_path)
+        assert loaded.sources.tiktok.region == "JP"
+        assert loaded.sources.tiktok.tz_name == "Asia/Tokyo"
+
+    def test_example_config_tiktok_section_parses(self) -> None:
+        example_path = Path(__file__).parents[1] / "config.example.toml"
+
+        with example_path.open("rb") as handle:
+            example = tomllib.load(handle)
+
+        tiktok = example["sources"]["tiktok"]
+        assert tiktok["mode"] == "auto"
+        assert tiktok["cookie_env"] == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert tiktok["region"] == "JP"
+        assert tiktok["tz_name"] == "Asia/Tokyo"
+        assert tiktok["daily_feed_budget"] == 3
+        assert tiktok["daily_search_budget"] == 3
+
+
+class TestSuspiciousBudgetWarnings:
+    """``_warn_suspicious_budgets`` flags 1-4 budgets as misused toggles, but
+    shipped defaults (TikTok's official daily_feed_budget=3 / daily_search_budget=3)
+    must not trip their own alarm on every startup."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_warned_keys(self) -> None:
+        config_module._warned_budget_keys.clear()
+
+    def test_tiktok_official_defaults_do_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()  # tiktok budgets stay at their shipped defaults (3/3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "daily_feed_budget" not in caplog.text
+        assert "daily_search_budget" not in caplog.text
+
+    def test_tiktok_handwritten_nondefault_budget_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = Config()
+        config.sources.tiktok.daily_feed_budget = 2  # not the official default (3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.tiktok.daily_feed_budget" in caplog.text
+
+    def test_other_source_low_budget_still_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()
+        config.sources.douyin.daily_feed_budget = 1
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.douyin.daily_feed_budget" in caplog.text

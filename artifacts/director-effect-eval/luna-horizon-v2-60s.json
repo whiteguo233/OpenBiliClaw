@@ -1,0 +1,1974 @@
+{
+  "started_at": "2026-09-30T16:11:09.615543+00:00",
+  "code_commit": "5419f1683a16e0f83d87cb8fdd78f57f01621966",
+  "runner_sha256": "9c20fb87fa9945d7599a1c40d32d8e2b18b281e7982c258dafd96f6d86ae8723",
+  "fixture_sha256": "20561373801cfb49f85deb20d17b2ec16426929dd7279d66f6e751281d4dada9",
+  "synthetic_content_and_profile": true,
+  "live_model": true,
+  "online_user_satisfaction_test": false,
+  "jev_tested": false,
+  "wire_attempts_instrumented": false,
+  "cost_totals_complete": false,
+  "transport": "codex-cli",
+  "route": {
+    "instance": "temporary-codex-cli",
+    "model": "gpt-6-luna",
+    "reasoning_effort": "low",
+    "fallback_enabled": false,
+    "model_verification": "explicit_cli_flag_not_server_echo",
+    "cli_version": "codex-cli 0.155.0-alpha.16.3",
+    "cli_binary": "/Applications/ChatGPT.app/Contents/Resources/codex"
+  },
+  "max_tokens_and_temperature_enforced": false,
+  "cli_latency_includes_startup": true,
+  "planning_budget_seconds": 60.0,
+  "production_planning_budget_seconds": null,
+  "evaluation_design": "current_policy_single_arm",
+  "policy_version": "director-screen-policy.v2",
+  "comparison": "Current policy with its strict completion contract only. Compare frozen v1 reports separately; this is not a concurrent A/B. The deterministic pair baseline is NOT production MMR.",
+  "repeats": 1,
+  "horizon_screens": 3,
+  "cases": [
+    {
+      "case_id": "practical_agent",
+      "title": "明确需求：从泛泛介绍转向 Agent 工程落地",
+      "input": {
+        "schema_version": "pair-composition.v1",
+        "request_id": "synthetic-request-practical_agent",
+        "session": {
+          "session_ref": "synthetic-session-practical_agent",
+          "stream_ref": "synthetic-stream-practical_agent",
+          "state_revision": 1,
+          "feedback_cursor": "synthetic-ack-practical_agent",
+          "configuration_revision": 1,
+          "explicit_intent": "给我点真正能落地的 Agent 工程内容，这次不想再看泛泛介绍。",
+          "real_feedback": [
+            {
+              "event_ref": "synthetic-ack-practical_agent",
+              "batch_ref": "synthetic-batch-practical_agent",
+              "kind": "presented",
+              "description": "这两张卡进入可见区域；没有观看时长或读完证据。",
+              "occurred_at": 1790769600.0,
+              "content": [
+                {
+                  "ref": "past_ai",
+                  "title": "Agent 入门：规划、记忆和工具",
+                  "summary": "通过天气查询介绍三个基本组成，没有实现细节。",
+                  "topic_group": "ai_intro",
+                  "content_style": "概念讲解",
+                  "source_platform": "synthetic"
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic"
+                }
+              ]
+            }
+          ],
+          "profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "fast_profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "recent_screens": [
+            {
+              "batch_ref": "synthetic-batch-practical_agent",
+              "direction": "从长期兴趣中提供两个独立的浏览入口",
+              "committed_at": 1790769599.0,
+              "cards": [
+                {
+                  "ref": "past_ai",
+                  "title": "Agent 入门：规划、记忆和工具",
+                  "summary": "通过天气查询介绍三个基本组成，没有实现细节。",
+                  "topic_group": "ai_intro",
+                  "content_style": "概念讲解",
+                  "source_platform": "synthetic",
+                  "position": 1,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": []
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic",
+                  "position": 2,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": []
+                }
+              ]
+            }
+          ],
+          "latest_preference_revision": 0
+        },
+        "candidate_set_ref": "synthetic-pool-v1",
+        "candidate_revision": 1,
+        "feature_schema_version": "director-effect-cases.v1",
+        "direction_ref": "synthetic-general-direction",
+        "direction": "结合用户画像、本次要求与实际反馈，为下一屏提供有用且不过度重复的选择。",
+        "cards": [
+          {
+            "ref": "c01",
+            "item_key": "synthetic-effect:c01",
+            "title": "Agent 到底是什么：从聊天框说起",
+            "summary": "用问答、记忆和工具调用三个概念介绍 Agent；以天气查询作演示，不包含实现步骤。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 100.0,
+            "eligible": true
+          },
+          {
+            "ref": "c02",
+            "item_key": "synthetic-effect:c02",
+            "title": "从聊天机器人到会用工具的助手",
+            "summary": "解释 Agent 与普通聊天机器人的区别，依次介绍记忆、规划和工具调用，演示查询天气。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 99.0,
+            "eligible": true
+          },
+          {
+            "ref": "c03",
+            "item_key": "synthetic-effect:c03",
+            "title": "一张图看懂 Agent 的组成",
+            "summary": "围绕记忆、规划、工具三个模块介绍 Agent，例子是自动查询天气，定位为入门概览。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 97.0,
+            "eligible": true
+          },
+          {
+            "ref": "c04",
+            "item_key": "synthetic-effect:c04",
+            "title": "给大模型接上资料库，需要哪几步",
+            "summary": "解释 RAG 的分块、检索和生成三个阶段，用企业知识库作概念示意，不提供参数或实验。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 96.0,
+            "eligible": true
+          },
+          {
+            "ref": "c05",
+            "item_key": "synthetic-effect:c05",
+            "title": "RAG 入门：资料如何变成答案",
+            "summary": "按分块、检索、生成的顺序介绍知识库问答，展示流程图和企业资料查询的示意场景。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 93.0,
+            "eligible": true
+          },
+          {
+            "ref": "c06",
+            "item_key": "synthetic-effect:c06",
+            "title": "又一个王炸！普通人也能让 Agent 替自己工作",
+            "summary": "围绕自动打开网页和填写表单的演示，强调工作方式将被彻底改变，未提供复现环境。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 95.0,
+            "eligible": true
+          },
+          {
+            "ref": "c07",
+            "item_key": "synthetic-effect:c07",
+            "title": "一个工单助手的实现笔记",
+            "summary": "从工单分类到调用内部查询接口，给出工具参数校验、人工确认与最小运行示例。",
+            "topic_group": "ai_practice",
+            "content_style": "项目记录",
+            "source_platform": "synthetic",
+            "baseline_score": 86.0,
+            "eligible": true
+          },
+          {
+            "ref": "c08",
+            "item_key": "synthetic-effect:c08",
+            "title": "工具调用重复执行后，我们改了什么",
+            "summary": "复盘一次重试造成重复操作的案例，展示幂等键、超时状态与补偿流程的修改前后差异。",
+            "topic_group": "ai_practice",
+            "content_style": "失败复盘",
+            "source_platform": "synthetic",
+            "baseline_score": 85.0,
+            "eligible": true
+          },
+          {
+            "ref": "c09",
+            "item_key": "synthetic-effect:c09",
+            "title": "给问答助手做一个小型回归集",
+            "summary": "从三十条真实形态的问题出发，划分可回答与应拒答样本，展示离线回归脚本和误差归类。",
+            "topic_group": "ai_eval",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 84.0,
+            "eligible": true
+          },
+          {
+            "ref": "c10",
+            "item_key": "synthetic-effect:c10",
+            "title": "同一批请求，换模型和缓存后成本怎么变",
+            "summary": "使用合成请求报告输入输出 token、缓存命中与响应时间，说明不同模型组合的适用边界。",
+            "topic_group": "ai_ops",
+            "content_style": "测量记录",
+            "source_platform": "synthetic",
+            "baseline_score": 83.0,
+            "eligible": true
+          },
+          {
+            "ref": "c11",
+            "item_key": "synthetic-effect:c11",
+            "title": "把本地助手跑进一个容器",
+            "summary": "展示配置注入、健康检查、日志采集与服务重启步骤，附最小部署文件及常见失败情况。",
+            "topic_group": "ai_ops",
+            "content_style": "部署教程",
+            "source_platform": "synthetic",
+            "baseline_score": 82.0,
+            "eligible": true
+          },
+          {
+            "ref": "c12",
+            "item_key": "synthetic-effect:c12",
+            "title": "一次知识库检索失准的排查记录",
+            "summary": "固定问答集比较分块长度和混合检索，给出命中与漏检样例，区分检索失败和生成失败。",
+            "topic_group": "ai_eval",
+            "content_style": "实验记录",
+            "source_platform": "synthetic",
+            "baseline_score": 81.0,
+            "eligible": true
+          },
+          {
+            "ref": "c13",
+            "item_key": "synthetic-effect:c13",
+            "title": "从对话记录里定位助手的失败步骤",
+            "summary": "用 trace 串联检索、工具调用和回答，展示脱敏字段、错误分类以及如何重放单次请求。",
+            "topic_group": "ai_ops",
+            "content_style": "调试教程",
+            "source_platform": "synthetic",
+            "baseline_score": 80.0,
+            "eligible": true
+          },
+          {
+            "ref": "c14",
+            "item_key": "synthetic-effect:c14",
+            "title": "让助手修改数据前，先加一道确认",
+            "summary": "为写入操作设计权限边界和人工确认，比较预览、撤销与拒绝执行的具体接口。",
+            "topic_group": "ai_practice",
+            "content_style": "接口设计",
+            "source_platform": "synthetic",
+            "baseline_score": 79.0,
+            "eligible": true
+          },
+          {
+            "ref": "c15",
+            "item_key": "synthetic-effect:c15",
+            "title": "周末环线的路线笔记：距离之外还要看什么",
+            "summary": "以虚构郊外环线演示爬升、岔路、补水点与返程安排，给出一份可独立使用的路线检查表。",
+            "topic_group": "outdoor_route",
+            "content_style": "经验分享",
+            "source_platform": "synthetic",
+            "baseline_score": 88.0,
+            "eligible": true
+          },
+          {
+            "ref": "c16",
+            "item_key": "synthetic-effect:c16",
+            "title": "同一条山路晴雨两天走，装备取舍有什么不同",
+            "summary": "记录鞋袜、防雨层和背包防水的实际取舍，明确适用条件，不涉及危险路线或极限活动。",
+            "topic_group": "outdoor_gear",
+            "content_style": "对照记录",
+            "source_platform": "synthetic",
+            "baseline_score": 87.0,
+            "eligible": true
+          },
+          {
+            "ref": "c17",
+            "item_key": "synthetic-effect:c17",
+            "title": "第一次走陌生路线前，如何看懂等高线",
+            "summary": "从坡度、山脊和山谷三个判断入手，用示意地图演示怎样核对步行轨迹。",
+            "topic_group": "outdoor_route",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 78.0,
+            "eligible": true
+          },
+          {
+            "ref": "c18",
+            "item_key": "synthetic-effect:c18",
+            "title": "我的日间徒步背包，哪些东西后来没再带",
+            "summary": "逐项说明普通日间徒步装备的用途、重量与取舍，保留必要应急物品并说明场景限制。",
+            "topic_group": "outdoor_gear",
+            "content_style": "装备记录",
+            "source_platform": "synthetic",
+            "baseline_score": 77.0,
+            "eligible": true
+          },
+          {
+            "ref": "c19",
+            "item_key": "synthetic-effect:c19",
+            "title": "城市近郊散步时，我怎样记录沿途的植物",
+            "summary": "分享按叶形、花期和生境整理观察笔记的方法，以认识常见植物为目的，不提供食用建议。",
+            "topic_group": "outdoor_nature",
+            "content_style": "观察记录",
+            "source_platform": "synthetic",
+            "baseline_score": 76.0,
+            "eligible": true
+          },
+          {
+            "ref": "c20",
+            "item_key": "synthetic-effect:c20",
+            "title": "把路线笔记做成一个可追问的小助手",
+            "summary": "用个人徒步笔记搭建检索应用，展示来源引用和缺失信息提示；明确它不能代替实时路况及专业导航。",
+            "topic_group": "ai_practice",
+            "content_style": "跨领域项目",
+            "source_platform": "synthetic",
+            "baseline_score": 75.0,
+            "eligible": true
+          },
+          {
+            "ref": "c21",
+            "item_key": "synthetic-effect:c21",
+            "title": "这次真要变天了！一个助手顶一整个团队",
+            "summary": "围绕几个自动回复和资料整理的演示展开，宣称多数工作马上不再需要人，未展示限制和评估。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 98.0,
+            "eligible": true
+          },
+          {
+            "ref": "c22",
+            "item_key": "synthetic-effect:c22",
+            "title": "别再学旧技术了，Agent 已经改写一切",
+            "summary": "汇集多个工具的演示片段，以职业焦虑和全面替代为主线，缺少可核查的实验与部署细节。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 94.0,
+            "eligible": true
+          },
+          {
+            "ref": "c23",
+            "item_key": "synthetic-effect:c23",
+            "title": "规划、搜索与策略：怎样区分几类智能体",
+            "summary": "从问题定义和反馈方式比较规划器、搜索算法与学习策略，讨论各自限制，偏分析而非上手教程。",
+            "topic_group": "ai_theory",
+            "content_style": "原理分析",
+            "source_platform": "synthetic",
+            "baseline_score": 74.0,
+            "eligible": true
+          },
+          {
+            "ref": "c24",
+            "item_key": "synthetic-effect:c24",
+            "title": "阴天的山路照片，怎样保留层次",
+            "summary": "用同一位置的照片比较曝光、前景与色彩处理，记录徒步途中便于完成的拍摄方法。",
+            "topic_group": "outdoor_photo",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 73.0,
+            "eligible": true
+          }
+        ],
+        "constraints": {
+          "version": "synthetic-no-topic-quota-v1",
+          "topic_quotas": [],
+          "excluded_item_keys": []
+        },
+        "target_count": 6,
+        "decision_budget_seconds": 60.0,
+        "max_provider_calls": 10,
+        "deadline_monotonic": null
+      },
+      "preregistered_labels": {
+        "task_support": [
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c20"
+        ],
+        "forbidden_style": [],
+        "supported_exploration": [
+          "c20"
+        ],
+        "stable_interest_ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23"
+        ],
+        "stable_interest_outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24"
+        ],
+        "topic:ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23",
+          "c20"
+        ],
+        "topic:outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24",
+          "c20"
+        ],
+        "duplicate:agent_definition": [
+          "c01",
+          "c02",
+          "c03"
+        ],
+        "duplicate:rag_definition": [
+          "c04",
+          "c05"
+        ]
+      }
+    },
+    {
+      "case_id": "local_style_feedback",
+      "title": "局部反馈：反感夸张标题，不等于反感 AI",
+      "input": {
+        "schema_version": "pair-composition.v1",
+        "request_id": "synthetic-request-local_style_feedback",
+        "session": {
+          "session_ref": "synthetic-session-local_style_feedback",
+          "stream_ref": "synthetic-stream-local_style_feedback",
+          "state_revision": 2,
+          "feedback_cursor": "synthetic-style-dislike",
+          "configuration_revision": 1,
+          "explicit_intent": "",
+          "real_feedback": [
+            {
+              "event_ref": "synthetic-ack-local_style_feedback",
+              "batch_ref": "synthetic-batch-local_style_feedback",
+              "kind": "presented",
+              "description": "这两张卡进入可见区域；没有观看时长或读完证据。",
+              "occurred_at": 1790769600.0,
+              "content": [
+                {
+                  "ref": "past_ai",
+                  "title": "震撼！AI 助手即将取代所有工作",
+                  "summary": "若干自动化演示与全面替代的结论，缺少实验细节。",
+                  "topic_group": "ai_news",
+                  "content_style": "夸张标题",
+                  "source_platform": "synthetic"
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic"
+                }
+              ]
+            },
+            {
+              "event_ref": "synthetic-style-dislike",
+              "batch_ref": "synthetic-batch-local_style_feedback",
+              "kind": "dislike",
+              "description": "这个标题太夸张",
+              "occurred_at": 1790769601.0,
+              "content": [
+                {
+                  "ref": "past_ai",
+                  "title": "震撼！AI 助手即将取代所有工作",
+                  "summary": "若干自动化演示与全面替代的结论，缺少实验细节。",
+                  "topic_group": "ai_news",
+                  "content_style": "夸张标题",
+                  "source_platform": "synthetic"
+                }
+              ]
+            }
+          ],
+          "profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "fast_profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "recent_screens": [
+            {
+              "batch_ref": "synthetic-batch-local_style_feedback",
+              "direction": "从长期兴趣中提供两个独立的浏览入口",
+              "committed_at": 1790769599.0,
+              "cards": [
+                {
+                  "ref": "past_ai",
+                  "title": "震撼！AI 助手即将取代所有工作",
+                  "summary": "若干自动化演示与全面替代的结论，缺少实验细节。",
+                  "topic_group": "ai_news",
+                  "content_style": "夸张标题",
+                  "source_platform": "synthetic",
+                  "position": 1,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": [
+                    {
+                      "event_ref": "synthetic-style-dislike",
+                      "kind": "dislike",
+                      "note": "这个标题太夸张",
+                      "occurred_at": 1790769601.0
+                    }
+                  ]
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic",
+                  "position": 2,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": []
+                }
+              ]
+            }
+          ],
+          "latest_preference_revision": 2
+        },
+        "candidate_set_ref": "synthetic-pool-v1",
+        "candidate_revision": 1,
+        "feature_schema_version": "director-effect-cases.v1",
+        "direction_ref": "synthetic-general-direction",
+        "direction": "结合用户画像、本次要求与实际反馈，为下一屏提供有用且不过度重复的选择。",
+        "cards": [
+          {
+            "ref": "c01",
+            "item_key": "synthetic-effect:c01",
+            "title": "Agent 到底是什么：从聊天框说起",
+            "summary": "用问答、记忆和工具调用三个概念介绍 Agent；以天气查询作演示，不包含实现步骤。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 100.0,
+            "eligible": true
+          },
+          {
+            "ref": "c02",
+            "item_key": "synthetic-effect:c02",
+            "title": "从聊天机器人到会用工具的助手",
+            "summary": "解释 Agent 与普通聊天机器人的区别，依次介绍记忆、规划和工具调用，演示查询天气。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 99.0,
+            "eligible": true
+          },
+          {
+            "ref": "c03",
+            "item_key": "synthetic-effect:c03",
+            "title": "一张图看懂 Agent 的组成",
+            "summary": "围绕记忆、规划、工具三个模块介绍 Agent，例子是自动查询天气，定位为入门概览。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 97.0,
+            "eligible": true
+          },
+          {
+            "ref": "c04",
+            "item_key": "synthetic-effect:c04",
+            "title": "给大模型接上资料库，需要哪几步",
+            "summary": "解释 RAG 的分块、检索和生成三个阶段，用企业知识库作概念示意，不提供参数或实验。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 96.0,
+            "eligible": true
+          },
+          {
+            "ref": "c05",
+            "item_key": "synthetic-effect:c05",
+            "title": "RAG 入门：资料如何变成答案",
+            "summary": "按分块、检索、生成的顺序介绍知识库问答，展示流程图和企业资料查询的示意场景。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 93.0,
+            "eligible": true
+          },
+          {
+            "ref": "c06",
+            "item_key": "synthetic-effect:c06",
+            "title": "又一个王炸！普通人也能让 Agent 替自己工作",
+            "summary": "围绕自动打开网页和填写表单的演示，强调工作方式将被彻底改变，未提供复现环境。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 95.0,
+            "eligible": true
+          },
+          {
+            "ref": "c07",
+            "item_key": "synthetic-effect:c07",
+            "title": "一个工单助手的实现笔记",
+            "summary": "从工单分类到调用内部查询接口，给出工具参数校验、人工确认与最小运行示例。",
+            "topic_group": "ai_practice",
+            "content_style": "项目记录",
+            "source_platform": "synthetic",
+            "baseline_score": 86.0,
+            "eligible": true
+          },
+          {
+            "ref": "c08",
+            "item_key": "synthetic-effect:c08",
+            "title": "工具调用重复执行后，我们改了什么",
+            "summary": "复盘一次重试造成重复操作的案例，展示幂等键、超时状态与补偿流程的修改前后差异。",
+            "topic_group": "ai_practice",
+            "content_style": "失败复盘",
+            "source_platform": "synthetic",
+            "baseline_score": 85.0,
+            "eligible": true
+          },
+          {
+            "ref": "c09",
+            "item_key": "synthetic-effect:c09",
+            "title": "给问答助手做一个小型回归集",
+            "summary": "从三十条真实形态的问题出发，划分可回答与应拒答样本，展示离线回归脚本和误差归类。",
+            "topic_group": "ai_eval",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 84.0,
+            "eligible": true
+          },
+          {
+            "ref": "c10",
+            "item_key": "synthetic-effect:c10",
+            "title": "同一批请求，换模型和缓存后成本怎么变",
+            "summary": "使用合成请求报告输入输出 token、缓存命中与响应时间，说明不同模型组合的适用边界。",
+            "topic_group": "ai_ops",
+            "content_style": "测量记录",
+            "source_platform": "synthetic",
+            "baseline_score": 83.0,
+            "eligible": true
+          },
+          {
+            "ref": "c11",
+            "item_key": "synthetic-effect:c11",
+            "title": "把本地助手跑进一个容器",
+            "summary": "展示配置注入、健康检查、日志采集与服务重启步骤，附最小部署文件及常见失败情况。",
+            "topic_group": "ai_ops",
+            "content_style": "部署教程",
+            "source_platform": "synthetic",
+            "baseline_score": 82.0,
+            "eligible": true
+          },
+          {
+            "ref": "c12",
+            "item_key": "synthetic-effect:c12",
+            "title": "一次知识库检索失准的排查记录",
+            "summary": "固定问答集比较分块长度和混合检索，给出命中与漏检样例，区分检索失败和生成失败。",
+            "topic_group": "ai_eval",
+            "content_style": "实验记录",
+            "source_platform": "synthetic",
+            "baseline_score": 81.0,
+            "eligible": true
+          },
+          {
+            "ref": "c13",
+            "item_key": "synthetic-effect:c13",
+            "title": "从对话记录里定位助手的失败步骤",
+            "summary": "用 trace 串联检索、工具调用和回答，展示脱敏字段、错误分类以及如何重放单次请求。",
+            "topic_group": "ai_ops",
+            "content_style": "调试教程",
+            "source_platform": "synthetic",
+            "baseline_score": 80.0,
+            "eligible": true
+          },
+          {
+            "ref": "c14",
+            "item_key": "synthetic-effect:c14",
+            "title": "让助手修改数据前，先加一道确认",
+            "summary": "为写入操作设计权限边界和人工确认，比较预览、撤销与拒绝执行的具体接口。",
+            "topic_group": "ai_practice",
+            "content_style": "接口设计",
+            "source_platform": "synthetic",
+            "baseline_score": 79.0,
+            "eligible": true
+          },
+          {
+            "ref": "c15",
+            "item_key": "synthetic-effect:c15",
+            "title": "周末环线的路线笔记：距离之外还要看什么",
+            "summary": "以虚构郊外环线演示爬升、岔路、补水点与返程安排，给出一份可独立使用的路线检查表。",
+            "topic_group": "outdoor_route",
+            "content_style": "经验分享",
+            "source_platform": "synthetic",
+            "baseline_score": 88.0,
+            "eligible": true
+          },
+          {
+            "ref": "c16",
+            "item_key": "synthetic-effect:c16",
+            "title": "同一条山路晴雨两天走，装备取舍有什么不同",
+            "summary": "记录鞋袜、防雨层和背包防水的实际取舍，明确适用条件，不涉及危险路线或极限活动。",
+            "topic_group": "outdoor_gear",
+            "content_style": "对照记录",
+            "source_platform": "synthetic",
+            "baseline_score": 87.0,
+            "eligible": true
+          },
+          {
+            "ref": "c17",
+            "item_key": "synthetic-effect:c17",
+            "title": "第一次走陌生路线前，如何看懂等高线",
+            "summary": "从坡度、山脊和山谷三个判断入手，用示意地图演示怎样核对步行轨迹。",
+            "topic_group": "outdoor_route",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 78.0,
+            "eligible": true
+          },
+          {
+            "ref": "c18",
+            "item_key": "synthetic-effect:c18",
+            "title": "我的日间徒步背包，哪些东西后来没再带",
+            "summary": "逐项说明普通日间徒步装备的用途、重量与取舍，保留必要应急物品并说明场景限制。",
+            "topic_group": "outdoor_gear",
+            "content_style": "装备记录",
+            "source_platform": "synthetic",
+            "baseline_score": 77.0,
+            "eligible": true
+          },
+          {
+            "ref": "c19",
+            "item_key": "synthetic-effect:c19",
+            "title": "城市近郊散步时，我怎样记录沿途的植物",
+            "summary": "分享按叶形、花期和生境整理观察笔记的方法，以认识常见植物为目的，不提供食用建议。",
+            "topic_group": "outdoor_nature",
+            "content_style": "观察记录",
+            "source_platform": "synthetic",
+            "baseline_score": 76.0,
+            "eligible": true
+          },
+          {
+            "ref": "c20",
+            "item_key": "synthetic-effect:c20",
+            "title": "把路线笔记做成一个可追问的小助手",
+            "summary": "用个人徒步笔记搭建检索应用，展示来源引用和缺失信息提示；明确它不能代替实时路况及专业导航。",
+            "topic_group": "ai_practice",
+            "content_style": "跨领域项目",
+            "source_platform": "synthetic",
+            "baseline_score": 75.0,
+            "eligible": true
+          },
+          {
+            "ref": "c21",
+            "item_key": "synthetic-effect:c21",
+            "title": "这次真要变天了！一个助手顶一整个团队",
+            "summary": "围绕几个自动回复和资料整理的演示展开，宣称多数工作马上不再需要人，未展示限制和评估。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 98.0,
+            "eligible": true
+          },
+          {
+            "ref": "c22",
+            "item_key": "synthetic-effect:c22",
+            "title": "别再学旧技术了，Agent 已经改写一切",
+            "summary": "汇集多个工具的演示片段，以职业焦虑和全面替代为主线，缺少可核查的实验与部署细节。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 94.0,
+            "eligible": true
+          },
+          {
+            "ref": "c23",
+            "item_key": "synthetic-effect:c23",
+            "title": "规划、搜索与策略：怎样区分几类智能体",
+            "summary": "从问题定义和反馈方式比较规划器、搜索算法与学习策略，讨论各自限制，偏分析而非上手教程。",
+            "topic_group": "ai_theory",
+            "content_style": "原理分析",
+            "source_platform": "synthetic",
+            "baseline_score": 74.0,
+            "eligible": true
+          },
+          {
+            "ref": "c24",
+            "item_key": "synthetic-effect:c24",
+            "title": "阴天的山路照片，怎样保留层次",
+            "summary": "用同一位置的照片比较曝光、前景与色彩处理，记录徒步途中便于完成的拍摄方法。",
+            "topic_group": "outdoor_photo",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 73.0,
+            "eligible": true
+          }
+        ],
+        "constraints": {
+          "version": "synthetic-no-topic-quota-v1",
+          "topic_quotas": [],
+          "excluded_item_keys": []
+        },
+        "target_count": 6,
+        "decision_budget_seconds": 60.0,
+        "max_provider_calls": 10,
+        "deadline_monotonic": null
+      },
+      "preregistered_labels": {
+        "task_support": [
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c20",
+          "c23"
+        ],
+        "forbidden_style": [
+          "c06",
+          "c21",
+          "c22"
+        ],
+        "supported_exploration": [
+          "c20"
+        ],
+        "stable_interest_ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23"
+        ],
+        "stable_interest_outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24"
+        ],
+        "topic:ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23",
+          "c20"
+        ],
+        "topic:outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24",
+          "c20"
+        ],
+        "duplicate:agent_definition": [
+          "c01",
+          "c02",
+          "c03"
+        ],
+        "duplicate:rag_definition": [
+          "c04",
+          "c05"
+        ]
+      }
+    },
+    {
+      "case_id": "weak_click",
+      "title": "弱证据：一次点击与一次无操作不能改写长期兴趣",
+      "input": {
+        "schema_version": "pair-composition.v1",
+        "request_id": "synthetic-request-weak_click",
+        "session": {
+          "session_ref": "synthetic-session-weak_click",
+          "stream_ref": "synthetic-stream-weak_click",
+          "state_revision": 2,
+          "feedback_cursor": "synthetic-single-click",
+          "configuration_revision": 1,
+          "explicit_intent": "",
+          "real_feedback": [
+            {
+              "event_ref": "synthetic-ack-weak_click",
+              "batch_ref": "synthetic-batch-weak_click",
+              "kind": "presented",
+              "description": "这两张卡进入可见区域；没有观看时长或读完证据。",
+              "occurred_at": 1790769600.0,
+              "content": [
+                {
+                  "ref": "past_ai",
+                  "title": "一个资料整理助手的运行记录",
+                  "summary": "展示资料提取、工具调用和结果检查的基本流程。",
+                  "topic_group": "ai_practice",
+                  "content_style": "项目记录",
+                  "source_platform": "synthetic"
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic"
+                }
+              ]
+            },
+            {
+              "event_ref": "synthetic-single-click",
+              "batch_ref": "synthetic-batch-weak_click",
+              "kind": "click",
+              "description": "点击打开了这张卡；没有点赞、读完或观看时长证据。",
+              "occurred_at": 1790769601.0,
+              "content": [
+                {
+                  "ref": "past_ai",
+                  "title": "一个资料整理助手的运行记录",
+                  "summary": "展示资料提取、工具调用和结果检查的基本流程。",
+                  "topic_group": "ai_practice",
+                  "content_style": "项目记录",
+                  "source_platform": "synthetic"
+                }
+              ]
+            }
+          ],
+          "profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "fast_profile_context": {
+            "schema_version": "director-profile.v1",
+            "stable": {
+              "cognitive_style": [
+                "喜欢通过具体例子理解问题"
+              ],
+              "core_traits": [],
+              "values": [],
+              "deep_needs": [],
+              "style": {
+                "preferred_duration": "",
+                "preferred_pace": "",
+                "quality_sensitivity": 0.5,
+                "humor_preference": 0.5,
+                "depth_preference": 0.7
+              },
+              "context": {
+                "weekday_patterns": "",
+                "weekend_patterns": "",
+                "time_of_day_patterns": "",
+                "session_type": ""
+              },
+              "exploration_openness": 0.4,
+              "source_platform_mix": {},
+              "interests": [
+                {
+                  "name": "AI 工程与智能体应用",
+                  "category": "科技",
+                  "weight": 0.9,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "name": "日间徒步与自然观察",
+                  "category": "户外",
+                  "weight": 0.8,
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "interest_domains": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    "AI 工程与智能体应用"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "户外",
+                  "weight": 0.8,
+                  "specifics": [
+                    "日间徒步与自然观察"
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "disliked_topics": []
+            },
+            "recent": {
+              "current_phase": "正在把一个个人 AI 助手从演示推进到可运行的工具",
+              "life_stage": "",
+              "awareness": [
+                {
+                  "observation": "用户明确提过想了解助手落地，也一直保留着周末徒步的兴趣。",
+                  "trend": "",
+                  "emotion_guess": ""
+                }
+              ],
+              "insights": [],
+              "speculative_interests": []
+            }
+          },
+          "recent_screens": [
+            {
+              "batch_ref": "synthetic-batch-weak_click",
+              "direction": "从长期兴趣中提供两个独立的浏览入口",
+              "committed_at": 1790769599.0,
+              "cards": [
+                {
+                  "ref": "past_ai",
+                  "title": "一个资料整理助手的运行记录",
+                  "summary": "展示资料提取、工具调用和结果检查的基本流程。",
+                  "topic_group": "ai_practice",
+                  "content_style": "项目记录",
+                  "source_platform": "synthetic",
+                  "position": 1,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": [
+                    {
+                      "event_ref": "synthetic-single-click",
+                      "kind": "click",
+                      "note": "",
+                      "occurred_at": 1790769601.0
+                    }
+                  ]
+                },
+                {
+                  "ref": "past_outdoor",
+                  "title": "近郊步道的一次日间行走记录",
+                  "summary": "介绍一条虚构步道的路线选择和沿途观察。",
+                  "topic_group": "outdoor_route",
+                  "content_style": "经验分享",
+                  "source_platform": "synthetic",
+                  "position": 2,
+                  "exposure_confirmed": true,
+                  "exposure_at": 1790769600.0,
+                  "actions": []
+                }
+              ]
+            }
+          ],
+          "latest_preference_revision": 0
+        },
+        "candidate_set_ref": "synthetic-pool-v1",
+        "candidate_revision": 1,
+        "feature_schema_version": "director-effect-cases.v1",
+        "direction_ref": "synthetic-general-direction",
+        "direction": "结合用户画像、本次要求与实际反馈，为下一屏提供有用且不过度重复的选择。",
+        "cards": [
+          {
+            "ref": "c01",
+            "item_key": "synthetic-effect:c01",
+            "title": "Agent 到底是什么：从聊天框说起",
+            "summary": "用问答、记忆和工具调用三个概念介绍 Agent；以天气查询作演示，不包含实现步骤。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 100.0,
+            "eligible": true
+          },
+          {
+            "ref": "c02",
+            "item_key": "synthetic-effect:c02",
+            "title": "从聊天机器人到会用工具的助手",
+            "summary": "解释 Agent 与普通聊天机器人的区别，依次介绍记忆、规划和工具调用，演示查询天气。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 99.0,
+            "eligible": true
+          },
+          {
+            "ref": "c03",
+            "item_key": "synthetic-effect:c03",
+            "title": "一张图看懂 Agent 的组成",
+            "summary": "围绕记忆、规划、工具三个模块介绍 Agent，例子是自动查询天气，定位为入门概览。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 97.0,
+            "eligible": true
+          },
+          {
+            "ref": "c04",
+            "item_key": "synthetic-effect:c04",
+            "title": "给大模型接上资料库，需要哪几步",
+            "summary": "解释 RAG 的分块、检索和生成三个阶段，用企业知识库作概念示意，不提供参数或实验。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 96.0,
+            "eligible": true
+          },
+          {
+            "ref": "c05",
+            "item_key": "synthetic-effect:c05",
+            "title": "RAG 入门：资料如何变成答案",
+            "summary": "按分块、检索、生成的顺序介绍知识库问答，展示流程图和企业资料查询的示意场景。",
+            "topic_group": "ai_intro",
+            "content_style": "概念讲解",
+            "source_platform": "synthetic",
+            "baseline_score": 93.0,
+            "eligible": true
+          },
+          {
+            "ref": "c06",
+            "item_key": "synthetic-effect:c06",
+            "title": "又一个王炸！普通人也能让 Agent 替自己工作",
+            "summary": "围绕自动打开网页和填写表单的演示，强调工作方式将被彻底改变，未提供复现环境。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 95.0,
+            "eligible": true
+          },
+          {
+            "ref": "c07",
+            "item_key": "synthetic-effect:c07",
+            "title": "一个工单助手的实现笔记",
+            "summary": "从工单分类到调用内部查询接口，给出工具参数校验、人工确认与最小运行示例。",
+            "topic_group": "ai_practice",
+            "content_style": "项目记录",
+            "source_platform": "synthetic",
+            "baseline_score": 86.0,
+            "eligible": true
+          },
+          {
+            "ref": "c08",
+            "item_key": "synthetic-effect:c08",
+            "title": "工具调用重复执行后，我们改了什么",
+            "summary": "复盘一次重试造成重复操作的案例，展示幂等键、超时状态与补偿流程的修改前后差异。",
+            "topic_group": "ai_practice",
+            "content_style": "失败复盘",
+            "source_platform": "synthetic",
+            "baseline_score": 85.0,
+            "eligible": true
+          },
+          {
+            "ref": "c09",
+            "item_key": "synthetic-effect:c09",
+            "title": "给问答助手做一个小型回归集",
+            "summary": "从三十条真实形态的问题出发，划分可回答与应拒答样本，展示离线回归脚本和误差归类。",
+            "topic_group": "ai_eval",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 84.0,
+            "eligible": true
+          },
+          {
+            "ref": "c10",
+            "item_key": "synthetic-effect:c10",
+            "title": "同一批请求，换模型和缓存后成本怎么变",
+            "summary": "使用合成请求报告输入输出 token、缓存命中与响应时间，说明不同模型组合的适用边界。",
+            "topic_group": "ai_ops",
+            "content_style": "测量记录",
+            "source_platform": "synthetic",
+            "baseline_score": 83.0,
+            "eligible": true
+          },
+          {
+            "ref": "c11",
+            "item_key": "synthetic-effect:c11",
+            "title": "把本地助手跑进一个容器",
+            "summary": "展示配置注入、健康检查、日志采集与服务重启步骤，附最小部署文件及常见失败情况。",
+            "topic_group": "ai_ops",
+            "content_style": "部署教程",
+            "source_platform": "synthetic",
+            "baseline_score": 82.0,
+            "eligible": true
+          },
+          {
+            "ref": "c12",
+            "item_key": "synthetic-effect:c12",
+            "title": "一次知识库检索失准的排查记录",
+            "summary": "固定问答集比较分块长度和混合检索，给出命中与漏检样例，区分检索失败和生成失败。",
+            "topic_group": "ai_eval",
+            "content_style": "实验记录",
+            "source_platform": "synthetic",
+            "baseline_score": 81.0,
+            "eligible": true
+          },
+          {
+            "ref": "c13",
+            "item_key": "synthetic-effect:c13",
+            "title": "从对话记录里定位助手的失败步骤",
+            "summary": "用 trace 串联检索、工具调用和回答，展示脱敏字段、错误分类以及如何重放单次请求。",
+            "topic_group": "ai_ops",
+            "content_style": "调试教程",
+            "source_platform": "synthetic",
+            "baseline_score": 80.0,
+            "eligible": true
+          },
+          {
+            "ref": "c14",
+            "item_key": "synthetic-effect:c14",
+            "title": "让助手修改数据前，先加一道确认",
+            "summary": "为写入操作设计权限边界和人工确认，比较预览、撤销与拒绝执行的具体接口。",
+            "topic_group": "ai_practice",
+            "content_style": "接口设计",
+            "source_platform": "synthetic",
+            "baseline_score": 79.0,
+            "eligible": true
+          },
+          {
+            "ref": "c15",
+            "item_key": "synthetic-effect:c15",
+            "title": "周末环线的路线笔记：距离之外还要看什么",
+            "summary": "以虚构郊外环线演示爬升、岔路、补水点与返程安排，给出一份可独立使用的路线检查表。",
+            "topic_group": "outdoor_route",
+            "content_style": "经验分享",
+            "source_platform": "synthetic",
+            "baseline_score": 88.0,
+            "eligible": true
+          },
+          {
+            "ref": "c16",
+            "item_key": "synthetic-effect:c16",
+            "title": "同一条山路晴雨两天走，装备取舍有什么不同",
+            "summary": "记录鞋袜、防雨层和背包防水的实际取舍，明确适用条件，不涉及危险路线或极限活动。",
+            "topic_group": "outdoor_gear",
+            "content_style": "对照记录",
+            "source_platform": "synthetic",
+            "baseline_score": 87.0,
+            "eligible": true
+          },
+          {
+            "ref": "c17",
+            "item_key": "synthetic-effect:c17",
+            "title": "第一次走陌生路线前，如何看懂等高线",
+            "summary": "从坡度、山脊和山谷三个判断入手，用示意地图演示怎样核对步行轨迹。",
+            "topic_group": "outdoor_route",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 78.0,
+            "eligible": true
+          },
+          {
+            "ref": "c18",
+            "item_key": "synthetic-effect:c18",
+            "title": "我的日间徒步背包，哪些东西后来没再带",
+            "summary": "逐项说明普通日间徒步装备的用途、重量与取舍，保留必要应急物品并说明场景限制。",
+            "topic_group": "outdoor_gear",
+            "content_style": "装备记录",
+            "source_platform": "synthetic",
+            "baseline_score": 77.0,
+            "eligible": true
+          },
+          {
+            "ref": "c19",
+            "item_key": "synthetic-effect:c19",
+            "title": "城市近郊散步时，我怎样记录沿途的植物",
+            "summary": "分享按叶形、花期和生境整理观察笔记的方法，以认识常见植物为目的，不提供食用建议。",
+            "topic_group": "outdoor_nature",
+            "content_style": "观察记录",
+            "source_platform": "synthetic",
+            "baseline_score": 76.0,
+            "eligible": true
+          },
+          {
+            "ref": "c20",
+            "item_key": "synthetic-effect:c20",
+            "title": "把路线笔记做成一个可追问的小助手",
+            "summary": "用个人徒步笔记搭建检索应用，展示来源引用和缺失信息提示；明确它不能代替实时路况及专业导航。",
+            "topic_group": "ai_practice",
+            "content_style": "跨领域项目",
+            "source_platform": "synthetic",
+            "baseline_score": 75.0,
+            "eligible": true
+          },
+          {
+            "ref": "c21",
+            "item_key": "synthetic-effect:c21",
+            "title": "这次真要变天了！一个助手顶一整个团队",
+            "summary": "围绕几个自动回复和资料整理的演示展开，宣称多数工作马上不再需要人，未展示限制和评估。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 98.0,
+            "eligible": true
+          },
+          {
+            "ref": "c22",
+            "item_key": "synthetic-effect:c22",
+            "title": "别再学旧技术了，Agent 已经改写一切",
+            "summary": "汇集多个工具的演示片段，以职业焦虑和全面替代为主线，缺少可核查的实验与部署细节。",
+            "topic_group": "ai_news",
+            "content_style": "夸张标题",
+            "source_platform": "synthetic",
+            "baseline_score": 94.0,
+            "eligible": true
+          },
+          {
+            "ref": "c23",
+            "item_key": "synthetic-effect:c23",
+            "title": "规划、搜索与策略：怎样区分几类智能体",
+            "summary": "从问题定义和反馈方式比较规划器、搜索算法与学习策略，讨论各自限制，偏分析而非上手教程。",
+            "topic_group": "ai_theory",
+            "content_style": "原理分析",
+            "source_platform": "synthetic",
+            "baseline_score": 74.0,
+            "eligible": true
+          },
+          {
+            "ref": "c24",
+            "item_key": "synthetic-effect:c24",
+            "title": "阴天的山路照片，怎样保留层次",
+            "summary": "用同一位置的照片比较曝光、前景与色彩处理，记录徒步途中便于完成的拍摄方法。",
+            "topic_group": "outdoor_photo",
+            "content_style": "方法教程",
+            "source_platform": "synthetic",
+            "baseline_score": 73.0,
+            "eligible": true
+          }
+        ],
+        "constraints": {
+          "version": "synthetic-no-topic-quota-v1",
+          "topic_quotas": [],
+          "excluded_item_keys": []
+        },
+        "target_count": 6,
+        "decision_budget_seconds": 60.0,
+        "max_provider_calls": 10,
+        "deadline_monotonic": null
+      },
+      "preregistered_labels": {
+        "task_support": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c20",
+          "c23",
+          "c24"
+        ],
+        "forbidden_style": [],
+        "supported_exploration": [
+          "c20"
+        ],
+        "stable_interest_ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23"
+        ],
+        "stable_interest_outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24"
+        ],
+        "topic:ai": [
+          "c01",
+          "c02",
+          "c03",
+          "c04",
+          "c05",
+          "c06",
+          "c07",
+          "c08",
+          "c09",
+          "c10",
+          "c11",
+          "c12",
+          "c13",
+          "c14",
+          "c21",
+          "c22",
+          "c23",
+          "c20"
+        ],
+        "topic:outdoors": [
+          "c15",
+          "c16",
+          "c17",
+          "c18",
+          "c19",
+          "c24",
+          "c20"
+        ],
+        "duplicate:agent_definition": [
+          "c01",
+          "c02",
+          "c03"
+        ],
+        "duplicate:rag_definition": [
+          "c04",
+          "c05"
+        ]
+      }
+    }
+  ],
+  "results": [
+    {
+      "case_id": "practical_agent",
+      "condition": "deterministic_pair_baseline",
+      "screen_refs": [
+        [
+          "c01",
+          "c02",
+          "c21",
+          "c03",
+          "c04",
+          "c06"
+        ]
+      ],
+      "first_screen_metrics": {
+        "selected_count": 6,
+        "unique_known_count": 6,
+        "unknown_ref_count": 0,
+        "repeated_ref_count": 0,
+        "valid_selection": true,
+        "task_support_count": 0,
+        "forbidden_style_count": 0,
+        "semantic_duplicate_excess": 2,
+        "semantic_duplicate_pairs": 3,
+        "supported_exploration_count": 0,
+        "topical_coverage": 1,
+        "independent_interest_coverage": 1,
+        "ai_count": 6,
+        "outdoor_count": 0
+      },
+      "network_calls": 0
+    },
+    {
+      "case_id": "practical_agent",
+      "condition": "screen_policy",
+      "repeat": 0,
+      "reason": "planner_unavailable",
+      "calls": [
+        {
+          "prompt_sha256": "14e388bc3d03e35658e7fd8d0297624b085bf3ab388a3ec219131876c8066afb",
+          "input_sha256": "ad3154e3af88d3760521a73c39ac57a59b34c3e914e2907743855ce260bd387e",
+          "input_bytes": 11732,
+          "requested_max_tokens": 4096,
+          "error_class": "CodexCLIError",
+          "error_chain": [
+            {
+              "class": "CodexCLIError"
+            }
+          ],
+          "elapsed_seconds": 34.723
+        }
+      ],
+      "elapsed_seconds": 34.725,
+      "plan_valid": false,
+      "cli_transport": {
+        "requested_model": "gpt-6-luna",
+        "model_verification": "explicit_cli_flag_not_server_echo",
+        "reasoning_effort": "low",
+        "tools_allowed": false,
+        "max_tokens_and_temperature_enforced": false,
+        "wrapper_sha256": "511beb12f03c125512fc07966174585d5b761c569d96ac70a217d7872e976595",
+        "exit_code": 0,
+        "stderr_bytes": 3449,
+        "item_types": [
+          "agent_message",
+          "error"
+        ],
+        "recoverable_diagnostic_present": true,
+        "failure_code": "cli_turn_failed"
+      }
+    }
+  ],
+  "stopped_early": {
+    "reason": "planner_unavailable",
+    "case_id": "practical_agent",
+    "condition": "screen_policy",
+    "remaining_evaluations_not_run": true
+  },
+  "finished_at": "2026-09-30T16:11:44.385693+00:00"
+}

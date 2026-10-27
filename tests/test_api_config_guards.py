@@ -35,7 +35,11 @@ def _make_client(
     )
 
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app), initial_cfg, config_path
+    return (
+        TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        initial_cfg,
+        config_path,
+    )
 
 
 def _base_config() -> Config:
@@ -261,7 +265,9 @@ def test_github_pat_update_clears_old_producer_rejection_marker(
         payload={"login": "octocat", "id": 583231},
     )
     client = TestClient(
-        create_app(memory_manager=object(), database=database, soul_engine=object())
+        create_app(memory_manager=object(), database=database, soul_engine=object()),
+        client=("127.0.0.1", 5000),
+        base_url="http://127.0.0.1:8420",
     )
 
     response = client.put(
@@ -912,3 +918,102 @@ def test_put_config_ignores_masked_proxy_echo(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 202
     assert load_config_from_path(config_path).network.proxy == "socks5://user:secret@127.0.0.1:1080"
+
+
+# ── issue #300: config write/probe routes self-gate for remote callers ──────
+
+_REMOTE_CLIENT = {"client": ("192.168.1.50", 5000), "base_url": "http://192.168.1.10:8420"}
+_AUTH_SECRET = "fixed-test-session-secret-cccccccccccc"
+
+
+def _make_config_app(monkeypatch, tmp_path, cfg: Config):
+    config_path = tmp_path / "config.toml"
+    save_config(cfg, config_path)
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+    monkeypatch.setattr(
+        "openbiliclaw.config.save_config",
+        lambda value, path=None, **kw: save_config(value, config_path, **kw),
+    )
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "auth.db")
+    database.initialize()
+    app = create_app(memory_manager=object(), database=database, soul_engine=object())
+    return app, database, config_path
+
+
+def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_path) -> None:
+    cfg = _base_config()
+    app, _db, config_path = _make_config_app(monkeypatch, tmp_path, cfg)
+    before = config_path.read_text(encoding="utf-8")
+    remote = TestClient(app, **_REMOTE_CLIENT)
+
+    tamper = remote.put(
+        "/api/config",
+        json={
+            "llm": {"openai": {"base_url": "http://attacker.example/v1"}},
+            "bilibili": {"browser_executable": "/tmp/obc_backdoor"},
+        },
+    )
+    assert tamper.status_code == 403
+    assert tamper.json()["error"] == "local_only"
+    assert config_path.read_text(encoding="utf-8") == before
+
+    probe = remote.post(
+        "/api/config/probe-service",
+        json={
+            "kind": "llm",
+            "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
+        },
+    )
+    assert probe.status_code == 403
+    assert probe.json()["error"] == "local_only"
+
+    discover = remote.post(
+        "/api/config/discover-models",
+        json={
+            "instance_id": "openai",
+            "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
+        },
+    )
+    assert discover.status_code == 403
+    assert discover.json()["error"] == "local_only"
+
+
+def _auth_config() -> Config:
+    from openbiliclaw import auth_core as ac
+
+    cfg = _base_config()
+    cfg.api.auth.enabled = True
+    cfg.api.auth.session_secret = _AUTH_SECRET
+    cfg.api.auth.password_hash = ac.hash_password("hunter2")
+    return cfg
+
+
+def test_remote_config_write_requires_auth_when_gate_on(monkeypatch, tmp_path) -> None:
+    app, _db, _path = _make_config_app(monkeypatch, tmp_path, _auth_config())
+    remote = TestClient(app, **_REMOTE_CLIENT)
+
+    response = remote.put("/api/config", json={"llm": {"openai": {"model": "gpt-4.1-mini"}}})
+    assert response.status_code == 401
+    assert response.json()["error"] == "auth_required"
+
+    probe = remote.post("/api/config/probe-service", json={"kind": "llm", "config": {}})
+    assert probe.status_code == 401
+
+
+def test_remote_config_write_allowed_with_session_when_gate_on(monkeypatch, tmp_path) -> None:
+    from openbiliclaw import auth_core as ac
+
+    app, database, config_path = _make_config_app(monkeypatch, tmp_path, _auth_config())
+    token = ac.sign_token(_AUTH_SECRET, epoch=database.get_auth_epoch(), ttl_hours=1)
+    remote = TestClient(app, **_REMOTE_CLIENT)
+
+    response = remote.put(
+        "/api/config",
+        json={"llm": {"openai": {"model": "gpt-4.1-mini"}}},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 202
+    assert load_config_from_path(config_path).llm.openai.model == "gpt-4.1-mini"

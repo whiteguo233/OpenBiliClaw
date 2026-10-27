@@ -1,0 +1,175 @@
+{
+  "code_commit": "1126329a",
+  "date": "2026-10-04",
+  "environment": {
+    "os": "macOS Intel x86_64",
+    "ram_gib": 16,
+    "ollama": "0.18.2",
+    "model": "bge-m3:latest",
+    "actual_backend": "cpu",
+    "gpu_transition_verified": false
+  },
+  "fault_injection": "SIGKILL direct runner children of a separately spawned Ollama daemon; real HTTP responses and real vectors, no mocked transport",
+  "api_scenarios": [
+    {
+      "scenario": "real_default_request",
+      "passed": true,
+      "probe": {
+        "ok": true,
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "Embedding provider is available.",
+        "error": "",
+        "latency_ms": 3779
+      },
+      "seconds": 3.791,
+      "health_embedding_ready": true,
+      "loaded_models": [
+        {
+          "name": "bge-m3:latest",
+          "size_vram": 0
+        }
+      ]
+    },
+    {
+      "scenario": "real_runner_termination",
+      "killed": [
+        33615
+      ],
+      "probe": {
+        "ok": true,
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "Embedding provider is available.",
+        "error": "",
+        "latency_ms": 4533
+      },
+      "seconds": 4.552
+    },
+    {
+      "scenario": "cpu_concurrent_requests",
+      "passed": true,
+      "requests": 8,
+      "latencies": [
+        0.911,
+        1.519,
+        2.863,
+        2.184,
+        2.652,
+        2.78,
+        2.819,
+        2.815
+      ],
+      "size_vram": [
+        0
+      ]
+    },
+    {
+      "scenario": "real_cpu_runner_failure",
+      "killed": [
+        33665,
+        33676,
+        33688,
+        33698
+      ],
+      "probe": {
+        "ok": false,
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "",
+        "error": "Embedding provider returned no vector.",
+        "latency_ms": 2866
+      },
+      "health_embedding_ready": false,
+      "seconds": 2.885
+    },
+    {
+      "scenario": "cpu_recovers_after_fault_removed",
+      "passed": true,
+      "probe": {
+        "ok": true,
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "Embedding provider is available.",
+        "error": "",
+        "latency_ms": 3022
+      },
+      "health_embedding_ready": true,
+      "seconds": 3.043
+    },
+    {
+      "scenario": "real_app_restart",
+      "passed": true,
+      "probe": {
+        "ok": true,
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "Embedding provider is available.",
+        "error": "",
+        "latency_ms": 3164
+      },
+      "seconds": 3.175
+    }
+  ],
+  "cache": {
+    "passed": true,
+    "texts": 3,
+    "dimensions": [
+      1024,
+      1024,
+      1024
+    ],
+    "actual_embedding_requests": 3,
+    "l1_extra_requests": 0,
+    "l2_extra_requests": 0,
+    "sqlite_rows": 3,
+    "cold_seconds": 2.133,
+    "l1_seconds": 1.2e-05,
+    "l2_seconds": 0.001013
+  },
+  "browser": {
+    "surface": "desktop Web /web/ settings",
+    "runner_failure_recovered": {
+      "passed": true,
+      "latency_ms": 4632,
+      "killed": 34068
+    },
+    "cpu_failure": {
+      "passed": true,
+      "latency_ms": 2906,
+      "ok": false,
+      "killed": [
+        34300,
+        34312
+      ]
+    },
+    "fault_removed": {
+      "passed": true,
+      "latency_ms": 3820,
+      "ok": true
+    }
+  },
+  "final_readiness": {
+    "embedding_ready": true,
+    "embedding_check": "ok",
+    "ollama_phase": "ready"
+  },
+  "regression": {
+    "passed": 159,
+    "seconds": 25.38
+  },
+  "cleanup": {
+    "harness_exit_code": 0,
+    "owned_process_groups_stopped": true
+  }
+}

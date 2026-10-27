@@ -50,3 +50,28 @@ def test_worker_status_store_reports_healthy_and_stale(tmp_path) -> None:
     payload = store.status_payload()
     assert payload["worker_running"] is False
     assert payload["worker_heartbeat_age_seconds"] == 50.0
+
+
+def test_read_if_fresh_only_returns_within_heartbeat_budget(tmp_path) -> None:
+    now = [1000.0]
+    store = WorkerStatusStore(
+        tmp_path / "discovery_worker_status.json",
+        max_age_seconds=45.0,
+        now=lambda: now[0],
+    )
+    assert store.read_if_fresh() is None
+
+    store.write(
+        mode="discovery",
+        pid=9,
+        started_at=900.0,
+        heartbeat_at=990.0,
+        extra={"coordinators": {"expression_copy": {"expression_pending_count": 19}}},
+    )
+    data = store.read_if_fresh()
+    assert data is not None
+    assert data["mode"] == "discovery"
+    assert data["coordinators"]["expression_copy"]["expression_pending_count"] == 19
+
+    now[0] = 990.0 + 46.0
+    assert store.read_if_fresh() is None

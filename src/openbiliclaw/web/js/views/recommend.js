@@ -5,6 +5,7 @@
 
 import {
   fetchRecommendations,
+  observeRecommendationPresentation,
   reshuffleRecommendations,
   appendRecommendations,
   fetchRuntimeStatus,
@@ -1186,6 +1187,7 @@ function renderCard(rawItem, index = 0) {
   const item = normalizeRecommendation(rawItem);
   const card = document.createElement("div");
   card.className = "card";
+  observeRecommendationPresentation(card, item);
   const url = buildContentUrl(item);
   const cardMedia = getRecommendationCardKind(item);
   if (cardMedia.kind === "text") card.classList.add("is-text-only");
@@ -1983,7 +1985,7 @@ export function onStreamEvent(payload) {
     // Merge pool status only. Do not replace recommendation cards here:
     // users may have appended older cards that /api/recommendations would not
     // return in its latest top window.
-    const poolEvent = payload.data || payload;
+    const poolEvent = { ...(payload.data || payload), type };
     const version = Number(poolEvent.pool_status_version) || 0;
     if (version && version < poolStatusVersion) return;
     applyCommittedPoolStatus(poolEvent);
@@ -2006,8 +2008,10 @@ export function onStreamEvent(payload) {
     ) {
       scheduleRecommendationRecovery();
     }
-  } else if (type === "refresh.started" || type === "refresh.strategy") {
-    patchState({ runtimeEvent: payload.data || payload });
+  } else if (type === "refresh.started" || type === "refresh.strategy" || type === "refresh.failed") {
+    const event = { ...(payload.data || payload), type };
+    runtimeStatusGeneration += 1;
+    patchState({ runtimeEvent: event, runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, event) });
     rerenderRuntimeDependentChrome();
   } else if (type === "activity.added") {
     // Prepend to activity feed

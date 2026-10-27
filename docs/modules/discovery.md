@@ -1,8 +1,85 @@
 # 内容发现引擎
 
-> 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 和通用 Web 等来源主动寻找潜在会喜欢的内容。
+2026-10-03：普通手动“换一批”也接入 Instagram 正式 producer → `drain_pending(..., flush=True)` → 有界推荐表达，与初始化/后台任务共用锁、预算与准入。callback 已拥有的 post-admission copy 不再重复执行；评估或文案失败映射为明确失败态，不把仅触发任务当作供给成功。
+
+显式 Instagram 初始化使用同一正式 producer 和候选管线完成首轮供给。`DiscoveryCandidatePipeline.drain_pending(..., flush=True)` 只跳过后台小批量 coalescing 等待，并保留调用者数量上限、引擎 hard cap、锁、claim token、评分与池准入规则；默认 `flush=False` 的后台行为不变。初始化持有 refresh 锁，待完整画像落盘后才发现、即时评估一批并同步生成推荐文案；没有可浏览条目仍返回首池未就绪，不以 queued/waiting 冒充成功。
+
+Instagram discovery 使用 optional-credential：保留匿名 topic/creator 路径，并可在直接 topic 页被动读取已登录响应中的公开媒体。它不提交 Search；`authenticated_topic_observed` 区分登录证据，候选仍走相同 evaluator/admission，不降低阈值。2026-09-30 真实正式链路取得 4 条、评估 4 条、低分拒绝 4 条；不代表个人初始化画像已通过。
+
+> 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub、Instagram 和通用 Web 等来源主动寻找潜在会喜欢的内容。
+
+## 纯 Jev 完整评估（可选，2026-10-02）
+
+`discovery.eval_scorer="jev"` 替换完整候选评估，不是额外预过滤，也不是 learned
+只替换相关性。`JevContentEvaluator.evaluate()` 用原生 Score / Choice 生成相关性、
+受控主题 / IP / 风格及完整时效证据组，统一经过现有验证、grounding、配额和准入。
+`ContentDiscoveryEngine` 的单条、批量与 `evaluate_cached_content_batch()` 旧池补评
+均走同一选择；API、CLI、OpenClaw 共用路由。失败返回 missing，留在待评估状态，
+不缓存失败、不伪造零分标签、不隐式调用 LLM。推荐表达、搜索词生成仍是独立 LLM 任务。
+
+主题来自配置中的粗分类，IP 仅从配置词表选择；未识别保留空分类和受控诊断，
+不把所有未知项归为同一个真实主题 / IP，也不让 embedding 偷填 Jev 的未知主题。
+解释是程序模板，不是 Jev 自由生成的文案。时效原文片段与完整日期候选由代码提取，
+证据冲突或无法 grounding 时整条评估失败，不补空冒充成功。
+`jev_context.py` 将原文片段只放入 state 一次，证据 Choice 使用显式片段路径，
+返回后还原原句并对完整原文 grounding。公共规则也只传一次；每道题仍明确候选 ref。
+
+原生仅文本，不支持封面；与 `multimodal_evaluation_enabled=true` 或另一 Jev
+semantic filter 同开会报配置错误。Jev 模式暂不运行旧 embedding prefilter 的
+LLM 对照审计，避免将 Jev 结果记作 LLM 真值。默认仍是 LLM；沿用的产品入池阈值
+不是 Jev 标定结果，中文质量与误拒需要另行真实验证。
+
+Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` 命名按需视图：
+全画像只在本地，先保留完整负偏好（Onion 保留原 domain/specific 限定树）、风格和场景，
+再按每条候选文本选择相关兴趣、少量全局偏好与近期事实，不调摘要 LLM、不改源画像。
+完整兴趣目录不再受旧 top-48/256 限制；当前相关性是确定性词法检索，不承诺语义同义召回。
+选中的单条事实不截字；没有加载某兴趣不等于用户不喜欢。请求中 `candidate_profiles.cN`
+只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景
+移到共享 `profile` 一次。正偏好选择独立于批次同行；原有 LLM 评估视图和召回不变。
+
+共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
+已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
+含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
+保守工程策略，不是精确 token 数。每条候选的 10 题是不可拆单元，多候选多题共用请求；
+整批装不下先移走完整候选，默认最多 4 条为待校准的工程上限，题数/单题字节护栏可配置。
+单条超限时本地选择完整片段，保留开头/结尾、显式否定/条件/时间线索及邻句；不截字、
+不调用摘要模型。`text_coverage` 标记局部视图、源摘要、原始/已选片段数，片段附源字段
+和字符位置，日志只记源摘要、计数及选中字符范围。这些词法锚点不是语义完整性证明；不能保证任意
+长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则 missing；远端拒绝也按失败
+处理，不缩短后二次发送。
+每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
+问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
+成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
+字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
+
+配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
+[Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与
+真实模型验收必须分开记录，见[验收记录](../plans/2026-10-02-jev-full-evaluator-validation.md)。
+
+单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
+Jev 入口保留完整 `description`（不沿用普通 LLM 批处理的 400 字截断），由
+`jev_context` 统一按预算选择整段原文；缓存也绑定完整描述，尾部条件改变会重新评估。
+本机真实 API 进程的浏览器保存 → 实际热重载 → 来源入队 → HTTP 评估 → SQLite 准入
+回归见 `tests/test_jev_runtime_e2e.py`；只有最外侧 Jev 推理使用合成协议后端，
+不能据此认定官方 token 容量、模型质量或整套推荐文案链路已验收。
+Web/插件/移动的 Jev 连接区可配置服务开关、原生 URL、Token、固定模型、双容量和每批候选数，
+与 `eval_scorer=jev` 可同次保存，由共享后端验证及后台重建生效。不是额外加一层预过滤；
+独立 semantic filter 仍与完整 Jev 评估互斥。连接配置只表示本机就绪，未自动请求付费探测。
+`scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
+设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
+`--config /absolute/path/config.toml` 可读取设置页保存的连接、精确模型及容量并先做零 HTTP
+preview；加真实模式及额度确认才会经生产 factory 请求所配服务，详见 [CLI 开发验证](cli.md#jev-本机开发验证脚本)。
+独立进程的保存/重启验收覆盖自定义模型容量，启动新进程后仍使用原 URL、Token 和固定模型；
+推理边界仍为本机合成服务，不代表官方模型已验收。
+加 `--fake` 则自动启动本机 Jev 原生协议假后端，以真实回环 HTTP 跑完两种预算的
+完整评估与入池，不需要 key；输出 `backend=local_fake`、`live=false`、
+`usage_is_synthetic=true`。假后端有独立字节容量校验和故障注入，不能验证官方 token
+限制或推荐判断质量；它不加入生产 evaluator 配置，也不代替官方真实服务验收。
+
 
 API daemon 的候选 admission 成功后只同步调用轻量 expression `notify()`，不会 inline 或 await 文案 provider；generation-owned coordinator 按 durable `admitted_pending_copy` 连续补齐文案，因此评估 worker 可立即继续补位。OpenClaw direct one-shot 没有 daemon owner：它在 admission commit 后 await `expression-copy(limit=4, max_extra_requests=0)`，首 batch 的有效 subset 立即进入 canonical pool，剩余 pending-copy 留给下一次 operation；若首 batch 全部无效，本次可服务池仍可能为空，但不会留下 copy/provider task。`drain_pending()` 会随原有 metrics 返回结构化 post-admission copy receipt；refresh 仅在本轮没有 callback owner 时执行 copy 兜底，避免同一 durable admission 被 controller 收尾再次调用。
+
+默认分阶段调度与全并发调度均向声明支持的来源策略转发 `keywords` 和 `keyword_ids`。TikTok 等第二阶段策略必须消费已领取的词并保留候选归因，不能改为重新生成关键词。
 
 ## 概述
 
@@ -36,6 +113,7 @@ API daemon 的候选 admission 成功后只同步调用轻量 expression `notify
 - **TrendingStrategy** — 从全站榜和相关分区榜中筛选高匹配热点内容
 - **RelatedChainStrategy** — 从近期高价值视频种子出发，沿相关推荐链扩展候选内容
 - **ExploreStrategy** — 消费统一 `KeywordPlanner` 生成的 B 站探索 query 候选池，寻找更有陌生感但仍可解释的内容；planner 关闭时保留旧的现场 domain 生成回退路径
+- **CommentThreadStrategy（`comment_thread`）** — 蓝鱼实验室挂在 B 站发现面上的**只读**一路：从已评估推荐池取种子视频（按鱼账本跳过已回过的视频），读评论区，把评论里点名的 BV 号还原成 `DiscoveredContent` 交给统一 batch evaluator。它同时把「种子视频 + 刚抓到的评论快照」写成一条 `fish/plans.json` 计划，公开发言由动作层在闸门内执行（本策略绝不发帖）。实验室关闭或没有独立 Cookie 时立即返回空、不访问网络；只在 API runtime 注册（CLI 没有执行计划的动作层）。详见 [fish 模块](fish.md#作为-b-站发现的一路)
 - **PoolDistributionSnapshot** — runtime 在补池前构建的候选池分布快照，给 discovery 提供当前供给拥挤/缺口的软信号
 - **inspiration.py / inspiration_provider.py** — keyword inspiration 轴库流程：可选从 like 二级兴趣构建 coverage-aware 候选窗口，再按 `inspiration_interest_sample_size` 抽样进入本轮 `select`；`OnionProfile.interest.likes[].specifics` 优先，一级 domain 只在缺少 specifics 时作为低特异性兜底，并按 parent 计数、production selection ledger、历史 coverage 和 axis saturation 降权。planner 在装配与近期 query-family 过滤后，只把真正留下关键词的 realized interests 写入 `discovery_interest_selection_ledger`；真实运行用 production scope，`keyword-inspiration-dry-run` / `keyword-inspiration-preview` 用 preview scope，因此 preview 可连续验证轮转但不污染正式抽样。随后流程固定为 `select → probe → ground → single-call → assemble → writeback`：`build_grounding_probes()` 先从 `discovery_inspiration_axis` 取 active 轴，再用二级兴趣标签、本地 pooled terms 生成确定性探针；search provider 链（默认 local cache / 已启用平台源 / Bing RSS / Exa / You.com）只做 grounding，不写 `discovery_candidates` 或推荐池，并受 `inspiration_max_probe_searches_per_stage`、`inspiration_platforms_per_probe`、`inspiration_search_pages_per_probe` 和 `inspiration_riskcontrolled_probe_budget` 约束；其中 Exa / You.com / Serply 直连 HTTP 后端与 mcporter 子进程均遵循进程级 `[network]` 出口策略（v0.3.209 起修复：此前硬编码 `trust_env=false`，custom 代理下 api.exa.ai 从国内直连超时），Bing RSS 属国内可达服务保持恒直连。`discovery.keyword_inspiration` 现在是 regular/shared inspiration stage 的唯一 LLM 调用：一次接收 platform guides、已选兴趣、轴库、fresh evidence 和 allocation targets，返回 `{axes[], keywords[]}`；输出截断时解析器会 salvage 已完整返回的 axes / keywords，LLM 失败时才进入两级确定性 fallback：先复用现有轴库 / 轴 example terms 生成 `MaterializeCandidate`，仍缺 coverage 时由 `materialize_platform_keywords()` 做 `deterministic_fill`。装配按兴趣 breadth 优先、同兴趣 axis depth 后补，再按 `platform_style_score()` 软分排序；平台 style mismatch 不再硬拒绝，错误兴趣归因、脚本不匹配、轴不足或目标平台缺词会进入 telemetry。新轴可通过 `upsert_inspiration_axes()` 写回轴库，生产运行会 `bump_usage=True`，preview 只有显式 `--persist-axes` 才持久化轴且不写关键词池。coverage join 统一走 `_normalize_match_text()`，画像整理产生兴趣重命名 mapping 时会同步迁移 `discovery_keywords.source_interest` 和 `discovery_interest_selection_ledger.source_interest`。
 - **runtime/inspiration_pipeline.py（`InspirationKeywordPipeline`，Phase 2 Part D）** — 上述 ①–⑥ 编排（选兴趣 / 取轴 / probe / ground / 单次调用 / coverage-first 装配 / 回写 / 回填 tick）从 ~4000 行的 `KeywordPlanner` god-file 抽成独立类，行为逐字不变。构造注入 db、llm、inspiration provider、discovery-config 视图 + Task 4 的 `InspirationBreadthParams` 内部视图、clock、可选 embedding 服务，并持有一个 `host` 反向引用只用于与 merged-keyword 路径共享的少数 planner 基础设施（`_history` / `_insert` / `_avoid_hints` / `_supply_hints` / `_load_profile`）；`KeywordPlanner` 保留 `_run_inspiration_stage` / `_run_shared_inspiration_stage` / `preview_inspiration_keywords` / `_selected_inspiration_interests` 四个签名不变的兼容委托转发到 pipeline。
@@ -44,7 +122,7 @@ API daemon 的候选 admission 成功后只同步调用轻量 expression `notify
 - **多平台丰富度修复（Phase 2.1，三管齐下）** — 真机发现平台越多，单次调用的 48 槽越摊薄，`core_concept` 会退化成"话题名 + 平台后缀"（`新游推荐 盘点`）而非具体锚点（`士官长 登陆PS5`）。三处协同补救：**(F1，产出侧)** `_INSPIRATION_AXIS_KEYWORD_SYSTEM_PROMPT` 新增一条静态规则，要求 `core_concept` 锚定 `fresh_evidence` 里的具体实体 / 事件 / 作品 / 人物 / 机制、禁止复述 interest 或 axis_label，无锚点时才可退回话题级（仍 100% 静态、过 byte-identical cache）；**(F1.5，择优侧，主)** `materialize_platform_keywords` 的 `_choose_materialize_candidate` 排序键加 `is_specific` 信号——`(需要新轴, is_specific, style_score, -index)`，具体候选同槽位内压过泛化候选，两者同类时才退回 style_score 排序。`is_specific(core_concept, interest, axis_label)` 是**纯确定性剥离残留判定**：把归一化 `core_concept` 里的 interest span、axis_label span、泛化 / 风格 marker（复用 `_PLATFORM_STYLE_MARKERS` + 若干话题填充词）**按最长优先做子串移除**（非空格 token——中文常无空格，`新游推荐盘点` 也要判为复述），去残留空白 / 标点后剩非空即 `True`；确定性补位候选天然 `is_specific=False`。`restatement_rate(keywords)` 是配套观测指标。**(F2，token 侧)** 单次调用 `max_tokens` 随槽位放大：`slots = len(selected_interests) * len(target_platforms)`，`max_tokens = min(16384, 8192 + max(0, slots-12) * 256)`（阈值 12 = 3 平台 × 4 兴趣舒适点；6 平台 24 槽→11264，8×6 48 槽→ceil 16384），并把请求值写进 `llm_telemetry.max_tokens_requested`；provider 因 max_tokens 报错时**降回 8192 floor 有界重试一次**（仅 max_tokens 相关错误、仅当请求高于 floor 才触发，非 Phase-1 禁的 salvage-repair），仍失败才走确定性 fallback——"一轮 ≤1 次成功生成调用"不变式保持。**观测**：`RealizedKeyword.metadata` 现在额外带 `core_concept` / `decoration`（确定性补位带模板 core + 空 decoration），preview 报告显式回写 `report["metadata_by_platform"]`；这两键只观测、不改最终 keyword 文本与入池。
 - **跨域 explore 通道走轴库富链路（Phase 2.3，默认开 coexist）** — B 站 explore 词从旧的把 merged `explore_domains` 拍平（`_explore_domain_queries`）升级为走同一条轴库富链路（`_run_explore_inspiration_stage`），与 regular 通道并存、互不影响。**种子 = merged call 现成的 `explore_domains`（跨域话题，非 like 二级兴趣、非历史旧域）**：把每个 domain 当作 `seed_interest` 喂进 E0 参数化后的 `_run_inspiration_axis_pipeline`，不新增独立跨域发现 LLM 调用。`_INSPIRATION_AXIS_KEYWORD_SYSTEM_PROMPT` 增一条**静态** explore 规则：带 `explore_request` 时 `core_concept` 锚定"未覆盖但相关"的跨域具体实体、避开 `explore_request.avoid_covered`（仍过 byte-identical cache）；F1/F1.5/F2/F3 全继承（具体性 prompt、`is_specific` 择优、动态 max_tokens、core/decoration 观测），explore 词同样具体、跨轴、可核 `restatement_rate`。**舒适区扩张闭环（复用 Phase 2 回填、零新逻辑）**：新生成的轴打 `source='explore'`（`new_axis_source` 参数，`axis_id` 由 interest+label 稳定派生），Phase 2 `backfill_inspiration_axis_yield()` 按 `axis_id` 归因（source 无关，cohort 过滤不排除 `keyword_kind='explore'` 行），高产 explore 轴 yield 上升；下一轮用 `list_inspiration_axes_by_source('explore', min_yield=…)` 把它们作为**匹配当前域的 `existing_axes`** 喂回（只丰富当前域、绝不当种子——否则 `source_interest` 会漂成旧域）。**AC2 机制保证（R3 钳制）**：装配前丢弃 `interest`（归一化匹配）不在当前 domains 种子集里的候选，保证每个 explore 词 `source_interest ∈ 当前域`。**默认开 + 降级不裸奔**：`inspiration_search_enabled=true` 且 explore 到期 → 走富链路（`mark_explore_planned` 照常）；富生成 degraded（`report["explore_degraded"]=true` / 空 ledger / 抛错）→ **降级回旧 `_explore_domain_queries` 拍平**（merged domains 是现成真数据，explore 池仍补货、非空），`planner.last_explore_inspiration_degraded=true`。**无双重 explore**：走新链路就不走旧拍平（除降级）。**预算诚实**：explore 到期的 coexist 轮比不到期轮**只多一次** explore 富生成 LLM 调用，regular 合并通道调用数不变。inspiration 关闭时该通道逐字回退旧拍平行为；`replace` 模式的 explore 路径不变（Non-Goal）。
 - **SourcePolicy** — 统一读取 `sources.<platform>.enabled` 与 `[scheduler.pool_source_shares]`，生成有效平台配比；关闭的平台保留配置但不占 runtime quota
-- **sources.platforms** — 十二个 canonical 平台族的唯一可枚举注册表；discovery 已看过滤、pool 配额统计、事件身份和 URL host 推断统一复用别名 / strategy 前缀规则。`github/gh` 与 `github.com/<owner>/<repo>` 归入 `github`，但 repository canonical identity 仍以 API 数字 ID 为准
+- **sources.platforms** — 十四个 canonical 平台族的唯一可枚举注册表；discovery 已看过滤、pool 配额统计、事件身份和 URL host 推断统一复用别名 / strategy 前缀规则。`github/gh` 与 `github.com/<owner>/<repo>` 归入 `github`，但 repository canonical identity 仍以 API 数字 ID 为准
 - **SourceAdapter 协议** — 多源适配层（`sources/`），在上述 4 个 B 站策略之外挂载非 B 站内容源（小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub）
 
 ## 来源定向回填与抖音任务预算
@@ -81,14 +159,18 @@ LLM precision 清池以减少库存浪费。最终“不展示”的正确性由
 - **DyTaskQueue** — 抖音初始化画像、`fetch-douyin` smoke、search / hot / feed discovery 都走同一扩展任务桥；初始化回传发布 / 收藏 / 点赞 / 关注后转成统一行为事件，discovery 任务只保留候选结果。
 - **YtTaskQueue / Takeout parser** — YouTube 初始化画像走扩展任务桥读取观看历史 / 订阅 / 点赞；Google Takeout 导入走 `youtube.takeout` 离线解析，两条入口都转成统一行为事件。`yt_tasks` 不承载 steady-state discovery。
 - **YouTube discovery strategies / producer** — `yt_search` 由 LLM 从画像生成关键词后用 `scrapetube` 搜索，`yt_trending` 优先通过 YouTube InnerTube browse API 拉 trending feed，当前 `FEtrending` 失效时降级抓取公开 topic 页的 `ytInitialData` 视频，`yt_channel` 从 DB 中 YouTube follow 事件读取订阅频道并用 `scrapetube` / `yt-dlp` 拉最新视频；三者由后端 `YoutubeDiscoveryProducer` 在 YouTube 低于 quota 时独立调度，输出 `source_platform="youtube"` 的 `DiscoveredContent` 并入 `discovery_candidates`，再由统一候选 pipeline 评估 / 入池。v0.3.165 起 yt-dlp、scrapetube、InnerTube POST 与 HTML fallback 全部服从 `[network].mode`，避免某条 fallback 偷偷继承失效环境代理。
+- **TikTok discovery strategies / producer** — 三个策略：`tiktok_feed` 走 Web API 后端的匿名 For-You 推荐流（无配置依赖，高曝光面默认每日 3 次拉取）；`tiktok_tag` 由 LLM 从画像生成 hashtag（或统一关键词规划器注入搜索词，压缩为无空格 hashtag）拉话题标签列表；`tiktok_user` 读取 `[sources.tiktok].creators` 配置的 handle 拉创作者最近视频。后端由 `[sources.tiktok].mode` 选择：默认 `auto` 用 **Web API 后端**（访客身份 + 纯 Python 签名 + curl_cffi Chrome TLS 指纹），后端级失败回退 yt-dlp 后端；访客身份的关键词搜索被上游 gate，因此不提供搜索策略（`search_videos()` 仅作 client 预留，登录 Cookie 可解锁）。另有 `tiktok_search` 关键词搜索策略，仅在配置登录 Cookie 且 mode 允许 web 时挂载（访客身份被上游 gate；登录态抓取违反 TikTok ToS，默认不启用），planner 注入词原样使用、不做 hashtag 压缩。各策略由后端 `TiktokDiscoveryProducer` 在 TikTok 低于 quota 时独立调度（镜像 YouTube producer），输出 `source_platform="tiktok"` 的 `DiscoveredContent` 并入 `discovery_candidates`；不登录、不依赖浏览器扩展。完整契约见 [TikTok 来源文档](tiktok.md)。
 - **DouyinDiscoveryService / DouyinDirectStrategy / DouyinDirectClient** — 抖音 discovery 走 opt-in 路径，服务层统一封装 search / hot / feed 三个公开来源；runtime 路径只拉原始候选并入 `discovery_candidates`，调试时仍可在 `openbiliclaw discover-douyin --no-cache` 下直接跑策略预览。三条分支现在分别报告 `used / empty / timeout / failed / budget_exhausted`，某个 search 关键词或分支失败不会再中止同轮 hot / feed，之前已取到的候选也会保留。v0.3.153+：`DouyinDirectClient` 默认 HTTP 客户端 `trust_env=False`，不继承环境 / 系统代理（抖音是国内域名，代理出口易触发风控，与 B站 直连策略一致）。runtime `DouyinDiscoveryProducer` 每轮 claim 数与实际搜索数对齐，并按每个关键词的真实终态分别结算，不再把同批未执行或失败词一起标成 used。
 - **ZhihuDiscoveryProducer** — 知乎 discovery 走浏览器插件登录态任务；runtime 和 `openbiliclaw discover --source zhihu` 都按 `pool_source_shares.zhihu` 缺口 / 手动 `--limit` 与 `[sources.zhihu].source_modes` 入队 `zhihu_tasks(type="search"|"hot"|"feed"|"creator"|"related")`。`search` claim 统一关键词；`hot` 拉热榜；`feed` 拉首页推荐；`creator` 优先用最近知乎任务中的作者主页作种子，没有历史种子时从同轮 search / hot / feed 候选的作者页兜底；`related` 优先用最近知乎候选 URL 作扩展种子，没有历史种子时从同轮已返回内容 URL 兜底。扩展回传 `zhihu_*` 后转换为 `DiscoveredContent` 进入统一待评估池。
 - **RedditTaskQueue / RedditDiscoveryProducer** — Reddit discovery 默认走 `rdt-cli` 登录态命令后端；runtime 和 `openbiliclaw discover --source reddit` 都按 `pool_source_shares.reddit` 缺口 / 手动 `--limit` 与 `[sources.reddit].source_modes` 触发 `search` / `hot` / `subreddit` / `related`。`search` 使用统一关键词，关键词池为空时回退画像兴趣；`hot` 默认拉 `r/all`；`subreddit` 优先用最近 Reddit 候选中的 subreddit 作种子；`related` 优先用最近 Reddit 内容 URL 作扩展种子。显式 `backend="extension"`，或 `rdt` / `opencli` 命令后端不可用时，会入队 `reddit_tasks(type="search"|"hot"|"subreddit"|"related")`，由扩展在已登录 `reddit.com` 会话里读取同源 JSON endpoint。候选回传后统一转换为 `DiscoveredContent` 进入待评估池。Reddit producer 是 fetch-only：只入 `discovery_candidates`，不在同一 CLI / runtime producer 调用里同步等待 LLM 评估。
 - **BangumiClient / BangumiDiscoveryProducer** — 第八个正式内容来源，固定直连官方 `api.bgm.tv/v0` 匿名只读接口。`search` claim 统一关键词，`ranked`/`latest` 按 subject type 和持久化 cursor 浏览；三分支使用 UTC 日条目预算、最小调度间隔与 `429 Retry-After` cooldown。Subject 经 `bangumi_subject_to_content()` 归一为 `content_type="subject"`，只写 `discovery_candidates`，不 inline 等待 LLM；显式公开 username 的收藏另供 guided init 使用。完整契约见 [Bangumi 来源文档](bangumi.md)。
 - **LinuxdoTaskQueue / LinuxdoDiscoveryProducer** — Linux.do 通过已安装扩展在真实 `linux.do` task tab 内发起同源 JSON `GET`，后端不持有 Cookie。`search` claim 统一关键词，`hot` 读取 `/hot.json`（仅 400/404 回退 weekly top），`feed` 读取 latest，`creator` / `related` 从最近或同轮作者/topic seed 扩展。五分支统一归一为 `content_type="post"`、`content_id="topic:<id>"` 和 `source_strategy="linuxdo-<mode>"`，只写 `discovery_candidates`；`_t` 仅上报登录布尔，Cookie 与原始响应不上传。完整契约见 [Linux.do 来源文档](linuxdo.md)。
 - **BangumiClient / BangumiDiscoveryProducer** — Bangumi 内容来源，固定直连官方 `api.bgm.tv/v0` 匿名只读接口。`search` claim 统一关键词，`ranked`/`latest` 按 subject type 和持久化 cursor 浏览；三分支使用 UTC 日条目预算、最小调度间隔与 `429 Retry-After` cooldown。Subject 经 `bangumi_subject_to_content()` 归一为 `content_type="subject"`，只写 `discovery_candidates`，不 inline 等待 LLM；显式公开 username 的收藏另供 guided init 使用。完整契约见 [Bangumi 来源文档](bangumi.md)。
-- **V2EXClient / V2EXDiscoveryProducer** — V2EX 公开 discovery 来源，固定使用匿名 JSON API / Node、Tab Feed，PAT 存在时增强 API 2.0。`search`、`node`、`tab`、`hot`、`latest` 五个分支共享关键词 claim、Node/Tab 配置、每日预算、最小间隔和 `429` cooldown；producer 会按配置上限补不完整 Topic 详情，并在 PAT 可用时读取 Reply 第一页生成确定性讨论摘要，`v2ex_topic_to_content()` 仍只把 Topic 归一为 `content_type="topic"`，Reply 不独立入池。正式 search 优先复用已配置的 Exa / You provider 做 `site:v2ex.com/t` 召回，再用官方 Topic API 补正文；没有外部 provider 或合法结果时才退回 latest/hot 的有界本地匹配。扩展 bootstrap 通过 staged task-result 进入统一事件层，用户 Reply 按 Topic 聚合；账号分区 `v2ex_node_affinity` 已实现确定性意图折扣、时间衰减与 Node 召回，完整收藏快照通过双确认 durable outbox 生成 retraction / restore，账号切换只在完整画像提交后激活。真实登录四 scope、五路公开请求和真实 LLM evaluator/admission E2E 均已通过。完整契约见 [V2EX 来源文档](v2ex.md)。
-- **DouyinPluginSearchClient** — search 子来源复用 `dy_tasks(type="search")` 插件 DOM-first 链路，结果以 `dy-plugin-search` 进入 discovery；扩展会从抖音首页搜索框输入关键词并点击搜索，任务 debug 用 `ui_triggered` 记录是否提交、`search_navigation_ok` 记录是否进入 `/jingxuan/search/<keyword>` 等真实搜索结果路由。MAIN-world tap 会兼容抖音搜索页当前的 `/general/search/stream/` chunked JSON 响应；v0.3.174 起 search 采集**被动优先**：触发真实 UI 搜索后滚动真实结果容器（`pickSearchScrollTarget` 从 `/video/` 锚点向上找可滚动祖先，找不到回退 window 滚动）驱动页面自发翻页，页面发出的带签名 `search/single` 响应由被动 tap 收割；滚动循环自适应（上限 10 轮、去重计数连续 2 轮无增长即停、每轮 250ms 轮询最多 3s），task debug 带 `passive_items_harvested` / `scroll_rounds`。当页面自身响应和 DOM 解析都没有候选时，search 会调用已登录页面的 search API bridge 兜底，但真实响应若带 `search_nil_info.search_nil_item="hit_shark"` 且无候选，仍按抖音反爬空结果处理。hot 子来源复用 `dy_tasks(type="hot")`，后端从 hot board 抽取 `sentence_id` 和可用的 `group_id -> seed_aweme_id`，扩展优先执行带 seed 的热词；后台 tab 从 `https://www.douyin.com/` 首页出发点击热榜 / 热点入口和目标热词，DOM / 被动监听不足时用已登录页面的 related API bridge 拉取相关视频，结果以 `dy-plugin-hot-related` 进入 discovery。feed 子来源复用 `dy_tasks(type="feed")`，由扩展在首页推荐流滚动触发加载，结果以 `dy-plugin-feed` 进入 discovery。search / hot / feed discovery 任务都会用非激活 tab 执行；content script 会按 `dy_search` / `dy_hot` / `dy_feed` 目标 scope 过滤候选，避免首页推荐流响应污染 search / hot 结果。只有 `bootstrap_profile` 这类显式账号信号导入允许前台。每次入队前会把过期的 search / hot / feed pending discovery 任务标记为 failed，避免旧任务挡住当前 producer；`ContentDiscoveryEngine.register_strategy()` 会按 strategy name 替换旧实例，避免 `DouyinDiscoveryService(cache=True)` 多轮运行后累积多个 `douyin_direct` 并重复入队 search。`openbiliclaw search-douyin` 仍保留为独立 search smoke / 诊断命令，结果不转成 memory event。v0.3.174 起 hot 子来源做**热词轮换**：客户端用进程内 `sentence_id → 单调时钟` 表（TTL 6 小时 `_HOT_SEED_REUSE_TTL_SECONDS`）过滤近期已用热词后再截断到种子数，全部近期时回退陈旧词（宁可陈旧不空手），避免连续 hot 轮反复挑同一个 top 热词只出被 dedupe 吸收的重复。扩展 `harvestSearchViaApi` 的每次 `w.fetch` 加 `AbortController` + 15s 超时快速失败（`search/single` 缺 a_bogus 会永久挂连接，仅 search 路径，`harvestHotRelatedViaApi` 不动）。
+- **V2EXClient / V2EXDiscoveryProducer** — V2EX 公开 discovery 来源，固定使用匿名 JSON API / Node、Tab Feed，PAT 存在时增强 API 2.0。`search`、`node`、`tab`、`hot`、`latest` 五个分支共享关键词 claim、Node/Tab 配置、每日预算、最小间隔和 `429` cooldown；producer 会按配置上限补不完整 Topic 详情，并在 PAT 可用时读取 Reply 第一页生成确定性讨论摘要，`v2ex_topic_to_content()` 仍只把 Topic 归一为 `content_type="topic"`，Reply 不独立入池。正式 search 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`）做 `site:v2ex.com/t` 召回，再用官方 Topic API 补正文；没有外部 provider 或合法结果时才退回 latest/hot 的有界本地匹配。扩展 bootstrap 通过 staged task-result 进入统一事件层，用户 Reply 按 Topic 聚合；账号分区 `v2ex_node_affinity` 已实现确定性意图折扣、时间衰减与 Node 召回，完整收藏快照通过双确认 durable outbox 生成 retraction / restore，账号切换只在完整画像提交后激活。真实登录四 scope、五路公开请求和真实 LLM evaluator/admission E2E 均已通过。完整契约见 [V2EX 来源文档](v2ex.md)。
+- **InstagramDiscoveryProducer** — 默认关闭的 queue-backed 浏览器来源。`topic` 只打开直接 `/popular/<topic>/` / hashtag 公共入口，`creator` 只读取明确 username 的公开时间线；creator 由同一 logical cycle 的 topic 作者提供 seed，因此 creator-only 配置会显式正规化为 `topic + creator`。不把 Web top-search 的账号/标签结果冒充内容搜索，也不主动请求登录私有 SERP；页面自身的请求不能冒充匿名内容证据。扩展只回传 canonical media 与 affirmative terminal evidence；数字 media ID、真实 `/p/` / `/reel/` URL、`post/reel/carousel`、作者、封面与权威 `taken_at` 进入 `DiscoveredContent`，跨路径不一致的互动指标保持 unknown。owner lease、producer 绝对时限与 late-result adoption 防止并行进程重复派发或迟到结果丢失；候选交接失败时保留 owner 供下轮重试。登录墙、challenge、HTML、429、重复 cursor 和 cap 都是 partial/failed，不是 empty。完整契约见 [Instagram 来源文档](instagram.md)。
+
+Instagram 已观察的兴趣别名只映射为有界候选 seed，不宣称站点路由持续有效，也不改变共享 evaluator 的相关性与准入。只有确证的 `public_page_unavailable` 可跳过；failed / partial 中的 auth、challenge、rate 或 schema 错误均保留原始 machine code 并停止后续任务，已接收的有效 rows 仍可交接。
+- **DouyinPluginSearchClient** — search 子来源复用 `dy_tasks(type="search")` 插件 DOM-first 链路，结果以 `dy-plugin-search` 进入 discovery；扩展会从抖音首页搜索框输入关键词并点击搜索，任务 debug 用 `ui_triggered` 记录是否提交、`search_navigation_ok` 记录是否进入 `/jingxuan/search/<keyword>` 等真实搜索结果路由。MAIN-world tap 会兼容抖音搜索页当前的 `/general/search/stream/` chunked JSON 响应；v0.3.174 起 search 采集**被动优先**：触发真实 UI 搜索后滚动真实结果容器（`pickSearchScrollTarget` 从 `/video/` 锚点向上找可滚动祖先，找不到回退 window 滚动）驱动页面自发翻页，页面发出的带签名 `search/single` 响应由被动 tap 收割；滚动循环自适应（上限 10 轮、去重计数连续 2 轮无增长即停、每轮 250ms 轮询最多 3s），task debug 带 `passive_items_harvested` / `scroll_rounds`。当页面自身响应和 DOM 解析都没有候选时，search 会调用已登录页面的 search API bridge 兜底，但真实响应若带 `search_nil_info.search_nil_item="hit_shark"` 且无候选，仍按抖音反爬空结果处理。hot 子来源复用 `dy_tasks(type="hot")`，后端从真实 hot board 抽取 word、`sentence_id` 和可用的 `group_id -> seed_aweme_id`；扩展对有词任务复用原生搜索采集、保留 `dy_hot` 和榜单归属，无词时才使用 seed-related collector。兼容策略名仍为 `dy-plugin-hot-related`。feed 子来源复用 `dy_tasks(type="feed")`，由扩展在首页推荐流滚动触发加载，结果以 `dy-plugin-feed` 进入 discovery。search / hot / feed discovery 任务都会用非激活 tab 执行；content script 会按 `dy_search` / `dy_hot` / `dy_feed` 目标 scope 过滤候选，避免首页推荐流响应污染 search / hot 结果。只有 `bootstrap_profile` 这类显式账号信号导入允许前台。每次入队前会把过期的 search / hot / feed pending discovery 任务标记为 failed，避免旧任务挡住当前 producer；`ContentDiscoveryEngine.register_strategy()` 会按 strategy name 替换旧实例，避免 `DouyinDiscoveryService(cache=True)` 多轮运行后累积多个 `douyin_direct` 并重复入队 search。`openbiliclaw search-douyin` 仍保留为独立 search smoke / 诊断命令，结果不转成 memory event。v0.3.174 起 hot 子来源做**热词轮换**：客户端用进程内 `sentence_id → 单调时钟` 表（TTL 6 小时 `_HOT_SEED_REUSE_TTL_SECONDS`）过滤近期已用热词后再截断到种子数，全部近期时回退陈旧词（宁可陈旧不空手），避免连续 hot 轮反复挑同一个 top 热词只出被 dedupe 吸收的重复。扩展 `harvestSearchViaApi` 的每次 `w.fetch` 加 `AbortController` + 15s 超时快速失败（`search/single` 缺 a_bogus 会永久挂连接，仅 search 路径，`harvestHotRelatedViaApi` 不动）。
 - **Douyin 插件稳定性护栏** — dispatcher 先确认 worker 具备 tab 执行能力，再在调用会原子 claim 的 `/next-task` 前取得跨来源 mutex；alarm 与 runtime-stream kick 共用 single-flight poll，executor 用 `accepted / declined` 握手，避免残缺环境、锁忙或双轮询把任务遗留在 `in_progress`。task-result 要求 2xx ACK，并对相同 body 做最多 3 次有界退避重试，未确认终态不清理 lifecycle。MAIN-world fetch / XHR tap 从 `document_start` 安装，Window 级状态使重复注入保持幂等，并在页面替换网络原语后重新包装；isolated listener 把早于任务 collector 的归一化 search / hot / feed 消息按 scope 有界缓存、一次性 drain。DOM fallback 覆盖当前 `/jingxuan` 的 `div[data-aweme-id]` / 非 anchor `href` / `video_<id>` 卡片，不再只依赖 `/video/` anchor。合法空响应与完全没观察到响应分开计数；仅当 passive 与 DOM 都无内容时，后者才触发同一后台 tab 一次 bypass-cache reload，仍未观察到才失败，真实空、限流 / 风控 / 登录 / 注入错误不重试。相同 `type + requestId` 的并发 API bridge 请求只执行一次，并有 TTL / 数量上限清理。Chrome / Firefox 构建各自清理输出并校验 manifest 引用资产；daemon 还以前置 extension presence 和 `15m` 失败 / `60m` 预算退避抑制 pending 任务风暴。
 - **XAdapter（`sources/twitter_adapter.py`）+ 三策略** — X (Twitter) 是第六个内容源，`source_type="twitter"`、显示标签 `"X"`。发现走**服务端 cookie 重放**（对标抖音 direct，但用 `twitter-cli` 取代 XBogus 签名），`XAdapter.fetch(recipe, profile, limit)` 是真实实现（不是 XHS 那种 stub），按 `recipe.strategy` 分发到三个 `discovery/strategies/x.py` 策略：
 
@@ -145,7 +227,7 @@ LLM precision 清池以减少库存浪费。最终“不展示”的正确性由
    这一层的核心思想是：先尽量把供给面铺开，再在后面统一收口。
 
 3. **统一入待评估池**
-   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel、知乎插件任务、Reddit rdt / 插件任务、Linux.do / V2EX 任务、Bangumi 官方 API、微博匿名 client 与 GitHub 官方 REST 的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。
+   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel、知乎插件任务、Reddit rdt / 插件任务、Linux.do / V2EX 任务、Bangumi 官方 API、微博匿名 client 、GitHub 官方 REST 与 Instagram topic / creator 浏览器任务 的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。
 
    入队阶段只做字段归一和身份去重，不做最终“用户会不会喜欢”的判断。`candidate_key` 会优先使用 `source_platform:content_id`，没有 ID 时退到规范化 URL，再退到标题 + 作者 hash。重复发现不会插入第二行，只刷新 `last_seen_at`。
 
@@ -180,7 +262,7 @@ LLM precision 清池以减少库存浪费。最终“不展示”的正确性由
 
    **Reason 契约（v0.3.171 减肥）**：批量 / 单条评估 prompt 明确 reason 仅供内部诊断，不是用户文案；`score < 0.5` 写空串，`score >= 0.5` 写不超过 30 个 Unicode code points 的精炼中文。`normalize_evaluation_reason()` 在 runtime 再执行同一契约：缺失 / `None` 归一为空串，其它非字符串按 malformed member 重试，高分先 strip 再截 30 code points，低分和被 franchise / style cap 淘汰的条目强制清空。对象、eval cache 与候选持久化只接收归一化后的值。0.5 是 baked 进静态 system prompt 的常量；所有 admission 路径仍高于它，所以减掉低分诊断不会改变准入。推荐表达与 delight 文案由独立生成链产生，不展示 `relevance_reason`。
 
-   **候选 sparse JSON 已上线，row-wire 继续拒绝**：batch evaluator 默认使用 `sparse-json` canonical envelope，每次请求分配 `0..N-1` local ID，只保留 title / author 与非空正文、简介、权威 `published_at`、时长、互动、标签、目录指标、tail recall 和真实图片引用；URL、全局内容 ID、重复作者/来源字段、平台指标别名和零值不进入模型 wire。同平台/类型提到 batch defaults，mixed batch 才逐项携带；只有 effective context 精确等于 `explore` 才标 `mode=explore`。顶层 `evaluation_context` 另携带精确 UTC `evaluated_at`；二者只用于 `temporal_*` 判断，不改写 relevance。输出仍为严格 JSON，并要求每个成员完整携带模型拥有的八个 temporal v2 字段；多成员必须按 local ID 绑定，缺失/重复/未知成员走 bounded repair，禁止按位置误绑。真实 100×3 中 sparse 相对历史 production 的 prompt/total 中位分别节省 `27.99% / 24.05%` 并通过全部门，因此继续作为默认；sparse landing 曾把 cache namespace 从 v3 升至 v4，temporal v2 原子证据契约升至 v5，本次无条件 state 证据契约再升至 v6。显式 `evaluation_candidate_transport="production"` 保留 pretty JSON/global-ID 回滚；`row-wire-v1` 因冻结列协议不能承载 `published_at`，编码时会明确拒绝，而且相对 sparse 的 prompt 中位只省 `2.20%`、未达锁定 `5%`，故仍严格限制为 replay-only。
+   **候选 sparse JSON 已上线，row-wire 继续拒绝**：batch evaluator 默认使用 `sparse-json` canonical envelope，每次请求分配 `0..N-1` local ID，只保留 title / author 与非空正文、简介、权威 `published_at`、时长、互动、标签、目录指标、tail recall 和真实图片引用；URL、全局内容 ID、重复作者/来源字段、平台指标别名和零值不进入模型 wire。同平台/类型提到 batch defaults，mixed batch 才逐项携带；只有 effective context 精确等于 `explore` 才标 `mode=explore`。顶层 `evaluation_context` 另携带精确 UTC `evaluated_at`；二者只用于 `temporal_*` 判断，不改写 relevance。输出仍为严格 JSON，并要求每个成员完整携带模型拥有的八个 temporal v2 字段；多成员必须按 local ID 绑定，缺失/重复/未知成员走 bounded repair，禁止按位置误绑。真实 100×3 中 sparse 相对历史 production 的 prompt/total 中位分别节省 `27.99% / 24.05%` 并通过全部门，因此继续作为默认；sparse landing 曾把 cache namespace 从 v3 升至 v4，temporal v2 原子证据契约升至 v5，本次无条件 state 证据契约再升至 v6。显式 `evaluation_candidate_transport="production"` 保留 pretty JSON/global-ID 回滚；`row-wire-v1` 因冻结列协议不能承载 `published_at`，编码时会明确拒绝，而且相对 sparse 的 prompt 中位只省 `2.20%`、未达锁定 `5%`，故仍严格限制为 replay-only。**入 wire 的文本统一过 `_sanitize_wire_text()` 清洗（#284）**：来源数据夹带的 C0 控制字符（`\t \r \n` 之外）与 DEL 在 `build_canonical_evaluation_batch` 边界被剥除、孤立代理项被替换，清洗后为空串的 tag 条目被丢弃，正文、简介、`published_at` 清洗后为空则整字段省略；此前单条脏候选会让 `_validate_text` 抛错、整批 burn 完 `batch_eval_attempts` 进 `failed_eval`。清洗只作用于发给 LLM 的副本，存储行保留原文；wire 校验器本身保持严格，继续拦截 LLM 响应侧的非法文本。已死信的历史行由 coordinator 启动时的 `revive_failed_eval_candidates` 自动复活重评。
 
 5. **按相关性、时效三态、供给层级和池子上限入推荐池**
    通过相关性阈值且 temporal disposition 为 `eligible` 的候选会先调用 `ContentDiscoveryEngine.normalize_evaluated_results()` 复用 discovery 旧路径的 topic_group / topic_key embedding normalization，再交给 `cache_evaluated_results()` 复用既有 `_cache_results()` 入库逻辑，写入正式推荐池 `content_cache`。`_cache_results()` 在真正写库前会再次调用同一 admission + temporal policy，任何兼容 / 手动调用即使绕过候选队列，也不能把未评估、缺分、低分、待复审或明确过期内容写入可服务池；`review_due` 使用可逆 hold/requeue，只有 `expired` 才终态拒绝。`Database.cache_content()` 的缺省分数为 `0.0`，不再凭空赋予 `0.60`。数据库的普通取池、缓存回填、平台补位、文案预计算、池配额统计、历史推荐和 delight 出口同样使用来源感知的准入条件，所以 `explore=0.58` 能真实展示，而任意非 `explore=0.58` 仍被拒绝。写入前会检查 `count_pool_candidates()`；如果 `pool_available_count >= pool_target_count`，pipeline 直接停止 drain，runtime 也不会继续 discovery。因此“推荐池到了上限就不 discovery”的边界仍以正式可换池为准。成功 admission 的 item 会保存在 pipeline 的 `last_admitted_items` 中，供 runtime 更新 `recent_pool_topics`。
@@ -342,7 +424,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### 3. 内容相关性评估 prompt
 
-这是 discovery 里最关键的一类 prompt。runtime 的统一待评估池会把十二个平台来源的候选（含 GitHub repository）交给 `ContentDiscoveryEngine.evaluate_content_batch()`；直接 discover 兼容路径仍可逐条调用 `evaluate_content()`。
+这是 discovery 里最关键的一类 prompt。runtime 的统一待评估池会把十四个平台来源的候选（含 GitHub repository）交给 `ContentDiscoveryEngine.evaluate_content_batch()`；直接 discover 兼容路径仍可逐条调用 `evaluate_content()`。
 
 它的 system prompt 重点是：
 
@@ -621,7 +703,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 > Discover 背压重构 P1。挂在 `[discovery].unified_keyword_planner_enabled` 后面，**v0.3.124 起默认 `true`**——各平台 search 关键词走统一规划器 + 关键词存储；设为 `false` 可逐字回退到各自旧的逐平台 LLM 生成路径（旧路径保留、回退无副作用）。
 
-此前十二个平台的 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`、知乎 `zhihu-search`、Reddit `reddit-search`、Bangumi `bangumi-search`、Linux.do `linuxdo-search`、V2EX `v2ex-search`、微博 `weibo-search`、GitHub `github-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，接管各平台 **search 关键词**，并接管 B 站 `ExploreStrategy` 的 `keyword_kind="explore"` query cache 生成；`trending / related / hot / feed / channel / creator / subreddit / ranked / latest` 及各自的 budget/cadence **原样不动**。关键词的 legacy / hybrid / inspiration 生成模式只决定词从哪里产生，不关闭 V2EX 正式 Search 的已配置 Exa / You 召回；外部 provider 不可用时，V2EX 才在 latest/hot 上做精确优先、核心词受限放宽的匿名 fallback。微博 `hot` 只把公开热搜词变成本轮查询种子，不会把热搜条目本身写成候选；GitHub `ranked/latest` 也不消费 planner 关键词。
+此前各平台的 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`、知乎 `zhihu-search`、Reddit `reddit-search`、Bangumi `bangumi-search`、Linux.do `linuxdo-search`、V2EX `v2ex-search`、微博 `weibo-search`、GitHub `github-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，接管各平台 **search 关键词**，并接管 B 站 `ExploreStrategy` 的 `keyword_kind="explore"` query cache 生成；`trending / related / hot / feed / channel / creator / subreddit / ranked / latest` 及各自的 budget/cadence **原样不动**。关键词的 legacy / hybrid / inspiration 生成模式只决定词从哪里产生，不关闭 V2EX 正式 Search 的已配置外部搜索召回（`bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`）；外部 provider 不可用时，V2EX 才在 latest/hot 上做精确优先、核心词受限放宽的匿名 fallback。微博 `hot` 只把公开热搜词变成本轮查询种子，不会把热搜条目本身写成候选；GitHub `ranked/latest` 也不消费 planner 关键词。
 
 **关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`，小红书任务遇到平台安全验证时也会从 `executing` 无损回到 `pending` 且不增加 attempts。画像 digest 变化时，planner 会先原子整理 `regular/pending`：当前 digest 优先保留；旧 digest 中创建未超过 `keyword_digest_grace_hours`、不命中由当前库存饱和度产生的平台 `avoid_topics`、且未超过动态高水位的词继续可领取，并保留原 digest 与全部生成溯源；过龄、供给饱和、重复或超额才变成 `expired`。普通 user dislike 不参与关键词过期或撤销。设宽限为 `0` 即恢复旧版硬过期。`claimed/executing`、终态行和 `keyword_kind="explore"` 均不参与整理。`keyword_kind` 区分 `regular` 与 `explore`：普通 search 只 claim `regular`，老 B 站 `ExploreStrategy` 在 planner 开启时只 claim `explore`。在途四元组 `(platform, keyword, profile_kw_digest, keyword_kind)` 部分唯一；已经实际搜索后因零产出或全量重复而变成 `expired` 的词保留 `used_at`，在 `history_window_hours` 内继续参与近期词冷却；宽限保留的 pending 也进入生成历史，避免库存尚在时又生成同族关键词。
 
@@ -645,7 +727,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 **兴趣丰富度**：planner prompt 使用与 B 站 search / trending / explore 相同的 compact query profile。`interests` 不是单纯权重前 64，而是从最多 128 个候选中结合 cached embedding 多样性、类别覆盖和 `disliked_topics` 距离选出，避免多平台首批关键词都围着同一强兴趣或同义标签转；embedding cache 未命中时不额外调用 provider，按权重顺序降级。
 
-**P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里有十二来源**平台供给优势表**：B站学习区/梗、小红书生活/美妆、抖音娱乐/热点、YouTube 英文长内容、X 实时/英文、GitHub 公开仓库/开源工程、知乎中文问答/深度回答/经验复盘、Reddit subreddit 经验讨论/技术问答/开源项目、Bangumi ACG 作品名/作者或监督/题材/目录检索、Linux.do 中文技术社区主题/故障排查/开源实践、V2EX 技术与生活讨论/折腾复盘、微博中文公共话题/实时讨论/创作者博文。模型据此把用户兴趣映射到各平台真正有货的方向，并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出）；非弃权平台仍低于低水位时，`recycle_oldest_used` 只补充超过近期窗口的历史有效词，近期词优先留给下一轮新生成。
+**P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里有十四来源**平台供给优势表**：B站学习区/梗、小红书生活/美妆、抖音娱乐/热点、YouTube 英文长内容、TikTok 海外短视频/话题标签、X 实时/英文、GitHub 公开仓库/开源工程、知乎中文问答/深度回答/经验复盘、Reddit subreddit 经验讨论/技术问答/开源项目、Bangumi ACG 作品名/作者或监督/题材/目录检索、Linux.do 中文技术社区主题/故障排查/开源实践、V2EX 技术与生活讨论/折腾复盘、微博中文公共话题/实时讨论/创作者博文。模型据此把用户兴趣映射到各平台真正有货的方向，并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出）；非弃权平台仍低于低水位时，`recycle_oldest_used` 只补充超过近期窗口的历史有效词，近期词优先留给下一轮新生成。
 
 **P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints(profile)` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10 时回退到全局热门 topic 避让。若正式池整体还是空的，planner 会先用 `build_cold_start_pool_snapshot(profile)` 生成 `cold_start=true` hints：高权重兴趣进入各平台 `avoid_topics` 软预算，次级兴趣 / 兴趣域进入 `prefer_axes`，merged prompt 规则要求每个平台首批关键词保留少量强兴趣入口但至少一半覆盖其它画像相关方向。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站；而真正冷启动时，各平台不会同时把第一批关键词全部押在同一个强兴趣上。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。v0.3.124 起默认开启、flag-off 逐字回退。
 
@@ -659,15 +741,24 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 抖音发现共享冷却 | ✅ | 已领取且最终 failed 的 search / hot / feed 从 `dy_tasks` 推导持久冷却；producer 在关键词 claim 前检查，client 在 hot-word / 取数和 direct fallback 前检查，队列暂停新的 pending discovery claim。有效 partial 保留，失败不被候选数量清除。 |
+| 抖音热词跨轮次轮换 | ✅ | 客户端从 `dy_tasks.payload_json.hot_items` 读取最近 6 小时已入队选择；正式 producer 每轮重建 transport 和进程重启均不会丢失轮换记录。沿用新词优先、全部最近使用时仍补足数量的原策略。 |
+| 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
+
+| Jev 按需画像 | ✅ | 完整目录本地保留，逐候选投影与精确模型双上下文预算；源快照、策略及预算隔离缓存，mandatory 不足明确 missing |
 | 5.1 搜索策略 | ✅ | compact 画像生成搜索词（关闭 thinking / core-memory 注入）+ 6 小时 query 缓存 + B 站搜索 + `bvid` 去重 + `DiscoveredContent` 映射 |
 | B 站近期供给 lane | ✅ | 生产 composition 在既有 SearchStrategy 请求预算内预留 1 个 `pubdate` 请求、最多 5 条；普通/近期结果交错进入评估窗口，并以 `search:recent` + raw provenance 留痕。它不改变 relevance、admission、来源策略或配额。 |
 | 5.2 排行榜策略 | ✅ | 全站榜 + 非 0 分区 rid 本地洗牌轮转覆盖 + LLM 评分筛选 |
 | 5.3 相关推荐链策略 | ✅ | 事件种子 + 偏好/策略兜底种子 + 2 层相关推荐链 + LLM 评分过滤 |
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
+| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批，超限 / 失败不缓存并保留候选待评估；中文质量与真实服务尚未验收。 |
+| 独立 Jev 语义过滤 | ✅ 默认 off | 注入 `JevSemanticFilter`，使用独立 provider 与导演共享预算；窄范围稳定避雷判断、探索保留、完整校准 cohort、隐私安全审计、失败放行。校准 enforce 只在本 wave 延期，下一 claim 强制完整评估，不永久拉黑，不替代 LLM 元数据。 |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
+| 抖音发现唤醒与 partial 保留 | ✅ | 默认 kick 读取 `api.port`；搜索 / 热榜 / feed 的已接收视频在后续失败或超时后继续正常评估，同时保留失败 outcome；不修改原评分门槛。 |
+| 抖音热榜抽样前种子优先 | ✅ | 先对整个热词池规范化、去重并优先带 `seed_aweme_id` 的条目，再按既有 6 小时轮换和 2 / 5 个种子窗口选取；避免无种子榜首挤掉后续可展开热词，仍保留无种子 UI 兜底。 |
 | 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 的原始候选先写入 `discovery_candidates(pending_eval)`；API runtime 先用 supply fill loop 按 `pending_eval + evaluating` 补足有效水位，入库前过滤历史候选和已缓存内容，再由唯一 `CandidateEvalCoordinator` 按 `[scheduler].eval_min_batch_size / eval_max_wait_seconds`（默认 15 / 90 秒）凑批，以最多 3×30 连续评估并串行 commit/admission；手动 CLI 固定 `1 / 0` 立即 drain。各路径共享 tokenized claim、统一阈值与 projected-inventory 规则。 |
 | 小红书自动任务领取门与风控背压 | ✅ | 自动 search / creator / bootstrap 在 API claim 时再次检查小红书来源开关与全局 scheduler，关闭后旧 pending 任务不会触发浏览器页面；search / creator 默认以 20 分钟为中心做 ±25% 稳定抖动并持久化下一次领取时间。搜索每日默认 20 次，producer 只把 pending + in-progress 搜索队列补到 5 条。扩展识别安全验证 / 操作频繁 / 429 后，后端按连续轮次打开 1/2/4…小时（24 小时封顶）平台冷却，停止 producer 与所有 XHS task claim，并把关联 planner 关键词无损退回 pending；同一冷却内重复报告不加轮次，冷却后的正常任务成功才重置。 |
 | M120 多事件循环并发控制修复 | ✅ | `DiscoveryConcurrencyController` 现在会按当前 event loop 重新绑定 semaphore，CLI `init` 的分阶段补货不会再在第二轮触发跨 loop `RuntimeError` |
@@ -676,7 +767,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M119 style_key 风格标注 | ✅ | discovery 入池时会按标题/描述轻规则补 `style_key`，为推荐层的风格多样性约束提供稳定信号 |
 | M120 候选池来源交错取样 | ✅ | `get_pool_candidates()` 现在会按 `search / trending / related_chain / explore` 交错取样，避免候选窗口被单一来源刷满 |
 | M122 来源优先补齐与观看模式误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少深度内容误判成轻聊天模式 |
-| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；当前十二来源默认保存为 `bilibili=5`、GitHub 等其余 canonical source 均为 `1`，但默认只有 B 站启用，disabled 平台会从有效配比中剔除。B 站缺口会按前端真实可换来源数计算，并用 raw-material headroom 夹住请求量；其余来源分别交给对应 producer。所有来源再统一进入 `discovery_candidates` batch 评估；超 raw-ceiling 配额的平台族才会被压回 raw 配额内 |
+| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；当前十四来源默认保存为 `bilibili=5`、GitHub 等其余 canonical source 均为 `1`，但默认只有 B 站启用，disabled 平台会从有效配比中剔除。B 站缺口会按前端真实可换来源数计算，并用 raw-material headroom 夹住请求量；其余来源分别交给对应 producer。所有来源再统一进入 `discovery_candidates` batch 评估；超 raw-ceiling 配额的平台族才会被压回 raw 配额内 |
 | runtime 调度参数配置 | ✅ | 后台 discovery 不使用 `discovery_cron`；`ContinuousRefreshController` 从 `[scheduler]` 读取 `refresh_check_interval_seconds`、`signal_event_threshold`、`trending_refresh_minutes`、`explore_refresh_minutes`、`discovery_limit` 和 `proactive_push_interval_seconds`，配置热重载后重建 controller 生效 |
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch evaluator 优先要求 `{"results":[...]}` 以贴合 `json_object` provider，parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列和按内容 ID 映射的 object。成功响应里的缺失 / malformed member 只做有界 subset/split retry（深度 3、额外请求 6），不再展开逐条调用；provider 异常直接传播 |
 | v0.3.74 eval-batch JSON 容错统一 | ✅ | `_evaluate_batch` 改用 `llm.json_utils.extract_llm_json_list()`，在原 fenced / echo / JSONL 基础上统一兼容 `results/items/data/output/scores/evaluations` wrapper、MiMo malformed `{ [ ... ] }` 数组包裹和 schema echo 后最终结果；解析失败仍按原有降级路径处理，不把示例 JSON 当作真实评分 |
@@ -684,7 +775,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时进入 split-retry 路径，而不是整批直接逐条评估 |
 | eval-batch 互动指标与封面图输入 | ✅ | `DiscoveredContent` / `discovery_candidates` / `content_cache` 透传观看、点赞、收藏、评论、分享、弹幕、转推、书签等指标；batch prompt 会带 `tags/body_text` 和互动指标，但画像摘要会先压缩到高权重兴趣、最新 awareness / insight 与完整避雷项。`[discovery].multimodal_evaluation_enabled=true` 且 evaluation 模型支持图像时，封面图经运行时图片缓存命中或白名单抓取后压缩为 image input 一并评估，并用 `cover_image_ref="cover:<content_id>"` 和图片前置文字锚点稳定绑定候选，自动使用更小 batch |
 | 封面 image-only embedding 预热 | ✅ | 入池后除 MMR 文本 embedding 预热外，当 `[llm.embedding].multimodal_enabled=true` 且 embedding model 支持图像（如 `gemini-embedding-2` 或 `dashscope`/`qwen3-vl-embedding`）时，`_warm_cover_embeddings` 用 `prepare_cover_bytes_for_embedding` + `embed_image` 预热封面向量，并以 `image_embedding_cache_key_for_url(cover_url)` 为键落缓存，供 recommendation `precompute_delight_scores` 的封面视觉加成按 URL 命中（与 vision eval 开关独立；纯文本 embedding 自动跳过、best-effort 不抛错） |
-| 多平台发布时间元数据 | ✅ | 十二个平台来源都只从语义明确的上游字段提取发布时间；GitHub repository 使用 `created_at`，不用发现、Star 或 `updated_at` 冒充发布日期。`published_at` 统一规范为 UTC RFC 3339，只有相对时间时写 `published_label`。两字段贯穿 `DiscoveredContent` → `discovery_candidates` → `content_cache`，重新发现时空值分别保留已有非空值；缺失/异常值默认不影响候选入队，仅显式严格发布日期偏好（`recommendation_date_weight=1`）按范围外排除（issue #257）。YouTube 配置非 `all` 日期偏好时按 channel id 抓取公开 Atom feed 补精确 `published_at`（只写 feed 的 `<published>`；RSS 未覆盖的旧视频保持 label-only）。小红书配置非 `all` 日期偏好时从 `user_posted.time` 和笔记详情 state `noteDetailMap[noteId].note.time`（epoch ms）补精确时间；搜索 / 收藏卡片本身没有时间字段，隐藏 iframe 补全单任务最多 5 条。旧缓存不联网回填，也不以发现时间、任务时间、互动时间或推荐生成时间代替发布时间。 |
+| 多平台发布时间元数据 | ✅ | 十四个平台来源都只从语义明确的上游字段提取发布时间；GitHub repository 使用 `created_at`，不用发现、Star 或 `updated_at` 冒充发布日期。`published_at` 统一规范为 UTC RFC 3339，只有相对时间时写 `published_label`。两字段贯穿 `DiscoveredContent` → `discovery_candidates` → `content_cache`，重新发现时空值分别保留已有非空值；缺失/异常值默认不影响候选入队，仅显式严格发布日期偏好（`recommendation_date_weight=1`）按范围外排除（issue #257）。YouTube 配置非 `all` 日期偏好时按 channel id 抓取公开 Atom feed 补精确 `published_at`（只写 feed 的 `<published>`；RSS 未覆盖的旧视频保持 label-only）。小红书配置非 `all` 日期偏好时从 `user_posted.time` 和笔记详情 state `noteDetailMap[noteId].note.time`（epoch ms）补精确时间；搜索 / 收藏卡片本身没有时间字段，隐藏 iframe 补全单任务最多 5 条。旧缓存不联网回填，也不以发现时间、任务时间、互动时间或推荐生成时间代替发布时间。 |
 | Evaluation Agent 证据驱动时效三态 | ✅ | evaluator 在同一请求中原子输出 `class/confidence/reason + validity_mode/valid_until/scope/evidence/state`，相关性分数保持时间中性；代码补齐评估/复审时钟、policy version 与 completeness。策略只在 `confidence>=0.80`、完整、`scope=core` 且 evidence 逐字 grounded 时，按已过明确 deadline 或 `expired/superseded` 状态 hard expire；其它内容 fail-neutral。1 / 14 / 60 天只是三类内容的复审节奏，`versioned` 另有 120 天准入 TTL（v1 legacy 行按年龄触发复审），旧 3 / 60 天行也只触发复审。`review_due` 回到待评估队列或进入可逆 `temporal_review_hold`，复审可恢复；`expired` 才进入 `rejected_temporal_stale` / `stale`。 |
 | v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`，也不把候选当 0 分拒绝；runtime 待评估池会把本批 claim 释放回 `pending_eval`，待 provider 恢复后继续评估，避免一次 Gemini 429 放大成逐条请求或误淘汰整批候选 |
 | 推理预算耗尽评估分批（未发布） | ✅ | batch LLM 调用若因推理实例把 `max_tokens` 全花在 thinking、正文为空（`returned reasoning but no final content`，`finish_reason=length`）而失败，`_evaluate_batch` 把该子批整体标记为 missing 后走既有有界 split-retry（深度 3 / 额外请求 6）：批次减半重试直到每条 JSON 放得下，耗尽后仍未评到的成员才落 0 分并标 `evaluation_response_missing`。限流 / 鉴权 / 超时等非预算异常继续原样上抛，rate limit 也不拆分（回到上面的 claim 释放路径）；文本 batch 预算保持 16384，`LLMService` 对所有结构化调用统一 4096 下限 |
@@ -730,7 +821,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | Discovery 评估类型边界 | ✅ | v0.3.71 起 eval scenario / evaluator 对 LLM JSON、缓存 persona、人工反馈和 ranking pool 做显式类型守卫，`mypy strict` 可覆盖评估链路而不依赖真实 Claude / Playwright / aiohttp 安装 |
 | Discovery 自动优化循环 | ✅ | SGD 风格优化循环：生成 persona → 生成 scenario → 运行发现 → 多维评估 → exploit/explore → accept/rollback |
 | Discovery 人工评估脚本 | ✅ | 交互式人工评估 + 可选触发优化 |
-| P1 统一关键词 planner / 背压（v0.3.124 起默认开） | ✅ | `[discovery].unified_keyword_planner_enabled`（v0.3.124 起默认 `true`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收、同画像/同池子需求块按 `plan_ttl_hours` 复用生成结果）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步插件任务）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。接管 B站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / Linux.do / V2EX / 微博 / GitHub 十二个平台的 search 关键词，`trending/explore/related/hot/feed/subreddit/ranked/latest` 不动；flag-off 逐字回退旧逐平台生成。flag-on 时 B 站主 refresh 若暂时 claim 不到关键词，会跳过本轮 `search` 子策略而不是回落到旧 `discovery.search.queries` caller。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}`）观测。V2EX node/tab/hot/latest、微博 hot/creator 与 GitHub ranked/latest 不需要额外 LLM 关键词。E2E：`tests/test_keyword_backpressure_e2e.py` |
+| P1 统一关键词 planner / 背压（v0.3.124 起默认开） | ✅ | `[discovery].unified_keyword_planner_enabled`（v0.3.124 起默认 `true`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收、同画像/同池子需求块按 `plan_ttl_hours` 复用生成结果）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步插件任务）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。接管 B站 / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / Bangumi / Linux.do / V2EX / 微博 / GitHub 的 search 关键词（TikTok 搜索词仅在配置登录 Cookie、search 策略挂载时被消费；未挂载时词经 `tag_from_query` 压缩为话题标签），`trending/explore/related/hot/feed/subreddit/ranked/latest` 不动；flag-off 逐字回退旧逐平台生成。flag-on 时 B 站主 refresh 若暂时 claim 不到关键词，会跳过本轮 `search` 子策略而不是回落到旧 `discovery.search.queries` caller。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}`）观测。V2EX node/tab/hot/latest、微博 hot/creator 与 GitHub ranked/latest 不需要额外 LLM 关键词。E2E：`tests/test_keyword_backpressure_e2e.py` |
 
 ### Visual enrichment API
 
@@ -739,6 +830,11 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+`JevContentEvaluator(provider, model=..., config=..., context_budget=...)` 接受模型绑定的共享
+预算；`evaluate(profile_summary=..., content_items=...)` 支持命名 on-demand catalog，
+仅向 provider 发送按需投影，保留旧直接视图调用兼容。返回仍逐项对齐，失败为 `None`，
+不扩大自动重试或隐式 LLM 路由。
 
 ### Learned scorer 校准 API
 
@@ -885,6 +981,60 @@ assert 0.0 <= score <= 1.0
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
 
+### 独立 Jev 语义过滤
+
+`[discovery.semantic_filter]` 与 `[director]` 独立；纯 Agent、纯 Jev、混合编排都能
+分别开关它。运行时创建和关闭 provider，`ContentDiscoveryEngine` 只接受已注入的
+`JevSemanticFilter`，不在构造器中读取 Key 或创建 HTTP client。
+该开关当前通过 TOML 配置；修改后完整重启后端，使 discovery 子进程与 API / 推荐
+子进程一并载入新配置。单独重载 API runtime 不会改变另一个已运行的发现进程。
+
+处理顺序是确定性硬规则 → 冻结校准 cohort → 模型过滤证据 → 当前 LLM 评估 / 分类
+→ 现有入池门。单条 `evaluate_content()` 在启用语义过滤时也转入同一个 batch 路径；
+注册到引擎的策略继承它，默认关闭和独立策略未注入时保留历史行为。
+
+| Interface | 合同 |
+|---|---|
+| `JevSemanticFilter(config, provider, *, model, database)` | 接受依赖，不拥有 provider 生命周期；enforce 要求固定模型与校准标识匹配 |
+| `evaluate(contents, profile, *, source_context="", calibration=False)` | 返回 `SemanticFilterBatch`；`suppressed_indices` 只在完整审计成功且可 enforce 时非空 |
+| `complete(batch, *, llm_scores, admission_thresholds)` | 只把真实有限 LLM 分数与准入结果接回审计；缺失标签保留 NULL，不用合成 0 补齐 |
+| `ContentDiscoveryEngine(..., semantic_filter=...)` | 单条 / 批量的共同注入点；不允许 embedding 和 Jev 同时 enforce |
+| `build_cli_semantic_filter(config, database)` | CLI 构造 helper；off 不查凭据，on 先验凭据但不创建 HTTP client，再注入逐请求 transport / 每 event loop 共享 gate |
+| `Database.defer_claimed_semantic_filter_candidates(ids, *, claim_token)` | CAS 检查当前评估租约，把本轮延期行退回 pending，零失败惩罚 |
+
+每个候选的问题在 `instructions` 中明确写入 request-local `candidate_ref`，不能依赖
+服务端不保证可见的 question key；候选标题、摘要和 tags 都是 untrusted data。
+模型只回答是否明确违反稳定避雷，不因陌生领域或近期兴趣不匹配就拒绝。探索来源 / 上下文
+保留。画像通过命名 compact profile view 序列化，不发送 portrait；负偏好不被裁剪。
+
+每 wave 默认最多 30 个非探索候选、1 个请求、2 秒总 deadline；配置可扩到 90 个候选、
+3 个请求，每请求最多 30 个问题。另有 24,000 UTF-8 字节工程上限，不宣称等于 tokenizer
+预算；超限、provider 故障、部分 / 错配 / 非有限结果、超时与审计失败均保留候选。
+所有调用与编排共享 `BoundedDecisionProvider` 的并发 / 排队 / 熔断限制。
+standalone CLI 的 `discover*` 同样注入该过滤器；CLI 可能多次 `asyncio.run()`，所以
+`LoopLocalDecisionProvider` 每次请求在当前 loop 中创建并关闭 transport，同一个 loop
+共享有界 gate，不把连接池带到下一个 loop。API runtime 接管时替换为其单一长期 client；
+两条路径都不回借聊天 / embedding 凭据。构建过滤器只校验启用路由所需的环境变量，
+不会探测远端或自动发送请求。
+
+Jev 启用时绕过普通评分缓存，避免缓存命中把难例从对照中消掉。任一模型 shadow、
+learned scorer 校准或延期复核 wave 都绕过 embedding 与 Jev 的模型拒绝，当前 LLM 继续
+补齐 temporal/topic/style/franchise 元数据。先前确定性已看 / 日期 / 可用性规则不被绕过。
+阈值只接受配置值；默认 1.0 没有真实领域校准背书。`calibration_tag` 是人工校准记录
+引用而非代码替用户完成了质量验收；更换模型必须重新校准，不自动提高上线等级。
+
+`discovery_semantic_filter_audit` 保留完整 cohort，包括探索豁免、预算未覆盖与失败成员。
+字段包含随机 decision/cohort id、候选 hash、输入 digest、requested/actual model、schema、
+rollout mode、calibration tag、阈值和拒绝证据、would-filter、suppressed、原因和真实 LLM
+标签。审计不保存候选标题、URL、正文或原始画像；保留上限 30 天 / 20,000 行。
+失败 / 未评估成员的 `llm_score` 保留 NULL，不能把“没评估”算作模型正确拒绝。
+
+enforce 只延期当前 wave，不写永久低分、不删除候选、不改变长期画像。延期保留
+`semantic_filter_deferred` 标记且不增加 eval/batch 失败次数；下一次 claim 读取它，
+强制完整评估，之后依旧由真实 LLM 分数与现有 admission 规则决定入池。
+`complete_claim()` 单独返回 `deferred` 数量，不误记为 rejected / stale / evaluated。
+此安全版本不承诺消除后续 LLM 成本，也没有 pre-serve 会话过滤路由。
+
 ### DiscoveryCandidatePipeline
 
 ```python
@@ -916,9 +1066,10 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 - `produce_and_enqueue()` 负责单次 raw 生产：用 `ContentDiscoveryEngine.produce_candidates()` 拉 raw candidates，再入待评估池。
 - `ensure_pending_supply()` 是 runtime 主补货路径：按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到达到目标 batch、池子已满、没有新候选或达到尝试 / 时间预算；目标 batch 会受 `[scheduler].eval_min_batch_size`（默认 15）下限约束，它看实际 inserted 数，不再把 raw fetched 数当成 Evo 可评估供给。
 - `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，文本 batch 默认 45，并默认最多领取两个 `batch_size` 的候选交给 `evaluate_content_batch()` 以 2 个 worker 并发处理；完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 或 runtime hot-reload / shutdown cancellation 会释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`，避免候选长期卡在 `evaluating`。
-- `drain_pending()` 会读取 evaluator 的 `_EVALUATE_BATCH_HARD_CAP` 并 clamp claim size，避免配置把 batch_size 调到 evaluator hard-cap 之上时，尾部候选被当作 0 分低相关永久拒绝。
+- `drain_pending(..., flush=False)` 会读取 evaluator 的 `_EVALUATE_BATCH_HARD_CAP` 并 clamp claim size，避免配置把 batch_size 调到 evaluator hard-cap 之上时，尾部候选被当作 0 分低相关永久拒绝。显式初始化可传 `flush=True` 跳过小批量聚合等待；此时也不扩大调用方 `batch_size`，评分、配额与 claim 锁不变。
 - API runtime 构造 pipeline 时会读取配置的 `eval_min_batch_size`、`eval_max_wait_seconds`，并启用 `candidate_fetch_oversample=4`；少于最小批量的 `pending_eval` 会先等待，超时才跑小 batch，协调器按 `eval_ready_in_seconds()` 返回的剩余时间唤醒。即使 refresh 缺口算法给出的 `batch_size` 小于最小批量，pipeline 也会把 claim size 抬到该下限（仍受 evaluator hard cap 约束）。CLI 手动 producer pipeline 固定 `min=1 / wait=0` 立即 drain，因为一次性进程不能可靠承载跨命令的内存计时。主 B 站 refresh 会先通过 `ensure_pending_supply()` 把待评估队列补到有效水位，再由 evaluator 消费，降低重复 discovery 让 evaluator 只拿到 1-3 条的概率。
 - `drain_pending()` 自带共享 async lock；`ContinuousRefreshController.drain_discovery_candidates_once()` 与周期 `_loop_candidate_eval()` 也会在 controller 层串行化外部触发。所有入口都会先检查 `count_pool_candidates() >= pool_target_count`；正式可换推荐池满时不再评估 / 入池。周期 loop 在 admission 后会触发 `precompute_pool_copy()`，把刚入 `content_cache` 但缺文案的候选整理成可换库存。
+- `revive_failed_eval_candidates()` 是死信复活委托：`CandidateEvalCoordinator` 在恢复信号（config rebuild 后的 `startup`、`config_*` / `manual_*` 唤醒）时调用，转发给 `Database.revive_failed_eval_candidates()` 把 `failed_eval` 候选拉回 `pending_eval`；单次限量与每候选持久化复活次数上限由 storage 保证（详见 storage.md）。对没有该方法的 storage 测试替身以 `getattr` 守卫返回 0，委托自身异常也只记 DEBUG。
 - 普通入池兜底阈值是 `[discovery].admission_min_score=0.60`；候选行可携带更严格的 strategy 阈值，explore 默认 `0.58`（backfill 最低 `0.55`）作为探索鼓励，普通 backfill 最低不低于 `0.60`。来源 / 平台标签不参与降阈值。
 
 更直白地说，`ContentDiscoveryEngine` 负责最后的“收口”：
@@ -928,7 +1079,45 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 
 因此真正影响推荐体验稳定性的，往往不是单个策略够不够聪明，而是引擎层的并发、去重、压缩和补货逻辑是否可靠。
 
+### 抖音发现冷却 API
+
+`DyTaskQueue.discovery_retry_at(*, connection=None) -> datetime | None` 从最近 24 小时内最多 8 条
+已领取 discovery 终态推导冷却。成功终态结束失败序列；未领取任务和 bootstrap 不计入。
+基础失败为 15 分钟，明确 rate-limit / captcha / hit_shark / risk-control 信号为 30 分钟；
+连续失败指数增加、上限 6 小时。返回的是 UTC 时刻，过期自然恢复，不新建表、不回写或修改既有终态。
+这些是本地退避策略，不是抖音公布的安全访问频率。
+
+冷却期间 `enqueue_with_id(search|hot|feed, ...)` 抛 `DouyinDiscoveryCooldownError`，
+`next_pending()` 不领取新的 pending discovery；已领取任务和 staged 终态仍可按原 lease 修复，
+显式 bootstrap 不被这道发现门控屏蔽。`DouyinPluginSearchClient` 三个视频发现入口在出网前检查；
+包括 hot board 取词和显式 direct-cookie fallback，不能换进程或换 transport 继续自动请求。
+已有 partial 仍交给统一 evaluator，失败 outcome 保留；冷却本身不会消费新的正式关键词 claim。
+
+`DyTaskQueue.recent_hot_sentence_ids(*, within_seconds) -> tuple[str, ...]` 从既有 hot
+任务 payload 读取并去重 `sentence_id`，排除其它任务类型、过期 / 明显未来记录与畸形内容。
+已入队但尚未领取的选择也作为 reservation；不修改任务时间或终态，不新增表。
+`DouyinPluginSearchClient._rotate_hot_terms()` 将该记录与本实例的 monotonic 缓存合并，
+沿用原 6 小时 TTL。正式 factory 每轮新建客户端时因此仍能优先尚未选择的热词，
+避免同一榜单因对象生命周期而总是重复前两个词。该轮换窗口与发现失败冷却分别计算。
+
 ### DouyinDiscoveryService
+
+`DouyinPluginSearchClient` 的默认 dispatcher 唤醒会读取当前配置的 `api.port`，向该本地端口的
+`/api/sources/dy/kick` 发起 best-effort POST；搜索、热榜和推荐流共用此路径。未能读取有效端口时
+回退 8420，网络失败仍交给扩展的周期轮询恢复。自定义端口不再因固定访问 8420 耗尽任务等待窗口。
+
+`DouyinPluginSearchClient.get_hot_board()` 在整个 hot board 池上先规范化、去重并优先带视频种子的热词，
+然后才执行近期热词轮换和种子数量截断。此前只在已截取的 2 / 5 行内排序，榜首缺种子时会挤掉后续
+可用种子、把任务送到不可点击的 UI 分支。6 小时复用规则、近期词不足时的回退和无种子 UI 支持不变。
+
+修复版扩展对有 word 的榜单任务按热词执行原生搜索采集，映射为 `dy_hot` 并保留榜单归属，
+仅无 word 时使用 seed-related collector；旧策略标识 `dy-plugin-hot-related` 保持兼容。
+热榜词来自真实 hot board，不能把用户兴趣搜索或 unrelated 视频重新标记来冒充热榜。
+debug `hot_collection_method=hot_word_search` 与原搜索导航、采集计数共同记录实际路径。
+
+搜索、热榜、推荐流已接收的 partial 视频在后续 watchdog / 客户端等待超时时仍保留并进入正常评估，
+`source_outcomes` / `keyword_outcomes` 同时保留 `failed` 或 `timeout`，不会因取到部分内容改成 `used`。
+没有 partial 时继续返回空候选；取消仍传播，first-final-wins 和原有准入阈值不变。
 
 ```python
 from openbiliclaw.discovery.douyin import (
@@ -969,7 +1158,7 @@ assert result.source_counts.get("dy-plugin-feed", 0) >= 0
 - `cache=True` 且传入 `discovery_engine` 时，服务会注册 `DouyinDirectStrategy`，再通过 `ContentDiscoveryEngine.discover(..., strategies=["douyin_direct"])` 走直接评估、压缩和缓存写入。注册按 strategy name 替换旧实例，避免同一个关键词重复入队成多个 search 任务。
 - daemon runtime 注入 `DiscoveryCandidatePipeline` 后会改用 `cache=False, evaluate=False` 拉抖音 raw candidates，再统一写入 `discovery_candidates` 并由共享 evaluator 入池；这条路径不会让抖音自己先写 `content_cache`。
 - `cache=False` 时服务会直接执行 `DouyinDirectStrategy.discover()`，适合 CLI smoke、源接口排查和未来 API 预览，不会写入 `content_cache`。
-- `sources` 公开支持 `search`、`hot`、`feed`；CLI 中 `search` 会走后台插件 DOM-first 链路并标记为 `dy-plugin-search`，`hot` 会走后台插件 hot-related DOM-first 链路并标记为 `dy-plugin-hot-related`，`feed` 会走后台首页推荐流 DOM-first 链路并标记为 `dy-plugin-feed`。dispatcher 给三类 discovery 任务打开的页面固定为抖音首页；content script 通过真实 DOM 操作触发页面加载，再被动收集页面自身 fetch/XHR 响应和 DOM 卡片，feed 覆盖真实页面使用的 `/aweme/v2/web/module/feed/`，search 覆盖新版 `/aweme/v1/web/general/search/stream/` chunked JSON。hot 插件任务会带总目标数和可选 `seed_aweme_id`，dispatcher 优先执行带 seed 的 hot item，累计达到目标后直接 finalise；小批量请求会展开一个小窗口，避免榜首没有 `group_id` 时完全无 seed。插件任务的空结果、超时、失败和预算耗尽会保持不同终态，不再都伪装成 0 条；只有显式传 `allow_direct_fallback=True` 的诊断客户端才会启用 direct-cookie fallback。插件 discovery 入队前会清理超过等待窗口的 search / hot / feed pending 任务，避免 daemon 重启或旧版本重复入队后，新任务被陈旧队列阻塞；这些清理出来的 `failed/stale_pending` 不计入每日任务预算。
+- `sources` 公开支持 `search`、`hot`、`feed`；CLI 中 `search` 会走后台插件 DOM-first 链路并标记为 `dy-plugin-search`，`hot` 会采集真实榜单热词的原生搜索结果（无词时兼容 seed-related）并保留策略名 `dy-plugin-hot-related`，`feed` 会走后台首页推荐流 DOM-first 链路并标记为 `dy-plugin-feed`。dispatcher 给三类 discovery 任务打开的页面固定为抖音首页；content script 通过真实 DOM 操作触发页面加载，再被动收集页面自身 fetch/XHR 响应和 DOM 卡片，feed 覆盖真实页面使用的 `/aweme/v2/web/module/feed/`，search 覆盖新版 `/aweme/v1/web/general/search/stream/` chunked JSON。hot 插件任务会带总目标数和可选 `seed_aweme_id`，dispatcher 优先执行带 seed 的 hot item，累计达到目标后直接 finalise；小批量请求会展开一个小窗口，避免榜首没有 `group_id` 时完全无 seed。插件任务的空结果、超时、失败和预算耗尽会保持不同终态，不再都伪装成 0 条；只有显式传 `allow_direct_fallback=True` 的诊断客户端才会启用 direct-cookie fallback。插件 discovery 入队前会清理超过等待窗口的 search / hot / feed pending 任务，避免 daemon 重启或旧版本重复入队后，新任务被陈旧队列阻塞；这些清理出来的 `failed/stale_pending` 不计入每日任务预算。
 - `dy_tasks` 领取在 SQLite `BEGIN IMMEDIATE` 内保持 source-wide single-flight：任一 15 分钟租约内的 `in_progress` 存在时，`/api/sources/dy/next-task` 不再发第二条 pending；过期任务仍优先被重领。该边界补足不同 unpacked 扩展 ID / Chrome profile 之间无法共享 service-worker mutex 的缺口。
 - runtime `DouyinDiscoveryProducer` 每轮把 `keywords_per_run` 收窄到 1，并按当前抖音缺口动态选子来源：缺口很小时只跑 feed，较小缺口优先 hot 再 feed，缺口较大固定保留 search，并在 hot / feed 间逐轮轮换，避免 feed 在长期大缺口下永远饥饿。统一关键词池暂时为空时，search 回退画像兴趣词，hot / feed 仍独立执行；单个 search 的预算或插件故障也不会阻断另外两条分支。runtime 构造插件客户端时还会按本轮抖音缺口动态抬高 hot 任务预算（最多 60）；CLI smoke / 手动 discovery 仍可通过 `sources` / `keywords` 显式控制搜索面。扩展侧单关键词 search timeout 和后端默认等待窗口均为 180 秒，给首页打开、DOM 交互、页面自身响应和 DOM 解析留足窗口；搜索 UI 若触发整页导航，dispatcher 会在新 document 恢复采集，而不是让旧 content promise 静默等到超时。
 - `DouyinDirectClient.get_hot_terms()` 会从 hot board 抽取 `sentence_id`，并保留可用 `group_id` / `seed_aweme_id` 给插件 hot 任务使用；`get_hot_board()` 只作为显式 direct-cookie 诊断 fallback，只有响应内直接携带 aweme 时才会产出视频。
@@ -1249,6 +1438,7 @@ item = DiscoveredContent(
 
 - `bvid`
 - `item_key` — 由 `make_item_key(source_platform, content_id, content_url)` 派生的平台 canonical identity；相同裸 `content_id` 在不同平台不会冲突
+- `scoring_key` — 推荐评分字典使用的只读 identity；优先返回 `item_key`，仅为缺少该字段的旧行回退到 `bvid`，因此非 B 站候选不会再因空 `bvid` 共用同一分数
 - `title`
 - `up_name`
 - `up_mid`
@@ -1488,3 +1678,66 @@ for each epoch:
 24. **长期避雷项必须进入发现前置上下文**：近期 negative exemplars 只能覆盖短期样本，`disliked_topics` 才代表稳定画像里的长期避让；因此 discovery 的共享 `profile_summary` 必须显式携带它，供 query 生成和内容评估共同消费
 25. **画像摘要要保留决策上下文而不是只传兴趣标签**：Search / Trending / Explore 都在问“什么内容适合这个人”，只传兴趣名会让模型退化成关键词扩写；因此 `build_profile_summary()` 同步携带认知风格、价值观、当前阶段、MBTI、近期觉察、当前洞察、来源分布和兴趣来源时间，但仍按前若干项裁剪，避免无界 prompt 膨胀
 26. **评估批次保留成功 sibling**：keyed partial payload 先写入有效评分，只对缺失 ID 使用共享 depth=3 / 六次额外请求预算；预算耗尽仍未解析的候选标记 `evaluation_response_missing`，不以零分拒绝，而是在 claim token 仍匹配时无 attempt 增量回到 `pending_eval`。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；匿名 inspiration 与 formal tag 使用同一 hashtag 归一化。失败查询不会标 used，feed 单次 12 条与每日调用次数解耦，收藏计数贯穿 favorite_count/collect_count。
+
+### 可选 Parallel grounding
+
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "parallel", "bing_rss", "exa", "you", "serply"]` 可启用 [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)。默认配置不变。服务免费匿名提供 Fast 模式搜索，有速率限制，无需账户、API Key、Node CLI 或新增依赖。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+
+| 已实现功能 | 状态 |
+|---|---|
+| 可选 Parallel MCP 标题 / URL / 摘录 grounding，既有 fallback 与 cooldown | ✅ |
+
+公开 API：`ParallelInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `parallel` 名称装配。单次搜索在同一绝对期限内完成 MCP 初始化与调用，支持 JSON / SSE，限制响应大小，取消向上传播。工具错误、限流或空结果进入已有后备链。摘录只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。
+
+该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
+
+### 可选 Keenable grounding
+
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "keenable"]` 可启用 [Keenable](https://keenable.ai) 搜索 API（文档见 [docs.keenable.ai](https://docs.keenable.ai)）。默认配置不变。该后端**只有匿名免费模式**：直连 `POST https://api.keenable.ai/v1/search/public`，固定带 `X-Keenable-Title: OpenBiliClaw` 标识调用方，无需账户、API Key、mcporter 或新增依赖；匿名额度为每 IP 每秒 10 次、每小时 1000 次（取自 Keenable 官方 Rate limits 文档，2026-10 核对；项目侧不额外限流）。项目有意不保留 keyed 分支：API Key 只提升速率限制，而关键词灵感每轮只有十几次请求，免费额度足够，少一条付费路径就少一处要维护的凭据与失败模式。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+
+| 已实现功能 | 状态 |
+|---|---|
+| 可选 Keenable 标题 / URL / 摘要 grounding（匿名或 API Key），既有 fallback 与 cooldown | ✅ |
+
+公开 API：`KeenableInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `keenable` 名称装配（不需要任何 key），6 s 请求超时落在上层 8 s 绝对期限之内。`parse_keenable_search_payload()` 读取 `results[].title / url / snippet`（`snippet` 为空时回退 `description`），摘要截断到 400 字符，与 Exa 直连请求的 `maxCharacters` 一致。HTTP 错误、限流或空结果进入已有后备链。摘要只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。V2EX 正式 search 的外部召回白名单同样接纳 `keenable`。
+
+该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
+
+### 后端词表与 grounding key 打包（2026-10-24）
+
+| 已实现功能 | 状态 |
+|---|---|
+| 默认链、别名表、外部召回白名单收敛到 `discovery/inspiration_backends.py` 单一来源 | ✅ |
+| 四个 grounding API key 由 `InspirationGroundingKeys` 打包，装配调用点不再逐个透传 | ✅ |
+
+关键字灵感后端原先在 `config._normalize_inspiration_search_backends()` 与
+`inspiration_provider._normalize_search_backends()` 各存一份默认链与别名表，V2EX 外部召回
+又硬编码第三份白名单；四个 `*_api_key` 也在 CLI、API 运行时和 V2EX producer 三处重复取键。
+现在默认链 `DEFAULT_INSPIRATION_SEARCH_BACKENDS`、别名表
+`INSPIRATION_SEARCH_BACKEND_ALIASES`、外部召回集合 `EXTERNAL_INSPIRATION_SEARCH_BACKENDS`
+与新函数 `normalize_inspiration_search_backends(value, *, default=...)` 只在
+`src/openbiliclaw/discovery/inspiration_backends.py` 维护，`config` 复用同一默认链（该模块是
+只依赖标准库的叶子模块，不产生导入环）。
+
+公开 API：`InspirationGroundingKeys(exa="", you="", serply="")` 打包三个可选
+grounding key，`InspirationGroundingKeys.from_discovery_config(section)` 从 `[discovery]`
+读取（缺失字段取空串）。`build_inspiration_search_provider(..., grounding_keys=...)` 取代
+原先的 `exa_api_key / you_api_key / serply_api_key` 三个关键字参数；
+新增 grounding 后端只需在词表与键包各加一处，不必再改三个调用点。
+
+行为不变：默认链与别名解析结果、未配置 key 时的 mcporter 回退、V2EX 外部召回白名单
+（`local_cache` / `platform_sources` 仍被排除）、Keenable 匿名与 keyed 端点选择均与之前一致；
+V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍返回 `None`，不会回落到默认链。
+
+### 搜索后端链契约（2026-10-24 起）
+
+`build_inspiration_search_provider()` 无论配置了几个后端都返回 `FallbackInspirationSearchProvider`（链式顺序不变，`providers` 只读视图可查看装配结果）：
+
+- 单后端配置同样获得既有的错误 cooldown、`provider_failures` / `provider_successes` 计数和 `last_search_provider` 归因；此前裸 provider 会让 `grounding_source` 退化成 `"none"`，并在每次 probe 重打同一个失败端点。
+- 单后端时 `pages_per_probe` 固定为 1，单次请求条数与装配前一致；多后端仍按配置的每 probe 页数叠加。
+- 失败语义不变：链上有可用结果就返回，全部失败时把最后一个真实错误抛给调用方，不吞异常。

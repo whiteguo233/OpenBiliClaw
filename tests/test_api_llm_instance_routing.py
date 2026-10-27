@@ -91,7 +91,7 @@ def _client(
     monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _rebuild)
     monkeypatch.setattr(RuntimeContext, "restart_background_tasks", _restart)
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app), path
+    return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"), path
 
 
 def _native_payload_from_get(llm: dict[str, Any]) -> dict[str, Any]:

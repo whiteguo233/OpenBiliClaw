@@ -18,6 +18,15 @@
  *      or on timeout.
  *   5. Waits ``DEFAULT_POLL_INTERVAL_MS`` before asking for the next.
  *
+ * Firefox MV3 background scripts are event pages and Chrome MV3 service
+ * workers are recycled when idle, so the in-flight task snapshot (task,
+ * tab, per-kind progress, deadline) is mirrored into
+ * ``chrome.storage.session`` on every transition and the timeout is
+ * backed by a ``chrome.alarms`` one-shot. A fresh worker restores the
+ * snapshot via ``ensureDyTaskRecovery`` so late results still post, the
+ * deadline backstop still closes the task tab, and orphaned marker tabs
+ * are swept on wake.
+ *
  * Only one task is in flight at a time (mutex). Bootstrap tasks get a
  * generous timeout because each scope can scroll up to 15 rounds and
  * we navigate through 4 scopes serially.
@@ -92,6 +101,8 @@ const FEED_TASK_TIMEOUT_MS = 120_000;
 const BOOTSTRAP_PER_ROUND_TIMEOUT_MS = 3_000;
 const BOOTSTRAP_MAX_TASK_TIMEOUT_MS = 360_000;
 const POLL_ALARM_NAME = "openbiliclaw-dy-task-poll";
+const TASK_TIMEOUT_ALARM_NAME = "openbiliclaw-dy-task-timeout";
+export const DY_TASK_STATE_SESSION_KEY = "openbiliclaw_dy_active_task";
 const KNOWN_SCOPES: readonly DouyinScope[] = [
   "dy_post",
   "dy_collect",
@@ -140,6 +151,7 @@ let pollInFlight: Promise<void> | null = null;
 let taskTabId: number | null = null;
 let ownsTaskTab = false;
 let taskTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let taskDeadlineMs: number | null = null;
 let currentTask: DyTask | null = null;
 
 // Per-scope state machine. Bootstrap visits 4 profile sub-tabs
@@ -161,15 +173,18 @@ interface TaskProgress {
 
 let progress: TaskProgress | null = null;
 
-interface SearchProgress {
+interface SearchNavigationProgress {
+  navigation_resume_count: number;
+  navigation_resume_dispatched: boolean;
+  navigation_generation: number;
+}
+
+interface SearchProgress extends SearchNavigationProgress {
   task_id: string;
   keywords: string[];
   current_keyword_idx: number;
   accumulated_count: number;
   max_items_per_keyword: number;
-  navigation_resume_count: number;
-  navigation_resume_dispatched: boolean;
-  navigation_generation: number;
 }
 
 let searchProgress: SearchProgress | null = null;
@@ -178,7 +193,7 @@ let searchNavigationListener:
   | null = null;
 let searchNavigationFallbackId: ReturnType<typeof setTimeout> | null = null;
 
-interface HotProgress {
+interface HotProgress extends SearchNavigationProgress {
   task_id: string;
   hot_items: DyHotTaskItem[];
   current_hot_idx: number;
@@ -386,8 +401,9 @@ export function dyScopeDegradedReason(result: DyScopeResult): string {
 }
 
 // ---------------------------------------------------------------------------
-// Chrome lifecycle (not unit-tested — Task 4's chrome-devtools MCP probe
-// already exercised the highest-risk seam against real douyin.com).
+// Chrome lifecycle (Task 4's chrome-devtools MCP probe already exercised the
+// highest-risk seam against real douyin.com; the event-page persistence /
+// recovery paths are unit-tested in tests/dy-task-recovery.test.ts).
 // ---------------------------------------------------------------------------
 
 async function fetchNextTask(): Promise<DyTask | null> {
@@ -551,11 +567,309 @@ function clearSearchNavigationWatcher(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Active-task persistence (event page / service-worker recycling)
+// ---------------------------------------------------------------------------
+
+export interface PersistedDyTaskState {
+  task: DyLegacyTask;
+  task_tab_id: number | null;
+  owns_task_tab: boolean;
+  deadline_ms: number;
+  progress: TaskProgress | null;
+  search_progress: SearchProgress | null;
+  hot_progress: HotProgress | null;
+  feed_progress: FeedProgress | null;
+}
+
+let sessionStateMutation: Promise<void> = Promise.resolve();
+let dyTaskRecoveryPromise: Promise<void> | null = null;
+
+function sessionStorageArea(): chrome.storage.StorageArea | null {
+  try {
+    return typeof chrome === "undefined" ? null : chrome.storage?.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function serializedSessionMutation(mutation: () => Promise<void>): Promise<void> {
+  const current = sessionStateMutation.then(mutation, mutation);
+  sessionStateMutation = current.catch(() => {});
+  return current;
+}
+
+function persistActiveTaskState(): Promise<void> {
+  return serializedSessionMutation(async () => {
+    const storage = sessionStorageArea();
+    if (!storage || !currentTask || currentTask.type === "native_save") return;
+    const record: PersistedDyTaskState = {
+      task: currentTask,
+      task_tab_id: taskTabId,
+      owns_task_tab: ownsTaskTab,
+      deadline_ms: taskDeadlineMs ?? 0,
+      progress,
+      search_progress: searchProgress,
+      hot_progress: hotProgress,
+      feed_progress: feedProgress,
+    };
+    try {
+      await storage.set({ [DY_TASK_STATE_SESSION_KEY]: record });
+    } catch {
+      // Session persistence is an optional recovery enhancement, not an execution prerequisite.
+    }
+  });
+}
+
+function clearPersistedTaskState(): Promise<void> {
+  return serializedSessionMutation(async () => {
+    const storage = sessionStorageArea();
+    if (!storage) return;
+    try {
+      await storage.remove(DY_TASK_STATE_SESSION_KEY);
+    } catch {
+      // The in-memory lifecycle is already terminal for this worker.
+    }
+  });
+}
+
+function parsePersistedTaskState(value: unknown): PersistedDyTaskState | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (!isValidDyTask(record.task) || record.task.type === "native_save") return null;
+  const task = record.task;
+  if (typeof record.deadline_ms !== "number" || !Number.isFinite(record.deadline_ms)) return null;
+  const tabId = record.task_tab_id ?? null;
+  if (tabId !== null && (typeof tabId !== "number" || !Number.isInteger(tabId))) return null;
+  const parsed: PersistedDyTaskState = {
+    task,
+    task_tab_id: tabId,
+    owns_task_tab: record.owns_task_tab === true,
+    deadline_ms: record.deadline_ms,
+    progress: null,
+    search_progress: null,
+    hot_progress: null,
+    feed_progress: null,
+  };
+  const progressFields = [
+    ["progress", "bootstrap_profile"],
+    ["search_progress", "search"],
+    ["hot_progress", "hot"],
+    ["feed_progress", "feed"],
+  ] as const;
+  let hasProgress = false;
+  for (const [key, type] of progressFields) {
+    const candidate = record[key];
+    if (candidate === null || candidate === undefined) continue;
+    if (task.type !== type) return null;
+    if (
+      typeof candidate !== "object" ||
+      (candidate as { task_id?: unknown }).task_id !== task.id
+    ) {
+      return null;
+    }
+    if (key === "progress") parsed.progress = candidate as TaskProgress;
+    if (key === "search_progress") parsed.search_progress = candidate as SearchProgress;
+    if (key === "hot_progress") parsed.hot_progress = candidate as HotProgress;
+    if (key === "feed_progress") parsed.feed_progress = candidate as FeedProgress;
+    hasProgress = true;
+  }
+  return hasProgress ? parsed : null;
+}
+
+function scheduleTaskTimeoutAlarm(deadlineMs: number): void {
+  if (typeof chrome === "undefined" || !chrome.alarms?.create) return;
+  try {
+    void chrome.alarms.create(TASK_TIMEOUT_ALARM_NAME, { when: deadlineMs });
+  } catch {
+    // The in-process timer still covers a live worker.
+  }
+}
+
+function armTaskDeadline(deadlineMs: number): void {
+  taskDeadlineMs = deadlineMs;
+  // The one-shot alarm is the authoritative backstop: it survives the
+  // event page / service worker being unloaded. The setTimeout below is
+  // only the exact-timing fast path while this worker stays alive.
+  scheduleTaskTimeoutAlarm(deadlineMs);
+  if (taskTimeoutId !== null) {
+    clearTimeout(taskTimeoutId);
+    taskTimeoutId = null;
+  }
+  taskTimeoutId = setTimeout(() => {
+    taskTimeoutId = null;
+    void failActiveTask("task_timeout");
+  }, Math.max(0, deadlineMs - Date.now()));
+}
+
+async function failActiveTask(error: string): Promise<void> {
+  const task = currentTask;
+  if (!task || task.type === "native_save") return;
+  try {
+    await postTaskResult({
+      task_id: task.id,
+      status: "failed",
+      error,
+    });
+    cleanupTask();
+  } catch {
+    // Keep the local task state intact after an unacknowledged terminal
+    // callback. The persisted record and the timeout alarm retry the
+    // callback on the next wake instead of pretending the task was
+    // durably failed and claiming more.
+  }
+}
+
+async function recordedTabAlive(tabId: number | null): Promise<boolean> {
+  if (tabId === null) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function restorePersistedTaskState(record: PersistedDyTaskState): Promise<void> {
+  const tabAlive = await recordedTabAlive(record.task_tab_id);
+  currentTask = record.task;
+  taskTabId = tabAlive ? record.task_tab_id : null;
+  ownsTaskTab = record.owns_task_tab && tabAlive;
+  progress = record.progress;
+  searchProgress = record.search_progress;
+  hotProgress = record.hot_progress ? {
+    ...record.hot_progress,
+    navigation_resume_count: record.hot_progress.navigation_resume_count ?? 0,
+    navigation_resume_dispatched: record.hot_progress.navigation_resume_dispatched ?? false,
+    navigation_generation: record.hot_progress.navigation_generation ?? 0,
+  } : null;
+  feedProgress = record.feed_progress;
+  taskInFlight = true;
+  tryAcquireDispatcherMutex("dy");
+  armTaskDeadline(record.deadline_ms);
+  if (Date.now() >= record.deadline_ms) {
+    await failActiveTask("task_timeout");
+    return;
+  }
+  if (ownsTaskTab && taskTabId !== null) {
+    try {
+      await chrome.tabs.update(taskTabId, { muted: true });
+    } catch {
+      // Do not leave a recovered autoplay page audible while its terminal
+      // callback waits for the backend to reconnect.
+      try {
+        await chrome.tabs.remove(taskTabId);
+        taskTabId = null;
+        ownsTaskTab = false;
+      } catch {
+        // Terminal cleanup retries closing the same owned tab after ACK.
+      }
+      await failActiveTask("task_tab_mute_failed");
+      return;
+    }
+  }
+  if (record.owns_task_tab && !tabAlive) {
+    // The task tab is gone (user closed it or the browser discarded it);
+    // nothing can deliver further results, so settle immediately instead
+    // of burning the remaining deadline budget.
+    await failActiveTask("task_tab_closed");
+    return;
+  }
+  if (ownsTaskTab && taskTabId !== null) {
+    if (searchProgress) {
+      searchProgress.navigation_resume_dispatched = false;
+      const keyword = navigationKeyword("search");
+      if (keyword) armSearchNavigationWatcher(taskTabId, keyword);
+    } else if (hotProgress) {
+      hotProgress.navigation_resume_dispatched = false;
+      const word = navigationKeyword("hot");
+      if (word) armSearchNavigationWatcher(taskTabId, word, "hot");
+    }
+  }
+}
+
+async function sweepOrphanDyTaskTabs(activeTabId: number | null): Promise<void> {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.tabs?.remove) return;
+  let tabs: chrome.tabs.Tab[];
+  try {
+    tabs = await chrome.tabs.query({ url: ["*://*.douyin.com/*"] });
+  } catch {
+    return;
+  }
+  const queryMarker = `${DY_TASK_MARKER}=1`;
+  for (const tab of tabs) {
+    if (tab.id === undefined || tab.id === activeTabId) continue;
+    const url = tab.url ?? tab.pendingUrl ?? "";
+    if (!url.includes(queryMarker)) continue;
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch {
+      // Orphan sweep is best-effort; the recorded-tab path stays authoritative.
+    }
+  }
+}
+
+async function recoverDyTaskState(): Promise<void> {
+  const storage = sessionStorageArea();
+  if (storage && !taskInFlight && currentTask === null) {
+    let record: PersistedDyTaskState | null = null;
+    try {
+      record = parsePersistedTaskState(
+        (await storage.get(DY_TASK_STATE_SESSION_KEY))[DY_TASK_STATE_SESSION_KEY],
+      );
+    } catch {
+      record = null;
+    }
+    if (record) await restorePersistedTaskState(record);
+  }
+  await sweepOrphanDyTaskTabs(taskTabId);
+}
+
+/**
+ * One MV3-lifetime barrier shared by startup, poll wakes, timeout alarms,
+ * and the DY_*_RESULT message handlers. A freshly woken worker restores
+ * the persisted in-flight task before any of those paths inspect the
+ * module state, so late results keep flowing and the deadline backstop
+ * keeps ownership of the task tab.
+ */
+export function ensureDyTaskRecovery(): Promise<void> {
+  dyTaskRecoveryPromise ??= recoverDyTaskState().catch(() => {});
+  return dyTaskRecoveryPromise;
+}
+
+export function resetDyTaskStateForTest(): void {
+  clearSearchNavigationWatcher();
+  if (taskTimeoutId !== null) {
+    clearTimeout(taskTimeoutId);
+    taskTimeoutId = null;
+  }
+  taskDeadlineMs = null;
+  taskTabId = null;
+  ownsTaskTab = false;
+  currentTask = null;
+  progress = null;
+  searchProgress = null;
+  hotProgress = null;
+  feedProgress = null;
+  taskInFlight = false;
+  dyTaskRecoveryPromise = null;
+  sessionStateMutation = Promise.resolve();
+  releaseDispatcherMutex("dy");
+}
+
 function cleanupTask(): void {
   clearSearchNavigationWatcher();
   if (taskTimeoutId !== null) {
     clearTimeout(taskTimeoutId);
     taskTimeoutId = null;
+  }
+  taskDeadlineMs = null;
+  if (typeof chrome !== "undefined" && chrome.alarms?.clear) {
+    try {
+      void chrome.alarms.clear(TASK_TIMEOUT_ALARM_NAME);
+    } catch {
+      // The alarm may already have fired; clearing stays best-effort.
+    }
   }
   if (ownsTaskTab && taskTabId !== null) {
     try {
@@ -573,6 +887,7 @@ function cleanupTask(): void {
   feedProgress = null;
   taskInFlight = false;
   releaseDispatcherMutex("dy");
+  void clearPersistedTaskState();
 }
 
 function emptyScopeCounts(): Record<DouyinScope, number> {
@@ -580,22 +895,8 @@ function emptyScopeCounts(): Record<DouyinScope, number> {
 }
 
 function armTaskTimeout(task: DyLegacyTask): void {
-  const timeoutMs = computeDyTaskTimeoutMs(task);
-  taskTimeoutId = setTimeout(async () => {
-    taskTimeoutId = null;
-    try {
-      await postTaskResult({
-        task_id: task.id,
-        status: "failed",
-        error: "task_timeout",
-      });
-      cleanupTask();
-    } catch {
-      // Keep the local task state intact after an unacknowledged terminal
-      // callback. A later worker recovery/backend stale-claim path remains
-      // safer than pretending the task was durably failed and claiming more.
-    }
-  }, timeoutMs);
+  armTaskDeadline(Date.now() + computeDyTaskTimeoutMs(task));
+  void persistActiveTaskState();
 }
 
 // ---------------------------------------------------------------------------
@@ -714,42 +1015,49 @@ function sendSearchExecuteMessage(resumeAfterNavigation: boolean = false): void 
     });
 }
 
+type SearchNavigationSource = "search" | "hot";
+
+function navigationProgress(source: SearchNavigationSource): SearchProgress | HotProgress | null {
+  return source === "hot" ? hotProgress : searchProgress;
+}
+
+function navigationKeyword(source: SearchNavigationSource): string | undefined {
+  return source === "hot"
+    ? hotProgress?.hot_items[hotProgress.current_hot_idx]?.word?.trim()
+    : searchProgress?.keywords[searchProgress.current_keyword_idx];
+}
+
+function isCurrentSearchNavigation(
+  tabId: number, keyword: string, generation: number, source: SearchNavigationSource,
+): boolean {
+  return taskTabId === tabId && navigationKeyword(source) === keyword
+    && navigationProgress(source)?.navigation_generation === generation;
+}
+
 function dispatchSearchNavigationResume(
   tabId: number,
   keyword: string,
   generation: number,
+  source: SearchNavigationSource,
 ): void {
+  const current = navigationProgress(source);
   if (
-    !searchProgress ||
-    taskTabId !== tabId ||
-    searchProgress.keywords[searchProgress.current_keyword_idx] !== keyword ||
-    searchProgress.navigation_generation !== generation ||
-    searchProgress.navigation_resume_dispatched
+    !current || !isCurrentSearchNavigation(tabId, keyword, generation, source)
+    || current.navigation_resume_dispatched
   ) {
     return;
   }
-  searchProgress.navigation_resume_dispatched = true;
-  searchProgress.navigation_resume_count += 1;
+  current.navigation_resume_dispatched = true;
+  current.navigation_resume_count += 1;
   clearSearchNavigationWatcher();
   onTabReady(
     tabId,
     () => {
-      if (
-        !searchProgress ||
-        taskTabId !== tabId ||
-        searchProgress.navigation_generation !== generation ||
-        searchProgress.keywords[searchProgress.current_keyword_idx] !== keyword
-      ) {
-        return;
-      }
+      if (!isCurrentSearchNavigation(tabId, keyword, generation, source)) return;
       void injectFetchTapInto(tabId).then(() => {
-        if (
-          searchProgress &&
-          taskTabId === tabId &&
-          searchProgress.navigation_generation === generation &&
-          searchProgress.keywords[searchProgress.current_keyword_idx] === keyword
-        ) {
-          sendSearchExecuteMessage(true);
+        if (isCurrentSearchNavigation(tabId, keyword, generation, source)) {
+          if (source === "hot") sendHotExecuteMessage(true);
+          else sendSearchExecuteMessage(true);
         }
       });
     },
@@ -757,11 +1065,14 @@ function dispatchSearchNavigationResume(
   );
 }
 
-function armSearchNavigationWatcher(tabId: number, keyword: string): void {
+function armSearchNavigationWatcher(
+  tabId: number, keyword: string, source: SearchNavigationSource = "search",
+): void {
   clearSearchNavigationWatcher();
-  if (!searchProgress) return;
-  searchProgress.navigation_generation += 1;
-  const generation = searchProgress.navigation_generation;
+  const current = navigationProgress(source);
+  if (!current) return;
+  current.navigation_generation += 1;
+  const generation = current.navigation_generation;
   const listener = (
     updatedId: number,
     info: { status?: string; url?: string },
@@ -770,7 +1081,7 @@ function armSearchNavigationWatcher(tabId: number, keyword: string): void {
     if (updatedId !== tabId) return;
     const candidateUrl = info.url ?? tab.url ?? "";
     if (!isDySearchResultUrl(candidateUrl, keyword)) return;
-    dispatchSearchNavigationResume(tabId, keyword, generation);
+    dispatchSearchNavigationResume(tabId, keyword, generation, source);
   };
   searchNavigationListener = listener;
   chrome.tabs.onUpdated.addListener(listener);
@@ -780,19 +1091,19 @@ function armSearchNavigationWatcher(tabId: number, keyword: string): void {
   // accepts it and continues collection.
   searchNavigationFallbackId = setTimeout(() => {
     searchNavigationFallbackId = null;
-    if (!searchProgress || taskTabId !== tabId) return;
+    if (!isCurrentSearchNavigation(tabId, keyword, generation, source)) return;
     void chrome.tabs
       .get(tabId)
       .then((tab) => {
         if (isDySearchResultUrl(tab.url ?? "", keyword)) {
-          dispatchSearchNavigationResume(tabId, keyword, generation);
+          dispatchSearchNavigationResume(tabId, keyword, generation, source);
         }
       })
       .catch(() => {});
   }, 10_000);
 }
 
-function sendHotExecuteMessage(): void {
+function sendHotExecuteMessage(resumeAfterNavigation = false): void {
   if (!hotProgress || !taskTabId) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
@@ -805,8 +1116,12 @@ function sendHotExecuteMessage(): void {
         sentence_id: hotItem.sentence_id,
         word: hotItem.word ?? "",
         ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
-        max_items: hotProgress.max_items_per_hot,
+        max_items: Math.min(
+          hotProgress.max_items_per_hot,
+          Math.max(1, hotProgress.max_items_total - hotProgress.accumulated_count),
+        ),
         debug_inject_status: _lastInjectStatus,
+        ...(resumeAfterNavigation ? { resume_after_navigation: true } : {}),
       },
     })
     .catch((err) => {
@@ -897,6 +1212,7 @@ async function replaceSearchTabForNextKeyword(): Promise<void> {
     cleanupTask();
     return;
   }
+  void persistActiveTaskState();
   const newTabId = taskTabId;
   onTabReady(
     newTabId,
@@ -911,12 +1227,14 @@ function navigateToCurrentHot(): void {
   if (!hotProgress || taskTabId === null) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
-  chrome.tabs.update(taskTabId, { url: buildDyDiscoveryPageUrl("hot", hotItem.sentence_id) }, () => {
-    onTabReady(taskTabId!, () => {
-      void injectFetchTapInto(taskTabId!).then(() => {
-        sendHotExecuteMessage();
-      });
-    }, { fallbackMs: 10_000 });
+  const tabId = taskTabId;
+  const word = hotItem.word?.trim();
+  if (word) armSearchNavigationWatcher(tabId, word, "hot");
+  // The task page is already ready. Submit the next board word through its
+  // search UI instead of reloading the homepage between every word. Real
+  // document navigations resume collection without submitting a second search.
+  void injectFetchTapInto(tabId).then(() => {
+    if (taskTabId === tabId && hotProgress) sendHotExecuteMessage();
   });
 }
 
@@ -1102,6 +1420,9 @@ export async function executeTask(
         Math.min(maxItemsTotal, Math.floor(task.max_items_per_hot ?? maxItemsTotal)),
       ),
       max_items_total: maxItemsTotal,
+      navigation_resume_count: 0,
+      navigation_resume_dispatched: false,
+      navigation_generation: 0,
     };
 
     let tab: chrome.tabs.Tab;
@@ -1258,6 +1579,7 @@ export async function executeTask(
  * next scope or finalises the task with status=ok.
  */
 export async function handleDyScopeResult(result: DyScopeResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!progress || result.task_id !== progress.task_id) return;
   // Reject results from outside the current scope (defensive; the
   // content script should only emit for the scope we asked it to).
@@ -1288,6 +1610,7 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
 
   progress.current_scope_idx += 1;
   if (progress.current_scope_idx < progress.scopes.length) {
+    void persistActiveTaskState();
     navigateToCurrentScope();
     return;
   }
@@ -1307,6 +1630,7 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
 }
 
 export async function handleDySearchResult(result: DySearchResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!searchProgress || result.task_id !== searchProgress.task_id) return;
   const expectedKeyword = searchProgress.keywords[searchProgress.current_keyword_idx];
   if (result.keyword !== expectedKeyword) return;
@@ -1316,6 +1640,11 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
   clearSearchNavigationWatcher();
 
   if (result.status === "failed") {
+    if (result.items.length > 0) {
+      searchProgress.accumulated_count += result.items.length;
+      await postTaskResult({ task_id: searchProgress.task_id, status: "partial",
+        videos: result.items, scope_counts: { dy_search: searchProgress.accumulated_count } });
+    }
     await postTaskResult({
       task_id: searchProgress.task_id,
       status: "failed",
@@ -1346,6 +1675,7 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
   searchProgress.current_keyword_idx += 1;
   if (searchProgress.current_keyword_idx < searchProgress.keywords.length) {
     searchProgress.navigation_resume_dispatched = false;
+    void persistActiveTaskState();
     await replaceSearchTabForNextKeyword();
     return;
   }
@@ -1360,12 +1690,20 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
 }
 
 export async function handleDyHotResult(result: DyHotResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!hotProgress || result.task_id !== hotProgress.task_id) return;
   const expected = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!expected || result.sentence_id !== expected.sentence_id) return;
+  hotProgress.navigation_generation += 1;
+  clearSearchNavigationWatcher();
 
   const terminalFailure = buildDyHotTerminalFailure(result);
   if (terminalFailure) {
+    if (result.items.length > 0) {
+      hotProgress.accumulated_count += result.items.length;
+      await postTaskResult({ task_id: hotProgress.task_id, status: "partial",
+        videos: result.items, scope_counts: { dy_hot: hotProgress.accumulated_count } });
+    }
     await postTaskResult(terminalFailure);
     cleanupTask();
     return;
@@ -1381,6 +1719,7 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
       sentence_id: result.sentence_id,
       word: result.word,
       hot_status: result.status,
+      search_navigation_resumes: hotProgress.navigation_resume_count,
       ...(result.debug ?? {}),
       ...(result.error ? { error: result.error } : {}),
     },
@@ -1405,7 +1744,9 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
   }
 
   hotProgress.current_hot_idx += 1;
+  hotProgress.navigation_resume_dispatched = false;
   if (hotProgress.current_hot_idx < hotProgress.hot_items.length) {
+    void persistActiveTaskState();
     navigateToCurrentHot();
     return;
   }
@@ -1420,11 +1761,13 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
 }
 
 export async function handleDyFeedResult(result: DyFeedResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!feedProgress || result.task_id !== feedProgress.task_id) return;
 
   if (result.status === "failed") {
     if (shouldRetryDyFeedCapture(result, feedProgress.capture_retry_count)) {
       feedProgress.capture_retry_count += 1;
+      void persistActiveTaskState();
       try {
         await reloadFeedForCaptureRetry();
         return;
@@ -1486,6 +1829,7 @@ export async function handleDyFeedResult(result: DyFeedResult): Promise<void> {
  * handleDyScopeResult instead.
  */
 export async function handleTaskResult(result: DyTaskResult): Promise<void> {
+  await ensureDyTaskRecovery();
   if (!currentTask || result.task_id !== currentTask.id) return;
   await postTaskResult(result);
   if (result.status === "partial") return;
@@ -1573,7 +1917,10 @@ async function reportDeclinedTask(task: DyTask): Promise<void> {
 }
 
 const DY_TASK_POLL_DEPENDENCIES: DyTaskPollDependencies = {
-  ensureRecovery: ensureNativeSaveTaskRecovery,
+  ensureRecovery: async () => {
+    await ensureNativeSaveTaskRecovery();
+    await ensureDyTaskRecovery();
+  },
   canExecute: () => {
     try {
       return typeof globalThis.chrome?.tabs?.create === "function";
@@ -1656,13 +2003,28 @@ export function startDyTaskPolling(): void {
 
 /**
  * Service-worker.ts's chrome.alarms.onAlarm dispatcher routes every
- * fired alarm through this. We only act on our own alarm name; other
- * alarms (xhs poll, cookie sync, event flush) are handled by their
- * respective modules.
+ * fired alarm through this. We only act on our own alarm names (the
+ * poll tick and the per-task timeout backstop); other alarms (xhs
+ * poll, cookie sync, event flush) are handled by their respective
+ * modules.
  */
 export function handleDyTaskAlarm(alarmName: string): void {
   if (alarmName === POLL_ALARM_NAME) {
     void pollDyTaskOnce().catch(() => {});
+    return;
+  }
+  if (alarmName === TASK_TIMEOUT_ALARM_NAME) {
+    void (async () => {
+      await ensureDyTaskRecovery();
+      if (!currentTask || currentTask.type === "native_save" || taskDeadlineMs === null) return;
+      if (Date.now() < taskDeadlineMs) {
+        // The browser clamped the one-shot alarm to its minimum delay;
+        // re-arm the in-process fast path for the remaining budget.
+        armTaskDeadline(taskDeadlineMs);
+        return;
+      }
+      await failActiveTask("task_timeout");
+    })().catch(() => {});
   }
 }
 

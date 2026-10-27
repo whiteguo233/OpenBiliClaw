@@ -467,6 +467,19 @@ def render_notices(
         lines.append(f"{fence}\n")
         lines.append("\n")
 
+    lines.extend(
+        [
+            "## Vendored TikTok request signer\n\n",
+            "`src/openbiliclaw/sources/tiktok_sign.py` was vendored on 2026-10-03 from\n",
+            "[Evil0ctal/Douyin_TikTok_Download_API]",
+            "(https://github.com/Evil0ctal/Douyin_TikTok_Download_API),\n",
+            "`src/dtk/signing/native/tiktok_sign.py`, under Apache License 2.0 ",
+            "(license text included above).\n",
+            "Local modifications move typing-only imports to satisfy Ruff; ",
+            "provenance is retained in the file header.\n",
+        ]
+    )
+
     return ("".join(lines).rstrip("\n") + "\n").encode("utf-8")
 
 
@@ -511,6 +524,7 @@ def write_or_check(output: Path, expected: bytes, *, check: bool) -> None:
             actual = output.read_bytes()
         except OSError as exc:
             raise NoticeGenerationError(f"cannot read notice output for --check: {output}") from exc
+
         # Git for Windows may check the committed file out with CRLF; compare
         # logically rather than byte-for-byte so generated LF notices still pass
         # on Windows runners.

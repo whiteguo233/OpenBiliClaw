@@ -111,6 +111,23 @@ def _wait_for_covers(page: Page, selector: str, minimum: int) -> None:
     )
 
 
+def _load_lazy_covers(page: Page, selector: str, minimum: int) -> None:
+    page.wait_for_function(
+        "({selector, minimum}) => document.querySelectorAll(selector).length >= minimum",
+        arg={"selector": selector, "minimum": minimum},
+        timeout=15_000,
+    )
+    images = page.locator(selector)
+    for index in range(minimum):
+        images.nth(index).scroll_into_view_if_needed()
+    page.wait_for_function(
+        "({selector, minimum}) => { const images = [...document.querySelectorAll(selector)].slice(0, minimum); return images.length >= minimum && images.every((image) => image.complete && image.naturalWidth > 0); }",
+        arg={"selector": selector, "minimum": minimum},
+        timeout=15_000,
+    )
+    page.evaluate("window.scrollTo(0, 0)")
+
+
 def _capture_web(
     origin: str,
     output_dir: Path,
@@ -161,7 +178,7 @@ def _capture_web(
             "document.querySelectorAll('#app .card').length >= 1",
             timeout=15_000,
         )
-        _wait_for_covers(mobile_page, "#app .card-cover-frame img.card-cover", 2)
+        _load_lazy_covers(mobile_page, "#app .card-cover-frame img.card-cover", 2)
         mobile_page.screenshot(path=output_dir / "mobile-recommend.png")
         mobile_context.close()
         mobile.close()
@@ -213,7 +230,7 @@ def _capture_web(
                 "document.querySelectorAll('#app .card').length >= 1",
                 timeout=15_000,
             )
-            _wait_for_covers(docs_mobile_page, "#app .card-cover-frame img.card-cover", 2)
+            _load_lazy_covers(docs_mobile_page, "#app .card-cover-frame img.card-cover", 2)
             docs_mobile_page.screenshot(path=docs_output_dir / "mobile-recommend.png")
 
             docs_mobile_page.get_by_role("tab", name="画像").click()
@@ -293,7 +310,7 @@ def _capture_extension(
             state="visible",
             timeout=20_000,
         )
-        _wait_for_covers(page, "#recommendationList .recommendation-cover img", 2)
+        _load_lazy_covers(page, "#recommendationList .recommendation-cover img", 2)
         page.screenshot(path=output_dir / "extension-recommend.png")
 
         if docs_output_dir is not None:

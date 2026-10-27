@@ -648,7 +648,6 @@ class CognitionCycle:
         except Exception:
             logger.debug("Daily confusion dedup sweep failed", exc_info=True)
 
-
     def _sync_to_profile(self, result: CognitionCycleResult) -> None:
         """Copy the freshest awareness/insights into the OnionProfile.
 

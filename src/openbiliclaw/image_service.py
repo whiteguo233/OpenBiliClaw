@@ -11,7 +11,6 @@ import asyncio
 import logging
 import os
 import time
-from io import BytesIO
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Response
@@ -25,24 +24,7 @@ app = FastAPI(title="OpenBiliClaw Image Proxy")
 coordinator = ImageFetchCoordinator()
 
 
-def _resize_cover_for_mobile(data: bytes, content_type: str) -> tuple[bytes, str]:
-    """Downscale/compress proxied cover images for mobile bandwidth."""
-    if not data or "image" not in content_type:
-        return data, content_type
-    try:
-        from PIL import Image
-
-        image: Image.Image = Image.open(BytesIO(data))
-        if image.width <= 640:
-            return data, content_type
-        image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-        if image.mode in {"RGBA", "P", "LA"}:
-            image = image.convert("RGB")
-        out = BytesIO()
-        image.save(out, format="JPEG", quality=80, optimize=True)
-        return out.getvalue(), "image/jpeg"
-    except Exception:
-        return data, content_type
+_resize_cover_for_mobile = image_cache.render_cover_for_display
 
 
 @app.get("/api/health")

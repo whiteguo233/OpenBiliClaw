@@ -46,6 +46,10 @@ CACHE_HIT_DISCOUNT: dict[str, float] = {
     "gemini": 0.25,
     "openrouter": 0.50,
     "orcarouter": 0.50,
+    "requesty": 0.50,
+    "api_route": 0.50,
+    "cheaperinference": 0.50,
+    "sponsored": 1.0,
     "ollama": 0.0,  # local; cached or not, cost is 0
 }
 
@@ -82,7 +86,8 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # model names here so the cost report remains useful for them.
         "kimi-k2.6": (0.001, 0.004),
         "kimi-k2.5": (0.001, 0.004),
-        "MiniMax-M3": (0.00432, 0.01728),  # $0.60/$2.40 per M
+        "MiniMax-M3.1-Flash": (0.00108, 0.00432),  # $0.15/$0.60 per M
+        "MiniMax-M3": (0.00432, 0.01728),  # Conservative >512k estimate: $0.60/$2.40 per M
         "MiniMax-M2.7": (0.00216, 0.00864),  # $0.30/$1.20 per M
         "MiniMax-M2.5": (0.00216, 0.00864),
         "qwen-flash": (0.0003, 0.0009),
@@ -94,6 +99,10 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         "yi-medium": (0.0025, 0.0025),
         "yi-large": (0.02, 0.02),
         "default": (0.018, 0.072),
+    },
+    "openai_compatible": {
+        # Direct MiniMax list-price estimate; custom gateways may charge differently.
+        "MiniMax-M3.1-Flash": (0.00108, 0.00432),
     },
     "claude": {
         # USD × 7.2; matches platform.claude.com 2026-05 pricing.
@@ -127,6 +136,12 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # OpenRouter routes vary widely (anywhere from "free" relay of
         # local Ollama to GPT-4o-class). Without knowing the route, use
         # a midrange estimate and let users override per-call.
+        #
+        # Exception: the advertised MiniMax Flash route has a published
+        # list price ($0.15/$0.60 per M, 2026-10-23), so estimating it at
+        # the generic fallback would overstate the cost report for the
+        # exact route model discovery recommends.
+        "minimax/minimax-m3.1-flash": (0.00108, 0.00432),
         "default": (0.005, 0.015),
     },
     "orcarouter": {
@@ -134,12 +149,24 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # ``openai/gpt-4o`` route as a conservative reference estimate.
         "default": (0.018, 0.072),
     },
-    "sponsored": {
-        # Sponsored traffic is covered by the sponsor account, so the
-        # user-facing cost estimate is always zero regardless of the
-        # upstream model's list price.
-        "default": (0.0, 0.0),
+    "requesty": {
+        # Gateway pricing follows the upstream route. Without knowing the
+        # route, use the same midrange estimate as OpenRouter.
+        "default": (0.005, 0.015),
     },
+    "api_route": {
+        # API Route publishes USD rates by model. The default route was
+        # $0.30/$1.80 per M tokens; convert with the same ~7.2 USD/CNY
+        # assumption used above. Other routes use a midrange estimate.
+        "gpt-5.5": (0.00216, 0.01296),
+        "default": (0.005, 0.015),
+    },
+    "cheaperinference": {
+        # Gateway pricing follows the upstream model. Without knowing the
+        # model, use the same midrange estimate as OpenRouter.
+        "default": (0.005, 0.015),
+    },
+    "sponsored": {"default": (0.0, 0.0)},
     "ollama": {
         "default": (0.0, 0.0),
     },
@@ -188,6 +215,8 @@ def estimate_cost(
     non_cached = prompt_tokens - cached_tokens
 
     discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
+    if model in {"MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash"}:
+        discount = 0.10  # $0.015 per M cached input on the direct and OpenRouter list prices.
     return round(
         (non_cached / 1000.0) * input_rate
         + (cached_tokens / 1000.0) * input_rate * discount

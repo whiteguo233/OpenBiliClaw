@@ -1,0 +1,161 @@
+{
+  "scope": "capability-increment",
+  "baseline": "1df4e59f",
+  "verdict": "incremental only",
+  "transport": "normal create_app Uvicorn TCP + registered Chrome extension",
+  "isolated_data": true,
+  "real_model_network_config_preserved": true,
+  "production_data_write_target": false,
+  "upstream_mutations": [],
+  "diagnostic_runs": [
+    {
+      "package_sha256": "cdd6b122d124693093b7164cc61546fa72831fd58620c1a5a513b17314322521",
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty",
+        "tt_follow": "failed",
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "",
+        "tt_collect": "",
+        "tt_follow": "Error: scope_root_not_proven",
+        "tt_history": "history_menu_not_found"
+      },
+      "accepted_rows": 0
+    },
+    {
+      "package_sha256": "6d13b86a57f216c3c3db5258643d3422787b4c485eef3c51d483f3075356b17a",
+      "scope_statuses": {
+        "tt_follow": "empty",
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_follow": "",
+        "tt_history": "history_entry_not_found"
+      },
+      "accepted_rows": 0
+    },
+    {
+      "package_sha256": "f652321826505c07c7f645ee2f3932d66e840e1ce00ee9b6cde7dd62a9a6ba97",
+      "scope_statuses": {
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_history": "history_entry_not_found"
+      },
+      "accepted_rows": 0
+    }
+  ],
+  "production_runs": [
+    {
+      "package_sha256": "7357dc48509cec393d27b7d4452984dc7095379a87c83b4a03c135f6b18451d8",
+      "profile_update": false,
+      "scopes": [
+        "tt_like",
+        "tt_collect",
+        "tt_follow"
+      ],
+      "status": "failed",
+      "error": "task_idle_timeout",
+      "scope_statuses": {
+        "tt_like": "failed",
+        "tt_collect": "failed",
+        "tt_follow": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "sendMessage_failed",
+        "tt_collect": "logged_out",
+        "tt_follow": "task_idle_timeout"
+      },
+      "accepted_rows": 0
+    },
+    {
+      "package_sha256": "7357dc48509cec393d27b7d4452984dc7095379a87c83b4a03c135f6b18451d8",
+      "profile_update": true,
+      "scopes": [
+        "tt_like",
+        "tt_collect",
+        "tt_history",
+        "tt_follow"
+      ],
+      "status": "failed",
+      "error": "sendMessage_failed",
+      "scope_statuses": {
+        "tt_like": "failed",
+        "tt_collect": "failed",
+        "tt_history": "failed",
+        "tt_follow": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "sendMessage_failed",
+        "tt_collect": "Error: scope_root_not_proven",
+        "tt_history": "history_entry_not_found",
+        "tt_follow": "Error: scope_root_not_proven"
+      },
+      "accepted_rows": 0
+    },
+    {
+      "package_sha256": "ce1266b986f60274b103a5e18b1d6d1af98e1e5eabaa5a0df616c666c67cd0bf",
+      "profile_update": false,
+      "scopes": [
+        "tt_like",
+        "tt_collect",
+        "tt_follow"
+      ],
+      "status": "failed",
+      "error": "logged_out",
+      "scope_statuses": {
+        "tt_like": "failed",
+        "tt_collect": "failed",
+        "tt_follow": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "logged_out",
+        "tt_collect": "logged_out",
+        "tt_follow": "logged_out"
+      },
+      "accepted_rows": 0
+    }
+  ],
+  "guided_init": {
+    "running": false,
+    "initialized": false,
+    "reason": "empty_signals",
+    "current_stage": 1,
+    "new_profile_task_created": true
+  },
+  "validation": {
+    "extension_passed": 1791,
+    "extension_failed": 0,
+    "bootstrap_regression_passed": 114,
+    "related_backend_passed": 312,
+    "related_backend_skipped": 37,
+    "docs_index_passed": 5,
+    "chrome_firefox_build_assets": "PASS",
+    "ruff": "PASS",
+    "mypy_318_files": "PASS",
+    "registration_audit": {
+      "PASS": 46,
+      "MANUAL": 14,
+      "NA": 2,
+      "MISSING": 0
+    },
+    "full_backend": {
+      "passed": 10428,
+      "skipped": 65,
+      "failed": 2,
+      "duration_seconds": 2011.94,
+      "failures": {
+        "tests/test_cli.py::test_login_codex_import_uses_source_path": "RemoteProtocolError; targeted retry passed in repair and baseline",
+        "tests/test_web_guided_init.py::test_run_guided_init_bounds_stage1_and_stops_extension_worker": "30ms timing/cancellation assertion also failed in three standalone baseline runs at 1df4e59f"
+      }
+    }
+  },
+  "cleanup": {
+    "original_installed_package_restored": true,
+    "original_package_sha256": "bbb0ac2f943713daa297fefdf36d077cbb1e70109d5a37a13a902236aed90f50",
+    "upstream_mutations": false,
+    "temporary_secrets_and_data_removed": true
+  }
+}

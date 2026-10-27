@@ -7,7 +7,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
-from openbiliclaw.api.runtime_context import build_youtube_discovery_producer
+from openbiliclaw.api.runtime_context import (
+    build_tiktok_discovery_producer,
+    build_youtube_discovery_producer,
+)
 from openbiliclaw.bilibili.api import BilibiliAPIClient
 from openbiliclaw.bilibili.auth import resolve_runtime_cookie
 from openbiliclaw.config import (
@@ -28,6 +31,7 @@ from openbiliclaw.discovery.strategies.strategies import (
     SearchStrategy,
     TrendingStrategy,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
 from openbiliclaw.llm.service import LLMService, module_overrides_from_config
@@ -63,6 +67,7 @@ class OpenClawAdapterServices:
     account_sync_service: AccountSyncService | Any
     event_ingress: EventIngressService | Any
     saved_sync_service: Any = None
+    director_runtime: Any = None
 
 
 def _build_account_sync_x_components(
@@ -156,6 +161,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
         reply_style=str(getattr(soul_cfg, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(config, "language", None)),
         module_overrides=module_overrides,
         llm_concurrency=llm_concurrency,
         llm_concurrency_gate=llm_gate,
@@ -262,6 +268,21 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         serve_outbox=ServeOutbox(config.data_path / "runtime" / "serve_outbox.jsonl"),
         reply_style=str(getattr(soul_cfg, "reply_style", "")),
     )
+    from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+    # Share the same controller/store/provider lifecycle as API and CLI. A
+    # configured route must either build successfully or report its real error.
+    director_mode = getattr(getattr(config, "director", None), "mode", "off")
+    filter_mode = getattr(
+        getattr(getattr(config, "discovery", None), "semantic_filter", None), "mode", "off"
+    )
+    director_runtime = (
+        build_director_runtime(config, database, recommendation_engine, llm_service)
+        if director_mode != "off"
+        or filter_mode != "off"
+        or getattr(config.discovery, "eval_scorer", "llm") == "jev"
+        else None
+    )
 
     from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
 
@@ -271,6 +292,14 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         search_budget_total=30,
     )
     discovery_cfg = getattr(config, "discovery", None)
+    semantic_filter_options: dict[str, Any] = (
+        {
+            "semantic_filter": director_runtime.semantic_filter,
+            "jev_evaluator": director_runtime.jev_evaluator,
+        }
+        if director_runtime
+        else {}
+    )
 
     discovery_engine = ContentDiscoveryEngine(
         llm_service=llm_service,
@@ -279,7 +308,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
         eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
+        **semantic_filter_options,
     )
+    if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+        recommendation_engine.bind_content_evaluator(discovery_engine)
     search_strategy = SearchStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
@@ -359,6 +391,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         candidate_pipeline=candidate_pipeline,
     )
+    tiktok_producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+    )
     runtime_controller: ContinuousRefreshController
 
     async def _drain_one_shot_expression_copy(profile: Any) -> int:
@@ -425,6 +466,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_limit=int(getattr(config.scheduler, "discovery_limit", 30)),
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
+        tiktok_producer=tiktok_producer,
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,
@@ -510,6 +552,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         account_sync_service=account_sync_service,
         event_ingress=event_ingress,
         saved_sync_service=saved_sync_service,
+        director_runtime=director_runtime,
     )
 
 

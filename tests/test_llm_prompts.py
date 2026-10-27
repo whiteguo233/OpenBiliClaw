@@ -107,6 +107,44 @@ def test_build_socratic_dialogue_prompt_includes_dialogue_instructions() -> None
     assert "不能修改 B 站或其他内容平台自身的推荐算法" in messages[0]["content"]
 
 
+@pytest.mark.parametrize("socratic", [True, False])
+@pytest.mark.parametrize("tone", ["", "先问动机再给建议"])
+def test_dialogue_followup_policy_survives_style_and_tone_overrides(
+    socratic: bool, tone: str
+) -> None:
+    """All entry styles retain completion rules, including custom tone blocks."""
+    history = [
+        {"role": "assistant", "content": "你更想看哪类轻松内容？"},
+        {"role": "user", "content": "不知道，你决定吧。"},
+    ]
+    messages = build_socratic_dialogue_prompt(
+        user_message="就按你的推荐来",
+        core_memory_text="",
+        tone_profile=None,
+        history=history,
+        dialogue_tone_prompt=tone,
+        socratic=socratic,
+    )
+    system = messages[0]["content"]
+    for rule in (
+        "画像完整度不是继续追问的理由",
+        "同一需求默认最多澄清一轮",
+        "上下文和可用工具无法补齐",
+        "不猜测参数、不扩大屏蔽或写入范围",
+        "仅选择访谈角色不代表每轮都要采访",
+        "连续提问最多两轮后先总结",
+        "不在总结后附带新问题",
+        "用户让你决定时采用合理默认给结果",
+        "最近的偏好不直接当成永久偏好",
+    ):
+        assert rule in system
+    assert "温和、追问动机" not in system
+    assert "或当前访谈角色需要探索时" not in system
+    assert messages[1:-1] == history  # The model can see the previous question/answer.
+    if tone:
+        assert system.index(tone) < system.index("对话收敛规则")
+
+
 def test_build_recommendation_expression_prompt_mentions_old_friend_tone() -> None:
     """v0.3.28+: tone-profile rendering with 老B友 lives in user_prompt
     instead of system_prompt. System keeps the algorithm-rejection rule."""
@@ -990,6 +1028,48 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
     will then guard its system-prompt stability automatically.
     """
     return [
+        (
+            "build_blue_fish_notice_prompt",
+            dict(
+                persona_name="大肥鱼",
+                persona_prompt="你是一只鱼",
+                reply_rules="说短一点",
+                owner_name="主人",
+                video={"bvid": "BV1xx", "title": "视频 A", "topic": "游戏"},
+            ),
+            dict(
+                persona_name="小蓝",
+                persona_prompt="你是一只害羞的鱼",
+                reply_rules="不要接梗",
+                owner_name="老白",
+                video={"bvid": "BV2yy", "title": "视频 B", "topic": "手工"},
+            ),
+        ),
+        (
+            "build_blue_fish_reply_prompt",
+            dict(
+                persona_name="大肥鱼",
+                persona_prompt="你是一只鱼",
+                reply_rules="说短一点",
+                audience="只想回在找片单的人",
+                trigger="只在评论区认真讨论技术时说话",
+                video={"bvid": "BV1xx", "title": "视频 A", "topic": "游戏"},
+                comments=[{"rpid": 1, "uname": "甲", "like_count": 3, "message": "第一条"}],
+                max_chars=40,
+                allow_top_level=False,
+            ),
+            dict(
+                persona_name="小蓝",
+                persona_prompt="你是一只害羞的鱼",
+                reply_rules="不要接梗",
+                audience="",
+                trigger="",
+                video={"bvid": "BV2yy", "title": "视频 B", "topic": "手工"},
+                comments=[{"rpid": 9, "uname": "乙", "like_count": 30, "message": "第二条"}],
+                max_chars=120,
+                allow_top_level=True,
+            ),
+        ),
         (
             "build_awareness_prompt",
             dict(
@@ -2448,7 +2528,7 @@ class TestDialogueTonePromptReplacement:
         # lead-in segments stay byte-identical.
         for segment in (
             "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
-            "请使用苏格拉底式对话风格",
+            "先回应当前需求；仅当用户主动要求探索时",
             "能力边界：",
             "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
         ):
@@ -2471,3 +2551,46 @@ class TestDialogueTonePromptReplacement:
             build_batch_expression_prompt,
         ):
             assert "dialogue_tone_prompt" not in inspect.signature(builder).parameters
+
+
+def test_blue_fish_reply_prompt_keeps_the_trigger_in_the_user_message() -> None:
+    from openbiliclaw.llm.prompts import build_blue_fish_reply_prompt
+
+    messages = build_blue_fish_reply_prompt(
+        persona_name="大肥鱼",
+        persona_prompt="你是一只鱼",
+        reply_rules="说短一点",
+        trigger="只在评论区认真讨论技术时开口",
+        video={"bvid": "BV1xx", "title": "视频", "topic": "技术"},
+        comments=[{"rpid": 1, "uname": "甲", "like_count": 1, "message": "这段实现有点意思"}],
+        max_chars=40,
+        allow_top_level=False,
+    )
+
+    system, user = messages[0]["content"], messages[1]["content"]
+    assert "<trigger>" in user
+    assert "只在评论区认真讨论技术时开口" in user
+    # The cache contract: per-call trigger never leaks into the static system.
+    assert "<trigger>" not in system
+    assert "只在评论区认真讨论技术时开口" not in system
+
+
+def test_blue_fish_notice_prompt_keeps_the_persona_in_the_user_message() -> None:
+    from openbiliclaw.llm.prompts import build_blue_fish_notice_prompt
+
+    messages = build_blue_fish_notice_prompt(
+        persona_name="大肥鱼",
+        persona_prompt="你是一只慢热的鱼",
+        reply_rules="说短一点",
+        owner_name="littlewish",
+        video={"bvid": "BV1xx", "title": "55 平的院子", "topic": "庭院"},
+    )
+
+    system, user = messages[0]["content"], messages[1]["content"]
+    assert "不是回复网友" in system
+    assert "55 平的院子" in user
+    assert "littlewish" in user
+    assert "你是一只慢热的鱼" in user
+    # Cache contract: per-call persona / owner / video never leak into system.
+    assert "littlewish" not in system
+    assert "55 平的院子" not in system

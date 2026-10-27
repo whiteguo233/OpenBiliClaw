@@ -91,6 +91,85 @@ def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -
     assert database.admission_min_score == 0.72
 
 
+@pytest.mark.parametrize(
+    ("terminal_status", "error", "expected_code"),
+    [
+        ("failed", "response_envelope_unobserved", 1),
+        ("failed", "rate_limited", 1),
+        ("failed", "challenge_required", 1),
+        ("failed", "login_required", 1),
+        ("failed", "html_response", 1),
+        ("empty", "", 0),
+    ],
+)
+def test_instagram_discover_browser_result_exit_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_status: str,
+    error: str,
+    expected_code: int,
+) -> None:
+    """Exercise the real CLI, producer and queue, replacing only browser transport."""
+    import urllib.request
+
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.sources.instagram_tasks import InstagramTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    config = config_module.Config()
+    config.llm.deepseek.api_key = "test-not-a-secret"
+    config.llm.deepseek.model = "deepseek-chat"
+    config.llm.deepseek.base_url = "http://127.0.0.1:1/v1"
+    config.sources.instagram.enabled = True
+    config.sources.instagram.source_modes = ("topic",)
+    config_module.save_config(config, tmp_path / "config.toml")
+
+    database = Database(config.data_path / "openbiliclaw.db")
+    database.initialize()
+    memory = MemoryManager(config.data_path, database=database)
+    memory.initialize()
+    profile = OnionProfile()
+    profile.populate_from_flat_preference(
+        {"interests": [{"name": "technology", "category": "technology", "weight": 1.0}]}
+    )
+    layer = memory.get_layer("soul")
+    layer.data.update(profile.to_dict())
+    layer.save()
+    queue = InstagramTaskQueue(database)
+
+    def browser_result(request: urllib.request.Request, **_kwargs: Any) -> io.BytesIO:
+        assert request.full_url.endswith("/api/sources/instagram/kick")
+        task = queue.next_pending()
+        assert task is not None
+        queue.stage_final_result(
+            task["id"],
+            claim_token=task["claim_token"],
+            terminal_status=terminal_status,
+            error=error,
+            items=[],
+            debug={
+                "response_observed": terminal_status == "empty",
+                "terminal_evidence": "all_collections_terminal"
+                if terminal_status == "empty"
+                else "response_unobserved",
+            },
+        )
+        assert queue.complete(task["id"], claim_token=task["claim_token"])
+        return io.BytesIO(b"{}")
+
+    async def forbidden_http(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("A failed browser task must not call an upstream API or LLM")
+
+    monkeypatch.setattr(urllib.request, "urlopen", browser_result)
+    monkeypatch.setattr(httpx.AsyncClient, "send", forbidden_http)
+    result = CliRunner().invoke(
+        app, ["discover", "--source", "instagram", "--limit", "2", "--force"]
+    )
+    assert (error or "返回为空") in result.output
+    assert result.exit_code == expected_code
+
+
 class _FakeMemoryLayer:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
@@ -917,6 +996,43 @@ def test_recommend_reports_clear_config_error(
     assert result.exit_code == 1
     assert "配置错误" in result.stdout
     assert "llm.openai.api_key" in result.stdout
+
+
+def test_language_command_canonicalizes_and_saves(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    cfg = config_module.Config()
+    persisted: list[str] = []
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        config_module,
+        "save_config",
+        lambda config, *args, **kwargs: persisted.append(config.language) or "/tmp/config.toml",
+    )
+    monkeypatch.delenv("OPENBILICLAW_LANG", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_LANGUAGE", raising=False)
+
+    result = runner.invoke(app, ["language", "zh-TW"])
+
+    assert result.exit_code == 0
+    assert cfg.language == "zh-Hant"
+    assert persisted == ["zh-Hant"]
+    assert "zh-Hant" in result.stdout
+
+
+def test_language_command_rejects_unknown_locale(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    cfg = config_module.Config()
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.delenv("OPENBILICLAW_LANG", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_LANGUAGE", raising=False)
+
+    result = runner.invoke(app, ["language", "klingon"])
+
+    assert result.exit_code == 2
+    assert cfg.language == "zh"
+    assert "klingon" in result.stdout
 
 
 def test_config_show_displays_registered_providers(
@@ -2172,6 +2288,7 @@ def test_runtime_builders_share_database_instance(
             concurrency_gate: object | None = None,
             reply_style: str = "",
             dialogue_tone_prompt: str = "",
+            output_language: str = "",
         ) -> None:
             self.registry = registry
             self.memory = memory
@@ -2181,6 +2298,7 @@ def test_runtime_builders_share_database_instance(
             self.concurrency_gate = concurrency_gate
             self.reply_style = reply_style
             self.dialogue_tone_prompt = dialogue_tone_prompt
+            self.output_language = output_language
 
     class FakeRecommendationEngine:
         def __init__(
@@ -2536,6 +2654,87 @@ def test_discover_douyin_uses_formal_producer_and_ignores_scheduler_master_switc
     monkeypatch.setenv("TEST_DY_COOKIE", "sessionid=test;")
 
     result = runner.invoke(app, ["discover", "--source", "douyin", "--limit", "7"])
+
+    assert result.exit_code == 0
+    assert captured["enabled_override"] is True
+    assert captured["limit"] == 7
+    assert "正式 producer" in result.stdout
+    assert "本轮分支正常完成" in result.stdout
+
+
+def test_discover_tiktok_requires_enabled_config(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = False
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok"])
+
+    assert result.exit_code == 1
+    assert "TikTok discovery 未启用" in result.stdout
+
+
+def test_discover_tiktok_uses_formal_producer_and_ignores_scheduler_master_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = True
+    config.scheduler.enabled = False
+    captured: dict[str, object] = {}
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDatabase:
+        conn = object()
+
+    class FakePipeline:
+        last_admitted_items: list[DiscoveredContent] = []
+
+    class FakeProducer:
+        async def produce_if_due(self, *, limit: int) -> dict[str, object]:
+            captured["limit"] = limit
+            return {
+                "reason": "ok",
+                "discovered": 0,
+                "enqueued": 0,
+                "source_counts": {},
+            }
+
+    def fake_build_producer(**kwargs: object) -> FakeProducer:
+        captured.update(kwargs)
+        return FakeProducer()
+
+    import openbiliclaw.api.runtime_context as runtime_context_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine())
+    monkeypatch.setattr(cli_module, "_build_discovery_engine", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_usage_recorder", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_candidate_pipeline",
+        lambda **kwargs: FakePipeline(),
+    )
+    monkeypatch.setattr(
+        runtime_context_module,
+        "build_tiktok_discovery_producer",
+        fake_build_producer,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok", "--limit", "7"])
 
     assert result.exit_code == 0
     assert captured["enabled_override"] is True
@@ -3933,7 +4132,9 @@ def test_init_guides_missing_runtime_config_interactively(
         raising=False,
     )
 
-    # Wizard + source-prompt inputs:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
+    # Wizard + source-prompt inputs (accept the language first):
     #   1. menu choice: "gemini"
     #   2. API key
     #   3. model (accept default)
@@ -3942,8 +4143,8 @@ def test_init_guides_missing_runtime_config_interactively(
     #   6. "y" — allow LAN access
     #   7-9. "" — accept Bili history/favorite/follow init limits
     #   10+. "n" — skip optional source prompts
-    #               (xhs / douyin / youtube / X / zhihu / reddit /
-    #                Linux.do / v2ex / weibo / bangumi / GitHub)
+    #               (xhs / douyin / youtube / tiktok / X / zhihu / reddit /
+    #                Linux.do / v2ex / weibo / bangumi / GitHub / Instagram)
     wizard_input = (
         "\n".join(
             [
@@ -3967,11 +4168,12 @@ def test_init_guides_missing_runtime_config_interactively(
                 "n",
                 "n",
                 "n",
+                "n",
             ]
         )
         + "\n"
     )
-    result = runner.invoke(app, ["init"], input=wizard_input)
+    result = runner.invoke(app, ["init"], input="\n" + wizard_input + "n\n")
 
     assert result.exit_code == 1
     assert captured["provider"] == "gemini"
@@ -3984,6 +4186,8 @@ def test_init_guides_missing_runtime_config_interactively(
 def test_init_guides_missing_auth_interactively(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
     class FakeAuthManager:
         def __init__(self) -> None:
             self.saved_cookie = ""
@@ -4047,13 +4251,13 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX /
-    # Weibo / Bangumi / GitHub so this test stays focused on the cookie-prompt
+    # to XHS / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / V2EX /
+    # Weibo / Bangumi / GitHub / Instagram so this test stays focused on the cookie-prompt
     # path.
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\n",
+        input="\n2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
     )
 
     assert result.exit_code == 1
@@ -5271,6 +5475,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "xiaohongshu": 3,
         "douyin": 1,
         "youtube": 5,
+        "tiktok": 1,
         # twitter carries its default share (1) even when not in the import's
         # enabled_sources; effective_pool_source_shares drops it while disabled.
         "twitter": 1,
@@ -5281,6 +5486,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 
@@ -5318,6 +5524,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "tiktok": 1,
         # Optional disabled sources carry their default share (1); dropped
         # later while disabled.
         "twitter": 1,
@@ -5328,6 +5535,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 

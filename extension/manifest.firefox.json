@@ -33,6 +33,8 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
+        "https://*.instagram.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",
@@ -119,6 +121,15 @@
         },
         {
             "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "content/tiktok.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
                 "*://*.youtube.com/*"
             ],
             "js": [
@@ -172,6 +183,25 @@
                 "content/v2ex.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "content/instagram.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "https://*.instagram.com/*"
+            ],
+            "js": [
+                "main/instagram-response-tap.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
         },
         {
             "matches": [

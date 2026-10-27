@@ -8,15 +8,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, cast
 from urllib.parse import quote, urlencode, urlparse
 from xml.etree import ElementTree
 
 import httpx
+
+from openbiliclaw.bilibili.search_backoff import (
+    mark_search_recovery_probe,
+    persist_shared_backoff,
+    read_shared_backoff,
+    snapshot_from_monotonic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +196,13 @@ class FollowingUser:
 
 @dataclass
 class CommentInfo:
-    """Basic comment info."""
+    """Basic comment info.
+
+    ``rpid`` / ``root`` / ``parent`` are the ids needed to answer a comment
+    inside its thread: ``root`` is the thread's top-level reply and
+    ``parent`` the reply being answered. They default to 0 so older callers
+    that only read ``message`` / ``uname`` keep working unchanged.
+    """
 
     mid: int
     uname: str
@@ -196,6 +211,32 @@ class CommentInfo:
     ctime: int = 0
     reply_count: int = 0
     avatar: str = ""
+    rpid: int = 0
+    root: int = 0
+    parent: int = 0
+
+
+# B站 caps a reply page regardless of ``ps``; 20 is the documented page size.
+_COMMENT_PAGE_SIZE = 20
+# Paging is bounded so one fish turn can never turn into an unbounded walk
+# through a hot comment section.
+_COMMENT_MAX_PAGES = 5
+
+
+def _comment_from_reply(reply: dict[str, Any]) -> CommentInfo:
+    """Project one ``/x/v2/reply/main`` reply object onto :class:`CommentInfo`."""
+    return CommentInfo(
+        mid=_int_value(reply.get("mid")),
+        uname=str(_json_object(reply.get("member", {})).get("uname", "")),
+        message=str(_json_object(reply.get("content", {})).get("message", "")),
+        like_count=_int_value(reply.get("like")),
+        ctime=_int_value(reply.get("ctime")),
+        reply_count=_int_value(reply.get("rcount")),
+        avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+        rpid=_int_value(reply.get("rpid")),
+        root=_int_value(reply.get("root")),
+        parent=_int_value(reply.get("parent")),
+    )
 
 
 class BilibiliAPIClient:
@@ -206,6 +247,8 @@ class BilibiliAPIClient:
     """
 
     _BASE_URL = "https://api.bilibili.com"
+    # Private messages live on a different host (same cookie / csrf).
+    _VC_BASE_URL = "https://api.vc.bilibili.com"
     DEFAULT_USER_AGENT: ClassVar[str] = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -229,6 +272,21 @@ class BilibiliAPIClient:
     _search_cooldown_level: ClassVar[int] = 0
     _search_voucher_block_streak: ClassVar[int] = 0
     _search_dom_fallback_until: ClassVar[float] = 0.0
+    # Recovery-probe bookkeeping: a lifted block is discovered by one probe
+    # request halfway through the cooldown window instead of idling the full
+    # (up to 1800s) cooldown out. Wall/mono anchors for the active window and
+    # whether this process already spent the in-memory fallback probe.
+    _search_cooldown_activated_mono: ClassVar[float] = 0.0
+    _search_cooldown_activated_wall: ClassVar[float] = 0.0
+    _search_cooldown_probe_used: ClassVar[bool] = False
+    # Process-wide LRU for /view payloads: one discovery round resolves the
+    # same bvid through get_video_info() (scoring), _resolve_aid() (save
+    # writes), cid lookup (danmaku/subtitle/play) and the API layer, each of
+    # which used to re-issue the request. The key carries a SESSDATA
+    # fingerprint because anonymous and authenticated responses can differ.
+    _VIEW_DATA_CACHE_TTL_SECONDS: ClassVar[float] = 600.0
+    _VIEW_DATA_CACHE_MAX_ENTRIES: ClassVar[int] = 512
+    _view_data_cache: ClassVar[OrderedDict[str, tuple[float, dict[str, Any]]]] = OrderedDict()
     _WBI_MIXIN_KEY_ENC_TAB = [
         46,
         47,
@@ -344,13 +402,115 @@ class BilibiliAPIClient:
         self._last_request_at = time.monotonic()
 
     @classmethod
+    def _merge_shared_backoff(cls) -> None:
+        """Adopt any stricter backoff another process persisted to disk.
+
+        The CLI runs API server + worker + discovery worker as separate
+        processes, each with its own copy of the ClassVars below; the shared
+        state file lets a 412 hard cooldown (or a v_voucher soft cooldown) in
+        one process back off all of them. On-disk deadlines are wall-clock
+        epochs (``time.monotonic()`` is not comparable across processes) and
+        merge with ``max`` so the most conservative process wins; the
+        escalation counters only merge while they still belong to a live
+        incident. Any I/O failure leaves the in-process state untouched.
+        """
+        shared = read_shared_backoff()
+        if shared is None:
+            return
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        cooldown_remaining = shared.cooldown_until - now_wall
+        if cooldown_remaining > cls._search_cooldown_until - now_monotonic:
+            cls._search_cooldown_until = now_monotonic + cooldown_remaining
+        fallback_remaining = shared.dom_fallback_until - now_wall
+        if fallback_remaining > cls._search_dom_fallback_until - now_monotonic:
+            cls._search_dom_fallback_until = now_monotonic + fallback_remaining
+        if shared.counters_fresh(now_wall):
+            cls._search_cooldown_level = max(cls._search_cooldown_level, shared.cooldown_level)
+            cls._search_voucher_block_streak = max(
+                cls._search_voucher_block_streak,
+                shared.voucher_block_streak,
+            )
+        cls._search_cooldown_activated_wall = max(
+            cls._search_cooldown_activated_wall,
+            shared.activated_at,
+        )
+
+    @classmethod
+    def _persist_search_backoff(cls, *, reset_counters: bool = False) -> None:
+        """Mirror the in-process backoff state to the shared state file."""
+        persist_shared_backoff(
+            snapshot_from_monotonic(
+                cooldown_until=cls._search_cooldown_until,
+                cooldown_level=cls._search_cooldown_level,
+                voucher_block_streak=cls._search_voucher_block_streak,
+                dom_fallback_until=cls._search_dom_fallback_until,
+                activated_at=cls._search_cooldown_activated_wall,
+            ),
+            reset_counters=reset_counters,
+        )
+
+    @classmethod
+    def _consume_search_recovery_probe(cls) -> bool:
+        """Allow exactly one probe request halfway through an active cooldown.
+
+        A 412 / v_voucher cooldown can outlast the actual block (up to the
+        1800s ceiling); probing once at the window's midpoint discovers a
+        lifted block in about half the time while costing at most one request
+        per window. The probe budget is shared across processes through the
+        state file; with persistence disabled it falls back to one probe per
+        process per window.
+        """
+        shared = read_shared_backoff()
+        if shared is not None:
+            due = shared.probe_due_at()
+            if due <= 0.0:
+                return False
+            now = time.time()
+            if now < due or shared.last_probe_at >= due:
+                return False
+            mark_search_recovery_probe(now)
+            return True
+        if cls._search_cooldown_probe_used or cls._search_cooldown_activated_mono <= 0.0:
+            return False
+        window = cls._search_cooldown_until - cls._search_cooldown_activated_mono
+        if window <= 0.0:
+            return False
+        if time.monotonic() < cls._search_cooldown_activated_mono + window / 2:
+            return False
+        cls._search_cooldown_probe_used = True
+        return True
+
+    @classmethod
+    def _clear_search_cooldown_after_probe(cls) -> None:
+        """Clear the whole cooldown once a recovery probe proved search healthy."""
+        cls._search_cooldown_until = 0.0
+        cls._search_dom_fallback_until = 0.0
+        cls._search_cooldown_level = 0
+        cls._search_voucher_block_streak = 0
+        cls._search_cooldown_activated_mono = 0.0
+        cls._search_cooldown_activated_wall = 0.0
+        cls._search_cooldown_probe_used = False
+        persist_shared_backoff(
+            snapshot_from_monotonic(
+                cooldown_until=0.0,
+                cooldown_level=0,
+                voucher_block_streak=0,
+                dom_fallback_until=0.0,
+            ),
+            clear=True,
+        )
+
+    @classmethod
     def search_cooldown_remaining(cls) -> float:
-        """Seconds remaining in the process-wide Bilibili search cooldown."""
+        """Seconds remaining in the shared Bilibili search cooldown."""
+        cls._merge_shared_backoff()
         return max(0.0, cls._search_cooldown_until - time.monotonic())
 
     @classmethod
     def search_dom_fallback_remaining(cls) -> float:
         """Seconds remaining while rendered-page search fallback is preferred."""
+        cls._merge_shared_backoff()
         return max(0.0, cls._search_dom_fallback_until - time.monotonic())
 
     @classmethod
@@ -361,11 +521,13 @@ class BilibiliAPIClient:
         search may keep probing, but the browser extension can backfill via a
         rendered search page while the API path looks degraded.
         """
+        cls._merge_shared_backoff()
         duration = cls._SEARCH_DOM_FALLBACK_SECONDS if seconds is None else seconds
         cls._search_dom_fallback_until = max(
             cls._search_dom_fallback_until,
             time.monotonic() + duration,
         )
+        cls._persist_search_backoff()
         return duration
 
     @classmethod
@@ -376,6 +538,7 @@ class BilibiliAPIClient:
         longer hard-cooldown base); the escalation multiplier and absolute
         ceiling are shared across both causes.
         """
+        cls._merge_shared_backoff()
         cls._search_cooldown_level = min(cls._search_cooldown_level + 1, 3)
         base = cls._SEARCH_COOLDOWN_BASE_SECONDS if base_seconds is None else base_seconds
         duration = min(
@@ -386,6 +549,11 @@ class BilibiliAPIClient:
             cls._search_cooldown_until,
             time.monotonic() + duration,
         )
+        cls._search_cooldown_activated_mono = time.monotonic()
+        cls._search_cooldown_activated_wall = time.time()
+        cls._search_cooldown_probe_used = False
+        # Persists the whole snapshot (cooldown deadline included) via the
+        # dom-fallback activation below.
         cls._activate_search_dom_fallback(seconds=duration)
         return duration
 
@@ -400,7 +568,9 @@ class BilibiliAPIClient:
         not an IP-level block, and must not strand the search round +
         explore for the full cooldown.
         """
+        cls._merge_shared_backoff()
         cls._search_voucher_block_streak += 1
+        cls._persist_search_backoff()
         if cls._search_voucher_block_streak >= cls._SEARCH_VOUCHER_BLOCK_THRESHOLD:
             return cls._activate_search_cooldown()
         return 0.0
@@ -410,6 +580,7 @@ class BilibiliAPIClient:
         """Reset escalation + the v_voucher streak once search succeeds again."""
         cls._search_cooldown_level = 0
         cls._search_voucher_block_streak = 0
+        cls._persist_search_backoff(reset_counters=True)
 
     @staticmethod
     def _sanitized_http_error(
@@ -574,6 +745,22 @@ class BilibiliAPIClient:
         sanitized["w_rid"] = hashlib.md5((query + mixin_key).encode()).hexdigest()
         return sanitized
 
+    async def get_space_profile(self, mid: int) -> dict[str, Any]:
+        """Return a public user profile (``name`` / ``mid`` / ``sign``) by mid.
+
+        Uses the WBI-signed ``/x/space/wbi/acc/info`` endpoint, which answers
+        anonymously. The Blue Fish Lab needs the owner's nickname to @ them
+        when the owner's own cookie has expired; it must not require that
+        cookie just to read a public display name.
+        """
+
+        target = int(mid)
+        if target <= 0:
+            raise ValueError("mid 不合法")
+        img_key, sub_key = await self._get_wbi_keys()
+        params = self._sign_wbi_params({"mid": target}, img_key=img_key, sub_key=sub_key)
+        return await self._get_json("/x/space/wbi/acc/info", params=params)
+
     async def get_nav_info(self) -> NavInfo:
         """Get the current login state from Bilibili nav API."""
         data = await self._get_json("/x/web-interface/nav")
@@ -583,6 +770,31 @@ class BilibiliAPIClient:
             mid=int(data.get("mid", 0)),
         )
 
+    def _view_cache_key(self, bvid: str) -> str:
+        """Cache key scoped by login identity: anon and authed /view payloads differ."""
+        sessdata = _cookie_value(self._cookie, "SESSDATA")
+        identity = hashlib.sha256(sessdata.encode()).hexdigest()[:12] if sessdata else "anon"
+        return f"{identity}:{bvid}"
+
+    @classmethod
+    def _view_cache_get(cls, key: str) -> dict[str, Any] | None:
+        entry = cls._view_data_cache.get(key)
+        if entry is None:
+            return None
+        fetched_at, payload = entry
+        if time.monotonic() - fetched_at > cls._VIEW_DATA_CACHE_TTL_SECONDS:
+            cls._view_data_cache.pop(key, None)
+            return None
+        cls._view_data_cache.move_to_end(key)
+        return payload
+
+    @classmethod
+    def _view_cache_put(cls, key: str, payload: dict[str, Any]) -> None:
+        cls._view_data_cache[key] = (time.monotonic(), payload)
+        cls._view_data_cache.move_to_end(key)
+        while len(cls._view_data_cache) > cls._VIEW_DATA_CACHE_MAX_ENTRIES:
+            cls._view_data_cache.popitem(last=False)
+
     async def get_video_view_data(self, bvid: str) -> dict[str, Any]:
         """Fetch the /view data object, falling back to the WBI-signed endpoint.
 
@@ -590,9 +802,19 @@ class BilibiliAPIClient:
         for a given network/IP (HTTP 412). The WBI-signed sibling
         ``/x/web-interface/wbi/view`` is still accepted by the web API and is
         the standard web client path for this payload.
+
+        Successful payloads are cached process-wide for
+        ``_VIEW_DATA_CACHE_TTL_SECONDS`` (keyed by bvid + login identity) so a
+        discovery round that touches the same video through scoring, danmaku,
+        play info and save writes only issues one request; failures are never
+        cached.
         """
+        key = self._view_cache_key(bvid)
+        cached = self._view_cache_get(key)
+        if cached is not None:
+            return cached
         try:
-            return await self._get_json("/x/web-interface/view", params={"bvid": bvid})
+            data = await self._get_json("/x/web-interface/view", params={"bvid": bvid})
         except BilibiliAPIError as exc:
             if exc.code != -412:
                 raise
@@ -602,10 +824,12 @@ class BilibiliAPIClient:
             )
             img_key, sub_key = await self._get_wbi_keys()
             signed = self._sign_wbi_params({"bvid": bvid}, img_key=img_key, sub_key=sub_key)
-            return await self._get_json(
+            data = await self._get_json(
                 "/x/web-interface/wbi/view",
                 params=signed,
             )
+        self._view_cache_put(key, data)
+        return data
 
     async def get_video_info(self, bvid: str) -> VideoInfo:
         """Get video information by BV ID.
@@ -776,14 +1000,20 @@ class BilibiliAPIClient:
             video_items = dash.get("video", []) or []
             audio_items = dash.get("audio", []) or []
             if isinstance(video_items, list) and video_items:
+                # DASH responses contain several qualities even when qn is
+                # explicit. Choose that quality first, then its preferred
+                # codec; the first AVC stream may be a different resolution.
+                candidates = [item for item in video_items if isinstance(item, dict)]
+                matching_quality = [
+                    item for item in candidates if int(item.get("id", 0) or 0) == qn
+                ]
+                candidates = matching_quality or candidates
                 preferred = []
-                for item in video_items:
-                    if not isinstance(item, dict):
-                        continue
+                for item in candidates:
                     codec = str(item.get("codecs", "") or "")
                     if codec.lower().startswith(preferred_codec.lower()):
                         preferred.append(item)
-                chosen = preferred[0] if preferred else video_items[0]
+                chosen = (preferred or candidates)[0] if candidates else None
                 if isinstance(chosen, dict):
                     video = {
                         "qn": int(chosen.get("id", 0) or 0),
@@ -939,28 +1169,31 @@ class BilibiliAPIClient:
                 code=int(payload.get("code", 0) or 0),
             )
         data = _json_object(payload.get("data", {}))
-        inner_code = int(data.get("code", 86101) or 86101)
+        inner_code = int(data.get("code", 86101))
         message = str(data.get("message", "") or "")
-        if inner_code in {0, 86101}:
-            status = "pending"
-            if inner_code == 0:
-                status = "confirmed"
-            elif data.get("url"):
-                # Some clients use 86101 as "not scanned yet"; the URL only
-                # appears once the scan is confirmed.
-                status = "confirmed"
-        elif inner_code == 86090:
-            status = "scanned"
-        elif inner_code == 86038:
-            status = "expired"
-        else:
-            status = "pending"
+        status = {
+            0: "confirmed",
+            86101: "pending",
+            86090: "scanned",
+            86038: "expired",
+        }.get(inner_code, "pending")
+        # Web QR login can deliver credentials via Set-Cookie instead of URL
+        # parameters. Only use this response, never a previous account's jar.
+        allowed = {"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "sid"}
+        cookie = (
+            "; ".join(
+                f"{item.name}={item.value}" for item in resp.cookies.jar if item.name in allowed
+            )
+            if status == "confirmed"
+            else ""
+        )
         return {
             "status": status,
             "message": message,
             "url": str(data.get("url", "") or ""),
             "qrcode_key": qrcode_key,
             "raw_code": inner_code,
+            "cookie": cookie,
         }
 
     async def search(
@@ -984,13 +1217,27 @@ class BilibiliAPIClient:
             List of search result dicts.
         """
         cooldown_remaining = self.search_cooldown_remaining()
+        probe = False
         if cooldown_remaining > 0:
-            logger.info(
-                "Bilibili search cooldown active (%.0fs left) — skipping query=%r",
-                cooldown_remaining,
-                keyword,
-            )
-            return []
+            if type(self)._consume_search_recovery_probe():
+                # Halfway through the cooldown: one single-attempt probe to
+                # discover a lifted block early instead of idling the full
+                # window out. A failed probe simply re-arms the cooldown via
+                # the normal 412 / v_voucher handlers below.
+                probe = True
+                logger.info(
+                    "Bilibili search recovery probe: cooldown has %.0fs left — "
+                    "testing recovery with a single request (query=%r)",
+                    cooldown_remaining,
+                    keyword,
+                )
+            else:
+                logger.info(
+                    "Bilibili search cooldown active (%.0fs left) — skipping query=%r",
+                    cooldown_remaining,
+                    keyword,
+                )
+                return []
 
         # v0.3.55+: 3 attempts with exponential backoff (was 2 with 1.5s
         # linear). Production logs (2026-05-05) showed 141 v_voucher
@@ -1007,7 +1254,7 @@ class BilibiliAPIClient:
         # (streak>0) we drop to a single quick probe — confirming a real
         # storm in a few fast attempts instead of hammering B站 with doomed
         # ~21s retry chains per keyword (which would only deepen the block).
-        max_attempts = 1 if type(self)._search_voucher_block_streak > 0 else 3
+        max_attempts = 1 if probe or type(self)._search_voucher_block_streak > 0 else 3
         backoff_schedule = (1.5, 5.0, 15.0)
         for attempt in range(max_attempts):
             try:
@@ -1097,7 +1344,14 @@ class BilibiliAPIClient:
                 return []
 
             results = _json_list(data.get("result", []))
-            self._reset_search_cooldown_backoff()
+            if probe:
+                self._clear_search_cooldown_after_probe()
+                logger.info(
+                    "Bilibili search recovery probe succeeded (query=%r) — cooldown cleared",
+                    keyword,
+                )
+            else:
+                self._reset_search_cooldown_backoff()
             if not results:
                 logger.debug("Search returned empty result for query=%r", keyword)
             return results
@@ -1468,26 +1722,47 @@ class BilibiliAPIClient:
         return _json_list(data.get("list", []))
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
-        """Get the top comments for a video."""
+        """Get up to ``limit`` top comments for a video, following cursor pages.
+
+        B站's ``/x/v2/reply/main`` returns at most one page per request and
+        silently caps ``ps``, so the only way to actually receive ``limit``
+        comments is to walk ``cursor.next``. Paging stops on the API's
+        ``is_end`` flag, on a missing/zero cursor (the old single-page shape),
+        on an empty page, or after :data:`_COMMENT_MAX_PAGES` pages — a hot
+        comment section must not turn one fish turn into N requests.
+        """
         video = await self.get_video_info(bvid)
-        data = await self._get_json(
-            "/x/v2/reply/main",
-            params={"oid": video.aid, "type": 1, "mode": 3, "ps": limit},
-        )
-        replies = _json_list(data.get("replies", []))
-        comments = [
-            CommentInfo(
-                mid=int(reply.get("mid", 0)),
-                uname=str(_json_object(reply.get("member", {})).get("uname", "")),
-                message=str(_json_object(reply.get("content", {})).get("message", "")),
-                like_count=int(reply.get("like", 0)),
-                ctime=int(reply.get("ctime", 0)),
-                reply_count=int(reply.get("rcount", 0)),
-                avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+        comments: list[CommentInfo] = []
+        next_page = 0
+        seen_pages: set[int] = set()
+        for _ in range(_COMMENT_MAX_PAGES):
+            remaining = max(0, int(limit) - len(comments))
+            if remaining == 0:
+                break
+            if next_page in seen_pages:
+                break
+            seen_pages.add(next_page)
+            data = await self._get_json(
+                "/x/v2/reply/main",
+                params={
+                    "oid": video.aid,
+                    "type": 1,
+                    "mode": 3,
+                    "ps": min(_COMMENT_PAGE_SIZE, remaining),
+                    "next": next_page,
+                },
             )
-            for reply in replies
-        ]
-        return comments[:limit]
+            replies = _json_list(data.get("replies", []))
+            if not replies:
+                break
+            comments.extend(_comment_from_reply(reply) for reply in replies)
+            cursor = _json_object(data.get("cursor", {}))
+            if bool(cursor.get("is_end", False)):
+                break
+            next_page = _int_value(cursor.get("next"))
+            if next_page <= 0:
+                break
+        return comments[: max(0, int(limit))]
 
     async def get_video_relation_state(self, bvid: str) -> dict[str, Any]:
         """Get the logged-in user's like/coin/favorite/watch-later state."""
@@ -1618,6 +1893,116 @@ class BilibiliAPIClient:
         if parent is not None and int(parent) > 0:
             data["parent"] = str(int(parent))
         return await self._post_json("/x/v2/reply/add", data=data)
+
+    async def get_reply_notifications(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent ``回复我的 / @我`` notifications for this account.
+
+        ``/x/msgfeed/reply`` is the B站 message-center feed. Each item carries
+        ``item.at_details`` (the users @-ed in that comment), ``item.subject_id``
+        (the commented object id — video comments use ``aid``) and ``user``
+        (the commenter). The Blue Fish owner-notice integration check reads
+        this feed to prove a mention really arrived; production code does not
+        depend on it.
+
+        Args:
+            limit: Maximum number of newest items to return.
+
+        Returns:
+            Raw notification items, newest first.
+        """
+
+        data = await self._get_json(
+            "/x/msgfeed/reply",
+            params={"build": 0, "mobi_app": "web", "platform": "web"},
+        )
+        items = data.get("items")
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)][: max(0, int(limit))]
+
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]:
+        """Send one text private message from this account to ``uid``.
+
+        The chat endpoint lives on ``api.vc.bilibili.com`` (not the main API
+        host) and uses the same session cookie + csrf token as the comment
+        API. Used by the Blue Fish Lab's "private message the owner" delivery
+        channel.
+
+        Args:
+            uid: Receiver mid.
+            text: Plain-text body (B站 caps a message at 1000 characters).
+
+        Returns:
+            The decoded ``data`` object.
+
+        Raises:
+            BilibiliAPIError: upstream rejected the message (rate limit, risk
+                control, receiver restrictions, …).
+            BilibiliAuthExpiredError: the cookie is no longer logged in.
+        """
+
+        target = int(uid)
+        if target <= 0:
+            raise ValueError("私信接收者 mid 不合法")
+        body = str(text).strip()
+        if not body:
+            raise ValueError("私信内容不能为空")
+        if len(body) > 1000:
+            raise BilibiliAPIError("私信内容过长（最多 1000 字）")
+        sender = _cookie_value(self._cookie, "DedeUserID")
+        if not sender:
+            raise BilibiliAuthExpiredError(
+                "发送私信需要登录 Cookie（缺少 DedeUserID）",
+                code=-101,
+            )
+        csrf = self._csrf_token()
+        await self._respect_rate_limit()
+        try:
+            resp = await self._client.post(
+                f"{self._VC_BASE_URL}/web_im/v1/web_im/send_msg",
+                data={
+                    "msg[sender_uid]": sender,
+                    "msg[receiver_id]": str(target),
+                    "msg[receiver_type]": "1",
+                    "msg[msg_type]": "1",
+                    "msg[msg_status]": "0",
+                    "msg[content]": json.dumps({"content": body}, ensure_ascii=False),
+                    "msg[timestamp]": str(int(time.time())),
+                    # B站 rejects a message without a device id with
+                    # ``-400 请求错误``. Derive a stable one from the sender so
+                    # every message from this account looks like one device.
+                    "msg[dev_id]": "web_" + hashlib.md5(f"fish:{sender}".encode()).hexdigest()[:16],
+                    "csrf": csrf,
+                    "csrf_token": csrf,
+                },
+                headers={"referer": "https://www.bilibili.com"},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._sanitized_http_error("POST", "web_im/send_msg", exc) from exc
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid JSON on web_im/send_msg") from exc
+        if not isinstance(payload, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        try:
+            code = int(payload.get("code", 0))
+        except (TypeError, ValueError) as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid code on web_im/send_msg") from exc
+        if code == -101:
+            raise BilibiliAuthExpiredError("Bilibili login required to send a message", code=code)
+        if code != 0:
+            raise BilibiliAPIError(
+                str(payload.get("message") or "send private message failed"), code=code
+            )
+        data = payload.get("data")
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        return cast("dict[str, Any]", data)
 
     async def delete_comment(self, bvid: str, rpid: int) -> None:
         """Delete one of the current user's comments (``/x/v2/reply/del``)."""

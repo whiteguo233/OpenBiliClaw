@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
@@ -46,6 +46,7 @@ from .schemas import (
     InterestProbeItem,
     InterestProbeResponse,
     PlatformAvailabilityResponse,
+    PresentationResponse,
     ProfileEditRequest,
     ProfileEditResponse,
     ProfileEditStateResponse,
@@ -65,6 +66,9 @@ from .schemas import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from openbiliclaw.recommendation.director.runtime import DirectorRuntime
+    from openbiliclaw.recommendation.director.store import BatchInstance
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +289,152 @@ class OpenClawAdapter:
 
     services: SupportsOpenClawServices
     refresh_timeout_seconds: float = 45.0
+    _closed: bool = field(default=False, init=False)
+
+    def _director(self) -> DirectorRuntime | None:
+        if self._closed:
+            raise AdapterOperationError("OpenClaw adapter is closed.")
+        runtime = getattr(self.services, "director_runtime", None)
+        configured = getattr(
+            getattr(getattr(self.services, "config", None), "director", None), "mode", "off"
+        )
+        if runtime is not None and runtime.enabled:
+            return cast("DirectorRuntime", runtime)
+        if configured != "off":
+            raise AdapterOperationError("Configured recommendation director is unavailable.")
+        return None
+
+    @staticmethod
+    def _director_response(
+        runtime: DirectorRuntime, stream: str, batch: BatchInstance | None
+    ) -> RecommendationResponse:
+        items = []
+        if batch is not None:
+            for original in batch.items:
+                item = _recommendation_from_row(dict(original))
+                item.batch_ref, item.stream_ref = batch.batch_ref, batch.stream_ref
+                items.append(item)
+        return RecommendationResponse(
+            items=items,
+            batch_ref=batch.batch_ref if batch else "",
+            stream_ref=stream,
+            request_id=batch.request_id if batch else "",
+            director_mode=runtime.config.director.mode,
+            director_strategy=runtime.config.director.strategy,
+            requires_generation=batch is None,
+        )
+
+    async def _director_page(
+        self,
+        runtime: DirectorRuntime,
+        *,
+        request_id: str,
+        stream_ref: str,
+        operation: str,
+        limit: int,
+        source_platform: str,
+        excluded_item_ids: list[str] | None,
+        explicit_intent: str,
+    ) -> RecommendationResponse:
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        if not request_id.strip() or len(request_id) > 128:
+            raise AdapterValidationError(
+                "Director generation requires a stable request_id (1–128 characters)."
+            )
+        if not stream_ref.strip() or len(stream_ref) > 128:
+            raise AdapterValidationError("stream_ref must contain 1–128 characters.")
+        if not 1 <= limit <= 20 or len(explicit_intent) > 500:
+            raise AdapterValidationError(
+                "Director screens require 1–20 cards and intent up to 500 characters."
+            )
+        scope = _source_scope(source_platform)
+        stream = f"{stream_ref}:{scope}" if scope else stream_ref
+        try:
+            profile = await self.services.soul_engine.get_profile()
+            latest_dislikes = getattr(
+                self.services.soul_engine, "get_effective_disliked_topics", None
+            )
+            batch = await runtime.generate(
+                profile,
+                stream_ref=stream,
+                request_id=request_id,
+                intent="STAY" if operation == "reshuffle" else "NEXT",
+                limit=limit,
+                source_platform=scope,
+                excluded_keys=frozenset(excluded_item_ids or []),
+                explicit_intent=explicit_intent,
+                latest_disliked_topics=latest_dislikes if callable(latest_dislikes) else None,
+            )
+        except (StoreConflict, ValueError) as exc:
+            raise AdapterValidationError(str(exc)) from exc
+        except Exception as exc:
+            raise AdapterOperationError("Failed to prepare recommendation screen.") from exc
+        # A host receiving a tool result is not proof that a human saw the cards.
+        return self._director_response(runtime, stream, batch)
+
+    async def restore_recommendations(
+        self, *, stream_ref: str = "openclaw", batch_ref: str = "", source_platform: str = ""
+    ) -> RecommendationResponse:
+        """Read the exact committed screen without running selection or exposure."""
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        runtime = self._director()
+        if runtime is None:
+            raise AdapterValidationError("Recommendation director is disabled.")
+        scope = _source_scope(source_platform)
+        stream = f"{stream_ref}:{scope}" if scope else stream_ref
+        latest_dislikes = getattr(self.services.soul_engine, "get_effective_disliked_topics", None)
+        try:
+            batch = await runtime.restore(
+                stream,
+                batch_ref or None,
+                latest_disliked_topics=latest_dislikes if callable(latest_dislikes) else None,
+            )
+        except StoreConflict as exc:
+            raise AdapterValidationError(str(exc)) from exc
+        return self._director_response(runtime, stream, batch)
+
+    async def present_recommendations(
+        self, *, batch_ref: str, ack_id: str, item_keys: list[str]
+    ) -> PresentationResponse:
+        """Host-confirmed actual visible subset; never call merely on tool delivery."""
+        from openbiliclaw.recommendation.director.store import DirectorStore, StoreConflict
+
+        try:
+            receipt = await asyncio.to_thread(
+                DirectorStore(self.services.database).present, batch_ref, ack_id, item_keys
+            )
+        except (ValueError, StoreConflict) as exc:
+            raise AdapterValidationError(str(exc)) from exc
+        return PresentationResponse(
+            batch_ref=receipt.batch_ref,
+            ack_id=receipt.event_ref,
+            item_keys=list(receipt.item_keys),
+            state_revision=receipt.state_revision,
+            event_ids=list(receipt.event_ids),
+        )
+
+    async def aclose(self) -> None:
+        """Cancel speculative work and close resources in the owning event loop."""
+        if self._closed:
+            return
+        self._closed = True
+        runtime = getattr(self.services, "director_runtime", None)
+        try:
+            if runtime is not None:
+                await runtime.aclose()
+        finally:
+            try:
+                client_close = getattr(
+                    getattr(self.services, "bilibili_client", None), "close", None
+                )
+                if callable(client_close):
+                    await _maybe_await(client_close())
+            finally:
+                db_close = getattr(self.services.database, "close", None)
+                if callable(db_close):
+                    db_close()
 
     @staticmethod
     def _to_int(value: object) -> int:
@@ -367,6 +517,9 @@ class OpenClawAdapter:
         source_platform: str = "",
         excluded_item_ids: list[str] | None = None,
         realtime: bool = False,
+        request_id: str = "",
+        stream_ref: str = "openclaw",
+        explicit_intent: str = "",
     ) -> RecommendationResponse:
         """Generate multi-source recommendations for an agent host.
 
@@ -376,6 +529,33 @@ class OpenClawAdapter:
         recommendation contract.  Older engines and test doubles continue to
         work through the historical ``generate_recommendations`` fallback.
         """
+        director = self._director()
+        if director is not None:
+            if realtime:
+                raise AdapterValidationError("Director screens use validated precomputed copy.")
+            if refresh_if_needed:
+                refresh = getattr(self.services.runtime_controller, "refresh_if_needed", None)
+                if callable(refresh):
+                    try:
+                        await asyncio.wait_for(
+                            refresh(), timeout=max(self.refresh_timeout_seconds, 0.1)
+                        )
+                    except TimeoutError:
+                        logger.warning(
+                            "OpenClaw refresh timed out; director uses current inventory"
+                        )
+                    except Exception:
+                        logger.exception("OpenClaw refresh failed; director uses current inventory")
+            return await self._director_page(
+                director,
+                request_id=request_id,
+                stream_ref=stream_ref,
+                operation="recommend",
+                limit=limit,
+                source_platform=source_platform,
+                excluded_item_ids=excluded_item_ids,
+                explicit_intent=explicit_intent,
+            )
         if limit <= 0:
             raise AdapterValidationError("recommendation limit must be positive.")
         if limit > 50:
@@ -517,6 +697,9 @@ class OpenClawAdapter:
         limit: int = 5,
         source_platform: str = "",
         excluded_item_ids: list[str] | None = None,
+        request_id: str = "",
+        stream_ref: str = "openclaw",
+        explicit_intent: str = "",
     ) -> RecommendationResponse:
         """Return a fresh precomputed recommendation batch."""
         return await self._serve_page(
@@ -524,6 +707,9 @@ class OpenClawAdapter:
             limit=limit,
             source_platform=source_platform,
             excluded_item_ids=excluded_item_ids,
+            request_id=request_id,
+            stream_ref=stream_ref,
+            explicit_intent=explicit_intent,
         )
 
     async def append_recommendations(
@@ -532,6 +718,9 @@ class OpenClawAdapter:
         limit: int = 10,
         source_platform: str = "",
         excluded_item_ids: list[str] | None = None,
+        request_id: str = "",
+        stream_ref: str = "openclaw",
+        explicit_intent: str = "",
     ) -> RecommendationResponse:
         """Append another precomputed recommendation page."""
         return await self._serve_page(
@@ -539,6 +728,9 @@ class OpenClawAdapter:
             limit=limit,
             source_platform=source_platform,
             excluded_item_ids=excluded_item_ids,
+            request_id=request_id,
+            stream_ref=stream_ref,
+            explicit_intent=explicit_intent,
         )
 
     async def _serve_page(
@@ -548,7 +740,22 @@ class OpenClawAdapter:
         limit: int,
         source_platform: str,
         excluded_item_ids: list[str] | None,
+        request_id: str = "",
+        stream_ref: str = "openclaw",
+        explicit_intent: str = "",
     ) -> RecommendationResponse:
+        director = self._director()
+        if director is not None:
+            return await self._director_page(
+                director,
+                request_id=request_id,
+                stream_ref=stream_ref,
+                operation=operation,
+                limit=limit,
+                source_platform=source_platform,
+                excluded_item_ids=excluded_item_ids,
+                explicit_intent=explicit_intent,
+            )
         if limit <= 0:
             raise AdapterValidationError("recommendation limit must be positive.")
         if limit > 50:
@@ -630,12 +837,19 @@ class OpenClawAdapter:
 
     async def submit_feedback(self, request: FeedbackRequest) -> FeedbackResponse:
         """Persist recommendation feedback and trigger downstream learning hooks."""
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
         try:
             recommendation = self.services.database.get_recommendation_by_id(
                 request.recommendation_id
             )
             if recommendation is None:
                 raise AdapterOperationError("Recommendation not found.")
+            from openbiliclaw.api.director import project_feedback, validate_feedback_binding
+
+            validate_feedback_binding(
+                self.services.database, request.recommendation_id, request.batch_ref
+            )
             from openbiliclaw.sources.event_format import build_event
 
             event = build_event(
@@ -684,8 +898,19 @@ class OpenClawAdapter:
                 feedback_type=stored_feedback_type,
                 feedback_note=stored_note,
             )
+            project_feedback(
+                self.services.database,
+                stored_recommendation_id,
+                request.request_id,
+                stored_feedback_type,
+                stored_note,
+                batch_ref=request.batch_ref,
+                existing_event_id=item_receipt.event_id,
+            )
         except (AdapterOperationError, AdapterValidationError):
             raise
+        except StoreConflict as exc:
+            raise AdapterValidationError(str(exc)) from exc
         except Exception as exc:  # pragma: no cover - defensive adapter boundary
             raise AdapterOperationError("Failed to submit recommendation feedback.") from exc
 

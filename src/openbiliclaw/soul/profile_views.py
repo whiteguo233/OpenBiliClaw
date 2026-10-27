@@ -29,10 +29,12 @@ them, and ``soul`` (this layer) must not import ``discovery``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -923,6 +925,472 @@ def compact_content_prompt_profile_summary(
         _CONTENT_PROMPT_SPECULATION_CAP,
     )
     return compacted
+
+
+def build_director_profile_view(profile: SoulProfile, *, fast: bool = False) -> dict[str, object]:
+    """Recommendation-specific stable taste and recent concerns, without portrait.
+
+    Engineering context caps (not calibrated): fast decisions retain 12 interests
+    and 3 recent observations, slow planning 32 and 6. Explicit dislikes are never
+    truncated. Caller payload limits must reject oversize inputs, not erase bans.
+    """
+    summary = compact_content_prompt_profile_summary(
+        build_profile_summary(profile, exclude_archived_topics=True)
+    )
+    stable = {
+        key: summary[key]
+        for key in (
+            "cognitive_style",
+            "core_traits",
+            "values",
+            "deep_needs",
+            "style",
+            "context",
+            "exploration_openness",
+            "source_platform_mix",
+        )
+    }
+    for key in ("cognitive_style", "core_traits", "values", "deep_needs"):
+        stable[key] = _cap_profile_sequence(stable[key], 4 if fast else 8)
+    stable["interests"] = _cap_weighted_profile_dicts(summary["interests"], 12 if fast else 32)
+    stable["interest_domains"] = _cap_weighted_profile_dicts(
+        summary["interest_domains"], 6 if fast else 12
+    )
+    stable["disliked_topics"] = list(profile.preferences.disliked_topics)
+    recent = {
+        "current_phase": summary["current_phase"],
+        "life_stage": summary["life_stage"],
+        "awareness": _cap_profile_sequence(
+            summary["recent_awareness"], 3 if fast else 6, newest=True
+        ),
+        "insights": [
+            {
+                "hypothesis": insight.hypothesis,
+                "evidence": insight.evidence[:4],
+                "confidence": insight.confidence,
+                "validated": insight.validated,
+                "user_verdict": insight.user_verdict,
+            }
+            for insight in profile.active_insights
+            if insight.user_verdict != "rejected"
+        ][-(3 if fast else 6) :],
+        "speculative_interests": _cap_profile_sequence(
+            summary.get("speculative_interests", []), 3 if fast else 6
+        ),
+    }
+    return {"schema_version": "director-profile.v1", "stable": stable, "recent": recent}
+
+
+PROFILE_CATALOG_VERSION = "on-demand-profile-catalog.v1"
+PROFILE_CONTEXT_VERSION = "on-demand-profile-context.v1"
+# Engineering selection policy, not a calibrated relevance score: alternate
+# task-related facts with two global taste anchors before filling spare space.
+# These versions must change when projection/selection semantics change.
+_PROFILE_GLOBAL_ANCHORS = 2
+_PROFILE_OPTIONAL_FIELDS = (
+    "core_traits",
+    "cognitive_style",
+    "values",
+    "motivational_drivers",
+    "deep_needs",
+    "current_phase",
+    "life_stage",
+    "style",
+    "context",
+    "exploration_openness",
+    "source_platform_mix",
+)
+
+
+def _profile_context_json(value: object) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _profile_context_copy(value: dict[str, object]) -> dict[str, object]:
+    copied: dict[str, object] = json.loads(_profile_context_json(value))
+    return copied
+
+
+def _profile_catalog_record(value: object) -> dict[str, object]:
+    """Detach a semantic record, omitting only empty/storage-only fields."""
+    if is_dataclass(value) and not isinstance(value, type):
+        value = asdict(value)
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if key not in {"last_decay_at", "favorite_up_users", "personality_portrait"}
+        and item not in ("", None, [], {})
+    }
+
+
+def _profile_catalog_records(
+    value: object, *, active_only: bool = False
+) -> list[dict[str, object]]:
+    if not isinstance(value, list | tuple):
+        return []
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in value:
+        record = _profile_catalog_record(item)
+        if not record:
+            continue
+        if active_only and (
+            _is_archived_state(record.get("state"))
+            or str(record.get("user_verdict", "")).casefold() == "rejected"
+            or str(record.get("status", "")).casefold()
+            in {"rejected", "deferred", "archived", "promoted"}
+        ):
+            continue
+        identity = _profile_context_json(record)
+        if identity not in seen:
+            seen.add(identity)
+            records.append(record)
+    return records
+
+
+def build_profile_catalog(profile: SoulProfile | OnionProfile) -> dict[str, object]:
+    """Build an uncapped local retrieval catalog, never a whole-model prompt.
+
+    Unlike the legacy compact views, this traverses all active positive records
+    directly. Negative scopes stay intact, archived/rejected hypotheses cannot
+    be resurrected, and portrait/creator lists never enter this content view.
+    Callers must pass the effective profile (including user overrides).
+    """
+    from openbiliclaw.soul.profile import OnionProfile
+
+    raw = profile.to_dict()
+    preference = profile.preferences
+    interests: list[dict[str, object]] = []
+    mandatory: dict[str, object]
+    if isinstance(profile, OnionProfile):
+        interest_tree = raw.get("interest")
+        assert isinstance(interest_tree, dict)
+        # Do not use the compatibility shim's flattened disliked_topics: it
+        # erases the relationship between a domain and its scoped specifics.
+        mandatory = {"disliked_domains": _profile_catalog_records(interest_tree.get("dislikes"))}
+        for domain in _profile_catalog_records(interest_tree.get("likes"), active_only=True):
+            name = domain.get("domain")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            interests.append(
+                {
+                    **{key: value for key, value in domain.items() if key != "specifics"},
+                    "name": name,
+                    "category": name,
+                }
+            )
+            interests[-1].pop("domain", None)
+            for specific in _profile_catalog_records(domain.get("specifics"), active_only=True):
+                if not isinstance(specific.get("name"), str) or not str(specific["name"]).strip():
+                    continue
+                # A specific inherits lifecycle from its parent, not evidence
+                # counts that were measured only for the domain as a whole.
+                interests.append(
+                    {"category": name, "state": domain.get("state", "active"), **specific}
+                )
+    else:
+        raw_preference = raw.get("preferences")
+        assert isinstance(raw_preference, dict)
+        interests = [
+            item
+            for item in _profile_catalog_records(raw_preference.get("interests"), active_only=True)
+            if isinstance(item.get("name"), str) and str(item["name"]).strip()
+        ]
+        mandatory = {"disliked_topics": list(preference.disliked_topics)}
+    core: dict[str, object] = {
+        key: getattr(profile, key)
+        for key in (
+            "core_traits",
+            "cognitive_style",
+            "values",
+            "motivational_drivers",
+            "deep_needs",
+            "current_phase",
+            "life_stage",
+        )
+    }
+    core.update(
+        {
+            "exploration_openness": preference.exploration_openness,
+            "source_platform_mix": dict(preference.source_platform_mix),
+        }
+    )
+    # Explicit duration/pace/session conditions cannot disappear merely
+    # because the optional positive-interest budget is small.
+    mandatory["style"] = _profile_catalog_record(preference.style)
+    mandatory["context"] = _profile_catalog_record(preference.context)
+    return _profile_context_copy(
+        {
+            "schema_version": PROFILE_CATALOG_VERSION,
+            "mandatory": mandatory,
+            "core": core,
+            "interests": _profile_catalog_records(interests, active_only=True),
+            "recent_awareness": _profile_catalog_records(raw.get("recent_awareness")),
+            "active_insights": _profile_catalog_records(
+                raw.get("active_insights"), active_only=True
+            ),
+            "speculative_interests": _profile_catalog_records(
+                getattr(profile, "_active_speculations", None), active_only=True
+            ),
+        }
+    )
+
+
+@dataclass(frozen=True)
+class ProfileContextProjection:
+    """Immutable selected context; ``payload`` returns a detached JSON dict.
+
+    Bytes count canonical UTF-8 JSON, not model tokens. ``fits=False`` retains
+    the complete mandatory block for diagnosis; it must not be sent as-is.
+    """
+
+    _payload_json: str
+    digest: str
+    fits: bool
+    used_bytes: int
+    included_interest_names: tuple[str, ...]
+
+    @property
+    def payload(self) -> dict[str, object]:
+        """Return a fresh copy so a caller cannot change evidence after hashing."""
+        result: dict[str, object] = json.loads(self._payload_json)
+        return result
+
+
+def _profile_lexical_tokens(text: str) -> frozenset[str]:
+    # Whole Latin terms plus Chinese bigrams: deterministic, dependency-free
+    # retrieval only. This is not an embedding or a model-quality guarantee.
+    tokens: set[str] = set()
+    for part in re.findall(r"[a-z0-9_]+|[\u3400-\u9fff]+", text.casefold()):
+        if re.fullmatch(r"[\u3400-\u9fff]+", part):
+            tokens.update(part[index : index + 2] for index in range(max(1, len(part) - 1)))
+        else:
+            tokens.add(part)
+    return frozenset(tokens)
+
+
+def _profile_task_relevance(value: object, query_tokens: frozenset[str]) -> float:
+    text = value if isinstance(value, str) else _profile_context_json(value)
+    tokens = _profile_lexical_tokens(text)
+    return len(tokens & query_tokens) / max(1, len(tokens))
+
+
+def select_profile_context(
+    catalog: dict[str, object],
+    *,
+    query_texts: Sequence[str],
+    max_bytes: int,
+    purpose: str = "evaluation",
+) -> ProfileContextProjection:
+    """Pack complete facts by task relevance plus global taste, without I/O.
+
+    Mandatory negative scopes are indivisible. Optional facts are added whole
+    or omitted, never string-sliced or semantically summarized. Small budgets
+    may therefore leave unused space. Query text is retrieval data, never an
+    instruction; selection cannot promote a hypothesis to a confirmed fact.
+    """
+    if type(max_bytes) is not int or max_bytes < 0:
+        raise ValueError("profile byte budget must be a nonnegative integer")
+    if not isinstance(purpose, str) or not purpose.strip():
+        raise ValueError("profile projection purpose must be nonempty")
+    if isinstance(query_texts, str | bytes) or any(
+        not isinstance(item, str) for item in query_texts
+    ):
+        raise ValueError("profile query texts must be a sequence of strings")
+    if catalog.get("schema_version") != PROFILE_CATALOG_VERSION:
+        raise ValueError("unsupported profile catalog schema")
+    snapshot = _profile_context_copy(catalog)
+    mandatory = snapshot.get("mandatory")
+    core = snapshot.get("core")
+    if not isinstance(mandatory, dict) or not isinstance(core, dict):
+        raise ValueError("profile catalog requires mandatory and core mappings")
+    if any(
+        key not in {"disliked_topics", "disliked_domains", "style", "context"} for key in mandatory
+    ):
+        raise ValueError("unsupported mandatory profile field")
+    payload: dict[str, object] = {
+        "schema_version": PROFILE_CONTEXT_VERSION,
+        "purpose": purpose,
+        "view_is_partial": True,
+        **mandatory,
+        "interests": [],
+    }
+    used_bytes = len(_profile_context_json(payload).encode("utf-8"))
+    names: list[str] = []
+
+    def finish() -> ProfileContextProjection:
+        serialized = _profile_context_json(payload)
+        return ProfileContextProjection(
+            _payload_json=serialized,
+            digest=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+            fits=used_bytes <= max_bytes,
+            used_bytes=used_bytes,
+            included_interest_names=tuple(names),
+        )
+
+    if used_bytes > max_bytes:
+        return finish()
+    queries = frozenset().union(*(_profile_lexical_tokens(text) for text in query_texts))
+    interests = _profile_catalog_records(snapshot.get("interests"), active_only=True)
+
+    def ranked_key(item: dict[str, object]) -> tuple[float, float, str]:
+        # Match semantic labels, not JSON keys/provenance bookkeeping.
+        labels = " ".join(str(item.get(key, "")) for key in ("name", "category"))
+        return (
+            -_profile_task_relevance(labels, queries),
+            -_profile_weight(item),
+            _profile_context_json(item),
+        )
+
+    ranked = sorted(interests, key=ranked_key)
+    related = [item for item in ranked if ranked_key(item)[0] < 0]
+    anchors = sorted(
+        interests, key=lambda item: (-_profile_weight(item), _profile_context_json(item))
+    )[:_PROFILE_GLOBAL_ANCHORS]
+    core_facts: list[tuple[str, object, bool]] = []
+    for key in _PROFILE_OPTIONAL_FIELDS:
+        value = core.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            core_facts.extend((key, item, True) for item in value)
+        else:
+            core_facts.append((key, value, False))
+    core_facts.sort(key=lambda fact: -_profile_task_relevance(fact[1], queries))
+    context_facts: list[tuple[str, object, bool]] = []
+    for key in ("recent_awareness", "active_insights", "speculative_interests"):
+        values = _profile_catalog_records(snapshot.get(key), active_only=True)
+        # Stable sort retains newest-first order when lexical relevance ties.
+        values.reverse()
+        values.sort(key=lambda item: -_profile_task_relevance(item, queries))
+        context_facts.extend((key, item, True) for item in values)
+    context_facts.sort(key=lambda fact: -_profile_task_relevance(fact[1], queries))
+    queues: list[list[tuple[str, object, bool]]] = [
+        [("interests", item, True) for item in related],
+        [("interests", item, True) for item in anchors],
+        core_facts,
+        context_facts,
+    ]
+    ordered: list[tuple[str, object, bool]] = []
+    for index in range(max((len(queue) for queue in queues), default=0)):
+        ordered.extend(queue[index] for queue in queues if index < len(queue))
+    ordered.extend(("interests", item, True) for item in ranked)
+    seen: set[tuple[str, str]] = set()
+    for key, item, sequence in ordered:
+        encoded = _profile_context_json(item)
+        identity = (key, encoded)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if key in payload:
+            current = payload[key]
+            if not sequence or not isinstance(current, list):
+                continue
+            extra_bytes = len(encoded.encode("utf-8")) + bool(current)
+        else:
+            # Existing object is nonempty; account for comma, key, colon, and
+            # optional list brackets without serializing the growing payload.
+            extra_bytes = len(_profile_context_json(key).encode("utf-8")) + 2
+            extra_bytes += len(encoded.encode("utf-8")) + (2 if sequence else 0)
+        if used_bytes + extra_bytes > max_bytes:
+            continue
+        if sequence:
+            current = payload.setdefault(key, [])
+            assert isinstance(current, list)
+            current.append(item)
+        else:
+            payload[key] = item
+        used_bytes += extra_bytes
+        if key == "interests" and isinstance(item, dict):
+            name = item.get("name")
+            if isinstance(name, str) and name not in names:
+                names.append(name)
+    return finish()
+
+
+def build_shared_evaluation_profiles(
+    contexts: dict[str, dict[str, object]],
+) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    """Factor identical mandatory facts once without changing any candidate view.
+
+    Only exclusions, style and current context may move to the shared profile.
+    Positive selections remain candidate-specific and never leak across peers.
+    Empty contexts support the evaluator's local budget probes.
+    """
+    snapshots = {key: _profile_context_copy(value) for key, value in contexts.items()}
+    shared: dict[str, object] = {}
+    if snapshots:
+        first = next(iter(snapshots.values()))
+        for field in ("disliked_topics", "disliked_domains", "style", "context"):
+            if field in first and all(
+                field in value and value[field] == first[field] for value in snapshots.values()
+            ):
+                shared[field] = first[field]
+                for value in snapshots.values():
+                    del value[field]
+    return shared, snapshots
+
+
+def resize_profile_context(
+    payload: dict[str, object],
+    *,
+    max_bytes: int,
+    query_texts: Sequence[str] = (),
+) -> ProfileContextProjection:
+    """Repack only already-loaded facts for a narrower decision envelope.
+
+    There is no source-profile lookup, summarization or I/O. Unknown top-level
+    fields are mandatory so future conditions cannot be silently discarded.
+    A zero budget returns the entire mandatory floor with ``fits=False``.
+    """
+    if payload.get("schema_version") != PROFILE_CONTEXT_VERSION:
+        raise ValueError("unsupported profile context schema")
+    if type(max_bytes) is not int or max_bytes < 0:
+        raise ValueError("profile byte budget must be a nonnegative integer")
+    snapshot = _profile_context_copy(payload)
+    purpose = snapshot.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        raise ValueError("profile projection purpose must be nonempty")
+    mandatory_keys = {"disliked_topics", "disliked_domains", "style", "context"}
+    core_keys = set(_PROFILE_OPTIONAL_FIELDS) - mandatory_keys
+    record_keys = {"recent_awareness", "active_insights", "speculative_interests"}
+    optional_keys = core_keys | record_keys | {"interests"}
+    preserved = {key: value for key, value in snapshot.items() if key not in optional_keys}
+    catalog: dict[str, object] = {
+        "schema_version": PROFILE_CATALOG_VERSION,
+        "mandatory": {key: value for key, value in snapshot.items() if key in mandatory_keys},
+        "core": {key: value for key, value in snapshot.items() if key in core_keys},
+        "interests": snapshot.get("interests", []),
+    }
+    for key in record_keys:
+        # Catalog selection reads chronological records newest-first. This
+        # input is already a selected/ranked view, so retain its tie order.
+        value = snapshot.get(key, [])
+        catalog[key] = list(reversed(value)) if isinstance(value, list) else value
+    minimum = select_profile_context(catalog, query_texts=(), max_bytes=0, purpose=purpose)
+    preserved_minimum = {**minimum.payload, **preserved}
+    mandatory_overhead = (
+        len(_profile_context_json(preserved_minimum).encode("utf-8")) - minimum.used_bytes
+    )
+    selected = select_profile_context(
+        catalog,
+        query_texts=query_texts,
+        max_bytes=max(0, max_bytes - mandatory_overhead),
+        purpose=purpose,
+    )
+    serialized = _profile_context_json({**selected.payload, **preserved})
+    used_bytes = len(serialized.encode("utf-8"))
+    return ProfileContextProjection(
+        _payload_json=serialized,
+        digest=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        fits=used_bytes <= max_bytes,
+        used_bytes=used_bytes,
+        included_interest_names=selected.included_interest_names,
+    )
 
 
 def _coerce_query_embedding_vector(value: object) -> list[float]:

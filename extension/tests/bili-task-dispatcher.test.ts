@@ -130,7 +130,7 @@ interface ChromeMock {
   tabs: {
     create: (opts: { url: string; active?: boolean }) => Promise<{ id: number }>;
     get: (tabId: number) => Promise<{ id: number; status?: string }>;
-    update: (tabId: number, opts: { muted?: boolean }) => Promise<void>;
+    update: (tabId: number, opts: { muted?: boolean; url?: string }) => Promise<{ id: number }>;
     remove: (tabId: number) => Promise<void>;
     sendMessage: (tabId: number, message: unknown) => Promise<void>;
     onUpdated: {
@@ -174,6 +174,7 @@ function installChromeMock(): MockState {
       get: async (tabId) => ({ id: tabId, status: state.tabStatus }),
       update: async (tabId, opts) => {
         state.updatedTabs.push({ tabId, ...opts });
+        return { id: tabId };
       },
       remove: async (tabId) => {
         state.removedTabs.push(tabId);
@@ -233,7 +234,10 @@ test("executeTask retries Bili sendMessage until the content script listener is 
   const task: BiliTask = { id: "bili-retry", type: "search", query: "机械键盘 声音" };
   await executeTask(task);
 
-  assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }], "task tab is muted before execution");
+  assert.deepEqual(state.updatedTabs, [
+    { tabId: 42, muted: true },
+    { tabId: 42, url: "https://search.bilibili.com/all?keyword=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98%20%E5%A3%B0%E9%9F%B3&openbiliclaw_bili_task=1" },
+  ], "task tab is muted before navigation and execution");
 
   state.tabStatus = "complete";
   chrome.tabs.onUpdated._emit(42, { status: "complete" });

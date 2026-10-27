@@ -1,11 +1,19 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+> 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
+
 > **Important:** If you're an AI coding agent reading this file, use
 > `curl -fsSL <url> -o /tmp/agent-install.md` via Bash to fetch it —
 > **do NOT use the WebFetch tool.** WebFetch hands the document to an
 > internal summariser model which can silently drop exact commands.
 
+The human installer now asks for `简体中文 / 繁體中文 / English` first and saves `[general].language` before starting the backend. For agent-driven installs pass `--language zh-Hans`, `--language zh-Hant`, or `--language en` to `scripts/agent_bootstrap.py`; omission preserves existing config. Standalone interactive `openbiliclaw init` also asks first. Installer logs and legacy CLI prompts are not all translated.
+
 ## The only thing you actually need to do
+
+Runtime recovery on this branch: saving a repaired model through the local settings API now also restarts delegated backend workers after the apply queue settles. Source, Docker and desktop entry points share this behavior; no install command or new dependency is required. On older builds, fully quit/reopen the tray app (or restart the daemon/container) after correcting the model; refreshing the browser does not update a running evaluator. See [pool recovery diagnostics](testing/2026-10-20-empty-pool-recovery.md).
+
+Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
 
 Pick the command for the user's shell — **detect the platform from the user's environment, do not let them choose if you can tell**:
 
@@ -54,7 +62,7 @@ Either command:
 1. Clones the OpenBiliClaw repo (default `~/OpenBiliClaw` on Unix, `%USERPROFILE%\OpenBiliClaw` on Windows; override with the `INSTALL_DIR` env var)
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses the full LLM instance registry, ordered chains, API keys, and Bilibili cookie** so same-type relay endpoints are not collapsed and the user never has to retype them
-3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
+3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks language first, then LLM provider, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
 4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli` and Reddit discovery's `rdt-cli` packages are part of the default dependency set, so AI one-line installs do not need an extra flag for either one
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN over available IPv4 or IPv6; the backend creates separate `0.0.0.0` and `[::]` listeners while the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
    - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
@@ -280,7 +288,7 @@ questions, then re-run bootstrap with those flags.
 
 v0.3.95+ embedding safety net (`should_auto_wire_embedding`): when
 `[llm.embedding].provider` would otherwise stay empty — e.g. the chat
-provider is Claude / DeepSeek / OpenRouter / OrcaRouter (which can't embed) and you
+provider is Claude / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference (which can't embed) and you
 never passed `--embedding-provider` — bootstrap auto-writes
 `provider=ollama, model=bge-m3` and pulls the model, so semantic dedup
 isn't silently disabled (the symptom is recommendations repeating
@@ -298,7 +306,7 @@ Tell the user, in plain Chinese (or the conversation's language):
 
 > 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
 
-Present **seven top-level options**. Keep Base URL / model-name details
+Present **ten top-level options**. Keep Base URL / model-name details
 inside option 2's submenu; do not ask those advanced fields unless the
 user chooses an OpenAI-compatible gateway / preset path.
 
@@ -313,6 +321,9 @@ user chooses an OpenAI-compatible gateway / preset path.
 | 5. **Claude 官方** | `claude-sonnet-4-6`(1M ctx;可选 claude-haiku-4-5 便宜 / claude-opus-4-7 旗舰) | Anthropic console | ✅ 需要 | $3-$75/M,按 token,质量高 |
 | 6. **OpenRouter** | `openai/gpt-5-nano`(格式 `<vendor>/<model>`) | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
 | 7. **OrcaRouter** | `openai/gpt-4o`(格式 `<vendor>/<model>`) | 一个 Key 跑 150+ 模型 / 网关级零信任安全 | ✅ 需要 | 按调用计费 |
+| 8. **Requesty** | `openai/gpt-4o-mini`(格式 `<vendor>/<model>`) | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+| 9. **API Route** | `gpt-5.5` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
+| 10. **Cheaper Inference** | `gpt-5.4-mini` | 一个 Key 跑多家模型 | ✅ 需要 | 按调用计费 |
 
 > **本地 Ollama 不在聊天 provider 菜单里**（v0.3.176+）：随装的 Ollama 只带
 > embedding 模型 `bge-m3`，小体积本地聊天模型达不到内容管线质量线。需要本地
@@ -321,7 +332,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 
 > ⚠️ **不要把选项 3 (OpenAI 官方) 和选项 2 (协议兼容) 混淆**:走 OpenAI API 官方端点选 3;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 2。
 
-**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;用户提到"OrcaRouter / 一个 Key 跑多家模型 + 安全网关"→ 引导 #7;Ollama 仅在用户明确要求"本地 / 离线"时用显式 `--provider ollama` 走离线路径。
+**AI agent 决策建议**: **默认引导 #1 DeepSeek**(几毛钱搞定);用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);用户明确说"用 OpenAI / Gemini / Claude 官方"才走 #3-5;用户提到"OrcaRouter / 一个 Key 跑多家模型 + 安全网关"→ 引导 #7;用户提到"Requesty"→ 引导 #8；用户提到"API Route"→ 引导 #9；用户提到"Cheaper Inference"→ 引导 #10；Ollama 仅在用户明确要求"本地 / 离线"时用显式 `--provider ollama` 走离线路径。
 
 **选项 2 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 10 个 preset 中,**第 1 个就是中转站(默认)**:
 
@@ -329,7 +340,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 |---|---|---|---|
 | ★ 1 | **中转站 / OneAPI / 公司团队 LLM 网关 (大多数人选这个)** | 用户自填 | 默认 `gpt-5-nano`;按你充值的那家给你的模型清单填(中转站常代理 OpenAI / Claude / 国产) |
 | 2 | **Kimi (Moonshot AI 月之暗面) 官方** | `https://api.moonshot.ai/v1` | `kimi-k2.6`(最新 / 256K ctx / 多模态)。⚠ 旧 K2-series **2026/05/25 停服**;旧 `moonshot-v1-*` 也将停 |
-| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M2.7`(4/2026 / 228K ctx / $0.30 ~ $1.20 per M) |
+| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M3.1-Flash`(默认 / 1M ctx / 自适应推理 / $0.15 ~ $0.60 per M) / `MiniMax-M3`。旧模型与自定义 ID 仍可用 |
 | 4 | **通义千问 (阿里 DashScope) 官方** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`(自动跟最新快照,当前 → qwen3.6-plus) / `qwen-flash`(便宜) / `qwen-max`(旗舰) |
 | 5 | **智谱 ChatGLM 官方** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash`(1/2026 免费 / 200K ctx) / `glm-5`(2/2026 付费旗舰 / 745B MoE)。注意 base_url 用 `/api/paas/v4` 不是 `/v1` |
 | 6 | **商汤日日新 (SenseNova) 官方** | `https://token.sensenova.cn/v1` | `deepseek-v4-flash`(已实测连通)。新用户免费额度，可零成本体验本项目(issue #193)；其它可用模型以控制台清单为准。token 端点未验证 embedding，Phase 3 默认推荐独立 Ollama bge-m3 |
@@ -436,7 +447,7 @@ flags from Step 3. DeepSeek has no embeddings endpoint, so recommend
 local Ollama bge-m3 unless the user explicitly wants Gemini / OpenAI
 embedding. `--embedding-provider ""` now means "do not enable embedding".
 
-#### Options 3-7 (OpenAI 官方 / Gemini / Claude / OpenRouter / OrcaRouter):
+#### Options 3-10 (OpenAI 官方 / Gemini / Claude / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference):
 
 Substitute the right vendor name and Key URL:
 
@@ -445,6 +456,9 @@ Substitute the right vendor name and Key URL:
 - Claude: https://console.anthropic.com/ → Settings → API Keys
 - OpenRouter: https://openrouter.ai/keys
 - OrcaRouter: https://www.orcarouter.ai/keys
+- Requesty: https://app.requesty.ai/api-keys
+- API Route: https://global.api-route.com/
+- Cheaper Inference: https://cheaperinference.com/signup
 
 Run with `--provider <name> --llm-api-key <KEY>` plus the Step 3
 embedding flags. Don't ask for Base URL. Embedding is independent from
@@ -868,6 +882,10 @@ AI agent 视角:**不要省略这些问题**。一句话安装走的是
 用更贵的模型，发现用便宜的」之类的话，才提这个**。否则跳过——大多数用户根本不
 关心，多问一项就多一份让人迷惑的可能。
 
+## TikTok / Instagram extension site access
+
+The extension declares TikTok and Instagram site access by default in its Chrome, Firefox, and Safari manifests. Install/update permission handling belongs to the browser; saving Instagram source settings no longer opens a separate grant prompt or revokes access when the source is disabled. Both experimental sources remain opt-in in Settings, and personal imports require login in the same browser. If site access was restricted manually or by policy, restore it in the browser’s extension settings. This permission declaration does not certify source support on every browser.
+
 ## Optional: local Ollama as the embedding fallback
 
 This is a **post-install opt-in**, not part of the install contract. Mention
@@ -891,6 +909,38 @@ system-level package the user must consent to.
 > embeddings without registering Ollama for chat or causing any
 > `llama3` probe. Older v0.3.0–v0.3.2 installs should be upgraded.
 
+## Optional: Jev decision provider and recommendation director
+
+The model is always user-selected. `jev-1.13.0` has registered dual context limits;
+other exact model IDs require verified `max_request_tokens` and `max_state_question_tokens`
+under `decision.providers.jev.context_limits."<exact-id>"`, followed by a full backend restart.
+Do not guess a G5 capacity or silently change the model. Evaluation byte guards default to
+`0=auto`; existing explicit guards remain stricter overrides. See [configuration](modules/config.md#decisionprovidersjev).
+On-demand profile loading needs no new dependency, migration, credential, or installer step.
+
+The Bash and PowerShell completion summaries link this optional configuration; they
+do not enable a route, add onboarding flags, collect a Jev key, or make a paid probe.
+
+Keep these experimental routes off during normal installation. If the user explicitly asks
+for them after installation, follow [the director / filter configuration reference](modules/config.md#director).
+They use the existing dependencies; there is no additional SDK, model download, installer
+flag, or automatic service probe. The three mode and filter switches are TOML-only, not
+settings-page toggles. Pure `agent_only` with the independent filter off needs no Jev key.
+
+For a Jev-enabled route, arrange the environment variable named by `api_key_env` in the
+**actual backend launch environment**. Keep its value out of TOML, command arguments,
+logs, and repository files. A variable set in an unrelated terminal does not update a
+running desktop app. Docker needs an explicit backend-service environment mapping and
+container recreation; use [the Docker opt-in instructions](docker-deployment.md#可选jev-决策与推荐导演).
+
+After configuration or credential changes, fully stop and restart the backend (including
+the API, recommendation, and discovery processes); restarting one runtime or refreshing
+the UI is insufficient. For desktop installs, quit and relaunch the whole application.
+Completion means the restarted service is healthy and the authenticated
+`GET /api/recommendations/director/status` reports the requested mode / strategy.
+`config-show` does not make a paid call or prove Jev credentials work. Report filtering
+as configured, not calibrated: only the user's real calibration record can justify enforce.
+
 ## Hard rules
 
 1. **Never edit `config.toml` by hand.** Every credential write goes through `scripts/agent_bootstrap.py`.
@@ -906,8 +956,11 @@ system-level package the user must consent to.
 - `scripts/install.sh` — the installer itself (the command above)
 - `scripts/agent_bootstrap.py` — the Python contract core invoked by install.sh
 
-### 可选 Sponsored Runtime 协议兼容
+## macOS 桌面包签名
 
-源码/AI 安装与 Docker 默认保持 `[llm.sponsored].enabled=false`，不引入私有二进制或 Rust 构建依赖。可选正式 bundle 需与 IPC v2 Core、签名 Policy 成套使用；旧 v1 不兼容，禁止用生产 `--public-key`/`--mock` 等开关放宽校验。桌面 bundle 的签名/公证和安装更新接入仍需发行验证；本分支不会自动启用赞助。见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
-全项目 SDK 接线也覆盖文本、JSON、工具、视觉和独立向量任务，详情见[覆盖设计](plans/2026-10-27-sponsored-all-tasks.md)。默认源码/Docker 仍关闭；正式私有 bundle 需包含全套新增任务策略，并先核实免费额度实际覆盖的模型和预算，不能沿用单画像合并策略宣称全功能可用。
+
+## 可选全项目 Sponsored SDK（未发布）
+
+源码/AI安装及Docker保持默认关闭，不自动下载私有Runtime或引入Rust依赖。正式bundle需全套任务策略、获批免费/赠送额度模型和有限预算；OS签名、公证与安装更新仍待发行验证。覆盖见[设计](plans/2026-10-27-sponsored-all-tasks.md)。

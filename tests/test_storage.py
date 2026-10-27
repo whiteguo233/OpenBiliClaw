@@ -6973,10 +6973,10 @@ def test_serve_snapshot_reuses_sql_but_rechecks_filters_and_topic_windows(tmp_pa
         conn.set_trace_callback(queries.append)
         return conn
 
-    def counted_filter(database, rows, *, viewed_content_keys):
+    def counted_filter(database, rows, *, viewed_content_keys, now=None):
         nonlocal filter_calls
         filter_calls += 1
-        return original_filter(database, rows, viewed_content_keys=viewed_content_keys)
+        return original_filter(database, rows, viewed_content_keys=viewed_content_keys, now=now)
 
     def available_queries() -> int:
         return sum(

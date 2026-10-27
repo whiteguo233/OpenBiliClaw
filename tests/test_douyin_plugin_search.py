@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -26,6 +28,7 @@ class _FallbackClient:
         self.keywords: list[str] = []
         self.hot_board_calls = 0
         self.feed_calls = 0
+        self.hot_terms_calls = 0
         self.hot_terms: list[dict[str, object]] = [
             {"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}
         ]
@@ -35,6 +38,7 @@ class _FallbackClient:
         return [{"aweme_id": "fallback", "desc": "fallback result"}]
 
     async def get_hot_terms(self, *, limit: int = 30) -> list[dict[str, object]]:
+        self.hot_terms_calls += 1
         return self.hot_terms[:limit]
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
@@ -54,6 +58,106 @@ def database(tmp_path: Path) -> Database:
     db = Database(tmp_path / "openbiliclaw.db")
     db.initialize()
     return db
+
+
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+async def test_claimed_failure_cools_every_discovery_path_without_direct_fallback(
+    database: Database,
+    source: str,
+) -> None:
+    queue = DyTaskQueue(database)
+    failed = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == failed
+    queue.fail(failed, error="api_rate_limited")
+    direct = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=direct,
+        wait_seconds=0,
+        allow_direct_fallback=True,
+    )
+    if source == "hot":
+        items = await client.get_hot_board(limit=12)
+    elif source == "feed":
+        items = await client.get_recommend_feed(limit=12)
+    else:
+        items = await client.search_aweme("next", limit=12)
+    assert items == []
+    assert database.conn.execute("SELECT COUNT(*) FROM dy_tasks").fetchone()[0] == 1
+    assert direct.keywords == []
+    assert direct.hot_terms_calls == direct.hot_board_calls == direct.feed_calls == 0
+
+
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+async def test_default_dispatcher_wakeup_uses_configured_backend_port(
+    database: Database, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    monkeypatch.setattr(
+        "openbiliclaw.config.load_config",
+        lambda: SimpleNamespace(api=SimpleNamespace(port=18420)),
+    )
+    urlopen = Mock()
+    monkeypatch.setattr(dy_plugin_search.request, "urlopen", urlopen)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=_FallbackClient(),
+        wait_seconds=0,
+    )
+
+    if source == "search":
+        await client.search_aweme("测试关键词", limit=1)
+    elif source == "hot":
+        await client.get_hot_board(limit=1)
+    else:
+        await client.get_recommend_feed(limit=1)
+
+    urlopen.assert_called_once()
+    assert urlopen.call_args.args[0].full_url == "http://127.0.0.1:18420/api/sources/dy/kick"
+
+
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+@pytest.mark.parametrize("failure", ["failed", "timeout"])
+async def test_plugin_discovery_retains_accepted_partial_items_on_failure(
+    database: Database, source: str, failure: str
+) -> None:
+    queue = DyTaskQueue(database)
+    task_ids: list[str] = []
+
+    def report_partial() -> None:
+        task = queue.next_pending()
+        assert task is not None
+        task_id = str(task["id"])
+        task_ids.append(task_id)
+        queue.merge_result(
+            task_id,
+            videos=[{"scope": f"dy_{source}", "aweme_id": "partial-1", "title": "已回传内容"}],
+            scope_counts={f"dy_{source}": 1},
+            complete=False,
+        )
+        if failure == "failed":
+            queue.fail(task_id, error="task_timeout")
+
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=_FallbackClient(),
+        wait_seconds=0.03,
+        poll_interval_seconds=0.005,
+        kick=report_partial,
+    )
+    if source == "search":
+        items = await client.search_aweme("测试", limit=5)
+    elif source == "hot":
+        items = await client.get_hot_board(limit=5)
+    else:
+        items = await client.get_recommend_feed(limit=5)
+
+    assert [item["aweme_id"] for item in items] == ["partial-1"]
+    assert getattr(client, f"last_{source}_outcome") == failure
+    task = queue.get(task_ids[0])
+    assert task is not None and task["status"] == "failed"
+    result = json.loads(task["result_json"])
+    assert result["videos"][0]["aweme_id"] == "partial-1"
+    assert result["error"] == ("task_timeout" if failure == "failed" else "wait_timeout")
 
 
 def test_plugin_search_item_to_aweme_maps_fields() -> None:
@@ -352,6 +456,41 @@ async def test_plugin_hot_preserves_seed_aweme_id_from_hot_terms(database: Datab
         raise AssertionError("hot task was not enqueued")
 
     await asyncio.gather(client.get_hot_board(limit=5), complete_task())
+
+
+async def test_plugin_hot_prioritizes_seeded_terms_before_selection_and_rotation(
+    database: Database,
+) -> None:
+    fallback = _FallbackClient()
+    fallback.hot_terms = [
+        {"sentence_id": "unseeded", "word": "仅有热词"},
+        *[
+            {"sentence_id": str(index), "word": "可展开热词", "group_id": f"seed-{index}"}
+            for index in range(1, 5)
+        ],
+    ]
+    queue = DyTaskQueue(database)
+    selected: list[list[str]] = []
+
+    def complete_task() -> None:
+        task = queue.next_pending()
+        assert task is not None
+        payload = json.loads(str(task["payload_json"]))
+        selected.append([item["sentence_id"] for item in payload["hot_items"]])
+        queue.merge_result(str(task["id"]), videos=[], scope_counts={"dy_hot": 0}, complete=True)
+
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=0.1,
+        kick=complete_task,
+    )
+
+    await client.get_hot_board(limit=12)
+    await client.get_hot_board(limit=12)
+
+    assert selected == [["1", "2"], ["3", "4"]]
+    assert fallback.hot_board_calls == 0
 
 
 @pytest.mark.asyncio

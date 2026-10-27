@@ -279,7 +279,7 @@ def test_doctor_cli_reports_skill_pack_and_registered_skill_names(capsys) -> Non
     assert data["host_names"] == ["openclaw", "hermes", "workbuddy"]
     assert data["skill_pack_path"] == str(_SKILL_PACK_PATH)
     assert data["skill_pack_exists"] is True
-    assert data["skill_count"] == 24
+    assert data["skill_count"] == 26
     assert "openbiliclaw_respond_interest_probe" in data["skill_names"]
     assert "openbiliclaw_sync_saved" in data["skill_names"]
     assert data["cli_module"] == "openbiliclaw.integrations.openclaw.cli"

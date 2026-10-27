@@ -141,10 +141,7 @@ class InsightAnalyzer:
         # Keep short labels apart; they are usually deliberate distinct topics.
         if len(left) < 20 or len(right) < 20:
             return False
-        return (
-            SequenceMatcher(None, left, right).ratio()
-            >= _INSIGHT_DEDUP_SIMILARITY_THRESHOLD
-        )
+        return SequenceMatcher(None, left, right).ratio() >= _INSIGHT_DEDUP_SIMILARITY_THRESHOLD
 
     @classmethod
     def dedupe_hypotheses(
@@ -163,11 +160,9 @@ class InsightAnalyzer:
             for index, current in enumerate(kept):
                 if not cls._is_near_duplicate(current, item):
                     continue
-                if (
-                    cls._dedupe_norm_title(current.hypothesis)
-                    != cls._dedupe_norm_title(item.hypothesis)
-                    and not cls._same_semantic_state(current, item)
-                ):
+                if cls._dedupe_norm_title(current.hypothesis) != cls._dedupe_norm_title(
+                    item.hypothesis
+                ) and not cls._same_semantic_state(current, item):
                     continue
                 match_index = index
                 break
@@ -209,11 +204,9 @@ class InsightAnalyzer:
                 # states.  Near-duplicate matches are only folded when both
                 # sides are in the same semantic state, otherwise we would
                 # collapse a reject into a confirm and lose the user verdict.
-                if (
-                    self._dedupe_norm_title(current.hypothesis)
-                    != self._dedupe_norm_title(item.hypothesis)
-                    and not self._same_semantic_state(current, item)
-                ):
+                if self._dedupe_norm_title(current.hypothesis) != self._dedupe_norm_title(
+                    item.hypothesis
+                ) and not self._same_semantic_state(current, item):
                     continue
                 match_index = index
                 break

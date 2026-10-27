@@ -1,0 +1,324 @@
+{
+  "date": "2026-10-12",
+  "scope": "capability-increment",
+  "baseline": "0077f7f8",
+  "verdict": "incremental only",
+  "transport": "normal create_app Uvicorn TCP + registered Chrome extension",
+  "isolated_data": true,
+  "real_model_network_config_preserved": true,
+  "production_data_write_target": false,
+  "upstream_mutations": [],
+  "runs": [
+    {
+      "task_id": "06bf30be-fa13-4e31-b214-528baa2879f9",
+      "package_sha256": "ce1266b986f60274b103a5e18b1d6d1af98e1e5eabaa5a0df616c666c67cd0bf",
+      "build_kind": "baseline-production",
+      "profile_update": false,
+      "status": "ok",
+      "error": null,
+      "scope_counts": {
+        "tt_like": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "empty"
+      },
+      "scope_errors": {
+        "tt_like": ""
+      },
+      "scope_complete": {
+        "tt_like": true
+      }
+    },
+    {
+      "task_id": "ae12462f-5a34-4f50-b6ca-e3d93d5b94b6",
+      "package_sha256": "5c3c1f7db4e5d5a4dcb5d064e021b547ce4688fe82f232fc2477f2cdc1f427b8",
+      "build_kind": "diagnostic",
+      "profile_update": false,
+      "status": null,
+      "error": "Error: scope_root_not_proven",
+      "scope_counts": {
+        "tt_history": 0,
+        "tt_collect": 0,
+        "tt_follow": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_collect": "failed",
+        "tt_follow": "empty",
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_collect": "Error: scope_root_not_proven",
+        "tt_follow": "",
+        "tt_history": "history_entry_not_found"
+      },
+      "scope_complete": {
+        "tt_collect": false,
+        "tt_follow": true,
+        "tt_history": false
+      }
+    },
+    {
+      "task_id": "42abed3e-f280-4a16-8332-7eef9c0c14e3",
+      "package_sha256": "b38bce0c9bab697fba18d38bf4912e2118f92144c5ef5d5b5326fc56dd2512d8",
+      "build_kind": "diagnostic-collect-wait-60s",
+      "profile_update": false,
+      "status": "ok",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_errors": {
+        "tt_collect": ""
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "f95f3393-1bb0-48ac-b6b4-cc82fd487e48",
+      "package_sha256": "60f1b593497ff1084de364e56b3b9f407a7bfa053176114c8351580d9fd0a6f1",
+      "build_kind": "production-before-handoff-fix",
+      "profile_update": false,
+      "status": null,
+      "error": "task_idle_timeout",
+      "scope_counts": {
+        "tt_collect": 0,
+        "tt_like": 0,
+        "tt_follow": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "failed",
+        "tt_follow": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "task_idle_timeout",
+        "tt_collect": "task_idle_timeout",
+        "tt_follow": "task_idle_timeout"
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": false,
+        "tt_follow": false
+      }
+    },
+    {
+      "task_id": "947b3dfb-91fc-401c-a7fc-d112c1a8b33d",
+      "package_sha256": "60f1b593497ff1084de364e56b3b9f407a7bfa053176114c8351580d9fd0a6f1",
+      "build_kind": "production-before-handoff-fix",
+      "profile_update": false,
+      "status": null,
+      "error": "task_timeout",
+      "scope_counts": null,
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_collect": "failed"
+      },
+      "scope_errors": {
+        "tt_collect": "task_timeout"
+      },
+      "scope_complete": {
+        "tt_collect": false
+      }
+    },
+    {
+      "task_id": "fe047cac-a661-46ac-90b5-4e57cf7153b8",
+      "package_sha256": "50a556ae4bde6043778a40fed66193e1d23255fdd5347fe3b148095c175c5d23",
+      "build_kind": "production-final",
+      "profile_update": false,
+      "status": "ok",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0,
+        "tt_like": 0,
+        "tt_follow": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty",
+        "tt_follow": "empty"
+      },
+      "scope_errors": {
+        "tt_like": "",
+        "tt_collect": "",
+        "tt_follow": ""
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": true,
+        "tt_follow": true
+      }
+    },
+    {
+      "task_id": "9818d0f0-67ed-4279-8ac9-6855e36a5640",
+      "package_sha256": "fdd5f2fc9f06af1c9fe92032c95ec24b49dc1708c713892fc64f93c76f8a7830",
+      "build_kind": "diagnostic-after-formal-failure",
+      "profile_update": false,
+      "status": null,
+      "error": "task_idle_timeout",
+      "scope_counts": null,
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "failed",
+        "tt_collect": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "task_idle_timeout",
+        "tt_collect": "task_idle_timeout"
+      },
+      "scope_complete": {
+        "tt_like": false,
+        "tt_collect": false
+      }
+    },
+    {
+      "task_id": "ccfa1983-cc0a-4edb-8819-ff923c53473f",
+      "package_sha256": "31286c402bdee8786554d8a2fa18b557c7207f3d18975fe7e6173dd95e8c1192",
+      "build_kind": "diagnostic-with-timeout-checkpoint",
+      "profile_update": false,
+      "status": "ok",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0,
+        "tt_like": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty"
+      },
+      "scope_errors": {
+        "tt_like": "",
+        "tt_collect": ""
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "fbff1adc-6f75-4e74-b30e-0d21cfadf8a1",
+      "package_sha256": "31286c402bdee8786554d8a2fa18b557c7207f3d18975fe7e6173dd95e8c1192",
+      "build_kind": "diagnostic-repeat-with-timeout-checkpoint",
+      "profile_update": false,
+      "status": "ok",
+      "error": null,
+      "scope_counts": {
+        "tt_collect": 0,
+        "tt_like": 0,
+        "tt_follow": 0
+      },
+      "accepted_rows": 0,
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty",
+        "tt_follow": "empty"
+      },
+      "scope_errors": {
+        "tt_like": "",
+        "tt_collect": "",
+        "tt_follow": ""
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": true,
+        "tt_follow": true
+      }
+    }
+  ],
+  "observations": {
+    "diagnostic_cold_login_after_document_complete_ms": 12250,
+    "diagnostic_collect_final_document_age_ms": 49424,
+    "current_settings_history_entry_found": false,
+    "unknown_pages_treated_as_empty": false,
+    "history_capability_applicability": "required",
+    "native_save": "BLOCKED: automatic approval review requires confirmation of the exact proposed video; pending, no write attempted",
+    "profile": "FAIL: formal init finished with empty_signals; no profile generated",
+    "incremental": "BLOCKED: no initial profile or nonempty account events; switches remain off",
+    "browser_automation_connection": "unavailable; project extension task transport used",
+    "subsequent_diagnostics": "First repeat idle timeout; two later diagnostic tasks completed empty. No claim of stable full production init."
+  },
+  "checks": {
+    "extension_tests": {
+      "passed": 1799,
+      "failed": 0
+    },
+    "targeted_red_before_fix": {
+      "cold_login_and_late_panel_failures": 3,
+      "same_document_handoff_failures": 1
+    },
+    "backend_tests": {
+      "passed": 107,
+      "failed": 0
+    },
+    "chrome_build_assets": "PASS (22 assets)",
+    "firefox_build_assets": "PASS (22 assets), installed Firefox NOT_RUN",
+    "source_audit": {
+      "PASS": 46,
+      "MANUAL": 14,
+      "N/A": 2,
+      "MISSING": 0,
+      "registration_only": true
+    },
+    "docs_index": {
+      "passed": 5,
+      "failed": 0
+    }
+  },
+  "formal_init": {
+    "http_status": 202,
+    "task_id": "88912b12-58c1-4168-acac-4a738860b471",
+    "profile_update": true,
+    "scopes": [
+      "tt_like",
+      "tt_collect",
+      "tt_history",
+      "tt_follow"
+    ],
+    "task_status": "failed",
+    "error": "Error: scope_root_not_proven",
+    "scope_counts": {
+      "tt_history": 0,
+      "tt_collect": 0,
+      "tt_like": 0,
+      "tt_follow": 0
+    },
+    "accepted_rows": 0,
+    "scope_statuses": {
+      "tt_like": "failed",
+      "tt_collect": "empty",
+      "tt_history": "failed",
+      "tt_follow": "empty"
+    },
+    "scope_errors": {
+      "tt_like": "Error: scope_root_not_proven",
+      "tt_collect": "",
+      "tt_history": "history_entry_not_found",
+      "tt_follow": ""
+    },
+    "scope_complete": {
+      "tt_like": false,
+      "tt_collect": true,
+      "tt_history": false,
+      "tt_follow": true
+    },
+    "initialized": false,
+    "reason": "empty_signals"
+  },
+  "cleanup": {
+    "isolated_backend_stopped": true,
+    "private_config_cookie_database_logs_deleted": true,
+    "production_extension_kept_installed": true,
+    "installed_package_sha256": "50a556ae4bde6043778a40fed66193e1d23255fdd5347fe3b148095c175c5d23",
+    "original_static_extension_archive_kept_privately_for_rollback": true,
+    "temporary_node_modules_symlink_removed": true
+  }
+}

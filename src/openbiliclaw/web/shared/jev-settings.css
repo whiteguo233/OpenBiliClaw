@@ -1,0 +1,14 @@
+.jev-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid #8885; color: inherit; }
+.jev-settings h4 { margin: 0 0 12px; font-size: 1rem; }
+.jev-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.jev-grid label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 14px; }
+.jev-grid .jev-wide { grid-column: 1 / -1; }
+.jev-settings input:not([type=checkbox]) { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; border: 1px solid #8888; border-radius: 8px; padding: 9px 10px; background: transparent; color: inherit; font: inherit; font-size: 16px; }
+.jev-settings input:focus-visible, .jev-settings summary:focus-visible { outline: 3px solid #4385d4; outline-offset: 2px; }
+.jev-settings input:disabled { opacity: .6; }
+.jev-settings .jev-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; cursor: pointer; }
+.jev-settings input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 auto; }
+.jev-settings .jev-hint { margin: 8px 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.jev-settings details { margin-top: 12px; }
+.jev-settings summary { min-height: 44px; line-height: 44px; cursor: pointer; }
+@media (max-width: 540px) { .jev-grid { grid-template-columns: minmax(0, 1fr); } }

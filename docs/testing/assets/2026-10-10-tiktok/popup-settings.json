@@ -1,0 +1,11 @@
+{
+  "browser": "isolated Chrome for Testing, unpacked extension loaded from repair worktree",
+  "real_backend": true,
+  "mode_after_save_reload": "auto",
+  "region_after_save_reload": "US",
+  "search_budget_after_save_reload": 4,
+  "enabled_after_ui_off": false,
+  "enabled_after_ui_on": true,
+  "verification_after_button": "verified",
+  "off_on_regression_fixed": true
+}

@@ -24,6 +24,8 @@ from .base import (
 )
 
 if TYPE_CHECKING:
+    from .api_route_provider import ApiRouteProvider
+    from .cheaperinference_provider import CheaperInferenceProvider
     from .claude_provider import ClaudeProvider
     from .gemini_provider import GeminiProvider
     from .ollama_provider import OllamaProvider
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
         build_llm_registry,
         summarize_registry,
     )
+    from .requesty_provider import RequestyProvider
     from .service import (
         LLMProviderExecutionError,
         LLMResponseContentError,
@@ -45,6 +48,9 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS = {
+    "ApiRouteProvider": ".api_route_provider",
+    "CheaperInferenceProvider": ".cheaperinference_provider",
+    "RequestyProvider": ".requesty_provider",
     "ClaudeProvider": ".claude_provider",
     "GeminiProvider": ".gemini_provider",
     "OllamaProvider": ".ollama_provider",
@@ -79,6 +85,9 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "ApiRouteProvider",
+    "CheaperInferenceProvider",
+    "RequestyProvider",
     "ClaudeProvider",
     "DeepSeekProvider",
     "GeminiProvider",

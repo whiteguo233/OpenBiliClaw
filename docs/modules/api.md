@@ -1,10 +1,115 @@
 # 后端 API
 
+## 抖音发现冷却与失败回传（issue #332）
+
+| 行为 | 状态 | 说明 |
+|---|---|---|
+| 新发现任务领取暂停 | ✅ | 共享 `dy_tasks` 冷却生效时，`GET /api/sources/dy/next-task` 不领取 pending search / hot / feed；没有其它合格任务时仍返回 204。原已领取 lease / staged 修复和显式 bootstrap 按原协议处理。 |
+| 有效 partial 后失败 | ✅ | 扩展先 POST partial 并等 2xx，再 POST failed；新采集的视频因此能与错误一起保留。直接在 failed body 放 videos 不代替 partial 协议。 |
+
+公开路径与响应字段未变；冷却时刻由 `DyTaskQueue.discovery_retry_at()` 读取，并在客户端日志显示。
+不能把已连接、来源 ready 或 204 当作本轮上游取数成功，也不能把冷却当作登录凭据失效。
+
+热词的跨客户端轮换复用已有任务 payload，不增加 REST 字段或改变领取 / 终态协议。
+已入队的 `hot_items.sentence_id` 保留为 6 小时内的选择记录；其它类型和过期选择不参与。
+
+## 扩展在线心跳跨进程共享（issue #332）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `WS /api/runtime-stream` | ✅ | 连接和断开立即发布共享 presence；服务端 reader 在空闲时每 20 秒续约，正常与降级 API 共用同一 reader。保持既有握手鉴权、事件格式和多客户端计数。 |
+| `GET /api/sources/dy/next-task` | ✅ | worker 可依据共享在线状态正常入队后，仍通过现有原子 claim 返回任务；无可领取任务继续返回 204。 |
+
+组合根将正常与降级 `PresenceTracker` 固定绑定 `data/runtime/extension_presence.json`。full/discovery worker 读取原子替换的文件，不依赖 API 内存中的 WebSocket 计数，也不会用自己的零连接覆盖在线状态。活动租约超过 60 秒失效；正常断开按已有 grace 配置处理。HTTP/WS 客户端、扩展资源、登录态和四个产品面的协议不变，无客户端升级要求。独立的 direct-cookie HTTP 403 仍由 `douyin direct request returned HTTP 403` 日志识别；共享 presence 只修复插件任务生产准入，不声称解决上游风控或所有 `empty_signals` 原因。
+
+## 桌面首屏静态脚本（2026-10-23）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /web`、`/web/`、`/web/index.html` | ✅ | 返回同一份 `no-store` 页面，将 12 个依赖脚本按原顺序替换为一次带内容版本的请求；主题和其他内联启动代码保持原位。 |
+| `GET /web/assets/desktop-bundle.js?v=<version>` | ✅ | 只拼接固定包内清单，不接受用户文件路径。应用内保留最近两个构建版本；命中版本返回对应的原始或预压缩 gzip 内容、表示相关的 ETag、`Vary: Accept-Encoding` 与一年 immutable 缓存。未知或已淘汰版本返回 `404 no-store`，不把新内容放进旧 URL。无版本请求使用 `no-cache`；不接受任何可用编码时返回 406。 |
+
+`api.desktop_assets.DesktopAssets` 检查 HTML、全部 12 个脚本和 3 个样式表的文件签名，输入变化才重建内容摘要及 gzip；构建由锁合并，压缩在同步路由工作线程执行。简体、聊天、扫码、收藏同步等代码仍使用相同的独立源码；`/shared/*` 与原桌面脚本路径继续服务移动端、插件及开发工具。`gzip;q=0` 被正确保留，外层压缩中间件不会再次压缩已协商内容。静态脚本仍公开，业务 API 的密码门禁不变。无需 Node 构建、额外依赖或配置，安装包仍使用原包内资源。
+
+## 首屏健康查询不阻塞请求（2026-10-23）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/health` | ✅ | LAN 地址探测转到工作线程；并发冷查询合并一次探测，仍缓存 30 秒。慢 `ipconfig` / `ifconfig` 不再阻塞推荐、封面或 ping 的 HTTP 事件循环；探测异常不缓存，后续请求可重试。 |
+| `GET /api/qr-info` | ✅ | 每次仍强制重新探测网络地址，与健康探测串行发布结果，避免较早的健康结果覆盖扫码时的新地址。返回字段与鉴权不变。 |
+
+网页、插件、移动端共用这些端点；不新增配置、依赖或 CLI 行为，git / Docker / 桌面安装均使用同一路径。并发 HTTP 回归覆盖慢探测期间 ping 可用、健康查询合并、二维码新地址胜出及失败后重试。
+
+## 封面转发与显示缓存（2026-10-23）
+
+`GET /api/image-proxy` 对独立图片服务复用 app-owned HTTPX 连接池，关闭应用时释放；内部连接不继承系统代理，连接超时 1 秒、读取超时 30 秒，服务不可用时仍回退进程内 coordinator，非 200 响应仍原样转发。成功响应与鉴权契约不变。独立服务和进程内模式共用 `image_cache.render_cover_for_display`，避免原图命中磁盘后重复缩图。
+
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
+`POST /api/recommendations/refresh` 的显式补库现包含 Instagram：来源启用且有配额缺口时运行一次有界 producer → eval → copy，不受后台 scheduler 开关影响。来源失败投影 `manual_refresh_state=failed` 和 `refresh.failed`，不再变成“成功但无候选”；部分已入库内容不回滚。`GET /api/image-proxy` 对每个重定向执行 DNS/IP 拒绝与数字连接地址固定，非公网目的地址返回 403，非标准端口返回 400；证书验证、大小和媒体类型限制保持。
+
+`POST /api/init` 选择 Instagram 时，第 4 阶段复用正式 topic/creator producer，任务在通知扩展前登记到该 init run（含恢复采用的任务），因此 `next-task` 的 init-only ID 过滤继续生效。未选择 B 站的 Instagram 初始化不再调用旧的 B 站四策略；关闭后台 scheduler 仍可显式执行。小批候选即时评估并同步生成文案，不改评分阈值；其它旧来源的第 4 阶段路由本次保持兼容。
+
+## Jev 完整候选评估配置
+
+`GET/PUT /api/config` 支持 `discovery.eval_scorer="jev"` 及
+`discovery.jev_evaluation` 的预算 / 受控词表。只读 `discovery.jev_provider` 报告
+provider 准备情况，不返回凭据。保存前校验启用状态、固定版本、凭据和多模态 / 预过滤
+冲突，失败不得写配置或留下表面成功的旧路由。运行时的完整评估器由共享独立 decision
+provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索与推荐表达保持原有 LLM 路由。
+
+`discovery.jev_provider.context_limits` / `context_budget` 分别只读暴露容量登记表与当前精确模型的
+生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
+完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
+改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+
+`PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
+（完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
+`timeout_seconds`、`max_attempts`、`context_limits`。可与 `discovery.eval_scorer="jev"`
+原子保存；无效更新不写配置。`api_key` 省略/空串保留，`clear_api_key=true` 明确清除，
+不能同时替换和清除。URL 变化必须重新填写 Token；外部仅 HTTPS，回环测试可 HTTP，
+禁止 URL 账号密码/query/fragment 及重定向。容量表是完整替换，`{}` 恢复自动。
+共享表单提交其它模型条目的副本，避免编辑一个模型丢掉别的登记。
+
+只读 `discovery.jev_provider` 新增 `endpoint_url`、`api_key_configured`、
+`credential_source=config|environment|missing`、超时和重试次数。任何响应（包括旧
+`reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
+TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
+202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。
 
+`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `api_route`，API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 API Route 实例草稿查询其 OpenAI 兼容 `GET /models`。
+
+`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型。
+
+## 本地向量 CPU 回退后的健康检查
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/health` | ✅ | 本地 Ollama 已因 runner 错误切到 CPU 时，probe 超时返回 `embedding_ready=false`；有效向量成功后恢复为 true。普通未回退冷加载仍沿用原兼容策略。 |
+| 初始化 / embedding 诊断 | ✅ | 正式请求与诊断共享 CPU 选择，CPU 也失败时保留具体故障；不把 `/api/version` 成功当作模型可用。 |
+
 ## 推荐通知测试生命周期
+
+### 默认关闭的导演屏协议
+
+启用 `[director]` 后，`GET /api/recommendations?stream_ref=default` 仅恢复精确屏，不 top-up、不请求模型；空屏返回 `director.requires_generation=true`。关闭时不增加空 director/batch 字段，保持旧响应形状。
+
+| 端点 | 合同 |
+|---|---|
+| `GET /api/recommendations/director/status` | enabled / mode / strategy，无模型请求 |
+| `POST /api/recommendations/director/generate` | request_id、stream_ref、intent=NEXT/STAY、limit=1..20、source_platform、explicit_intent、excluded_bvids；稳定 ID 幂等，返回精确屏及 post-commit 库存 |
+| `GET /api/recommendations/director/restore` | stream_ref 对应最新屏，纯恢复 |
+| `POST /api/recommendations/director/present` | batch_ref、ack_id、item_keys，只 ACK 实际可见子集；重试去重，错批次／卡片 409 |
+| 既有 `append` / `reshuffle` | 启用时 NEXT / STAY，接受稳定 request_id / stream_ref / explicit_intent；首次无根 STAY 返回 409，由客户端显式 NEXT |
+| 既有 `feedback` / `recommendation-click` | 可选 batch_ref；先核对 exact recommendation ID，canonical ingress 后投影同一事件，不重复写学习事件 |
+
+状态改变、候选失效、计划 CAS 或配置换代冲突返回 409，不能部分提交。三端共用 `shared/director-client.js`，区分恢复、生成、可见 ACK；隐藏页和预加载不是曝光。新前缀仍走既有推荐进程代理和鉴权。配置使用 TOML，未增加图形设置／付费探测。详见 [导演](director.md)。
+
+### 通知回归约定
 
 `POST /api/recommendations/append` 会在响应关键路径外安排推荐池状态通知。验证该通知的测试使用 `httpx.AsyncClient` + `ASGITransport`，让请求和有界异步等待共享 pytest 的事件循环；不得在请求级同步 `TestClient` portal 已关闭后用阻塞等待验证后台任务。追加推荐回归覆盖无延迟及 50ms 状态读取延迟，并保持完整响应与通知内容断言。生产接口、通知调度及应用启动流程不变。
 
@@ -13,6 +118,10 @@
 `GET /api/bilibili/video/comments` 的每条评论除作者、正文和点赞数外，返回 `ctime`（Unix 秒）、`reply_count` 和 `avatar`，供原生客户端显示本地日期、回复数量和头像。时间文本由客户端格式化，后端不输出语言相关日期字符串。
 
 ## 初始化期间的配置探测
+
+`GET /api/runtime-status` 的 `discovery_failure_message` 是安全的用户提示，默认空串。已保存画像但 guided init 首轮发现以 `discovery_partial/discovery_timeout` 结束、尚无可用候选/推荐时返回失败与恢复下一步；不透传上游异常、账号或 URL。较新的初始化及已恢复的可用候选/推荐优先，不能被历史失败遮盖。客户端不得把 `pending_signal_events > 0` 当作 worker 正在运行，也不能把只完成关键词规划或未执行的 success 当作内容发现已恢复。
+
+该端点有一项有界本地 reconciliation：首次观察到当前失败 init 已有可用供给时，在 `memory/init_discovery_resolution.json` 原子记录唯一 `run_id`。不改 init 原始结果，不写上游/业务内容；恢复后的自然消费、库存归零或进程重启不会让历史失败复活。新 init ID 不继承旧凭据。写入持有文件锁，并重查当前 owner 与实时供给，已被 force re-init 退休的推荐历史不算恢复。
 
 `POST /api/config/probe-service` 只在内存副本上应用设置页草稿并真实探测 LLM、默认链、embedding 或网络策略，不写 `config.toml`、不热重载 runtime。它因此不受 guided init 的 HTTP 写端 409 门控；初始化运行时仍可测试，LLM 请求继续经过进程级稳定 total gate。LLM 实例 / 链探测的 outer deadline 按草稿 `[llm].timeout` 取值并夹在 10–120 秒，超时以 `ok=false` 和稳定错误文案返回；图形客户端使用 125 秒预算，覆盖本地模型冷启动而不允许无界挂起。`PUT /api/config` 仍在初始化期间返回 `409 init_running`，避免替换本轮任务正在使用的组件。
 
@@ -55,6 +164,8 @@ Discovery 配置模型也公开 `eval_scorer="llm|shadow|learned"`。`GET /api/c
 
 ## 配置保存与后台应用
 
+多进程部署：完整 `_rebuild_runtime_with_lane_handoff()` 成功后才递增 app-owned `backend_config_generation`，父 supervisor 等待整条配置队列结束后重启子进程，使后台评估、推荐文案和推荐服务一起读取新配置。构造失败不发布 generation，后置恢复失败先回滚；仅已知聊天字段局部应用不触发重启。该 generation 是进程内协作接口，不新增 HTTP 字段；API 的 `applied` 表示主运行时已完成，后台子进程会在下一次约 5 秒巡检切换，实际运行状态仍看 worker heartbeat。
+
 `PUT /api/config` 把“持久化成功”和“运行时已经切换”分成两个明确阶段。请求仍在 `_CONFIG_SAVE_LOCK` 内完成校验、`config.toml.bak` 快照、`config.toml` 写入和凭据存储，然后统一立即返回 `202 apply_state="queued"`、`apply_revision` 与已脱敏配置快照；运行时 lane 由 app-owned latest-wins 队列在后台安全应用，前端通过 `GET /api/config/apply-status` 或 runtime event 观察终态，不把 202 当作失败。
 
 `GET /api/config` 和 `PUT /api/config` 同时公开 B 站发布日期偏好：`recommendation_date_preset`、
@@ -71,7 +182,17 @@ Phase 2 cognition rollout 在配置 API 中也是 task-scoped：`soul` GET/PUT �
 `soul.awareness_confusions`；普通 `soul.awareness` 固定使用 `legacy`，其余两个值各自只影响
 对应 analyzer。
 
+聊天批准后的 `update_config` 同样通过 API 的 `config_update_hook(key, value)` 进入这条队列：在保存锁内加载最新磁盘配置、应用单字段补丁、校验并快照，再等待该修订的实际应用结果。成功更新同一 last-good 基线；失败回滚并将审批置为 failed，不提前改 live Config，也不把热重载失败报告成执行成功。尚未开始的聊天修订被后续保存替代时，会明确报告被替代。
+
+若完整候选配置只改变 `[agent]` 的 `loop_enabled`、`loop_max_steps`、`tool_result_max_chars`、`session_title_enabled`、`task_max_steps` 五个已确认独立的字段，队列在同一 reload lock 内调用 `RuntimeContext.try_apply_agent_config()`，替换聊天 loop 与配置引用；LLM service、工具、审批存储、画像和对话学习 owner 保持原实例，不暂停、排空或取消后台任务。在途回合保留旧 loop/预算，新回合使用新值。完整候选与当前配置严格相等时直接完成修订，连 loop 也不替换。该路径仍更新 last-good、完成审批 future 并广播 `config_reloaded`。含其他未应用字段、未来新增 agent 字段变化、降级运行时或需要重启的修订均走原完整 handoff。
+
+热重载按审批文件的规范路径复用原 `ApprovalStore`；项目相对路径或符号链接别名变化不会重建同文件的内存状态机，正在执行的批准仍由原任务结算为 `executed/failed`，重复批准不重新入队。
+
+局部应用资格仅由上述五个键的聊天审批授予。普通 `PUT /api/config` 仍完整重载，因为 Cookie 等独立文件可能改变而 `Config` 值不变；普通修订尚未执行就被合并，或执行失败后由新修订接替时，其完整重建要求继续传递，不会被后续聊天设置覆盖。
+
 后台配置应用队列为 app-owned、latest-wins：正在应用的修订不会被取消，尚未开始的多个修订会合并为最新一份；因为每次 PATCH 都基于最新已落盘配置构建，合并不会丢掉前一轮已保存字段。成功广播 `config_reloaded`；失败且没有更新修订等待时恢复最后一次已生效配置并广播 `config_reload_failed`，若已有更新修订则不回滚覆盖它，直接继续应用最新值。进程在排队期间退出也不会丢配置，下一次启动直接从已落盘 `config.toml` 构建运行时。
+
+`applying` 的状态消息随交接阶段更新：等待画像/反馈任务、等待当前对话、等待对话学习任务并重建运行时、恢复后台任务。等待画像/反馈任务时尚未暂停对话 lane，仍可使用旧配置聊天；进入对话交接后才等待已有对话结束。进度消息不改变原有排空时限、回滚条件或 `queued/applying/applied/failed` 状态契约。
 
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
@@ -79,6 +200,8 @@ Phase 2 cognition rollout 在配置 API 中也是 task-scoped：`soul` GET/PUT �
 | `GET /api/config/apply-status` | ✅ | 返回 `state`、最新请求修订、最后已应用修订、消息、非敏感错误分类和更新时间；不包含配置内容或凭据。`applied` 只确认本进程可应用部分，不取消 PUT 已返回的目录重启要求。 |
 
 guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST /api/init` 返回 `409 config_applying`；init 已开始时 `PUT /api/config` 仍返回既有 `409 init_running`。
+
+桌面 Web 已补齐 Instagram 来源卡：`sources.instagram` 的 enabled、source_modes、两类日预算、request_interval_seconds、min_interval_minutes、bootstrap_limit，以及 `scheduler.pool_source_shares.instagram` 均沿用此保存 / apply-status / 回读协议。来源启用、占比建议请求与建议回填也包含 Instagram。该补齐不新增 API 或配置字段，不接收 Cookie，也不能代替扩展的站点权限确认与浏览器登录。
 
 ## 本机数据迁移
 
@@ -237,12 +360,34 @@ ID 字段是严格 JSON string，不接受数字、布尔或其它类型的自�
 | `POST /api/sources/linuxdo/login-state` | ✅（兼容端点） | 只接受 strict boolean `logged_in`，持久化扩展对 `_t` 存在性的观察；不接受 Cookie 字符串。公开 discovery 的 `auth_required` 仍为 false。 |
 
 Linux.do 站点访问全部发生在真实 `linux.do` task tab 内，且只允许同源 JSON `GET`。个人 bootstrap 先以 `/session/current.json` 正面确认 username；`_t=true` 只是 source-auth 心跳，不能替代任务内身份确认。结构化错误只包含 code/status/path，不把 challenge HTML、JSON body、Cookie 或 CSRF 字段带进回调。dispatcher 在执行前把 task/tab/deadline 写入扩展 session storage；MV3 service worker 重启时先恢复 runner，仍存活的任务 tab 可把结果交给恢复后的 handler 重试后端回传，不会重跑上游 GET。完整契约见 [Linux.do 来源文档](linuxdo.md)。
+### Instagram 任务与登录态端点
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/sources/instagram/login-state` | 只接受严格布尔 `logged_in`，保存 `sessionid` 存在性与更新时间；不接受 Cookie value |
+| `GET /api/sources/instagram/next-task` | 扩展通过 authenticated backend session 原子领取一个 `discover` / `bootstrap_events` 任务；无任务为 bodyless 204。init 活跃时只放行当前 run 登记的任务，包括阶段 4 新建与恢复的 discover，不放行其它旧后台任务 |
+| `POST /api/sources/instagram/task-result` | 接收 claim token、canonical rows、scope counts/completeness 与结构化错误；canonical payload 先 stage，投影完成后才 terminal |
+| `POST /api/sources/instagram/kick` | 只向 runtime stream 广播 `instagram_task_available`；不访问 Instagram |
+
+task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `creator`；bootstrap 只接受 liked/saved/following。个人结果没有正向数字 current-account ID 时一律拒绝投影；后端仅保存派生 account key。Cookie、header、raw JSON/HTML 和 challenge body 都不属于 API schema。只有 route-specific envelope 明确终止才能报告 `empty` / complete，已有 rows 的限流、challenge、cap 或 schema failure 使用 partial 并保留 staged rows。
+
+公开页专属不可用标题与断链正文共同确认的软 404 使用 `public_page_unavailable`，不是 empty。Producer 读取 completed 与 failed 两种终态的 staged canonical payload，保留原始 machine code；只有这个 page-local 错误允许继续下一个 seed，其余 auth / challenge / rate / schema 失败停止任务后缀。HTTP schema 和账号校验不变。
+
+`challenge_required` 必须来自明确上游诊断、验证表单或最终验证路由；Instagram 首页脚本中的路由名不是证据。API 意外返回首页 HTML 时保留 `html_response`，不能引导用户重复完成并不存在的验证。已有 task-result first-final 记录不会因分类器升级被改写，历史错误需按对应安装版本解读。
+
 ## B 站与抖音浏览器任务边界
+
+`DyTaskQueue.fail()` 在原子终态转换中保留已接收的 `videos`、scope counts 和 debug，并追加失败原因。
+客户端可以继续评估已接收的发现候选，但任务状态仍为 `failed`；迟到回调不能覆盖终态或 staged final。
 
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | 接收 partial 后的失败保留原视频与 scope counts；原子 failed / staged final 仍阻止迟到结果覆盖，不把 partial 的可用性冒充任务整体成功。 |
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
 | `GET /api/sources/dy/next-task` | ✅ | 对 legacy discovery 的 `dy_tasks` 执行 durable source-wide single-flight：`BEGIN IMMEDIATE` 内若已有未超过 15 分钟的 `in_progress` lease，则返回 bodyless 204，不让另一个扩展 ID/Profile 领取第二条任务；过期或缺失 `claimed_at` 的 lease 可按 FIFO 重领。此门禁不涵盖先于 legacy queue 检查的 native-save job。 |
+| `GET /api/sources/tiktok/next-task` | ✅ | 对 `tiktok_tasks` 执行与抖音相同的 durable source-wide single-flight 领取（`BEGIN IMMEDIATE` + 15 分钟 stale lease 重领）；无任务返回 bodyless 204。scheduler 增量任务在来源或总开关关闭时先被标记 `failed`，不参与领取。 |
+| `POST /api/sources/tiktok/task-result` | ✅ | 接受扩展 dispatch 的 `partial / ok / degraded / empty / failed` 结果。`ok / degraded / empty`（`empty` 仅限 `bootstrap_profile`）走两阶段 staged completion：先在单事务冻结第一份 canonical payload 与 staged marker，再经 `tiktok_bootstrap_videos_to_events` 重放事件入口并写 seen-key，最后只翻 terminal status；`failed` 直接落终态。scope 映射：点赞→`like`、收藏→`favorite`、观看历史→`view`、关注→`follow`。 |
+| `POST /api/sources/tiktok/kick` | ✅ | 经 `/api/runtime-stream` 广播 `tiktok_task_available`，让扩展 dispatcher 立即轮询而不是等下一个 alarm；幂等、best-effort，失败不影响任务状态。 |
 
 抖音的 15 分钟 stale lease 与 producer 的 15 分钟基础设施失败退避来自 2026-08-09 真实扩展 E2E：正常任务约 15–35 秒，而执行上下文丢失会耗尽 180 秒 watchdog。它们是防止重复 claim/分钟级重试风暴的工程安全值，不是抖音官方限额；任务 watchdog、lease 或调度 cadence 改动时必须重新校准。
 
@@ -298,12 +443,28 @@ row；相同 `turn_id` 的同一 normalized request 仍幂等，任何 relation/
 
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
-| `POST /api/chat/turns` | ✅ | 普通消息在 user row INSERT 前解析可选 `reply_to_turn_id`，冻结 server-owned canonical `DialogueTurnBinding`（bound/ordinary/detached）和 context digest；随后落成 `pending` 并立即返回，只向 app-owned `DurableChatReplyScheduler` 发 wake；单 worker 按 `chat_turns.rowid` 严格串行生成回复，启动会分页恢复全部 pending。provider、限流、配置、超时与取消都保持 pending 并原位有界退避，不能被后续 turn 越过；只有显式无效/空响应可终结为 failed。例外（issue #213）：连续 3 次快速失败且均被分类为 `no_provider`（模块路由 / 全局链解析不到任何 chat-capable 实例的配置型错误，重试不可能自愈）时，turn 以带修复提示的 failed 终态发布，避免无限「正在思考」并阻塞后续 turn。`scope="hypothesis"` 时服务端生成结构化卡片 payload（`type/kind/ref/title/evidence_refs/actions/state`），直接返回 `status="completed"`，不会调用 LLM worker。若双轨冷却允许，普通 durable 用户消息会先原子插入一条系统确认卡/问题，再写用户 turn；payload 的 `attached_to_turn_id` 负责重试与重启去重。 |
+| `POST /api/chat/turns` | ✅ | 普通消息在 user row INSERT 前解析可选 `reply_to_turn_id`，冻结 server-owned canonical `DialogueTurnBinding`（bound/ordinary/detached）和 context digest；随后落成 `pending` 并立即返回，只向 app-owned `DurableChatReplyScheduler` 发 wake；单 worker 按 `chat_turns.rowid` 严格串行生成回复，启动会分页恢复全部 pending。provider、限流、配置、超时与取消都保持 pending 并原位有界退避，不能被后续 turn 越过；只有显式无效/空响应可终结为 failed。例外（issue #213）：连续 3 次快速失败且均被分类为 `no_provider`（模块路由 / 全局链解析不到任何 chat-capable 实例的配置型错误，重试不可能自愈）时，turn 以带修复提示的 failed 终态发布，避免无限「正在思考」并阻塞后续 turn。`scope="hypothesis"` 时服务端生成结构化卡片 payload（`type/kind/ref/title/evidence_refs/actions/state`），直接返回 `status="completed"`，不会调用 LLM worker。若双轨冷却允许，普通 durable 用户消息会先原子插入一条系统确认卡/问题，再写用户 turn；payload 的 `attached_to_turn_id` 负责重试与重启去重。M5 起 body 支持可选 `session_id`（多会话归属）：缺省落默认会话，显式未知 id 返回 404，响应与 `ChatTurnOut` 回显实际归属；显式 `session_id` 参与同 `turn_id` 重试的请求一致性比较。payload 保留键（server-owned，客户端提交即 422 `reserved_payload_key`）：canonical binding 组（`dialogue_binding/source_type/kind/ref/generation/anchor_origin_turn_id/title/evidence/evidence_labels/context_digest/context/mode/inventory_settles_allowed`，声明 reply 关系时连 `evidence_refs/evidence_ref`）、M2 的 `agent_events`（流回放日志）与 `agent_persona`（回合冻结的表达风格）、M10 的 `agent_task_summary/task_id/task_status` 及 `payload.type="agent_task_summary"`（后台任务汇总卡只能由 AgentTaskRunner 写入）。 |
+| `POST /api/chat/agent/stream` | ✅ | 「聊一聊」多跳 agent loop 的真流式端点（M2）。body 复用 `ChatTurnIn`（`message` 必填，可带 `turn_id`）；整个 loop 在 `DialogueExecutionCoordinator` 租约内运行，经 `SocraticDialogue.stream_agent_reply()` 共享 persona prompt / 长期记忆 / 学习队列，短期消息上下文按 `session_id` 隔离并从本会话恢复。每个 `AgentEvent` 发一条 SSE event（event 名 = `type`：`thinking` / `tool_call` / `tool_result` / `approval_request`（M7）/ `delta`（token 级增量片段，只服务实时渲染、不落 `agent_events`，旧客户端可安全忽略）/ `step_limit_reached` / `final`），`final` 后紧跟端点级 `done`（`reply` + `turn_id` + `skill`）；LLM 异常映射为单个 `error` 事件。**租约准入有 30 秒上限**：配置热重载暂停/排空或前一个回复占用对话 lane 时请求不再无限挂起，超时返回单个 `error` 事件，文案按 paused/active 区分「正在重载配置」与「对话通道正忙」；此时带 `turn_id` 的 turn **保持 pending**（loop 未开始），端点会唤醒 durable 兜底 worker，待 lane 恢复后由它重跑同一 agent loop 完成该 turn。带 `turn_id`（须先以 `streaming=True` 创建 pending turn）时按 CAS 完成/失败落库，并将除 `delta` 外的事件逐条追加到 `chat_turns.payload.agent_events`（JSON 数组，免迁移）供历史回放；不带 `turn_id` 为临时运行。**兜底一致性**：streaming turn 在创建时由服务端写入 `payload.agent_stream`（+ 可选 `agent_skill`，chat 回合包含冻结的 `agent_persona`）标记（客户端伪造会被 422 拒绝）；HTTP 断连仅关闭订阅，app-owned producer 继续当前 loop 并完成 turn；重复请求在 lease 内重读终态并重放已有事件，不重复执行工具。进程关闭/从未建立流的 pending turn 仍由 `DurableChatReplyScheduler` 恢复，同 skill、工具子集与 canonical reply binding。审批结果逐事件追加，不会被流结束时覆盖。M4 起 body 支持可选 `skill` 字段绑定会话角色（缺省 = 默认 `taste-companion`，未知名返回 422 并附可选清单）：loop 工具集 = `agent_tool_registry.subset(skill.tools)` + `suggest_skill` 元工具，skill 人设叠加在 socratic system prompt 之上；会话中切换 = 下一回合带新 `skill` 值，agent 只能通过 `suggest_skill` 工具调用（`skill` / `reason` 参数随 `tool_call` 事件流出，前端渲染切换卡片）提议切换。`[agent] loop_enabled=false` 时返回 503；旧 `/api/chat` 不受影响，旧 `/api/chat/stream` 自 token streaming 起同样支持真流式（`SocraticDialogue.respond_stream()` 逐 token 下发 `content` 事件，替换原切片假流式；但生产装配的 legacy dialogue 带 SOURCE_TOOLS，工具回合按设计保持一次性工具流，最终回复作为单个 `content` 事件下发——逐 token 效果仅在无工具配置如 CLI `chat` 下可见）。事件协议详见 [agent 模块](agent.md)。**SSE 心跳**（本端点与旧 `/api/chat/stream` 共用 `_sse_heartbeat_wrap`）：相邻事件静默超过 10 秒（`_SSE_HEARTBEAT_INTERVAL_SECONDS`，含首个字节前的 LLM 首跳）时服务端插入一行 SSE 注释 `: ping`——防止代理缓冲 / NAT idle / 网络切换把连接静默掐死，并喂活三端前端的 60s 读看门狗；心跳推进在 shielded task 中进行，超时不会取消在飞的 LLM 调用。注释行按 SSE 规范被三端解析器跳过。 |
+| 对话内链接摄入（issue #83） | ✅ | 三个聊天端点（`POST /api/chat`、`/api/chat/stream`、`/api/chat/agent/stream`）共用 `ctx.dialogue` 装配的 `LinkIngestor`（`sources/link_ingest.py`，runtime_context 构建，`bilibili_client` + `MemoryManager.propagate_event` 事件 sink）：用户消息含 B站/知乎/小红书等链接时，先展开 b23.tv / xhslink.com 短链，再按平台抓取摘要（B站走 /view API，其余抓 og 元数据），注入当轮 prompt 并把抓取成功的链接记为 `share` 偏好事件；抓取失败降级为纯文本继续，端点协议与响应字段完全不变。 |
+| `GET /api/chat/agent/ping` | ✅ | 流式链路活体探针（无状态、不调 LLM）：每秒发一个 `event: ping`（data `{"seq": N}`），共 10 个（`_SSE_PING_EVENT_COUNT` / `_SSE_PING_INTERVAL_SECONDS`）。用户可直接在手机浏览器打开该 URL 验证整条代理链路是否保流式：序号在到达 10 之前停住即说明中间环节在缓冲或断流。 |
+| `GET /api/chat/personas` | ✅ | 六种聊天表达风格：`{example_prompt, personas:[{id,title,description,example,default}]}`。与功能 skill 独立，不含内部 prompt 或工具权限。 |
+| `GET /api/chat/skills` | ✅ | 列出全部可用 chat skill（内置 4 个 + `data/skills/` 用户自定义）：`{"skills": [{name, title, description, tools, source, builtin, default}]}`；`source` ∈ `builtin` / `custom`，同名用户 skill 覆盖内置。skill 格式与加载语义见 [agent 模块](agent.md)。 |
 | `GET /api/chat/contexts/{reply_to_turn_id}` | ✅ | 只读返回 canonical context preview（target、kind/ref/generation、可读 evidence、digest）。不创建 queue job、anchor、event，也不修改 card；三端只持久化 target ID，并用 preview 校验恢复。 |
 | `GET /api/chat/turns?session=<label>` | ✅ | `session` 只过滤当前 UI 可见 turn；插件、移动 Web、桌面 Web 的主聊天统一使用 `session=popup` 并读取完整 `chat/hypothesis/confusion` 可见历史，因此三端共享普通消息、确认卡和澄清问题；其它 session 仍可用于隔离集成。不同 UI 仍共享一份认知 history。列表中的每个非终态卡片只 submit `card.reconcile` 到唯一结算队列并返回本次 durable 快照；request task 不直接写 card/object/anchor。 |
 | `GET /api/chat/turns/{turn_id}` | ✅ | 返回单个 durable turn。普通 turn 仍为 pending 时只幂等唤醒同一 reply worker，重复轮询不会复制 queued/in-flight/backoff 工作。若读到非终态卡片，只同步 admission `card.reconcile` 并立即返回快照。worker 会为 `applied=1` receipt 补 stable audit、跨 session projection 与 exact-generation 解锚，也会把没有对应 active anchor 的 orphan `discussing` 校正回 `pending`；因此 publication gap 的第一次 GET 可仍见旧态，queue 完成后的下一次 GET 见权威状态。 |
+| `POST /api/chat/sessions` | ✅ | 创建多会话对话（M5）。body `{"session_id?", "title?", "metadata?}`：`session_id` 缺省自动生成 `chat-<uuid>`；`title` 可留空，首条 chat 消息后服务端异步自动生成（见下）；`metadata` 是 additive JSON bag，`metadata.persona` 可指定已知聊天风格，非法值在创建前返回 422；读回缺省为 natural。同 id 幂等。返回 `ChatSessionOut`。 |
+| `GET /api/chat/sessions` | ✅ | 会话列表（M5），按 `last_activity` 倒序（并列时 turn_count 多的在前）。每项带 `title / archived / metadata / turn_count / active_turns`（pending 回复数，即“活跃”指示）/ `last_message_preview`（120 字符截断）/ `last_activity / last_message_at / created_at / updated_at`。`?include_archived=true` 含已归档；`?limit=` 上限 500。 |
+| `GET /api/chat/sessions/{session_id}` | ✅ | 会话详情 + turns 分页（M5）：`{"session": ChatSessionOut, "items": [ChatTurnOut], "total, limit, offset}`，`items` 为页内升序展示序；`?scope=` 可按 `chat/hypothesis/...` 过滤。未知 id 404。默认会话（`session_id='default'`）收编全部 `session_id=''` 的 pre-M5 legacy turn，历史全部保留可查。 |
+| `PATCH /api/chat/sessions/{session_id}` | ✅ | 改名 / 归档（M5）：body `{"title?": 非空字符串, "archived?": bool, "persona?": 已知风格 ID}`；persona 原子更新 metadata 的单一字段并保留其他键，不重载配置；非法风格在写入前返回 422。空标题 422，归档默认会话 422，未知 id 404。不提供 DELETE——删除即归档。 |
+| `POST /api/chat/tasks` | ✅ | 发起 durable 后台任务（M6 任务中心）。body `{"prompt"（必填）, "session_id?", "title?", "skill?"}`：`session_id` 缺省为默认会话（显式未知 id 404），是完成后汇总消息的回写目标；`skill` 可选绑定角色（未知名 422 并附可选清单），其白名单与只读上限求交。任务立即以 `pending` 落库并在 `BackgroundTaskRegistry` 登记的后台 asyncio task 里运行**只读** AgentLoop（`filter_by_permission("read")` + `propose_suggestion` 元工具，跳数预算 `[agent] task_max_steps`）；写动作只产出结构化建议清单。`[agent] loop_enabled=false` 时 503。返回 `AgentTaskOut`（此时通常 pending/running，`steps` 为空）。 |
+| `GET /api/chat/tasks` | ✅ | 任务列表（M6），`created_at` 倒序 + 分页：`?status=`（pending/running/completed/failed/cancelled/interrupted，非法值 422）、`?session_id=`、`?limit=`（≤200）/`?offset=`，返回 `{"items": [AgentTaskOut], "total, limit, offset}`；列表项**不含** `steps` 执行记录。 |
+| `GET /api/chat/tasks/{task_id}` | ✅ | 任务详情（M6），`AgentTaskOut` 含完整 `steps` 执行记录（AgentEvent 形状 JSON 数组，≤200 条，超限以 `steps_truncated` 标记收尾）与 `suggestions` 建议清单（`{action, summary, payload}`）。未知 id 404。 |
+| `POST /api/chat/tasks/{task_id}/cancel` | ✅ | 取消在途任务（M6）：CAS 落 `cancelled` 终态并取消后台 asyncio task；未知 id 404，已终态 409。取消不写回会话消息；服务重启/热重载中断的任务由服务端标 `interrupted`（不自动恢复）。 |
 | `GET /api/chat/pending-confirmations` | ✅ | 读取前在 settlement worker 空闲时扫描 orphan claim：只有 `clarifying` claim 已超过 30 秒创建安全窗、ask-turn identity 未变化、且 durable turn 仍不存在时才释放；worker 正忙时跳过该次修复并直接返回 durable 快照，避免只读 UI 被长 LLM job 卡住，下一次空闲读取/open 会继续修复。随后返回 `{"count":N,"items":[...]}`；只列未结算的高优先级对象且最多 10 条（总积压在 `total` 字段返回）：未验证假设 `confidence>=0.60`、active 疑惑 `interpretation_confidence>=0.50`。已 defer 的假设在 `deferred_until` 到期前不进入该列表，到期后自动恢复；用户主动 open 仍按“手动绕过冷却”处理。无活跃澄清时疑惑固定预留 1 席；已有全局 `clarifying` 时只保留该持有者，隐藏必然无法 claim 的其它 open 疑惑。UI 传 `?session=popup|webui` 后，若该持有者已在本 session 有 turn，则不重复显示；同一 session 已打开/未结算的假设同样不再重复进入待聊列表，其它 session 仍可打开同一 ref 并获得本地 turn。列表会按标题归一化相似度折叠近似重复的待聊，只保留最高置信度副本。`?count_only=1` 保留轻量只读响应 `{"count":N,"total":T}`，其中 `count` 是本次返回列表长度、`total` 是去重后的完整积压数，供兼容客户端/诊断使用；当前 service worker 明确不调用它，工具栏角标只表达后端不可达或未初始化，待聊数字只在 popup、移动 Web 与桌面 Web 的对话入口显示。`openbiliclaw questions` 读取完整响应且不复制筛选规则。用户主动列表不套用系统冷却。 |
 | `POST /api/chat/pending-confirmations/{ref}/open` | ✅ | body 为 `{"session":"popup|webui|..."}`。若唯一 settlement worker 正在处理长 LLM job 或处于原子交接，端点在任何 claim/turn 写入前返回 `503 detail.code="dialogue_busy"` 与 `Retry-After: 2`；popup、移动 Web 与桌面 Web 共享 helper，最长按安全热重载窗口自动重试并显示等待态。空闲后，假设生成 completed card；疑惑通过 required `confusion.open.sync` 进入 `clarifying`，再由 required `anchor.establish` 以 `pending_open` 建锚，不使用会超时后继续执行的 1 秒 fast path，因此不会留下“claim 已完成、turn 未创建”的半截状态。相同 `(ref,session)` 原子复用，跨 session 各自产 turn；API 不在 request task 执行 protected mutation。 |
+| `GET /api/chat/approvals` | ✅ | M7 L2 审批门：列出 hard_write 待批准动作（`?status=pending|approved|executing|rejected|executed|failed|expired` 过滤，非法 status 422，`?limit=` 默认 50，按创建时间倒序）。返回 `{"count", "items":[ApprovalRecord]}`：每条含 `approval_id` / `tool_name` / `arguments` / `summary`（做什么）/ `reason`（为什么）/ `impact`（影响说明）/ `session` / `session_id` / `turn_id` / `status` / 时间戳 / `result` / `error`。存储为 `{data_dir}/chat_approvals.json`（免迁移）；审批未接线时 503。前端轮询本端点跟踪执行进展：`executing` = 后台执行中（建议显示「执行中」），`executed`/`failed` 为终态（结果分别在 `result` / `error`）。 |
+| `POST /api/chat/approvals/{approval_id}/approve` | ✅ | 批准一项待批准动作并**异步执行**：状态机 `pending→approved→executing→executed / failed`。端点只做快速状态迁移并立即返回（**不在请求内执行工具**——update_config 等会触发热重载排空，可能耗时数分钟），真实 dispatch 由 `BackgroundTaskRegistry` 登记的后台任务（`chat_approval_execute`，热重载 `cancel_all` 豁免）完成：用登记时的原 arguments 对 `ctx.agent_tool_registry` 二次 dispatch 真写入，完成后迁移终态、写审计台账（`profile_update_ledger`，`write_point=agent.approval.<tool>`、`gate_verdict=approved`）并往来源 turn 的 `payload.agent_events` 追加 `approval_result` 事件。首次响应 `{"approval"(status=executing), "executed": false, "queued": true, "already_queued": false, "ok": null, "result": ""}`；执行中重复 approve 返回 `already_queued=true`（不重复入队）；已到终态的记录返回 `{"already_executed": true, "queued": false, "ok", "result"}`（幂等，不重执行）。rejected/expired 409，未知 id 404，工具未接线 503。**前端迁移**：approve 响应不再携带执行结果，需轮询 `GET /api/chat/approvals` 直到 `executed`/`failed`；进程崩溃会把 `executing` 恢复为 `approved`，重新 approve 即重试。 |
+| `POST /api/chat/approvals/{approval_id}/reject` | ✅ | 拒绝一项待批准动作（body 可带 `{"reason": "..."}`，可空）：`pending→rejected`，动作永不执行；写审计台账（`gate_verdict=rejected`）并追加 `approval_result` 回放事件。重复 reject 幂等返回现状且不重复写审计；已 approved/executing/executed/failed 的记录 409，未知 id 404。 |
 | `POST /api/chat/cards/{turn_id}/action` | ✅ | body 为 `{"action":"confirm|reject|discuss|defer"}`。四动作分别 submit `settle.hypothesis`、`card.discuss`、`card.defer` 到唯一队列；confirm/reject 与锚定 `support/contradict/revise/answer`、普通 chat settles、legacy endpoint 共用 immutable ref winner。discuss 在 worker 内 `pending→discussing→建锚`，建锚失败立即补偿回 pending；defer 只对 pending/discussing 卡在 worker 内更新卡片/冷却，若卡由 pending-open 建锚但仍保持 `pending`，会按 origin turn 精确释放同代锚，若卡已 confirmed/rejected 则返回权威终态的 `already_settled` 且不写 cooldown。HTTP 最多等本地 job 1 秒，完成保持同步 `200`，队头阻塞返回 `202 processing` 且不会取消已入队 job。 |
 | `POST /api/insights/feedback` | deprecated | 保留旧客户端响应结构和 `Deprecation: true`，内部通过共同 façade submit 同一队列，台账 `source="legacy_endpoint"`；1 秒内未完成时同样返回 HTTP `202`，不新增 legacy 专用 executor。**锚冲突返回 `409`**：当另一张卡片持有对话锚时结算会被拒绝（`outcome=stale_anchor` / `anchor_dependency_failed`），此时 `card_settlements` 与台账都没有写入，端点返回 `409` 并在 detail 里说明原因，`Deprecation` / `Link` 头仍然保留。旧行为把这种拒绝包装成 `200 {"ok":true,"matched":false}`，老客户端会误以为确认成功。 |
 
@@ -316,9 +477,16 @@ row；相同 `turn_id` 的同一 normalized request 仍幂等，任何 relation/
 - `state="revised"`（终态，文案「已按你的修正记下」）：修正式结算——原假设被替换、派生假设已写入。它**不是** `rejected`；把 revise 投影成否定会让刚说完「我认可修正版」的用户看到「已标记不准」。
 - `outcome="stale_anchor"` / `"anchor_dependency_failed"`（`state="stale"`）：对话锚被另一张卡片占用，本次结算被拒绝，`card_settlements` 与台账均无写入。前端共享 helper 把这两个 outcome 归入 `retryable_error`：乐观态回滚到操作前的真实状态，提示用户先结束当前正在聊的那条再重试——**不得**回落到乐观终态，否则卡片会显示「已确认」而后端什么都没记。
 
+待聊确认列表按当前完整标题 tuple 缓存去重后的保留索引；缓存不保存卡片内容，状态字段每次请求重新投影。相似度比较先用 SequenceMatcher 安全上界跳过不可能达阈值的比较，保留既有阈值和结果；已展示的 confirmation refs 按请求批量读取，避免逐候选打开数据库连接。
+
 ## 一致性边界
 
-所有生产 `dialogue.respond()` 入口（durable reply、惊喜 chat、legacy `/api/chat`、兴趣探针 chat、避雷探针 chat）共享 app-owned `DialogueExecutionCoordinator`，同一时刻最多一个 active execution。调用方拿到 lease 后才解析当前 `ctx.dialogue` 与对应 Soul speculator，并把回复后的认知、事件与状态副作用一并留在 lease 内。配置热重载先暂停 admission、排空 active execution，才发布新 runtime；等待中的请求恢复后解析新 owner。25 分钟内不能排空时不调用 rebuild，恢复旧 lane 并回滚配置。guided init 的 `resume_execution_lanes=false` 只控制 event lane，不会把独立 chat lane 留在 paused。
+所有生产 `dialogue.respond()` 入口（durable reply、惊喜 chat、legacy `/api/chat`、兴趣探针 chat、避雷探针 chat）共享 app-owned `DialogueExecutionCoordinator`，同一时刻最多一个 active execution。调用方拿到 lease 后才解析当前 `ctx.dialogue` 与对应 Soul speculator，并把回复后的认知、事件与状态副作用一并留在 lease 内。配置热重载先暂停 admission、排空 active execution，才发布新 runtime；等待中的请求恢复后解析新 owner。25 分钟内不能排空时不调用 rebuild，恢复旧 lane 并回滚配置。guided init 的 `resume_execution_lanes=false` 只控制 event lane，不会把独立 chat lane 留在 paused。交互式 agent 流（`/api/chat/agent/stream`）的 lease 准入带 30 秒上限：热重载或前一个回复占用通道时不再无限挂起；超时向客户端发 `error` 事件，文案按 paused/active 区分“正在重载配置”与“对话通道正忙”，durable turn 保持 pending 并由兜底 worker 在 lane 恢复后重跑 agent loop 完成；durable worker 与 legacy 路径仍使用无限等待（自带退避重试）。
+
+新 agent chat turn 创建时由服务端冻结 `payload.agent_persona`，客户端提交该保留键返回 422；
+会话随后改风格不改变该回合，SSE 与 durable worker 均使用冻结值，旧 turn 缺省 natural。
+
+agent stream 以已存 turn 的 message/session/skill 为权威：未知 `turn_id` 返回 404，冲突消息、显式会话或 skill 返回 409，省略 skill 时沿用持久化绑定。创建 streaming turn 时即拒绝未知 skill。交互与恢复路径都传递 canonical `DialogueTurnBinding`，完成 CAS 和 scope 对应的学习/探针副作用留在同一 lease 内。
 
 durable reply 的可见终态使用 `WHERE status='pending'` compare-and-swap：模型调用在进程崩溃窗口可能至少一次，但 completed/failed 只发布一次。`/api/runtime-status` 以 SQLite 的真实 pending 数暴露 `chat_reply_depth`，另有 `chat_reply_active/last_error/processed`；即使 runtime controller 降级不可用也保留 event/chat scheduler 状态，且字段不含用户消息或回复内容。
 
@@ -358,6 +526,8 @@ popup、移动 Web 与桌面 Web 只有 durable 对话中的假设卡片保留 c
 
 推荐进程运行同一套认证中间件，因此反代必须让它看到与入口一致的请求上下文，否则 CSRF 同源判定会失败。
 
+传输选择由父进程 `ensure_recommendation_transport_env()` 统一决定并经环境变量共享给反代与子进程：`OPENBILICLAW_RECOMMENDATION_PORT` 存在走 loopback TCP，否则走 `OPENBILICLAW_RECOMMENDATION_SOCK` 的 Unix socket；POSIX 下 socket 路径字节长度达到 `sun_path` 上限（104 字节含 NUL）时父进程自动改选 TCP 并记 WARNING，反代因此始终与子进程同一传输，不会出现一边 Unix 一边 TCP。TCP 端口由父进程从基准值起递增探测（有界 21 个候选）后写回 env，反代连接的即是子进程实际 bind 的端口。
+
 | 已实现能力 | 接口 |
 | --- | --- |
 | 代理保留原始 Host | socket / loopback TCP 代理原样转发浏览器的 `Host`（不改写其值），推荐进程的 CSRF 同源校验（`Origin` vs effective host）因此与入口口径一致。 |
@@ -373,3 +543,52 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 ### 活动动态的交互隔离（2026-09-07）
 
 已实现：`GET /api/activity-feed` 的 runtime、认知和数据库聚合在工作线程完成，异步锁串行进入既有 TTL 缓存，避免并发重复扫描真实候选历史阻塞主 HTTP 事件循环。公开响应结构不变。真实验收见 [报告](../verification/2026-09-07-recommendation-live.md)。
+
+### Agent 网页工具与聊天笔记
+
+既有 `/api/chat/skills` 回显新增 search_web/read_webpage 权限；口味伙伴/探寻师还
+允许 delete_memory。继续使用 durable turn → Agent SSE → 通用工具事件与审批 API，
+不新增另一套聊天端点。delete_memory 由现有 hard_write 审批门拦截，批准时重新
+核对 expected_value，期间笔记已变化则执行失败并保留新值。
+
+### 2026-10-02 legacy SSE 重试与恢复
+
+`POST /api/chat/stream` 对 durable turn 在执行 lease 内重新读取状态：已完成/失败只重放；新回复也在 lease 内提交完成，防止 GET 触发的后台恢复与 SSE 重复摄取链接/学习。缺失 turn 或消息、会话等身份冲突提前拒绝。该保证覆盖并发与已完成请求重试，不扩展为任意中途取消的副作用 exactly-once 保证。
+
+服务未就绪等 lease 准入错误仍转换为 SSE 错误说明，未执行的 durable turn 保持 pending，不在未获得执行权时标成 completed。
+
+## TikTok 账号任务结果边界（2026-10-11）
+
+`GET /api/sources/tiktok/next-task` 返回冻结的 bootstrap_profile/scopes/max_items_per_scope/profile_update。`POST task-result` 的成功/partial/degraded 需 viewer_handle（可选 viewer_sec_uid）；后端规范化并散列 observed claim，首次绑定画像账号，跨任务切号返回 409 `tiktok_account_switch_requires_reset`，已 staged 的首份结果不被重试覆盖。`videos` 非数组返回 422；scope 与累计预算在后端限制，超额裁剪的最终结果标记 degraded，后续重试不能洗掉该状态。同一 handle 的可选 secUid 补齐/暂缺不改变 account_key，已知 secUid 冲突仍拒绝。
+
+仅 profile_update、incremental 或当前 init-owned 任务进入画像 ingress；普通 smoke 不写 seen、画像或全局账号绑定。账号身份不冒充上游 verified。协议桥与崩溃恢复测试见 [台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 凭据同步与运行时刷新
+
+`POST /api/sources/tiktok/credential` 在真实验证和持久化之后比较有效凭据；发生变化时经现有 lane handoff 重建运行时，使启动时的访客客户端立即切换到登录态搜索。相同 Cookie 重投、或 env 优先导致有效凭据未变时不重启任务。`persist_credential` 用 `PersistResult.runtime_dirty` 传递这一差异。
+
+
+### TikTok 默认账号范围与周期启用（2026-10-13）
+
+`POST /api/init` 的 TikTok 默认范围是喜欢、收藏、关注，观看历史不再是必要输入；`next-task` / `task-result` 协议不变，显式历史任务仍按原契约执行。非空结果沿账号隔离、staged result 与幂等 ingress 进入 generic 画像消费路径，重复回调及下轮重复收藏不会重复写事件。正常 runtime 构建/热重载现在向周期调度器传递 TikTok 来源开关，保持全局和逐源双 opt-in，不新增端点或权限。
+
+### 多语言端点（v0.3.230+）
+
+- `GET /api/i18n/locales`：返回 `default`、`active`（由 `[general].language` 规范化）与
+  `locales`（`id` / `native_name` / `english_name` / `html_lang`），供客户端与集成方发现可选语言；
+  当前 Web 与插件内置同一份列表以避免首屏多一次请求。
+- `GET /i18n/ui/<locale>.json`：静态挂载的客户端 UI 目录（`zh-Hans` / `zh-Hant` / `en`），
+  与 Web 页面同源，插件构建时复制同一份文件。
+- `PUT /api/config` 的 `language` 接受规范 id 与已知别名（`zh`、`zh-TW`、`en-US`…），
+  落盘前规范化；未知值返回 `400 unsupported_language` 并列出支持值。
+- `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
+
+
+### 可选赞助通道与配置探测
+
+| 行为 | 状态 | 说明 |
+| --- | --- | --- |
+| 显式草稿服务探针 | 已实现 | Chat 实例/默认链与 embedding 均绕过赞助替代，验证用户指定目标 |
+
+业务 LLM/向量请求通过统一 Sponsored SDK（默认关闭，未发布）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的实际模型赠送额度、工具模拟与缓冲流式边界见[设计](../plans/2026-10-27-sponsored-all-tasks.md)。

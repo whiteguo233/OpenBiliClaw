@@ -107,6 +107,198 @@ test("V2EX login-state checks only the cookie name and never reads its secret va
   assert.equal(await readV2EXLoginState(), true);
 });
 
+test("Instagram login-state heartbeat sends a boolean and never reads or uploads sessionid", async () => {
+  const { readInstagramLoginState, syncInstagramLoginStateToBackend } = await importCookieSync();
+  const sessionCookie = {
+    name: "sessionid",
+    domain: ".instagram.com",
+  } as Cookie;
+  Object.defineProperty(sessionCookie, "value", {
+    get() {
+      throw new Error("Instagram sessionid value must not be read");
+    },
+  });
+  installChromeMock([sessionCookie]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body || "{}")) as Record<string, unknown>,
+    });
+    if (String(url).endsWith("/api/config")) {
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }), {
+        status: 200,
+      });
+    }
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  assert.equal(await readInstagramLoginState(), true);
+  assert.equal(await syncInstagramLoginStateToBackend("test"), true);
+  assert.deepEqual(calls, [
+    { url: "http://127.0.0.1:8420/api/config", body: {} },
+    {
+      url: "http://127.0.0.1:8420/api/sources/instagram/credential",
+      body: { kind: "login_state", value: true, source: "test" },
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(calls), /session-secret/);
+});
+
+test("automatic Instagram heartbeat is disabled by config while explicit init bypasses the gate", async () => {
+  const { handleCookieSyncRuntimeEvent, syncInstagramLoginStateToBackend } = await importCookieSync();
+  installChromeMock([{ name: "sessionid", value: "secret", domain: ".instagram.com" }]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).endsWith("/api/config")) {
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: false } } }), {
+        status: 200,
+      });
+    }
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/config"]);
+  assert.equal(handleCookieSyncRuntimeEvent({ type: "instagram_login_state_sync_requested" }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls.some((url) => url.endsWith("/api/sources/instagram/credential")), true);
+});
+
+test("Instagram startup retries unavailable config without cookie access and converges after reconnect", async () => {
+  const { startCookieSync, handleCookieSyncAlarm } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  const cookieReads: string[] = [];
+  const sessionCookie = { name: "sessionid", domain: ".instagram.com" } as Cookie;
+  Object.defineProperty(sessionCookie, "value", {
+    get() {
+      throw new Error("Instagram sessionid value must not be read");
+    },
+  });
+  chrome.cookies.getAll = async (details) => {
+    cookieReads.push(details.domain || "");
+    return (details.domain === "instagram.com" ? [sessionCookie] : []) as chrome.cookies.Cookie[];
+  };
+  chrome.permissions = {
+    contains: async () => true,
+  } as unknown as typeof chrome.permissions;
+  let configAvailable = false;
+  const heartbeats: unknown[] = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/api/config")) {
+      if (!configAvailable) throw new Error("backend not started yet");
+      return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }));
+    }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      heartbeats.push(JSON.parse(String(init?.body)));
+    }
+    return new Response(JSON.stringify({ accepted: true }));
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(cookieReads.includes("instagram.com"), false);
+  assert.deepEqual(heartbeats, []);
+  assert.deepEqual(
+    alarms.filter((alarm) => alarm.name === "openbiliclaw-cookie-sync-instagram").at(-1)?.info,
+    { delayInMinutes: 1, periodInMinutes: 1 },
+  );
+
+  configAvailable = true;
+  assert.equal(handleCookieSyncAlarm("openbiliclaw-cookie-sync-instagram"), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(heartbeats, [{ kind: "login_state", value: true, source: "hourly-alarm" }]);
+  assert.deepEqual(cookieReads.filter((domain) => domain === "instagram.com"), ["instagram.com"]);
+  assert.deepEqual(
+    alarms.filter((alarm) => alarm.name === "openbiliclaw-cookie-sync-instagram").at(-1)?.info,
+    { periodInMinutes: 60 },
+  );
+});
+
+for (const failure of ["network", "unauthorized", "unavailable", "malformed-json", "missing-config"]) {
+  test(`Instagram ${failure} config keeps cookie access closed and schedules a retry`, async () => {
+    const { syncInstagramLoginStateToBackend, isInstagramSourceSyncEnabled } = await importCookieSync();
+    const { alarms } = installChromeMock([]);
+    let cookieReads = 0;
+    chrome.cookies.getAll = async () => {
+      cookieReads += 1;
+      return [];
+    };
+    const calls: string[] = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      if (failure === "network") throw new Error("backend unavailable");
+      if (failure === "unauthorized") return new Response("", { status: 401 });
+      if (failure === "unavailable") return new Response("", { status: 503 });
+      if (failure === "malformed-json") return new Response("not-json");
+      return new Response(JSON.stringify({ sources: {} }));
+    };
+
+    assert.equal(await isInstagramSourceSyncEnabled(), false);
+    assert.deepEqual(alarms, [], "readiness probe must not schedule work");
+    assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), false);
+    assert.equal(cookieReads, 0);
+    assert.deepEqual(calls, [
+      "http://127.0.0.1:8420/api/config",
+      "http://127.0.0.1:8420/api/config",
+    ]);
+    assert.deepEqual(alarms, [{
+      name: "openbiliclaw-cookie-sync-instagram",
+      info: { delayInMinutes: 1, periodInMinutes: 1 },
+    }]);
+  });
+}
+
+test("Instagram source disabled after an outage returns to hourly checks without reading cookies", async () => {
+  const { syncInstagramLoginStateToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  let cookieReads = 0;
+  chrome.cookies.getAll = async () => {
+    cookieReads += 1;
+    return [];
+  };
+  globalThis.fetch = async () => new Response("", { status: 503 });
+  assert.equal(await syncInstagramLoginStateToBackend("startup"), false);
+
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ sources: { instagram: { enabled: false } } }));
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+
+  assert.equal(cookieReads, 0);
+  assert.deepEqual(alarms.map((alarm) => alarm.info), [
+    { delayInMinutes: 1, periodInMinutes: 1 },
+    { periodInMinutes: 60 },
+  ]);
+});
+
+test("Instagram permission denial does not read config or cookies and stays on hourly checks", async () => {
+  const { syncInstagramLoginStateToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([]);
+  let cookieReads = 0;
+  chrome.cookies.getAll = async () => {
+    cookieReads += 1;
+    return [];
+  };
+  chrome.permissions = {
+    contains: async () => false,
+  } as unknown as typeof chrome.permissions;
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ sources: { instagram: { enabled: true } } }));
+  };
+
+  assert.equal(await syncInstagramLoginStateToBackend("hourly-alarm"), true);
+  assert.equal(cookieReads, 0);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(alarms, [{
+    name: "openbiliclaw-cookie-sync-instagram",
+    info: { periodInMinutes: 60 },
+  }]);
+});
+
 test("cookie sync runtime event posts the current bilibili cookie immediately", async () => {
   const { handleCookieSyncRuntimeEvent } = await importCookieSync();
   installChromeMock([
@@ -215,6 +407,9 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     if (String(url).endsWith("/api/sources/v2ex/credential")) {
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }
     return new Response(JSON.stringify({ ok: true, authenticated: true }), { status: 200 });
   };
 
@@ -229,6 +424,7 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     calls.map((call) => call.url).sort(),
     [
       "http://127.0.0.1:8420/api/bilibili/cookie",
+      "http://127.0.0.1:8420/api/config",
       "http://127.0.0.1:8420/api/sources/dy/cookie",
       "http://127.0.0.1:8420/api/sources/linuxdo/login-state",
       "http://127.0.0.1:8420/api/sources/v2ex/credential",
@@ -255,6 +451,7 @@ test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", as
     value: false,
     source: "hourly-alarm",
   });
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sources/instagram/credential")), false);
 });
 
 test("readXCookieHeader returns the header only when auth_token and ct0 are present", async () => {
@@ -554,6 +751,9 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
     if (String(url).endsWith("/api/sources/v2ex/credential")) {
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }
+    if (String(url).endsWith("/api/sources/instagram/credential")) {
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }
     return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
   };
 
@@ -565,6 +765,7 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
     calls.map((call) => call.url).sort(),
     [
       "http://127.0.0.1:8420/api/bilibili/cookie",
+      "http://127.0.0.1:8420/api/config",
       "http://127.0.0.1:8420/api/sources/dy/cookie",
       "http://127.0.0.1:8420/api/sources/linuxdo/login-state",
       "http://127.0.0.1:8420/api/sources/v2ex/credential",
@@ -587,6 +788,7 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
   assert.deepEqual(calls.find((call) => call.url.endsWith("/api/sources/linuxdo/login-state"))?.body, {
     logged_in: false,
   });
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sources/instagram/credential")), false);
 });
 
 test("startCookieSync triggers a reddit cookie sync at startup", async () => {
@@ -919,6 +1121,185 @@ test("readBilibiliCookieHeader reads subdomain cookies even when Safari domain f
   assert.match(header, /DedeUserID=42/);
 });
 
+test("readBilibiliCookieHeader finds a complete Safari store when the default store is anonymous", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (!details?.storeId) {
+          return [{ name: "buvid3", value: "anonymous", domain: ".bilibili.com" }];
+        }
+        if (details.storeId === "persistent-1") {
+          throw new Error("Safari could not read one cookie store");
+        }
+        if (details.storeId === "persistent-2") {
+          return [
+            { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+});
+
+test("readBilibiliCookieHeader keeps a complete default store without enumerating others", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  let storeEnumerations = 0;
+  globalThis.chrome = {
+    cookies: {
+      getAll: async () => [
+        { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+        { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+        { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+      ],
+      getAllCookieStores: async () => {
+        storeEnumerations += 1;
+        return [];
+      },
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+  assert.equal(storeEnumerations, 0);
+});
+
+test("readBilibiliCookieHeader does not combine partial cookies from different stores", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (details?.storeId === "persistent-1") {
+          return [{ name: "SESSDATA", value: "sess", domain: ".bilibili.com" }];
+        }
+        if (details?.storeId === "persistent-2") {
+          return [
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+});
+
+test("readBilibiliCookieHeader does not enumerate other stores outside Safari builds", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "chrome";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  let storeEnumerations = 0;
+  globalThis.chrome = {
+    cookies: {
+      getAll: async () => [{ name: "buvid3", value: "anonymous", domain: ".bilibili.com" }],
+      getAllCookieStores: async () => {
+        storeEnumerations += 1;
+        return [{ id: "container-1", tabIds: [] }];
+      },
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+  assert.equal(storeEnumerations, 0);
+});
+
+test("readBilibiliCookieHeader rejects ambiguous multiple complete Safari stores", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (!details?.storeId) return [];
+        return [
+          { name: "SESSDATA", value: `sess-${details.storeId}`, domain: ".bilibili.com" },
+          { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+          { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+        ];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+});
+
+test("readBilibiliCookieHeader applies the domain fallback inside a Safari store", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { domain?: string; storeId?: string }) => {
+        if (!details?.domain) {
+          throw new Error("Safari rejects unfiltered getAll");
+        }
+        if (details.storeId === "persistent-2" && details.domain === "bilibili.com") {
+          return [
+            { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [{ id: "persistent-2", tabIds: [] }],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+});
+
 test("readCookiesForDomains falls back to per-domain getAll when unfiltered getAll throws", async () => {
   const { readWeiboLoginState } = await importCookieSync();
   globalThis.chrome = {
@@ -941,4 +1322,177 @@ test("readCookiesForDomains falls back to per-domain getAll when unfiltered getA
     },
   } as unknown as typeof chrome;
   assert.equal(await readWeiboLoginState(), true);
+});
+
+test("readTiktokCookieHeader returns the full jar once a session cookie exists", async () => {
+  const { readTiktokCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+    { name: "msToken", value: "tt-ms", domain: ".tiktok.com" },
+  ]);
+
+  assert.equal(await readTiktokCookieHeader(), "sessionid=tt-sess; ttwid=tt-tw; msToken=tt-ms");
+});
+
+test("readTiktokCookieHeader never pushes a guest jar (ttwid / msToken only)", async () => {
+  const { readTiktokCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+    { name: "msToken", value: "tt-ms", domain: ".tiktok.com" },
+  ]);
+
+  // Guest cookies are not a login — guest identity works without them, so
+  // there is nothing worth a round trip.
+  assert.equal(await readTiktokCookieHeader(), null);
+
+  installChromeMock([]);
+  assert.equal(await readTiktokCookieHeader(), null);
+});
+
+test("cookie sync runtime event posts the current tiktok cookie immediately", async () => {
+  const { handleCookieSyncRuntimeEvent } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  const handled = handleCookieSyncRuntimeEvent({
+    type: "tiktok_cookie_sync_requested",
+    reason: "missing_cookie",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  // The unified credential write gate, same path as the settings paste box.
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/sources/tiktok/credential");
+  assert.deepEqual(calls[0].body, {
+    value: "sessionid=tt-sess; ttwid=tt-tw",
+    source: "runtime-stream-request",
+  });
+});
+
+test("onChanged on tiktok.com session cookies debounces into one sync", async () => {
+  const { startCookieSync } = await importCookieSync();
+  const { listeners } = installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  // A login touches several cookies; the debounce must collapse them.
+  listeners[0]({ cookie: { name: "sessionid", domain: ".tiktok.com" }, removed: false });
+  listeners[0]({ cookie: { name: "ttwid", domain: ".tiktok.com" }, removed: false });
+  listeners[0]({ cookie: { name: "msToken", domain: ".tiktok.com" }, removed: false });
+  // Analytics churn must not trigger anything.
+  listeners[0]({ cookie: { name: "tt_csrf_token", domain: ".tiktok.com" }, removed: false });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/sources/tiktok/credential"]);
+});
+
+test("tiktok logout syncs silently (no POST, no error)", async () => {
+  const { startCookieSync } = await importCookieSync();
+  // The session cookie is gone from the jar by the time the sync runs.
+  const { listeners } = installChromeMock([
+    { name: "ttwid", value: "tt-tw", domain: ".tiktok.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  listeners[0]({ cookie: { name: "sessionid", domain: ".tiktok.com" }, removed: true });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  // Guest mode is legitimate: a logout must not pester the backend.
+  assert.deepEqual(calls, []);
+});
+
+test("tiktok sync retry cadence follows the backend verdict", async () => {
+  const { syncTiktokCookieToBackend } = await importCookieSync();
+  const { alarms } = installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+  ]);
+
+  // Passport probe refuses the jar: wait for a real re-login (hourly).
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: false, error_code: "cookie_invalid" }), {
+      status: 200,
+    });
+  assert.equal(await syncTiktokCookieToBackend("test"), false);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.delayInMinutes === 60,
+    ),
+  );
+
+  // Probe could not conclude (network): moderate 5-minute retry.
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: false, error_code: "validation_network" }), {
+      status: 200,
+    });
+  assert.equal(await syncTiktokCookieToBackend("test"), false);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.delayInMinutes === 5,
+    ),
+  );
+
+  // Accepted: settle into the hourly refresh.
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ accepted: true }), { status: 200 });
+  assert.equal(await syncTiktokCookieToBackend("test"), true);
+  assert.ok(
+    alarms.some(
+      (alarm) =>
+        alarm.name === "openbiliclaw-cookie-sync-tiktok" && alarm.info.periodInMinutes === 60,
+    ),
+  );
+});
+
+test("tiktok per-platform alarm syncs only tiktok", async () => {
+  const { handleCookieSyncAlarm } = await importCookieSync();
+  installChromeMock([
+    { name: "sessionid", value: "tt-sess", domain: ".tiktok.com" },
+    { name: "sessionid", value: "dy-sess", domain: ".douyin.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(
+      JSON.stringify({ ok: true, has_cookie: true, accepted: true }),
+      { status: 200 },
+    );
+  };
+
+  const handled = handleCookieSyncAlarm("openbiliclaw-cookie-sync-tiktok");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/sources/tiktok/credential"]);
 });

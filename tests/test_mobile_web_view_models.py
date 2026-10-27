@@ -612,6 +612,7 @@ class TestMobileWebViewModels:
                 recent_pool_topics: [],
                 manual_refresh_state: "idle",
                 manual_refresh_message: "",
+                discovery_failure_message: "",
               },
             );
 

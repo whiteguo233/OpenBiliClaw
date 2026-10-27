@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-14",
+  "baseline": "3dfe0205",
+  "scope": "installed repair verification",
+  "installed_extension": {
+    "path": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-source-readiness/extension",
+    "manifest_matches_repair_build": true,
+    "existing_manifest_edit_preserved": true,
+    "changed_assets": [
+      "dist/content/tiktok.js",
+      "dist/content/tiktok.js.map",
+      "dist/content/native-save/tiktok.d.ts"
+    ],
+    "reload_endpoint": "POST /api/extension/reload",
+    "reload_delivered": true,
+    "presence_after_reload": 1,
+    "tiktok_bundle_sha256": "c92cfe1bf6fc8bccfaecd84783a99fee110e7de0b057fabf858cbc928c712eb7",
+    "artifact_sha256": "effcb3ac8ed09cf406fd19e77e4747133163f651c38c223cb7d11efec9b59024",
+    "artifact_hash_algorithm": "SHA256 sorted relative path + NUL + file bytes for manifest/dist/icons/popup"
+  },
+  "backend": {
+    "normal_create_app": true,
+    "isolated_storage": true,
+    "degraded": false,
+    "provider": "openai_compatible",
+    "network": "system",
+    "production_config_changed": false,
+    "automatic_incremental_enabled": false
+  },
+  "formal_native_save": {
+    "platform": "tiktok",
+    "action": "favorite",
+    "content_id": "7433494591833247008",
+    "expected_target": "TikTok Favorites",
+    "task_status": "failed",
+    "error_code": "native_confirmation_not_observed"
+  },
+  "live_session_verify": {
+    "result": "passport beat confirms live session",
+    "credentials_exported": false
+  },
+  "input_comparison": {
+    "authorized_video": "7433494591833247008",
+    "inner_button_cdp": {
+      "clicks": 1,
+      "observed_selected": false,
+      "target_request_observed": false
+    },
+    "outer_control_keyboard": {
+      "enter_presses": 1,
+      "request_method": "POST",
+      "http_status": 200,
+      "business_status": 0,
+      "action": "1",
+      "target_matches": true,
+      "immediate_bookmark": "gold",
+      "request_replay": false
+    },
+    "fresh_document": {
+      "navigation_type": "reload",
+      "probe_survived": false,
+      "video_ready_state": 4,
+      "bookmark": "unselected"
+    }
+  },
+  "formal_bootstrap": {
+    "status": "completed",
+    "result_status": "ok",
+    "error": null,
+    "rows": 0,
+    "scope_counts": {
+      "tt_follow": 0,
+      "tt_like": 0,
+      "tt_collect": 0
+    },
+    "scope_statuses": {
+      "tt_like": "empty",
+      "tt_collect": "empty",
+      "tt_follow": "empty"
+    },
+    "scope_complete": {
+      "tt_like": true,
+      "tt_collect": true,
+      "tt_follow": true
+    }
+  },
+  "validation": {
+    "chrome_build": "PASS",
+    "asset_preflight": "22 assets PASS",
+    "native_extension_tests": "61 passed",
+    "documentation_tests": "5 passed"
+  },
+  "remaining": {
+    "native_persistence": "FAIL",
+    "nonempty_live_profile": "BLOCKED: no persisted signal",
+    "live_periodic_incremental": "BLOCKED: profile not ready",
+    "mobile_app_comparison": "requested from user; no answer yet"
+  },
+  "cleanup": {
+    "server_stopped": true,
+    "owned_tab_closed": true,
+    "browser_lease_released": true,
+    "page_probe_cleared_by_reload": true,
+    "isolated_private_data_removed": true,
+    "updated_formal_extension_preserved": true
+  }
+}

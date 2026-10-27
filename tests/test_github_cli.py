@@ -474,9 +474,7 @@ def test_init_help_exposes_github_opt_in_and_identity_flags() -> None:
 
     init_command = get_command(app).commands["init"]
     option_names = {
-        option
-        for param in init_command.params
-        for option in getattr(param, "opts", [])
+        option for param in init_command.params for option in getattr(param, "opts", [])
     }
 
     assert "--yes-github" in option_names

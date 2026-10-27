@@ -498,8 +498,10 @@ test("installFetchTap posts parsed search responses through optional search call
   assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "search-tap-1");
 });
 
-test("installFetchTap posts chunked search stream responses through optional search callback", async () => {
+test("installFetchTap posts chunked search stream responses through optional search callback", { timeout: 1000 }, async () => {
   const calls: { items: unknown[] }[] = [];
+  let captured!: () => void;
+  const observed = new Promise<void>(resolve => { captured = resolve; });
   const fakeFetch = async (): Promise<Response> =>
     new Response(
       '14c0\r\n{"status_code":0,"data":[{"aweme_info":{"aweme_id":"stream-search-1","desc":"搜索 stream"}}]}',
@@ -509,13 +511,70 @@ test("installFetchTap posts chunked search stream responses through optional sea
   installFetchTap(
     fakeWindow,
     () => {},
-    (items) => calls.push({ items }),
+    (items) => { calls.push({ items }); captured(); },
   );
   await fakeWindow.fetch(
     "https://www.douyin.com/aweme/v1/web/general/search/stream/?keyword=%E7%A7%91%E6%8A%80",
   );
+  await observed;
   assert.equal(calls.length, 1);
   assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "stream-search-1");
+});
+
+test("search stream headers reach the page before the body ends", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+  const response = new Response(stream);
+  const target = { fetch: async () => response } as unknown as Window;
+  installFetchTap(target, () => {}, () => {});
+  const pending = target.fetch("https://www.douyin.com/aweme/v1/web/general/search/stream/?keyword=x");
+  let timer: ReturnType<typeof setTimeout>;
+  try {
+    const received = await Promise.race([
+      pending,
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 50); }),
+    ]);
+    assert.equal(received, response, "the tap must not delay the native stream consumer");
+  } finally {
+    clearTimeout(timer!);
+    controller.close();
+    await pending;
+  }
+});
+
+test("search stream emits complete JSON frames before EOF and preserves the original body", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+  const response = new Response(stream);
+  const target = { fetch: async () => response } as unknown as Window;
+  const calls: string[] = [];
+  let captured!: () => void;
+  const gotItems = new Promise<void>(resolve => { captured = resolve; });
+  installFetchTap(target, () => {}, items => {
+    calls.push(...items.map(item => item.aweme_id));
+    if (calls.length >= 2) captured();
+  });
+  const pending = target.fetch("https://www.douyin.com/aweme/v1/web/general/search/stream/?keyword=x");
+  const encoder = new TextEncoder();
+  const first = JSON.stringify({ status_code: 0, data: [{ aweme_info: { aweme_id: "first-frame", desc: '括号 } 和引号 " 中文' } }] });
+  const second = JSON.stringify({ status_code: 0, data: [{ aweme_info: { aweme_id: "second-frame", desc: "第二帧" } }] });
+  const text = `data: ${first}\n\ndata: ${second}\n\n`;
+  const bytes = encoder.encode(text);
+  controller.enqueue(bytes.slice(0, 19));
+  controller.enqueue(bytes.slice(19, 93));
+  controller.enqueue(bytes.slice(93));
+  let timer: ReturnType<typeof setTimeout>;
+  try {
+    await Promise.race([gotItems, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("video frames must not wait for EOF")), 100);
+    })]);
+    assert.deepEqual(calls, ["first-frame", "second-frame"]);
+  } finally {
+    clearTimeout(timer!);
+    controller.close();
+    const original = await pending;
+    assert.equal(await original.text(), text);
+  }
 });
 
 test("installFetchTap passively posts feed responses through optional search callback", async () => {
@@ -1548,6 +1607,71 @@ test("installApiHarvester signs douyin search URLs with the page acrawler", asyn
   assert.equal(fetchCalls[0]!.url.includes("search_channel=aweme_video_web"), true);
   assert.equal((result.items as { aweme_id: string }[])[0]!.aweme_id, "signed-search-1");
 });
+
+test("search API preserves its first page and reports a later rate limit", async () => {
+  let requests = 0;
+  class FakeWindow extends EventTarget {
+    location = { origin: "https://www.douyin.com" };
+    async fetch() {
+      requests += 1;
+      return requests === 1
+        ? new Response(JSON.stringify({ status_code: 0, has_more: true, cursor: 20,
+          data: [{ aweme_info: { aweme_id: "before-limit", desc: "已取得" } }] }))
+        : new Response("", { status: 429 });
+    }
+    postMessage(data: unknown) { queueMicrotask(() => this.dispatchEvent(bridgeMessage(this, data))); }
+  }
+  const target = new FakeWindow();
+  installApiHarvester(target as unknown as Window);
+  const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("search reply missing")), 2000);
+    target.addEventListener("message", event => {
+      const data = (event as MessageEvent).data as Record<string, unknown>;
+      if (data.type !== "OPENBILICLAW_DOUYIN_SEARCH_API_RESPONSE") return;
+      clearTimeout(timer);
+      resolve(data);
+    });
+    target.dispatchEvent(bridgeMessage(target, {
+      type: "OPENBILICLAW_DOUYIN_SEARCH_API_REQUEST", requestId: "late-limit", keyword: "热点", maxItems: 12,
+    }));
+  });
+  assert.equal(requests, 2);
+  assert.equal(result.error, "HTTP 429");
+  assert.equal((result.items as { aweme_id: string }[])[0].aweme_id, "before-limit");
+});
+
+for (const [name, response, expectedError] of [
+  ["affirmative empty", { status_code: 0, data: [], has_more: false }, undefined],
+  ["soft block", { status_code: 0, data: [], search_nil_info: { search_nil_item: "hit_shark" } }, "hit_shark"],
+  ["rejected session", { status_code: 8, data: [] }, "api_status_8"],
+] as const) {
+  test(`search API ${name} does not probe a second endpoint`, async () => {
+    let requests = 0;
+    class FakeWindow extends EventTarget {
+      location = { origin: "https://www.douyin.com" };
+      async fetch() { requests += 1; return new Response(JSON.stringify(response)); }
+      postMessage(data: unknown) { queueMicrotask(() => this.dispatchEvent(bridgeMessage(this, data))); }
+    }
+    const target = new FakeWindow();
+    installApiHarvester(target as unknown as Window);
+    const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("search reply missing")), 500);
+      target.addEventListener("message", event => {
+        const data = (event as MessageEvent).data as Record<string, unknown>;
+        if (data.type !== "OPENBILICLAW_DOUYIN_SEARCH_API_RESPONSE") return;
+        clearTimeout(timer);
+        resolve(data);
+      });
+      target.dispatchEvent(bridgeMessage(target, {
+        type: "OPENBILICLAW_DOUYIN_SEARCH_API_REQUEST", requestId: "one-request",
+        keyword: "热点", maxItems: 12,
+      }));
+    });
+    assert.equal(requests, 1);
+    assert.equal(result.error, expectedError);
+    assert.deepEqual(result.items, []);
+  });
+}
 
 test("installApiHarvester signs hot related URLs and returns dy_hot items", async () => {
   const fetchCalls: { url: string; credentials?: RequestCredentials }[] = [];

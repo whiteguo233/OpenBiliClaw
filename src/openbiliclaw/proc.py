@@ -15,8 +15,9 @@ explicitly invoked from a terminal (``openbiliclaw`` CLI, ``codex login``)
 — those already own a console and must keep it for interactive prompts.
 
 The module also owns :class:`ChildProcessSupervisor`, which keeps the
-desktop shell's backend children alive for the parent's lifetime so a single
-child crash no longer strands every background loop it owned.
+desktop and CLI backend children alive for the parent's lifetime. A committed
+API configuration generation also replaces their startup snapshots so repaired
+providers reach background evaluation and expression-copy work.
 """
 
 from __future__ import annotations
@@ -37,6 +38,28 @@ logger = logging.getLogger(__name__)
 # Value of subprocess.CREATE_NO_WINDOW; defined here so non-Windows type
 # checking and tests do not depend on the platform-only attribute.
 CREATE_NO_WINDOW = 0x08000000
+
+
+def backend_child_env(app: Any, **overrides: str) -> dict[str, str]:
+    """Keep respawned children on the data directory locked by their parent."""
+    env = {**os.environ, **overrides}
+    active_path = getattr(getattr(app, "state", None), "active_runtime_data_path", None)
+    if active_path is not None:
+        env["OPENBILICLAW_RUNTIME_DATA_DIR"] = str(active_path)
+    return env
+
+
+def backend_config_generation(app: Any) -> int | None:
+    """Read a committed API runtime generation, deferring while settings apply.
+
+    Config saves may queue newer revisions or roll back after a failed handoff.
+    Children read config.toml on spawn, so wait until that queue has settled.
+    """
+    state = getattr(app, "state", None)
+    task = getattr(state, "config_apply_task", None)
+    if task is not None and not task.done():
+        return None
+    return int(getattr(state, "backend_config_generation", 0))
 
 
 def no_window_kwargs() -> dict[str, Any]:
@@ -81,6 +104,7 @@ class ManagedChild:
     failures: int = 0
     restart_at: float = 0.0
     exit_handled: bool = False
+    restart_requested: bool = False
 
 
 class ChildProcessSupervisor:
@@ -92,6 +116,10 @@ class ChildProcessSupervisor:
     (and, in windowed builds, could pop a bootloader error dialog) until the
     whole app was restarted. The supervisor polls every child and respawns a
     dead one with capped exponential backoff so a crash loop cannot spin.
+
+    A changed ``config_generation_provider`` restarts children after confirming
+    their previous processes exited. Returning ``None`` defers configuration
+    restarts while the API is still applying or rolling back settings.
 
     ``check_once`` is the deterministic, injection-friendly core; ``start``
     only adds a daemon thread on top of it.
@@ -106,6 +134,7 @@ class ChildProcessSupervisor:
         backoff_max_seconds: float = 60.0,
         healthy_after_seconds: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
+        config_generation_provider: Callable[[], int | None] | None = None,
     ) -> None:
         self._children = list(children)
         self._poll_interval = max(0.5, float(poll_interval_seconds))
@@ -113,6 +142,8 @@ class ChildProcessSupervisor:
         self._backoff_max = max(self._backoff_base, float(backoff_max_seconds))
         self._healthy_after = max(0.0, float(healthy_after_seconds))
         self._clock = clock
+        self.config_generation_provider = config_generation_provider
+        self._config_generation: int | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -130,6 +161,7 @@ class ChildProcessSupervisor:
     def start(self) -> None:
         """Spawn every child once, then start the background watchdog thread."""
         with self._lock:
+            self._check_config_generation_locked()
             for child in self._children:
                 self._spawn_locked(child)
         self._thread = threading.Thread(
@@ -143,8 +175,21 @@ class ChildProcessSupervisor:
         """Detect dead children and respawn the ones whose backoff elapsed."""
         with self._lock:
             now = self._clock()
+            self._check_config_generation_locked()
+            for child in self._children:
+                if not child.restart_requested:
+                    continue
+                if not self._terminate_child_locked(child, timeout=5.0):
+                    continue
+                child.process = None
+                child.restart_requested = False
+                child.failures = 0
+                child.restart_at = 0.0
+                child.exit_handled = False
             for child in self._children:
                 process = child.process
+                if child.restart_requested:
+                    continue
                 if process is None or process.poll() is None or child.exit_handled:
                     continue
                 lifetime = max(0.0, now - child.spawned_at)
@@ -162,6 +207,8 @@ class ChildProcessSupervisor:
                     delay,
                 )
             for child in self._children:
+                if child.restart_requested:
+                    continue
                 process = child.process
                 if process is not None and process.poll() is None:
                     continue
@@ -177,18 +224,42 @@ class ChildProcessSupervisor:
             thread.join(timeout=max(1.0, float(terminate_timeout_seconds)))
         with self._lock:
             for child in reversed(self._children):
-                process = child.process
-                child.process = None
-                if process is None or process.poll() is not None:
-                    continue
-                try:
-                    process.terminate()
-                    process.wait(timeout=terminate_timeout_seconds)
-                except Exception:
-                    try:
-                        process.kill()
-                    except Exception:
-                        logger.exception("Failed to kill backend child %s", child.name)
+                if self._terminate_child_locked(child, timeout=terminate_timeout_seconds):
+                    child.process = None
+
+    def _check_config_generation_locked(self) -> None:
+        provider = self.config_generation_provider
+        if provider is None:
+            return
+        generation = provider()
+        if generation is None:
+            return
+        previous = self._config_generation
+        self._config_generation = generation
+        if previous is None or generation == previous:
+            return
+        logger.info("Applied runtime configuration changed; restarting backend children")
+        for child in self._children:
+            child.restart_requested = True
+
+    @staticmethod
+    def _terminate_child_locked(child: ManagedChild, *, timeout: float) -> bool:
+        process = child.process
+        if process is None or process.poll() is not None:
+            return True
+        try:
+            process.terminate()
+            process.wait(timeout=timeout)
+            return True
+        except Exception:
+            try:
+                process.kill()
+                process.wait(timeout=timeout)
+                return True
+            except Exception:
+                # Do not start a replacement while its old claim owner lives.
+                logger.exception("Failed to stop backend child %s", child.name)
+                return False
 
     def _run(self) -> None:
         while not self._stop_event.wait(self._poll_interval):

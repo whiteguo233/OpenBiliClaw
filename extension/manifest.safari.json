@@ -13,6 +13,8 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
+        "https://*.instagram.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",
@@ -62,6 +64,15 @@
                 "content/douyin.js"
             ],
             "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "content/tiktok.js"
+            ],
+            "run_at": "document_idle"
         },
         {
             "matches": [

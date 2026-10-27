@@ -253,6 +253,39 @@ def test_broker_ownership_and_completion_are_bound_to_platform_slug(
     assert broker.submit_result("reddit", result)
 
 
+def test_tiktok_native_save_job_round_trips_through_broker(database: Database) -> None:
+    """TikTok is a registered extension native-save platform: enqueue maps the
+    platform to the ``tiktok`` slug, claim serves the durable job, and a repeat
+    favorite completes as ``already_synced``."""
+    broker = ExtensionNativeSaveBroker(database, wake_platform=AsyncMock())
+    item = SavedItemInput(
+        "tiktok",
+        "7234567890123456789",
+        "https://www.tiktok.com/@creator/video/7234567890123456789",
+        "video",
+    )
+    route = NativeSaveRoute("favorite", "favorite", "TikTok Favorites")
+
+    job_id = broker.enqueue(item, route)
+
+    job = broker.claim_next("tiktok")
+    assert job is not None
+    assert job.job_id == job_id
+    assert job.platform == "tiktok"
+    assert job.platform_slug == "tiktok"
+    assert job.item_key == "tiktok:7234567890123456789"
+    assert job.target_label == "TikTok Favorites"
+    assert broker.owns(job_id, "tiktok")
+    assert not broker.owns(job_id, "dy")
+    assert broker.submit_result(
+        "tiktok",
+        ExtensionNativeSaveResultIn(job_id, job.item_key, "already_synced"),
+    )
+    row = database.get_extension_native_save_job(job_id)
+    assert row is not None
+    assert row["status"] == "already_synced"
+
+
 @pytest.mark.parametrize(
     ("status", "code", "message"),
     [

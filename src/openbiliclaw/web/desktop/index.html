@@ -32,6 +32,22 @@
   </script>
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
+  <script src="/web/assets/js/mobile-qr.js" defer></script>
+  <script src="/web/assets/js/pending-actions.js" defer></script>
+  <script src="/web/assets/js/saved-sync-core.js" defer></script>
+  <!-- Frontend helpers shared with the extension side panel (and, for source
+       status, the setup wizard); served from /shared because /web is rooted at
+       web/desktop. -->
+  <script src="/shared/dialogue-confirmation.js" defer></script>
+  <script src="/shared/agent-chat.js" defer></script>
+  <script src="/shared/source-status.js" defer></script>
+  <script src="/shared/i18n.js" defer></script>
+  <script src="/shared/director-client.js" defer></script>
+  <link rel="stylesheet" href="/shared/jev-settings.css">
+  <script src="/shared/jev-settings.js" defer></script>
+  <script src="/web/assets/js/chat-agent-core.js" defer></script>
+  <script src="/web/assets/js/fish-settings.js" defer></script>
+  <script src="/web/assets/js/app.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -114,7 +130,7 @@
             <div class="metric"><strong id="metricUnread">—</strong><span>通知数</span></div>
             <div class="metric"><strong id="metricSources">—</strong><span>内容源</span></div>
           </div>
-          <p class="hero-topics">最近主题：<span id="poolTopics">等待后端同步</span></p>
+          <p class="hero-topics"><span id="poolTopicsLabel">最近主题</span>：<span id="poolTopics">等待后端同步</span></p>
           <p id="accountSyncStatus" class="account-sync-status" hidden></p>
         </section>
         <section class="side-section side-activity-section" data-od-id="activity-rail" aria-label="后台动态摘要">
@@ -196,7 +212,7 @@
               <button class="pill-btn" id="resetFiltersBtn" type="button" hidden="">重置筛选</button>
             </div>
           </div>
-          <!-- chip 由 renderFilters 渲染成 role=tab（含 aria-selected 与库存计数） -->
+          <!-- chip 由 renderFilters 渲染成 role=tab（含 instagram、aria-selected 与库存计数） -->
           <div class="filter-row" id="filterRow" role="tablist" aria-label="推荐平台与库存"></div>
           <!-- 首屏骨架占位：后端推荐取回前先撑住版面，renderVideos 首次渲染时整体替换 -->
           <div class="card-grid" id="videoGrid">
@@ -291,17 +307,73 @@
             <span id="chatPendingBadgeToggleText">标签红点</span>
           </label>
         </div>
-        <div class="dialogue-pending">
-          <button id="desktopPendingToggle" type="button" aria-expanded="false" aria-controls="desktopPendingConfirmations">
-            <span class="dialogue-pending-toggle-title">待聊确认 <span class="dialogue-pending-toggle-count" id="desktopPendingCount">0</span></span>
-            <span class="dialogue-pending-toggle-chevron" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
-            </span>
-          </button>
-          <div class="profile-card-list" id="desktopPendingConfirmations" aria-label="待聊确认列表" hidden></div>
+        <div class="chat-main">
+          <aside class="chat-side" id="chatSide" aria-label="会话与任务" hidden>
+            <div class="chat-side-head">
+              <button class="pill-btn primary" id="chatNewSessionBtn" type="button">＋ 新会话</button>
+            </div>
+            <div class="chat-session-list" id="chatSessionList" role="list" aria-label="会话列表"></div>
+            <div class="chat-side-foot">
+              <button class="chat-side-entry" id="chatTasksToggle" type="button" aria-expanded="false" aria-controls="chatTaskCenter">
+                <span>任务中心</span><span class="chat-side-badge" id="chatTasksBadge" hidden></span>
+              </button>
+              <button class="chat-side-entry" id="chatApprovalsToggle" type="button" aria-expanded="false" aria-controls="chatApprovalsPanel">
+                <span>待审批</span><span class="chat-side-badge" id="chatApprovalsBadge" hidden></span>
+              </button>
+              <button class="chat-side-archived" id="chatArchivedToggle" type="button" aria-pressed="false">显示已归档</button>
+            </div>
+          </aside>
+          <div class="chat-conversation">
+            <div class="chat-session-bar" id="chatSessionBar" hidden>
+              <button class="chat-side-toggle" id="chatSideToggle" type="button" aria-label="会话列表" aria-expanded="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
+              <button class="chat-skill-chip" id="chatSkillChip" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="chatSkillPicker" title="点击切换对话角色">
+                <span class="chat-skill-icon" id="chatSkillIcon" aria-hidden="true">🧭</span>
+                <span id="chatSkillName">口味伙伴</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <button class="chat-persona-chip" id="chatPersonaChip" type="button" aria-expanded="false" aria-controls="chatPersonaPicker" title="选择当前会话的聊天风格">
+                <span>风格 · <span id="chatPersonaName">自然朋友</span></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <span class="chat-session-name" id="chatSessionName"></span>
+            </div>
+            <section class="chat-persona-picker" id="chatPersonaPicker" aria-label="选择聊天风格" hidden>
+              <div class="chat-persona-heading"><h3>聊天风格</h3><button class="pill-btn" id="chatPersonaClose" type="button">收起</button></div>
+              <p class="chat-persona-help">选择阿B说话的方式，角色继续决定能帮你做什么。保存后用于当前会话的下一条消息。</p>
+              <div id="chatPersonaOptions"></div>
+              <div class="chat-persona-preview" id="chatPersonaPreview" aria-live="polite"></div>
+              <div class="chat-persona-footer"><p id="chatPersonaStatus" role="status" aria-live="polite"></p><button class="pill-btn primary" id="chatPersonaSave" type="button">应用到当前会话</button></div>
+            </section>
+            <div class="dialogue-pending">
+              <button id="desktopPendingToggle" type="button" aria-expanded="false" aria-controls="desktopPendingConfirmations">
+                <span class="dialogue-pending-toggle-title">待聊确认 <span class="dialogue-pending-toggle-count" id="desktopPendingCount">0</span></span>
+                <span class="dialogue-pending-toggle-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 10 5 5 5-5"/></svg>
+                </span>
+              </button>
+              <div class="profile-card-list" id="desktopPendingConfirmations" aria-label="待聊确认列表" hidden></div>
+            </div>
+            <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
+            <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+          </div>
         </div>
-        <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
-        <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+        <div class="chat-popover" id="chatSkillPicker" role="dialog" aria-label="选择对话角色" hidden></div>
+        <div class="chat-drawer" id="chatTaskCenter" role="dialog" aria-label="任务中心" hidden>
+          <div class="chat-drawer-head">
+            <h3>任务中心</h3>
+            <button class="pill-btn" id="chatTaskCenterClose" type="button">关闭</button>
+          </div>
+          <div class="chat-drawer-body" id="chatTaskCenterBody"></div>
+        </div>
+        <div class="chat-drawer" id="chatApprovalsPanel" role="dialog" aria-label="待审批改动" hidden>
+          <div class="chat-drawer-head">
+            <h3>待审批</h3>
+            <button class="pill-btn" id="chatApprovalsClose" type="button">关闭</button>
+          </div>
+          <div class="chat-drawer-body" id="chatApprovalsBody"></div>
+        </div>
       </section>
 
       <section class="settings-page content-page" id="settingsPage" aria-label="后端设置" hidden>
@@ -318,6 +390,7 @@
           <button id="settingsTabSources" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSources" tabindex="-1" data-settings-tab="sources">平台源</button>
           <button id="settingsTabScheduler" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelScheduler" tabindex="-1" data-settings-tab="scheduler">调度</button>
           <button id="settingsTabAdvanced" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAdvanced" tabindex="-1" data-settings-tab="advanced">高级功能</button>
+          <button id="settingsTabFish" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelFish" tabindex="-1" data-settings-tab="fish">养蓝色大肥鱼</button>
           <button id="settingsTabGeneral" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelGeneral" tabindex="-1" data-settings-tab="general">通用</button>
           <button id="settingsTabFrontend" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelFrontend" tabindex="-1" data-settings-tab="frontend">前端</button>
           <button id="settingsTabLogging" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelLogging" tabindex="-1" data-settings-tab="logging">日志</button>
@@ -722,6 +795,70 @@
                   <div class="inline-row">
                     <label class="settings-field"><span>请求间隔秒数</span><input id="youtubeRequestInterval" inputmode="numeric" placeholder="2"></label>
                     <label class="settings-field"><span>最小调度间隔分钟</span><input id="youtubeMinInterval" inputmode="numeric" placeholder="3"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>验证</h4>
+                  <div class="settings-probe-row source-verify-row">
+                    <button class="pill-btn source-verify-btn" type="button">测试连接</button>
+                    <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+                  </div>
+                </section>
+              </div>
+            </article>
+
+            <article class="source-status-row source-card" data-source-status="tiktok" data-source-credential="tiktok" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-tiktok">
+                <span class="source-card-logo" data-source-logo="tiktok" aria-hidden="true">TT</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">TikTok</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareTiktok" value="1" inputmode="numeric" aria-label="TikTok 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 TikTok</span><select id="tiktokEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-tiktok">
+                <section class="source-seg">
+                  <h4>接入方式</h4>
+                  <p class="seg-note">主后端是 TikTok Web API（访客身份 + 请求签名），无需登录即可使用推荐流 / 话题标签 / 创作者列表；yt-dlp 仅作兜底。可选登录 Cookie 由浏览器扩展自动同步，也可在下方手动粘贴，留空保存不会覆盖现有值；配置后解锁关键词搜索。需要海外出网，代理设置见「通用」页。</p>
+                  <div class="source-cred-box">
+                    <div class="source-cred-line"><span class="source-credential-ro-tag">脱敏</span><span class="source-credential-summary">加载中…</span></div>
+                    <textarea class="source-credential-value" rows="2" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+                  </div>
+                  <label class="settings-field full"><span>TikTok Cookie（可选）</span><textarea id="tiktokCookie" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="保留空值表示不覆盖现有 cookie（登录 tiktok.com 后插件会自动同步）"></textarea></label>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>Cookie 环境变量</span><input id="tiktokCookieEnv" placeholder="OPENBILICLAW_TIKTOK_COOKIE"></label>
+                    <label class="settings-field"><span>后端模式</span><select id="tiktokMode"><option value="auto">auto（Web API 优先，yt-dlp 兜底）</option><option value="web">web（仅 Web API）</option><option value="ytdlp">ytdlp（仅 yt-dlp）</option></select></label>
+                  </div>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>地区参数</span><input id="tiktokRegion" placeholder="JP"></label>
+                    <label class="settings-field"><span>时区参数</span><input id="tiktokTzName" placeholder="Asia/Tokyo"></label>
+                  </div>
+                  <p class="seg-note">地区 / 时区应匹配你的网络出口；被风控 gate（空响应）时首先检查这两项。</p>
+                </section>
+                <section class="source-seg">
+                  <h4>发现分支与每日预算</h4>
+                  <p class="seg-note">预算是该分支每日任务次数上限，0 或留空 = 不限。关键词搜索需要登录 Cookie；未配置时关键词规划器的词会映射为话题标签。</p>
+                  <div class="branch-table" data-branch-toggles="off">
+                    <div class="branch-head"><span>分支</span><span>每日预算</span><span>说明</span></div>
+                    <div class="branch-row"><span class="branch-name">推荐流</span><input id="tiktokDailyFeedBudget" class="branch-budget" inputmode="numeric" placeholder="3" aria-label="TikTok 每日推荐流预算"><span class="branch-hint">For You 推荐流（高曝光，建议压低）</span></div>
+                    <div class="branch-row"><span class="branch-name">搜索</span><input id="tiktokDailySearchBudget" class="branch-budget" inputmode="numeric" placeholder="3" aria-label="TikTok 每日搜索预算"><span class="branch-hint">需登录 Cookie（有账号风险）</span></div>
+                    <div class="branch-row"><span class="branch-name">话题标签</span><input id="tiktokDailyTagBudget" class="branch-budget" inputmode="numeric" placeholder="0 = 不限" aria-label="TikTok 每日话题标签预算"><span class="branch-hint">常驻标签 + 规划器话题词</span></div>
+                    <div class="branch-row"><span class="branch-name">创作者</span><input id="tiktokDailyUserBudget" class="branch-budget" inputmode="numeric" placeholder="0 = 不限" aria-label="TikTok 每日创作者预算"><span class="branch-hint">跟踪下方创作者列表</span></div>
+                  </div>
+                  <label class="settings-field full"><span>常驻话题标签（逗号分隔，不带 #）</span><input id="tiktokTags" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="booktok, learnsontiktok"></label>
+                  <label class="settings-field full"><span>跟踪创作者（逗号分隔，@ 可省略）</span><input id="tiktokCreators" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="@creator1, @creator2"></label>
+                </section>
+                <section class="source-seg">
+                  <h4>节流</h4>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求间隔秒数</span><input id="tiktokRequestInterval" inputmode="numeric" placeholder="2"></label>
+                    <label class="settings-field"><span>最小调度间隔分钟</span><input id="tiktokMinInterval" inputmode="numeric" placeholder="3"></label>
                   </div>
                 </section>
                 <section class="source-seg">
@@ -1166,6 +1303,57 @@
               </div>
             </article>
 
+            <article class="source-status-row source-card" data-source-status="instagram" data-source-credential="instagram" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-instagram">
+                <span class="source-card-logo" data-source-logo="instagram" aria-hidden="true">IG</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">Instagram</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareInstagram" value="1" inputmode="numeric" aria-label="Instagram 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 Instagram</span><select id="instagramEnabled"><option value="on">启用</option><option value="off" selected>停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-instagram">
+                <section class="source-seg">
+                  <h4>接入方式</h4>
+                  <p class="seg-note">公开发现由浏览器扩展读取，无需登录；个人点赞、收藏和关注仅在首次初始化时读取。首次使用请在扩展的「设置 → 平台源」启用 Instagram 并保存，允许 instagram.com 站点访问；导入个人事件还需在同一浏览器登录 Instagram。Cookie 不会上传到后端。</p>
+                  <div class="source-cred-box">
+                    <div class="source-cred-line"><span class="source-credential-ro-tag">脱敏</span><span class="source-credential-summary">加载中…</span></div>
+                    <textarea class="source-credential-value" rows="2" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>发现分支与每日预算</h4>
+                  <p class="seg-note">话题读取可用的公开 topic 页面；作者分支以话题返回的作者为种子，因此启用作者时会同时启用话题。不提交 Instagram 站内搜索，不执行点赞、收藏或关注。</p>
+                  <div class="branch-table" data-branch-toggles="on">
+                    <div class="branch-head"><span></span><span>分支</span><span>每日预算</span><span>说明</span></div>
+                    <div class="branch-row"><input id="instagramModeTopic" type="checkbox" class="branch-toggle" aria-label="Instagram 话题分支"><span class="branch-name">话题</span><input id="instagramDailyTopicBudget" class="branch-budget" inputmode="numeric" placeholder="60" aria-label="Instagram 每日话题预算"><span class="branch-hint">有界公开 topic 内容</span></div>
+                    <div class="branch-row"><input id="instagramModeCreator" type="checkbox" class="branch-toggle" aria-label="Instagram 作者分支"><span class="branch-name">作者</span><input id="instagramDailyCreatorBudget" class="branch-budget" inputmode="numeric" placeholder="30" aria-label="Instagram 每日作者预算"><span class="branch-hint">围绕话题中观察到的作者扩展</span></div>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>节流与初始化</h4>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求间隔秒数</span><input id="instagramRequestInterval" inputmode="numeric" placeholder="3"></label>
+                    <label class="settings-field"><span>最小调度间隔分钟</span><input id="instagramMinInterval" inputmode="numeric" placeholder="10"></label>
+                    <label class="settings-field"><span>初始化每类信号上限</span><input id="instagramBootstrapLimit" inputmode="numeric" placeholder="300"></label>
+                  </div>
+                </section>
+                <section class="source-seg">
+                  <h4>验证</h4>
+                  <div class="settings-probe-row source-verify-row">
+                    <button class="pill-btn source-verify-btn" type="button">刷新浏览器登录状态</button>
+                    <span class="settings-probe-status source-verify-status" aria-live="polite"></span>
+                  </div>
+                </section>
+              </div>
+            </article>
+
           </div>
 
           <div class="source-aux-card">
@@ -1238,9 +1426,12 @@
               <h3 id="advancedEvaluatorHeading">候选评分模式</h3>
             </div>
             <div class="settings-advanced-fields">
-              <label class="settings-field full"><span>评分器模式</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
+              <label class="settings-field full"><span>候选评估器</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="jev">Jev（完整评估，纯文本）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
             </div>
             <p class="settings-note-inline" id="evalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+            <p class="settings-note-inline">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+            <p class="settings-note-inline" id="jevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
+            <div id="jevConnectionSettings"></div>
           </section>
 
           <section class="settings-advanced-section" aria-labelledby="advancedRecommendationHeading">
@@ -1317,9 +1508,121 @@
           </section>
         </div>
 
+        <div id="settingsPanelFish" class="settings-panel" data-settings-panel="fish" role="tabpanel" aria-labelledby="settingsTabFish" hidden>
+          <section class="settings-advanced-section" aria-labelledby="fishIntroHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Blue Fish Lab · 实验室</p>
+              <h3 id="fishIntroHeading">养蓝色大肥鱼</h3>
+            </div>
+            <p class="settings-note-inline">大肥鱼是一个独立的小号，有自己的 Cookie、自己的人设和自己的账本。</p>
+            <p class="settings-note-inline">它会挑一条评论回复并 @ 对方；打开下面的通知后，还会每天挑一条推荐告诉你（评论区 @ 你、私信你，或两个都发）。默认只预览不发布；如果它用的账号就是你自己，它会直接拒绝运行。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-advanced-toggle"><input id="fishEnabled" type="checkbox"><span>启用「养蓝色大肥鱼」（实验室）</span></label>
+              <label class="settings-advanced-toggle"><input id="fishDryRun" type="checkbox"><span>只预览不发布（推荐保持开启）</span></label>
+            </div>
+            <p class="settings-probe-status" id="fishStatusLine" aria-live="polite">正在读取状态…</p>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="fishAccountHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Separate account</p>
+              <h3 id="fishAccountHeading">大肥鱼的账号</h3>
+            </div>
+            <p class="settings-note-inline">粘贴大肥鱼自己那个 B 站账号的 Cookie（不是你的主账号）。它会单独存在 data/fish/bilibili_cookie.json，校验通过才会保存；和主账号相同会被拒绝。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-field full"><span>大肥鱼的 Cookie</span><input id="fishCookie" type="password" autocomplete="off" spellcheck="false" placeholder="SESSDATA=…; bili_jct=…"></label>
+            </div>
+            <div class="drawer-actions">
+              <button class="pill-btn" id="fishSaveAccountBtn" type="button">保存并校验</button>
+              <button class="pill-btn" id="fishQrLoginBtn" type="button">扫码登录</button>
+              <button class="pill-btn" id="fishClearAccountBtn" type="button">清除登录</button>
+            </div>
+            <div class="fish-qr-box" id="fishQrBox" hidden>
+              <img id="fishQrImage" alt="大肥鱼的登录二维码" width="180" height="180">
+            </div>
+            <p class="settings-probe-status" id="fishQrStatus" aria-live="polite"></p>
+            <p class="settings-probe-status" id="fishAccountStatus" aria-live="polite"></p>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="fishPersonaHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Persona</p>
+              <h3 id="fishPersonaHeading">人设与说话规矩</h3>
+            </div>
+            <p class="settings-note-inline">这几段会原样进入提示词：人设决定它像谁，规矩决定它不做什么，受众决定它优先回谁。改完点下面的「保存设置」即可生效，不用重启。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-field"><span>它的名字</span><input id="fishPersonaName" type="text" maxlength="20" autocomplete="off" placeholder="蓝色大肥鱼"></label>
+              <label class="settings-field full"><span>人格设定</span><textarea id="fishPersonaPrompt" rows="6" spellcheck="false" placeholder="你是一只叫「蓝色大肥鱼」的 B 站小用户…"></textarea></label>
+              <label class="settings-field full"><span>额外说话规矩</span><textarea id="fishReplyRules" rows="5" spellcheck="false" placeholder="只回答摆在你面前的那一条评论…"></textarea></label>
+              <label class="settings-field full"><span>只回哪类人（可选）</span><textarea id="fishAudiencePrompt" rows="3" spellcheck="false" placeholder="留空则不限。例如：想找片单、抱怨推荐不准、在聊同一个人的人。"></textarea></label>
+              <label class="settings-field full"><span>什么情况下才说话（可选）</span><textarea id="fishTriggerPrompt" rows="3" spellcheck="false" placeholder="留空则只要接得上就回。例如：只在认真讨论技术时插话；吵架、抽奖、打卡一律不回。"></textarea></label>
+            </div>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="fishNotifyHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Notify you</p>
+              <h3 id="fishNotifyHeading">在评论区 @ 你</h3>
+            </div>
+            <p class="settings-note-inline">打开后，它每天挑一条推荐告诉你：评论区 @ 你（公开）、私信你（不公开），或者两个都发。</p>
+            <p class="settings-note-inline">评论是公开的：别人也能看到大肥鱼 @ 了你的主号。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-advanced-toggle"><input id="fishNotifyOwner" type="checkbox"><span>每天在评论区 @ 我一次</span></label>
+              <label class="settings-field"><span>我的 B 站昵称（留空自动读取）</span><input id="fishOwnerName" type="text" maxlength="30" autocomplete="off" placeholder="留空则用主账号昵称"></label>
+              <label class="settings-field"><span>我的 mid（可选，主号登录失效时用）</span><input id="fishOwnerMid" type="number" min="0" max="10000000000000" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field"><span>每天最多通知几次</span><input id="fishNotifyDailyLimit" type="number" min="0" max="3" step="1" inputmode="numeric" placeholder="1"></label>
+              <label class="settings-field"><span>通知方式</span><select id="fishNotifyChannel">
+                <option value="comment">评论区 @ 你（公开）</option>
+                <option value="dm">私信你（不公开）</option>
+                <option value="both">评论 @ + 私信</option>
+              </select></label>
+            </div>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="fishQuotaHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Limits</p>
+              <h3 id="fishQuotaHeading">节奏与上限</h3>
+            </div>
+            <div class="settings-advanced-fields">
+              <label class="settings-field"><span>每天最多发几条</span><input id="fishDailyLimit" type="number" min="0" max="20" step="1" inputmode="numeric" placeholder="3"></label>
+              <label class="settings-field"><span>两次发言至少隔（分钟）</span><input id="fishMinInterval" type="number" min="5" max="1440" step="1" inputmode="numeric" placeholder="30"></label>
+              <label class="settings-field"><span>只在几点到几点说话（留空不限）</span><input id="fishActiveHours" type="text" maxlength="11" autocomplete="off" placeholder="09:00-23:00"></label>
+              <label class="settings-field"><span>同一视频最多几条</span><input id="fishPerVideoLimit" type="number" min="1" max="3" step="1" inputmode="numeric" placeholder="1"></label>
+              <label class="settings-field"><span>单条字数上限</span><input id="fishMaxChars" type="number" min="10" max="300" step="1" inputmode="numeric" placeholder="80"></label>
+              <label class="settings-field"><span>每轮看几个视频</span><input id="fishMaxCandidates" type="number" min="1" max="20" step="1" inputmode="numeric" placeholder="5"></label>
+              <label class="settings-field"><span>每个视频看几条评论</span><input id="fishCommentsPerVideo" type="number" min="1" max="50" step="1" inputmode="numeric" placeholder="10"></label>
+              <label class="settings-field"><span>只回点赞 ≥</span><input id="fishMinLikes" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field"><span>只回播放量 ≥（0 = 不限）</span><input id="fishMinViews" type="number" min="0" max="10000000" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field"><span>只在发布几天后回（0 = 不限）</span><input id="fishMinAgeDays" type="number" min="0" max="365" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field full"><span>屏蔽词（逗号分隔）</span><input id="fishBlockedWords" type="text" autocomplete="off" placeholder="剧透, 广告"></label>
+              <label class="settings-advanced-toggle"><input id="fishAllowTopLevel" type="checkbox"><span>允许它在视频下发顶层评论</span></label>
+            </div>
+          </section>
+
+          <section class="settings-advanced-section" aria-labelledby="fishRunHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Run</p>
+              <h3 id="fishRunHeading">现在跑一轮</h3>
+            </div>
+            <p class="settings-note-inline">「预览一轮」只生成不发帖，也不占配额；「发一轮」会真的用大肥鱼的账号在评论区说话，请确认人设和上限都调好了。</p>
+            <div class="drawer-actions">
+              <button class="pill-btn" id="fishSaveConfigBtn" type="button">保存设置</button>
+              <button class="pill-btn" id="fishPreviewBtn" type="button">预览一轮</button>
+              <button class="pill-btn" id="fishRunBtn" type="button">发一轮</button>
+            </div>
+            <p class="settings-probe-status" id="fishRunResult" aria-live="polite"></p>
+            <ul class="settings-note-inline" id="fishLedger" style="list-style:none;padding:0;margin:12px 0 0"></ul>
+            <details class="fish-report">
+              <summary>今日日报</summary>
+              <pre id="fishReport"></pre>
+            </details>
+          </section>
+        </div>
+
         <div id="settingsPanelGeneral" class="settings-panel" data-settings-panel="general" role="tabpanel" aria-labelledby="settingsTabGeneral" hidden>
           <p class="settings-section-title">通用</p>
-          <label class="settings-field"><span>语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
+          <label class="settings-field"><span>默认语言（所有端共用）</span><select id="language" data-i18n-skip><option value="zh-Hans">简体中文</option><option value="zh-Hant">繁體中文</option><option value="en">English</option></select></label>
           <label class="settings-field"><span>数据目录</span><input id="dataDir" placeholder="data"></label>
           <label class="settings-field full"><span>SQLite 数据库路径</span><input id="storageDbPath" placeholder="data/openbiliclaw.db"></label>
           <p class="settings-section-title">保存与平台同步</p>
@@ -1527,7 +1830,7 @@
             <label class="settings-field"><span>实例名称</span><input id="llmInstanceName" autocomplete="off" placeholder="例如：DeepSeek 官方"></label>
             <label class="settings-field"><span>实例 ID</span><input id="llmInstanceId" autocomplete="off" spellcheck="false" placeholder="deepseek-main" aria-describedby="llmInstanceIdHint"></label>
             <p class="settings-note-inline llm-instance-id-hint" id="llmInstanceIdHint">保存后 ID 不可修改；调用链通过它稳定引用实例。</p>
-            <label class="settings-field"><span>Provider 类型</span><select id="llmInstanceProviderType" translate="no"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="orcarouter">OrcaRouter</option><option value="ollama">Ollama</option><option value="openai_compatible">OpenAI-compatible</option></select></label>
+            <label class="settings-field"><span>Provider 类型</span><select id="llmInstanceProviderType" translate="no"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="orcarouter">OrcaRouter</option><option value="requesty">Requesty</option><option value="api_route">API Route</option><option value="cheaperinference">Cheaper Inference</option><option value="ollama">Ollama</option><option value="openai_compatible">OpenAI-compatible</option></select></label>
             <label class="settings-field"><span>状态</span><select id="llmInstanceEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field full">
               <span>模型</span>
@@ -1671,13 +1974,4 @@
     </svg>
     <span>顶部</span>
   </button>
-  <script src="/web/assets/js/mobile-qr.js" defer></script>
-  <script src="/web/assets/js/pending-actions.js" defer></script>
-  <script src="/web/assets/js/saved-sync-core.js" defer></script>
-  <!-- Frontend helpers shared with the extension side panel (and, for source
-       status, the setup wizard); served from /shared because /web is rooted at
-       web/desktop. -->
-  <script src="/shared/dialogue-confirmation.js" defer></script>
-  <script src="/shared/source-status.js" defer></script>
-  <script src="/web/assets/js/app.js" defer></script>
 </body></html>

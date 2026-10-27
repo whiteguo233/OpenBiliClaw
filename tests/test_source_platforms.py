@@ -27,7 +27,10 @@ from openbiliclaw.sources.zhihu_tasks import ZHIHU_DISCOVERY_SCOPE_STRATEGIES
         ("xhs", "xhs-search", "xiaohongshu"),
         ("rednote", "xiaohongshu_task", "xiaohongshu"),
         ("dy", "dy-hot", "douyin"),
-        ("tiktok", "douyin_search", "douyin"),
+        ("dy", "douyin_search", "douyin"),
+        ("tiktok", "tiktok_tag", "tiktok"),
+        ("tt", "tiktok-user", "tiktok"),
+        ("", "tiktok_user", "tiktok"),
         ("yt", "yt-search", "youtube"),
         ("x", "x-feed", "twitter"),
         ("gh", "github-search", "github"),
@@ -41,6 +44,7 @@ from openbiliclaw.sources.zhihu_tasks import ZHIHU_DISCOVERY_SCOPE_STRATEGIES
         ("", "linuxdo-related", "linuxdo"),
         ("wb", "weibo-hot", "weibo"),
         ("v2", "v2ex-node", "v2ex"),
+        ("ig", "instagram-topic", "instagram"),
     ],
 )
 def test_source_family_aliases(platform: str, source: str, expected: str) -> None:
@@ -53,6 +57,7 @@ def test_registry_contains_every_runtime_platform() -> None:
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "twitter",
         "github",
         "zhihu",
@@ -61,6 +66,7 @@ def test_registry_contains_every_runtime_platform() -> None:
         "linuxdo",
         "v2ex",
         "weibo",
+        "instagram",
     )
 
 
@@ -70,6 +76,8 @@ def test_registry_contains_every_runtime_platform() -> None:
         ("https://www.bilibili.com/video/BV1abc", "bilibili"),
         ("https://www.xiaohongshu.com/explore/a", "xiaohongshu"),
         ("https://www.douyin.com/video/1", "douyin"),
+        ("https://www.tiktok.com/@creator/video/7234567890123456789", "tiktok"),
+        ("https://vm.tiktok.com/ZNabcde/", "tiktok"),
         ("https://youtu.be/abc", "youtube"),
         ("https://x.com/user/status/1", "twitter"),
         ("https://github.com/openai/openai-python", "github"),
@@ -80,6 +88,7 @@ def test_registry_contains_every_runtime_platform() -> None:
         ("https://linux.do/t/topic/123", "linuxdo"),
         ("https://m.weibo.cn/detail/5023456789012345", "weibo"),
         ("https://www.v2ex.com/t/123456", "v2ex"),
+        ("https://www.instagram.com/p/DAb_cd-123/", "instagram"),
     ],
 )
 def test_url_inference_uses_registry(url: str, expected: str) -> None:

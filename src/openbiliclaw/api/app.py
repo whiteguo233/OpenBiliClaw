@@ -1,7 +1,7 @@
 """FastAPI app for the browser-extension backend."""
 
 # [INPUT]: 配置、MemoryManager、Database 与来源事件规范化器
-# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用的 FastAPI 路由；惊喜队列读在线程池执行
+# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用路由；向 worker 发布 runtime-stream 在线心跳
 # [POS]: API 组合根，负责请求边界与事件入口，不在此复制来源解析规则
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -29,8 +29,9 @@ import unicodedata
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, TypedDict, cast
 from urllib.parse import parse_qsl, quote, urlparse, urlsplit, urlunsplit
@@ -47,9 +48,13 @@ from fastapi.responses import (
 )
 from starlette.background import BackgroundTask
 
+from openbiliclaw.agent.persona import CHAT_PERSONAS, PERSONA_EXAMPLE_PROMPT, resolve_chat_persona
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
     ActivityFeedResponse,
+    AgentTaskCreateIn,
+    AgentTaskListResponse,
+    AgentTaskOut,
     AutostartApplyIn,
     AutostartConfigOut,
     AutostartStatusOut,
@@ -61,6 +66,11 @@ from openbiliclaw.api.models import (
     BilibiliCookieResponse,
     BilibiliSourceConfigOut,
     ChatIn,
+    ChatSessionCreateIn,
+    ChatSessionDetailResponse,
+    ChatSessionListResponse,
+    ChatSessionOut,
+    ChatSessionPatchIn,
     ChatTurnIn,
     ChatTurnListResponse,
     ChatTurnOut,
@@ -116,6 +126,11 @@ from openbiliclaw.api.models import (
     InitStatusOut,
     InsightFeedbackIn,
     InsightFeedbackResponse,
+    InstagramLoginStateIn,
+    InstagramLoginStateResponse,
+    InstagramSourceConfigOut,
+    JevEvaluationConfigOut,
+    JevProviderReadinessOut,
     LinuxdoLoginStateIn,
     LinuxdoLoginStateResponse,
     LinuxdoSourceConfigOut,
@@ -176,6 +191,7 @@ from openbiliclaw.api.models import (
     SourceVerifyResponse,
     StorageConfigOut,
     TailnetConfigOut,
+    TiktokSourceConfigOut,
     TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
@@ -214,6 +230,7 @@ from openbiliclaw.recommendation_runtime import (
 from openbiliclaw.runtime import embedding_progress
 from openbiliclaw.runtime.dialogue_reply_scheduler import (
     DialogueExecutionCoordinator,
+    DialogueLeaseTimeoutError,
     DurableChatReplyScheduler,
     TerminalChatReplyError,
 )
@@ -223,6 +240,7 @@ from openbiliclaw.runtime.image_cache import (
     CoverFetchError,
     cleanup_image_cache,
     image_log_identity,
+    render_cover_for_display,
     save_extension_cover,
 )
 from openbiliclaw.runtime.image_fetch import ImageFetchCoordinator
@@ -231,6 +249,7 @@ from openbiliclaw.runtime.keyword_fetch import (
     requeue_keyword_from_xhs_rate_limit,
     source_keyword_id_from_xhs_task,
 )
+from openbiliclaw.runtime.presence import PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 from openbiliclaw.saved_sync.extension_broker import (
     ExtensionNativeSaveResultIn as BrokerExtensionNativeSaveResultIn,
 )
@@ -247,6 +266,12 @@ from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
 )
+from openbiliclaw.sources.instagram_tasks import (
+    INSTAGRAM_LOGIN_FAILURE_CODES as _INSTAGRAM_LOGIN_FAILURE_CODES,
+)
+from openbiliclaw.sources.instagram_tasks import (
+    normalize_instagram_failure_code,
+)
 from openbiliclaw.sources.platforms import (
     CANONICAL_SOURCE_FAMILIES,
     normalize_source_platform,
@@ -256,7 +281,11 @@ from openbiliclaw.sources.platforms import (
 from openbiliclaw.sources.platforms import (
     infer_source_platform_from_url as _registry_infer_source_platform_from_url,
 )
-from openbiliclaw.storage.database import CONTENT_HISTORY_RETENTION_DAYS
+from openbiliclaw.storage.database import (
+    AGENT_TASK_TERMINAL_STATUSES,
+    CONTENT_HISTORY_RETENTION_DAYS,
+    DEFAULT_CHAT_SESSION_ID,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -306,6 +335,40 @@ _SQLITE_SIGNED_INTEGER_MAX = (1 << 63) - 1
 _CONTENT_HISTORY_CURSOR_VERSION = 1
 _CONTENT_HISTORY_CURSOR_MAX_LENGTH = 32768
 _CONTENT_HISTORY_CURSOR_ITEM_KEY_MAX_LENGTH = 2048
+
+
+def _instagram_login_failure_code(value: object) -> str:
+    """Return an exact login failure, allowing only a frozen scope prefix."""
+
+    normalized = normalize_instagram_failure_code(value)
+    code = normalized.rpartition(":")[2]
+    return code if code in _INSTAGRAM_LOGIN_FAILURE_CODES else ""
+
+
+def _instagram_result_login_failure(result: Mapping[str, object]) -> str:
+    """Find an exact fatal login code in canonical error/debug evidence."""
+
+    candidates: list[object] = [result.get("error")]
+    debug = result.get("debug")
+    if isinstance(debug, Mapping):
+        failures = debug.get("failures")
+        if isinstance(failures, list):
+            candidates.extend(failures)
+    for candidate in candidates:
+        if code := _instagram_login_failure_code(candidate):
+            return code
+    return ""
+
+
+def _instagram_permission_conflict_detail(error: PermissionError) -> str:
+    """Map queue claim races separately from account-binding violations."""
+
+    code = str(error).strip()
+    if code == "task_claim_conflict":
+        return "task_claim_conflict"
+    if code == "instagram_account_changed":
+        return "instagram_account_switch_not_supported"
+    return "task_result_conflict"
 
 
 class _MigrationArchiveStreamingResponse(StreamingResponse):
@@ -443,8 +506,58 @@ _CONFIRMATION_GLOBAL_COOLDOWN_HOURS = 12
 # object-level ask budget and makes "以后再说" durable without becoming a
 # permanent dismissal. Recalibrate after the first production month.
 _CONFIRMATION_OBJECT_COOLDOWN_HOURS = 72
-_RUNTIME_STREAM_HEARTBEAT_SECONDS = 20.0
+_RUNTIME_STREAM_HEARTBEAT_SECONDS = PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 _DIALOGUE_EXECUTION_DRAIN_TIMEOUT_SECONDS = 1500.0
+# Interactive agent-stream admission budget: a hot reload can hold the
+# dialogue lane paused for the full drain window above, which left SSE
+# requests hanging for minutes with zero feedback. 30s is generous for a
+# normal reload yet short enough for the client to surface the error event.
+_AGENT_STREAM_LEASE_TIMEOUT_SECONDS = 30.0
+# SSE heartbeat: idle gaps longer than this emit a ``: ping`` comment line so
+# proxies/NATs do not silently drop the connection and client read watchdogs
+# stay fed. All three frontend SSE parsers skip ``:`` comment lines.
+_SSE_HEARTBEAT_INTERVAL_SECONDS = 10.0
+# Diagnostics probe for ``GET /api/chat/agent/ping``: numbered ping events,
+# one per interval, no LLM involved.
+_SSE_PING_EVENT_COUNT = 10
+_SSE_PING_INTERVAL_SECONDS = 1.0
+
+
+async def _sse_heartbeat_wrap(stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Yield ``: ping`` comment lines whenever ``stream`` goes silent.
+
+    A silently-dropped connection (proxy buffering, NAT idle timeout, mobile
+    network switch) otherwise hangs forever without an error; the heartbeat
+    keeps middleboxes from recycling the connection and feeds the client-side
+    read watchdog. The wrapped iterator is advanced in a shielded task so a
+    heartbeat timeout never cancels the in-flight LLM work.
+    """
+    pending: asyncio.Task[str] | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(anext(stream))
+            try:
+                item = await asyncio.wait_for(
+                    asyncio.shield(pending),
+                    timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS,
+                )
+            except TimeoutError:
+                yield ": ping\n\n"
+                continue
+            pending = None
+            yield item
+    except StopAsyncIteration:
+        return
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await pending
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            with suppress(asyncio.CancelledError, Exception):
+                await aclose()
 
 
 @dataclass(slots=True)
@@ -456,6 +569,8 @@ class _QueuedConfigApply:
     saved_path: Path
     run_post_reload_llm_work: bool
     restart_required: bool = False
+    completion: asyncio.Future[str] | None = None
+    allow_agent_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -594,6 +709,7 @@ _SOURCE_SHARE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -602,15 +718,22 @@ _SOURCE_SHARE_ORDER = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
 _SOURCE_COUNT_ORDER = _SOURCE_SHARE_ORDER + ("unknown",)
+# Guided-init legal sources: every registered source family. TikTok joined
+# when its account bootstrap queue (tiktok_tasks) landed — guided init now
+# collects real signals (tt_like/tt_collect/tt_history/tt_follow) through the
+# extension task handler, so enabling it no longer flips
+# ``sources.tiktok.enabled`` without collecting anything.
 _INIT_SOURCE_ORDER = (
     "bilibili",
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -619,6 +742,7 @@ _INIT_SOURCE_ORDER = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
@@ -657,6 +781,7 @@ _NATIVE_SAVE_E2E_CONTENT_TYPES: dict[str, frozenset[str]] = {
     "twitter": frozenset({"tweet", "status"}),
     "zhihu": frozenset({"question", "answer", "article"}),
     "reddit": frozenset({"post", "comment"}),
+    "tiktok": frozenset({"video"}),
 }
 
 
@@ -733,6 +858,11 @@ def _native_save_e2e_content_id_from_url(
         if not host_is_or_subdomain("douyin.com"):
             return ""
         match = re.fullmatch(r"/video/([A-Za-z0-9_-]+)/?", parsed.path)
+        return match.group(1) if match else ""
+    if platform == "tiktok":
+        if not host_is_or_subdomain("tiktok.com"):
+            return ""
+        match = re.fullmatch(r"/@[\w.-]+/video/([0-9]+)/?", parsed.path)
         return match.group(1) if match else ""
     if platform == "twitter":
         if not host_is_or_subdomain("x.com", "twitter.com"):
@@ -1030,9 +1160,49 @@ _RESETTABLE_CONFIG_FIELDS = {
     "llm.deepseek.api_key": ("llm", "deepseek", "api_key"),
     "llm.openrouter.api_key": ("llm", "openrouter", "api_key"),
     "llm.orcarouter.api_key": ("llm", "orcarouter", "api_key"),
+    "llm.requesty.api_key": ("llm", "requesty", "api_key"),
+    "llm.api_route.api_key": ("llm", "api_route", "api_key"),
+    "llm.cheaperinference.api_key": ("llm", "cheaperinference", "api_key"),
     "llm.openai_compatible.api_key": ("llm", "openai_compatible", "api_key"),
     "llm.embedding.api_key": ("llm", "embedding", "api_key"),
 }
+
+
+def _validated_config_language(value: object) -> str:
+    """Validate and canonicalize a ``language`` value from a config write.
+
+    Rejects at save time (CLAUDE.md pitfall rule 7) rather than persisting a
+    value no surface can render. Raises ``HTTPException(400)`` with the
+    supported locale list so clients can show a precise error.
+    """
+
+    from openbiliclaw.i18n import SUPPORTED_LOCALES, resolve_locale
+
+    requested = str(value or "").strip()
+    resolved = resolve_locale(requested)
+    if resolved is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_language",
+                "value": requested,
+                "supported": list(SUPPORTED_LOCALES),
+            },
+        )
+    return resolved
+
+
+def _canonical_locale(value: object) -> str:
+    """Resolve a stored/requested language value to a shipped locale id.
+
+    ``config.toml`` predates the locale contract and may still contain ``zh``
+    or ``en-US``; every API/consumer boundary funnels through this helper so
+    the rest of the codebase only ever sees ``zh-Hans`` / ``zh-Hant`` / ``en``.
+    """
+
+    from openbiliclaw.i18n import normalize_locale
+
+    return normalize_locale(value)
 
 
 def _config_backup_path(config_path: Path) -> Path:
@@ -1904,6 +2074,59 @@ def _is_masked_proxy_echo(value: str) -> bool:
 _BILIBILI_RELATED_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _BILIBILI_RELATED_CACHE_TTL_SECONDS = 300.0
 
+# --- Chat session auto-titling (「聊一聊」 M5) ---
+
+SESSION_TITLE_MAX_CHARS = 30
+_SESSION_TITLE_TIMEOUT_SECONDS = 30.0
+_SESSION_TITLE_SYSTEM_PROMPT = (
+    "你是会话标题生成器。根据用户的首条消息，生成一个简短的中文会话标题。"
+    "要求：不超过 20 个字符，概括话题，不带标点后缀，不带引号。"
+    '输出 JSON：{"title": "..."}'
+)
+# Strong references for fire-and-forget title tasks so the event loop cannot
+# garbage-collect them mid-flight.
+_SESSION_TITLE_TASKS: set[asyncio.Task[None]] = set()
+
+
+def fallback_session_title(message: str) -> str:
+    """Truncated first-message prefix used when LLM titling is unavailable."""
+    return " ".join(message.split())[:SESSION_TITLE_MAX_CHARS]
+
+
+async def generate_session_title(
+    llm_service: Any,
+    message: str,
+    *,
+    timeout: float = _SESSION_TITLE_TIMEOUT_SECONDS,
+) -> str:
+    """Generate a short session title via the LLM, falling back to a prefix.
+
+    The call goes through ``LLMService.complete_structured_task`` so it
+    shares the app-wide LLM concurrency gate; any failure (timeout, provider
+    error, malformed JSON, empty title) falls back to the truncated first
+    message instead of propagating.
+    """
+    try:
+        response = await asyncio.wait_for(
+            llm_service.complete_structured_task(
+                system_instruction=_SESSION_TITLE_SYSTEM_PROMPT,
+                user_input=message[:2000],
+                temperature=0.3,
+                max_tokens=256,
+                caller="chat.session_title",
+                reasoning_effort="",
+                inject_core_memory=False,
+            ),
+            timeout=timeout,
+        )
+        parsed = json.loads(str(response.content))
+        title = str(parsed.get("title", "")).strip().strip("\"' ").strip()
+        if title:
+            return title[:SESSION_TITLE_MAX_CHARS]
+    except Exception:
+        logger.debug("Chat session title generation failed; using fallback", exc_info=True)
+    return fallback_session_title(message)
+
 
 def create_app(
     *,
@@ -1920,6 +2143,7 @@ def create_app(
 ) -> FastAPI:
     """Create the local backend API app."""
     from openbiliclaw.api.runtime_context import (
+        _LIVE_AGENT_CONFIG_FIELDS,
         RuntimeContext,
         build_degraded_runtime_context,
         build_runtime_context,
@@ -2222,6 +2446,11 @@ def create_app(
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
 
+    ctx.configure_director(config)
+    from openbiliclaw.api.director import register_director_routes
+
+    register_director_routes(app, ctx)
+
     # Fan freshly recorded LLM/embedding anomaly alerts out to the live
     # runtime stream so the 异常报警 feed updates without a poll round-trip.
     with suppress(Exception):
@@ -2310,6 +2539,15 @@ def create_app(
     if initial_available is not None and callable(update_inventory):
         update_inventory(available=initial_available, target=_inventory_target())
     app.state.runtime_context = ctx
+    # 「聊一聊」 M6: agent tasks still pending/running belong to a dead
+    # process (in-flight asyncio tasks never survive a restart) — mark them
+    # interrupted once at boot; they are never auto-resumed.
+    with suppress(Exception):
+        interrupt_stale = getattr(
+            getattr(ctx, "database", None), "interrupt_stale_agent_tasks", None
+        )
+        if callable(interrupt_stale):
+            interrupt_stale()
     auto_replenishment_task: asyncio.Task[None] | None = None
     auto_replenishment_started_at = 0.0
     first_page_topup_attempted_at = 0.0
@@ -2320,6 +2558,11 @@ def create_app(
     recommendation_snapshot_lock = asyncio.Lock()
     runtime_status_cache: RuntimeStatusResponse | None = None
     runtime_status_cached_at = 0.0
+    # Slugs whose post-write runtime rebuild failed. A write whose persisted
+    # value already matches the store is otherwise an accepted no-op, so
+    # without this debt set a failed rebuild would never be retried and the
+    # runtime would keep running on the stale credential.
+    pending_runtime_rebuilds: set[str] = set()
     activity_feed_cache: dict[tuple[int, str], tuple[float, ActivityFeedResponse]] = {}
     activity_feed_lock = asyncio.Lock()
 
@@ -2357,6 +2600,9 @@ def create_app(
     config_runtime_reload_lock = asyncio.Lock()
     config_apply_task: asyncio.Task[None] | None = None
     config_apply_pending: _QueuedConfigApply | None = None
+    # Parent process supervisors use this committed generation to replace
+    # delegated evaluators that otherwise retain stale providers indefinitely.
+    app.state.backend_config_generation = 0
     config_apply_revision = 0
     config_applied_revision = 0
     config_apply_state: Literal["idle", "queued", "applying", "applied", "failed"] = "idle"
@@ -2369,6 +2615,7 @@ def create_app(
     app.state.migration_import_phase = ""
     image_fetch_coordinator = ImageFetchCoordinator()
     app.state.image_fetch_coordinator = image_fetch_coordinator
+    app.state.image_service_client = None
     chat_reply_scheduler: DurableChatReplyScheduler
 
     def _complete_degraded_runtime_recovery() -> None:
@@ -2397,6 +2644,36 @@ def create_app(
         return cast("AuthGate", app.state.auth_gate)
 
     register_auth_routes(app, _get_auth_gate)
+
+    def _local_or_authenticated_gate(request: Request, *, detail: str) -> JSONResponse | None:
+        """Self-gate privileged routes for when the password gate is off.
+
+        The auth middleware short-circuits when ``[api.auth]`` is disabled (the
+        default), so privileged routes must self-gate like ``/api/auth/admin``:
+        trusted-local callers always pass; remote callers must enable the
+        password gate first (the middleware then requires an authenticated
+        session). Returns ``None`` when the request may proceed. See issues
+        #299 (credential export) and #300 (config tampering).
+        """
+        gate = _get_auth_gate()
+        if gate.auth.enabled or gate.is_trusted_local(request):
+            return None
+        return JSONResponse({"error": "local_only", "detail": detail}, status_code=403)
+
+    def _config_write_gate(request: Request) -> JSONResponse | None:
+        """Gate config write/probe routes (issue #300).
+
+        An unauthenticated remote ``PUT /api/config`` can hijack LLM traffic
+        (``llm.instances.*.base_url`` + stored API key) and plant an arbitrary
+        executable (``bilibili.browser_executable``); the probe/discover
+        endpoints leak the stored API key to an attacker-chosen ``base_url``
+        without any write.
+        """
+        return _local_or_authenticated_gate(
+            request,
+            detail="远程读取或修改设置需要先开启密码门禁"
+            "（[api.auth] enabled = true），或在本机操作。",
+        )
 
     @app.post("/api/auth/admin")
     async def auth_admin(request: Request) -> JSONResponse:
@@ -2606,9 +2883,11 @@ def create_app(
             path == "/"
             or path in {"/m", "/web", "/setup"}
             # /shared/ hosts modules the recovery shells load at parse time
-            # (e.g. source-status.js); blocking it kills the setup wizard's
-            # script and leaves the degraded config unrepairable.
-            or path.startswith(("/m/", "/web/", "/setup/", "/shared/"))
+            # (e.g. source-status.js, i18n.js); blocking it kills the setup
+            # wizard's script and leaves the degraded config unrepairable.
+            # /i18n/ui/ is the locale catalog behind that runtime — without it
+            # the recovery UI silently falls back to Simplified Chinese.
+            or path.startswith(("/m/", "/web/", "/setup/", "/shared/", "/i18n/ui/"))
         )
         allowed = (
             method == "OPTIONS"
@@ -2621,6 +2900,9 @@ def create_app(
             or path == "/favicon.ico"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
+            # Static locale metadata: no LLM dependency, and clients need it to
+            # render their recovery UI in the user's language.
+            or path == "/api/i18n/locales"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
             # Update status + manual check/apply: a backend that can't build its
             # LLM registry is exactly when pulling a fix-carrying release matters,
@@ -2661,6 +2943,17 @@ def create_app(
             or path == "/api/sources/status"
             or (path.startswith("/api/sources/") and path.endswith("/verify"))
             or path == "/api/embedding/repair"
+            # Blue Fish Lab config/account/ledger are LLM-independent (the lab
+            # has its own JSON config and its own cookie), so they stay
+            # repairable while the registry is down. /api/fish/run is
+            # deliberately absent: a pass needs a working model.
+            or path
+            in {
+                "/api/fish/config",
+                "/api/fish/status",
+                "/api/fish/account",
+                "/api/fish/ledger",
+            }
             or path.startswith("/api/auth")
             # Keep every browser recovery shell loadable. Their static assets
             # do not depend on the LLM registry, and the desktop/setup forms
@@ -2686,6 +2979,50 @@ def create_app(
             return bool(coord.init_active())
         except Exception:
             return False
+
+    async def _apply_staged_bilibili_cookie(reason: str) -> None:
+        """Apply a cookie staged while guided init owned the runtime.
+
+        Runs the same validate+persist path as a direct push, so a staged jar
+        gets the identical live gate (including the unverified-persist
+        fallback on transport failure). The staged file is cleared after any
+        completed attempt — a definitive refusal is logged, not retried
+        forever — but kept when the apply itself crashes, so the next
+        completion point can retry.
+        """
+        from openbiliclaw.api.source_auth.staged import (
+            clear_staged_bilibili_cookie,
+            peek_staged_bilibili_cookie,
+        )
+
+        if _init_active_now():
+            return
+        staged = peek_staged_bilibili_cookie(active_runtime_data_path)
+        if staged is None:
+            return
+        try:
+            result = await _write_source_credential(
+                "bilibili",
+                kind="cookie",
+                value=staged["cookie"],
+                source=staged["source"],
+            )
+        except Exception:
+            logger.error(
+                "failed to apply staged bilibili cookie (%s); keeping it staged",
+                reason,
+                exc_info=True,
+            )
+            return
+        clear_staged_bilibili_cookie(active_runtime_data_path)
+        if result.accepted:
+            logger.info("applied staged bilibili cookie (%s)", reason)
+        else:
+            logger.warning(
+                "staged bilibili cookie refused on apply (%s): %s",
+                reason,
+                result.message,
+            )
 
     def _init_owns_task(task_id: str) -> bool:
         """Whether ``task_id`` is a bootstrap task enqueued by the active init
@@ -2787,7 +3124,8 @@ def create_app(
     #                                         embedding, and network settings;
     #                                         the LLM path still uses the stable
     #                                         total concurrency gate
-    #  - /api/bilibili/cookie               — handler no-ops during init
+    #  - /api/bilibili/cookie               — handler stages a changed cookie
+    #                                         during init (applies on completion)
     #  - /api/auth/*                        — auth-gate management (login/admin)
     #  - /api/sources/*/kick                — init's own dispatcher kick
     #  - /api/sources/*/task-result         — init bootstrap results (the handler
@@ -2816,6 +3154,8 @@ def create_app(
             "/api/sources/v2ex/credential",
             "/api/sources/weibo/login-state",
             "/api/sources/weibo/credential",
+            "/api/sources/instagram/login-state",
+            "/api/sources/instagram/credential",
         }
     )
 
@@ -2922,15 +3262,24 @@ def create_app(
                     value = f"http://{same_origin_host}"
                 headers[key] = value
             body = await request.body()
+            director_config = getattr(getattr(ctx, "config", None) or config, "director", None)
+            proxy_timeout = 30.0
+            if director_config is not None and getattr(director_config, "mode", "off") != "off":
+                proxy_timeout = max(
+                    proxy_timeout,
+                    float(director_config.planning_budget_seconds)
+                    + float(director_config.decision_budget_seconds)
+                    + 30.0,
+                )
             recommendation_port = os.environ.get(RECOMMENDATION_PORT_ENV, "").strip()
             if recommendation_port:
                 target_url = f"http://127.0.0.1:{recommendation_port}{request.url.path}"
-                client_kwargs: dict[str, Any] = {"timeout": 30.0, "trust_env": False}
+                client_kwargs: dict[str, Any] = {"timeout": proxy_timeout, "trust_env": False}
             else:
                 target_url = f"http://localhost{request.url.path}"
                 client_kwargs = {
                     "transport": _httpx.AsyncHTTPTransport(uds=os.environ[RECOMMENDATION_SOCK_ENV]),
-                    "timeout": 30.0,
+                    "timeout": proxy_timeout,
                     "trust_env": False,
                 }
             if request.url.query:
@@ -3036,6 +3385,14 @@ def create_app(
     app.state.event_ingress = event_ingress
 
     def _bind_runtime_lane_dependencies() -> None:
+        agent_tool_context = getattr(ctx, "agent_tool_context", None)
+        if agent_tool_context is not None:
+            # The ingress belongs to the API; the tool context is rebuilt on
+            # config reload. Bind every replacement before reopening its lane.
+            agent_tool_context.event_ingress = event_ingress
+            agent_tool_context.config_update_hook = lambda key, value: _apply_agent_config_update(
+                key, value
+            )
         runtime_controller = getattr(ctx, "runtime_controller", None)
         if runtime_controller is not None:
             try:
@@ -3200,23 +3557,33 @@ def create_app(
         run_post_reload_llm_work: bool = True,
         resume_execution_lanes: bool = True,
         after_rebuild: Any = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         """Quiesce old owners before publishing and recovering a new runtime."""
         async with config_runtime_reload_lock:
+            if progress is not None:
+                progress("正在等待画像/反馈任务结束，再应用配置；此时仍可继续聊天。")
             await feedback_batch_scheduler.pause_and_drain()
             dialogue_paused = False
             try:
+                if progress is not None:
+                    progress("正在等待当前对话结束，再应用配置。")
                 await dialogue_execution_coordinator.pause_and_drain(
                     timeout=_DIALOGUE_EXECUTION_DRAIN_TIMEOUT_SECONDS
                 )
                 dialogue_paused = True
+                if progress is not None:
+                    progress("正在等待对话学习任务结束并重建运行时配置。")
                 await ctx.rebuild_from_config(_pin_active_runtime_config(new_config))
                 if callable(after_rebuild):
                     after_rebuild()
+                if progress is not None:
+                    progress("配置组件已切换，正在恢复后台任务。")
                 await _restart_background_tasks_after_event_recovery(
                     run_post_reload_llm_work=run_post_reload_llm_work,
                     resume_execution_lanes=resume_execution_lanes,
                 )
+                app.state.backend_config_generation += 1
             except BaseException:
                 # Rebuild is atomic: on construction failure ctx still exposes the
                 # old runtime; after publication it exposes the new one. Resolve at
@@ -3237,6 +3604,9 @@ def create_app(
     # Keeping it on app.state also makes drain/publication invariants directly
     # testable without forcing a config.toml write through the HTTP surface.
     app.state._rebuild_runtime_with_lane_handoff = _rebuild_runtime_with_lane_handoff
+    # M7: the update_config tool (post-approval) hot-reloads through the same
+    # lane-handoff path instead of rebuilding raw inside a chat turn.
+    ctx.config_reload_delegate = _rebuild_runtime_with_lane_handoff
 
     def _set_config_apply_status(
         state: Literal["idle", "queued", "applying", "applied", "failed"],
@@ -3280,6 +3650,19 @@ def create_app(
 
     async def _apply_runtime_config_revision(item: _QueuedConfigApply) -> str:
         """Apply one persisted revision without owning the config-file lock."""
+        from openbiliclaw.i18n import get_translator
+
+        tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
+        # Chat knobs have no dependency on profile/feedback owners. Keep the
+        # same queue, lock and last-good transaction, but don't drain unrelated
+        # work when the complete candidate differs only in known chat fields.
+        if item.allow_agent_live_apply and not item.restart_required:
+            async with config_runtime_reload_lock:
+                if ctx.try_apply_agent_config(item.config):
+                    logger.info(
+                        "Chat config applied without runtime rebuild: revision=%d", item.revision
+                    )
+                    return tr("api.config.saved_chat_live", path=item.saved_path)
         was_degraded = bool(getattr(ctx, "degraded", False))
         recovered_from_degraded = False
 
@@ -3295,24 +3678,21 @@ def create_app(
                 item.config,
                 run_post_reload_llm_work=item.run_post_reload_llm_work,
                 after_rebuild=_after_config_runtime_rebuilt,
+                progress=lambda message: _set_config_apply_status("applying", message),
             )
         except Exception:
             if not recovered_from_degraded:
                 raise
             logger.exception("Degraded runtime recovered, but background task restart failed")
-            message = (
-                f"配置已保存到 {item.saved_path}。后端已原地恢复；"
-                "部分后台任务启动失败，将在后续配置刷新时重试，"
-                "不影响继续初始化。"
-            )
+            message = tr("api.config.saved_degraded_partial", path=item.saved_path)
         else:
-            message = f"配置已保存到 {item.saved_path}。"
+            message = tr("api.config.saved_applied", path=item.saved_path)
             if was_degraded:
-                message += " 后端已从降级模式原地恢复。"
-            message += (
-                " 除需完全重启的字段外，其余运行时组件已热重载。"
+                message += tr("api.config.recovered_from_degraded")
+            message += tr(
+                "api.config.hot_reload_restart_required"
                 if item.restart_required
-                else " 运行时组件已热重载，新配置立即生效，无需重启。"
+                else "api.config.hot_reload_ok"
             )
         logger.info("Config hot-reload succeeded: revision=%d", item.revision)
         return message
@@ -3347,11 +3727,14 @@ def create_app(
 
         try:
             while config_apply_pending is not None:
+                from openbiliclaw.i18n import get_translator
+
                 item = config_apply_pending
                 config_apply_pending = None
+                queue_tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
                 _set_config_apply_status(
                     "applying",
-                    f"正在后台应用配置修订 {item.revision}。",
+                    queue_tr("api.config.applying_revision", revision=item.revision),
                 )
                 runtime_apply_started = False
                 try:
@@ -3366,8 +3749,9 @@ def create_app(
                     config_apply_pending = item
                     _set_config_apply_status(
                         "queued",
-                        f"配置修订 {item.revision} 已保存，将在后端重启后生效。",
+                        queue_tr("api.config.revision_saved_after_restart", revision=item.revision),
                     )
+                    _settle_config_completion(item, error=queue_tr("api.config.apply_interrupted"))
                     raise
                 except Exception as exc:
                     logger.exception(
@@ -3377,6 +3761,13 @@ def create_app(
                     error = _config_reload_error(exc)
                     async with _CONFIG_SAVE_LOCK:
                         if config_apply_pending is not None:
+                            # A failed ordinary settings revision may have
+                            # persisted credentials outside Config; its next
+                            # revision must still rebuild those consumers.
+                            config_apply_pending.allow_agent_live_apply = (
+                                config_apply_pending.allow_agent_live_apply
+                                and item.allow_agent_live_apply
+                            )
                             _set_config_apply_status(
                                 "queued",
                                 (
@@ -3385,6 +3776,7 @@ def create_app(
                                 ),
                                 error=error,
                             )
+                            _settle_config_completion(item, error=error)
                             continue
                         try:
                             restored_path = save_config(
@@ -3422,6 +3814,7 @@ def create_app(
                                 failure_message,
                                 error=error,
                             )
+                    _settle_config_completion(item, error=config_apply_message)
                     with suppress(Exception):
                         await ctx.event_hub.publish(
                             {
@@ -3443,6 +3836,7 @@ def create_app(
                                 f"修订 {config_apply_pending.revision} 等待应用。"
                             ),
                         )
+                    _settle_config_completion(item, message=message)
                     with suppress(Exception):
                         await ctx.event_hub.publish(
                             {
@@ -3455,8 +3849,29 @@ def create_app(
             config_apply_task = None
             app.state.config_apply_task = None
 
+    def _settle_config_completion(
+        item: _QueuedConfigApply, *, message: str = "", error: str = ""
+    ) -> None:
+        completion = item.completion
+        if completion is None or completion.done():
+            return
+        if error:
+            completion.set_exception(RuntimeError(error))
+        else:
+            completion.set_result(message)
+
     def _enqueue_config_apply(item: _QueuedConfigApply) -> None:
         nonlocal config_apply_pending, config_apply_task
+        if config_apply_pending is not None:
+            # Ordinary settings can update external cookie jars without any
+            # Config field changing. Coalescing must retain their rebuild
+            # requirement even when the newest revision is a small agent edit.
+            item.allow_agent_live_apply = (
+                item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
+            )
+            _settle_config_completion(
+                config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
+            )
         config_apply_pending = item
         _set_config_apply_status(
             "queued",
@@ -3468,6 +3883,53 @@ def create_app(
                 name="config-apply",
             )
             app.state.config_apply_task = config_apply_task
+
+    async def _apply_agent_config_update(key: str, value: Any) -> str:
+        """Apply one approved scalar edit through the settings transaction."""
+        nonlocal config_apply_revision
+        from openbiliclaw.agent.tools.config_tools import (
+            _resolve_config_leaf,
+            _update_config_denial,
+        )
+        from openbiliclaw.config import (
+            _default_config_path,
+            load_config,
+            save_config,
+            validate_runtime_config,
+        )
+
+        denial = _update_config_denial(key)
+        if denial is not None:
+            raise ValueError(denial)
+        async with _CONFIG_SAVE_LOCK:
+            if _init_active_now():
+                raise RuntimeError("初始化进行中，请稍后再修改配置。")
+            candidate = load_config()
+            resolved = _resolve_config_leaf(candidate, key)
+            if resolved is None:
+                raise ValueError(f"配置项不存在: {key}")
+            owner, leaf, _current = resolved
+            setattr(owner, leaf, value)
+            validate_runtime_config(candidate)
+            _snapshot_config_file(_default_config_path())
+            saved_path = save_config(candidate)
+            config_apply_revision += 1
+            completion: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            _enqueue_config_apply(
+                _QueuedConfigApply(
+                    revision=config_apply_revision,
+                    config=_pin_active_runtime_config(candidate),
+                    saved_path=saved_path,
+                    run_post_reload_llm_work=False,
+                    completion=completion,
+                    allow_agent_live_apply=(
+                        key.startswith("agent.") and key[6:] in _LIVE_AGENT_CONFIG_FIELDS
+                    ),
+                )
+            )
+        return await asyncio.shield(completion)
+
+    app.state._apply_agent_config_update = _apply_agent_config_update
 
     def _is_feedback_event(event: dict[str, Any]) -> bool:
         return str(event.get("event_type") or event.get("type") or "").strip() == "feedback"
@@ -3526,7 +3988,7 @@ def create_app(
         account_key: str = "",
     ) -> None:
         """Persist bootstrap keys that already entered the source event path."""
-        if not keys and not (source in {"linuxdo", "weibo"} and account_key):
+        if not keys and not (source in {"linuxdo", "weibo", "instagram"} and account_key):
             return
         from datetime import UTC, datetime
 
@@ -3551,6 +4013,8 @@ def create_app(
                 state["linuxdo_account_key"] = account_key
             if source == "weibo" and account_key:
                 state["weibo_account_key"] = account_key
+            if source == "instagram" and account_key:
+                state["instagram_account_key"] = account_key
             state["last_source_bootstrap_sync_at"] = datetime.now(UTC).isoformat()
             return state
 
@@ -3738,6 +4202,44 @@ def create_app(
     def _pending_norm_title(value: object) -> str:
         return re.sub(r"[\W_]+", "", str(value or "")).lower()
 
+    @lru_cache(maxsize=8)
+    def _pending_confirmation_keep_indices(titles: tuple[str, ...]) -> tuple[int, ...]:
+        """Memoize exact title snapshots without retaining mutable card payloads.
+
+        Eight snapshots bound memory while covering hypothesis/confusion polls
+        and recent edits. Eviction only changes performance, never selection.
+        SequenceMatcher's two upper bounds reject impossible matches before its
+        expensive ratio calculation; the existing threshold/order stay intact.
+        """
+        from difflib import SequenceMatcher
+
+        kept: list[int] = []
+        seen_titles: set[str] = set()
+        matchers: list[SequenceMatcher[str]] = []
+        for index, title in enumerate(titles):
+            if not title or len(title) < _PENDING_DEDUP_MIN_TITLE_LENGTH:
+                kept.append(index)
+                continue
+            if title in seen_titles:
+                continue
+            duplicate = False
+            for matcher in matchers:
+                # Keep candidate/representative direction unchanged: ratio is
+                # not symmetric. Reusing seq2 also reuses its character index.
+                matcher.set_seq1(title)
+                if (
+                    matcher.real_quick_ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                    and matcher.quick_ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                    and matcher.ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                ):
+                    duplicate = True
+                    break
+            if not duplicate:
+                seen_titles.add(title)
+                matchers.append(SequenceMatcher(None, "", title))
+                kept.append(index)
+        return tuple(kept)
+
     def _dedupe_pending_confirmations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Collapse pending titles that differ only by wording.
 
@@ -3749,27 +4251,8 @@ def create_app(
         """
         if len(items) < 2:
             return list(items)
-        from difflib import SequenceMatcher
-
-        kept: list[dict[str, Any]] = []
-        seen_titles: list[str] = []
-        for item in items:
-            normalized_title = _pending_norm_title(item.get("title", ""))
-            # Short titles are usually synthetic test labels; applying the
-            # sequence matcher there would collapse "高优先假设一/二/三".
-            if not normalized_title or len(normalized_title) < _PENDING_DEDUP_MIN_TITLE_LENGTH:
-                kept.append(item)
-                continue
-            if any(
-                len(seen) >= _PENDING_DEDUP_MIN_TITLE_LENGTH
-                and SequenceMatcher(None, normalized_title, seen).ratio()
-                >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
-                for seen in seen_titles
-            ):
-                continue
-            seen_titles.append(normalized_title)
-            kept.append(item)
-        return kept
+        titles = tuple(_pending_norm_title(item.get("title", "")) for item in items)
+        return [items[index] for index in _pending_confirmation_keep_indices(titles)]
 
     def _pending_confirmation_candidates(
         *,
@@ -3787,6 +4270,18 @@ def create_app(
         confirmation_state = _load_dialogue_confirmation_state()
         now = datetime.now(UTC)
         normalized_session = session.strip()
+        visible_refs: set[str] | None = None
+        refs_reader = _chat_db_method("get_chat_confirmation_refs")
+        if normalized_session and refs_reader is not None:
+            visible_refs = set(refs_reader(session=normalized_session))
+
+        def already_visible(ref: str) -> bool:
+            if not normalized_session:
+                return False
+            if visible_refs is not None:
+                return ref in visible_refs
+            return _get_chat_confirmation_turn(ref=ref, session=normalized_session) is not None
+
         hypotheses = [
             item
             for item in _hypothesis_confirmation_items()
@@ -3823,15 +4318,7 @@ def create_app(
         if confusions and confusions[0].get("status") == "clarifying":
             active = confusions[0]
             active_ref = str(active.get("ref", ""))
-            already_visible = bool(
-                normalized_session
-                and _get_chat_confirmation_turn(
-                    ref=active_ref,
-                    session=normalized_session,
-                )
-                is not None
-            )
-            confusions = [] if already_visible else [active]
+            confusions = [] if already_visible(active_ref) else [active]
 
         # Deduplicate each kind separately so a hypothesis can never be
         # collapsed into a semantically different confusion.
@@ -3844,13 +4331,7 @@ def create_app(
             # duplicate of the item the user is already looking at.  Dedup runs
             # first so an open representative also hides its near-duplicates.
             deduped_hypotheses = [
-                item
-                for item in deduped_hypotheses
-                if _get_chat_confirmation_turn(
-                    ref=item["ref"],
-                    session=normalized_session,
-                )
-                is None
+                item for item in deduped_hypotheses if not already_visible(item["ref"])
             ]
         deduped_confusions = _dedupe_pending_confirmations(
             sorted(confusions, key=rank, reverse=True),
@@ -4048,6 +4529,7 @@ def create_app(
             status=str(row.get("status", "pending") or "pending"),
             error=str(row.get("error", "") or ""),
             payload=payload,
+            session_id=str(row.get("session_id", "") or ""),
             created_at=str(row.get("created_at", "") or ""),
             updated_at=str(row.get("updated_at", "") or ""),
         )
@@ -4283,6 +4765,16 @@ def create_app(
             return False
         if str(row.get("session", "popup") or "popup") != (payload.session.strip() or "popup"):
             return False
+        # Explicit multi-session ownership (M5) is part of request identity;
+        # omitted session_id stays compatible with pre-M5 rows.
+        requested_session_id = payload.session_id.strip()
+        if requested_session_id and str(row.get("session_id", "") or "") != requested_session_id:
+            return False
+        stored_payload = row.get("payload")
+        if payload.skill.strip() and isinstance(stored_payload, dict):
+            stored_skill = str(stored_payload.get("agent_skill") or "").strip()
+            if payload.skill.strip() != (stored_skill or _resolve_skill_catalog().default().name):
+                return False
         if str(row.get("reply_to_turn_id", "") or "") != payload.reply_to_turn_id.strip():
             return False
         if stored_binding is None or stored_binding.mode.value != "bound":
@@ -4506,6 +4998,7 @@ def create_app(
         *,
         turn_id: str,
         structured_payload: dict[str, object] | None = None,
+        session_id: str = "",
     ) -> dict[str, Any]:
         create_chat_turn = _chat_db_method("create_chat_turn")
         if create_chat_turn is not None:
@@ -4520,6 +5013,7 @@ def create_app(
                     message=payload.message.strip(),
                     reply_to_turn_id=payload.reply_to_turn_id.strip(),
                     payload=structured_payload or {},
+                    session_id=session_id,
                 ),
             )
 
@@ -4540,6 +5034,7 @@ def create_app(
                 "reply": "",
                 "error": "",
                 "payload": dict(structured_payload or {}),
+                "session_id": session_id,
                 "created_at": now,
                 "updated_at": now,
             },
@@ -4839,6 +5334,160 @@ def create_app(
             return True
         return False
 
+    def _store_chat_turn_agent_events(turn_id: str, events: list[dict[str, Any]]) -> bool:
+        """Persist the agent-loop event stream into the turn payload for replay."""
+        store = _chat_db_method("store_chat_turn_agent_events")
+        if store is not None:
+            return bool(store(turn_id, events=events))
+        row = fallback_chat_turns.get(turn_id)
+        if row is None:
+            return False
+        stored_payload = row.get("payload")
+        if not isinstance(stored_payload, dict):
+            stored_payload = {}
+            row["payload"] = stored_payload
+        stored_payload["agent_events"] = [dict(event) for event in events]
+        return True
+
+    # --- Multi-session chat helpers (「聊一聊」 M5) ---
+
+    def _chat_session_db_method(name: str) -> Any:
+        method = _chat_db_method(name)
+        if method is None:
+            raise HTTPException(status_code=503, detail="Chat session storage not available.")
+        return method
+
+    def _normalize_chat_session(row: Mapping[str, Any]) -> ChatSessionOut:
+        metadata = dict(row.get("metadata", {}) or {})
+        metadata["persona"] = resolve_chat_persona(metadata.get("persona")).id
+        return ChatSessionOut(
+            session_id=str(row.get("session_id", "")),
+            title=str(row.get("title", "") or ""),
+            archived=bool(row.get("archived", False)),
+            metadata=metadata,
+            turn_count=int(row.get("turn_count", 0) or 0),
+            active_turns=int(row.get("active_turns", 0) or 0),
+            last_message_preview=str(row.get("last_message_preview", "") or ""),
+            last_activity=str(row.get("last_activity", "") or ""),
+            created_at=str(row.get("created_at", "") or ""),
+            updated_at=str(row.get("updated_at", "") or ""),
+            last_message_at=str(row.get("last_message_at", "") or ""),
+        )
+
+    def _session_persona_id(session_id: str) -> str:
+        """Snapshot a conversation's current style without changing legacy rows."""
+        get_session = _chat_db_method("get_chat_session")
+        row = get_session(session_id) if get_session is not None else None
+        metadata = row.get("metadata", {}) if row else {}
+        return resolve_chat_persona(metadata.get("persona")).id
+
+    def _resolve_chat_session_id(payload: ChatTurnIn) -> str:
+        """Resolve the owning session for a new turn, validating explicit ids."""
+        requested = payload.session_id.strip()
+        if not requested:
+            return DEFAULT_CHAT_SESSION_ID
+        getter = _chat_db_method("get_chat_session")
+        row = getter(requested) if callable(getter) else None
+        if row is None:
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+        return requested
+
+    # --- Durable agent task center helpers (「聊一聊」 M6) ---
+
+    def _agent_task_db_method(name: str) -> Any:
+        method = _chat_db_method(name)
+        if method is None:
+            raise HTTPException(status_code=503, detail="Agent task storage not available.")
+        return method
+
+    def _resolve_agent_task_runner() -> Any:
+        """Return the runtime task runner, building it lazily if unwired.
+
+        The runner resolves loop/registry/catalog from ``ctx`` at run start,
+        so one instance survives the hot-reload atomic swap — same lazy
+        pattern as ``_resolve_skill_catalog``.
+        """
+        runner = getattr(ctx, "agent_task_runner", None)
+        if runner is not None:
+            return runner
+        from openbiliclaw.agent.tasks import AgentTaskRunner
+
+        database = getattr(ctx, "database", None)
+        if not callable(getattr(database, "create_agent_task", None)):
+            raise HTTPException(status_code=503, detail="Agent task storage not available.")
+        runner = AgentTaskRunner(
+            database,
+            runtime=ctx,
+            task_registry=getattr(ctx, "task_registry", None),
+        )
+        ctx.agent_task_runner = runner
+        return runner
+
+    def _normalize_agent_task(
+        row: Mapping[str, Any], *, include_steps: bool = True
+    ) -> AgentTaskOut:
+        return AgentTaskOut(
+            task_id=str(row.get("task_id", "")),
+            session_id=str(row.get("session_id", "") or ""),
+            title=str(row.get("title", "") or ""),
+            prompt=str(row.get("prompt", "") or ""),
+            status=str(row.get("status", "") or ""),
+            skill=str(row.get("skill", "") or ""),
+            progress=str(row.get("progress", "") or ""),
+            report=str(row.get("report", "") or ""),
+            suggestions=[dict(item) for item in row.get("suggestions", []) or []],
+            steps=[dict(step) for step in row.get("steps", []) or []] if include_steps else [],
+            error=str(row.get("error", "") or ""),
+            created_at=str(row.get("created_at", "") or ""),
+            started_at=str(row.get("started_at", "") or ""),
+            finished_at=str(row.get("finished_at", "") or ""),
+            updated_at=str(row.get("updated_at", "") or ""),
+        )
+
+    def _resolve_chat_title_llm_service() -> Any | None:
+        """Find an LLMService capable of the structured title task."""
+        for owner in (
+            getattr(ctx, "agent_loop", None),
+            getattr(ctx, "dialogue", None),
+            getattr(ctx, "soul_engine", None),
+        ):
+            service = getattr(owner, "_llm", None) or getattr(owner, "_llm_service", None)
+            if service is not None and callable(getattr(service, "complete_structured_task", None)):
+                return service
+        return None
+
+    def _schedule_session_title(session_id: str, message: str) -> None:
+        """Best-effort async auto-title for a session's first chat message."""
+        get_session = _chat_db_method("get_chat_session")
+        rename_session = _chat_db_method("rename_chat_session")
+        if not callable(get_session) or not callable(rename_session):
+            return
+        row = get_session(session_id)
+        if row is None or str(row.get("title", "")).strip():
+            return
+        agent_config = getattr(getattr(ctx, "config", None), "agent", None)
+        enabled = bool(getattr(agent_config, "session_title_enabled", True))
+        llm_service = _resolve_chat_title_llm_service() if enabled else None
+
+        async def _run() -> None:
+            try:
+                if llm_service is not None:
+                    title = await generate_session_title(llm_service, message)
+                else:
+                    title = fallback_session_title(message)
+            except Exception:
+                logger.debug("Chat session title task failed", exc_info=True)
+                title = fallback_session_title(message)
+            current = get_session(session_id)
+            if current is None or str(current.get("title", "")).strip():
+                # A manual rename or another writer already set the title.
+                return
+            rename_session(session_id, title=title)
+
+        task = asyncio.create_task(_run())
+        _SESSION_TITLE_TASKS.add(task)
+        task.add_done_callback(_SESSION_TITLE_TASKS.discard)
+
     def _health_profile_ready() -> bool | None:
         soul_engine = getattr(ctx, "soul_engine", None)
         if soul_engine is None:
@@ -4855,14 +5504,21 @@ def create_app(
 
     _lan_ip_value: str | None = None
     _lan_ip_checked_at = float("-inf")
+    _lan_ip_lock = asyncio.Lock()
 
-    def _health_lan_ip() -> str | None:
+    async def _health_lan_ip() -> str | None:
         nonlocal _lan_ip_value, _lan_ip_checked_at
         if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
             return _lan_ip_value
-        _lan_ip_value = _detect_lan_ip()
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        async with _lan_ip_lock:
+            # Several startup health reads share one cold probe. Interface
+            # enumeration shells out (up to seconds on Windows/VPN hosts), so
+            # it must not hold the HTTP loop needed by recommendations/images.
+            if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
+                return _lan_ip_value
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     async def _fresh_lan_ip() -> str | None:
         """Detect the LAN IP now, bypassing the ``/api/health`` TTL cache.
@@ -4875,9 +5531,12 @@ def create_app(
         shared cache that ``/api/health`` reads.
         """
         nonlocal _lan_ip_value, _lan_ip_checked_at
-        _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        # Keep explicit fresh reads ordered after an in-flight health probe;
+        # an older health result must not overwrite the newly detected address.
+        async with _lan_ip_lock:
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     # Embedding readiness is probed live (see _health_embedding_ready) and the
     # result cached here so frequent /api/health polls share one provider call.
@@ -4919,9 +5578,14 @@ def create_app(
         provider = str(getattr(emb, "provider", "") or "").strip().lower()
         if provider != "ollama":
             return False
+        from openbiliclaw.llm.ollama_embedding_runtime import cpu_fallback_active
         from openbiliclaw.runtime.ollama_supervisor import is_loopback
 
-        base_url, _ = _embedding_ollama_target()
+        base_url, model = _embedding_ollama_target()
+        # Once an actual runner failure forced CPU, a timeout is no longer
+        # evidence of an ordinary cold load. Require a real successful probe.
+        if cpu_fallback_active(base_url, model):
+            return False
         return is_loopback(base_url)
 
     def _peek_embedding_ready(*, strict: bool = False) -> bool:
@@ -5201,7 +5865,7 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
-        lan_ip = _health_lan_ip()
+        lan_ip = await _health_lan_ip()
         embedding_ready = await _health_embedding_ready()
         llm_registered = _health_llm_registered()
         llm_callable = _health_llm_callable() if llm_registered else False
@@ -5657,6 +6321,12 @@ def create_app(
                     target_pool_count,
                     fully_parallel=True,
                     progress_callback=progress_callback,
+                    # Instagram's explicit init uses the formal task-backed
+                    # producer. Other sources retain their legacy backfill.
+                    sources=effective if "instagram" in effective else None,
+                    register_instagram_task=lambda task_id: coord.register_enqueued_task(
+                        run_id, task_id
+                    ),
                 )
             )
 
@@ -5688,6 +6358,7 @@ def create_app(
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
+                include_tiktok="tiktok" in effective,
                 include_x="twitter" in effective,
                 include_zhihu="zhihu" in effective,
                 include_reddit="reddit" in effective,
@@ -5696,6 +6367,7 @@ def create_app(
                 include_github="github" in effective,
                 include_linuxdo="linuxdo" in effective,
                 include_weibo="weibo" in effective,
+                include_instagram="instagram" in effective,
                 bangumi_username=bangumi_username,
                 bangumi_token=bangumi_token,
                 github_username=github_username,
@@ -5717,11 +6389,21 @@ def create_app(
             discovery_partial = bool(result.discovery_error)
             dy_status = str(getattr(result, "dy_status", "skipped") or "skipped")
             dy_degraded = dy_status == "degraded"
+            tiktok_status = str(getattr(result, "tiktok_status", "skipped") or "skipped")
+            tiktok_degraded = tiktok_status == "degraded"
             linuxdo_status = str(getattr(result, "linuxdo_status", "skipped") or "skipped")
             linuxdo_degraded = linuxdo_status == "degraded"
             weibo_status = str(getattr(result, "weibo_status", "skipped") or "skipped")
             weibo_degraded = weibo_status in {"failed", "timeout", "login_required"}
-            partial_success = discovery_partial or dy_degraded or linuxdo_degraded or weibo_degraded
+            instagram_status = str(getattr(result, "instagram_status", "skipped") or "skipped")
+            instagram_degraded = instagram_status in {
+                "failed",
+                "timeout",
+                "login_required",
+                "challenge",
+                "rate_limited",
+                "partial",
+            }
             v2ex_status = str(getattr(result, "v2ex_status", "skipped") or "skipped")
             v2ex_partial = v2ex_status == "partial"
             github_status = str(getattr(result, "github_status", "skipped") or "skipped")
@@ -5729,13 +6411,25 @@ def create_app(
             partial_success = (
                 discovery_partial
                 or dy_degraded
+                or tiktok_degraded
                 or linuxdo_degraded
                 or v2ex_partial
                 or github_partial
                 or weibo_degraded
+                or instagram_degraded
             )
             reason = getattr(result, "discovery_reason", None)
             detail = str(getattr(result, "discovery_detail", "") or "").strip()
+            if tiktok_degraded:
+                tiktok_event_count = len(getattr(result, "tiktok_events", []) or [])
+                tiktok_detail = (
+                    "TikTok 采集状态 tiktok_status=degraded："
+                    f"已保留并用于画像建模 {tiktok_event_count} 条已采事件，"
+                    "但至少一个范围未能证明分页完整。"
+                )
+                detail = " ".join(part for part in (detail, tiktok_detail) if part)
+                if not discovery_partial:
+                    reason = "tiktok_degraded"
             if dy_degraded:
                 dy_event_count = len(getattr(result, "dy_events", []) or [])
                 dy_detail = (
@@ -5791,6 +6485,21 @@ def create_app(
                     and not github_partial
                 ):
                     reason = "weibo_degraded"
+            if instagram_degraded:
+                instagram_event_count = len(getattr(result, "instagram_events", []) or [])
+                instagram_detail = (
+                    f"Instagram 采集状态 instagram_status={instagram_status}："
+                    f"已保留 {instagram_event_count} 条已采事件；"
+                    "首版个人信号仅在初始化时读取，请确认浏览器登录态和扩展连接后重试。"
+                )
+                detail = " ".join(part for part in (detail, instagram_detail) if part)
+                if (
+                    not discovery_partial
+                    and not dy_degraded
+                    and not v2ex_partial
+                    and not weibo_degraded
+                ):
+                    reason = "instagram_degraded"
             await coord.complete(
                 run_id,
                 partial_success=partial_success,
@@ -5819,6 +6528,11 @@ def create_app(
             if not bool(getattr(ctx, "degraded", False)):
                 with suppress(Exception):
                     await _restart_background_tasks_after_event_recovery()
+            # A cookie pushed mid-init was staged rather than applied; now
+            # that the run released the runtime (complete/fail/cancel alike),
+            # put it through the normal validate+persist path.
+            with suppress(Exception):
+                await _apply_staged_bilibili_cookie("guided_init_finished")
 
     @app.post("/api/init")
     async def start_guided_init(request: Request) -> JSONResponse:
@@ -6154,6 +6868,54 @@ def create_app(
                 effective_sources.discard("weibo")
                 warnings.append(
                     "微博个人信号未就绪：本次初始化跳过收藏、关注和互动记录；公开发现保持启用。"
+                )
+        instagram_capability_readiness = capability_readiness
+        if "instagram" in effective_sources and callable(instagram_capability_readiness):
+            instagram_profile_readiness = str(
+                instagram_capability_readiness("instagram", "profile") or "unverified"
+            )
+            if instagram_profile_readiness != "ready":
+                if effective_sources == {"instagram"}:
+                    return JSONResponse(
+                        {
+                            "error": "no_profile_signal_sources",
+                            "detail": (
+                                "Instagram 公开 topic / creator 发现无需登录，但初始化"
+                                "点赞、收藏和关注记录需要当前浏览器已登录 Instagram 并连接扩展。"
+                            ),
+                            "capability": "profile",
+                            "readiness": instagram_profile_readiness,
+                        },
+                        status_code=409,
+                    )
+                effective_sources.discard("instagram")
+                warnings.append(
+                    "Instagram 个人信号未就绪：本次初始化跳过点赞、收藏和关注；公开发现保持启用。"
+                )
+        tiktok_capability_readiness = capability_readiness
+        if "tiktok" in effective_sources and callable(tiktok_capability_readiness):
+            tiktok_profile_readiness = str(
+                tiktok_capability_readiness("tiktok", "profile") or "unverified"
+            )
+            if tiktok_profile_readiness != "ready":
+                if effective_sources == {"tiktok"}:
+                    return JSONResponse(
+                        {
+                            "error": "no_profile_signal_sources",
+                            "detail": (
+                                "TikTok 公开发现可用访客身份，但初始化点赞、收藏、观看历史"
+                                "和关注记录需要当前浏览器已登录 tiktok.com 并连接扩展"
+                                "（登录证据由扩展同步并经会话心跳确认）。"
+                            ),
+                            "capability": "profile",
+                            "readiness": tiktok_profile_readiness,
+                        },
+                        status_code=409,
+                    )
+                effective_sources.discard("tiktok")
+                warnings.append(
+                    "TikTok 个人信号未就绪：本次初始化跳过点赞、收藏、观看历史和关注；"
+                    "公开发现保持启用。"
                 )
         configured_bangumi_username = str(
             getattr(
@@ -6917,35 +7679,6 @@ def create_app(
             return JSONResponse({"error": "not_running"}, status_code=409)
         return JSONResponse({"cancelling": True, "run_id": run["run_id"]}, status_code=202)
 
-    def _resize_cover_for_mobile(
-        data: bytes,
-        content_type: str,
-    ) -> tuple[bytes, str]:
-        """Downscale/compress proxied cover images for mobile bandwidth.
-
-        Original CDN covers are often 300KB-500KB; mobile only renders them at
-        card/list size. A 640px JPEG keeps quality while cutting transfer size
-        dramatically. Failures fall back to the original bytes.
-        """
-        if not data or "image" not in content_type:
-            return data, content_type
-        try:
-            from io import BytesIO
-
-            from PIL import Image
-
-            image: Image.Image = Image.open(BytesIO(data))
-            if image.width <= 640:
-                return data, content_type
-            image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-            if image.mode in {"RGBA", "P", "LA"}:
-                image = image.convert("RGB")
-            out = BytesIO()
-            image.save(out, format="JPEG", quality=80, optimize=True)
-            return out.getvalue(), "image/jpeg"
-        except Exception:
-            return data, content_type
-
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(
         url: str = Query(..., description="URL-encoded image URL to proxy"),
@@ -6970,11 +7703,20 @@ def create_app(
             try:
                 import httpx
 
-                async with httpx.AsyncClient(timeout=30) as client:
-                    upstream = await client.get(
-                        f"{service_base}/api/image-proxy",
-                        params={"url": url},
+                client = app.state.image_service_client
+                if client is None:
+                    # App-owned pool: per-image clients repeatedly load TLS
+                    # roots and discard keep-alive sockets, even on localhost.
+                    # The internal child service must not inherit system proxies.
+                    client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(30, connect=1, pool=5),
+                        trust_env=False,
                     )
+                    app.state.image_service_client = client
+                upstream = await client.get(
+                    f"{service_base}/api/image-proxy",
+                    params={"url": url},
+                )
                 if upstream.status_code == 200:
                     return Response(
                         content=upstream.content,
@@ -7028,7 +7770,7 @@ def create_app(
                 cache_id,
             )
         proxy_data, proxy_content_type = await asyncio.to_thread(
-            _resize_cover_for_mobile,
+            render_cover_for_display,
             result.data,
             result.content_type,
         )
@@ -7071,6 +7813,13 @@ def create_app(
         the config-update endpoint uses, so any in-flight handlers see
         the new cookie on their next call.
 
+        While guided init runs, a *changed* cookie is staged to
+        ``data/runtime/staged_bilibili_cookie.json`` instead of being
+        validated/applied mid-init; the guided-init completion hook then
+        runs it through the same validate+persist path, and
+        ``/api/runtime-status`` exposes ``bilibili_cookie_staged`` so the
+        desktop can show the pending state.
+
         Security: the backend is bound to 127.0.0.1 by default, so this
         endpoint is only reachable from the user's own machine. CORS
         already accepts ``*`` (set when the app is built); no auth token
@@ -7093,31 +7842,44 @@ def create_app(
         # gui-init D1.2: while guided init runs, the extension keeps auto-syncing
         # the cookie. Don't validate (~30s round-trip) or rebuild the runtime
         # (which would swap the BilibiliAPIClient mid-init). Same effective
-        # cookie → silent 200 no-op so the extension's auto-sync doesn't error;
-        # a genuinely different cookie → 409 so the user learns the switch
-        # didn't take (it applies after init), rather than being dropped.
+        # cookie → silent 200 no-op so the extension's auto-sync doesn't error.
+        # A genuinely different cookie is STAGED (not 409-dropped as before:
+        # the extension's backoff decided whether the fix ever landed, which
+        # deadlocked users whose init never completed) and applied through the
+        # normal validate+persist path once init completes.
         if _init_active_now():
+            staged_data_dir = active_runtime_data_path
             effective_cookie = ""
             try:
                 _cfg, _ = load_config_with_diagnostics()
                 _cfg = _pin_active_runtime_config(_cfg)
+                staged_data_dir = Path(_cfg.data_path)
                 effective_cookie = (_cfg.bilibili.cookie or "").strip()
                 if not effective_cookie:
                     effective_cookie = AuthManager(data_dir=_cfg.data_path).load_cookie().strip()
             except Exception:
                 effective_cookie = ""
+            from openbiliclaw.api.source_auth.staged import (
+                clear_staged_bilibili_cookie,
+                stage_bilibili_cookie,
+            )
+
             if cookie_value == effective_cookie and effective_cookie:
+                # The pushed jar matches the live one, so any older staged
+                # value describes a session the user has since replaced.
+                clear_staged_bilibili_cookie(staged_data_dir)
                 return BilibiliCookieResponse(
                     ok=True,
                     authenticated=True,
                     message="Cookie 未变，初始化进行中无需重新同步。",
                 )
-            return JSONResponse(
-                {
-                    "error": "init_running",
-                    "detail": "初始化进行中，暂不能切换 Cookie，请稍后再试。",
-                },
-                status_code=409,
+            stage_bilibili_cookie(staged_data_dir, cookie=cookie_value, source=payload.source)
+            logger.info("bilibili cookie staged while guided init is active")
+            return BilibiliCookieResponse(
+                ok=True,
+                authenticated=False,
+                message="初始化进行中，新 Cookie 已暂存，初始化完成后自动应用。",
+                error_code="cookie_staged",
             )
 
         # ``payload.validate_with_bilibili`` is deliberately not consulted. It is
@@ -7147,11 +7909,20 @@ def create_app(
             authenticated=result.authenticated,
             username=result.username,
             user_id=result.user_id,
+            # An unverified persist (probe could not reach bilibili) keeps the
+            # gate's own honest copy — "stored unchecked, the sync loop will
+            # re-check" — instead of claiming a refresh that proved nothing.
             message=(
-                "Cookie synced and runtime refreshed."
-                if result.runtime_refreshed
-                else "Cookie already synced; runtime unchanged."
+                result.message
+                if result.unverified
+                else (
+                    "Cookie synced and runtime refreshed."
+                    if result.runtime_refreshed
+                    else "Cookie already synced; runtime unchanged."
+                )
             ),
+            unverified=result.unverified,
+            unverified_reason=result.unverified_reason,
         )
 
     def _qr_cookie_header(url: str) -> str:
@@ -7213,7 +7984,9 @@ def create_app(
         status = str(data.get("status", "pending"))
         user = None
         if status == "confirmed":
-            cookie_header = _qr_cookie_header(str(data.get("url", "") or ""))
+            cookie_header = str(data.get("cookie") or "") or _qr_cookie_header(
+                str(data.get("url", "") or "")
+            )
             if cookie_header:
                 result = await _write_source_credential(
                     "bilibili",
@@ -7754,9 +8527,28 @@ def create_app(
         finally:
             await client.close()
 
-    @app.post("/api/bilibili/auth/import")
-    async def bilibili_auth_import(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
+    def _bilibili_credential_gate(request: Request) -> JSONResponse | None:
+        """Keep the Bilibili credential routes privileged even with the gate off.
+
+        The auth middleware short-circuits when ``[api.auth]`` is disabled, so
+        cookie import/export/session must self-gate like ``/api/auth/admin``.
+        Otherwise any LAN peer could export the stored session cookie and take
+        over the victim's Bilibili account (issue #299).
+        """
+        return _local_or_authenticated_gate(
+            request,
+            detail="远程访问 B 站凭据需要先开启密码门禁"
+            "（[api.auth] enabled = true），或在本机操作。",
+        )
+
+    @app.post("/api/bilibili/auth/import", response_model=None)
+    async def bilibili_auth_import(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
         """Import a Bilibili cookie from the mobile WebView login."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         cookies = payload.get("cookies") or {}
         if not isinstance(cookies, dict):
             raise HTTPException(status_code=400, detail="cookies must be an object")
@@ -7785,8 +8577,8 @@ def create_app(
             },
         }
 
-    @app.post("/api/bilibili/auth/export")
-    async def bilibili_auth_export() -> dict[str, Any]:
+    @app.post("/api/bilibili/auth/export", response_model=None)
+    async def bilibili_auth_export(request: Request) -> dict[str, Any] | JSONResponse:
         """Export the backend's Bilibili cookie for the mobile app.
 
         The mobile client keeps the returned cookie only in memory and uses it
@@ -7794,6 +8586,9 @@ def create_app(
         such as comments. The backend still remains the source of truth for
         login state and CSRF-protected writes.
         """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.bilibili.api import BilibiliAPIClient
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
@@ -7821,15 +8616,369 @@ def create_app(
             "expires_at": "",
         }
 
-    @app.delete("/api/bilibili/auth/session")
-    async def bilibili_auth_clear() -> dict[str, Any]:
+    @app.delete("/api/bilibili/auth/session", response_model=None)
+    async def bilibili_auth_clear(request: Request) -> dict[str, Any] | JSONResponse:
         """Clear the backend's stored Bilibili cookie/session."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.bilibili.auth import AuthManager
         from openbiliclaw.config import load_config
 
         cfg = _pin_active_runtime_config(load_config())
         AuthManager(cfg.data_path).clear_cookie()
         return {"ok": True}
+
+    # ── Blue Fish Lab ────────────────────────────────────────────────────
+    # 实验室功能：一只独立的小号去评论区回复并 @ 人。所有写操作都走 B 站
+    # 凭据门禁 —— 一次 run 就是拿用户的号在公网说话，不能只靠本机信任。
+
+    def _fish_data_dir() -> Any:
+        from openbiliclaw.config import load_config
+
+        return _pin_active_runtime_config(load_config()).data_path
+
+    async def _fish_main_account() -> tuple[int, str, str]:
+        """Return (main mid, main cookie, main nickname) with a short cache.
+
+        ``mid`` proves the fish is not the owner's own account; ``cookie`` is
+        compared with the fish's; ``uname`` is the exact text the owner
+        notification has to mention (B站 resolves ``@昵称`` from the comment
+        text, so a stale nickname would silently drop the mention). A stale
+        answer is harmless, and a 10-minute cache keeps the status endpoint
+        from doing a nav call on every poll.
+
+        When the owner's cookie is dead, the lab config's ``owner_mid`` is the
+        fallback reference: it keeps the isolation check and DM targeting
+        working, and the public profile endpoint supplies the nickname.
+        """
+        import time as _time
+
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+
+        cached = getattr(app.state, "fish_main_account_cache", None)
+        now = _time.monotonic()
+        if isinstance(cached, tuple) and now - float(cached[0]) < 600:
+            return int(cached[1]), str(cached[2]), str(cached[3])
+        cfg = _pin_active_runtime_config(load_config())
+        cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        mid = 0
+        uname = ""
+        if cookie:
+            client = BilibiliAPIClient(
+                cookie=cookie,
+                proxy=(getattr(cfg.bilibili, "proxy", None) or None),
+            )
+            try:
+                nav = await client.get_nav_info()
+                if nav.is_login:
+                    mid = int(nav.mid)
+                    uname = str(nav.uname or "")
+            except Exception:  # noqa: BLE001 - isolation check degrades to cookie compare
+                mid = 0
+                uname = ""
+            finally:
+                await client.close()
+        if mid <= 0:
+            from openbiliclaw.fish.config import load_fish_config
+
+            lab = load_fish_config(cfg.data_path)
+            if int(lab.owner_mid) > 0:
+                mid = int(lab.owner_mid)
+                uname = await _owner_name_for_mid(mid) or uname
+        app.state.fish_main_account_cache = (now, mid, cookie, uname)
+        return mid, cookie, uname
+
+    async def _owner_name_for_mid(mid: int) -> str:
+        """Public nickname lookup used when the owner's cookie cannot answer."""
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.get_space_profile(mid)
+            return str(data.get("name") or "")
+        except Exception:  # noqa: BLE001 - a missing nickname just disables the @
+            logger.debug("owner nickname lookup failed for mid %s", mid, exc_info=True)
+            return ""
+        finally:
+            await client.close()
+
+    def _fish_engine_for(data_dir: Any) -> Any:
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.account import FishAccount
+        from openbiliclaw.fish.engine import BlueFishEngine
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
+
+        llm = getattr(ctx, "llm_service", None)
+        signature = (str(data_dir), id(llm))
+        cached = getattr(app.state, "fish_engine_cache", None)
+        if isinstance(cached, tuple) and cached[0] == signature:
+            return cached[1]
+
+        async def _candidates(limit: int) -> list[Any]:
+            try:
+                # Reuse the existing ranked pool verbatim: the main pipeline
+                # already decided what is worth visiting. ``exclude_processed``
+                # drops rows the owner already liked / disliked / dismissed /
+                # commented on, so the fish does not walk into places the owner
+                # has already reacted to. The fish's *own* history never touches
+                # these rows — it lives in ``fish/ledger.jsonl``.
+                return recommendation_pool_seeds(ctx.database, limit)
+            except Exception:  # noqa: BLE001 - empty pool is a normal state
+                return []
+
+        engine = BlueFishEngine(
+            data_dir=data_dir,
+            account=FishAccount(data_dir),
+            store=FishStore(data_dir),
+            llm=llm,
+            candidate_provider=_candidates,
+            client_factory=lambda cookie: BilibiliAPIClient(
+                cookie=cookie,
+                proxy=_fish_bilibili_proxy(),
+            ),
+            main_account_provider=_fish_main_account,
+            # Plans are written by the comment-thread discovery route into the
+            # same ``fish/`` directory; consuming one here skips a second
+            # comment fetch and acts in the same round that discovered it.
+            plan_store=FishPlanStore(data_dir),
+        )
+        app.state.fish_engine_cache = (signature, engine)
+        return engine
+
+    def _fish_bilibili_proxy() -> Any:
+        """Explicit B站 proxy from the main config (empty means direct)."""
+        from openbiliclaw.config import load_config
+
+        cfg = _pin_active_runtime_config(load_config())
+        return getattr(cfg.bilibili, "proxy", None) or None
+
+    def _fish_account_payload(status: Any) -> dict[str, Any]:
+        return {
+            "has_cookie": bool(status.has_cookie),
+            "authenticated": bool(status.authenticated),
+            "mid": int(status.mid),
+            "uname": str(status.uname),
+            "message": str(status.message),
+            "isolated": bool(status.isolated),
+        }
+
+    @app.get("/api/fish/status", response_model=None)
+    async def fish_status() -> dict[str, Any]:
+        """Lab status: switch, account, level, today's count, recent ledger."""
+        engine = _fish_engine_for(_fish_data_dir())
+        return dict(await engine.status())
+
+    @app.get("/api/fish/config", response_model=None)
+    def fish_get_config() -> dict[str, Any]:
+        from openbiliclaw.fish.config import load_fish_config
+
+        config = load_fish_config(_fish_data_dir())
+        return {"ok": True, "config": config.to_public_dict()}
+
+    @app.put("/api/fish/config", response_model=None)
+    async def fish_put_config(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Patch the lab config. Values are clamped, never rejected outright."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.config import (
+            FishConfig,
+            load_fish_config,
+            save_fish_config,
+        )
+
+        data_dir = _fish_data_dir()
+        current = load_fish_config(data_dir).to_public_dict()
+        if isinstance(payload.get("config"), dict):
+            payload = cast("dict[str, Any]", payload["config"])
+        current.update({k: v for k, v in payload.items() if k in current})
+        normalized = save_fish_config(data_dir, FishConfig(**cast("Any", current)))
+        return {"ok": True, "config": normalized.to_public_dict()}
+
+    @app.post("/api/fish/account", response_model=None)
+    async def fish_set_account(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Validate and store the fish's own cookie."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.account import FishAccount
+
+        cookie = str(payload.get("cookie") or "").strip()
+        if not cookie:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "message": "Cookie 不能为空"},
+            )
+        account = FishAccount(_fish_data_dir())
+        try:
+            account.save_cookie(cookie)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "message": str(exc)})
+        main_mid, main_cookie, _main_uname = await _fish_main_account()
+        status = await account.status(main_mid=main_mid, main_cookie=main_cookie)
+        if not status.authenticated or not status.isolated:
+            account.clear_cookie()
+            return {
+                "ok": False,
+                "message": status.message,
+                "account": _fish_account_payload(status),
+            }
+        return {"ok": True, "message": "大肥鱼登录成功。", "account": _fish_account_payload(status)}
+
+    @app.post("/api/fish/account/qrcode", response_model=None)
+    async def fish_account_qrcode(request: Request) -> dict[str, Any] | JSONResponse:
+        """Create a QR login session for the fish's own account.
+
+        The QR is rendered on the backend as an SVG data URL so both settings
+        panels only have to set an ``<img>`` src. The cookie is only written
+        by the poll endpoint, after B站 confirms the scan.
+        """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.qr import qr_svg_data_url
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.generate_qrcode()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the settings panel
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "message": f"生成二维码失败：{exc}"},
+            )
+        finally:
+            await client.close()
+
+        qrcode_key = str(data.get("qrcode_key") or "").strip()
+        qrcode_url = str(data.get("url") or "").strip()
+        if not qrcode_key or not qrcode_url:
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "message": "B 站没有返回二维码内容"},
+            )
+        return {
+            "ok": True,
+            "qrcode_key": qrcode_key,
+            "qrcode_image": qr_svg_data_url(qrcode_url),
+            "expires_in": 180,
+        }
+
+    @app.get("/api/fish/account/qrcode/poll", response_model=None)
+    async def fish_account_qrcode_poll(
+        request: Request, qrcode_key: str = Query(...)
+    ) -> dict[str, Any] | JSONResponse:
+        """Poll the fish QR session; persist the cookie once B站 confirms it.
+
+        The same isolation rule as the paste path applies: an account whose
+        mid or cookie matches the owner's is rejected and the freshly written
+        cookie is rolled back, so a mis-scan can never leave the fish pointing
+        at the owner's own account.
+        """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.account import FishAccount
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.poll_qrcode(qrcode_key)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the settings panel
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "status": "error", "message": f"二维码状态查询失败：{exc}"},
+            )
+        finally:
+            await client.close()
+
+        status = str(data.get("status") or "pending")
+        if status != "confirmed":
+            return {"ok": True, "status": status, "message": str(data.get("message") or "")}
+
+        cookie = str(data.get("cookie") or "") or _qr_cookie_header(str(data.get("url") or ""))
+        if not cookie:
+            return {
+                "ok": False,
+                "status": "error",
+                "message": "二维码已确认，但没有拿到 Cookie，请重试或改用粘贴。",
+            }
+        account = FishAccount(_fish_data_dir())
+        try:
+            account.save_cookie(cookie)
+        except ValueError as exc:
+            return {"ok": False, "status": "rejected", "message": str(exc)}
+        main_mid, main_cookie, _main_uname = await _fish_main_account()
+        account_status = await account.status(main_mid=main_mid, main_cookie=main_cookie)
+        if not account_status.authenticated or not account_status.isolated:
+            account.clear_cookie()
+            return {
+                "ok": False,
+                "status": "rejected",
+                "message": account_status.message,
+                "account": _fish_account_payload(account_status),
+            }
+        return {
+            "ok": True,
+            "status": "logged_in",
+            "message": "大肥鱼登录成功。",
+            "account": _fish_account_payload(account_status),
+        }
+
+    @app.delete("/api/fish/account", response_model=None)
+    async def fish_clear_account(request: Request) -> dict[str, Any] | JSONResponse:
+        """Forget the fish cookie."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.account import FishAccount
+
+        FishAccount(_fish_data_dir()).clear_cookie()
+        return {"ok": True}
+
+    @app.post("/api/fish/run", response_model=None)
+    async def fish_run(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Run one pass now (dry-run by default unless the config says otherwise)."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        dry_run = payload.get("dry_run")
+        engine = _fish_engine_for(_fish_data_dir())
+        result = await engine.run_once(
+            trigger=str(payload.get("trigger") or "manual"),
+            dry_run=bool(dry_run) if isinstance(dry_run, bool) else None,
+        )
+        return {
+            "ok": result.ok,
+            "status": result.status,
+            "message": result.message,
+            "bvid": result.bvid,
+            "target_rpid": result.target_rpid,
+            "reply": result.reply,
+            "reply_rpid": result.reply_rpid,
+            "record": result.record,
+        }
+
+    @app.get("/api/fish/ledger", response_model=None)
+    def fish_ledger(limit: int = 50) -> dict[str, Any]:
+        from openbiliclaw.fish.store import FishStore
+
+        bounded = max(1, min(int(limit), 200))
+        return {"ok": True, "items": FishStore(_fish_data_dir()).recent(limit=bounded)}
 
     @app.post("/api/sources/dy/cookie", response_model=DouyinCookieResponse, deprecated=True)
     async def sync_douyin_cookie(payload: DouyinCookieIn) -> DouyinCookieResponse:
@@ -7976,6 +9125,10 @@ def create_app(
                     "message": "初始化完成，画像与发现池已就绪。",
                 }
             )
+        # CLI-driven init never passes through the in-app runner's finally
+        # block, so its completion is the other place a staged cookie lands.
+        with suppress(Exception):
+            await _apply_staged_bilibili_cookie("init_completed")
         await _request_runtime_replenishment(reason="init_completed", force=True)
         return {"ok": True}
 
@@ -8094,6 +9247,22 @@ def create_app(
             await websocket.close(code=4401)
             return
         await websocket.accept()
+
+        async def _receive_until_disconnect() -> None:
+            # Renew even for idle/degraded sockets and independently of event
+            # delivery. Workers never have a local WebSocket to renew for them.
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=_RUNTIME_STREAM_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    ctx.presence.heartbeat()
+                    continue
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect
+                ctx.presence.heartbeat()
+
         if bool(getattr(ctx, "degraded", False)):
             connected = False
             try:
@@ -8106,10 +9275,7 @@ def create_app(
                         "issues": _degraded_issues_payload(),
                     }
                 )
-                while True:
-                    message = await websocket.receive()
-                    if message.get("type") == "websocket.disconnect":
-                        raise WebSocketDisconnect
+                await _receive_until_disconnect()
             except WebSocketDisconnect:
                 pass
             finally:
@@ -8171,12 +9337,6 @@ def create_app(
                     with suppress(Exception):
                         await websocket.close(code=4401)
                     return
-
-        async def _receive_until_disconnect() -> None:
-            while True:
-                message = await websocket.receive()
-                if message.get("type") == "websocket.disconnect":
-                    raise WebSocketDisconnect
 
         try:
             ctx.presence.on_connect()
@@ -8243,6 +9403,29 @@ def create_app(
                             await websocket.send_json(
                                 {
                                     "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
+                    # TikTok without a cookie is a legitimate guest-mode
+                    # state, so this is a quiet pull, not a missing-credential
+                    # complaint: if the browser is logged into tiktok.com the
+                    # extension answers with the jar, otherwise it no-ops.
+                    tt_cfg = getattr(runtime_config.sources, "tiktok", None)
+                    if tt_cfg is not None and bool(getattr(tt_cfg, "enabled", False)):
+                        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+                        tt_cookie = resolve_tiktok_cookie(
+                            data_dir=runtime_config.data_path,
+                            cookie_env=str(
+                                getattr(tt_cfg, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
+                            ),
+                        )
+                        if not str(tt_cookie or "").strip():
+                            await websocket.send_json(
+                                {
+                                    "type": "tiktok_cookie_sync_requested",
                                     "reason": "missing_cookie",
                                     "source": "runtime-stream",
                                 }
@@ -8354,6 +9537,15 @@ def create_app(
 
     @app.on_event("shutdown")
     async def shutdown_refresh_loop() -> None:
+        # Durable stream producers outlive their HTTP subscribers, but remain
+        # app-owned so shutdown leaves no task using a closed runtime.
+        stream_tasks = list(chat_agent_stream_tasks)
+        for task in stream_tasks:
+            task.cancel()
+        if stream_tasks:
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
+        if ctx.director_runtime is not None:
+            await ctx.director_runtime.aclose()
         inventory_watch = getattr(app.state, "pool_inventory_watch_task", None)
         if inventory_watch is not None:
             inventory_watch.cancel()
@@ -8393,6 +9585,11 @@ def create_app(
         # shutdown; close then cancels both active and already-queued fetches.
         with suppress(Exception):
             await image_fetch_coordinator.close()
+        image_service_client = app.state.image_service_client
+        app.state.image_service_client = None
+        if image_service_client is not None:
+            with suppress(Exception):
+                await image_service_client.aclose()
         # Drain the self-owned dialogue settlement queue; it is not covered by
         # the background-task cancellation above.
         settlement_queue = getattr(ctx, "dialogue_settlement_queue", None)
@@ -9069,7 +10266,9 @@ def create_app(
         ), snapshot_expires_at
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
-    async def recommendations() -> RecommendationListResponse:
+    async def recommendations(
+        stream_ref: str = Query("default", min_length=1, max_length=128),
+    ) -> RecommendationListResponse:
         """Return one coalesced recommendation snapshot.
 
         Restored browser sessions can contain dozens of stale dashboard tabs.
@@ -9081,6 +10280,11 @@ def create_app(
         nonlocal recommendation_snapshot_cache, recommendation_snapshot_cached_at
         nonlocal recommendation_snapshot_expires_at
         nonlocal recommendation_snapshot_dislike_digest
+
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import restore_screen
+
+            return await restore_screen(ctx, stream_ref)
 
         now = time.monotonic()
         disliked_topics, dislike_digest = _effective_recommendation_dislikes()
@@ -10044,6 +11248,8 @@ def create_app(
         _fire_and_forget_tasks.add(task)
         task.add_done_callback(_fire_and_forget_tasks.discard)
 
+    ctx.director_replenish_callback = _trigger_replenishment_if_needed
+
     def _platform_scope_kwargs(source_platform: str) -> dict[str, str]:
         """Forward the platform scope only when the client actually sent one.
 
@@ -10109,6 +11315,14 @@ def create_app(
     async def reshuffle_recommendations(
         payload: Annotated[RecommendationReshuffleIn | None, Body()] = None,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            source = payload or RecommendationReshuffleIn()
+            values = source.model_dump()
+            values["request_id"] = source.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="STAY"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -10218,6 +11432,13 @@ def create_app(
     async def append_recommendations(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            values = payload.model_dump()
+            values["request_id"] = payload.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="NEXT"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -10371,6 +11592,13 @@ def create_app(
             active_runtime_data_path / "runtime" / "worker_status.json"
         )
         payload.update(worker_status_store.status_payload())
+        # A bilibili cookie staged while guided init ran is pending state the
+        # desktop should show, not something only the extension console knows.
+        from openbiliclaw.api.source_auth.staged import peek_staged_bilibili_cookie
+
+        payload["bilibili_cookie_staged"] = (
+            peek_staged_bilibili_cookie(active_runtime_data_path) is not None
+        )
         response = RuntimeStatusResponse(**payload)
         runtime_status_cache = response
         runtime_status_cached_at = time.monotonic()
@@ -11093,15 +12321,23 @@ def create_app(
 
         When a ``turn_id`` is supplied, the client has already created a
         pending durable turn with ``streaming=True``; this endpoint completes
-        that turn while streaming deltas. Without a turn_id it falls back to a
-        non-persistent legacy response.
+        that turn while streaming real token deltas (``content`` events) via
+        ``SocraticDialogue.respond_stream``. Without a turn_id it falls back
+        to a non-persistent legacy response.
         """
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="Chat message is required.")
         turn_id = payload.turn_id.strip()
         row = _get_chat_turn_row(turn_id) if turn_id else None
+        if turn_id and row is None:
+            raise HTTPException(status_code=404, detail="Chat turn not found.")
         turn = _normalize_chat_turn(row) if row else None
+        if turn is not None and (
+            message != turn.message
+            or (payload.session_id.strip() and payload.session_id.strip() != turn.session_id)
+        ):
+            _dialogue_context_error(409, "turn_id_conflict", "Chat turn request conflicts.")
 
         progress_events: list[tuple[str, dict[str, object]]] = []
 
@@ -11118,6 +12354,43 @@ def create_app(
                 )
             )
 
+        async def _respond_deltas(dialogue_owner: Any) -> AsyncIterator[str]:
+            """Yield real reply deltas via ``respond_stream``.
+
+            Dialogue owners without ``respond_stream`` (duck-typed doubles)
+            fall back to the one-shot ``respond`` and yield its reply once.
+            """
+            stream_fn = getattr(dialogue_owner, "respond_stream", None)
+            if not callable(stream_fn):
+                yield await _respond(dialogue_owner)
+                return
+            if turn is not None:
+                respond_kwargs: dict[str, object] = {
+                    "scope": turn.scope or "chat",
+                    "turn_id": turn.turn_id,
+                }
+                binding = _binding_from_turn(turn)
+                respond_parameters: Mapping[str, inspect.Parameter] = {}
+                try:
+                    respond_parameters = inspect.signature(stream_fn).parameters
+                except (TypeError, ValueError):
+                    respond_parameters = {}
+                if "session" in respond_parameters:
+                    respond_kwargs["session"] = turn.session
+                if binding is not None and "dialogue_binding" in respond_parameters:
+                    respond_kwargs["dialogue_binding"] = binding
+                if "progress" in respond_parameters:
+                    respond_kwargs["progress"] = _progress
+                iterator = stream_fn(_contextual_chat_message(turn), **respond_kwargs)
+            else:
+                iterator = stream_fn(message, progress=_progress)
+            while True:
+                try:
+                    delta = await asyncio.wait_for(iterator.__anext__(), timeout=120)
+                except StopAsyncIteration:
+                    break
+                yield str(delta)
+
         async def _event_stream() -> AsyncIterator[str]:
             import json as _json
 
@@ -11125,31 +12398,383 @@ def create_app(
                 return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
             yield sse("phase", {"phase": "thinking", "text": "正在思考…"})
+            reply_parts: list[str] = []
+            progress_index = 0
+
+            def _drain_progress() -> list[tuple[str, dict[str, object]]]:
+                nonlocal progress_index
+                pending = progress_events[progress_index:]
+                progress_index = len(progress_events)
+                return pending
+
             try:
-                reply = await _run_with_dialogue_execution(_respond)
+                async with _dialogue_execution_lease() as current_dialogue:
+                    # Polling recovery or another stream may have completed this
+                    # durable turn while this request waited for the lease. Reuse
+                    # that result before link ingestion or post-reply learning.
+                    if turn_id:
+                        latest_row = _get_chat_turn_row(turn_id)
+                        latest = _normalize_chat_turn(latest_row) if latest_row else None
+                        if latest is None:
+                            yield sse("error", {"error": "Chat turn not found."})
+                            return
+                        if latest.status != "pending":
+                            reply = latest.error if latest.status == "failed" else latest.reply
+                            yield sse("content", {"delta": reply})
+                            yield sse("done", {"reply": reply})
+                            return
+                    try:
+                        async for delta in _respond_deltas(current_dialogue):
+                            # Tool-phase progress events are produced between
+                            # deltas; flush them first so they never render
+                            # after the reply text they precede.
+                            for event, data in _drain_progress():
+                                yield sse(event, data)
+                            reply_parts.append(delta)
+                            yield sse("content", {"delta": delta})
+                    except Exception as exc:
+                        logger.exception("Chat stream dialogue failed")
+                        reply_parts = [safe_llm_failure_message(exc)]
+                        yield sse("content", {"delta": reply_parts[0]})
+                    reply = "".join(reply_parts)
+                    # Keep completion in the execution lease: releasing it first
+                    # lets the durable worker observe pending and repeat effects.
+                    if turn is not None and turn_id:
+                        _complete_chat_turn_row(turn_id, reply=reply)
             except Exception as exc:
-                logger.exception("Chat stream dialogue failed")
+                # Preserve the legacy SSE envelope even when admission or
+                # persistence fails. Leave pending rows recoverable; never
+                # force completion outside the execution lease.
+                logger.exception("Chat stream admission or persistence failed")
                 reply = safe_llm_failure_message(exc)
+                yield sse("content", {"delta": reply})
 
-            if turn is not None and turn_id:
-                _complete_chat_turn_row(turn_id, reply=reply)
-
-            for event, data in progress_events:
+            for event, data in _drain_progress():
                 yield sse(event, data)
-            await asyncio.sleep(0.15)
-            for i in range(0, len(reply), 18):
-                yield sse("content", {"delta": reply[i : i + 18]})
-                await asyncio.sleep(0.015)
             yield sse("done", {"reply": reply})
 
         return StreamingResponse(
-            _event_stream(),
+            _sse_heartbeat_wrap(_event_stream()),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
             },
         )
+
+    chat_agent_stream_tasks: set[asyncio.Task[None]] = set()
+
+    @app.post("/api/chat/agent/stream")
+    async def chat_agent_stream(payload: ChatTurnIn) -> StreamingResponse:
+        """True-streaming multi-hop agent chat endpoint (「聊一聊」 M2).
+
+        Runs ``AgentLoop`` under the app-wide dialogue execution lease and
+        forwards every ``AgentEvent`` as one SSE event named by its type
+        (``thinking`` / ``tool_call`` / ``tool_result`` / ``delta`` /
+        ``step_limit_reached`` / ``final``), followed by a terminal ``done``
+        carrying the final reply. ``delta`` events carry incremental reply
+        fragments (``text``) for live rendering; they are never persisted
+        into ``payload.agent_events``, and older clients may safely ignore
+        them since ``thinking`` / ``final`` still carry the full text. LLM
+        failures map to a single ``error``
+        event. Lease admission is bounded (30s): while a config hot reload
+        holds the dialogue lane, the stream ends with one ``error`` event
+        ("系统正在重载配置，请稍后再试") instead of hanging, and a durable
+        turn stays ``pending`` so the fallback worker completes it (running
+        the same agent loop) once the lane resumes. With a ``turn_id``
+        (created via ``POST /api/chat/turns`` with ``streaming=True``) the
+        turn is completed/failed durably and the loop's events are
+        persisted into the turn payload's ``agent_events``
+        for history replay; without a ``turn_id`` the run is ephemeral. The
+        legacy single-hop ``/api/chat`` and ``/api/chat/stream`` endpoints
+        are unaffected.
+
+        M4 skill binding: the optional ``skill`` field selects a chat skill
+        (default 口味伙伴). The loop's tools are restricted to the skill's
+        whitelist (``registry.subset``) plus the ``suggest_skill`` meta tool,
+        and the skill's persona prompt is layered onto the system prompt.
+        Switching skills mid-session is just sending the next turn with a
+        different ``skill`` value; the agent itself can only *propose* a
+        switch via the ``suggest_skill`` tool call.
+
+        M5 multi-session: the optional ``session_id`` selects the owning
+        conversation (default session when empty, 404 when unknown). With a
+        durable ``turn_id`` the turn's own ``session_id`` (assigned at
+        ``POST /api/chat/turns``) wins; the terminal ``done`` event always
+        carries the effective ``session_id``.
+        """
+        message = payload.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="Chat message is required.")
+        agent_config = getattr(getattr(ctx, "config", None), "agent", None)
+        if agent_config is not None and not bool(getattr(agent_config, "loop_enabled", True)):
+            raise HTTPException(status_code=503, detail="Agent loop chat is disabled.")
+        turn_id = payload.turn_id.strip()
+        row = _get_chat_turn_row(turn_id) if turn_id else None
+        if turn_id and row is None:
+            raise HTTPException(status_code=404, detail="Chat turn not found.")
+        turn = _normalize_chat_turn(row) if row else None
+        if turn is not None:
+            if message != turn.message or (
+                payload.session_id.strip() and payload.session_id.strip() != turn.session_id
+            ):
+                _dialogue_context_error(409, "turn_id_conflict", "Chat turn request conflicts.")
+            stored_skill = str(turn.payload.get("agent_skill") or "").strip()
+            if payload.skill.strip() and payload.skill.strip() != (
+                stored_skill or _resolve_skill_catalog().default().name
+            ):
+                _dialogue_context_error(409, "turn_id_conflict", "Chat turn skill conflicts.")
+        else:
+            stored_skill = ""
+        skill_catalog = _resolve_skill_catalog()
+        skill_name = stored_skill if turn is not None else payload.skill.strip()
+        if skill_name:
+            skill_definition = skill_catalog.get(skill_name)
+            if skill_definition is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unknown chat skill: {skill_name}. "
+                        f"Available: {', '.join(skill_catalog.names)}"
+                    ),
+                )
+        else:
+            skill_definition = skill_catalog.default()
+        requested_session_id = payload.session_id.strip()
+        if turn is not None:
+            effective_session_id = turn.session_id or DEFAULT_CHAT_SESSION_ID
+        elif requested_session_id:
+            get_session = _chat_db_method("get_chat_session")
+            if callable(get_session) and get_session(requested_session_id) is None:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+            effective_session_id = requested_session_id
+        else:
+            effective_session_id = DEFAULT_CHAT_SESSION_ID
+
+        # A durable turn owns its style forever, including old turns whose
+        # missing marker means natural. Only ephemeral requests consult the
+        # current session, once, before waiting for the dialogue lane.
+        persona_id = (
+            resolve_chat_persona(turn.payload.get("agent_persona")).id
+            if turn is not None
+            else _session_persona_id(effective_session_id)
+        )
+
+        async def _event_stream() -> AsyncIterator[str]:
+            import json as _json
+
+            def sse(event: str, data: dict[str, Any]) -> str:
+                return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+            final_reply = ""
+            try:
+                async with _dialogue_execution_lease(
+                    timeout=_AGENT_STREAM_LEASE_TIMEOUT_SECONDS
+                ) as current_dialogue:
+                    # A retry or the durable worker may have settled this turn
+                    # while admission was queued. Replay before touching tools.
+                    if turn_id:
+                        latest_row = _get_chat_turn_row(turn_id)
+                        latest = _normalize_chat_turn(latest_row) if latest_row else None
+                        if latest is None:
+                            yield sse("error", {"error": "Chat turn not found."})
+                            return
+                        if latest.status != "pending":
+                            saved_events = latest.payload.get("agent_events", [])
+                            if not isinstance(saved_events, list):
+                                saved_events = []
+                            for saved_event in saved_events:
+                                if isinstance(saved_event, dict) and saved_event.get("type"):
+                                    yield sse(str(saved_event["type"]), saved_event)
+                            if latest.status == "failed":
+                                yield sse("error", {"error": latest.error})
+                            else:
+                                yield sse(
+                                    "done",
+                                    {
+                                        "reply": latest.reply,
+                                        "turn_id": turn_id,
+                                        "skill": skill_definition.name if skill_definition else "",
+                                        "session_id": effective_session_id,
+                                    },
+                                )
+                            return
+                    agent_loop = getattr(ctx, "agent_loop", None)
+                    stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
+                    if agent_loop is None or not callable(stream_fn):
+                        raise RuntimeError("Agent chat is not configured.")
+                    if turn is not None:
+                        binding = _binding_from_turn(turn)
+                        if binding is None or binding.mode.value != "bound":
+                            await _ensure_confusion_dialogue_anchor(turn)
+                    chat_message = _contextual_chat_message(turn) if turn is not None else message
+                    binding_kwargs = _agent_turn_binding_kwargs(turn, stream_fn)
+                    async for event in stream_fn(
+                        agent_loop,
+                        chat_message,
+                        session=turn.session if turn else (payload.session.strip() or "popup"),
+                        scope=turn.scope if turn is not None else "chat",
+                        turn_id=turn_id,
+                        session_id=effective_session_id,
+                        skill=skill_definition,
+                        tools=_skill_tool_subset(skill_definition, skill_catalog),
+                        skill_switch_guide=(
+                            skill_catalog.render_switch_guide(skill_definition.name)
+                            if skill_definition is not None
+                            else ""
+                        ),
+                        **binding_kwargs,
+                        **_agent_persona_kwargs(persona_id, stream_fn),
+                    ):
+                        data = event.to_dict()
+                        # Persist semantic events incrementally for recovery;
+                        # token deltas are live-only, replay uses final/thinking.
+                        if turn_id and event.type != "delta":
+                            _append_chat_turn_agent_event(turn_id, data)
+                        if event.type == "final":
+                            final_reply = event.text
+                        yield sse(event.type, data)
+                    if not final_reply.strip():
+                        from openbiliclaw.llm.service import LLMResponseContentError
+
+                        raise LLMResponseContentError("LLM returned an empty response")
+                    if turn is not None and turn_id:
+                        completed = _complete_chat_turn_row(turn_id, reply=final_reply)
+                        if completed:
+                            try:
+                                await _apply_durable_chat_success_side_effects(turn, final_reply)
+                            except Exception:
+                                logger.exception("Failed to apply agent chat effects: %s", turn_id)
+            except DialogueLeaseTimeoutError as exc:
+                # Hot reload or another reply held the lane past the admission
+                # budget. The loop never started, so keep the durable turn pending and
+                # re-wake the fallback worker: it re-runs the agent loop
+                # (with full agent_events) once the lane resumes.
+                logger.info(
+                    "Agent stream admission timed out: %s (%s)", turn_id or "-", exc.safe_message
+                )
+                if turn_id:
+                    chat_reply_scheduler.schedule(turn_id)
+                yield sse("error", {"error": exc.safe_message})
+                return
+            except Exception as exc:
+                logger.exception("Agent chat stream failed")
+                error_message = safe_llm_failure_message(exc)
+                if turn_id:
+                    _fail_chat_turn_row(turn_id, error=error_message)
+                yield sse("error", {"error": error_message})
+                return
+
+            yield sse(
+                "done",
+                {
+                    "reply": final_reply,
+                    "turn_id": turn_id,
+                    "skill": skill_definition.name if skill_definition is not None else "",
+                    "session_id": effective_session_id,
+                },
+            )
+
+        async def _durable_event_stream() -> AsyncIterator[str]:
+            # The producer owns execution; closing one HTTP subscriber must
+            # never restart a partially executed write on the fallback lane.
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+            async def produce() -> None:
+                try:
+                    async for frame in _event_stream():
+                        queue.put_nowait(frame)
+                finally:
+                    queue.put_nowait(None)
+
+            task = asyncio.create_task(produce(), name=f"chat-agent-stream:{turn_id}")
+            chat_agent_stream_tasks.add(task)
+            task.add_done_callback(chat_agent_stream_tasks.discard)
+            while True:
+                frame = await queue.get()
+                if frame is None:
+                    return
+                yield frame
+
+        return StreamingResponse(
+            _sse_heartbeat_wrap(_durable_event_stream() if turn_id else _event_stream()),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/chat/agent/ping")
+    async def chat_agent_ping() -> StreamingResponse:
+        """SSE liveness probe for the chat stream pipeline (no LLM involved).
+
+        Emits ``_SSE_PING_EVENT_COUNT`` numbered ``ping`` events, one per
+        ``_SSE_PING_INTERVAL_SECONDS``. Open the URL directly in a browser to
+        verify the whole proxy chain keeps streaming: if the sequence stalls
+        before the last ``seq``, a middlebox is buffering or dropping the
+        connection.
+        """
+
+        async def _ping_stream() -> AsyncIterator[str]:
+            for seq in range(1, _SSE_PING_EVENT_COUNT + 1):
+                yield f'event: ping\ndata: {{"seq": {seq}}}\n\n'
+                if seq < _SSE_PING_EVENT_COUNT:
+                    await asyncio.sleep(_SSE_PING_INTERVAL_SECONDS)
+
+        return StreamingResponse(
+            _ping_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    def _resolve_skill_catalog() -> Any:
+        """Return the runtime skill catalog, building it lazily if unwired.
+
+        Production wiring builds ``ctx.skill_catalog`` on every config
+        rebuild; tests and minimal contexts fall back to loading builtin
+        skills plus ``{data_dir}/skills`` on first use.
+        """
+        from openbiliclaw.agent.skill import load_skill_catalog
+
+        catalog = getattr(ctx, "skill_catalog", None)
+        if catalog is not None:
+            return catalog
+        data_dir = str(getattr(getattr(ctx, "config", None), "data_dir", "data") or "data")
+        catalog = load_skill_catalog(user_dir=Path(data_dir) / "skills")
+        ctx.skill_catalog = catalog
+        return catalog
+
+    def _skill_tool_subset(skill_definition: Any, skill_catalog: Any) -> Any:
+        """Skill whitelist subset of the full registry + meta tools.
+
+        Returns ``None`` when no full registry is wired (legacy tests that
+        inject only ``ctx.agent_loop``) so the loop falls back to its own
+        registry, preserving pre-M4 behavior. Meta tools: ``suggest_skill``
+        (M4) proposes a skill switch; ``start_background_task`` (M6) proposes
+        a durable background task — both are read-level and side-effect free,
+        the user confirms via the frontend.
+        """
+        if skill_definition is None:
+            return None
+        base_registry = getattr(ctx, "agent_tool_registry", None)
+        if base_registry is None:
+            return None
+        from openbiliclaw.agent.tasks import build_start_background_task_tool
+        from openbiliclaw.agent.tools import build_suggest_skill_tool
+
+        subset = base_registry.subset(skill_definition.tools)
+        subset.register(build_suggest_skill_tool(skill_catalog.names))
+        subset.register(build_start_background_task_tool(skill_catalog.names))
+        return subset
+
+    @app.get("/api/chat/skills")
+    async def list_chat_skills() -> JSONResponse:
+        """List available chat skills (builtin + user ``data/skills/``)."""
+        return JSONResponse(content={"skills": _resolve_skill_catalog().to_public_list()})
 
     def _record_probe_cognition(
         summary: str,
@@ -11610,9 +13235,14 @@ def create_app(
         return turn.message
 
     @asynccontextmanager
-    async def _dialogue_execution_lease() -> AsyncIterator[Any]:
-        """Hold the app-stable dialogue lease and then resolve current ctx."""
-        async with dialogue_execution_coordinator.lease():
+    async def _dialogue_execution_lease(timeout: float | None = None) -> AsyncIterator[Any]:
+        """Hold the app-stable dialogue lease and then resolve current ctx.
+
+        ``timeout`` bounds admission (seconds); on expiry a
+        :class:`DialogueLeaseTimeoutError` propagates. ``None`` waits
+        indefinitely (durable worker / legacy paths, which retry anyway).
+        """
+        async with dialogue_execution_coordinator.lease(timeout=timeout):
             current_dialogue = getattr(ctx, "dialogue", None)
             if current_dialogue is None:
                 raise RuntimeError("Dialogue service is not configured.")
@@ -11678,6 +13308,90 @@ def create_app(
                 "producer_source": "durable_confusion_ensure",
             },
         )
+
+    def _is_agent_stream_turn(turn: ChatTurnOut) -> bool:
+        """Whether the turn was created for the agent streaming endpoint.
+
+        The marker is written server-side at ``POST /api/chat/turns`` (and
+        client-forged copies are rejected by the payload validator), so the
+        durable fallback can trust it to re-run the agent loop instead of
+        the legacy single-hop reply when the interactive stream died.
+        """
+        return bool(turn.payload.get("agent_stream"))
+
+    def _agent_turn_binding_kwargs(turn: ChatTurnOut | None, stream_fn: Any) -> dict[str, Any]:
+        """Forward the immutable reply target to capable dialogue owners."""
+        if turn is None:
+            return {}
+        binding = _binding_from_turn(turn)
+        if binding is not None and "dialogue_binding" in inspect.signature(stream_fn).parameters:
+            return {"dialogue_binding": binding}
+        return {}
+
+    def _agent_persona_kwargs(persona_id: str, stream_fn: Any) -> dict[str, str]:
+        """Thread style through real owners while retaining narrow legacy doubles."""
+        parameters = inspect.signature(stream_fn).parameters
+        if "persona_id" in parameters or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+        ):
+            return {"persona_id": persona_id}
+        return {}
+
+    async def _generate_durable_agent_turn_reply(
+        turn: ChatTurnOut, dialogue_owner: Any
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        """Re-run the multi-hop agent loop for a disconnected streaming turn.
+
+        Returns ``(reply, agent_events)`` mirroring the interactive
+        ``POST /api/chat/agent/stream`` path (same skill binding, same tool
+        subset), or ``None`` when the agent loop is not wired — the caller
+        then falls back to the legacy single-hop reply so the durable lane
+        keeps working in degraded runtimes.
+        """
+        agent_loop = getattr(ctx, "agent_loop", None)
+        stream_fn = getattr(dialogue_owner, "stream_agent_reply", None)
+        if agent_loop is None or not callable(stream_fn):
+            return None
+        skill_catalog = _resolve_skill_catalog()
+        skill_name = str(turn.payload.get("agent_skill") or "").strip()
+        skill_definition = skill_catalog.get(skill_name) if skill_name else None
+        if skill_definition is None:
+            # Unknown/unrecorded skill degrades to the catalog default,
+            # exactly like an interactive request without a skill field.
+            skill_definition = skill_catalog.default()
+        events: list[dict[str, Any]] = []
+        reply = ""
+        async for event in stream_fn(
+            agent_loop,
+            _contextual_chat_message(turn),
+            session=turn.session,
+            scope=turn.scope or "chat",
+            turn_id=turn.turn_id,
+            session_id=turn.session_id or DEFAULT_CHAT_SESSION_ID,
+            skill=skill_definition,
+            tools=_skill_tool_subset(skill_definition, skill_catalog),
+            skill_switch_guide=(
+                skill_catalog.render_switch_guide(skill_definition.name)
+                if skill_definition is not None
+                else ""
+            ),
+            **_agent_turn_binding_kwargs(turn, stream_fn),
+            **_agent_persona_kwargs(
+                resolve_chat_persona(turn.payload.get("agent_persona")).id, stream_fn
+            ),
+        ):
+            # Same rule as the interactive endpoint: delta fragments are
+            # live-render only and never persisted into agent_events.
+            if event.type != "delta":
+                events.append(event.to_dict())
+                _append_chat_turn_agent_event(turn.turn_id, event.to_dict())
+            if event.type == "final":
+                reply = event.text
+        if not reply.strip():
+            from openbiliclaw.llm.service import LLMResponseContentError
+
+            raise LLMResponseContentError("LLM returned an empty response")
+        return reply, events
 
     async def _generate_durable_chat_reply(
         turn: ChatTurnOut, dialogue_owner: Any, progress: Any = None
@@ -12508,11 +14222,20 @@ def create_app(
                 _chat_no_provider_streak.pop(turn_id, None)
                 return
             turn = _normalize_chat_turn(row)
+            agent_events: list[dict[str, Any]] | None = None
             try:
                 binding = _binding_from_turn(turn)
                 if binding is None or binding.mode.value != "bound":
                     await _ensure_confusion_dialogue_anchor(turn)
-                reply = await _generate_durable_chat_reply(turn, current_dialogue)
+                agent_reply = (
+                    await _generate_durable_agent_turn_reply(turn, current_dialogue)
+                    if _is_agent_stream_turn(turn)
+                    else None
+                )
+                if agent_reply is not None:
+                    reply, agent_events = agent_reply
+                else:
+                    reply = await _generate_durable_chat_reply(turn, current_dialogue)
             except asyncio.CancelledError:
                 # Shutdown leaves the durable row pending for startup recovery.
                 raise
@@ -12565,6 +14288,12 @@ def create_app(
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="Chat message is required.")
+        if (
+            payload.streaming
+            and payload.skill.strip()
+            and _resolve_skill_catalog().get(payload.skill.strip()) is None
+        ):
+            raise HTTPException(status_code=422, detail="Unknown chat skill.")
         normalized_scope = _normalize_chat_scope(payload.scope)
         if normalized_scope == "hypothesis" and (
             not payload.subject_id.strip() or not payload.subject_title.strip()
@@ -12588,6 +14317,8 @@ def create_app(
                 chat_reply_scheduler.schedule(turn.turn_id)
             return turn
 
+        resolved_session_id = _resolve_chat_session_id(payload)
+
         if normalized_scope == "hypothesis":
             if payload.reply_to_turn_id.strip():
                 _dialogue_context_error(
@@ -12599,6 +14330,7 @@ def create_app(
                 payload,
                 turn_id=turn_id,
                 structured_payload=_hypothesis_card_payload(payload),
+                session_id=resolved_session_id,
             )
             _complete_chat_turn_row(turn_id, reply="")
             completed = _get_chat_turn_row(turn_id)
@@ -12669,13 +14401,27 @@ def create_app(
         )
         structured_payload = dict(payload.payload)
         structured_payload["dialogue_binding"] = binding.to_mapping()
+        if payload.streaming:
+            # Server-owned markers for the durable fallback worker: a
+            # streaming turn whose client disconnected is completed by
+            # re-running the agent loop (same skill binding) so the reply
+            # and its ``agent_events`` replay stream stay consistent with
+            # the interactive path.
+            structured_payload["agent_stream"] = True
+            if canonical_scope == "chat":
+                structured_payload["agent_persona"] = _session_persona_id(resolved_session_id)
+            if payload.skill.strip():
+                structured_payload["agent_skill"] = payload.skill.strip()
         row = _create_chat_turn_row(
             canonical_request,
             turn_id=turn_id,
             structured_payload=structured_payload,
+            session_id=resolved_session_id,
         )
         if not payload.streaming:
             chat_reply_scheduler.schedule(turn_id)
+        if canonical_scope == "chat" and not payload.reply_to_turn_id.strip():
+            _schedule_session_title(resolved_session_id, message)
         return _normalize_chat_turn(row)
 
     @app.get("/api/chat/pending-confirmations", response_model=None)
@@ -12721,6 +14467,270 @@ def create_app(
             user_initiated=True,
         )
         return turn
+
+    # ── M7: L2 hard-write approval gate ─────────────────────────────
+    # The agent loop parks hard_write tool calls as durable approval records
+    # (``ctx.chat_approval_store``, JSON-backed, no schema migration) and
+    # streams an ``approval_request`` SSE event. These endpoints are the only
+    # execution path: approve moves the record to ``executing`` and returns
+    # immediately while a tracked background task re-dispatches the recorded
+    # tool call exactly once (idempotent), reject closes the record. The
+    # background execution writes the audit ledger (``soul/ledger.py`` →
+    # ``profile_update_ledger``) and appends an ``approval_result`` event to
+    # the originating turn's ``agent_events`` so history replay shows the
+    # outcome inline. Execution is decoupled because hard_write tools (e.g.
+    # update_config) can wait minutes on the hot-reload lane handoff; the
+    # frontend polls ``GET /api/chat/approvals`` for the terminal state.
+
+    # Serializes approve→mark_executing→enqueue per process so duplicate
+    # clicks can never queue two executions for the same record.
+    _chat_approval_execution_lock = asyncio.Lock()
+
+    def _chat_approval_store_or_503() -> Any:
+        store = getattr(ctx, "chat_approval_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Chat approvals are not configured.")
+        return store
+
+    def _chat_approval_or_404(store: Any, approval_id: str) -> Any:
+        record = store.get(approval_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Approval not found.")
+        return record
+
+    def _record_chat_approval_ledger(
+        record: Any,
+        *,
+        verdict: str,
+        outcome: str,
+        error: str = "",
+    ) -> None:
+        """Best-effort audit row: who/when/tool/arguments/result per decision."""
+        from openbiliclaw.soul.ledger import ProfileLedger
+
+        ProfileLedger(getattr(ctx, "database", None)).record(
+            write_point=f"agent.approval.{record.tool_name}",
+            source="chat_agent_loop",
+            before={
+                "approval_id": record.approval_id,
+                "summary": record.summary,
+                "arguments": record.arguments,
+            },
+            after={"status": record.status, "result": record.result},
+            outcome=outcome,
+            turn_id=getattr(record, "turn_id", ""),
+            gate_verdict=verdict,
+            held_id=record.approval_id,
+            error=error,
+        )
+
+    def _append_chat_turn_agent_event(turn_id: str, event: dict[str, Any]) -> bool:
+        """Append one event to a durable turn's ``payload.agent_events``."""
+        if not turn_id.strip():
+            return False
+        row = _read_chat_turn_row(turn_id.strip())
+        if row is None:
+            return False
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        existing = payload.get("agent_events")
+        events = (
+            [dict(item) for item in existing if isinstance(item, dict)]
+            if isinstance(existing, list)
+            else []
+        )
+        events.append(dict(event))
+        return _store_chat_turn_agent_events(turn_id.strip(), events)
+
+    def _approval_result_event(
+        record: Any, *, decision: str, ok: bool, text: str
+    ) -> dict[str, Any]:
+        return {
+            "type": "approval_result",
+            "approval_id": record.approval_id,
+            "tool_name": record.tool_name,
+            "decision": decision,
+            "ok": ok,
+            "text": text[:2000],
+        }
+
+    @app.get("/api/chat/approvals", response_model=None)
+    async def list_chat_approvals(
+        status: str = Query(default=""),
+        limit: int = Query(default=50),
+    ) -> dict[str, Any]:
+        """List hard-write approvals (default: all states, newest first)."""
+        store = _chat_approval_store_or_503()
+        normalized = status.strip()
+        if normalized and normalized not in {
+            "pending",
+            "approved",
+            "executing",
+            "rejected",
+            "executed",
+            "failed",
+            "expired",
+        }:
+            raise HTTPException(status_code=422, detail=f"Unknown approval status: {status}")
+        records = store.list(status=normalized, limit=limit)
+        return {"count": len(records), "items": [record.to_dict() for record in records]}
+
+    def _enqueue_chat_approval_execution(approval_id: str) -> None:
+        """Track the background execution through the runtime task registry.
+
+        The task name is excluded from the hot-reload ``cancel_all`` sweep
+        (``api/runtime_context.py``) so a user-confirmed write — including
+        the update_config reload it may itself trigger — always runs to a
+        terminal state instead of being cancelled mid-dispatch.
+        """
+        coro = _execute_chat_approval(approval_id)
+        registry = getattr(ctx, "task_registry", None)
+        track = getattr(registry, "track", None)
+        if callable(track):
+            track("chat_approval_execute", coro)
+        else:  # minimal test contexts without a registry
+            asyncio.create_task(coro, name="chat_approval_execute")
+
+    async def _execute_chat_approval(approval_id: str) -> None:
+        """Dispatch one ``executing`` approval and settle it to a terminal state."""
+        store = getattr(ctx, "chat_approval_store", None)
+        if store is None:
+            return
+        try:
+            record = store.get(approval_id)
+            if record is None or record.status != "executing":
+                return
+            tool_name = record.tool_name
+            registry = getattr(ctx, "agent_tool_registry", None)
+            dispatch = getattr(registry, "dispatch", None)
+            if not callable(dispatch):
+                ok, content, error = False, "", "Agent tools are not configured."
+            else:
+                try:
+                    outcome = await dispatch(tool_name, dict(record.arguments))
+                except Exception as exc:
+                    logger.exception(
+                        "Chat approval dispatch crashed: %s (%s)", approval_id, tool_name
+                    )
+                    ok, content, error = False, "", safe_llm_failure_message(exc)
+                else:
+                    ok = bool(outcome.ok)
+                    content = str(outcome.content or "")
+                    error = "" if ok else str(outcome.error or "执行失败")
+            try:
+                record = store.mark_executed(
+                    approval_id,
+                    ok=ok,
+                    result=content,
+                    error=error,
+                )
+            except Exception:
+                # Another owner already settled the record (e.g. store swapped);
+                # never double-record.
+                logger.exception("Chat approval settle failed: %s", approval_id)
+                return
+            _record_chat_approval_ledger(
+                record,
+                verdict="approved",
+                outcome="success" if ok else "failed",
+                error="" if ok else (error or content),
+            )
+            _append_chat_turn_agent_event(
+                record.turn_id,
+                _approval_result_event(record, decision="approved", ok=ok, text=content or error),
+            )
+        except Exception:
+            logger.exception("Chat approval execution crashed: %s", approval_id)
+
+    @app.post("/api/chat/approvals/{approval_id}/approve", response_model=None)
+    async def approve_chat_approval(approval_id: str) -> dict[str, Any]:
+        """Approve one parked hard-write action; execution runs in the background.
+
+        Returns immediately with the record in ``executing`` state — the
+        actual dispatch (which can take minutes when the tool triggers a
+        config hot-reload) runs as a tracked background task. Poll
+        ``GET /api/chat/approvals`` until the status reaches a terminal
+        state (``executed`` / ``failed``) for the outcome; the originating
+        turn's ``agent_events`` also receives an ``approval_result`` event.
+
+        Idempotent: re-approving an ``executing``/``executed``/``failed``
+        record returns the stored state without queueing a second
+        execution. Rejected/expired records conflict (409).
+        """
+        from openbiliclaw.agent.approvals import ApprovalConflictError
+
+        store = _chat_approval_store_or_503()
+        _chat_approval_or_404(store, approval_id)
+        # Fast critical section only: state transitions + enqueue. The
+        # dispatch itself never runs inside the request.
+        async with _chat_approval_execution_lock:
+            try:
+                record = store.approve(approval_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="Approval not found.") from exc
+            except ApprovalConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if record.status in ("executed", "failed"):
+                return {
+                    "approval": record.to_dict(),
+                    "executed": False,
+                    "already_executed": True,
+                    "queued": False,
+                    "ok": not record.error,
+                    "result": record.result,
+                }
+            if record.status == "approved":
+                registry = getattr(ctx, "agent_tool_registry", None)
+                dispatch = getattr(registry, "dispatch", None)
+                if not callable(dispatch):
+                    raise HTTPException(status_code=503, detail="Agent tools are not configured.")
+                record = store.mark_executing(approval_id)
+                _enqueue_chat_approval_execution(approval_id)
+                queued_now = True
+            else:  # executing: an execution is already in flight
+                queued_now = False
+            return {
+                "approval": record.to_dict(),
+                "executed": False,
+                "already_executed": False,
+                "queued": True,
+                "already_queued": not queued_now,
+                "ok": None,
+                "result": "",
+            }
+
+    @app.post("/api/chat/approvals/{approval_id}/reject", response_model=None)
+    async def reject_chat_approval(
+        approval_id: str,
+        payload: Annotated[dict[str, Any] | None, Body()] = None,
+    ) -> dict[str, Any]:
+        """Reject one pending approval; the action is never executed."""
+        from openbiliclaw.agent.approvals import ApprovalConflictError
+
+        store = _chat_approval_store_or_503()
+        # Snapshot the status: the store returns the live mutable record.
+        before_status = _chat_approval_or_404(store, approval_id).status
+        reason = str((payload or {}).get("reason") or "").strip()
+        try:
+            record = store.reject(approval_id, reason=reason)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Approval not found.") from exc
+        except ApprovalConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if before_status != "rejected":
+            # Skip the audit row / replay event on idempotent re-rejects.
+            _record_chat_approval_ledger(record, verdict="rejected", outcome="success")
+            _append_chat_turn_agent_event(
+                record.turn_id,
+                _approval_result_event(
+                    record,
+                    decision="rejected",
+                    ok=True,
+                    text="用户拒绝了该操作，未执行。",
+                ),
+            )
+        return {"approval": record.to_dict(), "ok": True}
 
     @app.post("/api/chat/cards/{turn_id}/action", response_model=None)
     async def act_on_chat_card(
@@ -12836,6 +14846,193 @@ def create_app(
         if turn.status == "pending":
             chat_reply_scheduler.schedule(turn.turn_id)
         return turn
+
+    # --- Multi-session chat endpoints (「聊一聊」 M5) ---
+
+    @app.get("/api/chat/personas")
+    async def list_chat_personas() -> dict[str, Any]:
+        """List expression presets independently of the capability skill catalog."""
+        return {
+            "example_prompt": PERSONA_EXAMPLE_PROMPT,
+            "personas": [persona.public_dict() for persona in CHAT_PERSONAS],
+        }
+
+    @app.post("/api/chat/sessions", response_model=ChatSessionOut)
+    async def create_chat_session(payload: ChatSessionCreateIn) -> ChatSessionOut:
+        """Create one chat conversation; title auto-generates on first message."""
+        create_session = _chat_session_db_method("create_chat_session")
+        session_id = payload.session_id.strip() or f"chat-{uuid.uuid4().hex}"
+        row = create_session(
+            session_id=session_id,
+            title=payload.title.strip(),
+            metadata=payload.metadata,
+        )
+        return _normalize_chat_session(row)
+
+    @app.get("/api/chat/sessions", response_model=ChatSessionListResponse)
+    async def list_chat_sessions(
+        include_archived: bool = Query(default=False),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> ChatSessionListResponse:
+        """List conversations by latest activity with previews and active counts."""
+        list_sessions = _chat_session_db_method("list_chat_sessions")
+        rows = list_sessions(include_archived=include_archived, limit=limit)
+        return ChatSessionListResponse(items=[_normalize_chat_session(row) for row in rows])
+
+    @app.get("/api/chat/sessions/{session_id}", response_model=ChatSessionDetailResponse)
+    async def get_chat_session_detail(
+        session_id: str,
+        scope: str = Query(default=""),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> ChatSessionDetailResponse:
+        """Return one conversation plus a page of its turns (display order)."""
+        get_summary = _chat_session_db_method("get_chat_session_summary")
+        list_by_session = _chat_session_db_method("list_chat_turns_by_session")
+        row = get_summary(session_id.strip())
+        if row is None:
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+        normalized_scope = _normalize_chat_scope(scope) if scope else ""
+        turns, total = list_by_session(
+            session_id=session_id.strip(),
+            scope=normalized_scope,
+            limit=limit,
+            offset=offset,
+        )
+        return ChatSessionDetailResponse(
+            session=_normalize_chat_session(row),
+            items=[_normalize_chat_turn(turn) for turn in turns],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.patch("/api/chat/sessions/{session_id}", response_model=ChatSessionOut)
+    async def update_chat_session(session_id: str, payload: ChatSessionPatchIn) -> ChatSessionOut:
+        """Edit conversation preferences; the default session cannot be archived."""
+        get_session = _chat_session_db_method("get_chat_session")
+        get_summary = _chat_session_db_method("get_chat_session_summary")
+        normalized_id = session_id.strip()
+        if get_session(normalized_id) is None:
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+        if payload.archived and normalized_id == DEFAULT_CHAT_SESSION_ID:
+            raise HTTPException(
+                status_code=422, detail="The default chat session cannot be archived"
+            )
+        if payload.title is not None:
+            title = payload.title.strip()
+            if not title:
+                raise HTTPException(status_code=422, detail="Session title cannot be empty.")
+            _chat_session_db_method("rename_chat_session")(normalized_id, title=title)
+        if payload.archived is not None:
+            try:
+                _chat_session_db_method("set_chat_session_archived")(
+                    normalized_id, archived=payload.archived
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if payload.persona is not None:
+            _chat_session_db_method("set_chat_session_persona")(
+                normalized_id, persona=payload.persona
+            )
+        row = get_summary(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the check above
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+        return _normalize_chat_session(row)
+
+    # --- Durable agent task center endpoints (「聊一聊」 M6) ---
+
+    @app.post("/api/chat/tasks", response_model=AgentTaskOut)
+    async def create_agent_task_endpoint(payload: AgentTaskCreateIn) -> AgentTaskOut:
+        """Start one durable background task (read-only loop + suggestion list).
+
+        The task runs an ``AgentLoop`` with a read-only tool subset in a
+        ``BackgroundTaskRegistry``-tracked asyncio task; every loop event is
+        appended to the durable step log. Write actions are only produced as
+        structured suggestions; on completion a summary message is written
+        back into the originating chat session for the user to confirm.
+        """
+        prompt = payload.prompt.strip()
+        if not prompt:
+            raise HTTPException(status_code=422, detail="Task prompt is required.")
+        agent_config = getattr(getattr(ctx, "config", None), "agent", None)
+        if agent_config is not None and not bool(getattr(agent_config, "loop_enabled", True)):
+            raise HTTPException(status_code=503, detail="Agent loop chat is disabled.")
+        session_id = payload.session_id.strip()
+        if session_id:
+            get_session = _chat_db_method("get_chat_session")
+            if not callable(get_session) or get_session(session_id) is None:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+        skill_name = payload.skill.strip()
+        if skill_name:
+            skill_catalog = _resolve_skill_catalog()
+            if skill_catalog.get(skill_name) is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unknown chat skill: {skill_name}. "
+                        f"Available: {', '.join(skill_catalog.names)}"
+                    ),
+                )
+        runner = _resolve_agent_task_runner()
+        row = runner.start(
+            session_id=session_id,
+            prompt=prompt,
+            title=payload.title.strip(),
+            skill=skill_name,
+        )
+        return _normalize_agent_task(row)
+
+    @app.get("/api/chat/tasks", response_model=AgentTaskListResponse)
+    async def list_agent_tasks_endpoint(
+        status: str = Query(default=""),
+        session_id: str = Query(default=""),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> AgentTaskListResponse:
+        """List durable agent tasks (newest first), without step logs."""
+        list_tasks = _agent_task_db_method("list_agent_tasks")
+        try:
+            rows, total = list_tasks(
+                status=status.strip(),
+                session_id=session_id.strip(),
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return AgentTaskListResponse(
+            items=[_normalize_agent_task(row, include_steps=False) for row in rows],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.get("/api/chat/tasks/{task_id}", response_model=AgentTaskOut)
+    async def get_agent_task_endpoint(task_id: str) -> AgentTaskOut:
+        """Return one agent task including its execution step log."""
+        get_task = _agent_task_db_method("get_agent_task")
+        row = get_task(task_id.strip())
+        if row is None:
+            raise HTTPException(status_code=404, detail="Agent task not found.")
+        return _normalize_agent_task(row)
+
+    @app.post("/api/chat/tasks/{task_id}/cancel", response_model=AgentTaskOut)
+    async def cancel_agent_task_endpoint(task_id: str) -> AgentTaskOut:
+        """Cancel one active task; terminal tasks report 409."""
+        get_task = _agent_task_db_method("get_agent_task")
+        normalized_id = task_id.strip()
+        row = get_task(normalized_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Agent task not found.")
+        if str(row.get("status", "")) in AGENT_TASK_TERMINAL_STATUSES:
+            raise HTTPException(status_code=409, detail="Agent task is already terminal.")
+        runner = _resolve_agent_task_runner()
+        await runner.cancel(normalized_id)
+        row = get_task(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the check above
+            raise HTTPException(status_code=404, detail="Agent task not found.")
+        return _normalize_agent_task(row)
 
     @app.post("/api/interest-probes/trigger")
     async def trigger_interest_probe() -> dict[str, Any]:
@@ -13477,7 +15674,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
         recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
-        if recommendation is None and (payload.bvid.strip() or payload.item_key.strip()):
+        if (
+            recommendation is None
+            and not payload.batch_ref
+            and (payload.bvid.strip() or payload.item_key.strip())
+        ):
             # Mobile can hold a stale history row id after backend restarts /
             # migrations; fall back to the stable content identity so feedback
             # on a currently listed card still lands on the newest row.
@@ -13495,13 +15696,27 @@ def create_app(
             raise HTTPException(status_code=404, detail="Recommendation not found.")
         resolved_recommendation_id = int(recommendation.get("id") or 0)
 
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    validate_feedback_binding,
+                    ctx.database,
+                    resolved_recommendation_id,
+                    payload.batch_ref,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
+
         from openbiliclaw.sources.event_format import (
             SOURCE_BILIBILI,
             build_event,
             format_event_context,
         )
 
-        rec_title = str(recommendation.get("title", ""))
+        rec_title = str(recommendation.get("title") or "")
         source_platform = (
             str(recommendation.get("source_platform") or SOURCE_BILIBILI).strip().lower()
             or SOURCE_BILIBILI
@@ -13520,7 +15735,7 @@ def create_app(
             context=feedback_context,
             metadata={
                 "recommendation_id": resolved_recommendation_id,
-                "bvid": recommendation.get("bvid", ""),
+                "bvid": recommendation.get("bvid") or "",
                 "feedback_type": feedback_type,
                 "feedback_note": note,
                 "event_namespace": "recommendation",
@@ -13562,6 +15777,22 @@ def create_app(
             feedback_type=stored_feedback_type,
             feedback_note=stored_note,
         )
+        from openbiliclaw.api.director import project_feedback
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        try:
+            await asyncio.to_thread(
+                project_feedback,
+                ctx.database,
+                stored_recommendation_id,
+                payload.request_id,
+                stored_feedback_type,
+                stored_note,
+                batch_ref=payload.batch_ref,
+                existing_event_id=item_receipt.event_id,
+            )
+        except StoreConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.reason_code) from None
         _invalidate_recommendation_snapshot()
         buffer_domain, buffer_specifics = _recommendation_buffer_domain(recommendation)
         if item_receipt.inserted and feedback_type == "like":
@@ -13587,7 +15818,7 @@ def create_app(
             with suppress(Exception):
                 record_immediate_feedback_cognition(
                     feedback_type=feedback_type,
-                    title=str(recommendation.get("title", "")),
+                    title=str(recommendation.get("title") or ""),
                     note=note,
                 )
         return FeedbackResponse(
@@ -13619,6 +15850,17 @@ def create_app(
             recommendation = ctx.database.get_recommendation_by_id(
                 payload.recommendation_id,
             )
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                validate_feedback_binding(
+                    ctx.database, payload.recommendation_id or 0, payload.batch_ref
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         bvid = (payload.bvid or "").strip()
         content_id = (payload.content_id or "").strip()
@@ -13750,6 +15992,22 @@ def create_app(
                 detail="request_id was already used for a different recommendation click",
             )
         stored_bvid = str(stored_metadata.get("bvid") or stored_content_id).strip()
+        if stored_recommendation_id is not None:
+            from openbiliclaw.api.director import project_feedback
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    project_feedback,
+                    ctx.database,
+                    stored_recommendation_id,
+                    payload.request_id,
+                    "click",
+                    batch_ref=payload.batch_ref,
+                    existing_event_id=item_receipt.event_id,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
         if item_receipt.inserted:
             buffer_domain, buffer_specifics = _recommendation_buffer_domain(
                 {
@@ -14686,6 +16944,27 @@ def create_app(
             "weibo", kind="login_state", value=payload.logged_in, source="extension"
         )
         return WeiboLoginStateResponse(
+            ok=True,
+            logged_in=payload.logged_in,
+            updated_at=result.updated_at,
+        )
+
+    @app.post(
+        "/api/sources/instagram/login-state",
+        response_model=InstagramLoginStateResponse,
+        deprecated=True,
+    )
+    async def update_instagram_login_state(
+        payload: InstagramLoginStateIn,
+    ) -> InstagramLoginStateResponse:
+        """Persist sessionid presence only; an Instagram Cookie is never accepted."""
+
+        if not hasattr(ctx.database, "set_instagram_login_state"):
+            raise HTTPException(status_code=503, detail="database not configured")
+        result = await _write_source_credential(
+            "instagram", kind="login_state", value=payload.logged_in, source="extension"
+        )
+        return InstagramLoginStateResponse(
             ok=True,
             logged_in=payload.logged_in,
             updated_at=result.updated_at,
@@ -16045,7 +18324,11 @@ def create_app(
                 slug,
                 authenticated=verdict.authenticated,
                 detail=verdict.message,
-                network_error=False,
+                # An ``unverified`` verdict means the probe never reached the
+                # platform; recording it as a clean negative would tell the
+                # status surfaces the stored cookie failed a check it never
+                # took.
+                network_error=bool(getattr(verdict, "unverified", False)),
                 fingerprint=credential_fingerprint(slug, value),
                 username=verdict.username,
                 user_id=verdict.user_id,
@@ -16063,6 +18346,25 @@ def create_app(
                 )
         if changed:
             note_credential_changed(slug)
+        if slug == "bilibili":
+            # A persisted ``auth_expired`` sync issue must not outlive the
+            # credential it was about: the account-sync banner is only cleared
+            # by a completed tick, which a paused/crash-looping daemon may
+            # never run, so the write path clears it the moment a fresh
+            # cookie lands. The next real tick re-derives the truth.
+            try:
+                clear_auth_expired = getattr(
+                    getattr(ctx, "account_sync_service", None),
+                    "clear_auth_expired_state",
+                    None,
+                )
+                if callable(clear_auth_expired):
+                    clear_auth_expired()
+            except Exception:
+                logger.warning(
+                    "failed to clear stale auth_expired account-sync state",
+                    exc_info=True,
+                )
 
     async def _write_source_credential(
         slug: str,
@@ -16140,6 +18442,15 @@ def create_app(
         # is excluded from the change signal: 小红书's ``xsec_token`` is per-note
         # content access, not a login, so it cannot invalidate a login verdict.
         if written.persisted:
+            if slug == "bilibili":
+                # A directly-landed cookie supersedes anything staged during
+                # guided init; applying the older staged value later would
+                # resurrect a session the user already replaced.
+                from openbiliclaw.api.source_auth.staged import (
+                    clear_staged_bilibili_cookie,
+                )
+
+                clear_staged_bilibili_cookie(active_runtime_data_path)
             _credential_landed(
                 slug,
                 verdict=verdict,
@@ -16158,17 +18469,37 @@ def create_app(
                 XSourceHealthStore(ctx.database).clear_relogin_block()
 
         runtime_refreshed = False
-        if slug == "bilibili" and written.runtime_dirty:
+        if slug in {"bilibili", "tiktok"} and (
+            written.runtime_dirty or slug in pending_runtime_rebuilds
+        ):
             # Atomic by contract: a partial ``rebuild_from_config`` leaves the
             # old runtime intact, so a failure here costs a stale client, never
-            # a broken one.
-            with suppress(Exception):
-                await _rebuild_runtime_with_lane_handoff(load_config())
+            # a broken one. TikTok captures its cookie and search availability
+            # at construction, so a late extension sync must replace it too.
+            # A failure must NOT be swallowed: log it and record the debt in
+            # ``pending_runtime_rebuilds`` so the next write for this slug —
+            # including an identical-cookie push, which is otherwise an
+            # accepted no-op that never reaches the rebuild — retries it.
+            try:
+                await _rebuild_runtime_with_lane_handoff(
+                    load_config(), run_post_reload_llm_work=slug != "tiktok"
+                )
+            except Exception:
+                logger.error(
+                    "runtime rebuild after %s credential write failed; "
+                    "the store already holds the new credential, retrying on next write",
+                    slug,
+                    exc_info=True,
+                )
+                pending_runtime_rebuilds.add(slug)
+            else:
                 runtime_refreshed = True
+                pending_runtime_rebuilds.discard(slug)
 
         event_type = {
             "bilibili": "bilibili_cookie_synced",
             "douyin": "douyin_cookie_synced",
+            "tiktok": "tiktok_cookie_synced",
             "twitter": "x_cookie_synced",
             "reddit": "reddit_cookie_synced",
         }.get(slug, "")
@@ -16191,6 +18522,7 @@ def create_app(
             persisted=bool(written.persisted) and not unchanged,
             checked=verdict.checked,
             unverified_reason=verdict.unverified_reason,
+            unverified=verdict.unverified,
             cookie_names=written.cookie_names,
             authenticated=verdict.authenticated,
             username=verdict.username,
@@ -16300,6 +18632,7 @@ def create_app(
         from openbiliclaw.config import load_config
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
         from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         cfg = _pin_active_runtime_config(load_config())
         srcs = cfg.sources
@@ -16311,6 +18644,10 @@ def create_app(
         dy_cookie = resolve_douyin_cookie(
             data_dir=cfg.data_path,
             cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+        )
+        tt_cookie = resolve_tiktok_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE"),
         )
         tw_cookie = resolve_x_cookie(
             data_dir=cfg.data_path,
@@ -16435,6 +18772,13 @@ def create_app(
                 "",
                 "YouTube 当前按公开源接入，后端不保存 Cookie。",
             ),
+            tiktok=item(
+                "tiktok",
+                "Cookie",
+                tt_cookie,
+                "TikTok 默认以访客身份读公开数据无需登录；可选登录 Cookie 用于解锁关键词搜索"
+                "与更高限额（env 优先，兜底 data/tiktok_cookie.json）。",
+            ),
             twitter=item("twitter", "Cookie", tw_cookie, "X 当前 resolved Cookie。"),
             zhihu=item(
                 "zhihu",
@@ -16475,6 +18819,13 @@ def create_app(
                 "",
                 "微博公开发现无需登录；初始化本人收藏、关注和互动时，插件只同步布尔登录状态，"
                 "实际只读请求在微博页面内执行，不读取或保存用户 Cookie。",
+            ),
+            instagram=item(
+                "instagram",
+                "浏览器登录态",
+                "",
+                "Instagram 公开发现无需登录；个人点赞、收藏和关注由浏览器插件同源读取，"
+                "后端只保存 sessionid 是否存在的布尔状态。",
             ),
         )
 
@@ -16633,6 +18984,191 @@ def create_app(
 
         return {"ok": True}
 
+    # ── TikTok task queue endpoints (extension dispatcher) ─────────
+    # Mirrors the Douyin block above by design: same two-phase staged
+    # completion contract, separate table (tiktok_tasks) and queue class.
+    # Scopes differ: TikTok adds tt_history (watch history → view), the
+    # first history-type bootstrap scope in this tree.
+
+    from openbiliclaw.sources.tiktok_tasks import (
+        TiktokTaskQueue,
+        tiktok_bootstrap_video_key,
+        tiktok_bootstrap_videos_to_events,
+    )
+
+    _tiktok_task_queue: TiktokTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _tiktok_task_queue = TiktokTaskQueue(ctx.database)
+
+    @app.get("/api/sources/tiktok/next-task")
+    def tiktok_next_task(response: Any = None) -> Any:
+        """Return the oldest pending tiktok task, or 204 if none.
+
+        Durable extension native-save jobs are claimed first (same
+        priority as dy/yt), then the tiktok_tasks bootstrap queue.
+        """
+        from starlette.responses import Response
+
+        native_task = _claim_extension_native_task("tiktok")
+        if native_task is not None:
+            return native_task
+
+        _cancel_disabled_source_incremental_tasks("tiktok")
+
+        if _tiktok_task_queue is None:
+            return Response(status_code=204)
+        task = _tiktok_task_queue.next_pending(only_ids=_init_owned_ids_filter())
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/tiktok/task-result")
+    async def tiktok_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a TikTok task result from the extension dispatcher.
+
+        ``ok`` and ``degraded`` are terminal, while ``partial`` keeps the
+        task pending and ``failed`` marks it failed. ``degraded`` means the
+        extension preserved valid items but could not prove the bootstrap
+        was complete. The result schema uses ``videos`` and propagation
+        goes through ``tiktok_bootstrap_videos_to_events``.
+        """
+        task_id = str(payload.get("task_id", "") or "").strip()
+        if not task_id:
+            raise HTTPException(status_code=422, detail="task_id is required")
+        if _is_extension_native_job(task_id):
+            if not _is_extension_native_job(task_id, "tiktok"):
+                raise HTTPException(status_code=409, detail="task_result_conflict")
+            return _submit_extension_native_result("tiktok", payload)
+
+        status = str(payload.get("status", "") or "").strip()
+        raw_videos = payload.get("videos", [])
+        if not isinstance(raw_videos, list):
+            raise HTTPException(status_code=422, detail="videos must be a list")
+        videos = [v for v in raw_videos if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        legacy_queue = _tiktok_task_queue
+        if legacy_queue is None:
+            raise HTTPException(status_code=409, detail="task_result_conflict")
+        task = _require_legacy_task(legacy_queue, task_id)
+        task_type = str(task.get("type", "")).strip() if task else ""
+        if str(task.get("status", "")).strip() in {"completed", "failed"}:
+            # Extension callbacks may race or be retried out of order.  Keep a
+            # terminal result immutable and acknowledge the retry so the
+            # dispatcher does not enter a resend loop.
+            return {"ok": True, "ignored": True}
+
+        from openbiliclaw.sources.task_result_protocol import (
+            parse_task_result,
+            staged_terminal_status,
+        )
+
+        canonical_result = parse_task_result(task.get("result_json"))
+        staged_status = staged_terminal_status(canonical_result)
+        task_payload = parse_task_result(task.get("payload_json"))
+        profile_update = (
+            task_payload.get("profile_update") is True
+            or task_payload.get("incremental") is True
+            or _init_owns_task(task_id)
+        )
+        if not staged_status and status in {"partial", "ok", "empty", "degraded"}:
+            try:
+                legacy_queue.bind_account(
+                    task_id,
+                    viewer_handle=payload.get("viewer_handle"),
+                    viewer_sec_uid=payload.get("viewer_sec_uid"),
+                    profile_update=profile_update,
+                )
+            except ValueError as exc:
+                legacy_queue.fail(task_id, error=str(exc))
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        if (
+            staged_status
+            or status in {"partial", "ok", "degraded"}
+            or (status == "empty" and task_type == "bootstrap_profile")
+        ):
+            is_final = (
+                bool(staged_status)
+                or status in {"ok", "degraded"}
+                or (status == "empty" and task_type == "bootstrap_profile")
+            )
+            if staged_status:
+                # Repair exclusively from the first durable final payload.
+                canonical_result = parse_task_result(task.get("result_json"))
+            elif is_final:
+                canonical_result = legacy_queue.stage_final_result(
+                    task_id,
+                    terminal_status=status,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                )
+            else:
+                legacy_queue.merge_result(
+                    task_id,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                    complete=False,
+                )
+                canonical_task = legacy_queue.get(task_id) or {}
+                canonical_result = parse_task_result(canonical_task.get("result_json"))
+            canonical_videos = [
+                value for value in canonical_result.get("videos", []) if isinstance(value, dict)
+            ]
+            # gui-init D1: persist the result (above) for init's own collector;
+            # during init skip profile propagation for non-owned results, but
+            # propagate init-OWNED bootstrap results through the deduped path.
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if (
+                task_type == "bootstrap_profile"
+                and profile_update
+                and canonical_videos
+                and not _skip_profile
+            ):
+                fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
+                    "tiktok",
+                    canonical_videos,
+                    lambda video: (
+                        str(canonical_result.get("account_key", ""))
+                        + ":"
+                        + tiktok_bootstrap_video_key(video)
+                    ),
+                )
+                events_with_keys: list[tuple[dict[str, Any], str]] = []
+                for index, video in enumerate(fresh_videos):
+                    for event in tiktok_bootstrap_videos_to_events([video]):
+                        key = video_keys_by_index.get(index, "")
+                        events_with_keys.append((event, key))
+                accepted_keys = await _accept_source_profile_events(
+                    source="tiktok",
+                    task_id=task_id,
+                    events_with_keys=events_with_keys,
+                    generic_owner=not _init_busy,
+                )
+                _mark_source_bootstrap_keys("tiktok", accepted_keys)
+            if is_final:
+                legacy_queue.complete_staged_result(task_id)
+        else:
+            legacy_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+
+        return {"ok": True}
+
     # ── Wake-up kick endpoints ──────────────────────────────────────
     #
     # The extension's task dispatchers normally poll on a 60s
@@ -16657,6 +19193,12 @@ def create_app(
         """Broadcast `dy_task_available` over runtime-stream. See
         xhs_task_kick docstring for rationale."""
         return await _kick_source_task("dy")
+
+    @app.post("/api/sources/tiktok/kick")
+    async def tiktok_task_kick() -> dict[str, Any]:
+        """Broadcast `tiktok_task_available` over runtime-stream. See
+        xhs_task_kick docstring for rationale."""
+        return await _kick_source_task("tiktok")
 
     @app.get("/api/sources/x/next-task")
     def x_next_task(response: Any = None) -> Any:
@@ -16684,6 +19226,13 @@ def create_app(
         return await _kick_source_task("x")
 
     # ── YouTube bootstrap endpoints ────────────────────────────────
+    from openbiliclaw.sources.instagram_tasks import (
+        INSTAGRAM_HEARTBEAT_EVIDENCE_AT_FIELD,
+        InstagramTaskQueue,
+        instagram_account_key,
+        instagram_bootstrap_item_key,
+        instagram_bootstrap_items_to_events,
+    )
     from openbiliclaw.sources.linuxdo_tasks import (
         LinuxdoTaskQueue,
         LinuxdoTaskResultValidationError,
@@ -16725,6 +19274,7 @@ def create_app(
     _linuxdo_task_queue: LinuxdoTaskQueue | None = None
     _v2ex_task_queue: V2EXTaskQueue | None = None
     _weibo_task_queue: WeiboTaskQueue | None = None
+    _instagram_task_queue: InstagramTaskQueue | None = None
     _v2ex_snapshot_store: V2EXFavoriteSnapshotStore | None = None
     db_conn = getattr(ctx.database, "conn", None)
     if hasattr(db_conn, "executescript"):
@@ -16733,6 +19283,7 @@ def create_app(
         _linuxdo_task_queue = LinuxdoTaskQueue(ctx.database)
         _v2ex_task_queue = V2EXTaskQueue(ctx.database)
         _weibo_task_queue = WeiboTaskQueue(ctx.database)
+        _instagram_task_queue = InstagramTaskQueue(ctx.database)
         _v2ex_snapshot_store = V2EXFavoriteSnapshotStore(ctx.database)
 
     @app.get("/api/sources/reddit/next-task")
@@ -17503,6 +20054,252 @@ def create_app(
     async def weibo_task_kick() -> dict[str, Any]:
         """Broadcast ``weibo_task_available`` over runtime-stream."""
         return await _kick_source_task("weibo")
+
+    @app.get("/api/sources/instagram/next-task")
+    def instagram_next_task(response: Any = None) -> Any:
+        """Return the oldest Instagram browser task, or 204 when none is ready."""
+
+        from starlette.responses import Response
+
+        queue = _instagram_task_queue
+        if queue is None:
+            return Response(status_code=204)
+        runtime_config = getattr(ctx, "config", None)
+        if runtime_config is None:
+            from openbiliclaw.config import load_config
+
+            runtime_config = load_config()
+        source_cfg = getattr(getattr(runtime_config, "sources", None), "instagram", None)
+        # ``enabled`` gates background discovery production, not an explicit
+        # fetch/init task the user already admitted.  When disabled, allow only
+        # personal bootstrap work so a stale discover backlog cannot run.
+        allowed_task_types = (
+            None if bool(getattr(source_cfg, "enabled", False)) else ("bootstrap_events",)
+        )
+        task = queue.next_pending(
+            only_ids=_init_owned_ids_filter(),
+            task_types=allowed_task_types,
+        )
+        if task is None:
+            return Response(status_code=204)
+        try:
+            task_payload = json.loads(str(task.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            task_payload = {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            "claim_token": task.get("claim_token", ""),
+            **(task_payload if isinstance(task_payload, dict) else {}),
+        }
+
+    @app.post("/api/sources/instagram/task-result")
+    async def instagram_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Freeze and ingest one credential-free Instagram browser result."""
+
+        from openbiliclaw.sources.task_result_protocol import (
+            parse_task_result,
+            staged_terminal_status,
+        )
+
+        task_id = str(payload.get("task_id", "") or "").strip()
+        claim_token = str(payload.get("claim_token", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip().lower()
+        if not task_id:
+            raise HTTPException(status_code=422, detail="task_id is required")
+        if status not in {"ok", "empty", "partial", "failed"}:
+            raise HTTPException(status_code=422, detail="invalid_result_status")
+        raw_items = payload.get("items", [])
+        if not isinstance(raw_items, list) or any(not isinstance(item, dict) for item in raw_items):
+            raise HTTPException(status_code=422, detail="invalid_task_items")
+        scope_counts = payload.get("scope_counts")
+        if scope_counts is not None and not isinstance(scope_counts, dict):
+            raise HTTPException(status_code=422, detail="invalid_scope_counts")
+        scope_complete = payload.get("scope_complete")
+        if scope_complete is not None and not isinstance(scope_complete, dict):
+            raise HTTPException(status_code=422, detail="invalid_scope_complete")
+        debug = payload.get("debug")
+        if debug is not None and not isinstance(debug, dict):
+            raise HTTPException(status_code=422, detail="invalid_task_debug")
+        queue = _instagram_task_queue
+        if queue is None:
+            raise HTTPException(status_code=409, detail="task_result_conflict")
+        task = _require_legacy_task(queue, task_id)
+        if str(task.get("status", "") or "") in {"completed", "failed"}:
+            return {"ok": True, "ignored": True}
+        if not queue.claim_token_matches(task_id, claim_token):
+            raise HTTPException(status_code=409, detail="task_claim_conflict")
+
+        task_type = str(task.get("type", "") or "").strip()
+        try:
+            task_payload = json.loads(str(task.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            task_payload = {}
+        if not isinstance(task_payload, dict):
+            task_payload = {}
+        canonical = parse_task_result(task.get("result_json"))
+        staged = staged_terminal_status(canonical)
+        account_id = payload.get("account_id")
+        account_key = instagram_account_key(account_id)
+        profile_update = bool(task_payload.get("profile_update"))
+        smoke_only = bool(task_payload.get("smoke_only"))
+
+        def reject_account_mismatch() -> None:
+            try:
+                queue.fail_account_mismatch(task_id, claim_token=claim_token)
+            except PermissionError as exc:
+                raise HTTPException(status_code=409, detail="task_claim_conflict") from exc
+            raise HTTPException(
+                status_code=409,
+                detail="instagram_account_switch_not_supported",
+            )
+
+        def reject_missing_identity() -> None:
+            try:
+                queue.fail_identity_missing(task_id, claim_token=claim_token)
+            except PermissionError as exc:
+                raise HTTPException(status_code=409, detail="task_claim_conflict") from exc
+            raise HTTPException(status_code=409, detail="instagram_identity_required")
+
+        if not staged:
+            if task_type == "bootstrap_events" and status in {"ok", "empty", "partial"}:
+                if not account_key:
+                    reject_missing_identity()
+                expected_account_key = str(
+                    task_payload.get("expected_account_key", "") or ""
+                ).strip()
+                bound = str(
+                    _load_source_bootstrap_state().get("instagram_account_key", "") or ""
+                ).strip()
+                if (expected_account_key and expected_account_key != account_key) or (
+                    bound and bound != account_key
+                ):
+                    reject_account_mismatch()
+            error_text = str(payload.get("error", "") or "").strip()
+            if status == "failed" and not error_text:
+                raise HTTPException(status_code=422, detail="task_error_required")
+            try:
+                canonical, _staged_by_current_callback = queue.stage_final_result_with_freshness(
+                    task_id,
+                    terminal_status=status,
+                    claim_token=claim_token,
+                    items=list(raw_items),
+                    scope_counts=scope_counts,
+                    scope_complete=scope_complete,
+                    account_id=account_id,
+                    error=error_text,
+                    debug=debug,
+                )
+            except PermissionError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=_instagram_permission_conflict_detail(exc),
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        canonical_terminal = staged_terminal_status(canonical)
+        if canonical_terminal not in {"ok", "empty", "partial", "failed"}:
+            raise HTTPException(status_code=409, detail="task_result_not_staged")
+
+        canonical_items = [item for item in canonical.get("items", []) if isinstance(item, dict)]
+        canonical_account_key = str(canonical.get("account_key", "") or "").strip()
+        if task_type == "bootstrap_events" and canonical_terminal != "failed":
+            if not canonical_account_key:
+                reject_missing_identity()
+            expected_account_key = str(task_payload.get("expected_account_key", "") or "").strip()
+            bound = str(
+                _load_source_bootstrap_state().get("instagram_account_key", "") or ""
+            ).strip()
+            if (expected_account_key and expected_account_key != canonical_account_key) or (
+                bound and bound != canonical_account_key
+            ):
+                reject_account_mismatch()
+        init_busy = _init_active_now()
+        skip_profile = init_busy and not _init_owns_task(task_id)
+        if (
+            task_type == "bootstrap_events"
+            and canonical_terminal in {"ok", "empty", "partial"}
+            and profile_update
+            and not smoke_only
+            and not skip_profile
+        ):
+            events_with_keys: list[tuple[dict[str, Any], str]] = []
+            if canonical_items:
+                fresh_items, item_keys_by_index = _filter_new_source_bootstrap_items(
+                    "instagram",
+                    canonical_items,
+                    lambda item: instagram_bootstrap_item_key(
+                        item,
+                        account_key=canonical_account_key,
+                    ),
+                )
+                for index, item in enumerate(fresh_items):
+                    events = instagram_bootstrap_items_to_events(
+                        [item],
+                        account_key=canonical_account_key,
+                    )
+                    events_with_keys.extend(
+                        (event, item_keys_by_index.get(index, "")) for event in events
+                    )
+            accepted_keys = await _accept_source_profile_events(
+                source="instagram",
+                task_id=task_id,
+                events_with_keys=events_with_keys,
+                generic_owner=not init_busy,
+            )
+            _mark_source_bootstrap_keys(
+                "instagram",
+                accepted_keys,
+                account_key=canonical_account_key,
+            )
+
+        raw_canonical_debug = canonical.get("debug")
+        canonical_debug: dict[str, Any] = (
+            dict(raw_canonical_debug) if isinstance(raw_canonical_debug, dict) else {}
+        )
+        login_failure = (
+            _instagram_result_login_failure(canonical) if task_type == "bootstrap_events" else ""
+        )
+        heartbeat_evidence_at = str(
+            canonical.get(INSTAGRAM_HEARTBEAT_EVIDENCE_AT_FIELD, "") or ""
+        ).strip()
+        has_positive_evidence = (
+            task_type == "bootstrap_events"
+            and canonical_terminal in {"ok", "empty"}
+            and canonical_account_key
+            and canonical_debug.get("response_observed") is True
+            and (
+                canonical_debug.get("identity_resolved") is True
+                or canonical_debug.get("identity_verified") is True
+            )
+        )
+        project_login_state = getattr(
+            ctx.database,
+            "project_instagram_login_state_if_not_newer",
+            None,
+        )
+        if callable(project_login_state) and heartbeat_evidence_at:
+            if login_failure:
+                project_login_state(False, heartbeat_evidence_at)
+            elif has_positive_evidence:
+                project_login_state(True, heartbeat_evidence_at)
+        try:
+            queue.complete_staged_result(task_id, claim_token=claim_token)
+        except PermissionError as exc:
+            detail = (
+                "task_claim_conflict"
+                if str(exc).strip() == "task_claim_conflict"
+                else "task_result_conflict"
+            )
+            raise HTTPException(status_code=409, detail=detail) from exc
+        return {"ok": True}
+
+    @app.post("/api/sources/instagram/kick")
+    async def instagram_task_kick() -> dict[str, Any]:
+        """Broadcast ``instagram_task_available`` over runtime-stream."""
+
+        return await _kick_source_task("instagram")
 
     @app.get("/api/sources/linuxdo/next-task")
     def linuxdo_next_task(response: Any = None) -> Any:
@@ -18349,12 +21146,19 @@ def create_app(
             effective_llm_routes,
         )
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         dy_cookie = ""
         with suppress(Exception):
             dy_cookie = resolve_douyin_cookie(
                 data_dir=_active_runtime_data_path(),
                 cookie_env=cfg.sources.douyin.cookie_env,
+            )
+        tt_cookie = ""
+        with suppress(Exception):
+            tt_cookie = resolve_tiktok_cookie(
+                data_dir=_active_runtime_data_path(),
+                cookie_env=cfg.sources.tiktok.cookie_env,
             )
         tw_cookie = ""
         with suppress(Exception):
@@ -18479,8 +21283,46 @@ def create_app(
         else:
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
+        from openbiliclaw.config import ConfigError
+        from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+        from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+        jev_settings = cfg.decision.providers.jev
+        jev_ready = False
+        jev_reason = "请在 Jev 连接配置区启用服务并填写 Token。"
+        if jev_settings.enabled:
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                jev_reason = "请填写有效 Token，或在后端设置 api_key_env 指向的环境变量。"
+            else:
+                jev_ready = True
+                jev_reason = (
+                    "本机配置就绪（未联网验证）；纯文本、受控分类，评分尚未按当前模型校准。"
+                )
+        if cfg.discovery.semantic_filter.mode != "off":
+            jev_ready = False
+            jev_reason = (
+                "请先在 TOML 将 discovery.semantic_filter.mode 设为 off 并重启，避免重复评估。"
+            )
+        if jev_settings.model in {"jev-latest", "jev-preview"}:
+            jev_ready = False
+            jev_reason = "完整评估需要固定模型版本，请填写精确模型 ID。"
+        jev_context_budget: dict[str, str | int] | None = None
+        try:
+            jev_context = resolve_jev_context(jev_settings.model, jev_settings.context_limits)
+        except JevContextError:
+            jev_ready = False
+            jev_reason = (
+                "所选模型上下文容量未知；请按精确模型 ID 在 Jev 配置区填写已确认的双 token 上限。"
+            )
+        else:
+            jev_context_budget = {**asdict(jev_context), "fingerprint": jev_context.fingerprint}
+
         return ConfigResponse(
-            language=cfg.language,
+            # Canonical locale id: clients switch i18n on this value, while
+            # config.toml may still hold a legacy alias such as ``zh``.
+            language=_canonical_locale(cfg.language),
             data_dir=cfg.data_dir,
             degraded=degraded,
             degraded_reason=degraded_reason,
@@ -18507,6 +21349,9 @@ def create_app(
                 openrouter=_provider_out(_legacy_provider_projection("openrouter")),
                 openai_compatible=_provider_out(_legacy_provider_projection("openai_compatible")),
                 orcarouter=_provider_out(_legacy_provider_projection("orcarouter")),
+                requesty=_provider_out(_legacy_provider_projection("requesty")),
+                api_route=_provider_out(_legacy_provider_projection("api_route")),
+                cheaperinference=_provider_out(_legacy_provider_projection("cheaperinference")),
                 embedding=EmbeddingConfigOut(
                     provider=cfg.llm.embedding.provider,
                     model=cfg.llm.embedding.model,
@@ -18574,6 +21419,24 @@ def create_app(
                     request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                     **_source_date_pref_out_kwargs(cfg.sources.youtube),
+                ),
+                tiktok=TiktokSourceConfigOut(
+                    enabled=cfg.sources.tiktok.enabled,
+                    incremental_enabled=cfg.sources.tiktok.incremental_enabled,
+                    mode=cfg.sources.tiktok.mode,
+                    cookie=_mask(tt_cookie),
+                    cookie_env=cfg.sources.tiktok.cookie_env,
+                    region=cfg.sources.tiktok.region,
+                    tz_name=cfg.sources.tiktok.tz_name,
+                    tags=list(cfg.sources.tiktok.tags),
+                    creators=list(cfg.sources.tiktok.creators),
+                    daily_feed_budget=cfg.sources.tiktok.daily_feed_budget,
+                    daily_search_budget=cfg.sources.tiktok.daily_search_budget,
+                    daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
+                    daily_user_budget=cfg.sources.tiktok.daily_user_budget,
+                    request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.tiktok.min_interval_minutes,
+                    **_source_date_pref_out_kwargs(cfg.sources.tiktok),
                 ),
                 twitter=TwitterSourceConfigOut(
                     enabled=cfg.sources.twitter.enabled,
@@ -18703,6 +21566,16 @@ def create_app(
                     min_interval_minutes=cfg.sources.weibo.min_interval_minutes,
                     **_source_date_pref_out_kwargs(cfg.sources.weibo),
                 ),
+                instagram=InstagramSourceConfigOut(
+                    enabled=cfg.sources.instagram.enabled,
+                    source_modes=list(cfg.sources.instagram.source_modes),
+                    daily_topic_budget=cfg.sources.instagram.daily_topic_budget,
+                    daily_creator_budget=cfg.sources.instagram.daily_creator_budget,
+                    request_interval_seconds=cfg.sources.instagram.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.instagram.min_interval_minutes,
+                    bootstrap_limit=cfg.sources.instagram.bootstrap_limit,
+                    **_source_date_pref_out_kwargs(cfg.sources.instagram),
+                ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
@@ -18728,6 +21601,7 @@ def create_app(
                 reddit_incremental_hours=getattr(cfg.scheduler, "reddit_incremental_hours", None),
                 linuxdo_incremental_hours=getattr(cfg.scheduler, "linuxdo_incremental_hours", None),
                 v2ex_incremental_hours=getattr(cfg.scheduler, "v2ex_incremental_hours", None),
+                tiktok_incremental_hours=getattr(cfg.scheduler, "tiktok_incremental_hours", None),
                 refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
                 eval_min_batch_size=cfg.scheduler.eval_min_batch_size,
                 eval_max_wait_seconds=cfg.scheduler.eval_max_wait_seconds,
@@ -18781,6 +21655,30 @@ def create_app(
                 admission_min_score=cfg.discovery.admission_min_score,
                 eval_prefilter_mode=cfg.discovery.eval_prefilter_mode,
                 eval_scorer=cfg.discovery.eval_scorer,
+                jev_evaluation=JevEvaluationConfigOut(**asdict(cfg.discovery.jev_evaluation)),
+                jev_provider=JevProviderReadinessOut(
+                    enabled=jev_settings.enabled,
+                    model=jev_settings.model,
+                    api_key_env=jev_settings.api_key_env,
+                    endpoint_url=jev_settings.endpoint_url,
+                    api_key_configured=bool(jev_settings.api_key),
+                    credential_source=(
+                        "config"
+                        if jev_settings.api_key
+                        else "environment"
+                        if os.environ.get(jev_settings.api_key_env, "").strip()
+                        else "missing"
+                    ),
+                    timeout_seconds=jev_settings.timeout_seconds,
+                    max_attempts=jev_settings.max_attempts,
+                    ready=jev_ready,
+                    reason=jev_reason,
+                    context_limits={
+                        model: asdict(limits)
+                        for model, limits in jev_settings.context_limits.items()
+                    },
+                    context_budget=jev_context_budget,
+                ),
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 visual_profile_enabled=cfg.discovery.visual_profile_enabled,
@@ -18843,6 +21741,24 @@ def create_app(
             ),
             issues=issue_list,
         )
+
+    @app.get("/api/i18n/locales")
+    def get_i18n_locales() -> dict[str, object]:
+        """Return the shipped locales, their native names, and the active one.
+
+        Clients use this instead of hardcoding the locale list, so adding a
+        language later only touches the backend catalog set and this module.
+        """
+
+        from openbiliclaw.config import load_config as _load_i18n_config
+        from openbiliclaw.i18n import locale_options
+
+        config = _load_i18n_config()
+        return {
+            "default": "zh-Hans",
+            "active": _canonical_locale(config.language),
+            "locales": [option.as_dict() for option in locale_options()],
+        }
 
     @app.get("/api/config", response_model=ConfigResponse)
     def get_config(reveal_keys: bool = False) -> ConfigResponse:
@@ -19456,6 +22372,9 @@ def create_app(
                 "openrouter",
                 "orcarouter",
                 "openai_compatible",
+                "requesty",
+                "api_route",
+                "cheaperinference",
             }:
                 return "", None
             instance_id = normalized_type.replace("_", "-")
@@ -19533,6 +22452,9 @@ def create_app(
             "openrouter",
             "orcarouter",
             "openai_compatible",
+            "requesty",
+            "api_route",
+            "cheaperinference",
         ):
             if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
                 if bool(getattr(cfg.llm, "instance_routing", False)) and not native_payload:
@@ -19745,6 +22667,9 @@ def create_app(
             "orcarouter",
             "ollama",
             "openai_compatible",
+            "requesty",
+            "api_route",
+            "cheaperinference",
         }:
             return ConfigModelDiscoveryResponse(
                 ok=False,
@@ -20097,8 +23022,13 @@ def create_app(
             )
 
     @app.post("/api/config/probe-service", response_model=ConfigServiceProbeResponse)
-    async def probe_config_service(payload: ConfigServiceProbeIn) -> ConfigServiceProbeResponse:
+    async def probe_config_service(
+        request: Request, payload: ConfigServiceProbeIn
+    ) -> ConfigServiceProbeResponse | JSONResponse:
         """Probe submitted LLM / embedding / proxy settings without saving config.toml."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from copy import deepcopy
 
         from openbiliclaw.config import (
@@ -20137,19 +23067,28 @@ def create_app(
         llm_data = update.get("llm")
         if isinstance(llm_data, dict):
             _apply_llm_update(cfg, llm_data)
-        if payload.kind == "embedding":
-            return await _probe_embedding_config(cfg)
-        return await _probe_llm_config(
-            cfg,
-            kind=payload.kind,
-            instance_id=payload.instance_id,
-        )
+        from openbiliclaw.llm.sponsored_router import bypass_sponsored
+
+        # Draft-provider probes must validate their selected target, including
+        # embedding and default-chain probes, rather than borrow sponsor health.
+        with bypass_sponsored():
+            if payload.kind == "embedding":
+                return await _probe_embedding_config(cfg)
+            return await _probe_llm_config(
+                cfg,
+                kind=payload.kind,
+                instance_id=payload.instance_id,
+            )
 
     @app.post("/api/config/discover-models", response_model=ConfigModelDiscoveryResponse)
     async def discover_config_models(
+        request: Request,
         payload: ConfigModelDiscoveryIn,
-    ) -> ConfigModelDiscoveryResponse:
+    ) -> ConfigModelDiscoveryResponse | JSONResponse:
         """List models for one submitted instance without saving config.toml."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from copy import deepcopy
 
         from openbiliclaw.config import load_config
@@ -20171,6 +23110,9 @@ def create_app(
         After persisting, the backend attempts to rebuild all swappable
         runtime components so the new settings take effect immediately.
         """
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.config import (
             _DEFAULT_ADMISSION_MIN_SCORE,
             _DEFAULT_CANDIDATE_EVAL_CONCURRENCY,
@@ -20213,6 +23155,8 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            ConfigError,
+            ConfigIssue,
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
@@ -20222,6 +23166,8 @@ def create_app(
             _normalize_scheduler_int,
             _normalize_source_incremental_hours,
             _validate_auto_update_check_interval,
+            build_jev_evaluation_config,
+            decision_routes_enabled,
             load_config,
             normalize_outbound_proxy,
             normalize_outbound_proxy_mode,
@@ -20255,9 +23201,16 @@ def create_app(
 
         # Apply top-level scalars
         if "language" in update:
-            cfg.language = str(update["language"])
+            cfg.language = _validated_config_language(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
+        if "decision" in update:
+            from openbiliclaw.config import update_decision_config
+
+            try:
+                cfg.decision = update_decision_config(cfg.decision, update["decision"])
+            except ConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
 
         tailnet_restart_required = False
         tailnet_bootstrap_credential = ""
@@ -20618,6 +23571,79 @@ def create_app(
                     ):
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
+
+                tt_data = sources_data.get("tiktok")
+                if isinstance(tt_data, dict):
+                    if "enabled" in tt_data:
+                        cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    if "incremental_enabled" in tt_data:
+                        cfg.sources.tiktok.incremental_enabled = _as_bool(
+                            tt_data["incremental_enabled"]
+                        )
+                    if "mode" in tt_data:
+                        # Reject invalid backends at save time instead of
+                        # silently clamping them at read time.
+                        from openbiliclaw.sources.tiktok_web import _TIKTOK_MODES
+
+                        new_mode = str(tt_data["mode"]).strip().lower()
+                        if new_mode not in _TIKTOK_MODES:
+                            raise ValueError(
+                                f"sources.tiktok.mode 必须是 {', '.join(_TIKTOK_MODES)} 之一"
+                            )
+                        cfg.sources.tiktok.mode = new_mode
+                    if "cookie_env" in tt_data:
+                        new_env = str(tt_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.tiktok.cookie_env = new_env
+                    for str_key in ("region", "tz_name"):
+                        # Empty geo values would gate every request; ignore
+                        # them rather than persisting a broken identity.
+                        if str_key in tt_data:
+                            new_geo = str(tt_data[str_key]).strip()
+                            if new_geo:
+                                setattr(cfg.sources.tiktok, str_key, new_geo)
+                    if "cookie" in tt_data:
+                        # Manual paste — routed to data/tiktok_cookie.json like
+                        # the unified credential endpoint; never lands in
+                        # config.toml. Same write gate as everywhere else
+                        # (spec D4): the passport-beat probe must accept the
+                        # cookie before it is stored.
+                        from openbiliclaw.sources.tiktok_auth import (
+                            TiktokCookieManager,
+                            resolve_tiktok_cookie,
+                        )
+
+                        new_cookie = str(tt_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_tiktok_cookie(
+                                    data_dir=active_data_path,
+                                    cookie_env=cfg.sources.tiktok.cookie_env,
+                                )
+                            if new_cookie != current:
+                                await _gate_credential("tiktok", new_cookie)
+                                TiktokCookieManager(active_data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
+                    for list_key in ("tags", "creators"):
+                        raw_list = tt_data.get(list_key)
+                        if isinstance(raw_list, list):
+                            setattr(
+                                cfg.sources.tiktok,
+                                list_key,
+                                tuple(str(item).strip() for item in raw_list if str(item).strip()),
+                            )
+                    for key in (
+                        "daily_feed_budget",
+                        "daily_search_budget",
+                        "daily_tag_budget",
+                        "daily_user_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tt_data:
+                            setattr(cfg.sources.tiktok, key, int(tt_data[key]))
 
                 tw_data = sources_data.get("twitter")
                 if isinstance(tw_data, dict):
@@ -21437,15 +24463,94 @@ def create_app(
                             raise HTTPException(status_code=400, detail=f"微博 {key} 不能为负数")
                         setattr(cfg.sources.weibo, key, raw_value)
 
+                instagram_data = sources_data.get("instagram")
+                if isinstance(instagram_data, dict):
+                    allowed_instagram_fields = {
+                        "recommendation_date_preset",
+                        "recommendation_date_start",
+                        "recommendation_date_end",
+                        "recommendation_date_weight",
+                        "enabled",
+                        "source_modes",
+                        "daily_topic_budget",
+                        "daily_creator_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                        "bootstrap_limit",
+                    }
+                    unknown_instagram_fields = sorted(
+                        set(instagram_data) - allowed_instagram_fields
+                    )
+                    if unknown_instagram_fields:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Instagram 包含不支持的配置字段: "
+                                + ", ".join(unknown_instagram_fields)
+                            ),
+                        )
+                    instagram_cfg = cfg.sources.instagram
+                    if "enabled" in instagram_data:
+                        instagram_cfg.enabled = _as_bool(instagram_data["enabled"])
+                    if "source_modes" in instagram_data:
+                        raw_modes = instagram_data["source_modes"]
+                        if not isinstance(raw_modes, list):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Instagram source_modes 必须是数组",
+                            )
+                        selected_modes = tuple(
+                            dict.fromkeys(
+                                str(mode).strip().lower() for mode in raw_modes if str(mode).strip()
+                            )
+                        )
+                        if not selected_modes or any(
+                            mode not in {"topic", "creator"} for mode in selected_modes
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Instagram source_modes 包含不支持的值",
+                            )
+                        if selected_modes == ("creator",):
+                            selected_modes = ("topic", "creator")
+                        instagram_cfg.source_modes = selected_modes
+                    instagram_integer_limits = {
+                        "daily_topic_budget": (0, None),
+                        "daily_creator_budget": (0, None),
+                        "request_interval_seconds": (1, 30),
+                        "min_interval_minutes": (0, None),
+                        "bootstrap_limit": (1, 300),
+                    }
+                    for key, (minimum, maximum) in instagram_integer_limits.items():
+                        if key not in instagram_data:
+                            continue
+                        raw_value = instagram_data[key]
+                        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Instagram {key} 必须是整数",
+                            )
+                        if raw_value < minimum or (maximum is not None and raw_value > maximum):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"Instagram {key} 必须在 {minimum}"
+                                    + (f"..{maximum}" if maximum is not None else " 以上")
+                                    + " 范围内"
+                                ),
+                            )
+                        setattr(instagram_cfg, key, raw_value)
         # Apply per-source recommendation date preference updates. Validation
         # happens here, before save_config re-validates and writes.
         if "sources" in update and isinstance(update.get("sources"), dict):
             sources_data = update["sources"]
             source_config_by_slug = {
+                "instagram": cfg.sources.instagram,
                 "bilibili": cfg.sources.bilibili,
                 "xiaohongshu": cfg.sources.xiaohongshu,
                 "douyin": cfg.sources.douyin,
                 "youtube": cfg.sources.youtube,
+                "tiktok": cfg.sources.tiktok,
                 "twitter": cfg.sources.twitter,
                 "zhihu": cfg.sources.zhihu,
                 "reddit": cfg.sources.reddit,
@@ -21524,6 +24629,7 @@ def create_app(
                 "reddit_incremental_hours",
                 "linuxdo_incremental_hours",
                 "v2ex_incremental_hours",
+                "tiktok_incremental_hours",
                 "refresh_check_interval_seconds",
                 "eval_min_batch_size",
                 "eval_max_wait_seconds",
@@ -21580,6 +24686,7 @@ def create_app(
                         "reddit_incremental_hours",
                         "linuxdo_incremental_hours",
                         "v2ex_incremental_hours",
+                        "tiktok_incremental_hours",
                     }:
                         try:
                             # Douyin account bootstrap can foreground a task tab.
@@ -21714,12 +24821,24 @@ def create_app(
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
                 if "eval_scorer" in ddata:
                     eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
-                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                    if eval_scorer not in {"llm", "shadow", "learned", "jev"}:
                         raise HTTPException(
                             status_code=422,
-                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                            detail="discovery.eval_scorer must be llm, shadow, learned, or jev",
                         )
                     cfg.discovery.eval_scorer = eval_scorer
+                if "jev_evaluation" in ddata:
+                    raw_jev_evaluation = ddata["jev_evaluation"]
+                    if not isinstance(raw_jev_evaluation, dict):
+                        raise HTTPException(
+                            status_code=422, detail="discovery.jev_evaluation must be an object"
+                        )
+                    try:
+                        cfg.discovery.jev_evaluation = build_jev_evaluation_config(
+                            {**asdict(cfg.discovery.jev_evaluation), **raw_jev_evaluation}
+                        )
+                    except ConfigError as exc:
+                        raise HTTPException(status_code=422, detail=str(exc)) from exc
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(
@@ -21873,10 +24992,27 @@ def create_app(
             setattr(subsection, target[2], "")
 
         issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if decision_routes_enabled(cfg):
+            from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                issues.append(
+                    ConfigIssue(
+                        field="decision.providers.jev.api_key_env",
+                        message=(
+                            "Jev 路由需要有效 Token；请在连接配置区填写，或配置后端环境变量。"
+                        ),
+                        severity="blocking",
+                    )
+                )
         posture_issue = _posture_gate_enforce_issue(cfg, getattr(ctx, "database", None))
         if posture_issue is not None:
             issues.append(posture_issue)
         if any(getattr(issue, "severity", "warning") == "blocking" for issue in issues):
+            from openbiliclaw.i18n import get_translator
+
             response = ConfigUpdateResponse(
                 ok=False,
                 config=_config_to_response(
@@ -21886,7 +25022,9 @@ def create_app(
                     degraded=bool(getattr(ctx, "degraded", False)),
                     degraded_reason=str(getattr(ctx, "degraded_reason", "")),
                 ),
-                message="配置校验失败，未写入 config.toml。",
+                message=get_translator(_canonical_locale(getattr(cfg, "language", None)))(
+                    "api.config.validation_failed"
+                ),
                 reloaded=False,
                 rollback_applied=False,
                 restart_required=False,
@@ -21998,21 +25136,26 @@ def create_app(
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，
             # 避免一次后台 LLM 或事件排空把交互式保存请求挂住数十秒。
             _enqueue_config_apply(item)
+            from openbiliclaw.i18n import get_translator
+
+            response_tr = get_translator(_canonical_locale(getattr(cfg, "language", None)))
             queued_response = ConfigUpdateResponse(
                 ok=True,
                 config=_config_to_response(cfg, issues, mask_keys=True),
                 message=(
-                    f"配置已保存到 {saved_path}；"
-                    + (
-                        "data_dir 与应用内 Tailnet 将在完全重启后生效，"
-                        if data_dir_restart_required and tailnet_restart_required
-                        else "data_dir 将在完全重启后生效，"
-                        if data_dir_restart_required
-                        else "应用内 Tailnet 将在完全重启后生效，"
+                    response_tr(
+                        "api.config.saved_queued_restart",
+                        path=saved_path,
+                        scope=response_tr(
+                            "api.config.restart.data_dir_tailnet"
+                            if data_dir_restart_required and tailnet_restart_required
+                            else "api.config.restart.data_dir"
+                            if data_dir_restart_required
+                            else "api.config.restart.tailnet"
+                        ),
                     )
-                    + "其余配置正在后台应用。"
                     if restart_required
-                    else f"配置已保存到 {saved_path}，正在后台应用。"
+                    else response_tr("api.config.saved_queued", path=saved_path)
                 ),
                 reloaded=False,
                 rollback_applied=False,
@@ -22126,61 +25269,26 @@ def create_app(
     if _shared_web_dir.is_dir():
         app.mount("/shared", _StaticFiles(directory=_shared_web_dir), name="shared-web")
 
+    # ── i18n UI catalogs ─────────────────────────────────────────
+    # The canonical UI catalog set lives with the Python package so every
+    # surface (desktop, mobile, setup, extension build) consumes one source of
+    # truth instead of three drifting copies.
+    _ui_i18n_dir = _Path(__file__).resolve().parent.parent / "i18n" / "ui"
+    if _ui_i18n_dir.is_dir():
+        app.mount("/i18n/ui", _StaticFiles(directory=_ui_i18n_dir), name="i18n-ui")
+
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
-        _desktop_index_path = _desktop_dir / "index.html"
+        from openbiliclaw.api.desktop_assets import DesktopAssets
 
-        def _desktop_asset_version() -> str:
-            import hashlib
-
-            digest = hashlib.sha256()
-            # Paths are relative to the desktop root except the shared modules,
-            # which live outside it — an upgrade that only changed
-            # shared renderers would otherwise be served from cache forever.
-            for relative, root in (
-                ("assets/css/app.css", _desktop_dir),
-                ("assets/css/classic.css", _desktop_dir),
-                ("assets/js/app.js", _desktop_dir),
-                ("dialogue-confirmation.js", _shared_web_dir),
-                ("source-status.js", _shared_web_dir),
-            ):
-                path = root / relative
-                if not path.is_file():
-                    continue
-                stat = path.stat()
-                digest.update(relative.encode("utf-8"))
-                digest.update(str(stat.st_mtime_ns).encode("ascii"))
-                digest.update(str(stat.st_size).encode("ascii"))
-            return digest.hexdigest()[:12]
+        _desktop_assets = DesktopAssets(_web_dir)
 
         def _desktop_index_response() -> Response:
-            if not _desktop_index_path.is_file():
+            if not (_desktop_dir / "index.html").is_file():
                 raise HTTPException(status_code=404, detail="desktop web index not found")
-            version = _desktop_asset_version()
-            html = _desktop_index_path.read_text(encoding="utf-8")
-            html = html.replace(
-                'href="/web/assets/css/app.css"',
-                f'href="/web/assets/css/app.css?v={version}"',
-            )
-            html = html.replace(
-                'href="/web/assets/css/classic.css"',
-                f'href="/web/assets/css/classic.css?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/app.js"',
-                f'src="/web/assets/js/app.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/dialogue-confirmation.js"',
-                f'src="/shared/dialogue-confirmation.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/source-status.js"',
-                f'src="/shared/source-status.js?v={version}"',
-            )
             return Response(
-                html,
+                _desktop_assets.current().html,
                 media_type="text/html; charset=utf-8",
                 headers={"Cache-Control": "no-store"},
             )
@@ -22192,6 +25300,18 @@ def create_app(
         @app.get("/web/", include_in_schema=False)
         def _desktop_index_slash() -> Response:
             return _desktop_index_response()
+
+        @app.get("/web/index.html", include_in_schema=False)
+        def _desktop_index_file() -> Response:
+            return _desktop_index_response()
+
+        @app.get("/web/assets/desktop-bundle.js", include_in_schema=False)
+        def _desktop_bundle(request: Request, v: str | None = None) -> Response:
+            return _desktop_assets.response(
+                v,
+                accept_encoding=request.headers.get("accept-encoding", ""),
+                if_none_match=request.headers.get("if-none-match", ""),
+            )
 
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 
@@ -22215,5 +25335,44 @@ def create_app(
     _setup_dir = _Path(__file__).resolve().parent.parent / "web" / "setup"
     if _setup_dir.is_dir():
         app.mount("/setup", _StaticFiles(directory=_setup_dir, html=True), name="setup-wizard")
+
+    # ── Blue Fish Lab background loop ─────────────────────────────
+    # A lab feature: the loop wakes every 5 minutes, but the engine only
+    # acts when the lab is enabled and dry-run is off. Every failure is
+    # caught inside the loop so it can never take the daemon down.
+    if os.environ.get("OPENBILICLAW_FISH_LOOP_DISABLED", "").strip() != "1":
+
+        @app.on_event("startup")
+        async def startup_blue_fish_loop() -> None:
+            try:
+                from openbiliclaw.fish.engine import run_fish_loop
+
+                data_dir = _fish_data_dir()
+
+                async def _fish_discovery_tick() -> None:
+                    # One route through the standard discovery pipeline: the
+                    # comment-thread strategy returns BV ids for the batch
+                    # evaluator and leaves a reply plan for the action pass
+                    # right after it. It is inert unless the lab is enabled.
+                    await ctx.run_discovery_route(strategies=["comment_thread"], limit=5)
+
+                app.state.fish_task = asyncio.create_task(
+                    run_fish_loop(
+                        _fish_engine_for(data_dir),
+                        data_dir=data_dir,
+                        discovery_tick=_fish_discovery_tick,
+                    ),
+                    name="blue_fish_loop",
+                )
+            except Exception:  # noqa: BLE001 - never block startup for a lab loop
+                logger.warning("Blue Fish loop failed to start", exc_info=True)
+
+        @app.on_event("shutdown")
+        async def shutdown_blue_fish_loop() -> None:
+            task = getattr(app.state, "fish_task", None)
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     return app

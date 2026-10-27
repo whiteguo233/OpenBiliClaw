@@ -28,25 +28,34 @@ V2EX_SOURCE_WEIGHTS = {"search": 40, "node": 40, "tab": 10, "hot": 5, "latest": 
 
 
 def build_v2ex_external_search_provider(config: object) -> Any | None:
-    """Build the configured Exa/You chain used for ``site:v2ex.com/t`` recall."""
+    """Build the configured external search chain used for ``site:v2ex.com/t`` recall."""
+
+    from openbiliclaw.discovery.inspiration_backends import (
+        EXTERNAL_INSPIRATION_SEARCH_BACKENDS,
+        normalize_inspiration_search_backends,
+    )
 
     discovery = getattr(config, "discovery", None)
-    configured = tuple(getattr(discovery, "inspiration_search_backends", ()) or ())
+    # ``default=()`` keeps this path additive: a missing / junk-only backend list
+    # yields no external recall instead of falling back to the default chain.
     external = tuple(
-        str(value).strip().lower()
-        for value in configured
-        if str(value).strip().lower() in {"bing_rss", "exa", "you", "serply"}
+        backend
+        for backend in normalize_inspiration_search_backends(
+            getattr(discovery, "inspiration_search_backends", None),
+            default=(),
+        )
+        if backend in EXTERNAL_INSPIRATION_SEARCH_BACKENDS
     )
     if not external:
         return None
-    from openbiliclaw.discovery.inspiration_provider import build_inspiration_search_provider
+    from openbiliclaw.discovery.inspiration_provider import (
+        InspirationGroundingKeys,
+        build_inspiration_search_provider,
+    )
 
-    discovery = getattr(config, "discovery", None)
     return build_inspiration_search_provider(
         external,
-        exa_api_key=str(getattr(discovery, "exa_api_key", "") or ""),
-        you_api_key=str(getattr(discovery, "you_api_key", "") or ""),
-        serply_api_key=str(getattr(discovery, "serply_api_key", "") or ""),
+        grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery),
     )
 
 

@@ -481,6 +481,7 @@ async def test_respond_with_tools_forwards_dialogue_tone_prompt_replacing_tone_b
     assert reply == "好的"
     system = str(captured.get("system_instruction", ""))
     assert "像一个老朋友：\n- 多用短句" in system
+    assert "同一需求默认最多澄清一轮" in system
     assert "- 信息密度" not in system
     assert "- 回复风格:" not in system
     assert "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。" in system

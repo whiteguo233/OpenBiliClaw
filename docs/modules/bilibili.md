@@ -1,10 +1,22 @@
 # B 站接入层
 
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
 > API 优先的 B 站数据访问层，包含 Cookie 认证、核心 API 封装和 agent-browser 浏览器集成。
 
 ## 概述
 
 `BilibiliAPIClient.get_video_comments()` 在 `CommentInfo` 中保留评论 `ctime`（Unix 秒）、`reply_count` 与 `avatar`；缺失时使用 `0 / 0 / ""`，经 HTTP 评论接口透传给原生客户端展示。
+
+`CommentInfo` 还携带 `rpid` / `root` / `parent`（2026-10-19 起，默认 `0`）：`root` 是楼层根评论、`parent` 是被回复的那条，配合 `post_comment(root=..., parent=...)` 就能发楼中楼。蓝鱼实验室是第一个消费方；旧调用方不读这三个字段时行为逐字节不变。
+
+`get_space_profile(mid)` 用 WBI 签名的 `/x/space/wbi/acc/info` 匿名查公开资料（`name` / `mid` / `sign`），供蓝鱼在主号 Cookie 失效时解析主人昵称；该接口可能返回 `-352 风控校验失败`，调用方按「查不到」处理。
+
+`send_private_message(uid, text)` 走 `api.vc.bilibili.com/web_im/v1/web_im/send_msg`（与评论共用 Cookie + csrf，另带 `referer`）；蓝鱼实验室的「私信通知」用它，上游拒绝 / 风控返回真实错误码。
+
+`get_reply_notifications(limit=...)` 读取消息中心的 `/x/msgfeed/reply`（「回复我的 / @我」）：每条通知带 `item.at_details`（这条评论 @ 了谁）与 `item.subject_id`（视频评论为 `aid`），蓝鱼实验室的 @ 主人联调用例靠它证明提及真的到达；生产链路不依赖该接口。
+
+`get_video_comments(limit=...)` 同日改为**翻页取满**：`/x/v2/reply/main` 单次最多返回一页且会忽略过大的 `ps`，所以按 `cursor.next` 走到 `is_end` / 空页 / 游标缺失 / 上限 5 页为止（每次请求 `ps ≤ 20`）。上游没有 `cursor` 字段时仍只发一次请求，老的返回结构行为不变。
 
 `bilibili/` 包是系统访问 B 站 API 的唯一出口；B 站 steady-state discovery 还会通过 `sources/bili_tasks.py`、`runtime/bilibili_producer.py` 和浏览器扩展提供搜索兜底任务桥。整体分四层：
 
@@ -18,11 +30,13 @@
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 3.1 Cookie 认证 | ✅ | set / load / validate / clear + CLI auth 命令 + 运行时 cookie 回退 |
-| 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传 |
+| 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传。guided init 期间异值推送暂存到 `data/runtime/staged_bilibili_cookie.json`、init 完成后自动应用（`runtime-status` 的 `bilibili_cookie_staged` 可见）；写入探针遭遇传输失败时短退避重试后以显式 unverified 标记落盘（账号同步每轮复检兜底），平台明确 -101 仍拒绝；凭据落盘即清 `account_sync_state.json` 残留的 `auth_expired` 横幅状态 |
+| 扫码登录 | ✅ | 成功码 0 精确判定，读取本次响应 Set-Cookie，调用方兼容 URL 参数 |
 | 3.2 核心 API | ✅ | 10+ API 方法 + 限流 + 统一错误处理 |
+| 移动端播放画质 | ✅ | DASH 候选先匹配请求的 `qn`，再在同画质内选择 `preferred_codec`；目标画质不可用时保留候选流回退，`video.qn` 始终表示实际返回的画质。 |
 | 登录态诊断 | ✅ | 任意 `_get_json()` endpoint 返回 `-101` 时抛 `BilibiliAuthExpiredError`；日志使用固定 session-expired 文案提示重新登录或保持扩展在线，不复制远端 message/body。 |
 | 搜索 WBI 化与 412 软降级 | ✅ | `search()` 现会先从 `nav` 获取 WBI key，走 `/x/web-interface/wbi/search/type`；遇到 `412 Precondition Failed` 时会记录 warning 并返回空结果，避免拖垮整轮 discover |
-| 搜索风控冷却（分级） | ✅ | 412（显式 IP 封禁）即时进入硬冷却（base 600s）；`v_voucher`（多为 WBI key churn / 轻限流）改为**阈值化软冷却**——单个关键词耗尽重试只记一次 streak、不触发冷却（整轮其余关键词 + 共用此冷却的 explore 继续出货），但会打开短期 `search_dom_fallback_remaining()` 信号让扩展可补一轮真实搜索页；连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词级耗尽才启用进程级 cooldown（base 缩到 180s）；一旦怀疑风暴（streak>0）后续关键词只做单次快探测、不再每词 ~21s 硬抗，任一成功即清零 streak。所有 BilibiliAPIClient 实例共享冷却和 DOM fallback 状态 |
+| 搜索风控冷却（分级） | ✅ | 412（显式 IP 封禁）即时进入硬冷却（base 600s）；`v_voucher`（多为 WBI key churn / 轻限流）改为**阈值化软冷却**——单个关键词耗尽重试只记一次 streak、不触发冷却（整轮其余关键词 + 共用此冷却的 explore 继续出货），但会打开短期 `search_dom_fallback_remaining()` 信号让扩展可补一轮真实搜索页；连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词级耗尽才启用进程级 cooldown（base 缩到 180s）；一旦怀疑风暴（streak>0）后续关键词只做单次快探测、不再每词 ~21s 硬抗，任一成功即清零 streak。冷却与 DOM fallback 状态除在同进程所有 BilibiliAPIClient 实例间共享外，还会落盘到 `<data_dir>/bilibili_search_backoff.json`（墙钟 deadline，`memory/json_state.py` 文件锁读-改-写，fail-open），API 主进程 / worker / discovery worker 跨进程按「最保守者赢」合并；escalation 档位与 streak 只在事故窗口（最长冷却 1800s）内合并，任一进程搜索成功后清零并传播；冷却窗口过半时放行一次单 attempt 恢复探测（每窗口一次、跨进程共享预算），成功即提前解除冷却 |
 | 扩展搜索兜底任务桥 | ✅ | `BilibiliExtensionSearchProducer` 在 `search_cooldown_remaining()>0` 或 `search_dom_fallback_remaining()>0`、扩展 presence 在线、B 站池子低于 quota 时入队 `bili_tasks(type="search")`；扩展后台打开 `search.bilibili.com/all?keyword=...`，content script 抓渲染后的搜索卡片并 POST `/api/sources/bili/task-result`，后端写入 `discovery_candidates`，后续仍由统一 evaluator 判断是否入池 |
 | 近期供给 lane | ✅ | API 与扩展搜索都在既有请求/关键词预算内把每轮第 1 个 query 标为 `order="pubdate"`，最多取 5 条；它仍使用 `source_strategy="search"` / `bili-extension-search` 与同一 admission 规则，只用 `discovery_lane="recent"`、`source_context` 和 raw payload 保留可回放的检索来源。 |
 | 弹幕 fetch outcome | ✅ | `get_danmaku_texts_result()` 区分 `success`（可为空）、`no_data` 与 `transient_failure`；HTTP、XML、限速和网络异常保留原因并交给上层重试。HTTP 200 但根元素不是 B 站 `<i>`（包括 HTML challenge）不会伪装成成功空结果。`get_danmaku_texts()` 继续提供只返回文本列表的兼容包装 |
@@ -30,6 +44,7 @@
 | 原生收藏 / 稍后再看写入 | ✅ | `BilibiliAPIClient` 新增认证 form POST、exact-title 收藏夹复用/创建、视频收藏和稍后再看写入；`BilibiliNativeSaveAdapter` 将 B 站 application code 归一化为 saved-sync 状态，并已由 `RuntimeContext` 注册到平台中立 `/api/saved/*`。UI 仍属后续任务；默认关闭自动同步，旧 B 站保存端点仍只写本地。 |
 | 分区 id 与视频标签 | ✅ | `get_video_info()` 从同一 `/x/web-interface/view` 响应补填 `tid` / `tid_v2`（零额外请求）；新增 `get_video_tags(bvid)` 走 `/x/tag/archive/tags` 取标签名（匿名可用，响应远轻于 `/x/web-interface/view/detail`）。**实测（2026-09-11，8 个分区各 1 个样本）**：`/view` 响应**不含 `tag` 数组**，`tname` / `tname_v2` **恒为空字符串** —— 因此该路径下 `VideoInfo.tags` 保持 `None`，标签名只能由 `get_video_tags()` 显式获取。 |
 | 3.3 agent-browser 集成 | ✅ | navigate / get_page_content + CLI browser 命令 |
+| /view 进程内缓存 | ✅ | `get_video_view_data()` 对成功响应做进程级 LRU 缓存（TTL 600s、上限 512 条，键含 SESSDATA 指纹以区分匿名 / 登录响应）：同一轮 discovery 里推荐打分、danmaku / 字幕 / play 的 cid 解析、收藏写入的 aid 解析复用同一次请求，失败永不缓存 |
 
 ### Danmaku outcome API
 
@@ -39,6 +54,10 @@
 `get_danmaku_texts()` 仅作为返回文本列表的兼容包装。
 
 ## 公开 API
+
+`poll_qrcode(qrcode_key)` 返回 `status/message/url/qrcode_key/raw_code/cookie`；`cookie` 仅包含成功响应的凭据白名单，供后端持久化，不对前端暴露。非成功状态不返回 Cookie，不能凭 URL 非空判定成功。
+
+`BilibiliAPIClient.get_play_info(bvid, cid=None, qn=80, preferred_codec="avc")` 为 `/api/bilibili/player/play-url` 返回视频、音轨、选集、字幕与弹幕地址。B 站 DASH 响应可能同时包含多档清晰度，`qn` 匹配优先于编码偏好；不能直接取第一个 AVC 流，否则 480P 请求会错误返回 1080P。若目标画质不在实际候选中，保留既有回退行为，调用方应以响应中的 `video.qn` 判断实际画质。
 
 ### AuthManager
 
@@ -124,6 +143,7 @@ related = await client.get_related_videos("BV1xx411c7mD")
 
 # 评论
 comments = await client.get_video_comments("BV1xx411c7mD", limit=20)  # list[CommentInfo]
+notices = await client.get_reply_notifications(limit=20)  # 消息中心「回复/@我」，原始 item 列表
 
 # 排行榜
 ranking = await client.get_ranking(rid=0)
@@ -192,7 +212,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
 | `FollowingUser` | 关注用户（mid, uname, sign） |
-| `CommentInfo` | 评论（mid, uname, message, like_count） |
+| `CommentInfo` | 评论（mid, uname, message, like_count；`rpid` / `root` / `parent` 用于楼中楼回复，默认 0） |
 | `AuthStatus` | 认证状态（has_cookie, authenticated, username 等；`network_error=True` 表示校验死在传输层——代理 / 风控 / 超时——而非 Cookie 失效） |
 | `BilibiliAuthExpiredError` | 任意 `_get_json()` endpoint 返回 `-101` 时的专项异常，仍继承 `BilibiliAPIError` |
 | `BilibiliFavoriteDuplicateError` | 仅最终 `/x/v3/fav/resource/deal` POST 返回 `11201` 时产生的安全 operation-tagged 异常；folder/resolver 同码不会变成 duplicate success。 |
@@ -222,7 +242,7 @@ headed = false     # 调试时设为 true
 7. **账户侧长期信号分层**：`history / favorites / following` 作为低频同步来源，用来补插件实时事件看不到的长期偏好变化
 8. **搜索 WBI 对齐 + 保守降级**：B 站搜索已切到 WBI 路径；客户端现在会复用 `nav` 的 WBI key 对齐浏览器搜索链路，剩余 `412` / `v_voucher` 再降级为空结果，避免把单次 search 失败放大成整轮 refresh 错误
 9. **Cookie 过期显式化**：所有 `_get_json()` endpoint 的 `-101` 都与普通业务错误分开处理，日志和异常文本使用固定 session expired / re-auth 提示，不复制远端 message/body；上层仍可按 `BilibiliAPIError` 统一兜底
-10. **进程级 search 冷却（分级）**：`BilibiliAPIClient.search()` 把 412 与 `v_voucher` 拆开处理——412 即时硬冷却（base 600s）；`v_voucher` 走 `_record_voucher_block()` 阈值化，连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词耗尽才设共享 cooldown（base 180s），单个被风控的关键词不再让整轮 search + explore 归零十几分钟，`_reset_search_cooldown_backoff()` 在任一成功时清零 streak 与升级档位。dedicated search clients 和主 runtime client 仍通过 `search_cooldown_remaining()` 共享同一状态
+10. **进程级 search 冷却（分级）**：`BilibiliAPIClient.search()` 把 412 与 `v_voucher` 拆开处理——412 即时硬冷却（base 600s）；`v_voucher` 走 `_record_voucher_block()` 阈值化，连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词耗尽才设共享 cooldown（base 180s），单个被风控的关键词不再让整轮 search + explore 归零十几分钟，`_reset_search_cooldown_backoff()` 在任一成功时清零 streak 与升级档位。dedicated search clients 和主 runtime client 仍通过 `search_cooldown_remaining()` 共享同一状态；该状态经 `bilibili/search_backoff.py` 落盘 `<data_dir>/bilibili_search_backoff.json`（墙钟 deadline + 文件锁读-改-写，不可写时完全退回进程内行为），CLI 四进程布局下 API 主进程的 412 硬冷却与 worker 侧 v_voucher 软冷却 / DOM fallback 信号不再互相不可见；冷却窗口过半时 `search()` 放行一次单 attempt 恢复探测（探测预算经状态文件 `activated_at` / `last_probe_at` 跨进程共享，每窗口最多一次、失败经正常 412 / v_voucher 路径重新武装冷却），成功即清除全部冷却状态，风控解除的发现时间从最长 1800s 空转缩短到约半个窗口
 11. **扩展兜底只做冷却时补位**：B 站 API 搜索仍是主路径；后端搜索任务只在服务端搜索冷却且浏览器 presence 在线时触发，避免常驻打开搜索页或把插件变成主 crawler。扩展侧只抓用户真实会话中可见的渲染结果，不在 isolated world 里伪造签名请求；background 对 `BILI_TASK_EXECUTE` 做短重试以吸收 content script 注入时序抖动；回传结果也不直接入正式池，而是进入统一候选待评估池，继续复用跨源评估、去重和 admission 规则。
 12. **账号写入 fail closed**：收藏/稍后再看在视频信息 lookup 前先验证 `SESSDATA + bili_jct`；BV → aid 通过 `_get_json()` 解析 application code，只有非 bool 的正整数 aid 才允许发写 POST。只有最终 favorite resource-deal POST 的 `11201` 会被 client 包装成 `BilibiliFavoriteDuplicateError`，adapter 还要求 resolved action 为 favorite 才映射 `already_synced`；folder/resolver 的 generic `11201` 及非 favorite route 的 duplicate 异常保持 failed。watch-later 的 `90003` 是视频不可用并固定返回 failed。
 13. **收藏夹并发单飞范围**：每个 `BilibiliAPIClient` 按 exact title 持有实例内 `asyncio.Lock`；进入锁后重新查询再决定创建，只避免同一个 client 实例内的并发调用重复创建 `OpenBiliClaw`。不同 client（即使使用同一账号）、不同进程或 event loop 之间没有协调；不宣称 account/process 级全局单飞。

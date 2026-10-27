@@ -1,0 +1,35 @@
+{
+  "scenarios": [
+    {
+      "mode": "feed",
+      "exit": 0,
+      "summary": "TikTok feed: fetched=2; storage=isolated; candidate_writes=0"
+    },
+    {
+      "mode": "tag",
+      "exit": 0,
+      "summary": "TikTok tag: fetched=2; storage=isolated; candidate_writes=0"
+    },
+    {
+      "mode": "user",
+      "exit": 0,
+      "summary": "TikTok user: fetched=2; storage=isolated; candidate_writes=0"
+    }
+  ],
+  "application_db_changed": false,
+  "temporary_files": [
+    "tiktok_request_state.sqlite3"
+  ],
+  "projection_deltas": {
+    "task": 0,
+    "task_result": 0,
+    "seen": 0,
+    "affinity": 0,
+    "snapshot": 0,
+    "schedule": 0,
+    "event_ingress": 0,
+    "memory": 0,
+    "profile": 0
+  },
+  "method": "No application DB changes; transport temporary directory contains request timestamps only. Pipeline smoke is separate."
+}

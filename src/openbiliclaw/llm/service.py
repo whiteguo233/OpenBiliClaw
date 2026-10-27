@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -12,14 +14,13 @@ from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
-from .base import LLMProviderError, LLMRateLimitError
+from .base import LLMProviderError, LLMRateLimitError, LLMStreamChunk, LLMToolCallUnsupportedError
 from .concurrency import (
     DEFAULT_TOTAL_LLM_CONCURRENCY,
     LLMConcurrencyGate,
     PrioritySemaphore,
     coerce_total_concurrency,
 )
-from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_socratic_dialogue_prompt
 from .sponsored_errors import SponsoredError, is_fallback_allowed
 
@@ -103,6 +104,107 @@ class SupportsComplete(Protocol):
     def is_chat_capable(self, name: str) -> bool: ...
 
     def provider_type(self, name: str | None = None) -> str: ...
+
+    def provider_supports_tool_calling(self, name: str | None = None) -> bool: ...
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+    ) -> LLMResponse: ...
+
+    async def complete_with_tools_chain(
+        self,
+        instance_ids: list[str] | tuple[str, ...],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+    ) -> LLMResponse: ...
+
+    async def complete_provider_with_tools(
+        self,
+        provider_name: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse: ...
+
+    def stream_complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
+
+    def stream_chain(
+        self,
+        instance_ids: list[str] | tuple[str, ...],
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
+
+    def stream_provider(
+        self,
+        provider_name: str,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
+
+    def stream_complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
+
+    def stream_with_tools_chain(
+        self,
+        instance_ids: list[str] | tuple[str, ...],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
+
+    def stream_provider_with_tools(
+        self,
+        provider_name: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]: ...
 
 
 class LLMServiceError(Exception):
@@ -288,9 +390,11 @@ class LLMService:
     # ``complete_socratic_dialogue`` (and suppresses the reply_style line
     # there, since the entire block is swapped).
     dialogue_tone_prompt: str = ""
-    # Optional closed-source Sponsored Runtime client. Default None keeps the
-    # open-source build byte-identical (BYOK / Ollama only); the provider is
-    # injected by configuration, by tests, or lazily by the env bootstrap.
+    # Canonical locale id (zh-Hans / zh-Hant / en) for model output that the
+    # user reads. Injected into the *user* prompt at call time so the system
+    # prompt stays byte-identical for provider caching. Empty (default) keeps
+    # the previous Chinese-only behaviour for tests and standalone callers.
+    output_language: str = ""
     sponsored_provider: SponsoredProvider | None = None
     _logged_unknown_override_keys: set[tuple[str, str]] = field(
         default_factory=set, init=False, repr=False
@@ -445,6 +549,25 @@ class LLMService:
         ):
             return None
         return None
+
+    @staticmethod
+    def _structured_json_contract(system_instruction: str) -> str:
+        """Ensure JSON-mode instructions carry a lowercase ``json`` token.
+
+        Some OpenAI-compatible endpoints reject ``response_format=json_object``
+        unless a message contains the literal lowercase token. Preserve an
+        existing instruction's meaning by normalizing its uppercase ``JSON``
+        spelling first; only append the minimal contract token when no such
+        spelling exists.
+        """
+
+        instruction = system_instruction.strip()
+        if "json" in instruction:
+            return instruction
+        normalized = instruction.replace("JSON", "json")
+        if "json" in normalized:
+            return normalized
+        return f"{normalized}\n\njson" if normalized else "json"
 
     def _core_memory_blocks(self, inject_core_memory: bool) -> tuple[str, str]:
         """Return ``(stable_block, volatile_block)`` for core-memory injection.
@@ -606,6 +729,109 @@ class LLMService:
                     record_fn(response, caller=caller)
         return response
 
+    async def stream_complete_with_core_memory(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+        bypass_semaphore: bool = False,
+        inject_core_memory: bool = True,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Streaming variant of :meth:`complete_with_core_memory`.
+
+        Same prompt assembly, module routing, provider slot and usage
+        recording; yields content ``delta`` chunks as they arrive and one
+        terminal chunk with the aggregated response. Routing fallback only
+        happens before the first delta (see ``LLMRegistry.stream_chain``).
+        """
+        stable_block, volatile_block = self._core_memory_blocks(inject_core_memory)
+        parts = [system_instruction.strip()]
+        if stable_block:
+            parts.append("以下是当前用户的 core memory，请作为理解背景：")
+            parts.append(stable_block)
+        system_content = "\n\n".join(parts)
+        effective_reasoning_effort = self._reasoning_effort_for_call(
+            caller,
+            reasoning_effort,
+        )
+        user_content = self._prepend_volatile_core_memory(user_input, volatile_block)
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_content})
+
+        def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:
+            routed_chain = self._resolve_module_chain(caller)
+            if routed_chain is not None:
+                return self.registry.stream_chain(
+                    routed_chain,
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    reasoning_effort=effective_reasoning_effort,
+                )
+            routed = self._resolve_module_override(caller)
+            if routed is None:
+                return self.registry.stream_complete(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    reasoning_effort=effective_reasoning_effort,
+                )
+            provider, model = routed
+            return self.registry.stream_provider(
+                provider,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=effective_reasoning_effort,
+                model=model,
+            )
+
+        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_router import stream_project_completion
+
+            return stream_project_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                fallback=_route_user_stream,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                json_mode=json_mode,
+                reasoning_effort=effective_reasoning_effort,
+            )
+
+        terminal: LLMResponse | None = None
+        try:
+            async with self._provider_slot(
+                caller=caller,
+                bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
+            ):
+                async for chunk in _route_stream():
+                    if chunk.response is not None:
+                        terminal = chunk.response
+                    yield chunk
+        except LLMProviderError as exc:
+            raise LLMProviderExecutionError(str(exc)) from exc
+        if terminal is None or not terminal.content.strip():
+            raise LLMResponseContentError("LLM returned an empty response.")
+        recorder = self.usage_recorder
+        if recorder is not None:
+            record_fn = getattr(recorder, "record", None)
+            if callable(record_fn):
+                with suppress(Exception):
+                    record_fn(terminal, caller=caller)
+
     def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
         """Return the Sponsored provider, or None when disabled.
 
@@ -757,7 +983,7 @@ class LLMService:
         callers asking for more than the floor keep their budget.
         """
         return await self.complete_with_core_memory(
-            system_instruction=ensure_json_mode_contract(system_instruction),
+            system_instruction=self._structured_json_contract(system_instruction),
             user_input=user_input,
             history=history,
             temperature=temperature,
@@ -795,7 +1021,15 @@ class LLMService:
             if callable(provider_type)
             else provider_name.lower()
         )
-        if provider_key not in {"openai", "openai_compatible", "openrouter", "orcarouter"}:
+        if provider_key not in {
+            "openai",
+            "openai_compatible",
+            "openrouter",
+            "orcarouter",
+            "requesty",
+            "api_route",
+            "cheaperinference",
+        }:
             return False
 
         provider_obj: object | None = None
@@ -844,7 +1078,7 @@ class LLMService:
         # the text path; see MIN_STRUCTURED_MAX_TOKENS.
         max_tokens = max(int(max_tokens), MIN_STRUCTURED_MAX_TOKENS)
         stable_block, volatile_block = self._core_memory_blocks(inject_core_memory)
-        parts = [ensure_json_mode_contract(system_instruction)]
+        parts = [self._structured_json_contract(system_instruction)]
         if stable_block:
             parts.append("以下是当前用户的 core memory，请作为理解背景：")
             parts.append(stable_block)
@@ -987,8 +1221,6 @@ class LLMService:
         )
 
         # Try to parse tool calls from the response
-        import json
-
         content = (response.content or "").strip()
         if content.startswith("{"):
             try:
@@ -1002,6 +1234,401 @@ class LLMService:
                 pass  # Not valid JSON — treat as normal text reply
 
         return response
+
+    async def complete_with_native_tools(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        bypass_semaphore: bool = False,
+    ) -> LLMResponse:
+        """Execute one agent-loop step with multi-hop tool calling.
+
+        Unlike :meth:`complete_with_tools` (single-turn, legacy flat tool
+        dicts), this takes the full canonical message list — system, history,
+        assistant messages with ``tool_calls`` and ``role="tool"`` results —
+        plus OpenAI-format tool schemas, and is safe to call once per hop.
+
+        When the routed provider implements native function calling
+        (``supports_tool_calling``), the request goes through the registry's
+        native FC chain with the usual fallback/cooldown semantics. Otherwise
+        the messages are flattened into the prompt-simulation path: tool
+        definitions (with JSON Schemas) are rendered into the system prompt
+        and ``{"tool_call": ...}`` / ``{"tool_calls": [...]}`` JSON replies
+        are parsed into normalized ``response.tool_calls``.
+
+        Neither path injects core memory — agent-loop callers own the system
+        prompt. A response with tool calls and empty content is valid; a
+        response with neither raises ``LLMResponseContentError``.
+        """
+        effective_reasoning_effort = self._reasoning_effort_for_call(
+            caller,
+            reasoning_effort,
+        )
+        native = self._route_supports_native_tools(caller)
+        if native:
+            try:
+                response = await self._complete_native_tool_call(
+                    messages=messages,
+                    tools=tools,
+                    caller=caller,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=effective_reasoning_effort,
+                    bypass_semaphore=bypass_semaphore,
+                )
+            except LLMToolCallUnsupportedError:
+                # The route claimed support (first instance) but the actual
+                # call resolved to an FC-less provider (e.g. responses-flavor
+                # instance). Degrade to simulation instead of failing the turn.
+                logger.info("Native tool calling unavailable at call time; simulating.")
+                response = await self._complete_simulated_tool_call(
+                    messages=messages,
+                    tools=tools,
+                    caller=caller,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=effective_reasoning_effort,
+                    bypass_semaphore=bypass_semaphore,
+                )
+        else:
+            response = await self._complete_simulated_tool_call(
+                messages=messages,
+                tools=tools,
+                caller=caller,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=effective_reasoning_effort,
+                bypass_semaphore=bypass_semaphore,
+            )
+        if not response.content.strip() and not response.tool_calls:
+            raise LLMResponseContentError("LLM returned an empty response.")
+        recorder = self.usage_recorder
+        if recorder is not None:
+            record_fn = getattr(recorder, "record", None)
+            if callable(record_fn):
+                with suppress(Exception):
+                    record_fn(response, caller=caller)
+        return response
+
+    def _route_supports_native_tools(self, caller: str) -> bool:
+        """Return whether the first provider of the resolved route has native FC."""
+        from .sponsored_router import sponsored_enabled
+
+        if self.sponsored_provider is not None or sponsored_enabled():
+            return True
+        routed_chain = self._resolve_module_chain(caller)
+        if routed_chain is not None:
+            return bool(routed_chain) and self.registry.provider_supports_tool_calling(
+                routed_chain[0]
+            )
+        routed = self._resolve_module_override(caller)
+        provider_name = routed[0] if routed is not None else self.registry.default_provider
+        return self.registry.provider_supports_tool_calling(provider_name)
+
+    async def _complete_native_tool_call(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str,
+        temperature: float,
+        max_tokens: int,
+        reasoning_effort: str | None,
+        bypass_semaphore: bool,
+    ) -> LLMResponse:
+        """Run one native-FC call under the provider slot and module routing."""
+
+        async def _do_user_call() -> LLMResponse:
+            routed_chain = self._resolve_module_chain(caller)
+            if routed_chain is not None:
+                return await self.registry.complete_with_tools_chain(
+                    routed_chain,
+                    messages,
+                    tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
+            routed = self._resolve_module_override(caller)
+            if routed is None:
+                return await self.registry.complete_with_tools(
+                    messages,
+                    tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
+            provider, model = routed
+            return await self.registry.complete_provider_with_tools(
+                provider,
+                messages,
+                tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+
+            response = await try_sponsored_completion(
+                messages,
+                tools=tools,
+                provider=self.sponsored_provider,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                caller=caller,
+            )
+            if response is not None:
+                return response
+            with bypass_sponsored():
+                return await _do_user_call()
+
+        try:
+            async with self._provider_slot(
+                caller=caller,
+                bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
+            ):
+                return await _do_llm_call()
+        except LLMToolCallUnsupportedError:
+            raise
+        except LLMProviderError as exc:
+            raise LLMProviderExecutionError(str(exc)) from exc
+
+    async def _complete_simulated_tool_call(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str,
+        temperature: float,
+        max_tokens: int,
+        reasoning_effort: str | None,
+        bypass_semaphore: bool,
+    ) -> LLMResponse:
+        """Prompt-simulation tool calling for providers without native FC."""
+        system_instruction, history, user_input = _flatten_agent_messages(messages)
+        tool_names = [_tool_schema_name(tool) for tool in tools]
+        tool_names = [name for name in tool_names if name]
+        if tools:
+            augmented_system = (
+                system_instruction + "\n\n"
+                "<available_tools>\n" + _render_simulated_tool_block(tools) + "\n"
+                "</available_tools>\n\n"
+                "<tool_call_format>\n"
+                "如果你需要调用工具，请返回如下 JSON（不要附带任何其他文字）：\n"
+                '{"tool_call": {"name": "工具名", "arguments": {参数}}}\n'
+                "需要连续调用多个工具时可以返回：\n"
+                '{"tool_calls": [{"name": "工具名", "arguments": {参数}}, ...]}\n'
+                "如果不需要调用工具，正常回复用户即可（不要输出 JSON）。\n"
+                "</tool_call_format>"
+            )
+        else:
+            augmented_system = system_instruction
+        response = await self.complete_with_core_memory(
+            system_instruction=augmented_system,
+            user_input=user_input,
+            history=history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=False,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+            bypass_semaphore=bypass_semaphore,
+            # Agent-loop callers own the system prompt (including whatever
+            # profile context they want); injecting core memory here would
+            # diverge from the native-FC path, which takes messages verbatim.
+            inject_core_memory=False,
+        )
+        if tools:
+            calls = _parse_simulated_tool_calls(response.content, tool_names)
+            if calls:
+                response.tool_calls = calls
+                response.content = ""
+        return response
+
+    async def stream_complete_with_native_tools(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        bypass_semaphore: bool = False,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Streaming variant of :meth:`complete_with_native_tools`.
+
+        Native-FC routes stream content deltas live and deliver the
+        aggregated response (with any ``tool_calls``) on the terminal chunk.
+        The prompt-simulation route stays one-shot — whether the reply is a
+        tool_call JSON payload is known only after the full text arrives —
+        so its final text is emitted as a single delta.
+        """
+        effective_reasoning_effort = self._reasoning_effort_for_call(
+            caller,
+            reasoning_effort,
+        )
+        native = self._route_supports_native_tools(caller)
+        terminal: LLMResponse | None = None
+        emitted_delta = False
+        if native:
+            try:
+                async for chunk in self._stream_native_tool_call(
+                    messages=messages,
+                    tools=tools,
+                    caller=caller,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=effective_reasoning_effort,
+                    bypass_semaphore=bypass_semaphore,
+                ):
+                    if chunk.delta:
+                        emitted_delta = True
+                    if chunk.response is not None:
+                        terminal = chunk.response
+                    yield chunk
+            except LLMToolCallUnsupportedError:
+                if emitted_delta or terminal is not None:
+                    raise
+                # Same degrade-to-simulation contract as the one-shot path.
+                logger.info("Native tool calling unavailable at call time; simulating.")
+                async for chunk in self._stream_simulated_tool_call(
+                    messages=messages,
+                    tools=tools,
+                    caller=caller,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=effective_reasoning_effort,
+                    bypass_semaphore=bypass_semaphore,
+                ):
+                    if chunk.response is not None:
+                        terminal = chunk.response
+                    yield chunk
+        else:
+            async for chunk in self._stream_simulated_tool_call(
+                messages=messages,
+                tools=tools,
+                caller=caller,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=effective_reasoning_effort,
+                bypass_semaphore=bypass_semaphore,
+            ):
+                if chunk.response is not None:
+                    terminal = chunk.response
+                yield chunk
+        if terminal is None or (not terminal.content.strip() and not terminal.tool_calls):
+            raise LLMResponseContentError("LLM returned an empty response.")
+        recorder = self.usage_recorder
+        if recorder is not None:
+            record_fn = getattr(recorder, "record", None)
+            if callable(record_fn):
+                with suppress(Exception):
+                    record_fn(terminal, caller=caller)
+
+    async def _stream_native_tool_call(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str,
+        temperature: float,
+        max_tokens: int,
+        reasoning_effort: str | None,
+        bypass_semaphore: bool,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Run one streaming native-FC call under the provider slot and routing."""
+
+        def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:
+            routed_chain = self._resolve_module_chain(caller)
+            if routed_chain is not None:
+                return self.registry.stream_with_tools_chain(
+                    routed_chain,
+                    messages,
+                    tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
+            routed = self._resolve_module_override(caller)
+            if routed is None:
+                return self.registry.stream_complete_with_tools(
+                    messages,
+                    tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                )
+            provider, model = routed
+            return self.registry.stream_provider_with_tools(
+                provider,
+                messages,
+                tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            )
+
+        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_router import stream_project_completion
+
+            return stream_project_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                fallback=_route_user_stream,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                tools=tools,
+                reasoning_effort=reasoning_effort,
+            )
+
+        try:
+            async with self._provider_slot(
+                caller=caller,
+                bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
+            ):
+                async for chunk in _route_stream():
+                    yield chunk
+        except LLMToolCallUnsupportedError:
+            raise
+        except LLMProviderError as exc:
+            raise LLMProviderExecutionError(str(exc)) from exc
+
+    async def _stream_simulated_tool_call(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        caller: str,
+        temperature: float,
+        max_tokens: int,
+        reasoning_effort: str | None,
+        bypass_semaphore: bool,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """One-shot streaming adapter over the prompt-simulation tool path."""
+        response = await self._complete_simulated_tool_call(
+            messages=messages,
+            tools=tools,
+            caller=caller,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            bypass_semaphore=bypass_semaphore,
+        )
+        if response.content:
+            yield LLMStreamChunk(delta=response.content)
+        yield LLMStreamChunk(response=response)
 
     async def complete_socratic_dialogue(
         self,
@@ -1022,13 +1649,45 @@ class LLMService:
             source_platform_mix=source_mix or None,
             reply_style=self.reply_style,
             dialogue_tone_prompt=self.dialogue_tone_prompt,
+            output_language=self.output_language,
         )
         return await self.complete_with_core_memory(
             system_instruction=prompt_messages[0]["content"],
-            user_input=user_message,
+            # The builder appends the locale directive to the user message; the
+            # raw user text must still be what gets persisted as chat history.
+            user_input=prompt_messages[-1]["content"],
             history=history,
             caller=caller,
         )
+
+    async def stream_socratic_dialogue(
+        self,
+        *,
+        user_message: str,
+        history: list[dict[str, str]],
+        caller: str = "",
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Streaming variant of :meth:`complete_socratic_dialogue`."""
+        tone_profile = self._build_dialogue_tone_profile()
+        preference_raw = self.memory.get_layer("preference").data
+        source_mix = preference_layer_from_dict(preference_raw).source_platform_mix
+        prompt_messages = build_socratic_dialogue_prompt(
+            user_message=user_message,
+            core_memory_text="",
+            tone_profile=tone_profile,
+            history=[],
+            source_platform_mix=source_mix or None,
+            reply_style=self.reply_style,
+            dialogue_tone_prompt=self.dialogue_tone_prompt,
+            output_language=self.output_language,
+        )
+        async for chunk in self.stream_complete_with_core_memory(
+            system_instruction=prompt_messages[0]["content"],
+            user_input=prompt_messages[-1]["content"],
+            history=history,
+            caller=caller,
+        ):
+            yield chunk
 
     def _build_dialogue_tone_profile(self) -> ToneProfile:
         """Infer tone profile for dialogue from persisted memory."""
@@ -1043,3 +1702,127 @@ class LLMService:
             preference_summary=self.memory.get_core_memory().get("preference_summary", {}),
             recent_feedback=[],
         )
+
+
+def _tool_schema_name(tool: dict[str, Any]) -> str:
+    """Extract the function name from an OpenAI-format tool schema."""
+    function = tool.get("function")
+    if isinstance(function, dict):
+        return str(function.get("name") or "").strip()
+    return ""
+
+
+def _render_simulated_tool_block(tools: list[dict[str, Any]]) -> str:
+    """Render OpenAI-format tool schemas as a prompt-level tool list."""
+    lines: list[str] = []
+    for tool in tools:
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(function.get("description") or "")
+        line = f"- {name}: {description}"
+        parameters = function.get("parameters")
+        if isinstance(parameters, dict) and parameters:
+            line += f"\n  parameters: {json.dumps(parameters, ensure_ascii=False)}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _flatten_agent_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, str]], str]:
+    """Flatten canonical tool-calling messages for the simulation path.
+
+    Returns ``(system_instruction, history, user_input)``: system messages
+    join into the instruction; assistant turns with ``tool_calls`` become
+    text annotations; ``role="tool"`` results become user-role result notes.
+    The last flattened message becomes ``user_input`` when it is user-role
+    (always true for the loop: hop 1 ends with the user message, later hops
+    end with tool results); otherwise a continuation marker is appended.
+    """
+    system_parts: list[str] = []
+    flattened: list[dict[str, str]] = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        content = message.get("content")
+        text = content if isinstance(content, str) else str(content or "")
+        if role == "system":
+            if text.strip():
+                system_parts.append(text)
+            continue
+        if role == "assistant":
+            calls = message.get("tool_calls")
+            if isinstance(calls, list) and calls:
+                descriptions = []
+                for call in calls:
+                    function = call.get("function") if isinstance(call, dict) else None
+                    if not isinstance(function, dict):
+                        continue
+                    call_name = str(function.get("name") or "")
+                    call_args = str(function.get("arguments") or "")
+                    descriptions.append(f"{call_name}({call_args})")
+                if descriptions:
+                    note = f"（调用了工具 {'；'.join(descriptions)}）"
+                    text = f"{text}\n{note}".strip()
+            flattened.append({"role": "assistant", "content": text})
+            continue
+        if role == "tool":
+            flattened.append({"role": "user", "content": f"[工具执行结果] {text}"})
+            continue
+        flattened.append({"role": "user", "content": text})
+
+    user_input = "（请根据以上工具结果继续回答用户）"
+    if flattened and flattened[-1]["role"] == "user":
+        user_input = flattened.pop()["content"]
+    return "\n\n".join(system_parts), flattened, user_input
+
+
+def _parse_simulated_tool_calls(
+    content: str,
+    tool_names: list[str],
+) -> list[dict[str, Any]] | None:
+    """Parse ``{"tool_call": ...}`` / ``{"tool_calls": [...]}`` JSON replies.
+
+    Returns normalized ``{"id", "name", "arguments", "arguments_raw"}``
+    entries, or ``None`` when the content is not a whole-message tool-call
+    JSON object. Calls naming unknown tools are dropped.
+    """
+    text = (content or "").strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    raw_calls: list[Any] = []
+    single = parsed.get("tool_call")
+    if isinstance(single, dict):
+        raw_calls.append(single)
+    multiple = parsed.get("tool_calls")
+    if isinstance(multiple, list):
+        raw_calls.extend(multiple)
+    if not raw_calls:
+        return None
+    known = {name for name in tool_names if name}
+    calls: list[dict[str, Any]] = []
+    for raw in raw_calls:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if name not in known:
+            continue
+        arguments = raw.get("arguments")
+        calls.append(
+            {
+                "id": f"sim-{uuid.uuid4().hex[:8]}",
+                "name": name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+                "arguments_raw": "",
+            }
+        )
+    return calls or None

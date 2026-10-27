@@ -1,0 +1,15 @@
+{
+  "version": "0.3.227",
+  "chrome_load_root": "extension/",
+  "firefox_build_root": "extension/dist-firefox/",
+  "parents": [
+    "11ccce379a9bf48063e9de28fb6d4f388b063a13",
+    "2d8fe411821badc4f65de95a4e384c39498fc57a"
+  ],
+  "sha256": {
+    "manifest.json": "a0ebbec372dcb90d9cc11ba2c800dd34707aebb9f0cfcb960c8e9247ac183e21",
+    "dist/background/service-worker.js": "f98d4513a4db5d8169fbeec2d7215bb36da6c591541c2d0430cbab3b459b696f",
+    "popup/popup.js": "e34be005568b8234c8801e9111e992a894d7715fe85032ac56190f1773cdefc2",
+    "popup/popup.html": "a02abe16d9d441701a9460f3765ab288323346fda7743699e9e2ce4b3993cd17"
+  }
+}

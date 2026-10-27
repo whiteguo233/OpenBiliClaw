@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 
 test("settings page exposes advanced config fields from backend schema", () => {
@@ -75,6 +76,20 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgYoutubeDailyChannelBudget",
     "cfgYoutubeRequestInterval",
     "cfgYoutubeMinInterval",
+    "cfgTiktokEnabled",
+    "cfgTiktokMode",
+    "cfgTiktokCookie",
+    "cfgTiktokCookieEnv",
+    "cfgTiktokRegion",
+    "cfgTiktokTzName",
+    "cfgTiktokTags",
+    "cfgTiktokCreators",
+    "cfgTiktokDailyFeedBudget",
+    "cfgTiktokDailySearchBudget",
+    "cfgTiktokDailyTagBudget",
+    "cfgTiktokDailyUserBudget",
+    "cfgTiktokRequestInterval",
+    "cfgTiktokMinInterval",
     "cfgGithubEnabled",
     "cfgGithubUsername",
     "cfgGithubAccessToken",
@@ -138,6 +153,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgPoolShareDouyin",
     "cfgPoolShareWeibo",
     "cfgPoolShareYoutube",
+    "cfgPoolShareTiktok",
     "cfgPoolShareGithub",
     "cfgPoolShareReddit",
     "cfgSuggestPoolShares",
@@ -200,6 +216,7 @@ test("settings source tab separates every platform into its own block", () => {
     "douyin",
     "weibo",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -228,6 +245,7 @@ test("settings source tab separates every platform into its own block", () => {
     "douyin",
     "weibo",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -258,7 +276,7 @@ test("settings source tab separates every platform into its own block", () => {
     "Linux.do source body and card must close before V2EX starts",
   );
   assert.match(popupJs, /face\.tabIndex = on \? 0 : -1/);
-  assert.match(popupJs, /face\.setAttribute\("aria-disabled", on \? "false" : "true"\)/);
+  assert.match(popupJs, /face\.removeAttribute\("aria-disabled"\)/);
   assert.match(popupJs, /bilibiliEnabled\.checked = cfg\.sources\?\.bilibili\?\.enabled !== false/);
   assert.match(popupJs, /xhsEnabled\.checked = cfg\.sources\?\.xiaohongshu\?\.enabled === true/);
   assert.match(popupJs, /bilibili:\s*\{\s*enabled: checked\("cfgBilibiliEnabled", true\)/);
@@ -460,6 +478,56 @@ test("settings page round-trips YouTube source budgets", () => {
   ]) {
     assert.match(popupHtml, new RegExp(`id="${id}"`));
   }
+});
+
+test("settings page round-trips TikTok source config", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  // Card exists between YouTube and X with its own enable switch + status row.
+  const youtubeStart = popupHtml.indexOf('data-source-card="youtube"');
+  const tiktokStart = popupHtml.indexOf('data-source-card="tiktok"');
+  const twitterStart = popupHtml.indexOf('data-source-card="twitter"');
+  assert.ok(youtubeStart >= 0 && tiktokStart > youtubeStart && twitterStart > tiktokStart);
+  assert.match(popupHtml, /id="cfgTiktokStatus" data-source-status="tiktok"/);
+
+  // Load fills every field from the config snapshot.
+  assert.match(popupJs, /cfg\.sources\?\.tiktok\?\.enabled === true/);
+  assert.match(popupJs, /setVal\("cfgTiktokMode", cfg\.sources\?\.tiktok\?\.mode \|\| "auto"\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokCookie", cfg\.sources\?\.tiktok\?\.cookie\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokCookieEnv", cfg\.sources\?\.tiktok\?\.cookie_env\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokRegion", cfg\.sources\?\.tiktok\?\.region\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokTzName", cfg\.sources\?\.tiktok\?\.tz_name\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokDailyFeedBudget", cfg\.sources\?\.tiktok\?\.daily_feed_budget\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokDailySearchBudget", cfg\.sources\?\.tiktok\?\.daily_search_budget\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokDailyTagBudget", cfg\.sources\?\.tiktok\?\.daily_tag_budget\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokDailyUserBudget", cfg\.sources\?\.tiktok\?\.daily_user_budget\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokRequestInterval", cfg\.sources\?\.tiktok\?\.request_interval_seconds\)/);
+  assert.match(popupJs, /setVal\("cfgTiktokMinInterval", cfg\.sources\?\.tiktok\?\.min_interval_minutes\)/);
+
+  // Save collects the full block; empty-field fallbacks mirror the backend
+  // dataclass defaults (feed/search 3, tag/user 0) so popup and web settings
+  // write the same values.
+  assert.match(popupJs, /enabled: checked\("cfgTiktokEnabled"\)/);
+  assert.match(popupJs, /mode: getVal\("cfgTiktokMode"\) \|\| "auto"/);
+  assert.match(popupJs, /cookie_env: getVal\("cfgTiktokCookieEnv"\)/);
+  assert.match(popupJs, /region: getVal\("cfgTiktokRegion"\)/);
+  assert.match(popupJs, /tz_name: getVal\("cfgTiktokTzName"\)/);
+  assert.match(popupJs, /daily_feed_budget: getInt\("cfgTiktokDailyFeedBudget", 3\)/);
+  assert.match(popupJs, /daily_search_budget: getInt\("cfgTiktokDailySearchBudget", 3\)/);
+  assert.match(popupJs, /daily_tag_budget: getInt\("cfgTiktokDailyTagBudget", 0\)/);
+  assert.match(popupJs, /daily_user_budget: getInt\("cfgTiktokDailyUserBudget", 0\)/);
+  assert.match(popupJs, /request_interval_seconds: getInt\("cfgTiktokRequestInterval", 2\)/);
+  assert.match(popupJs, /min_interval_minutes: getInt\("cfgTiktokMinInterval", 3\)/);
+
+  // Pool share round-trips so a save never drops a user-configured tiktok share.
+  assert.match(popupJs, /setVal\("cfgPoolShareTiktok", cfg\.scheduler\?\.pool_source_shares\?\.tiktok\)/);
+  assert.match(popupJs, /tiktok: getInt\("cfgPoolShareTiktok", 1\)/);
+
+  // The verify button rides the generic per-card dispatch.
+  const cardHtml = popupHtml.slice(tiktokStart, twitterStart);
+  assert.match(cardHtml, /source-verify-btn/);
+  assert.match(cardHtml, /data-budget-note>预算 = 每日任务次数上限/);
 });
 
 test("settings page round-trips Zhihu discovery source modes", () => {
@@ -1039,6 +1107,7 @@ test("source-share suggestion button uses settings-scope helpers and form switch
   assert.match(suggestionBlock, /bilibili:\s*checked\("cfgBilibiliEnabled", true\)/);
   assert.match(suggestionBlock, /xiaohongshu:\s*checked\("cfgXhsEnabled"\)/);
   assert.match(suggestionBlock, /youtube:\s*checked\("cfgYoutubeEnabled"\)/);
+  assert.match(suggestionBlock, /tiktok:\s*checked\("cfgTiktokEnabled"\)/);
   assert.match(suggestionBlock, /github:\s*checked\("cfgGithubEnabled"\)/);
   assert.match(suggestionBlock, /configured_shares:\s*\{/);
 });
@@ -1125,7 +1194,7 @@ test("settings page shows the budget-semantics hint for every per-source budget 
     "预算 = 每日任务次数上限；搜索默认每天 20 次，显式填 0 = 不限；创作者预算 0 或留空 = 不限。";
 
   // Every source card that has a daily budget input must carry a note.
-  const budgetCards = ["xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit", "linuxdo"];
+  const budgetCards = ["xiaohongshu", "douyin", "youtube", "tiktok", "twitter", "zhihu", "reddit", "linuxdo"];
   for (const card of budgetCards) {
     const start = popupHtml.indexOf(`data-source-card="${card}"`);
     assert.ok(start >= 0, `source card ${card} should exist`);
@@ -1240,4 +1309,32 @@ test("settings save bar stays pinned above scrolling content", () => {
   assert.match(savebarCss, /bottom: 0;/);
   assert.match(savebarCss, /box-shadow: 0 -12px 28px/);
   assert.doesNotMatch(savebarCss, /position: sticky;/);
+});
+
+
+test("disabled TikTok card keeps nested enable control accessible", () => {
+  const js = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const source = js.slice(js.indexOf("  const SOURCE_CARD_ENABLE_IDS ="), js.indexOf("  function initSourceCards()"));
+  class Element {
+    tabIndex = 0;
+    attributes = new Map<string, string>();
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+    removeAttribute(name: string) { this.attributes.delete(name); }
+  }
+  const face = new Element();
+  const toggle = { checked: false };
+  const card = { dataset: { sourceOff: "", open: "1" }, querySelector: () => face };
+  const document = {
+    querySelector: (selector: string) => selector.includes('"tiktok"') ? card : null,
+    getElementById: () => toggle,
+  };
+  const sync = runInNewContext(source + "\nsyncSourceCardEnabledState", { document, HTMLElement: Element });
+  sync();
+  assert.equal(card.dataset.sourceOff, "true");
+  assert.equal(card.dataset.open, "0");
+  assert.notEqual(face.attributes.get("aria-disabled"), "true", "Ancestor ARIA disabled also disables its enable checkbox");
+  toggle.checked = true;
+  sync();
+  assert.equal(card.dataset.sourceOff, "false");
+  assert.equal(face.tabIndex, 0);
 });

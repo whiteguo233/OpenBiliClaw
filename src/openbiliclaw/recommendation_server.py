@@ -24,11 +24,16 @@ from openbiliclaw.recommendation_runtime import (
     DEFAULT_RECOMMENDATION_PORT,
     RECOMMENDATION_PORT_ENV,
     RECOMMENDATION_SOCK_ENV,
+    UNIX_SOCKET_SUN_PATH_BYTES,
+    find_free_loopback_port,
     recommendation_sock_from_data_path,
+    unix_socket_path_too_long,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,21 @@ def wait_for_buildable_llm(
             sleep(retry_interval)
 
 
+def _run_tcp(app: FastAPI, port: int) -> None:
+    """Bind the recommendation API on loopback TCP with a clear failure log."""
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    except OSError as exc:
+        logger.error(
+            "Recommendation server failed to bind TCP 127.0.0.1:%d: %s. The port "
+            "was free when it was probed; another process took it in between, "
+            "or the probe range was exhausted.",
+            port,
+            exc,
+        )
+        raise
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     wait_for_buildable_llm()
@@ -79,12 +99,25 @@ def main() -> None:
     recommendation_port = os.environ.get(RECOMMENDATION_PORT_ENV, "").strip()
     if os.name == "nt" or recommendation_port:
         port = int(recommendation_port or str(DEFAULT_RECOMMENDATION_PORT))
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+        _run_tcp(app, port)
         return
 
     sock = os.environ.get(RECOMMENDATION_SOCK_ENV)
     if not sock:
         sock = recommendation_sock_from_data_path(load_config().data_path)
+        if unix_socket_path_too_long(sock):
+            free_port = find_free_loopback_port(DEFAULT_RECOMMENDATION_PORT)
+            fallback_port = free_port if free_port is not None else DEFAULT_RECOMMENDATION_PORT
+            logger.warning(
+                "Recommendation Unix socket path %r is %d bytes, exceeding the "
+                "%d-byte AF_UNIX sun_path limit; falling back to TCP 127.0.0.1:%d",
+                sock,
+                len(os.fsencode(sock)),
+                UNIX_SOCKET_SUN_PATH_BYTES,
+                fallback_port,
+            )
+            _run_tcp(app, fallback_port)
+            return
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     uvicorn.run(app, uds=sock, log_level="info")
 

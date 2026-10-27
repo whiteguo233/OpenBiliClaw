@@ -622,7 +622,7 @@ PY
         echo "Next steps (credentials are missing):"
         echo ""
         echo "  1. Choose your LLM chat provider (default: deepseek):"
-        echo "     Supported: deepseek | openai | gemini | claude | openrouter | openai_compatible"
+        echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible"
         echo "     (Local Ollama is embedding-only here — not offered as a chat provider.)"
         echo ""
         echo "  2. Ask which embedding service to use:"
@@ -644,6 +644,9 @@ PY
                 echo "         DeepSeek:   https://platform.deepseek.com/api_keys"
                 echo "         Claude:     https://console.anthropic.com/settings/keys"
                 echo "         OpenRouter: https://openrouter.ai/keys"
+                echo "         Requesty:   https://app.requesty.ai/api-keys"
+                echo "         API Route:  https://global.api-route.com/"
+                echo "         Cheaper Inference: https://cheaperinference.com/signup"
                 ;;
         esac
         case "$missing" in
@@ -728,9 +731,18 @@ PY
     echo "  without a remote SAN the generated certificate is localhost-only."
     echo "  See: $INSTALL_DIR/docs/https-deployment.md"
     echo ""
+    echo "Optional recommendation director / Jev filter (disabled by default):"
+    echo "  Configure TOML only after opting in; fully restart the backend."
+    echo "  Jev routes need the configured key environment variable in the backend."
+    echo "  See: $INSTALL_DIR/docs/modules/config.md#director"
+    echo ""
+    echo "Language: choose 简体中文 / 繁體中文 / English in the wizard or /setup/."
+    echo "  CLI: openbiliclaw init --language en (or zh-Hans / zh-Hant)"
+    echo ""
     echo "Reference docs:"
     echo "  - $INSTALL_DIR/docs/agent-install.md     (install guide)"
     echo "  - $INSTALL_DIR/docs/agent-deployment.md  (troubleshooting)"
+    echo "  - $INSTALL_DIR/docs/modules/packaging.md (macOS signed desktop builds; separate from this source install)"
     echo "================================================================"
 }
 

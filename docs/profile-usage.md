@@ -17,6 +17,7 @@ so every legacy import path stays valid):
 
 | Serializer | Defined at | Shape | Portrait? | Notes |
 | --- | --- | --- | --- | --- |
+| `build_profile_catalog` / `select_profile_context` | `soul/profile_views.py` | local catalog → immutable budgeted projection | **No** | Local catalog has no top-48/256 positive-interest cutoff. Preserve scoped negatives, style/context; select whole relevant facts + global taste anchors using deterministic lexical relevance. No model call, source mutation, or creator-name inference. Projection exposes digest, bytes, fits and selected interest names; mandatory overflow is not success. |
 | `build_profile_summary` | `soul/profile_views.py:360` (re-export `discovery/strategies/_utils.py`) | dict | **No** | Canonical structured profile; portrait deliberately excluded (`profile_views.py:371-375`). `favorite_up_users` also excluded (`profile_views.py:392`). |
 | `compact_content_prompt_profile_summary` | `soul/profile_views.py:512` (re-export `discovery/strategies/_utils.py`) | dict | **No** | Caps a `build_profile_summary` dict for high-volume content prompts. Aliased as `compact_evaluation_profile_summary` (`discovery/engine.py:102`). Dislike floor preserved (`profile_views.py:46-50`). |
 | `build_query_generation_profile_summary` | `soul/profile_views.py:914` (re-export `discovery/strategies/_utils.py`) | dict | **No** | Query-trimmed taste shape; drops awareness/insights/timestamps. Interests cap 64, domains ≤16. |
@@ -30,12 +31,23 @@ event projection, not a profile serializer: it preserves event order/count and
 semantic evidence, parses metadata deterministically, and removes only an
 explicit narrow set of transport/projection bookkeeping fields.
 
+`resize_profile_context` can budget an existing on-demand projection again for a larger
+audit/repair envelope. It only selects whole already-loaded facts, preserves mandatory
+and unknown fields, rejects unknown schemas, and never fetches or invents profile data.
+
 ## Consumer surfaces
+
+Jev 完整评估先按候选选择不依赖同行的视图，再由具名
+`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`。
+各 `candidate_profiles.cN` 必须与共享块一起解释；不借用其它候选的正偏好。
 
 | Surface | Trigger cadence | View / serializer | Fields (caps) | Portrait? | LLM? |
 | --- | --- | --- | --- | --- | --- |
 | Recommendation evaluation / expression | Per candidate (discovery + serve) | `compact_content_prompt_profile_summary(build_profile_summary(...))` — `recommendation/engine.py:126-127` | compact (20 core / 48 interests / 32 domains × 16 specifics / 12 recent; dislikes uncapped) | No | Yes |
+| Director planning / pair decisions | Opt-in generation or rolling preplan | `build_profile_catalog` + `select_profile_context` by intent and shortlist; no core-memory injection | Budgeted slow/fast projections, explicit negatives uncut. Full source digest controls plan freshness; actual projections bind request identity. Latest 3 experienced screens + semantic actions/ACKs remain separate, not inferred interests | No | Yes (Agent and/or typed decision) |
 | Discovery evaluation | Per candidate batch | `_evaluation_profile_summary` = `compact_evaluation_profile_summary(build_profile_summary(...))` — `discovery/engine.py:1874`; applied `discovery/engine.py:823` | compact | No | Yes |
+| Jev discovery semantic filter | Opt-in candidate wave, independently of director strategy | `compact_content_prompt_profile_summary(build_profile_summary(...))` — `discovery/semantic_filter.py` | Same compact view; complete dislikes retained; oversize request fails open at the 24,000-byte engineering cap rather than truncating negative evidence | No | Yes (typed decision, not chat) |
+| Jev full candidate evaluator | Selected instead of full LLM evaluation; single, batch and legacy recovery | Local `build_profile_catalog` → per-candidate `select_profile_context`; `candidate_profiles.cN` | Selected-model dual byte guards reserve candidate/questions/negatives first; independent of batch peers; keep mandatory constraints, split candidates or return missing. Full source/policy/budget identities prevent stale cache | No | Yes (typed decision; no generative fallback) |
 | Discovery evaluation digest (cache key) | Per candidate batch | `_evaluation_profile_digest` — `discovery/engine.py:1862`; used `discovery/engine.py:1542`, `:2119` | digest over the compact prompt-visible slice | No | No (cache key) |
 | Search keyword generation | Per discovery cycle | `build_query_generation_profile_summary` — `discovery/strategies/search.py:547`, `:550` | query-trimmed | No | Yes |
 | Explore domain generation | Per discovery cycle | `build_query_generation_profile_summary` — `discovery/strategies/explore.py:428` | query-trimmed | No | Yes |

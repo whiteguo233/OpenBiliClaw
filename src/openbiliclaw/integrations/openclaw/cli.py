@@ -123,6 +123,9 @@ def _build_parser() -> argparse.ArgumentParser:
     recommend_parser.add_argument("--limit", type=int, default=5)
     recommend_parser.add_argument("--source-platform", default="")
     recommend_parser.add_argument("--exclude-item-id", action="append", default=[])
+    recommend_parser.add_argument("--request-id", default="")
+    recommend_parser.add_argument("--stream-ref", default="")
+    recommend_parser.add_argument("--explicit-intent", default="")
     recommend_parser.add_argument(
         "--realtime",
         action="store_true",
@@ -147,6 +150,7 @@ def _build_parser() -> argparse.ArgumentParser:
     feedback_parser.add_argument("--recommendation-id", type=int, required=True)
     feedback_parser.add_argument("--feedback-type", required=True)
     feedback_parser.add_argument("--note", default="")
+    feedback_parser.add_argument("--batch-ref", default="")
     feedback_parser.add_argument(
         "--request-id",
         required=True,
@@ -158,6 +162,18 @@ def _build_parser() -> argparse.ArgumentParser:
         page_parser.add_argument("--limit", type=int, default=default_limit)
         page_parser.add_argument("--source-platform", default="")
         page_parser.add_argument("--exclude-item-id", action="append", default=[])
+        page_parser.add_argument("--request-id", default="")
+        page_parser.add_argument("--stream-ref", default="")
+        page_parser.add_argument("--explicit-intent", default="")
+
+    restore_parser = subparsers.add_parser("restore")
+    restore_parser.add_argument("--stream-ref", default="openclaw")
+    restore_parser.add_argument("--batch-ref", default="")
+    restore_parser.add_argument("--source-platform", default="")
+    present_parser = subparsers.add_parser("present")
+    present_parser.add_argument("--batch-ref", required=True)
+    present_parser.add_argument("--ack-id", required=True)
+    present_parser.add_argument("--item-key", action="append", required=True)
 
     activity_parser = subparsers.add_parser("activity-feed")
     activity_parser.add_argument("--limit", type=int, default=10)
@@ -298,6 +314,9 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
                 recommend_kwargs["excluded_item_ids"] = args.exclude_item_id
             if getattr(args, "realtime", False):
                 recommend_kwargs["realtime"] = True
+            for key in ("request_id", "stream_ref", "explicit_intent"):
+                if getattr(args, key, ""):
+                    recommend_kwargs[key] = getattr(args, key)
             result = await adapter.recommend(**recommend_kwargs)
         elif args.command in {"reshuffle", "append"}:
             method_name = "reshuffle" if args.command == "reshuffle" else "append_recommendations"
@@ -306,6 +325,23 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
                 limit=args.limit,
                 source_platform=args.source_platform,
                 excluded_item_ids=args.exclude_item_id,
+                **{
+                    key: getattr(args, key)
+                    for key in ("request_id", "stream_ref", "explicit_intent")
+                    if getattr(args, key, "")
+                },
+            )
+        elif args.command == "restore":
+            result = await adapter.restore_recommendations(
+                stream_ref=args.stream_ref,
+                batch_ref=args.batch_ref,
+                source_platform=args.source_platform,
+            )
+        elif args.command == "present":
+            result = await adapter.present_recommendations(
+                batch_ref=args.batch_ref,
+                ack_id=args.ack_id,
+                item_keys=args.item_key,
             )
         elif args.command == "submit-feedback":
             request = FeedbackRequest(
@@ -313,6 +349,7 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
                 feedback_type=args.feedback_type,
                 note=args.note,
                 request_id=args.request_id,
+                batch_ref=args.batch_ref,
             )
             result = await adapter.submit_feedback(request)
         elif args.command == "chat":
@@ -553,7 +590,16 @@ def main(argv: Sequence[str] | None = None, *, adapter: Any | None = None) -> in
         resolved_adapter = object()
     else:
         resolved_adapter = build_openclaw_adapter()
-    payload = asyncio.run(_run_command(args, resolved_adapter))
+
+    async def run_and_close() -> dict[str, object]:
+        try:
+            return await _run_command(args, resolved_adapter)
+        finally:
+            close = getattr(resolved_adapter, "aclose", None)
+            if callable(close):
+                await close()
+
+    payload = asyncio.run(run_and_close())
     _print_payload(payload)
     return 0 if bool(payload.get("ok", False)) else 1
 

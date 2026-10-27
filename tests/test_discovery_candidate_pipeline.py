@@ -1653,8 +1653,10 @@ async def test_pipeline_clamps_claim_batch_to_evaluator_hard_cap(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("flush", [False, True])
 async def test_pipeline_accumulates_eval_batch_until_minimum_or_timeout(
     tmp_path: Path,
+    flush: bool,
 ) -> None:
     db = Database(tmp_path / "test.db")
     db.initialize()
@@ -1687,8 +1689,9 @@ async def test_pipeline_accumulates_eval_batch_until_minimum_or_timeout(
     assert engine.batch_lengths == []
     assert db.count_discovery_candidates_by_status()["pending_eval"] == 3
 
-    now += 61
-    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+    if not flush:
+        now += 61
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30, flush=flush)
 
     assert result == {"evaluated": 3, "cached": 3, "rejected": 0}
     assert engine.batch_lengths == [3]

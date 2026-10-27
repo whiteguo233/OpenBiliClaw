@@ -1,0 +1,4736 @@
+{
+  "baseline_commit": "733f69dc",
+  "candidate_branch": "fix/web-first-screen",
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "browser_cache_disabled": true,
+  "order": [
+    "before",
+    "after",
+    "after",
+    "before",
+    "before",
+    "after"
+  ],
+  "method": "Each round starts a new API process with an isolated database containing the same 8 real cached content items and an empty image cache. Navigate cold, then warm in that process. No profiler during these timings. Real image CDN and configured provider readiness requests; recommendation seed is fixed. URLs omit query strings and hosts. No Bilibili cookies or external social writes.",
+  "runs": [
+    {
+      "round": 1,
+      "variant": "before",
+      "cache": "cold",
+      "timing": {
+        "cards": 1101.5999999046326,
+        "first4": 2341.199999809265,
+        "all8": 2990.699999809265,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 199,
+            "end": 357.8999996185303,
+            "queue": 10.099999904632568,
+            "ttfb": 88.40000009536743,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 199.2999997138977,
+            "end": 303.59999990463257,
+            "queue": 17.300000190734863,
+            "ttfb": 79.5,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 199.2999997138977,
+            "end": 310.7999997138977,
+            "queue": 29.90000009536743,
+            "ttfb": 70.40000009536743,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 199.39999961853027,
+            "end": 311.5,
+            "queue": 30.600000381469727,
+            "ttfb": 71,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 199.5,
+            "end": 373.5,
+            "queue": 106,
+            "ttfb": 57.5,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 199.59999990463257,
+            "end": 376.59999990463257,
+            "queue": 112.90000009536743,
+            "ttfb": 54.5,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 199.69999980926514,
+            "end": 381.8999996185303,
+            "queue": 113.19999980926514,
+            "ttfb": 58.5,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 199.7999997138977,
+            "end": 378.5,
+            "queue": 113.30000019073486,
+            "ttfb": 54.799999713897705,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 199.7999997138977,
+            "end": 390,
+            "queue": 130.90000009536743,
+            "ttfb": 53.30000019073486,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 200,
+            "end": 413.09999990463257,
+            "queue": 159.59999990463257,
+            "ttfb": 51,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 200.09999990463257,
+            "end": 311.09999990463257,
+            "queue": 19.5,
+            "ttfb": 80.69999980926514,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 200.19999980926514,
+            "end": 414.8999996185303,
+            "queue": 174,
+            "ttfb": 38.19999980926514,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 200.2999997138977,
+            "end": 457.5,
+            "queue": 180.5,
+            "ttfb": 53.5,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 200.39999961853027,
+            "end": 437.19999980926514,
+            "queue": 180.90000009536743,
+            "ttfb": 50.700000286102295,
+            "bytes": 4580
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 200.39999961853027,
+            "end": 598.0999999046326,
+            "queue": 183.5,
+            "ttfb": 47.30000019073486,
+            "bytes": 171775
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 200.5,
+            "end": 329.5,
+            "queue": 26.09999990463257,
+            "ttfb": 92.59999990463257,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 719.3999996185303,
+            "end": 750.7999997138977,
+            "queue": 1,
+            "ttfb": 20.40000009536743,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 920.0999999046326,
+            "end": 936.3999996185303,
+            "queue": 1.0999999046325684,
+            "ttfb": 13.800000190734863,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 923.7999997138977,
+            "end": 932.5999999046326,
+            "queue": 1.200000286102295,
+            "ttfb": 6.199999809265137,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 934.0999999046326,
+            "end": 1070.5,
+            "queue": 0.7999997138977051,
+            "ttfb": 129.90000009536743,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 934.6999998092651,
+            "end": 1079.5,
+            "queue": 2,
+            "ttfb": 135.09999990463257,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 935,
+            "end": 1125.7999997138977,
+            "queue": 2,
+            "ttfb": 181.09999990463257,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 937.0999999046326,
+            "end": 1083.7999997138977,
+            "queue": 1.0999999046325684,
+            "ttfb": 138.09999990463257,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 939,
+            "end": 1101.6999998092651,
+            "queue": 1.299999713897705,
+            "ttfb": 142,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1101.7999997138977,
+            "end": 2338.7999997138977,
+            "queue": 1.4000000953674316,
+            "ttfb": 1218.0999999046326,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1102.1999998092651,
+            "end": 1650.6999998092651,
+            "queue": 1.4000000953674316,
+            "ttfb": 542.5,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1102.1999998092651,
+            "end": 2340.5999999046326,
+            "queue": 2.0999999046325684,
+            "ttfb": 1218.5999999046326,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1102.2999997138977,
+            "end": 1685.5,
+            "queue": 3,
+            "ttfb": 543.4000000953674,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 1104.6999998092651,
+            "end": 1257.8999996185303,
+            "queue": 1.6999998092651367,
+            "ttfb": 131.90000009536743,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1132.5,
+            "end": 2342.2999997138977,
+            "queue": 0.8999996185302734,
+            "ttfb": 1202.8000001907349,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1132.5999999046326,
+            "end": 2715.699999809265,
+            "queue": 1263.1999998092651,
+            "ttfb": 317.90000009536743,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1132.6999998092651,
+            "end": 2613.5,
+            "queue": 1296.1999998092651,
+            "ttfb": 183.80000019073486,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 1132.7999997138977,
+            "end": 2977.3999996185303,
+            "queue": 1296.8000001907349,
+            "ttfb": 545.9000000953674,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1133.8999996185303,
+            "end": 1332.2999997138977,
+            "queue": 124.5,
+            "ttfb": 73.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1134.1999998092651,
+            "end": 1337.7999997138977,
+            "queue": 198.5,
+            "ttfb": 4.400000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 1137.2999997138977,
+            "end": 2863.2999997138977,
+            "queue": 200.90000009536743,
+            "ttfb": 1523.0999999046326,
+            "bytes": 436
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 1252.7999997138977,
+            "end": 2394.199999809265,
+            "queue": 433,
+            "ttfb": 704.2000002861023,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1333.5,
+            "end": 2395.2999997138977,
+            "queue": 1005.6999998092651,
+            "ttfb": 51.69999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1338.7999997138977,
+            "end": 2402.5,
+            "queue": 1002.0999999046326,
+            "ttfb": 52.80000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 1555.0999999046326,
+            "end": 2405.0999999046326,
+            "queue": 787.7999997138977,
+            "ttfb": 51.90000009536743,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1853.0999999046326,
+            "end": 2467.8999996185303,
+            "queue": 541.4000000953674,
+            "ttfb": 70.7999997138977,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2399.199999809265,
+            "end": 2428.2999997138977,
+            "queue": 3.5999999046325684,
+            "ttfb": 23.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2404.2999997138977,
+            "end": 2429.199999809265,
+            "queue": 1.0999999046325684,
+            "ttfb": 21.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2429.0999999046326,
+            "end": 2496.0999999046326,
+            "queue": 39.09999990463257,
+            "ttfb": 26.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2429.699999809265,
+            "end": 2504.8999996185303,
+            "queue": 66.69999980926514,
+            "ttfb": 6.800000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2496.7999997138977,
+            "end": 2520.5,
+            "queue": 8.5,
+            "ttfb": 14,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2505.7999997138977,
+            "end": 2528.0999999046326,
+            "queue": 15.099999904632568,
+            "ttfb": 6.400000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2521.5,
+            "end": 2539.5,
+            "queue": 7.399999618530273,
+            "ttfb": 8.300000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2529.0999999046326,
+            "end": 2557.3999996185303,
+            "queue": 10.799999713897705,
+            "ttfb": 14.800000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2540.2999997138977,
+            "end": 2568.3999996185303,
+            "queue": 17.700000286102295,
+            "ttfb": 9.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2558.8999996185303,
+            "end": 2576.2999997138977,
+            "queue": 9.800000190734863,
+            "ttfb": 6.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2569.0999999046326,
+            "end": 2581.3999996185303,
+            "queue": 7.5,
+            "ttfb": 4.299999713897705,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2577,
+            "end": 2585.199999809265,
+            "queue": 4.699999809265137,
+            "ttfb": 3.1999998092651367,
+            "bytes": 464
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 2864.199999809265,
+            "end": 2910.199999809265,
+            "queue": 0.9000000953674316,
+            "ttfb": 42.40000009536743,
+            "bytes": 739
+          },
+          {
+            "path": "/api/profile-summary",
+            "start": 2912.5,
+            "end": 2973.5999999046326,
+            "queue": 1.299999713897705,
+            "ttfb": 58,
+            "bytes": 682
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 1,
+      "variant": "before",
+      "cache": "warm",
+      "timing": {
+        "cards": 685.8000001907349,
+        "first4": 792.3000001907349,
+        "all8": 998.7000002861023,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 178.10000038146973,
+            "end": 289.90000009536743,
+            "queue": 5.599999904632568,
+            "ttfb": 45,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 178.5,
+            "end": 261.1000003814697,
+            "queue": 5.800000190734863,
+            "ttfb": 70.5,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 178.5,
+            "end": 259.6000003814697,
+            "queue": 10.800000190734863,
+            "ttfb": 63.59999990463257,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 178.60000038146973,
+            "end": 260.30000019073486,
+            "queue": 11,
+            "ttfb": 64.19999980926514,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 178.80000019073486,
+            "end": 312.7000002861023,
+            "queue": 65.5,
+            "ttfb": 57.69999980926514,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 178.80000019073486,
+            "end": 329,
+            "queue": 83.59999990463257,
+            "ttfb": 61.80000019073486,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 179,
+            "end": 329.6000003814697,
+            "queue": 83.80000019073486,
+            "ttfb": 62.69999980926514,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 179.10000038146973,
+            "end": 336.2000002861023,
+            "queue": 87.19999980926514,
+            "ttfb": 64.59999990463257,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 179.10000038146973,
+            "end": 338.5,
+            "queue": 84,
+            "ttfb": 71.59999990463257,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 179.2000002861023,
+            "end": 347.2000002861023,
+            "queue": 111.40000009536743,
+            "ttfb": 53.69999980926514,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 179.30000019073486,
+            "end": 243.7000002861023,
+            "queue": 7,
+            "ttfb": 51.09999990463257,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 179.40000009536743,
+            "end": 356.1000003814697,
+            "queue": 133.90000009536743,
+            "ttfb": 39.90000009536743,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 179.5,
+            "end": 379.30000019073486,
+            "queue": 150.60000038146973,
+            "ttfb": 37.39999961853027,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 179.60000038146973,
+            "end": 379.90000009536743,
+            "queue": 150.69999980926514,
+            "ttfb": 38.19999980926514,
+            "bytes": 4580
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 179.7000002861023,
+            "end": 521.5,
+            "queue": 157.09999990463257,
+            "ttfb": 48,
+            "bytes": 171775
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 179.90000009536743,
+            "end": 265.7000002861023,
+            "queue": 7.200000286102295,
+            "ttfb": 69,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 545.7000002861023,
+            "end": 555.9000000953674,
+            "queue": 1.6999998092651367,
+            "ttfb": 7.599999904632568,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 592,
+            "end": 683.1000003814697,
+            "queue": 4.200000286102295,
+            "ttfb": 80.40000009536743,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 592.6000003814697,
+            "end": 612.8000001907349,
+            "queue": 5.699999809265137,
+            "ttfb": 12.699999809265137,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 614,
+            "end": 669.1000003814697,
+            "queue": 1.8000001907348633,
+            "ttfb": 42.69999980926514,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 614.3000001907349,
+            "end": 675.1000003814697,
+            "queue": 3.3000001907348633,
+            "ttfb": 44.89999961853027,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 614.5,
+            "end": 705,
+            "queue": 3.5,
+            "ttfb": 81.80000019073486,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 614.7000002861023,
+            "end": 679.9000000953674,
+            "queue": 3.9000000953674316,
+            "ttfb": 47.69999980926514,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 615.1000003814697,
+            "end": 682.2000002861023,
+            "queue": 4.399999618530273,
+            "ttfb": 53.60000038146973,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 685.9000000953674,
+            "end": 787.7000002861023,
+            "queue": 1.4000000953674316,
+            "ttfb": 86.40000009536743,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 686.1000003814697,
+            "end": 769.8000001907349,
+            "queue": 1.5999999046325684,
+            "ttfb": 69.09999990463257,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 686.1000003814697,
+            "end": 783.8000001907349,
+            "queue": 2.299999713897705,
+            "ttfb": 79.2000002861023,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 686.3000001907349,
+            "end": 790.6000003814697,
+            "queue": 2.9000000953674316,
+            "ttfb": 90.90000009536743,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 686.6000003814697,
+            "end": 738.5,
+            "queue": 3.299999713897705,
+            "ttfb": 36,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 688,
+            "end": 757.7000002861023,
+            "queue": 17.300000190734863,
+            "ttfb": 49.69999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 688.3000001907349,
+            "end": 806.3000001907349,
+            "queue": 50.69999980926514,
+            "ttfb": 60.60000038146973,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 689.3000001907349,
+            "end": 877.1000003814697,
+            "queue": 69.59999990463257,
+            "ttfb": 115.40000009536743,
+            "bytes": 436
+          },
+          {
+            "path": "/api/init-status",
+            "start": 689.9000000953674,
+            "end": 890.2000002861023,
+            "queue": 80.90000009536743,
+            "ttfb": 113.59999990463257,
+            "bytes": 2121
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 709.2000002861023,
+            "end": 925,
+            "queue": 82,
+            "ttfb": 128.19999980926514,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 709.4000000953674,
+            "end": 928.8000001907349,
+            "queue": 97.5,
+            "ttfb": 116.7000002861023,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 709.4000000953674,
+            "end": 942.2000002861023,
+            "queue": 183.09999990463257,
+            "ttfb": 42.700000286102295,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 709.5,
+            "end": 983.9000000953674,
+            "queue": 220,
+            "ttfb": 50.90000009536743,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 748.5,
+            "end": 911.7000002861023,
+            "queue": 36.10000038146973,
+            "ttfb": 118.89999961853027,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 763.4000000953674,
+            "end": 890.7000002861023,
+            "queue": 24.800000190734863,
+            "ttfb": 99,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 807.2000002861023,
+            "end": 916.9000000953674,
+            "queue": 70.40000009536743,
+            "ttfb": 33.19999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 878.3000001907349,
+            "end": 986.3000001907349,
+            "queue": 13.800000190734863,
+            "ttfb": 90.59999990463257,
+            "bytes": 739
+          },
+          {
+            "path": "/api/profile-summary",
+            "start": 892.6000003814697,
+            "end": 949.2000002861023,
+            "queue": 19.899999618530273,
+            "ttfb": 31.5,
+            "bytes": 682
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 897.9000000953674,
+            "end": 954.4000000953674,
+            "queue": 19.40000009536743,
+            "ttfb": 30.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 917.8000001907349,
+            "end": 962.1000003814697,
+            "queue": 7.5,
+            "ttfb": 31.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/delight/pending-batch",
+            "start": 950.1000003814697,
+            "end": 994.2000002861023,
+            "queue": 1.6999998092651367,
+            "ttfb": 37.59999990463257,
+            "bytes": 312
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 955.6000003814697,
+            "end": 981.1000003814697,
+            "queue": 1.6999998092651367,
+            "ttfb": 22.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 963.1000003814697,
+            "end": 986.7000002861023,
+            "queue": 1,
+            "ttfb": 20.09999990463257,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "cache": "cold",
+      "timing": {
+        "cards": 669.1999998092651,
+        "first4": 1411.5,
+        "all8": 2231.5999999046326,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 231.69999980926514,
+            "end": 373.19999980926514,
+            "queue": 1.0999999046325684,
+            "ttfb": 98.2000002861023,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 231.90000009536743,
+            "end": 338.69999980926514,
+            "queue": 4.899999618530273,
+            "ttfb": 94.90000009536743,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 232.09999990463257,
+            "end": 317.90000009536743,
+            "queue": 13.400000095367432,
+            "ttfb": 58.59999990463257,
+            "bytes": 233909
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 232.19999980926514,
+            "end": 337,
+            "queue": 4.900000095367432,
+            "ttfb": 91.80000019073486,
+            "bytes": 863
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 232.2999997138977,
+            "end": 350.59999990463257,
+            "queue": 5.100000381469727,
+            "ttfb": 110.09999990463257,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 454.09999990463257,
+            "end": 466.19999980926514,
+            "queue": 1.3000001907348633,
+            "ttfb": 9.5,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 550.4000000953674,
+            "end": 567.0999999046326,
+            "queue": 0.7999997138977051,
+            "ttfb": 12.900000095367432,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 551.4000000953674,
+            "end": 559.1999998092651,
+            "queue": 0.7999997138977051,
+            "ttfb": 6.300000190734863,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 561.0999999046326,
+            "end": 641.5,
+            "queue": 1.1999998092651367,
+            "ttfb": 76.80000019073486,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 563,
+            "end": 658.0999999046326,
+            "queue": 1.6999998092651367,
+            "ttfb": 85.7000002861023,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 563.9000000953674,
+            "end": 760.7999997138977,
+            "queue": 1.8999996185302734,
+            "ttfb": 191.7000002861023,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 564.7999997138977,
+            "end": 685.5,
+            "queue": 2.700000286102295,
+            "ttfb": 92.59999990463257,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 565.6999998092651,
+            "end": 687.5999999046326,
+            "queue": 3.0999999046325684,
+            "ttfb": 97.2000002861023,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 669.4000000953674,
+            "end": 1410.7999997138977,
+            "queue": 3.5,
+            "ttfb": 731.5999999046326,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 669.5999999046326,
+            "end": 1333.2999997138977,
+            "queue": 4.599999904632568,
+            "ttfb": 654.2000002861023,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 669.7999997138977,
+            "end": 1405.9000000953674,
+            "queue": 16.40000009536743,
+            "ttfb": 710.8000001907349,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 669.7999997138977,
+            "end": 1409.0999999046326,
+            "queue": 10.300000190734863,
+            "ttfb": 720.4000000953674,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 670.2999997138977,
+            "end": 762.7999997138977,
+            "queue": 17.800000190734863,
+            "ttfb": 70.59999990463257,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 671.5,
+            "end": 786.9000000953674,
+            "queue": 90.09999990463257,
+            "ttfb": 23.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 672.0999999046326,
+            "end": 787.5999999046326,
+            "queue": 91.09999990463257,
+            "ttfb": 22.800000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 702.6999998092651,
+            "end": 1837,
+            "queue": 740.9000000953674,
+            "ttfb": 365.09999990463257,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 703,
+            "end": 1852.5999999046326,
+            "queue": 750.5999999046326,
+            "ttfb": 390.90000009536743,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 703.1999998092651,
+            "end": 1688.9000000953674,
+            "queue": 771.8000001907349,
+            "ttfb": 210.59999990463257,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 703.2999997138977,
+            "end": 2216,
+            "queue": 999.2000002861023,
+            "ttfb": 511.69999980926514,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 800.4000000953674,
+            "end": 1408.1999998092651,
+            "queue": 533.2999997138977,
+            "ttfb": 65.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 800.6999998092651,
+            "end": 1443.0999999046326,
+            "queue": 605.5,
+            "ttfb": 33.30000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 954,
+            "end": 1466.4000000953674,
+            "queue": 455.40000009536743,
+            "ttfb": 55,
+            "bytes": 400
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 1255,
+            "end": 1446.5999999046326,
+            "queue": 154.69999980926514,
+            "ttfb": 32.200000286102295,
+            "bytes": 332
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1409.0999999046326,
+            "end": 1453,
+            "queue": 2.1999998092651367,
+            "ttfb": 32.700000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1444,
+            "end": 1474.5,
+            "queue": 2.9000000953674316,
+            "ttfb": 25.09999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1456.0999999046326,
+            "end": 1497.9000000953674,
+            "queue": 10.699999809265137,
+            "ttfb": 28.200000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1475.1999998092651,
+            "end": 1533.5,
+            "queue": 23.200000286102295,
+            "ttfb": 30.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1499.2999997138977,
+            "end": 1558.4000000953674,
+            "queue": 34.80000019073486,
+            "ttfb": 19.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1534.6999998092651,
+            "end": 1576.2999997138977,
+            "queue": 24.200000286102295,
+            "ttfb": 15,
+            "bytes": 464
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1554.6999998092651,
+            "end": 1644.0999999046326,
+            "queue": 21.90000009536743,
+            "ttfb": 59.19999980926514,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1559.4000000953674,
+            "end": 1656.2999997138977,
+            "queue": 85.59999990463257,
+            "ttfb": 10.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1577.0999999046326,
+            "end": 1681.1999998092651,
+            "queue": 79.59999990463257,
+            "ttfb": 21.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1657.0999999046326,
+            "end": 1701.4000000953674,
+            "queue": 24.699999809265137,
+            "ttfb": 17.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1682.5,
+            "end": 1709.9000000953674,
+            "queue": 6.799999713897705,
+            "ttfb": 16.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1702.2999997138977,
+            "end": 1723.0999999046326,
+            "queue": 8.300000190734863,
+            "ttfb": 11.099999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1711.4000000953674,
+            "end": 1800.5,
+            "queue": 12,
+            "ttfb": 69.7999997138977,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "cache": "warm",
+      "timing": {
+        "cards": 480.40000009536743,
+        "first4": 585.1999998092651,
+        "all8": 713.0999999046326,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 193.09999990463257,
+            "end": 319.69999980926514,
+            "queue": 2.0999999046325684,
+            "ttfb": 85.7000002861023,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 193.40000009536743,
+            "end": 299.59999990463257,
+            "queue": 2.0999999046325684,
+            "ttfb": 95.19999980926514,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 193.5,
+            "end": 267.90000009536743,
+            "queue": 9.599999904632568,
+            "ttfb": 56,
+            "bytes": 233909
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 193.59999990463257,
+            "end": 277.90000009536743,
+            "queue": 2.700000286102295,
+            "ttfb": 78.7999997138977,
+            "bytes": 863
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 193.69999980926514,
+            "end": 291.80000019073486,
+            "queue": 3.3000001907348633,
+            "ttfb": 83.19999980926514,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 362.80000019073486,
+            "end": 370.40000009536743,
+            "queue": 1.1999998092651367,
+            "ttfb": 5.5,
+            "bytes": 398
+          },
+          {
+            "path": "/api/ping",
+            "start": 410.59999990463257,
+            "end": 420.40000009536743,
+            "queue": 0.7000002861022949,
+            "ttfb": 7.599999904632568,
+            "bytes": 344
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 412.69999980926514,
+            "end": 479.5,
+            "queue": 0.8000001907348633,
+            "ttfb": 63.90000009536743,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 421.40000009536743,
+            "end": 469.69999980926514,
+            "queue": 1.5,
+            "ttfb": 37.799999713897705,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 421.69999980926514,
+            "end": 472.19999980926514,
+            "queue": 1.700000286102295,
+            "ttfb": 43.19999980926514,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 422.30000019073486,
+            "end": 512.4000000953674,
+            "queue": 2.3999996185302734,
+            "ttfb": 83.80000019073486,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 423,
+            "end": 473.40000009536743,
+            "queue": 3.3000001907348633,
+            "ttfb": 41.5,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 423.90000009536743,
+            "end": 478,
+            "queue": 3.5999999046325684,
+            "ttfb": 48.80000019073486,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 480.5,
+            "end": 566.4000000953674,
+            "queue": 1.5999999046325684,
+            "ttfb": 77.2000002861023,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 480.69999980926514,
+            "end": 565.1999998092651,
+            "queue": 2,
+            "ttfb": 76,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 480.80000019073486,
+            "end": 570.5,
+            "queue": 2.8999996185302734,
+            "ttfb": 80,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 480.90000009536743,
+            "end": 568.4000000953674,
+            "queue": 4.5,
+            "ttfb": 77.69999980926514,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 481.30000019073486,
+            "end": 523.0999999046326,
+            "queue": 5.699999809265137,
+            "ttfb": 29.59999990463257,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 482.09999990463257,
+            "end": 567.0999999046326,
+            "queue": 30.800000190734863,
+            "ttfb": 49.19999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 482.40000009536743,
+            "end": 582.8000001907349,
+            "queue": 41.19999980926514,
+            "ttfb": 49.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 484.09999990463257,
+            "end": 613.4000000953674,
+            "queue": 81.59999990463257,
+            "ttfb": 43.200000286102295,
+            "bytes": 436
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 501.09999990463257,
+            "end": 646.9000000953674,
+            "queue": 68.2000002861023,
+            "ttfb": 72.2999997138977,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 501.19999980926514,
+            "end": 648.1999998092651,
+            "queue": 82.60000038146973,
+            "ttfb": 59.69999980926514,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 501.30000019073486,
+            "end": 662.3000001907349,
+            "queue": 116.7999997138977,
+            "ttfb": 42,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 501.40000009536743,
+            "end": 693.9000000953674,
+            "queue": 146.09999990463257,
+            "ttfb": 42.59999990463257,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 555.9000000953674,
+            "end": 637.5,
+            "queue": 12.900000095367432,
+            "ttfb": 66.39999961853027,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 568.0999999046326,
+            "end": 617.3000001907349,
+            "queue": 2.700000286102295,
+            "ttfb": 43.39999961853027,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 590.4000000953674,
+            "end": 645.6999998092651,
+            "queue": 23.40000009536743,
+            "ttfb": 26.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 630.5999999046326,
+            "end": 703.9000000953674,
+            "queue": 7.599999904632568,
+            "ttfb": 62.30000019073486,
+            "bytes": 739
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 631.4000000953674,
+            "end": 672.5,
+            "queue": 15.299999713897705,
+            "ttfb": 19.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 658.5,
+            "end": 676.6999998092651,
+            "queue": 0.9000000953674316,
+            "ttfb": 15.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 686.0999999046326,
+            "end": 705.4000000953674,
+            "queue": 1.0999999046325684,
+            "ttfb": 15.300000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 687.1999998092651,
+            "end": 705.9000000953674,
+            "queue": 2.5,
+            "ttfb": 13.5,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "cache": "cold",
+      "timing": {
+        "cards": 470.80000019073486,
+        "first4": 1103.3000001907349,
+        "all8": 1910,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 183.40000009536743,
+            "end": 300.90000009536743,
+            "queue": 2.5,
+            "ttfb": 72.90000009536743,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 183.7000002861023,
+            "end": 283.2000002861023,
+            "queue": 3.799999713897705,
+            "ttfb": 91.40000009536743,
+            "bytes": 2968
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 183.80000019073486,
+            "end": 274.40000009536743,
+            "queue": 5.800000190734863,
+            "ttfb": 71.69999980926514,
+            "bytes": 863
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 183.80000019073486,
+            "end": 258.1000003814697,
+            "queue": 9.699999809265137,
+            "ttfb": 46.80000019073486,
+            "bytes": 233909
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 183.90000009536743,
+            "end": 289.80000019073486,
+            "queue": 6.300000190734863,
+            "ttfb": 92.09999990463257,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 339.1000003814697,
+            "end": 354,
+            "queue": 0.5999999046325684,
+            "ttfb": 13.599999904632568,
+            "bytes": 398
+          },
+          {
+            "path": "/api/ping",
+            "start": 380.6000003814697,
+            "end": 393.90000009536743,
+            "queue": 2.799999713897705,
+            "ttfb": 7.099999904632568,
+            "bytes": 344
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 381,
+            "end": 453,
+            "queue": 2.8000001907348633,
+            "ttfb": 63.40000009536743,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 395.40000009536743,
+            "end": 455.30000019073486,
+            "queue": 2,
+            "ttfb": 51.59999990463257,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 396.40000009536743,
+            "end": 459.40000009536743,
+            "queue": 1.4000000953674316,
+            "ttfb": 55.90000009536743,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 396.80000019073486,
+            "end": 504,
+            "queue": 1.6999998092651367,
+            "ttfb": 103.2000002861023,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 397.1000003814697,
+            "end": 461.40000009536743,
+            "queue": 2.0999999046325684,
+            "ttfb": 57.90000009536743,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 397.40000009536743,
+            "end": 467.40000009536743,
+            "queue": 3.4000000953674316,
+            "ttfb": 64.30000019073486,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 471.1000003814697,
+            "end": 1102.9000000953674,
+            "queue": 1.3999996185302734,
+            "ttfb": 628.3000001907349,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 471.30000019073486,
+            "end": 1060.8000001907349,
+            "queue": 1.5999999046325684,
+            "ttfb": 565.5,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 471.30000019073486,
+            "end": 1101.9000000953674,
+            "queue": 2.3000001907348633,
+            "ttfb": 620.1999998092651,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 471.40000009536743,
+            "end": 1073.2000002861023,
+            "queue": 3.200000286102295,
+            "ttfb": 572.6999998092651,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 471.90000009536743,
+            "end": 516.1000003814697,
+            "queue": 3.4000000953674316,
+            "ttfb": 35,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 472.80000019073486,
+            "end": 541.2000002861023,
+            "queue": 31.90000009536743,
+            "ttfb": 34.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 473,
+            "end": 553.1000003814697,
+            "queue": 43.80000019073486,
+            "ttfb": 34.30000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 474.1000003814697,
+            "end": 1899.1000003814697,
+            "queue": 67.7999997138977,
+            "ttfb": 1350,
+            "bytes": 436
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 488.1000003814697,
+            "end": 1545.7000002861023,
+            "queue": 625,
+            "ttfb": 430.19999980926514,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 488.40000009536743,
+            "end": 1488.6000003814697,
+            "queue": 693.5999999046326,
+            "ttfb": 304.5,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 488.40000009536743,
+            "end": 1608.1000003814697,
+            "queue": 650.8000001907349,
+            "ttfb": 467.69999980926514,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 488.6000003814697,
+            "end": 1903.3000001907349,
+            "queue": 957.0999999046326,
+            "ttfb": 455.5,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 536.3000001907349,
+            "end": 1134.3000001907349,
+            "queue": 524.9000000953674,
+            "ttfb": 70.90000009536743,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 542.8000001907349,
+            "end": 1112.3000001907349,
+            "queue": 530.9000000953674,
+            "ttfb": 34.799999713897705,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 555.3000001907349,
+            "end": 1138.7000002861023,
+            "queue": 547,
+            "ttfb": 32.69999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 838.9000000953674,
+            "end": 1139.9000000953674,
+            "queue": 264.30000019073486,
+            "ttfb": 33.799999713897705,
+            "bytes": 332
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1113.3000001907349,
+            "end": 1162.9000000953674,
+            "queue": 21.300000190734863,
+            "ttfb": 23.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1138.8000001907349,
+            "end": 1177.8000001907349,
+            "queue": 1.4000000953674316,
+            "ttfb": 36.19999980926514,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1141.6000003814697,
+            "end": 1181.5,
+            "queue": 21.59999990463257,
+            "ttfb": 15.400000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1163.8000001907349,
+            "end": 1191.4000000953674,
+            "queue": 14.5,
+            "ttfb": 11.800000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1183.3000001907349,
+            "end": 1220.8000001907349,
+            "queue": 8.300000190734863,
+            "ttfb": 25.299999713897705,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1197.9000000953674,
+            "end": 1238.5,
+            "queue": 23.300000190734863,
+            "ttfb": 16.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1221.7000002861023,
+            "end": 1261.5,
+            "queue": 17.199999809265137,
+            "ttfb": 16.800000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1239.6000003814697,
+            "end": 1274.8000001907349,
+            "queue": 22.5,
+            "ttfb": 11.899999618530273,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1262.5,
+            "end": 1283.9000000953674,
+            "queue": 12.700000286102295,
+            "ttfb": 7.099999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1275.6000003814697,
+            "end": 1296.1000003814697,
+            "queue": 8.599999904632568,
+            "ttfb": 10.900000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1284.7000002861023,
+            "end": 1386.3000001907349,
+            "queue": 11.799999713897705,
+            "ttfb": 61.200000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1296.8000001907349,
+            "end": 1429,
+            "queue": 89.90000009536743,
+            "ttfb": 41.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1387.1000003814697,
+            "end": 1445,
+            "queue": 42.299999713897705,
+            "ttfb": 14.800000190734863,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "cache": "warm",
+      "timing": {
+        "cards": 481.5,
+        "first4": 597.7999997138977,
+        "all8": 857.7999997138977,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 175.89999961853027,
+            "end": 291.8999996185303,
+            "queue": 2.200000286102295,
+            "ttfb": 68.19999980926514,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 176.19999980926514,
+            "end": 267.8999996185303,
+            "queue": 2.1999998092651367,
+            "ttfb": 78.40000009536743,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 176.39999961853027,
+            "end": 227.59999990463257,
+            "queue": 10.100000381469727,
+            "ttfb": 29.59999990463257,
+            "bytes": 233909
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 176.5,
+            "end": 248.19999980926514,
+            "queue": 3.299999713897705,
+            "ttfb": 60.90000009536743,
+            "bytes": 31039
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 176.5,
+            "end": 248.69999980926514,
+            "queue": 2.6999998092651367,
+            "ttfb": 63.40000009536743,
+            "bytes": 863
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 337.8999996185303,
+            "end": 345.7999997138977,
+            "queue": 1.9000000953674316,
+            "ttfb": 5,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 390.8999996185303,
+            "end": 480.19999980926514,
+            "queue": 3.5,
+            "ttfb": 82.30000019073486,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 392.59999990463257,
+            "end": 410.69999980926514,
+            "queue": 2.0999999046325684,
+            "ttfb": 14.400000095367432,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 413.2999997138977,
+            "end": 462.8999996185303,
+            "queue": 2.5,
+            "ttfb": 43.80000019073486,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 414.5,
+            "end": 472.19999980926514,
+            "queue": 1.8999996185302734,
+            "ttfb": 44.90000009536743,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 415.09999990463257,
+            "end": 558.1999998092651,
+            "queue": 2.6999998092651367,
+            "ttfb": 132.30000019073486,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 415.8999996185303,
+            "end": 475.69999980926514,
+            "queue": 2.700000286102295,
+            "ttfb": 47.299999713897705,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 416.5,
+            "end": 477.3999996185303,
+            "queue": 3,
+            "ttfb": 49.19999980926514,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 481.59999990463257,
+            "end": 578.5,
+            "queue": 1.299999713897705,
+            "ttfb": 81.2000002861023,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 481.69999980926514,
+            "end": 576.0999999046326,
+            "queue": 1.5,
+            "ttfb": 79.5,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 481.8999996185303,
+            "end": 582.3999996185303,
+            "queue": 2,
+            "ttfb": 81,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 481.8999996185303,
+            "end": 597.0999999046326,
+            "queue": 3.4000000953674316,
+            "ttfb": 80.30000019073486,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 482.3999996185303,
+            "end": 600.3999996185303,
+            "queue": 4.400000095367432,
+            "ttfb": 86.2000002861023,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 483.3999996185303,
+            "end": 713.3999996185303,
+            "queue": 75.60000038146973,
+            "ttfb": 81.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 483.69999980926514,
+            "end": 726.3999996185303,
+            "queue": 92.90000009536743,
+            "ttfb": 140.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 485.2999997138977,
+            "end": 732.5,
+            "queue": 94,
+            "ttfb": 141.2000002861023,
+            "bytes": 436
+          },
+          {
+            "path": "/api/init-status",
+            "start": 486.09999990463257,
+            "end": 743,
+            "queue": 97,
+            "ttfb": 155.7999997138977,
+            "bytes": 2121
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 507.09999990463257,
+            "end": 755,
+            "queue": 90.5,
+            "ttfb": 149.19999980926514,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 507.2999997138977,
+            "end": 754.5,
+            "queue": 95.59999990463257,
+            "ttfb": 145.5,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 507.3999996185303,
+            "end": 829.1999998092651,
+            "queue": 249.2000002861023,
+            "ttfb": 65.90000009536743,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 507.59999990463257,
+            "end": 842,
+            "queue": 272.5,
+            "ttfb": 56.40000009536743,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 626.3999996185303,
+            "end": 801.3999996185303,
+            "queue": 87.5,
+            "ttfb": 80.30000019073486,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 714.8999996185303,
+            "end": 778.6999998092651,
+            "queue": 12,
+            "ttfb": 40.30000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 727.2999997138977,
+            "end": 784.5,
+            "queue": 5.599999904632568,
+            "ttfb": 40.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 733.5,
+            "end": 846.8999996185303,
+            "queue": 9.899999618530273,
+            "ttfb": 96.80000019073486,
+            "bytes": 739
+          },
+          {
+            "path": "/api/profile-summary",
+            "start": 744.7999997138977,
+            "end": 802.5,
+            "queue": 10.5,
+            "ttfb": 46.59999990463257,
+            "bytes": 682
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 780.5999999046326,
+            "end": 815.5999999046326,
+            "queue": 4.799999713897705,
+            "ttfb": 26.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 785.8999996185303,
+            "end": 834.5,
+            "queue": 17,
+            "ttfb": 30.200000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 816.5,
+            "end": 849.7999997138977,
+            "queue": 0.6999998092651367,
+            "ttfb": 27,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 4,
+      "variant": "before",
+      "cache": "cold",
+      "timing": {
+        "cards": 769.3000001907349,
+        "first4": 1902.2000002861023,
+        "all8": 2525.5,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 190,
+            "end": 327.30000019073486,
+            "queue": 4,
+            "ttfb": 69,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 190.5,
+            "end": 274.7000002861023,
+            "queue": 5.099999904632568,
+            "ttfb": 69.2000002861023,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 190.59999990463257,
+            "end": 307.5,
+            "queue": 12.5,
+            "ttfb": 94.80000019073486,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 190.7000002861023,
+            "end": 303.59999990463257,
+            "queue": 13.199999809265137,
+            "ttfb": 91.59999990463257,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 190.80000019073486,
+            "end": 338.7000002861023,
+            "queue": 85.19999980926514,
+            "ttfb": 56.09999990463257,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 190.90000009536743,
+            "end": 358.7000002861023,
+            "queue": 99.5,
+            "ttfb": 57.19999980926514,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 191,
+            "end": 368,
+            "queue": 113.30000019073486,
+            "ttfb": 57.90000009536743,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 191.09999990463257,
+            "end": 370.80000019073486,
+            "queue": 115.5,
+            "ttfb": 56.60000038146973,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 191.2000002861023,
+            "end": 371.5,
+            "queue": 117.19999980926514,
+            "ttfb": 55.59999990463257,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 191.30000019073486,
+            "end": 399.7000002861023,
+            "queue": 138.40000009536743,
+            "ttfb": 66.69999980926514,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 191.40000009536743,
+            "end": 289.80000019073486,
+            "queue": 5.599999904632568,
+            "ttfb": 82.30000019073486,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 191.5,
+            "end": 411.80000019073486,
+            "queue": 148,
+            "ttfb": 63.09999990463257,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 191.59999990463257,
+            "end": 430.40000009536743,
+            "queue": 167.60000038146973,
+            "ttfb": 65.2999997138977,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 191.7000002861023,
+            "end": 452.5,
+            "queue": 177,
+            "ttfb": 81.7999997138977,
+            "bytes": 4580
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 191.80000019073486,
+            "end": 590.4000000953674,
+            "queue": 182.09999990463257,
+            "ttfb": 55.59999990463257,
+            "bytes": 171775
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 191.90000009536743,
+            "end": 305.5,
+            "queue": 5.5,
+            "ttfb": 99.90000009536743,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 620.8000001907349,
+            "end": 633.5,
+            "queue": 0.9000000953674316,
+            "ttfb": 10.299999713897705,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 670.2000002861023,
+            "end": 782.2000002861023,
+            "queue": 1.799999713897705,
+            "ttfb": 96.09999990463257,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 670.7000002861023,
+            "end": 690.5999999046326,
+            "queue": 1.5999999046325684,
+            "ttfb": 15.599999904632568,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 692,
+            "end": 756.5,
+            "queue": 1.9000000953674316,
+            "ttfb": 57.80000019073486,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 692.5,
+            "end": 759.8000001907349,
+            "queue": 1.700000286102295,
+            "ttfb": 58.5,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 692.8000001907349,
+            "end": 831.7000002861023,
+            "queue": 2.0999999046325684,
+            "ttfb": 133.30000019073486,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 693.2000002861023,
+            "end": 765.8000001907349,
+            "queue": 2.1999998092651367,
+            "ttfb": 59.5,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 693.5999999046326,
+            "end": 768.9000000953674,
+            "queue": 2.200000286102295,
+            "ttfb": 67.2999997138977,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.4000000953674,
+            "end": 1899.8000001907349,
+            "queue": 1.3000001907348633,
+            "ttfb": 1122.7999997138977,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.7000002861023,
+            "end": 1880.3000001907349,
+            "queue": 1.299999713897705,
+            "ttfb": 1085.9000000953674,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.7000002861023,
+            "end": 1901.4000000953674,
+            "queue": 2.0999999046325684,
+            "ttfb": 1126.5,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.8000001907349,
+            "end": 1891.4000000953674,
+            "queue": 4.599999904632568,
+            "ttfb": 1112.0999999046326,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 770.3000001907349,
+            "end": 837.9000000953674,
+            "queue": 12.5,
+            "ttfb": 48,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 771.2000002861023,
+            "end": 930.5999999046326,
+            "queue": 60.89999961853027,
+            "ttfb": 88.30000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 771.4000000953674,
+            "end": 935.7000002861023,
+            "queue": 67.19999980926514,
+            "ttfb": 88.10000038146973,
+            "bytes": 464
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 792.4000000953674,
+            "end": 2289.4000000953674,
+            "queue": 1141.8000001907349,
+            "ttfb": 353.5,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 792.7000002861023,
+            "end": 2348.7000002861023,
+            "queue": 1145.2999997138977,
+            "ttfb": 409.80000019073486,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 792.8000001907349,
+            "end": 2196.7000002861023,
+            "queue": 1145.4000000953674,
+            "ttfb": 255.5,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 792.9000000953674,
+            "end": 2511.800000190735,
+            "queue": 1280.5999999046326,
+            "ttfb": 436.80000019073486,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 885.0999999046326,
+            "end": 1937.3000001907349,
+            "queue": 995.6000003814697,
+            "ttfb": 51.89999961853027,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 931.7000002861023,
+            "end": 1926.7000002861023,
+            "queue": 960.6999998092651,
+            "ttfb": 31.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 936.5999999046326,
+            "end": 1933.7000002861023,
+            "queue": 963.7000002861023,
+            "ttfb": 29.299999713897705,
+            "bytes": 464
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 1185.8000001907349,
+            "end": 1936.9000000953674,
+            "queue": 716,
+            "ttfb": 30.199999809265137,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1486.3000001907349,
+            "end": 1967.7000002861023,
+            "queue": 440.7999997138977,
+            "ttfb": 39.200000286102295,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1943.2000002861023,
+            "end": 1976.9000000953674,
+            "queue": 25.09999990463257,
+            "ttfb": 7.199999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1943.5999999046326,
+            "end": 1992.7000002861023,
+            "queue": 33.700000286102295,
+            "ttfb": 14.099999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1978.5999999046326,
+            "end": 1998.8000001907349,
+            "queue": 14.600000381469727,
+            "ttfb": 5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1993.5,
+            "end": 2007.2000002861023,
+            "queue": 5.599999904632568,
+            "ttfb": 5.700000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1999.8000001907349,
+            "end": 2015.4000000953674,
+            "queue": 7.900000095367432,
+            "ttfb": 6.699999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2008.3000001907349,
+            "end": 2021.7000002861023,
+            "queue": 7.5,
+            "ttfb": 5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2016.0999999046326,
+            "end": 2034.4000000953674,
+            "queue": 5.900000095367432,
+            "ttfb": 11.599999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2022.5,
+            "end": 2043.3000001907349,
+            "queue": 12.300000190734863,
+            "ttfb": 7.900000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2036,
+            "end": 2049,
+            "queue": 7.599999904632568,
+            "ttfb": 5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2044.3000001907349,
+            "end": 2054.2000002861023,
+            "queue": 5.099999904632568,
+            "ttfb": 4,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2050.0999999046326,
+            "end": 2060.2000002861023,
+            "queue": 4.5,
+            "ttfb": 4.200000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2055,
+            "end": 2072.4000000953674,
+            "queue": 5.5,
+            "ttfb": 10.400000095367432,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 4,
+      "variant": "before",
+      "cache": "warm",
+      "timing": {
+        "cards": 768.5999999046326,
+        "first4": 848.6999998092651,
+        "all8": 1003.1999998092651,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 196,
+            "end": 343.5,
+            "queue": 2.1999998092651367,
+            "ttfb": 81.40000009536743,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 196.39999961853027,
+            "end": 291.8999996185303,
+            "queue": 2.4000000953674316,
+            "ttfb": 86.2000002861023,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 196.5,
+            "end": 296,
+            "queue": 12.899999618530273,
+            "ttfb": 81.80000019073486,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 196.59999990463257,
+            "end": 295.5,
+            "queue": 13.099999904632568,
+            "ttfb": 81.09999990463257,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 196.69999980926514,
+            "end": 345,
+            "queue": 81.5,
+            "ttfb": 57,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 196.7999997138977,
+            "end": 349,
+            "queue": 84.5,
+            "ttfb": 55,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 196.89999961853027,
+            "end": 361.5,
+            "queue": 95.7000002861023,
+            "ttfb": 63.5,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 197,
+            "end": 368.19999980926514,
+            "queue": 99.69999980926514,
+            "ttfb": 63,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 197,
+            "end": 369,
+            "queue": 99.89999961853027,
+            "ttfb": 63.5,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 197.19999980926514,
+            "end": 277.5,
+            "queue": 2.8000001907348633,
+            "ttfb": 72.09999990463257,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 197.19999980926514,
+            "end": 402.59999990463257,
+            "queue": 147.09999990463257,
+            "ttfb": 53.200000286102295,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 197.39999961853027,
+            "end": 401.09999990463257,
+            "queue": 148.5,
+            "ttfb": 50,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 197.39999961853027,
+            "end": 424.7999997138977,
+            "queue": 153.90000009536743,
+            "ttfb": 57.5,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 197.5,
+            "end": 445.8999996185303,
+            "queue": 165.09999990463257,
+            "ttfb": 69.59999990463257,
+            "bytes": 4580
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 197.59999990463257,
+            "end": 635.5,
+            "queue": 171.90000009536743,
+            "ttfb": 65.59999990463257,
+            "bytes": 171775
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 197.69999980926514,
+            "end": 280.59999990463257,
+            "queue": 3.3000001907348633,
+            "ttfb": 73.69999980926514,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 650.3999996185303,
+            "end": 667.3999996185303,
+            "queue": 3.200000286102295,
+            "ttfb": 10.799999713897705,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 701.8999996185303,
+            "end": 771.7999997138977,
+            "queue": 1,
+            "ttfb": 67.40000009536743,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 702.5999999046326,
+            "end": 715.3999996185303,
+            "queue": 1.299999713897705,
+            "ttfb": 8.400000095367432,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 716.6999998092651,
+            "end": 757.3999996185303,
+            "queue": 1.5,
+            "ttfb": 35.80000019073486,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 717,
+            "end": 758.1999998092651,
+            "queue": 1.5,
+            "ttfb": 36.19999980926514,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 717.1999998092651,
+            "end": 847.2999997138977,
+            "queue": 1.9000000953674316,
+            "ttfb": 114.69999980926514,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 717.5999999046326,
+            "end": 767,
+            "queue": 2.9000000953674316,
+            "ttfb": 38.59999990463257,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 717.8999996185303,
+            "end": 767.2999997138977,
+            "queue": 3.5,
+            "ttfb": 39.60000038146973,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 768.8999996185303,
+            "end": 832.1999998092651,
+            "queue": 1.9000000953674316,
+            "ttfb": 53.700000286102295,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769,
+            "end": 839.1999998092651,
+            "queue": 2,
+            "ttfb": 58.09999990463257,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.0999999046326,
+            "end": 835.0999999046326,
+            "queue": 2.9000000953674316,
+            "ttfb": 55.89999961853027,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 769.1999998092651,
+            "end": 842.2999997138977,
+            "queue": 3.4000000953674316,
+            "ttfb": 58,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 769.6999998092651,
+            "end": 852.8999996185303,
+            "queue": 3.4000000953674316,
+            "ttfb": 64.5,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 787.5,
+            "end": 942.5999999046326,
+            "queue": 61.69999980926514,
+            "ttfb": 88.59999990463257,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 787.5999999046326,
+            "end": 944.5,
+            "queue": 66.40000009536743,
+            "ttfb": 87.09999990463257,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 787.6999998092651,
+            "end": 959.5,
+            "queue": 117.69999980926514,
+            "ttfb": 43,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 787.7999997138977,
+            "end": 980,
+            "queue": 119.59999990463257,
+            "ttfb": 63.700000286102295,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 788.5999999046326,
+            "end": 904.7999997138977,
+            "queue": 44,
+            "ttfb": 69.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 788.8999996185303,
+            "end": 906.7999997138977,
+            "queue": 47.30000019073486,
+            "ttfb": 68,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 791.2999997138977,
+            "end": 907.6999998092651,
+            "queue": 48.80000019073486,
+            "ttfb": 65.40000009536743,
+            "bytes": 436
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 917.0999999046326,
+            "end": 974.5,
+            "queue": 0.9000000953674316,
+            "ttfb": 49.89999961853027,
+            "bytes": 400
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 922.6999998092651,
+            "end": 996.3999996185303,
+            "queue": 20.199999809265137,
+            "ttfb": 51,
+            "bytes": 739
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 923.2999997138977,
+            "end": 984.1999998092651,
+            "queue": 21.40000009536743,
+            "ttfb": 33.80000019073486,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 923.5,
+            "end": 991.7999997138977,
+            "queue": 36.39999961853027,
+            "ttfb": 29.5,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 5,
+      "variant": "before",
+      "cache": "cold",
+      "timing": {
+        "cards": 778.1999998092651,
+        "first4": 2020.1999998092651,
+        "all8": 2775.8999996185303,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 199.2999997138977,
+            "end": 377.59999990463257,
+            "queue": 5.400000095367432,
+            "ttfb": 89.59999990463257,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 199.69999980926514,
+            "end": 308.5,
+            "queue": 10.5,
+            "ttfb": 86.59999990463257,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 200,
+            "end": 316.7999997138977,
+            "queue": 14.5,
+            "ttfb": 85.7999997138977,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 200.09999990463257,
+            "end": 317.69999980926514,
+            "queue": 15,
+            "ttfb": 86.09999990463257,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 200.19999980926514,
+            "end": 377.2999997138977,
+            "queue": 106.19999980926514,
+            "ttfb": 57.60000038146973,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 200.2999997138977,
+            "end": 379.5,
+            "queue": 108.90000009536743,
+            "ttfb": 58.09999990463257,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 200.39999961853027,
+            "end": 396.8999996185303,
+            "queue": 119.40000009536743,
+            "ttfb": 68,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 200.39999961853027,
+            "end": 397.59999990463257,
+            "queue": 119.10000038146973,
+            "ttfb": 69.2999997138977,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 200.5,
+            "end": 398.09999990463257,
+            "queue": 119.5,
+            "ttfb": 69.5,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 200.69999980926514,
+            "end": 440.2999997138977,
+            "queue": 177.80000019073486,
+            "ttfb": 58,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 200.7999997138977,
+            "end": 305.09999990463257,
+            "queue": 11.400000095367432,
+            "ttfb": 84.09999990463257,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 200.89999961853027,
+            "end": 435.7999997138977,
+            "queue": 178,
+            "ttfb": 43.5,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 200.89999961853027,
+            "end": 437.3999996185303,
+            "queue": 179.10000038146973,
+            "ttfb": 43.39999961853027,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 201.09999990463257,
+            "end": 448.8999996185303,
+            "queue": 197.7999997138977,
+            "ttfb": 47.60000038146973,
+            "bytes": 4580
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 201.2999997138977,
+            "end": 318.5,
+            "queue": 12.200000286102295,
+            "ttfb": 89.39999961853027,
+            "bytes": 31039
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 201.2999997138977,
+            "end": 612.0999999046326,
+            "queue": 197.80000019073486,
+            "ttfb": 46.40000009536743,
+            "bytes": 171775
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 638.5999999046326,
+            "end": 650.6999998092651,
+            "queue": 1,
+            "ttfb": 10.099999904632568,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 687.5999999046326,
+            "end": 770.3999996185303,
+            "queue": 0.9000000953674316,
+            "ttfb": 77.5,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 688.0999999046326,
+            "end": 698.7999997138977,
+            "queue": 1.1999998092651367,
+            "ttfb": 7.900000095367432,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 700.1999998092651,
+            "end": 766.5999999046326,
+            "queue": 1.5,
+            "ttfb": 56.19999980926514,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 701.0999999046326,
+            "end": 767.0999999046326,
+            "queue": 2,
+            "ttfb": 55.40000009536743,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 702.6999998092651,
+            "end": 811.3999996185303,
+            "queue": 1.5999999046325684,
+            "ttfb": 98.7000002861023,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 703.3999996185303,
+            "end": 767.5,
+            "queue": 1.1000003814697266,
+            "ttfb": 55.69999980926514,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 703.8999996185303,
+            "end": 769.5999999046326,
+            "queue": 1.6000003814697266,
+            "ttfb": 59,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 778.5,
+            "end": 2019.7999997138977,
+            "queue": 2.299999713897705,
+            "ttfb": 1235.5999999046326,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 778.7999997138977,
+            "end": 2017.7999997138977,
+            "queue": 2.700000286102295,
+            "ttfb": 1232.3999996185303,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 778.8999996185303,
+            "end": 2018.7999997138977,
+            "queue": 3.5,
+            "ttfb": 1232.4000000953674,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 779.0999999046326,
+            "end": 1949.1999998092651,
+            "queue": 4.099999904632568,
+            "ttfb": 1163.0999999046326,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 779.8999996185303,
+            "end": 907.3999996185303,
+            "queue": 4.100000381469727,
+            "ttfb": 35.39999961853027,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 783.1999998092651,
+            "end": 1000.1999998092651,
+            "queue": 124.59999990463257,
+            "ttfb": 91.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 783.5,
+            "end": 1005.7999997138977,
+            "queue": 217.19999980926514,
+            "ttfb": 4.400000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 800,
+            "end": 2374.5,
+            "queue": 1224.0999999046326,
+            "ttfb": 348.40000009536743,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 800.2999997138977,
+            "end": 2535.5,
+            "queue": 1257.9000000953674,
+            "ttfb": 476,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 800.7999997138977,
+            "end": 2329.3999996185303,
+            "queue": 1307.9000000953674,
+            "ttfb": 219,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 801,
+            "end": 2773,
+            "queue": 1406.8999996185303,
+            "ttfb": 563.4000000953674,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 940,
+            "end": 1984.6999998092651,
+            "queue": 1009.5999999046326,
+            "ttfb": 6.799999713897705,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1001.2999997138977,
+            "end": 2023.0999999046326,
+            "queue": 983.8000001907349,
+            "ttfb": 35.299999713897705,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1006.5999999046326,
+            "end": 2055.199999809265,
+            "queue": 1011.5999999046326,
+            "ttfb": 32,
+            "bytes": 464
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 1240.6999998092651,
+            "end": 2056.5,
+            "queue": 778.4000000953674,
+            "ttfb": 33.90000009536743,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1540.5999999046326,
+            "end": 2087.0999999046326,
+            "queue": 479.59999990463257,
+            "ttfb": 62.30000019073486,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2025.8999996185303,
+            "end": 2077.5999999046326,
+            "queue": 29.90000009536743,
+            "ttfb": 18.09999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2056.2999997138977,
+            "end": 2107.5,
+            "queue": 21.59999990463257,
+            "ttfb": 24.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2078.5,
+            "end": 2118.3999996185303,
+            "queue": 9.299999713897705,
+            "ttfb": 27,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2108.5999999046326,
+            "end": 2128.8999996185303,
+            "queue": 10.199999809265137,
+            "ttfb": 8.900000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2119.3999996185303,
+            "end": 2142.199999809265,
+            "queue": 9.900000095367432,
+            "ttfb": 9.400000095367432,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2129.7999997138977,
+            "end": 2149.8999996185303,
+            "queue": 12.800000190734863,
+            "ttfb": 6.699999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2145.699999809265,
+            "end": 2162.3999996185303,
+            "queue": 4.5,
+            "ttfb": 11.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2150.7999997138977,
+            "end": 2171.5999999046326,
+            "queue": 12,
+            "ttfb": 7.599999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2163.3999996185303,
+            "end": 2181.5999999046326,
+            "queue": 8.800000190734863,
+            "ttfb": 8,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2172.5,
+            "end": 2195.199999809265,
+            "queue": 9.399999618530273,
+            "ttfb": 12.300000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 2182.3999996185303,
+            "end": 2201.3999996185303,
+            "queue": 13.400000095367432,
+            "ttfb": 4.700000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 2196.199999809265,
+            "end": 2206.7999997138977,
+            "queue": 5.599999904632568,
+            "ttfb": 4.300000190734863,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 5,
+      "variant": "before",
+      "cache": "warm",
+      "timing": {
+        "cards": 814.5,
+        "first4": 949.6999998092651,
+        "all8": 1237.6999998092651,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 201,
+            "end": 328,
+            "queue": 2,
+            "ttfb": 45.799999713897705,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 201.2999997138977,
+            "end": 283.7999997138977,
+            "queue": 2,
+            "ttfb": 70.2000002861023,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/js/mobile-qr.js",
+            "start": 201.39999961853027,
+            "end": 294.69999980926514,
+            "queue": 12.400000095367432,
+            "ttfb": 75.30000019073486,
+            "bytes": 3074
+          },
+          {
+            "path": "/web/assets/js/pending-actions.js",
+            "start": 201.39999961853027,
+            "end": 297.3999996185303,
+            "queue": 12.800000190734863,
+            "ttfb": 75.90000009536743,
+            "bytes": 1268
+          },
+          {
+            "path": "/web/assets/js/saved-sync-core.js",
+            "start": 201.59999990463257,
+            "end": 346.7999997138977,
+            "queue": 73.2999997138977,
+            "ttfb": 67.30000019073486,
+            "bytes": 6224
+          },
+          {
+            "path": "/shared/dialogue-confirmation.js",
+            "start": 201.69999980926514,
+            "end": 383.59999990463257,
+            "queue": 82.90000009536743,
+            "ttfb": 91.5,
+            "bytes": 9772
+          },
+          {
+            "path": "/shared/agent-chat.js",
+            "start": 201.69999980926514,
+            "end": 384.59999990463257,
+            "queue": 94.09999990463257,
+            "ttfb": 82.09999990463257,
+            "bytes": 8999
+          },
+          {
+            "path": "/shared/source-status.js",
+            "start": 201.7999997138977,
+            "end": 386,
+            "queue": 94.40000009536743,
+            "ttfb": 85,
+            "bytes": 12915
+          },
+          {
+            "path": "/shared/i18n.js",
+            "start": 201.89999961853027,
+            "end": 386.3999996185303,
+            "queue": 96.10000038146973,
+            "ttfb": 84.59999990463257,
+            "bytes": 6643
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 202,
+            "end": 274.2999997138977,
+            "queue": 2.3999996185302734,
+            "ttfb": 65.7000002861023,
+            "bytes": 863
+          },
+          {
+            "path": "/shared/director-client.js",
+            "start": 202,
+            "end": 407.7999997138977,
+            "queue": 127.09999990463257,
+            "ttfb": 76,
+            "bytes": 3841
+          },
+          {
+            "path": "/shared/jev-settings.js",
+            "start": 202.19999980926514,
+            "end": 416.5,
+            "queue": 145.40000009536743,
+            "ttfb": 66,
+            "bytes": 3443
+          },
+          {
+            "path": "/web/assets/js/chat-agent-core.js",
+            "start": 202.2999997138977,
+            "end": 438.69999980926514,
+            "queue": 181.80000019073486,
+            "ttfb": 40.09999990463257,
+            "bytes": 8529
+          },
+          {
+            "path": "/web/assets/js/fish-settings.js",
+            "start": 202.39999961853027,
+            "end": 447.2999997138977,
+            "queue": 182.90000009536743,
+            "ttfb": 57.90000009536743,
+            "bytes": 4580
+          },
+          {
+            "path": "/web/assets/js/app.js",
+            "start": 202.39999961853027,
+            "end": 618.6999998092651,
+            "queue": 184.7000002861023,
+            "ttfb": 54.09999990463257,
+            "bytes": 171775
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 202.5,
+            "end": 294,
+            "queue": 3.1999998092651367,
+            "ttfb": 81,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 646.5999999046326,
+            "end": 666.0999999046326,
+            "queue": 1.5,
+            "ttfb": 9.400000095367432,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 704.8999996185303,
+            "end": 839.2999997138977,
+            "queue": 0.8000001907348633,
+            "ttfb": 125.09999990463257,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 705.6999998092651,
+            "end": 717.5999999046326,
+            "queue": 0.6999998092651367,
+            "ttfb": 8.800000190734863,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 719.5999999046326,
+            "end": 798.7999997138977,
+            "queue": 1,
+            "ttfb": 66.69999980926514,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 721.1999998092651,
+            "end": 802.1999998092651,
+            "queue": 0.9000000953674316,
+            "ttfb": 65.90000009536743,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 721.7999997138977,
+            "end": 921,
+            "queue": 0.9000000953674316,
+            "ttfb": 188.09999990463257,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 722.5999999046326,
+            "end": 802.5999999046326,
+            "queue": 1.1999998092651367,
+            "ttfb": 65.5,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 723.5999999046326,
+            "end": 803,
+            "queue": 1.4000000953674316,
+            "ttfb": 66.09999990463257,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 814.7999997138977,
+            "end": 915,
+            "queue": 1.4000000953674316,
+            "ttfb": 90.19999980926514,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 814.8999996185303,
+            "end": 947.1999998092651,
+            "queue": 1.6000003814697266,
+            "ttfb": 114.19999980926514,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 815,
+            "end": 921.8999996185303,
+            "queue": 2.5999999046325684,
+            "ttfb": 94.19999980926514,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 815.0999999046326,
+            "end": 931.8999996185303,
+            "queue": 3.5999999046325684,
+            "ttfb": 100.09999990463257,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 815.5,
+            "end": 973.5,
+            "queue": 24.199999809265137,
+            "ttfb": 105.19999980926514,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 855,
+            "end": 1151.0999999046326,
+            "queue": 93.09999990463257,
+            "ttfb": 195.09999990463257,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 855.1999998092651,
+            "end": 1154.1999998092651,
+            "queue": 118.90000009536743,
+            "ttfb": 175.2999997138977,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 855.5,
+            "end": 1187.0999999046326,
+            "queue": 245.19999980926514,
+            "ttfb": 83.40000009536743,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 856.1999998092651,
+            "end": 1202.8999996185303,
+            "queue": 245.19999980926514,
+            "ttfb": 89.7000002861023,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 857.7999997138977,
+            "end": 1099.3999996185303,
+            "queue": 58.200000286102295,
+            "ttfb": 177.69999980926514,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 858.7999997138977,
+            "end": 1099.7999997138977,
+            "queue": 63.40000009536743,
+            "ttfb": 174.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/health",
+            "start": 860.8999996185303,
+            "end": 1101,
+            "queue": 61.60000038146973,
+            "ttfb": 174.7999997138977,
+            "bytes": 436
+          },
+          {
+            "path": "/api/init-status",
+            "start": 863.5,
+            "end": 1122.2999997138977,
+            "queue": 68.59999990463257,
+            "ttfb": 174.59999990463257,
+            "bytes": 2121
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 996.8999996185303,
+            "end": 1182.5,
+            "queue": 103.5,
+            "ttfb": 76.80000019073486,
+            "bytes": 400
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 1121.5,
+            "end": 1228.5999999046326,
+            "queue": 1.6999998092651367,
+            "ttfb": 99.09999990463257,
+            "bytes": 739
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1125.3999996185303,
+            "end": 1201,
+            "queue": 26,
+            "ttfb": 37.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1126.5999999046326,
+            "end": 1208.0999999046326,
+            "queue": 28,
+            "ttfb": 47,
+            "bytes": 464
+          },
+          {
+            "path": "/api/profile-summary",
+            "start": 1137.0999999046326,
+            "end": 1233.2999997138977,
+            "queue": 45.90000009536743,
+            "ttfb": 44.59999990463257,
+            "bytes": 682
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 6,
+      "variant": "after",
+      "cache": "cold",
+      "timing": {
+        "cards": 613.1999998092651,
+        "first4": 1273.6999998092651,
+        "all8": 2278.5,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 273.19999980926514,
+            "end": 384.40000009536743,
+            "queue": 3.4000000953674316,
+            "ttfb": 64.5,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 273.5,
+            "end": 354.40000009536743,
+            "queue": 5,
+            "ttfb": 65.59999990463257,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 273.69999980926514,
+            "end": 340.69999980926514,
+            "queue": 14.099999904632568,
+            "ttfb": 45.200000286102295,
+            "bytes": 233909
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 273.7999997138977,
+            "end": 365.09999990463257,
+            "queue": 7.100000381469727,
+            "ttfb": 66.7999997138977,
+            "bytes": 863
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 274,
+            "end": 365.90000009536743,
+            "queue": 7.5,
+            "ttfb": 69.5,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 443.40000009536743,
+            "end": 452,
+            "queue": 1.5,
+            "ttfb": 6.5,
+            "bytes": 398
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 515.0999999046326,
+            "end": 579.1999998092651,
+            "queue": 1.5,
+            "ttfb": 59.69999980926514,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/ping",
+            "start": 519,
+            "end": 531,
+            "queue": 1.1999998092651367,
+            "ttfb": 9,
+            "bytes": 344
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 532.4000000953674,
+            "end": 589.9000000953674,
+            "queue": 1.299999713897705,
+            "ttfb": 48.90000009536743,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 532.7999997138977,
+            "end": 593.9000000953674,
+            "queue": 1.3000001907348633,
+            "ttfb": 53.90000009536743,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 533.5,
+            "end": 618.9000000953674,
+            "queue": 1.299999713897705,
+            "ttfb": 82.30000019073486,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 534.4000000953674,
+            "end": 595.5999999046326,
+            "queue": 1.1999998092651367,
+            "ttfb": 56,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 536,
+            "end": 603.5999999046326,
+            "queue": 1.6999998092651367,
+            "ttfb": 61.59999990463257,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 613.7999997138977,
+            "end": 1273.0999999046326,
+            "queue": 1.700000286102295,
+            "ttfb": 651.7999997138977,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 614.4000000953674,
+            "end": 1199.0999999046326,
+            "queue": 1.3999996185302734,
+            "ttfb": 569.5,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 615.0999999046326,
+            "end": 1271.9000000953674,
+            "queue": 1.6999998092651367,
+            "ttfb": 647.5,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 615.5,
+            "end": 1268.5,
+            "queue": 6.599999904632568,
+            "ttfb": 634.0999999046326,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 622.9000000953674,
+            "end": 677.2999997138977,
+            "queue": 1.6999998092651367,
+            "ttfb": 48.59999990463257,
+            "bytes": 1090
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 629.1999998092651,
+            "end": 680.2999997138977,
+            "queue": 2.9000000953674316,
+            "ttfb": 43.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 630.4000000953674,
+            "end": 814.5999999046326,
+            "queue": 47.19999980926514,
+            "ttfb": 128.09999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 669.9000000953674,
+            "end": 1748.4000000953674,
+            "queue": 628.5999999046326,
+            "ttfb": 447.2999997138977,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 670.0999999046326,
+            "end": 1913.5,
+            "queue": 694.0999999046326,
+            "ttfb": 545.7000002861023,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 670.0999999046326,
+            "end": 2071.5999999046326,
+            "queue": 703.0999999046326,
+            "ttfb": 695.9000000953674,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 670.1999998092651,
+            "end": 2272.7999997138977,
+            "queue": 1079,
+            "ttfb": 521.4000000953674,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 741.4000000953674,
+            "end": 1297.7999997138977,
+            "queue": 458.2999997138977,
+            "ttfb": 79.09999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 818.0999999046326,
+            "end": 1343.5,
+            "queue": 451,
+            "ttfb": 62.40000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 820.2999997138977,
+            "end": 1363.0999999046326,
+            "queue": 452,
+            "ttfb": 87,
+            "bytes": 400
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 1122.6999998092651,
+            "end": 1347.1999998092651,
+            "queue": 150.80000019073486,
+            "ttfb": 69.19999980926514,
+            "bytes": 332
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1298.7999997138977,
+            "end": 1372.1999998092651,
+            "queue": 45.30000019073486,
+            "ttfb": 22.300000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1344.6999998092651,
+            "end": 1375,
+            "queue": 3,
+            "ttfb": 23.5,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1373.1999998092651,
+            "end": 1407.5999999046326,
+            "queue": 2.5,
+            "ttfb": 26.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1376,
+            "end": 1429.9000000953674,
+            "queue": 32.69999980926514,
+            "ttfb": 15.099999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1408.6999998092651,
+            "end": 1450.4000000953674,
+            "queue": 21.90000009536743,
+            "ttfb": 17.90000009536743,
+            "bytes": 464
+          },
+          {
+            "path": "/api/recommendations/platform-availability",
+            "start": 1421.5999999046326,
+            "end": 1478.5,
+            "queue": 29.199999809265137,
+            "ttfb": 24.100000381469727,
+            "bytes": 374
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1431,
+            "end": 1518.5,
+            "queue": 48,
+            "ttfb": 38.09999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1451.1999998092651,
+            "end": 1549.5999999046326,
+            "queue": 67.80000019073486,
+            "ttfb": 29.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1519.5999999046326,
+            "end": 1568.1999998092651,
+            "queue": 30.5,
+            "ttfb": 15.599999904632568,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1550.5,
+            "end": 1580.2999997138977,
+            "queue": 18.199999809265137,
+            "ttfb": 10.300000190734863,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1569,
+            "end": 1597.1999998092651,
+            "queue": 11.599999904632568,
+            "ttfb": 12.699999809265137,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 1581.0999999046326,
+            "end": 1718.0999999046326,
+            "queue": 16.699999809265137,
+            "ttfb": 84,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 1598.1999998092651,
+            "end": 1761,
+            "queue": 120.30000019073486,
+            "ttfb": 34.19999980926514,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        },
+        {
+          "status": 200,
+          "cache": "miss"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "round": 6,
+      "variant": "after",
+      "cache": "warm",
+      "timing": {
+        "cards": 534.9000000953674,
+        "first4": 647.6999998092651,
+        "all8": 849.4000000953674,
+        "resources": [
+          {
+            "path": "/web/assets/css/app.css",
+            "start": 246.5,
+            "end": 360.40000009536743,
+            "queue": 4.599999904632568,
+            "ttfb": 79.30000019073486,
+            "bytes": 38975
+          },
+          {
+            "path": "/web/assets/css/classic.css",
+            "start": 247.19999980926514,
+            "end": 334.69999980926514,
+            "queue": 4.300000190734863,
+            "ttfb": 79.40000009536743,
+            "bytes": 2968
+          },
+          {
+            "path": "/web/assets/desktop-bundle.js",
+            "start": 247.40000009536743,
+            "end": 315.69999980926514,
+            "queue": 10.599999904632568,
+            "ttfb": 47.299999713897705,
+            "bytes": 233909
+          },
+          {
+            "path": "/shared/jev-settings.css",
+            "start": 247.5,
+            "end": 325.09999990463257,
+            "queue": 4.799999713897705,
+            "ttfb": 70.2000002861023,
+            "bytes": 863
+          },
+          {
+            "path": "/m/icon-maskable-192.png",
+            "start": 247.90000009536743,
+            "end": 328.2999997138977,
+            "queue": 5.599999904632568,
+            "ttfb": 70.7999997138977,
+            "bytes": 31039
+          },
+          {
+            "path": "/api/auth/status",
+            "start": 397.5,
+            "end": 408.90000009536743,
+            "queue": 1.1999998092651367,
+            "ttfb": 7.5,
+            "bytes": 398
+          },
+          {
+            "path": "/api/ping",
+            "start": 451.19999980926514,
+            "end": 463.5,
+            "queue": 0.9000000953674316,
+            "ttfb": 9.900000095367432,
+            "bytes": 344
+          },
+          {
+            "path": "/m/icon-32.png",
+            "start": 453.09999990463257,
+            "end": 522.2999997138977,
+            "queue": 0.9000000953674316,
+            "ttfb": 60.90000009536743,
+            "bytes": 2437
+          },
+          {
+            "path": "/api/chat/pending-confirmations",
+            "start": 464.2999997138977,
+            "end": 520.4000000953674,
+            "queue": 1.6000003814697266,
+            "ttfb": 46.89999961853027,
+            "bytes": 332
+          },
+          {
+            "path": "/api/recommendations",
+            "start": 464.69999980926514,
+            "end": 521.1999998092651,
+            "queue": 1.5999999046325684,
+            "ttfb": 47.60000038146973,
+            "bytes": 2290
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 464.90000009536743,
+            "end": 582.7999997138977,
+            "queue": 2.0999999046325684,
+            "ttfb": 108.40000009536743,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later",
+            "start": 465.19999980926514,
+            "end": 529.2999997138977,
+            "queue": 2.5999999046325684,
+            "ttfb": 55,
+            "bytes": 322
+          },
+          {
+            "path": "/api/saved/favorite",
+            "start": 465.5,
+            "end": 530.5,
+            "queue": 3.299999713897705,
+            "ttfb": 54.90000009536743,
+            "bytes": 322
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 535.1999998092651,
+            "end": 620.5,
+            "queue": 2.4000000953674316,
+            "ttfb": 68.90000009536743,
+            "bytes": 33536
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 535.2999997138977,
+            "end": 634.4000000953674,
+            "queue": 3,
+            "ttfb": 75.5,
+            "bytes": 90252
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 535.4000000953674,
+            "end": 621.9000000953674,
+            "queue": 3.6999998092651367,
+            "ttfb": 68.90000009536743,
+            "bytes": 38828
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 535.5,
+            "end": 638.7999997138977,
+            "queue": 4.199999809265137,
+            "ttfb": 75.30000019073486,
+            "bytes": 61912
+          },
+          {
+            "path": "/api/runtime-status",
+            "start": 535.9000000953674,
+            "end": 643.0999999046326,
+            "queue": 4.399999618530273,
+            "ttfb": 87.5,
+            "bytes": 1094
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 537.0999999046326,
+            "end": 659.7999997138977,
+            "queue": 46.09999990463257,
+            "ttfb": 68,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 537.5,
+            "end": 748,
+            "queue": 85.2999997138977,
+            "ttfb": 121.60000038146973,
+            "bytes": 464
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 560.7999997138977,
+            "end": 770.7999997138977,
+            "queue": 83.10000038146973,
+            "ttfb": 121.59999990463257,
+            "bytes": 75880
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 560.9000000953674,
+            "end": 787.6999998092651,
+            "queue": 99.59999990463257,
+            "ttfb": 120.09999990463257,
+            "bytes": 24986
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 561,
+            "end": 800.1999998092651,
+            "queue": 188.19999980926514,
+            "ttfb": 44.5,
+            "bytes": 28653
+          },
+          {
+            "path": "/api/image-proxy",
+            "start": 561.0999999046326,
+            "end": 839.5999999046326,
+            "queue": 219.19999980926514,
+            "ttfb": 54.200000286102295,
+            "bytes": 76939
+          },
+          {
+            "path": "/api/health",
+            "start": 564.0999999046326,
+            "end": 748.7999997138977,
+            "queue": 59.19999980926514,
+            "ttfb": 121.7000002861023,
+            "bytes": 436
+          },
+          {
+            "path": "/api/init-status",
+            "start": 565.5999999046326,
+            "end": 758.4000000953674,
+            "queue": 69.59999990463257,
+            "ttfb": 120.90000009536743,
+            "bytes": 2121
+          },
+          {
+            "path": "/api/config/apply-status",
+            "start": 626.9000000953674,
+            "end": 769.0999999046326,
+            "queue": 12.599999904632568,
+            "ttfb": 123.69999980926514,
+            "bytes": 400
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 661.0999999046326,
+            "end": 779.5999999046326,
+            "queue": 87.40000009536743,
+            "ttfb": 26,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 749.1999998092651,
+            "end": 791,
+            "queue": 9.599999904632568,
+            "ttfb": 27.200000286102295,
+            "bytes": 464
+          },
+          {
+            "path": "/api/activity-feed",
+            "start": 752.0999999046326,
+            "end": 841.4000000953674,
+            "queue": 17.40000009536743,
+            "ttfb": 68.69999980926514,
+            "bytes": 739
+          },
+          {
+            "path": "/api/profile-summary",
+            "start": 763,
+            "end": 805.5999999046326,
+            "queue": 8.199999809265137,
+            "ttfb": 30.800000190734863,
+            "bytes": 682
+          },
+          {
+            "path": "/api/saved/watch_later/status",
+            "start": 790.9000000953674,
+            "end": 833.4000000953674,
+            "queue": 1,
+            "ttfb": 36.59999990463257,
+            "bytes": 464
+          },
+          {
+            "path": "/api/saved/favorite/status",
+            "start": 792.5,
+            "end": 835.2999997138977,
+            "queue": 0.7999997138977051,
+            "ttfb": 36.5,
+            "bytes": 464
+          }
+        ]
+      },
+      "images": [
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        },
+        {
+          "status": 200,
+          "cache": "hit"
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "diagnostic_only": {
+    "before": {
+      "browser": {
+        "cards": 1138.2999997138977,
+        "first4": 3012.5999999046326,
+        "all8": 4432.699999809265
+      },
+      "loop_lag_max_ms": 1190.7019908726215
+    },
+    "after": {
+      "browser": {
+        "cards": 851.7000002861023,
+        "first4": 1667.5999999046326,
+        "all8": 2839.300000190735
+      },
+      "loop_lag_max_ms": 86.72684013843536
+    }
+  },
+  "production_bundle_smoke": {
+    "widths": [
+      {
+        "width": 1920,
+        "chat": 1516.8125,
+        "available": 1516.8000000000002,
+        "overflow": false
+      },
+      {
+        "width": 1440,
+        "chat": 1049,
+        "available": 1049,
+        "overflow": false
+      },
+      {
+        "width": 1024,
+        "chat": 633,
+        "available": 633,
+        "overflow": false
+      },
+      {
+        "width": 768,
+        "chat": 729,
+        "available": 729,
+        "overflow": false
+      },
+      {
+        "width": 375,
+        "chat": 336,
+        "available": 336,
+        "overflow": false
+      }
+    ],
+    "settingsVisible": true,
+    "mobileEntryStatus": 200,
+    "scriptCount": 1,
+    "errors": []
+  }
+}

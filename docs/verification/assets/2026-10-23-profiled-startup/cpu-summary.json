@@ -1,0 +1,504 @@
+{
+  "before": {
+    "cards_ms": 2621.5,
+    "first4_ms": 2744.2000002861023,
+    "functions": [
+      {
+        "function": "(root)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 2261.47,
+        "self_ms": 0.0
+      },
+      {
+        "function": "(program)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 1390.42,
+        "self_ms": 1390.42
+      },
+      {
+        "function": "(idle)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 289.75,
+        "self_ms": 289.75
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 1,
+        "inclusive_ms": 215.17,
+        "self_ms": 3.07
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 0,
+        "inclusive_ms": 215.17,
+        "self_ms": 0.0
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 211,
+        "inclusive_ms": 139.32,
+        "self_ms": 139.32
+      },
+      {
+        "function": "getScrollTargets",
+        "path": "/web/assets/js/app.js",
+        "line": 204,
+        "inclusive_ms": 139.32,
+        "self_ms": 0.0
+      },
+      {
+        "function": "getScrollTopTarget",
+        "path": "/web/assets/js/app.js",
+        "line": 218,
+        "inclusive_ms": 139.32,
+        "self_ms": 0.0
+      },
+      {
+        "function": "sync",
+        "path": "/web/assets/js/app.js",
+        "line": 226,
+        "inclusive_ms": 139.32,
+        "self_ms": 0.0
+      },
+      {
+        "function": "initBackToTop",
+        "path": "/web/assets/js/app.js",
+        "line": 200,
+        "inclusive_ms": 139.32,
+        "self_ms": 0.0
+      },
+      {
+        "function": "activate",
+        "path": "/shared/i18n.js",
+        "line": 224,
+        "inclusive_ms": 113.83,
+        "self_ms": 3.35
+      },
+      {
+        "function": "apply",
+        "path": "/shared/i18n.js",
+        "line": 356,
+        "inclusive_ms": 77.72,
+        "self_ms": 10.25
+      },
+      {
+        "function": "run",
+        "path": "/web/assets/js/app.js",
+        "line": 4164,
+        "inclusive_ms": 66.53,
+        "self_ms": 0.0
+      },
+      {
+        "function": "isAutoLoadSentinelInView",
+        "path": "/web/assets/js/app.js",
+        "line": 4148,
+        "inclusive_ms": 66.15,
+        "self_ms": 0.0
+      },
+      {
+        "function": "refreshAutoLoadSentinelVisibility",
+        "path": "/web/assets/js/app.js",
+        "line": 4156,
+        "inclusive_ms": 66.15,
+        "self_ms": 0.0
+      },
+      {
+        "function": "getBoundingClientRect",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 65.0,
+        "self_ms": 65.0
+      },
+      {
+        "function": "renderAll",
+        "path": "/web/assets/js/app.js",
+        "line": 12301,
+        "inclusive_ms": 35.28,
+        "self_ms": 0.0
+      },
+      {
+        "function": "nextNode",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 32.73,
+        "self_ms": 7.72
+      },
+      {
+        "function": "renderChat",
+        "path": "/web/assets/js/app.js",
+        "line": 8955,
+        "inclusive_ms": 30.73,
+        "self_ms": 0.0
+      },
+      {
+        "function": "applyInitialRecommendations",
+        "path": "/web/assets/js/app.js",
+        "line": 12068,
+        "inclusive_ms": 28.02,
+        "self_ms": 0.0
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 12237,
+        "inclusive_ms": 28.02,
+        "self_ms": 0.0
+      },
+      {
+        "function": "translateTextNode",
+        "path": "/shared/i18n.js",
+        "line": 298,
+        "inclusive_ms": 26.4,
+        "self_ms": 8.25
+      },
+      {
+        "function": "syncRecommendationCards",
+        "path": "/web/assets/js/app.js",
+        "line": 5218,
+        "inclusive_ms": 25.42,
+        "self_ms": 0.23
+      },
+      {
+        "function": "renderVideos",
+        "path": "/web/assets/js/app.js",
+        "line": 5252,
+        "inclusive_ms": 25.42,
+        "self_ms": 0.0
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 5225,
+        "inclusive_ms": 25.02,
+        "self_ms": 0.0
+      },
+      {
+        "function": "acceptNode",
+        "path": "/shared/i18n.js",
+        "line": 372,
+        "inclusive_ms": 25.01,
+        "self_ms": 5.69
+      },
+      {
+        "function": "createRecommendationCard",
+        "path": "/web/assets/js/app.js",
+        "line": 5157,
+        "inclusive_ms": 20.23,
+        "self_ms": 11.82
+      },
+      {
+        "function": "shouldSkip",
+        "path": "/shared/i18n.js",
+        "line": 246,
+        "inclusive_ms": 19.32,
+        "self_ms": 3.8
+      },
+      {
+        "function": "mergeCatalog",
+        "path": "/shared/i18n.js",
+        "line": 147,
+        "inclusive_ms": 18.08,
+        "self_ms": 13.31
+      },
+      {
+        "function": "",
+        "path": "/shared/i18n.js",
+        "line": 405,
+        "inclusive_ms": 17.67,
+        "self_ms": 0.15
+      },
+      {
+        "function": "",
+        "path": "/shared/i18n.js",
+        "line": 402,
+        "inclusive_ms": 17.67,
+        "self_ms": 0.0
+      },
+      {
+        "function": "apply",
+        "path": "/shared/i18n.js",
+        "line": 356,
+        "inclusive_ms": 17.51,
+        "self_ms": 0.27
+      },
+      {
+        "function": "renderDesktopPendingConfirmations",
+        "path": "/web/assets/js/app.js",
+        "line": 7556,
+        "inclusive_ms": 17.21,
+        "self_ms": 16.9
+      },
+      {
+        "function": "",
+        "path": "",
+        "line": 2,
+        "inclusive_ms": 17.2,
+        "self_ms": 3.12
+      },
+      {
+        "function": "",
+        "path": "",
+        "line": 1,
+        "inclusive_ms": 17.2,
+        "self_ms": 0.0
+      }
+    ]
+  },
+  "after": {
+    "cards_ms": 1674.1999998092651,
+    "first4_ms": 1925.6999998092651,
+    "functions": [
+      {
+        "function": "(root)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 1477.12,
+        "self_ms": 0.0
+      },
+      {
+        "function": "(idle)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 673.92,
+        "self_ms": 673.92
+      },
+      {
+        "function": "(program)",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 571.06,
+        "self_ms": 571.06
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 1,
+        "inclusive_ms": 97.44,
+        "self_ms": 0.2
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 1,
+        "inclusive_ms": 97.24,
+        "self_ms": 10.0
+      },
+      {
+        "function": "renderAll",
+        "path": "/web/assets/js/app.js",
+        "line": 12311,
+        "inclusive_ms": 56.14,
+        "self_ms": 2.91
+      },
+      {
+        "function": "applyInitialRecommendations",
+        "path": "/web/assets/js/app.js",
+        "line": 12078,
+        "inclusive_ms": 48.76,
+        "self_ms": 0.0
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 12247,
+        "inclusive_ms": 48.76,
+        "self_ms": 0.0
+      },
+      {
+        "function": "renderChat",
+        "path": "/web/assets/js/app.js",
+        "line": 8965,
+        "inclusive_ms": 48.06,
+        "self_ms": 1.08
+      },
+      {
+        "function": "renderVideos",
+        "path": "/web/assets/js/app.js",
+        "line": 5262,
+        "inclusive_ms": 45.45,
+        "self_ms": 1.6
+      },
+      {
+        "function": "syncRecommendationCards",
+        "path": "/web/assets/js/app.js",
+        "line": 5228,
+        "inclusive_ms": 43.85,
+        "self_ms": 0.67
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 5235,
+        "inclusive_ms": 43.18,
+        "self_ms": 1.49
+      },
+      {
+        "function": "renderDesktopPendingConfirmations",
+        "path": "/web/assets/js/app.js",
+        "line": 7566,
+        "inclusive_ms": 35.13,
+        "self_ms": 35.13
+      },
+      {
+        "function": "createRecommendationCard",
+        "path": "/web/assets/js/app.js",
+        "line": 5167,
+        "inclusive_ms": 28.69,
+        "self_ms": 14.37
+      },
+      {
+        "function": "run",
+        "path": "/web/assets/js/app.js",
+        "line": 4174,
+        "inclusive_ms": 28.58,
+        "self_ms": 0.26
+      },
+      {
+        "function": "refreshAutoLoadSentinelVisibility",
+        "path": "/web/assets/js/app.js",
+        "line": 4166,
+        "inclusive_ms": 27.99,
+        "self_ms": 0.25
+      },
+      {
+        "function": "getBoundingClientRect",
+        "path": "",
+        "line": 0,
+        "inclusive_ms": 27.74,
+        "self_ms": 27.74
+      },
+      {
+        "function": "isAutoLoadSentinelInView",
+        "path": "/web/assets/js/app.js",
+        "line": 4158,
+        "inclusive_ms": 27.74,
+        "self_ms": 0.0
+      },
+      {
+        "function": "recommendationCardHtml",
+        "path": "/web/assets/js/app.js",
+        "line": 5140,
+        "inclusive_ms": 10.76,
+        "self_ms": 1.78
+      },
+      {
+        "function": "next",
+        "path": "",
+        "line": 25,
+        "inclusive_ms": 8.26,
+        "self_ms": 0.0
+      },
+      {
+        "function": "predicate",
+        "path": "",
+        "line": 3,
+        "inclusive_ms": 7.76,
+        "self_ms": 0.0
+      },
+      {
+        "function": "",
+        "path": "",
+        "line": 2,
+        "inclusive_ms": 7.34,
+        "self_ms": 2.01
+      },
+      {
+        "function": "",
+        "path": "",
+        "line": 1,
+        "inclusive_ms": 7.34,
+        "self_ms": 0.0
+      },
+      {
+        "function": "chatHtml",
+        "path": "/web/assets/js/app.js",
+        "line": 7479,
+        "inclusive_ms": 6.8,
+        "self_ms": 0.57
+      },
+      {
+        "function": "restoreFrontendSettings",
+        "path": "/web/assets/js/app.js",
+        "line": 1132,
+        "inclusive_ms": 6.73,
+        "self_ms": 1.71
+      },
+      {
+        "function": "hydrateFromBackend",
+        "path": "/web/assets/js/app.js",
+        "line": 12074,
+        "inclusive_ms": 6.64,
+        "self_ms": 0.31
+      },
+      {
+        "function": "hydrate",
+        "path": "/web/assets/js/saved-sync-core.js",
+        "line": 254,
+        "inclusive_ms": 6.59,
+        "self_ms": 0.81
+      },
+      {
+        "function": "",
+        "path": "",
+        "line": 1,
+        "inclusive_ms": 6.47,
+        "self_ms": 6.25
+      },
+      {
+        "function": "",
+        "path": "/web/assets/js/app.js",
+        "line": 7483,
+        "inclusive_ms": 6.23,
+        "self_ms": 0.59
+      },
+      {
+        "function": "desktopSavedItem",
+        "path": "/web/assets/js/app.js",
+        "line": 3213,
+        "inclusive_ms": 6.01,
+        "self_ms": 0.82
+      },
+      {
+        "function": "renderMarkdown",
+        "path": "/shared/dialogue-confirmation.js",
+        "line": 179,
+        "inclusive_ms": 5.63,
+        "self_ms": 2.34
+      },
+      {
+        "function": "initSourceCards",
+        "path": "/web/assets/js/app.js",
+        "line": 10088,
+        "inclusive_ms": 5.52,
+        "self_ms": 2.31
+      },
+      {
+        "function": "bindRovingChoiceGroup",
+        "path": "/web/assets/js/app.js",
+        "line": 4032,
+        "inclusive_ms": 5.45,
+        "self_ms": 5.17
+      },
+      {
+        "function": "InjectedScript",
+        "path": "",
+        "line": 6961,
+        "inclusive_ms": 5.15,
+        "self_ms": 3.38
+      },
+      {
+        "function": "watchLaterStatus",
+        "path": "/web/assets/js/app.js",
+        "line": 3314,
+        "inclusive_ms": 5.09,
+        "self_ms": 0.17
+      }
+    ]
+  }
+}

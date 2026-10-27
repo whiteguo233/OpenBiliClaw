@@ -1,15 +1,16 @@
 # OpenBiliClaw configuration example
 # Copy this file to config.toml and edit as needed.
 # 首次运行如果缺少 config.toml，程序会自动基于本文件生成模板。
-# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter）时，需要为调用链中的实例填写 api_key。
+# 使用远程模型（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）时，需要为调用链中的实例填写 api_key。
 # 本地 Ollama 主要用于向量检索（embedding, bge-m3）。作为聊天 provider 属高级用法：
 # 捆绑的 Ollama 只装了 embedding 模型，小体积本地聊天模型达不到内容管线质量线，
 # 因此图形向导 / init / bootstrap 都不再推荐把它当聊天默认。确要如此的高级用户可手动
 # 新建一个 provider_type = "ollama" 的实例，并把实例 ID 放入 default_chain。
 
 [general]
-# Language for Agent output (zh / en)
-language = "zh"
+# 界面 / CLI / 新生成内容的语言：zh-Hans（简体中文）、zh-Hant（繁體中文・台灣）、en（English）。
+# 旧值如 zh / en-US 仍可读取，运行时会规范化为上面的 id；未知值在保存配置时被拒绝。
+language = "zh-Hans"
 # Data directory (relative to project root)
 data_dir = "data"
 
@@ -25,6 +26,14 @@ port = 8420
 # 局域网/远程访问的可选密码门禁。本机（127.0.0.1 直连）默认始终免登录。
 [api.auth]
 # 是否开启密码登录门禁。
+# 安全警告：enabled = false 且 host 绑定 0.0.0.0（默认组合）时，历史记录、画像、
+# 推荐和点赞/评论/关注等写接口对同一网络中的任何人完全开放（零鉴权）。
+# B 站凭据接口（/api/bilibili/auth/import|export|session）与设置写/探测接口
+# （PUT /api/config、/api/config/probe-service、/api/config/discover-models）
+# 不受此开关影响：它们始终要求本机访问或已登录会话，远程调用一律 403
+#（issue #299、#300）。
+# 只要端口可被局域网或公网访问，强烈建议设为 true 并用
+# `openbiliclaw set-password` 设置密码。
 enabled = false
 # 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
 password_hash = ""
@@ -49,6 +58,76 @@ extension_access_keys = []
 # 扩展设备访问令牌有效期（小时），允许范围 1..168，默认 24。
 extension_token_ttl_hours = 24
 
+# 独立的 typed decision provider，不复用聊天或 embedding 凭据。
+# enabled 仅允许创建 client；实际请求由下面的导演/过滤独立路由控制。
+# 这三段只通过 TOML 配置；修改后完整重启后端（API/推荐/发现子进程）生效。
+# Key 必须由后端启动环境继承；Docker 须显式映射环境变量并重建容器。
+[decision.providers.jev]
+enabled = false
+model = "jev-1.13.0"
+# 自建/中转也必须兼容 Jev 原生协议，不是 Chat Completions。
+endpoint_url = "https://api.typesafe.ai/v1/systemone"
+# 可在 Web/插件连接区保存本机 Token；留空则读取环境变量。不要提交真实值。
+api_key = ""
+api_key_env = "TYPESAFE_API_KEY"
+# 初始传输预算，并非实测 SLA。有限正秒数；max_attempts 包含首次请求。
+timeout_seconds = 2.0
+max_attempts = 2
+# 已知固定版本自动加载已确认容量；绝不自动换模型。未知模型须先登记双 token 上限。
+# 手工容量按精确模型 ID 隔离；切模型不会继承其他型号的容量。以下仅示意，勿照抄容量。
+# [decision.providers.jev.context_limits."your-exact-model-id"]
+# max_request_tokens = 64000
+# max_state_question_tokens = 32000
+
+[director]
+# 三种编排共用 off/shadow/enforce 灰度。shadow 记录导演提案、返回同 shortlist
+# 的确定性基线；不是旧 MMR 严格不干预，旧路径请用 off。
+mode = "off"
+strategy = "agent_jev" # jev_recurrent | agent_jev | agent_only
+decision_provider = "jev"
+planning_horizon_screens = 3
+plan_ttl_seconds = 300
+planning_budget_seconds = 20.0
+decision_budget_seconds = 8.0
+max_decision_calls = 10
+max_candidates = 40
+
+[discovery.semantic_filter]
+# 与导演独立。仅针对明确稳定避雷，探索候选保留；失败/证据不足 fail open。
+mode = "off"
+provider = "jev"
+# 初始 shadow 观察值，非校准结论。enforce 需要人工记录真实校准标签与固定模型。
+refusal_threshold = 1.0
+calibration_tag = ""
+calibration_model = ""
+max_candidates_per_cycle = 30
+max_calls_per_cycle = 1
+decision_budget_seconds = 2.0
+# embedding/Jev 不可同时 enforce。任一 shadow/learned 对照队列绕过双方拒绝。
+
+[discovery.jev_evaluation]
+# eval_scorer = "jev" 时替换完整候选评估，不隐式调用 LLM；原生仅文本。
+# 受控标签最多 254 项，每项最多 80 UTF-8 字节，不能重复。未识别主题/IP保留未知。
+# franchise_labels 为空时不识别新的 IP；可手动添加领域内规范名称。
+topic_labels = ["科技", "编程", "科学", "游戏", "影视", "音乐", "动漫", "生活", "美食", "旅行", "运动", "财经", "教育", "历史", "社会", "艺术", "其他"]
+franchise_labels = []
+# 工程 UTF-8 字节护栏，不是精确 token 计数；按完整候选拆批。
+# 超长单项先在本地选完整原文片段，必需信息仍超限则留待评估。
+# 0=按所选模型双上下文上限自适应；正数为额外更严上限，不得高于模型字节护栏。
+# jev-1.13.0 对应 24000/48000 bytes；旧配置的正值仍保留，不会被静默改为自动。
+# 工程估算 = 已确认 token 上限 × 0.75，不是 tokenizer；画像按需加载不修改原画像。
+max_state_question_bytes = 0
+max_request_bytes = 0
+# 完整候选题组不拆开；整批超限时优先移到下一批。此处均为工程护栏。
+# 默认每批最多 4 条，尚非中文质量标定值；按实测调整。
+max_candidates_per_request = 4
+# 官方无独立题数上限；0=仅受双容量约束，正数至少 10（一套完整评估）。
+max_questions_per_request = 0
+# 单题 instructions/criteria 的 canonical JSON UTF-8 字节；0=仅受组合窗口约束。
+max_question_bytes = 0
+max_calls = 32
+budget_seconds = 30.0
+
 [llm]
 # v2：每个实例都是完整可调用端点（类型 + Base URL + 凭据 + 模型）。
 # default_chain 从左到右依次尝试；失败、超时或限流时降级到下一实例。
@@ -61,7 +140,7 @@ default_chain = ["deepseek"]
 concurrency = 3
 # Global request timeout for all LLM providers (seconds).
 # Applies to OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter /
-# OrcaRouter / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
+# OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
 timeout = 1200
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
@@ -87,6 +166,36 @@ timeout = 1200
 # reasoning_effort = "medium"
 #
 # default_chain = ["deepseek", "orcarouter"]
+#
+# [llm.instances.requesty]
+# name = "Requesty 聚合"
+# provider_type = "requesty"
+# enabled = true
+# api_key = "rqsty-..."
+# model = "openai/gpt-4o-mini"
+# base_url = "https://router.requesty.ai/v1"
+#
+# default_chain = ["deepseek", "requesty"]
+#
+# [llm.instances.api-route]
+# name = "API Route 聚合"
+# provider_type = "api_route"
+# enabled = true
+# api_key = "your-api-route-key"
+# model = "gpt-5.5"
+# base_url = "https://global.api-route.com/v1"
+#
+# default_chain = ["deepseek", "api-route"]
+#
+# [llm.instances.cheaperinference]
+# name = "Cheaper Inference 聚合"
+# provider_type = "cheaperinference"
+# enabled = true
+# api_key = "ci_live_..."
+# model = "gpt-5.4-mini"
+# base_url = "https://api.cheaperinference.com/v1"
+#
+# default_chain = ["deepseek", "cheaperinference"]
 
 [llm.instances.deepseek]
 name = "DeepSeek 官方"
@@ -185,7 +294,7 @@ cache_low_watermark = 0.7
 # 可选 Sponsored SDK 覆盖项目文本/JSON/工具/视觉/向量；正式 bundle 待验，源码部署默认关闭。
 # 官方安装包把 runtime_path 指向包内的 obc-sponsored-runtime；该进程持有
 # SiliconFlow Sponsored Key，并按签名 policy 限制任务/模型/额度，只回退不中转。
-# IPC v2：当前仅画像合并固定结构请求；需匹配 v2 Runtime/签名 Policy，源码默认关闭。
+# 长度帧 IPC 2 / SDK contract3：覆盖全项目六类操作，保留旧合并v2；需配套 Runtime/签名 Policy。
 [llm.sponsored]
 enabled = false
 # 可执行文件路径或命令行（支持带参数）。为空 = Sponsored 不可用，完全走 BYOK/Ollama。
@@ -248,7 +357,7 @@ executable = ""
 headed = false
 
 # ── 海外网络路由（仅作用于海外客户端）──
-# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / openai_compatible
+# 作用范围：OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible
 # 的 chat + embedding、YouTube(yt-dlp)、X(twitter-cli)、Reddit(rdt-cli /
 # OpenCLI)、Bangumi(api.bgm.tv 与封面 CDN lain.bgm.tv 均为海外 Cloudflare,
 # 国内网络直连易超时,需走代理)、GitHub 内容来源 / 自动更新、Codex OAuth。
@@ -349,6 +458,40 @@ daily_trending_budget = 0
 daily_channel_budget = 0
 request_interval_seconds = 2
 # YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
+min_interval_minutes = 3
+
+# ── TikTok 专用配置（实验性）──
+# 主后端是 TikTok Web API（访客身份 + 请求签名，curl_cffi Chrome TLS 指纹），
+# 无需登录、不依赖浏览器扩展；yt-dlp 仅作兜底（创作者/话题标签列表）。
+# 发现面：推荐流（For You）+ 话题标签列表 + 创作者视频列表；配置登录 cookie
+# 后可尝试关键词搜索（需单独验证可用性，默认不启用）。未配置搜索时，关键词规划器产出
+# 的词会被映射为话题标签而不是搜索词。
+# enabled=false 时 pool_source_shares 中的 tiktok 配额会被丢弃（避免池子卡在低于目标）。
+# TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
+[sources.tiktok]
+enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
+# 后端选择："auto"（默认，Web API 优先、失败回退 yt-dlp）| "web"（仅 Web API）| "ytdlp"（仅 yt-dlp）。
+# Web API 后端走访客身份 + 请求签名（curl_cffi Chrome TLS 指纹），实测匿名可用：
+# 推荐流 / 创作者列表 / 话题标签列表；关键词搜索被上游 gate，需要登录 cookie。
+mode = "auto"
+# 可选登录 cookie 环境变量（优先级高于 data/tiktok_cookie.json）；不配置也能以访客身份运行，
+# 配置后挂载关键词搜索；会话有效不证明搜索可用或更高限额。切勿伪造 msToken。
+cookie_env = "OPENBILICLAW_TIKTOK_COOKIE"
+# Web API 请求携带的地区 / 时区参数，应匹配你的网络出口地区；被风控 gate（空响应）时首先检查这两项。
+region = "JP"
+tz_name = "Asia/Tokyo"
+# 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
+tags = []
+# 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
+creators = []
+daily_feed_budget = 3                    # 推荐流每日拉取上限（高曝光，建议压低）；0 = 不设每日上限
+daily_search_budget = 3                  # 关键词搜索每日上限；搜索需登录 Cookie（有账号风险，默认不启用）
+daily_tag_budget = 0                     # 0 = 不设每日上限
+daily_user_budget = 0                    # 0 = 不设每日上限
+request_interval_seconds = 2             # 每个 Web 请求的间隔，formal/inspiration 共用持久状态
+# TikTok producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
 min_interval_minutes = 3
 
 # ── X (Twitter) 专用配置 ──
@@ -509,6 +652,23 @@ daily_creator_budget = 30
 request_interval_seconds = 3
 min_interval_minutes = 10
 
+# ── Instagram 公开发现 + 登录态初始化（只读）──
+# topic / creator 发现由浏览器执行可选登录的只读任务；初始化时可读取当前账号最近的
+# liked / saved / following。扩展只同步 sessionid 是否存在的布尔心跳，不上传 Cookie。
+# 首版个人信号为 init-only，不注册后台周期增量。
+[sources.instagram]
+enabled = false
+source_modes = ["topic", "creator"]
+daily_topic_budget = 60               # 每日实际保留的 topic 候选上限；0 = 不设上限
+daily_creator_budget = 30             # 每日实际保留的 creator 候选上限；0 = 不设上限
+request_interval_seconds = 3          # 扩展对上游分页请求的最小间隔（1..30 秒）
+min_interval_minutes = 10             # producer 两次有产出运行的最小间隔
+bootstrap_limit = 300                 # 每个个人 scope 最多读取 300 条
+recommendation_date_preset = "all"    # 与其它来源共用日期准入；默认不过滤
+recommendation_date_start = ""
+recommendation_date_end = ""
+recommendation_date_weight = 0.5
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -558,6 +718,7 @@ douyin_incremental_hours = 0
 # reddit_incremental_hours = 24
 # linuxdo_incremental_hours = 24
 # v2ex_incremental_hours = 24
+# tiktok_incremental_hours = 24
 # --- Runtime refresh tuning ---
 refresh_check_interval_seconds = 60      # Main loop poll interval; values <15 fallback
 # eval_min_batch_size = 15               # Coalesce trickle candidates into fuller eval batches; 1..90
@@ -619,6 +780,7 @@ bilibili = 5
 xiaohongshu = 1
 douyin = 1
 youtube = 1
+tiktok = 1
 twitter = 1
 zhihu = 1
 reddit = 1
@@ -627,6 +789,7 @@ github = 1
 linuxdo = 1
 v2ex = 1
 weibo = 1
+instagram = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──
 # 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词
@@ -670,6 +833,8 @@ inspiration_search_enabled = true
 # Exa 不可用/返回空时再用 You.com 兜底，最后是 Serply。远端 MCP 需要在本机
 # mcporter 配置里有 `exa` 和 / 或 `you` server；填写 exa_api_key / you_api_key /
 # serply_api_key 后则直连 HTTP API。
+# 可选加入 "parallel"：匿名 Parallel Search MCP grounding，无需 API Key；默认链不变。
+# 可选加入 "keenable"：Keenable 搜索 API 匿名免费 grounding，无需 API Key；默认链不变。
 inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
 # Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
 # 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter
@@ -677,6 +842,8 @@ inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "e
 # Exa: https://exa.ai  →  x-api-key
 # You.com: https://you.com  →  x-api-key
 # Serply: https://serply.io（文档 https://serply.io/docs）→ X-Api-Key
+# Keenable 只使用免费匿名端点（https://api.keenable.ai/v1/search/public，
+#   带 X-Keenable-Title 标识调用方），没有 API Key 配置项。
 exa_api_key = ""
 you_api_key = ""
 serply_api_key = ""
@@ -700,6 +867,8 @@ candidate_eval_concurrency = 3
 eval_prefilter_mode = "shadow"
 # relevance 后端："llm"（默认，配置页显示为 Agent）；"shadow" 同跑 learned/LLM、以 LLM 为准并落审计；
 # "learned" 使用 learned relevance，但仍由 LLM 提供 temporal/topic/style/franchise 安全元数据。
+# "jev" 使用独立 Jev 完整评估，纯文本受控分类，不调用 LLM；须配置上方 provider/env。
+# Jev 不能与 multimodal_evaluation_enabled 或 semantic_filter 同开；模型换代须重做质量校准。
 # 两种校准模式都会绕过 normal eval cache，且把 prefilter enforce 当成 shadow；当前不减少 LLM 调用。
 eval_scorer = "llm"
 # 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时
@@ -815,6 +984,24 @@ insight_prompt_view = "legacy"
 # retained as disliked_topics evidence instead of being learned as a
 # positive interest.
 satisfaction_filter_enabled = true
+
+
+# ──────────────────────────────────────────────────────────────
+# Chat agent loop（「聊一聊」多跳工具调用）
+# ──────────────────────────────────────────────────────────────
+[agent]
+# 流式 agent 聊天端点（POST /api/chat/agent/stream）开关；关闭后旧单跳聊天端点不受影响。
+# loop_enabled = true
+# 每轮对话「思考 → 调工具 → 再思考」的最大跳数；超限后模型会收尾汇报进展。
+# loop_max_steps = 64
+# 单次工具结果回填进 prompt 的字符上限，超出部分截断。
+# tool_result_max_chars = 4000
+# 多会话标题自动生成（M5）：开启后新会话首条消息会用 LLM 生成简短标题
+# （失败时回退为消息截断前缀）；关闭则直接使用截断前缀、不发起 LLM 调用。
+# session_title_enabled = true
+# 后台任务（任务中心，M6）单次执行的跳数预算：后台任务无人值守、只挂只读工具，
+# 预算比交互对话小；超限后模型会收尾汇报进展。
+# task_max_steps = 32
 
 
 # ──────────────────────────────────────────────────────────────

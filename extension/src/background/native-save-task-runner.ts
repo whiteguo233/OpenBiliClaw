@@ -24,6 +24,7 @@ const READ_ONLY_VERIFICATION_PLATFORMS = new Set<NativeSavePlatform>([
   "xiaohongshu",
   "youtube",
   "zhihu",
+  "tiktok",
 ]);
 
 export interface NativeSaveRunnerOptions {
@@ -709,6 +710,17 @@ export async function runNativeSaveTask(
           Math.max(1, options.readinessRetryMs ?? DEFAULT_READINESS_RETRY_MS),
         );
         outcome = mutationExecution.outcome;
+        // TikTok can show a gold bookmark and return a successful request
+        // while a fresh page still reports no membership (live 2026-10-12).
+        // Never publish its optimistic success, even if reload is unavailable.
+        if (task.platform === "tiktok" &&
+            (outcome.status === "synced" || outcome.status === "already_synced")) {
+          outcome = {
+            status: "failed",
+            error_code: "native_confirmation_not_observed",
+            error_message: "",
+          };
+        }
         if (
           READ_ONLY_VERIFICATION_PLATFORMS.has(task.platform) &&
           outcome.status === "failed" &&

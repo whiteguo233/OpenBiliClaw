@@ -621,6 +621,42 @@ def test_feedback_state_round_trips_to_json(tmp_path: Path) -> None:
     assert state["feedback_owner_cutover_at"] == "2026-08-01T01:02:03"
 
 
+def test_feedback_state_concurrent_saves_do_not_race_on_tmp_file(tmp_path: Path) -> None:
+    """Parallel writers used to share one ``*.tmp`` name; the loser crashed
+    with FileNotFoundError when its os.replace ran after the winner renamed
+    the tmp file away. Each save now uses a unique tmp name."""
+    import threading
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    errors: list[BaseException] = []
+
+    def _write(worker: int) -> None:
+        try:
+            for index in range(30):
+                memory.save_feedback_state(
+                    {
+                        "last_processed_feedback_event_id": worker * 1000 + index,
+                        "last_feedback_reanalyzed_at": "",
+                    }
+                )
+        except BaseException as exc:  # noqa: BLE001 - surfaced via assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_write, args=(worker,)) for worker in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    state = memory.load_feedback_state()
+    assert isinstance(state["last_processed_feedback_event_id"], int)
+    # No orphaned tmp files are left behind.
+    leftovers = list((tmp_path / "memory").glob("feedback_state.json.*.tmp"))
+    assert leftovers == []
+
+
 def test_discovery_runtime_state_defaults_when_missing(tmp_path: Path) -> None:
     memory = MemoryManager(tmp_path)
     memory.initialize()
@@ -964,6 +1000,9 @@ def test_source_bootstrap_state_defaults_when_missing(tmp_path: Path) -> None:
         "v2ex_seen_item_keys": [],
         "weibo_seen_item_keys": [],
         "weibo_account_key": "",
+        "instagram_seen_item_keys": [],
+        "instagram_account_key": "",
+        "tiktok_seen_item_keys": [],
         "last_source_bootstrap_sync_at": "",
         "source_incremental": {
             "cursor": "",

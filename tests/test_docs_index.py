@@ -24,14 +24,18 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceLinuxdoText" in html
     assert "sourceWeiboTitle" in html
     assert "sourceWeiboText" in html
-    assert "十二类平台来源与开放 Web" in html
-    assert "Twelve platform sources and the open web" in html
+    assert "十四类平台来源（含正式可用的 Instagram 与 TikTok）与开放 Web" in html
+    assert (
+        "Fourteen platform sources (including official Instagram and TikTok) and the open web"
+        in html
+    )
     source_cards = re.findall(r'data-source="([a-z0-9_-]+)"', html)
     assert source_cards == [
         "bilibili",
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "x",
         "zhihu",
         "reddit",
@@ -40,14 +44,22 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
         "v2ex",
         "weibo",
         "github",
+        "instagram",
         "web",
     ]
     assert "sourceYoutubeTitle" in html
     assert "sourceYoutubeText" in html
+    assert "sourceTiktokTitle" in html
+    assert "sourceTiktokText" in html
     assert "sourceXTitle" in html
     assert "sourceXText" in html
     assert "sourceGithubTitle" in html
     assert "sourceGithubText" in html
+    assert "sourceInstagramTitle" in html
+    assert "sourceInstagramText" in html
+    assert "正式可用、默认关闭" in html
+    assert "disabled by default" in html
+    assert "docs/platform-source-acceptance.instagram.md" in html
     assert "Linux.do、V2EX、微博等十一类来源" not in html
     assert "Weibo, and eight other platform sources" not in html
     assert "登录微博后可在初始化时通过同源只读任务导入收藏、关注和互动" in html
@@ -76,14 +88,14 @@ def test_docs_homepage_chinese_weibo_translation_is_chinese() -> None:
     assert html.count("Public discovery covers search, hot, and creator") == 1
 
 
-def test_docs_homepage_mentions_macos_first_launch_security_bypass() -> None:
+def test_docs_homepage_explains_notarized_macos_installation() -> None:
     html = (ROOT / "docs/index.html").read_text(encoding="utf-8")
 
     assert "OpenBiliClaw-macos-v*-arm64.dmg" in html
-    assert "Control-click" in html
-    assert "隐私与安全性" in html
-    assert "已损坏" in html
-    assert "xattr -dr com.apple.quarantine /Applications/OpenBiliClaw.app" in html
+    assert "Developer ID 签名与 Apple 公证" in html
+    assert "拖入应用程序" in html
+    assert "Apple notarization" in html
+    assert "xattr -dr com.apple.quarantine" not in html
     assert "README bypass steps" not in html
 
 

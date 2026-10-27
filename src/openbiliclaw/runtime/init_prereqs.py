@@ -60,6 +60,7 @@ _PLATFORM_SOURCE_FIELDS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -68,6 +69,7 @@ _PLATFORM_SOURCE_FIELDS = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 
 

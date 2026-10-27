@@ -1,0 +1,51 @@
+{
+  "version": "0.3.232",
+  "preparation_base": "19dd85bf756b04a78f74c56063eefa1dc383b8dc",
+  "local_packages": [
+    {
+      "file": "openbiliclaw-extension-v0.3.232.zip",
+      "version": "0.3.232",
+      "bytes": 1693305,
+      "sha256": "736962d88250adcb4cd62c215f2582cf71f58e4d67316698ce25e21dc4957bee",
+      "script_hashes": {
+        "dist/background/service-worker.js": "a32bb0d0f93b35c752cde0f84e7cf9d8dc30f2be21cbdf76d0f5c39f63e0531d",
+        "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+        "dist/main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+      }
+    },
+    {
+      "file": "openbiliclaw-extension-v0.3.232-firefox.zip",
+      "version": "0.3.232",
+      "bytes": 1575646,
+      "sha256": "3daf61d15f326bc8285b841799ab7c6399dfe19883a25e5ba43c2824709da0ba",
+      "script_hashes": {
+        "background/service-worker.js": "2754d1748da6c2130898e0b7bc7a2dd8802ec7ef1de0bdc0d7579128fd185f4a",
+        "content/douyin.js": "d6539c3d242d9283a71d474fd836a4c0c3d8cd95994e7f39faf91bb84cd69320",
+        "main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+      }
+    }
+  ],
+  "chrome_douyin_scripts_identical_to_real_e2e": true,
+  "tests": {
+    "python_release": {
+      "passed": 36,
+      "seconds": 10.02,
+      "exit_code": 0
+    },
+    "extension_before": {
+      "passed": 1855,
+      "failed": 2,
+      "seconds": 25.255660519
+    },
+    "extension_after": {
+      "passed": 1857,
+      "failed": 0,
+      "seconds": 25.41856695
+    },
+    "typecheck_and_package_chrome": "PASS",
+    "typecheck_and_package_firefox": "PASS",
+    "ruff": "PASS",
+    "mypy": "PASS: 363 files"
+  },
+  "note": "Local archive hashes only; CI release archives are checked separately after publication."
+}

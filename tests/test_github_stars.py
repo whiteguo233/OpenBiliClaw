@@ -104,9 +104,7 @@ async def test_rate_limit_serves_stale_cache_and_backs_off(tmp_path: Path) -> No
 async def test_rate_limit_falls_back_to_shields(tmp_path: Path) -> None:
     cache_path = tmp_path / "github-stars.json"
     cache_path.write_text(
-        json.dumps(
-            {"github_stars": 123, "fetched_at": 1_000.0, "retry_at": 0, "etag": ""}
-        ),
+        json.dumps({"github_stars": 123, "fetched_at": 1_000.0, "retry_at": 0, "etag": ""}),
         encoding="utf-8",
     )
 

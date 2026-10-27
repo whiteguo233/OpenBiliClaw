@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from typing import Any
 
 from openbiliclaw.llm.base import classify_llm_failure_kind
+
+logger = logging.getLogger(__name__)
 
 _TRANSIENT_BACKOFF_SECONDS = (15.0, 30.0, 60.0, 120.0, 300.0)
 
@@ -67,6 +70,7 @@ class ExpressionCopyCoordinator:
         ):
             self._paused = False
             self._retry_not_before = 0.0
+            logger.info("expression copy resumed on %s", reason)
         self._generation += 1
         self.last_wake_reason = str(reason)
         if self._first_pending_at is None:
@@ -168,6 +172,7 @@ class ExpressionCopyCoordinator:
         if task is None:
             return
         failure_kind: str | None = None
+        backoff_delay = 0.0
         try:
             completed = task.result()
         except asyncio.CancelledError:
@@ -180,14 +185,40 @@ class ExpressionCopyCoordinator:
             now = float(self.time_fn())
             if kind in {"no_provider", "auth_failed"}:
                 self._paused = True
+                logger.warning(
+                    "expression copy paused on %s (pending=%d); waiting for a "
+                    "startup/config_*/manual_* wake: %s",
+                    kind,
+                    self._pending_count(),
+                    self.last_error,
+                )
             elif kind in {"rate_limited", "timeout", "connection", "server_error"}:
-                delay = _TRANSIENT_BACKOFF_SECONDS[
+                backoff_delay = _TRANSIENT_BACKOFF_SECONDS[
                     min(self._transient_streak, len(_TRANSIENT_BACKOFF_SECONDS) - 1)
                 ]
                 self._transient_streak += 1
                 retry_after = max(0.0, float(getattr(exc, "retry_after", 0.0) or 0.0))
-                self._retry_not_before = now + max(delay, retry_after)
+                backoff_delay = max(backoff_delay, retry_after)
+                self._retry_not_before = now + backoff_delay
+                # One line per state change, matching the candidate-eval worker
+                # style: silent 15/30/60/120/300s backoff ladders used to leave
+                # "no copy progress for minutes, zero log lines" incidents.
+                logger.warning(
+                    "expression copy transient failure (%s); backing off %.0fs "
+                    "(pending=%d, streak=%d): %s",
+                    kind,
+                    backoff_delay,
+                    self._pending_count(),
+                    self._transient_streak,
+                    self.last_error,
+                )
         else:
+            if self._transient_streak > 0 or self._retry_not_before > 0.0:
+                logger.info(
+                    "expression copy recovered: completed=%d pending=%d",
+                    completed,
+                    self._pending_count(),
+                )
             self.last_error = ""
             self._transient_streak = 0
         self.last_completed = completed
@@ -203,6 +234,14 @@ class ExpressionCopyCoordinator:
                 "server_error",
             }:
                 self._retry_not_before = now + self.zero_progress_backoff_seconds
+                if failure_kind is None:
+                    logger.warning(
+                        "expression copy made no progress; retrying in %.0fs "
+                        "(pending=%d, last_error=%s)",
+                        self.zero_progress_backoff_seconds,
+                        pending,
+                        self.last_error or "none",
+                    )
             self._first_pending_at = None
         else:
             self._retry_not_before = 0.0

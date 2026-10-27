@@ -247,8 +247,7 @@ class ConfusionManager:
             if (
                 len(ta) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
                 and len(tb) >= _CONFUSION_DEDUP_MIN_TEXT_LENGTH
-                and SequenceMatcher(None, ta, tb).ratio()
-                >= _CONFUSION_DEDUP_SIMILARITY_THRESHOLD
+                and SequenceMatcher(None, ta, tb).ratio() >= _CONFUSION_DEDUP_SIMILARITY_THRESHOLD
                 and cls._dedupe_norm_text(left_observation)
                 == cls._dedupe_norm_text(right_observation)
             ):

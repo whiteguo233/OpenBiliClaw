@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from .base import LLMProviderError, LLMResponse, LLMResponseError, LLMTimeoutError
+from .ollama_embedding_runtime import embedding_vector, post_embedding
 from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,10 @@ class OllamaProvider(OpenAIProvider):
             provider_name="ollama",
             timeout=timeout,
         )
+        # M1 keeps Ollama on the prompt-simulation tool path: native FC is
+        # only verified for the hosted OpenAI-compatible chat-completions
+        # endpoints, and Ollama's /v1 shim tool support varies by model.
+        self.supports_tool_calling = False
         self._embed_timeout = timeout
         # v0.3.x+: when >0, chat completions route through Ollama's *native*
         # ``/api/chat`` endpoint so we can pass ``options.num_ctx``. The
@@ -222,7 +227,7 @@ class OllamaProvider(OpenAIProvider):
 
     def _native_root(self) -> str:
         """Strip the OpenAI-compat ``/v1`` suffix to reach Ollama's native API root."""
-        return self.base_url.rstrip("/").rsplit("/v1", 1)[0]
+        return native_root(self.base_url)
 
     async def embed(self, text: str, *, model: str = "bge-m3") -> list[float]:
         """Get text embedding via Ollama's native ``/api/embeddings`` endpoint.
@@ -230,69 +235,134 @@ class OllamaProvider(OpenAIProvider):
         Recommended local fallback model is ``bge-m3`` (multilingual,
         1024-dim). Other Ollama embedding models also work — just pass
         ``model=...``.
-
-        Retries once on transient errors (timeout / connection drop /
-        Ollama runner restart). Returns an empty list only after both
-        attempts fail. Callers (EmbeddingService) treat empty vectors
-        as "no embedding" and skip caching them.
         """
-        url = f"{self._native_root()}/api/embeddings"
-        last_exc: Exception | None = None
-        # 1 initial + 1 retry. The retry covers brief Ollama hiccups
-        # (model swap, runner restart, momentary OOM) without making a
-        # transient failure poison the user's experience for several
-        # minutes. Two attempts is enough — if the second also fails,
-        # something structural is wrong and adding more retries just
-        # delays the inevitable WARN.
-        for attempt in (1, 2):
-            try:
-                # trust_env=False bypasses the user's HTTP_PROXY / HTTPS_PROXY env
-                # vars, which would otherwise route localhost embedding calls
-                # through e.g. a 127.0.0.1:7897 VPN proxy and time out.
-                #
-                # 120s timeout absorbs (a) the initial bge-m3 cold-load (~10-30s
-                # from disk on first call after Ollama wake) and (b) brief
-                # request-queue backlog when EmbeddingService throttles to
-                # concurrency=2 but the daemon enqueued >2 cache-miss texts
-                # within seconds. 60s was too tight under the post-proxy-fix
-                # cache-rebuild burst.
-                async with httpx.AsyncClient(
-                    timeout=self._embed_timeout,
-                    trust_env=False,
-                ) as client:
-                    response = await client.post(
-                        url,
-                        json={"model": model, "prompt": text},
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                vec = data.get("embedding")
-                if not isinstance(vec, list):
-                    return []
-                return [float(v) for v in vec if isinstance(v, int | float)]
-            except Exception as exc:
-                last_exc = exc
-                if attempt == 1:
-                    logger.debug(
-                        "Ollama embedding attempt 1 failed (model=%s), retrying",
-                        model,
-                        exc_info=True,
-                    )
-
-        # Ollama puts the actionable part ("model 'bge-m3' not found",
-        # "out of memory", …) in the response body — without it a bare
-        # "500" is undiagnosable from logs (field log 2026-07-05).
-        body_hint = ""
-        if isinstance(last_exc, httpx.HTTPStatusError):
-            try:
-                body_hint = last_exc.response.text[:200]
-            except Exception:
-                body_hint = ""
-        logger.warning(
-            "Ollama embedding failed after 2 attempts (model=%s, url=%s)%s",
+        return await embed_via_native_api(
+            self.base_url,
             model,
-            url,
-            f" body={body_hint!r}" if body_hint else "",
-            exc_info=last_exc,
+            text,
+            timeout=self._embed_timeout,
         )
-        return []
+
+
+def native_root(base_url: str) -> str:
+    """Strip the OpenAI-compat ``/v1`` suffix to reach Ollama's native API root."""
+    return base_url.rstrip("/").rsplit("/v1", 1)[0]
+
+
+async def embed_via_native_api(
+    base_url: str,
+    model: str,
+    text: str,
+    *,
+    timeout: float = 1200.0,
+) -> list[float]:
+    """Embed one text through Ollama's native ``/api/embeddings`` route.
+
+    Shared by :class:`OllamaProvider` (chat + embed) and
+    :class:`OllamaEmbeddingProvider` (embedding only) so both keep the same
+    CPU-fallback, retry, and logging contract.
+
+    Local native runner failures switch the endpoint/model to CPU and
+    retry the same input once. The shared choice also applies to readiness
+    probes and survives provider recreation until the app exits. Other
+    transient errors retain one retry. Failed or invalid vectors return
+    an empty list, which EmbeddingService never caches.
+    """
+    url = f"{native_root(base_url)}/api/embeddings"
+    last_exc: Exception | None = None
+    # 1 initial + 1 retry. The retry covers brief Ollama hiccups
+    # (model swap, runner restart, momentary OOM) without making a
+    # transient failure poison the user's experience for several
+    # minutes. Two attempts is enough — if the second also fails,
+    # something structural is wrong and adding more retries just
+    # delays the inevitable WARN.
+    for attempt in (1, 2):
+        try:
+            # trust_env=False bypasses the user's HTTP_PROXY / HTTPS_PROXY env
+            # vars, which would otherwise route localhost embedding calls
+            # through e.g. a 127.0.0.1:7897 VPN proxy and time out.
+            #
+            # 120s timeout absorbs (a) the initial bge-m3 cold-load (~10-30s
+            # from disk on first call after Ollama wake) and (b) brief
+            # request-queue backlog when EmbeddingService throttles to
+            # concurrency=2 but the daemon enqueued >2 cache-miss texts
+            # within seconds. 60s was too tight under the post-proxy-fix
+            # cache-rebuild burst.
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                trust_env=False,
+            ) as client:
+                response = await post_embedding(client, native_root(base_url), model, text)
+                response.raise_for_status()
+            return embedding_vector(response)
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 1:
+                logger.debug(
+                    "Ollama embedding attempt 1 failed (model=%s), retrying",
+                    model,
+                    exc_info=True,
+                )
+
+    # Ollama puts the actionable part ("model 'bge-m3' not found",
+    # "out of memory", …) in the response body — without it a bare
+    # "500" is undiagnosable from logs (field log 2026-07-05).
+    body_hint = ""
+    if isinstance(last_exc, httpx.HTTPStatusError):
+        try:
+            body_hint = last_exc.response.text[:200]
+        except Exception:
+            body_hint = ""
+    logger.warning(
+        "Ollama embedding failed after 2 attempts (model=%s, url=%s)%s",
+        model,
+        url,
+        f" body={body_hint!r}" if body_hint else "",
+        exc_info=last_exc,
+    )
+    return []
+
+
+class OllamaEmbeddingProvider:
+    """Embedding-only Ollama client that never builds a chat SDK client.
+
+    Issue #318 (v0.3.229 Windows desktop): Ollama embedding used to be an
+    :class:`OllamaProvider`, whose ``__init__`` builds an ``AsyncOpenAI``
+    chat client. Embedding never uses that client — it talks to Ollama's
+    native ``/api/embeddings`` route — but in a packaged build whose
+    openai/httpx pair was mismatched the constructor raised
+    (``'AsyncHttpxClientWrapper' object has no attribute '_mounts'``),
+    ``build_embedding_service`` swallowed the exception, and every embedding
+    probe then reported "misconfigured" — init returned 409 forever and the
+    recommendation pool stayed empty. Embedding only needs raw httpx.
+    """
+
+    supports_embedding = True
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:11434/v1",
+        model: str = "bge-m3",
+        timeout: float = 1200.0,
+    ) -> None:
+        self.base_url = base_url
+        self._model = model
+        self._embed_timeout = timeout
+        # Parity with OllamaProvider: native tool calling is not advertised
+        # for local models (M1 keeps Ollama on the prompt-simulation path).
+        self.supports_tool_calling = False
+
+    @property
+    def name(self) -> str:
+        """Logical provider name used by embedding provenance and logs."""
+        return "ollama"
+
+    async def embed(self, text: str, *, model: str = "") -> list[float]:
+        """Get text embedding via Ollama's native ``/api/embeddings`` endpoint."""
+        effective_model = (model or "").strip() or self._model
+        return await embed_via_native_api(
+            self.base_url,
+            effective_model,
+            text,
+            timeout=self._embed_timeout,
+        )

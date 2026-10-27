@@ -120,6 +120,9 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                 kwargs["source_platform"] = str(payload.get("source_platform", ""))
             if "excluded_item_ids" in payload:
                 kwargs["excluded_item_ids"] = _to_strings(payload.get("excluded_item_ids"))
+            for key in ("request_id", "stream_ref", "explicit_intent"):
+                if key in payload:
+                    kwargs[key] = str(payload[key])
             return await adapter.recommend(**kwargs)
 
         return await _run_handler(action)
@@ -130,6 +133,11 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                 limit=_to_int(payload.get("limit", 5), default=5),
                 source_platform=str(payload.get("source_platform", "")),
                 excluded_item_ids=_to_strings(payload.get("excluded_item_ids")),
+                **{
+                    key: str(payload[key])
+                    for key in ("request_id", "stream_ref", "explicit_intent")
+                    if key in payload
+                },
             )
 
         return await _run_handler(action)
@@ -140,6 +148,31 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                 limit=_to_int(payload.get("limit", 10), default=10),
                 source_platform=str(payload.get("source_platform", "")),
                 excluded_item_ids=_to_strings(payload.get("excluded_item_ids")),
+                **{
+                    key: str(payload[key])
+                    for key in ("request_id", "stream_ref", "explicit_intent")
+                    if key in payload
+                },
+            )
+
+        return await _run_handler(action)
+
+    async def restore_handler(payload: dict[str, object]) -> dict[str, object]:
+        async def action() -> Any:
+            return await adapter.restore_recommendations(
+                stream_ref=str(payload.get("stream_ref", "openclaw")),
+                batch_ref=str(payload.get("batch_ref", "")),
+                source_platform=str(payload.get("source_platform", "")),
+            )
+
+        return await _run_handler(action)
+
+    async def present_handler(payload: dict[str, object]) -> dict[str, object]:
+        async def action() -> Any:
+            return await adapter.present_recommendations(
+                batch_ref=str(payload.get("batch_ref", "")),
+                ack_id=str(payload.get("ack_id", "")),
+                item_keys=_to_strings(payload.get("item_keys")),
             )
 
         return await _run_handler(action)
@@ -152,6 +185,7 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                     feedback_type=str(payload.get("feedback_type", "")),
                     note=str(payload.get("note", "")),
                     request_id=str(payload.get("request_id", "")),
+                    batch_ref=str(payload.get("batch_ref", "")),
                 )
             )
 
@@ -345,7 +379,10 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
         ),
         OpenClawSkillDescriptor(
             name="openbiliclaw_recommend",
-            description="Generate a multi-source recommendation batch.",
+            description=(
+                "Generate a multi-source batch. Director mode requires stable request_id; "
+                "tool delivery is not user exposure."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -353,6 +390,13 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                     "refresh_if_needed": {"type": "boolean"},
                     "source_platform": {"type": "string"},
                     "excluded_item_ids": {"type": "array", "items": {"type": "string"}},
+                    "request_id": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "description": "Required in Director mode; reuse for retries.",
+                    },
+                    "stream_ref": {"type": "string", "maxLength": 128},
+                    "explicit_intent": {"type": "string", "maxLength": 500},
                 },
             },
             handler=recommend_handler,
@@ -366,6 +410,9 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                     "source_platform": {"type": "string"},
                     "excluded_item_ids": {"type": "array", "items": {"type": "string"}},
+                    "request_id": {"type": "string", "maxLength": 128},
+                    "stream_ref": {"type": "string", "maxLength": 128},
+                    "explicit_intent": {"type": "string", "maxLength": 500},
                 },
             },
             handler=reshuffle_handler,
@@ -379,9 +426,51 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                     "source_platform": {"type": "string"},
                     "excluded_item_ids": {"type": "array", "items": {"type": "string"}},
+                    "request_id": {"type": "string", "maxLength": 128},
+                    "stream_ref": {"type": "string", "maxLength": 128},
+                    "explicit_intent": {"type": "string", "maxLength": 500},
                 },
             },
             handler=append_handler,
+        ),
+        OpenClawSkillDescriptor(
+            name="openbiliclaw_restore_recommendations",
+            description=(
+                "Restore an immutable Director screen without generating cards "
+                "or recording exposure."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "stream_ref": {"type": "string"},
+                    "batch_ref": {"type": "string"},
+                    "source_platform": {"type": "string"},
+                },
+            },
+            handler=restore_handler,
+        ),
+        OpenClawSkillDescriptor(
+            name="openbiliclaw_present_recommendations",
+            description=(
+                "Acknowledge only cards actually visible to the user. "
+                "Never invoke merely because a tool returned cards."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "batch_ref": {"type": "string"},
+                    "ack_id": {"type": "string"},
+                    "item_keys": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "uniqueItems": True,
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["batch_ref", "ack_id", "item_keys"],
+            },
+            handler=present_handler,
         ),
         OpenClawSkillDescriptor(
             name="openbiliclaw_submit_feedback",
@@ -395,6 +484,7 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
                         "enum": ["like", "dislike", "comment", "dismiss"],
                     },
                     "note": {"type": "string"},
+                    "batch_ref": {"type": "string", "maxLength": 256},
                     "request_id": {
                         "type": "string",
                         "minLength": 1,

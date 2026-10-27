@@ -62,13 +62,14 @@ _EXTENSION_ADAPTER_DEFINITIONS = (
     ExtensionAdapterDefinition("twitter", "x", "X Bookmarks"),
     ExtensionAdapterDefinition("zhihu", "zhihu", "知乎收藏"),
     ExtensionAdapterDefinition("reddit", "reddit", "Reddit Saved"),
+    ExtensionAdapterDefinition("tiktok", "tiktok", "TikTok Favorites"),
 )
 
 
 def build_extension_native_save_adapters(
     broker: ExtensionNativeSaveBroker,
 ) -> tuple[ExtensionNativeSaveAdapter, ...]:
-    """Return the six production extension adapters in canonical source order."""
+    """Return the seven production extension adapters in canonical source order."""
     return tuple(
         ExtensionNativeSaveAdapter(definition, broker)
         for definition in _EXTENSION_ADAPTER_DEFINITIONS

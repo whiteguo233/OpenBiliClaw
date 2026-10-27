@@ -8,17 +8,61 @@
 > - 推荐列表使用卡片式展示
 > - 用户画像使用分区块展示
 
+CLI `chat` 仍使用 legacy 单轮对话；网页搜索、链接阅读与聊天笔记删除审批目前通过
+桌面 Web、移动 Web 和插件的 Agent 聊天入口使用，本次不新增 CLI 命令。
+
 ## 全局选项
+
+`openbiliclaw rebuild-profile --source instagram --limit 5000` 从本地已保存事件重新分析偏好并生成画像，使用当前 LLM 路由，不重新抓取平台数据，也不要求 B 站登录（包括仅重建 B 站已有事件的情况）。它会更新所选 project/data root 的画像，验证时必须显式设置隔离的 `OPENBILICLAW_PROJECT_ROOT`。没有事件时仍非零退出；配置检查保持启用。`--source` 支持事件 metadata 中的来源标识，不限于旧帮助列出的四个平台。
 
 ```bash
 openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 ```
+
+## Jev 本机开发验证脚本
+
+`config-show` 还显示 Jev 原生 API URL 和本机是否保存 Token，但不回显 Token，不读取
+环境变量秘密或联网探测。完整连接配置可在 Web/插件/移动设置页填写；直接编辑 TOML
+仍需重启，页面/API 保存走既有后台应用流程。开发 fake runner 不读取生产连接配置。
+
+在包含脚本的源码 worktree 根目录运行：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake --model jev-1.14.0
+```
+
+`--fake` 与 `--live` 互斥，不读取真实 key，不用生产配置/数据库；自动启动临时回环
+HTTP 服务，以合成画像/三条候选跑标准和较小预算两个隔离场景，结束即关闭服务。
+报告的 `passed` 仅表示协议/完整评估/入池通过，`backend=local_fake` 和
+`usage_is_synthetic=true` 明确模型答案及 token 用量为假数据。模型 ID 由 `--model`
+显式选择，不自动切换。省略两种模式仍为无 HTTP 的 preview；真实服务运行仍需
+`--live --confirm-free-credits` 与本机 `TYPESAFE_API_KEY`。
+也可显式读取新设置页保存的连接（不合并其它 TOML/环境配置覆盖；只有选定凭据环境变量会按 factory 规则读取）：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --config /absolute/path/config.toml
+# 先自行确认账户已有可用促销额度；该命令会向所配置的服务发送合成测试数据。
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-credits --config /absolute/path/config.toml
+```
+
+`--config` 沿用保存的原生 URL、Token（优先于 env）、固定模型、该型号双容量及评估打包参数。
+首条命令只做 preview，不创建 HTTP client 或读取 Token 环境值；未知模型必须登记容量。
+如果同时传 `--model`，必须与配置完全相同，否则零请求退出；不会更改文件、自动换模型或启用被禁用的连接。
+`--fake` 禁止与 `--config` 同用，避免误用真实凭据。配置不存在/不合法、无凭据、无额度确认则拒绝实请求。
+真实模式通过原生产 provider factory 构造连接，但把最大尝试数收紧为 1、超时不高于配置及 15 秒；
+整次最多 6 次 POST，第一次远端失败后停止发送，无摘要/分段评估或隐式聊天 LLM fallback。
+两种预算使用独立临时 SQLite 与合成三候选 cohort；这是验收对比，不是生产中的重复评估。
+显式配置返回 `backend=configured`、`usage_is_synthetic=null`，不认证中转/自建服务的模型及用量真实性，
+更不能凭回环服务成功声称官方 Jev 已验收。脚本从不打开配置的生产数据库或输出 URL/Token/原始响应。
+这不是新增 `openbiliclaw` 产品命令或 UI provider；不改变安装流程和四端设置。
 
 ## 命令一览
 
 | 命令 | 说明 | 状态 |
 |------|------|------|
 | `config-show` | 显示当前配置、LLM 实例、全局调用链和最终默认实例 | ✅ |
+| `language [locale]` | 查看或切换界面 / CLI / 模型输出语言（`zh-Hans` / `zh-Hant` / `en`） | ✅ |
 | `config-export-legacy` | 导出可供旧二进制读取的固定 Provider 配置副本 | ✅ |
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
@@ -46,7 +90,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `tls-proxy enable [--san HOST_OR_IP]...` | 持久开启可选 LAN/self-managed HTTPS 入口 | ✅ |
 | `tls-proxy disable` | 持久关闭 TLS 入口（不删除证书） | ✅ |
 | `tls-proxy status` | 显示开关、端口、证书目录与 SAN | ✅ |
-| `init` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
+| `init [--language locale]` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
@@ -57,6 +101,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `fetch-bangumi` | 读取 Bangumi 公开收藏（默认只读，不写 memory、不调用 LLM） | ✅ |
 | `fetch-github` | 读取 GitHub 公开 starred repositories（默认只读；公开 username 或可选专用 PAT） | 🧪 接线；验收见 ledger |
 | `fetch-v2ex` | 只读验证 V2EX 发布、讨论、收藏主题、收藏 Node 四个 bootstrap scope（不写 memory、不调用 LLM） | ✅ |
+| `fetch-instagram` | 只读验证 Instagram 点赞、收藏、关注三个初始化 scope（默认 smoke，不写 memory、不重建画像） | ✅ |
 | `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为独立 embedding provider（可选） | ✅ |
 | `embedding-cache-stats` | 查看 embedding L2 持久化缓存诊断（行数、载荷、文件/WAL 大小、namespace 分布、容量水位、最近维护） | ✅ |
@@ -93,7 +138,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `discover-v2ex-hot` | 只读验证 V2EX 热门 Topic | ✅ |
 | `discover-v2ex-latest` | 只读验证 V2EX 最新 Topic | ✅ |
 | `search-douyin` | 通过浏览器插件调试抖音搜索召回 | ✅ |
-| `chat` | 苏格拉底式对话 | ✅ |
+| `chat` | 苏格拉底式对话；消息里粘贴的 B站/知乎/小红书等链接（含 b23.tv / xhslink.com 短链）会先被抓取摘要注入当轮上下文，并记为 `share` 正向偏好事件（issue #83，抓取失败静默降级不阻塞对话） | ✅ |
 | `ledger` | 查看画像更新台账（`--line` 逐行 / `--days` / `--write-point` 过滤） | ✅ |
 | `delight` | 手动查看当前惊喜推荐候选 | ✅ |
 | `probe` | 手动查看并确认猜测兴趣方向 | ✅ |
@@ -113,9 +158,41 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 
 ## 详细说明
 
+### 初始化语言选择
+
+`openbiliclaw init` 在交互终端首先显示 `简体中文 / 繁體中文 / English`，接受编号或 locale，
+默认当前配置语言；选择写回 `[general].language` 后才检查模型与认证。
+`openbiliclaw init --language zh-Hant` 可跳过提问（接受 `zh-TW`、`en-US` 等别名），非法值退出 2。
+非交互调用未提供该参数时保留当前语言，不读 stdin。语言选择不会翻译所有历史 CLI 提示。
+
+### `openbiliclaw language`
+
+```bash
+openbiliclaw language              # 查看当前语言与可选值
+openbiliclaw language zh-Hant      # 写入 config.toml，立即对 Web / 插件 / CLI 生效
+OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
+```
+
+语言解析优先级：`OPENBILICLAW_LANG` / `OPENBILICLAW_LANGUAGE` → `config.toml` 的
+`[general].language` → 简体中文。切换后新生成的聊天回复与推荐理由使用新语言；已持久化的
+历史推荐 / 画像文本保持原语言。详见 [多语言模块](i18n.md)。
+
 ### `openbiliclaw config-show`
 
 显示当前加载的配置、已注册的 LLM 端点实例、全局调用链和最终生效的默认实例。旧格式仍显示等价结果；v2 会额外区分实例 ID 与 Provider 类型，因此两个同类型渠道不会被合并。
+
+独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
+同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
+另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
+`config-show` 也显示每批候选数、题数和单题字节护栏；后两项 0 表示仅受双容量限制。
+`config-show` 还显示精确模型的已登记 token 容量、容量来源与自动工程字节护栏；评估字段
+为 0 表示 auto，旧显式数值表示额外收紧，未知容量明确显示不可用，不自动挑选替代模型。
+`eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，
+不跨 asyncio loop 复用连接、不隐式回退 LLM；配置失败在构建时直接报告。
+这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。
+
+导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。
+
 配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。
 推荐引擎构造同样读取 `[discovery]` 的 `keyframe_max_frames`、`keyframe_fetch_limit`、
 `danmaku_fetch_limit` 和 `danmaku_max_chars`；手动 `recommend` 的预热范围与 daemon/API 使用同一配置。
@@ -349,7 +426,11 @@ $ openbiliclaw start --host 0.0.0.0 --port 9000
 
 适合本地直接运行或调试场景。若只希望本机访问，把 `[api].host` 改为 `127.0.0.1`，或启动时传 `--host 127.0.0.1`。
 
-默认使用四进程后台模式：主 API 之外会拉起 `full worker`、`discovery worker`、独立推荐进程和独立图片代理。需要回退到旧的单 API 进程模式时，设置 `OPENBILICLAW_WORKER=0`（`false` / `no` / `off` 也可）。
+默认使用四进程后台模式：主 API 之外会拉起 `full worker`、`discovery worker`、独立推荐进程和独立图片代理。需要回退到旧的单 API 进程模式时，设置 `OPENBILICLAW_WORKER=0`（`false` / `no` / `off` 也可）。退出时（含 SIGINT 与 SIGTERM，如 `docker stop` / `pkill` / launchd / systemd）主进程都会 terminate 并回收这四个子进程，不会留下孤儿。
+
+独立推荐进程的传输由 `recommendation_runtime.ensure_recommendation_transport_env()` 在拉起子进程前决定并写入环境变量，主 API 反代与子进程读同一组变量，天然一致：Windows 或显式 `OPENBILICLAW_RECOMMENDATION_PORT` 走 loopback TCP；POSIX 默认用 `<data_dir>/runtime/recommendation.sock`（或显式 `OPENBILICLAW_RECOMMENDATION_SOCK`）Unix socket，但当最终 socket 路径字节长度达到 AF_UNIX `sun_path` 上限（按最严平台 104 字节含 NUL 计，macOS 数据目录稍深即触发）时自动回退 loopback TCP（默认 `127.0.0.1:8423`）并记一条 WARNING（含实际路径长度与所选端口），不再让子进程以 `OSError: AF_UNIX path too long` 崩掉。独立直接运行 `openbiliclaw.recommendation_server`（无继承环境变量）时同样的长度检查在进程内兜底。选 TCP 时父进程会从基准端口（显式值或 8423）起逐个真实 bind 探测，被占则递增（有界 21 个候选），把最终选中的空闲端口写回 `OPENBILICLAW_RECOMMENDATION_PORT`，同机第二个实例因此不会再因 8423 冲突起不来；显式端口被占时同样递增并记 WARNING 说明改选结果（该端口只是内部 loopback IPC，唯一消费者是读同一 env 的反代，硬失败只会复现推荐页 502）；探测耗尽则保留基准端口并 WARNING，由子进程 `_run_tcp` 在 bind 失败时记一条含端口号的 ERROR。探测到子进程 bind 之间存在小概率被抢的竞态，该 ERROR 日志即为此准备。
+
+四个子进程的 stdout/stderr 会显式重定向落盘到 `logs/child-{worker,discovery-worker,recommendation,image-service}.log`（append）。这是 Windows 桌面包（`pythonw.exe`，无控制台）的必需行为：不显式传标准流时子进程拿不到任何句柄，一写输出就静默退出。`child-*.log` 按 unmanaged 日志策略清理（单文件超 200MB 截断、超 30 天删除、logs/ 总预算 500MB，见 `logs-prune`）。
 
 `start` 与 `serve-api` 都会先取得项目根和 canonical `data_dir` 的 migration runtime lock；如果存在已校验的 pending 或未完成 journal，会在任何业务数据库访问前完成应用或恢复。锁会持续到后端退出，另一个指向同一数据目录的受支持后端无法并发启动。迁移应用后会重新读取配置并补锁实际运行目录；无法取得任一锁时拒绝启动。
 
@@ -376,6 +457,8 @@ WARN extension presence required; backend will pause background LLM work after g
 这表示 daemon-owned 后台 LLM / embedding 工作需要浏览器插件保持 `runtime-stream` 在线，或仍处于断开后的宽限窗口内；手动 CLI/API 操作不受这个 WARN 影响。
 
 如果配置导致 LLM registry 无法构建，`start` 不会直接让 popup 完全失联，而是以降级模式启动本地 API，并在 uvicorn 启动前打印 `降级模式 / Degraded mode` 面板。面板会列出 `llm_registry_unavailable` 和 blocking issue，并提示打开扩展设置页保存修复配置；校验通过后当前进程会原地构建完整 runtime，无需重启 daemon。
+
+`start` / `serve-api` 与桌面包共用 `ChildProcessSupervisor`：子进程崩溃会退避重启；完整配置应用队列结束后，下一次约 5 秒巡检会停止旧后台进程并从新配置重新拉起。discovery worker 因旧模型故障停住的候选会重新进入既有评估/入池流程。仅聊天 loop 设置局部应用不触发后台重启；数据目录继续固定为父入口锁定的 active path，修改目录仍需完整退出重开。没有新增命令或安装步骤。
 
 如果数据库已损坏：
 
@@ -766,6 +849,7 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 9. best-effort 等待插件导入 Linux.do 初始化信号
 10. 若提供公开用户名，读取 Bangumi 公开收藏初始化信号
 11. 若提供公开 username 或可选专用 PAT，通过 GitHub 官方 REST 读取公开 starred repositories
+12. best-effort 等待插件导入 Instagram 点赞、收藏、关注初始化信号（仅用户显式启用时）
 12. 写入事件层并分析偏好
 13. 生成、校验并保存完整初始画像
 14. 严格使用该画像执行发现、个性化评估和推荐文案生成，至少验证一条 canonical 推荐可直接浏览
@@ -776,6 +860,8 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 
 > v0.3.102+：来源采集步骤的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动（交互提示 / 摘要仍在命令里），后端图形化初始化 `POST /api/init` 复用同一协程。CLI 行为 / 输出 / 退出码不变。**也可以不进终端**：插件「推荐」tab 未初始化时直接点「开始初始化」，详见 [init 模块文档](init.md) 与 [extension 模块文档](extension.md)。
 
+Instagram opt-in 的第 4 阶段传递本次来源选择，CLI 与 API 共用 source-aware `run_init_backfill`：正式 topic/creator → 同一候选 evaluator（显式小批量 flush）→ 推荐文案 → 可浏览校验。仅选 Instagram 时不再悄悄执行 B 站策略；scheduler 可以保持关闭，评分阈值与背景批量配置不变。其它来源旧路由不在此修复范围内。
+
 > Issue #113（v0.3.168+）：共享流水线仅在阶段 2 偏好分析和阶段 3 画像任务的 task-local scope 内绕过库存敏感的后台 admission，避免首次空库存与画像生成互相等待；阶段 4 只在完整画像落盘后开始且不继承 bypass，并同步完成发现、评估、推荐文案与 canonical 可用性校验。正向兴趣 / 避雷探针移到 init wrapper 恢复 runtime 后调度，普通后台任务、LLM 总并发 gate 及 Soul 公开 API 不变。
 
 > 阶段 2 的 ETA 心跳会附带实时分片进度 `已完成 X/N 批` 和实际 LLM 并发上限，超过原始预估后明确显示“已超预估、仍在处理”，不再长期显示“预计还需 ~0s”。分片完成行在 CLI 与 API 初始化路径都会写到 stdout，便于桌面端 `desktop.log` 直接定位进度；更细的分片起止、耗时、限流重试和取消记录写入 `openbiliclaw.log`。
@@ -785,6 +871,8 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 安装渠道里的首选路径是 `scripts/agent_bootstrap.py` 自动运行 init：Bash / PowerShell 人类一行安装会先在终端向导里按顺序确认 LLM、embedding、B 站 Cookie 和各来源 opt-in；Docker / AI agent / CI 非交互安装则通过显式 flags 和 `BOOTSTRAP_STATUS` 推进，不会阻塞读 stdin。bootstrap 随后会对默认 LLM provider 与 embedding 服务各做一次轻量真实调用；两者都可用才触发本命令。若 bootstrap 返回 `service_check_failed`，说明 `openbiliclaw init` 尚未运行，应先修 API key / base_url / model / Ollama，再重跑 bootstrap。直接执行 `openbiliclaw init` 仍保留为高级手动 fallback 和重复初始化入口。
 
 默认初始化信号上限：B 站观看历史最多 500 条、收藏最多 500 条（跨收藏夹总预算，单个收藏夹会按页补齐）、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 300 条；知乎 `bootstrap_events` 的四个分支默认各最多 300 条；Reddit 三个分支与 Linux.do 三个分支默认各最多 300 条；Bangumi 公开收藏使用 `[sources.bangumi].bootstrap_limit`，GitHub 公开 Star 使用 `[sources.github].bootstrap_limit`，两者默认均为 300。GitHub 还用 `bootstrap_max_pages=10` 作分页安全上限，不在未证明完整时冒充 full snapshot。交互式 `init` 会让用户确认 B 站收藏 / 关注上限；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
+
+Instagram `bootstrap_events` 的 liked / saved / following 使用 `[sources.instagram].bootstrap_limit`（默认及最大 300）；到达上限保留 partial，不声明完整快照。
 
 v0.3.95+：交互式 `init` 的 embedding 配置阶段（`_interactive_embedding_setup(auto_if_ready=True)`）会先探测本机 Ollama——若 Ollama 已运行且装有 `bge-m3`，直接写入 `provider=ollama, model=bge-m3` 并跳过选项菜单，避免「确认用 Ollama 当聊天模型、却把语义去重所需的 embedding 留空」导致推荐刷到换皮重复。显式 `setup-embedding` 命令不走自动跳过，始终展示完整菜单以便切换 provider。
 
@@ -852,6 +940,7 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
+- `--yes-tiktok` / `--no-tiktok`：跳过 TikTok 交互式提问，直接启用或跳过。`--yes-tiktok` 会通过浏览器扩展任务桥默认采集点赞 / 收藏 / 关注（`tt_like` / `tt_collect` / `tt_follow`），观看历史为显式任务可选并纳入本轮首版画像；交互式提问默认 No，非交互式终端默认跳过，`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--yes-zhihu` / `--no-zhihu`：跳过知乎交互式提问，直接启用或跳过。`--yes-zhihu` 会执行 `bootstrap_events` 并把结果纳入本轮首版画像；非交互式终端默认跳过知乎，脚本化 init 应显式传其中一个。
 - `--yes-reddit` / `--no-reddit`：跳过 Reddit 交互式提问，直接启用或跳过。`--yes-reddit` 会执行 `bootstrap_events` 并把 saved / upvoted / subscribed 结果纳入本轮首版画像，同时开启后续 Reddit discovery；非交互式终端默认跳过 Reddit。
@@ -889,13 +978,16 @@ OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。
  5   Claude 官方                           默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高
  6   OpenRouter 聚合                       默认 openai/gpt-5-nano。一个 Key 跑多家模型,按调用计费
  7   OrcaRouter 聚合                       默认 openai/gpt-4o。一个 Key 跑 150+ 模型,网关级零信任安全
+ 8   Requesty 聚合                         默认 openai/gpt-4o-mini。一个 Key 跑多家模型,按调用计费
+ 9   API Route 聚合                        默认 gpt-5.5。一个 Key 跑多家模型,按调用计费
+10   Cheaper Inference 聚合                默认 gpt-5.4-mini。一个 Key 跑多家模型,按调用计费
 
 Tip:不确定就选 1 (DeepSeek),¥0.001/千 token 几乎免费,月度通常 ¥0.5-2。已经买了中转站 / OneAPI Key 选 2 (协议兼容)。本地 Ollama 仅用于向量检索(embedding),不作为聊天服务商;如需本地聊天模型请到设置页手动配置。
 
 请输入序号或名称（默认 1=DeepSeek） [1]:
 
 # (随后只问被选中那一项实际需要的字段——
-#  例如选 1/3/4/5/6/7: 只问 API Key + 模型名；
+#  例如选 1/3/4/5/6/7/8: 只问 API Key + 模型名；
 #  选 2: 进协议兼容 preset 子菜单，按需问 Base URL + API Key + 模型名)
 #
 # 注意（v0.3.176+）：本地 Ollama 已不再出现在聊天 provider 菜单里——随装的
@@ -1177,6 +1269,19 @@ V2EX 数据拉取
 
 用户名默认从已登录 V2EX 页面顶部导航观察；需要固定公开账号路径时可传 `--username <name>`。任务默认复用 6 小时内的近期结果，真实回归应加 `--force`。任一 scope 达到条目 / 页数上限或解析失败时命令显示 `partial`，保留已读取数据但明确不把本次结果作为完整收藏快照；身份冲突、无可归属信号、超时和任务失败使用非零退出码。CLI 的 `/kick` 会读取 `[api].port`，因此扩展与后端使用非默认端口时也能立即唤醒 dispatcher。
 
+### `openbiliclaw fetch-instagram`
+
+只读触发 Instagram `bootstrap_events`，验证当前浏览器登录态下的 liked、saved、following 三条初始化分支。默认等待 780 秒；`--force` 跳过近期成功任务复用。命令创建 `smoke_only=true` 的任务，只打印 canonical 事件计数，不写 memory、seen、snapshot、schedule 或画像；任何 scope 达到上限、分页中断或解析不完整都会显示 `partial` 并保留已确认条目。
+
+```bash
+$ openbiliclaw fetch-instagram --force --wait-seconds 780
+Instagram 数据拉取
+  Instagram 点赞 120 条 / 收藏 84 条 / 关注 30 人
+  共转换 234 条 canonical 事件。
+```
+
+任务只使用同源只读请求，首个 personal 分页请求不发送空 `max_id`，后续 cursor 原样透传；Cookie 值不离开扩展。`401/403`、登录页、checkpoint/challenge、`429`、HTML 伪响应和无法解析当前账号都不是空结果。Instagram 来源默认关闭，启用及真实账号使用前需确认 Meta 自动采集授权边界，详见 [Instagram 来源文档](instagram.md)。
+
 ### `openbiliclaw fetch-zhihu`
 
 单独触发知乎 `bootstrap_events` 拉取，用于验证浏览器扩展、知乎登录态和 `/api/sources/zhihu/*` 后端任务桥是否联通。默认采集最近浏览记录、收藏夹条目和当前知乎用户主页动态里的点赞 / 收藏动作；扩展会通过 `/api/v4/me` 自动识别当前用户，传入 `--profile-slug` 时可手动覆盖。
@@ -1225,7 +1330,11 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。TikTok 复用正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态）：推荐流 / 话题标签 / 创作者按预算执行，配置登录 Cookie 时搜索分支一并挂载。
+
+Instagram 正式流程复用 `InstagramDiscoveryProducer`，只执行 `[sources.instagram].source_modes` 中的 `topic` / `creator` 直接页面，不主动提交 Instagram Search；公开候选进入统一 `discovery_candidates` 后再由 evaluator 处理。页面自身请求是否改变 Recent Searches 仍需独立前后对照，不能仅凭直接导航推断。它不会把个性化 Explore/Home Feed 或不稳定私有 keyword SERP 冒充成 formal discover。
+
+Instagram 退出码区分失败和正常无产出：缺画像、来源/分支不可用、扩展离线、超时、登录/验证/限流、HTML 或未观察到内容响应，以及其它未知失败返回 **1**，同时保留具体 reason。成功与明确空结果返回 **0**；节流、池满、预算耗尽、没有 topic/creator seed、去重/准入后无新增等正常跳过也返回 **0**。因此自动化不能仅凭退出码 0 推断存在新候选，还需检查发现/入池计数。
 
 手动 `discover` 是一次性进程，其 candidate pipeline 固定 `eval_min_batch_size=1`、`eval_max_wait_seconds=0`，立即 drain 本次已入队候选；只有常驻 API daemon 才读取 `[scheduler]` 的默认 15 / 90 秒聚合策略。这样 CLI 不会在退出时遗失只存在内存里的凑批等待状态。
 
@@ -1253,6 +1362,15 @@ $ openbiliclaw discover --source xiaohongshu
 
 # 忽略 4 小时节流
 $ openbiliclaw discover --source xiaohongshu --force
+
+# 触发 TikTok discovery（需先在配置启用 [sources.tiktok]）
+$ openbiliclaw discover --source tiktok --limit 20
+TikTok 内容发现
+发现摘要
+  发现条数: 6
+  入池候选: 6
+  来源: tiktok
+  来源分布: tiktok_feed:3, tiktok_tag:3
 
 # 触发 douyin discovery
 # Cookie 可由扩展自动同步；下面的环境变量仅用于调试时显式覆盖
@@ -1321,16 +1439,24 @@ V2EX 内容发现
   入池候选: 20
   来源: v2ex
   分支: search, node, tab, hot, latest
+
+# 触发 Instagram 正式 discovery（扩展执行直接 topic / creator 页面）
+$ openbiliclaw discover --source instagram --limit 20 --force
+Instagram 内容发现
+  来源: instagram
+  分支: topic, creator
 ```
 
 显式非 B 站 discover 仍遵循对应 `[sources.<source>].enabled`、分支预算和来源前置；即使 `[scheduler].enabled=false`，手动命令也可执行，scheduler 总开关只暂停后台自动任务。producer 返回 disabled、画像尚未初始化、GitHub rate-limited 或 budget exhausted 时，CLI 会显示对应修复/等待提示，不回落为通用“未产出内容”。
 
+显式 Bangumi / V2EX discover 要求对应 `[sources.<source>].enabled=true`，但即使 `[scheduler].enabled=false` 也会执行；scheduler 总开关只暂停后台自动任务。producer 返回 disabled 或画像尚未初始化时，CLI 会显示对应修复提示，而不是回落为通用“未产出内容”。
+
 选项：
 
-- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin`、`zhihu`、`reddit`、`bangumi`、`github`（兼容 `gh`）、`linuxdo`、`v2ex` 或 `weibo`（兼容 `wb`）
+- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin`、`zhihu`、`reddit`、`bangumi`、`github`（兼容 `gh`）、`linuxdo`、`v2ex` 、`instagram`（兼容 `ig`）或 `weibo`（兼容 `wb`）
 - `--strategy, -S`：仅对 Bilibili 生效，可多次传或逗号分隔，取值 `search` / `trending` / `explore` / `related_chain`
 - `--limit, -n`：发现结果条数上限，默认 `30`
-- `--force`：xiaohongshu / Bangumi / GitHub / V2EX 可用；忽略本地最小调度间隔，但仍遵循持久化远端 cooldown
+- `--force`：xiaohongshu / Bangumi / GitHub / V2EX / Weibo / Instagram 可用；忽略本地最小调度间隔，但仍遵循持久化远端 cooldown
 
 抖音 discovery 需要 `[sources.douyin].enabled = true`。`discover --source douyin` 现在直接调用与 daemon 相同的正式 `DouyinDiscoveryProducer`：统一关键词 claim、插件 search / hot / feed、`DiscoveryCandidatePipeline` 待评估入池和关键词终态都与后台一致；显式手动命令只绕过 `[scheduler].enabled` 这个后台总开关，来源开关、source mode、预算、候选池上限和 producer cadence 仍然生效。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。Reddit discovery 需要 `[sources.reddit].enabled = true`；默认 `backend="rdt"`，优先使用 rdt-cli 登录态命令后端，不使用 CDP/临时浏览器；rdt / opencli 不可用时自动复用 OpenBiliClaw 插件所在浏览器的 Reddit 登录态，也可在配置页显式切到 `extension`。Linux.do discovery 需要 `[sources.linuxdo].enabled = true` 和在线扩展；公开分支不要求登录，个人 bootstrap 才要求 `/session/current.json` 返回正面账号身份。
 
@@ -1527,7 +1653,7 @@ openbiliclaw discover-v2ex-hot --limit 10
 openbiliclaw discover-v2ex-latest --limit 10
 ```
 
-正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的 Exa / You provider 做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
+正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`）做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
 
 ### `openbiliclaw search-douyin`
 
@@ -1558,12 +1684,17 @@ openbiliclaw init
 
 ### `openbiliclaw chat`
 
-进入持续对话模式，复用 `SocraticDialogue` 的多轮历史。CLI 构造点显式固定为
+进入持续对话模式，复用 `SocraticDialogue` 的多轮历史。回复经 `respond_stream()` 逐 token
+流式打印（`阿花：` 前缀只出一次，增量不解析 markup、不换行刷屏）；service 无流式能力时
+回退一次性输出。CLI 构造点显式固定为
 `legacy_direct`：得到回复后仍按既有 detached direct learning 学习，既不提交 API
 runtime 的 `DialogueSettlementQueue`，也不持有 worker guard permit；因此行为不变，
 但不享受队列串行/receipt/guard 保证。Wave 3 的 HTTP `202 processing` 与 30 秒
 卡片轮询只服务 popup、移动 Web 与桌面 Web 卡片，CLI 没有 action HTTP 入口，不新增 poll。输入
-`exit`、`quit` 或空行可结束。聊天内容
+`exit`、`quit` 或空行可结束。交互式终端下（stdin/stdout 均为 TTY）输入框由
+prompt_toolkit 驱动，支持多行输入：Enter 发送，Esc+Enter（或 Alt+Enter）插入换行，
+进入对话时副标题会提示该快捷键；管道、重定向等非 TTY 环境自动回退为原来的单行
+`typer.prompt` 读取，行为与此前完全一致。聊天内容
 仅在得到真实回复后以受控方式积累到长期理解候选中，不会因为一句话立刻改写画像。
 单轮 LLM 失败会打印安全、可操作的错因（不显示上游异常原文），REPL 继续接受下一轮输入。
 
@@ -1629,8 +1760,16 @@ $ openbiliclaw db-repair
 
 当前仍是 stub 的命令会统一使用”开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
 
-### 画像合并的可选赞助协议
 
-`profile-consolidate` 参数保持不变。启用配套 Sponsored Runtime 时，后端将簇数据通过 IPC v2 发送为固定 soul.consolidation.v2 请求，默认仍走用户配置的模型。离线 `scripts/generate_sponsored_policy.py` 生成含 canonical system_prompt/hash 的无 Key 策略，需由私有发行流程签名；旧 v1 Runtime 不能混用。见[协议](../plans/2026-10-27-sponsored-fixed-tasks.md)。
+### TikTok 来源验收补全（2026-10-04）
 
-全项目赞助接线不会新增业务 CLI 命令：初始化、推荐、对话和评测沿原入口使用统一 SDK。开发校验可运行 `python scripts/audit_sponsored_coverage.py --output docs/testing/sponsored-task-inventory.json`，无模型请求、无凭据读取。指定供应商的配置连通性检查继续测指定供应商。
+新增 `discover-tiktok --mode feed|tag|user|search --query TEXT --limit 1..20`：使用配置中的网络路线及可选 Cookie，在临时目录执行只读取数 smoke，不写生产候选/记忆/画像。正式 `discover --source tiktok` 支持 rate_limited、no_keywords 和 degraded 的真实状态提示。
+
+TikTok full-source 初始化在后台标签页顺序读取喜欢、收藏、关注三个默认 scope（网页历史可选）；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。
+
+TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历史数据标为“默认不采集”，避免把未请求历史写成成功采集 0 条。
+
+
+## 可选全项目 Sponsored SDK（未发布）
+
+业务CLI保持不变。启用配套全任务Runtime/Policy后，文本、JSON、工具、流式、视觉、向量与评测经统一SDK。源码默认关闭，无新增Rust编译或用户Key依赖。`generate_sponsored_policy.py` 生成无Key策略，`audit_sponsored_coverage.py` 生成调用清单；正式生产禁用mock/unsigned/外部公钥覆盖。见[设计](../plans/2026-10-27-sponsored-all-tasks.md)。

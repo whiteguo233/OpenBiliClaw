@@ -27,6 +27,12 @@
       chatTurns: "/chat/turns",
       chat: "/chat",
       chatStream: "/chat/stream",
+      chatAgentStream: "/chat/agent/stream",
+      chatSessions: "/chat/sessions",
+      chatSkills: "/chat/skills",
+      chatPersonas: "/chat/personas",
+      chatTasks: "/chat/tasks",
+      chatApprovals: "/chat/approvals",
       dialogueContexts: "/chat/contexts",
       pendingConfirmations: "/chat/pending-confirmations",
       interestProbeRespond: "/interest-probes/respond",
@@ -55,6 +61,7 @@
     let chatHistoryRefreshTimer = null;
     let chatHistoryRefreshInFlight = false;
     let lastDialogueChatSignature = null;
+    let dialogueChatRefreshGeneration = 0;
 
     const dialogueConfirmation = globalThis.OpenBiliClawDialogueConfirmation;
     if (!dialogueConfirmation) throw new Error("dialogue-confirmation shared helper did not load");
@@ -79,6 +86,13 @@
       selectDialogueTurns,
       writeContextSelection,
     } = dialogueConfirmation;
+    // 「聊一聊」agent loop（M8）纯逻辑层：SSE 解析、过程模型与卡片 markup。
+    // 旧后端没有这个文件时保持 null，全部走 legacy 路径。
+    const chatAgentCore = globalThis.OpenBiliClawChatAgentCore || null;
+    const recommendationDirector = globalThis.OpenBiliClawDirectorClient?.createClient({
+      request: (path, options) => requestJsonStrict(path, options),
+      namespace: "desktop-director",
+    }) || null;
     let dialogueContextSelection = readContextSelection(
       (() => {
         try { return window.localStorage; } catch { return null; }
@@ -86,6 +100,7 @@
       "desktop-web",
     );
     let retainedChatDraft = "";
+    const chatSessionDrafts = new Map();
     const dialogueCardActionAbortController = new AbortController();
     const CHAT_SCROLL_BOTTOM_TOLERANCE_PX = 48;
     let hasOpenedDialogueChatPage = false;
@@ -147,7 +162,35 @@
       chat: [
         { role: "agent", text: "你可以直接告诉我最近想多看什么、少看什么，或者评价一条推荐为什么准/不准。" }
       ],
-      pendingConfirmations: { count: 0, items: [], expanded: false }
+      pendingConfirmations: { count: 0, items: [], expanded: false },
+      // 「聊一聊」agent loop（M8）。mode: "unknown"（未探测）→ "agent"（新链路）
+      // 或 "legacy"（旧后端 / 探测失败，保持原有行为）。
+      agentChat: {
+        mode: "unknown",
+        sessionId: "default",
+        sessions: [],
+        includeArchived: false,
+        skill: "",
+        skills: [],
+        skillPickerOpen: false,
+        personas: [],
+        personaCatalogLoading: false,
+        personaCatalogError: "",
+        personaExamplePrompt: "",
+        personaPickerOpen: false,
+        personaDraft: "",
+        personaSaves: new Map(),
+        personaStatusBySession: new Map(),
+        sidebarOpen: true,
+        live: null,
+        tasksOpen: false,
+        tasks: [],
+        taskDetailId: "",
+        taskDetail: null,
+        approvalsOpen: false,
+        approvals: [],
+        handledSuggestions: new Set(),
+      }
     };
 
     const $ = (selector) => document.querySelector(selector);
@@ -192,10 +235,20 @@
         target.scrollTo({ top: 0, behavior });
       };
 
-      document.addEventListener("scroll", sync, true);
-      window.addEventListener("resize", sync, { passive: true });
+      // Batch geometry reads after the shell's writes. Reading computed style
+      // here synchronously forces a full layout before renderAll changes it.
+      let syncFrame = 0;
+      const scheduleSync = () => {
+        if (syncFrame) return;
+        syncFrame = requestAnimationFrame(() => {
+          syncFrame = 0;
+          sync();
+        });
+      };
+      document.addEventListener("scroll", scheduleSync, { capture: true, passive: true });
+      window.addEventListener("resize", scheduleSync, { passive: true });
       button.addEventListener("click", scrollToTop);
-      sync();
+      scheduleSync();
     }
     const grid = $("#videoGrid");
     const sourceFilterDefinitions = [
@@ -204,6 +257,7 @@
       { key: "douyin", label: "抖音" },
       { key: "weibo", label: "微博" },
       { key: "youtube", label: "YouTube" },
+      { key: "tiktok", label: "TikTok" },
       { key: "twitter", label: "X (Twitter)" },
       { key: "github", label: "GitHub" },
       { key: "zhihu", label: "知乎" },
@@ -211,13 +265,14 @@
       { key: "bangumi", label: "Bangumi" },
       { key: "linuxdo", label: "Linux.do" },
       { key: "v2ex", label: "V2EX" },
+      { key: "instagram", label: "Instagram" },
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
     // 首次成功读到库存快照之前是"未知"，不能把还没读到伪装成 0。
     const PLATFORM_COUNT_UNKNOWN_TEXT = "—";
     const PLATFORM_COUNT_UNKNOWN_LABEL = "库存待读取";
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex" };
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX", instagram: "Instagram", ig: "Instagram" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex", ig: "instagram", instagram: "instagram" };
     const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment", "repository"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
@@ -232,7 +287,7 @@
     const INIT_SOURCE_LABEL_FALLBACK = {
       bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube",
       twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
-      linuxdo: "Linux.do", v2ex: "V2EX"
+      linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram"
     };
     const INIT_SOURCE_DEFAULT_CHECKED = new Set(["bilibili"]);
     const _initSourceStatus = globalThis.OpenBiliClawSourceStatus || null;
@@ -255,7 +310,7 @@
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
       invalid_llm_concurrency: "初始化 LLM 并发必须是正整数。",
-      no_profile_signal_sources: "所选来源暂时没有可用的个人画像信号；请按该来源提示补充个人令牌、公开用户名，或先在对应网站登录并连接扩展（如 bgm.tv）。",
+      no_profile_signal_sources: "所选来源暂时无法提供画像信号，请检查对应账号、凭据及扩展连接后重试。",
       invalid_bangumi_access_token: "Bangumi 个人令牌被拒绝（缺失、错误或已过期）。请到 next.bgm.tv/demo/access-token 重新生成后重试。",
       bangumi_token_check_failed: "校验 Bangumi 令牌时无法连接 Bangumi，请稍后重试。",
       github_bootstrap_not_ready: "GitHub 初始化需要公开用户名或可选 PAT；公开 repository 发现仍可匿名使用。",
@@ -508,7 +563,10 @@
     }
 
     async function readRecommendationSnapshot() {
-      const payload = await requestJsonStrict(ENDPOINTS.recommendations, { timeoutMs: 15000 });
+      let payload = await requestJsonStrict(ENDPOINTS.recommendations, { timeoutMs: 15000 });
+      if (recommendationDirector) {
+        payload = await recommendationDirector.ensureInitial(payload, { allowGenerate: state.videos.length === 0 });
+      }
       return Array.isArray(payload) ? payload : asArray(payload?.items);
     }
 
@@ -1315,6 +1373,7 @@
         if (urlHostMatches(url, ["github.com"])) return "github";
         if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
         if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
+        if (urlHostMatches(url, ["instagram.com"])) return "instagram";
         if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
         return "web";
       }
@@ -1335,6 +1394,8 @@
     }
 
     function formatCountCn(n) {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
       const value = Math.floor(Number(n) || 0);
       if (value <= 0) return "";
       if (value >= 100000000) {
@@ -1355,7 +1416,13 @@
         if (diff >= 0 && diff < 604_800_000) return `${Math.floor(diff / 86_400_000)} 天前`;
         const date = new Date(parsed);
         const current = new Date(now);
-        if (date.getFullYear() === current.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日`;
+        if (date.getFullYear() === current.getFullYear()) {
+          const runtime = globalThis.OpenBiliClawI18n;
+          if (runtime && typeof runtime.formatShortDate === "function") {
+            return runtime.formatShortDate(date);
+          }
+          return `${date.getMonth() + 1}月${date.getDate()}日`;
+        }
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       }
       return String(item?.published_label || "").replace(/\s+/g, " ").trim().slice(0, 64);
@@ -1387,6 +1454,8 @@
         id: Number(item?.id ?? Date.now()),
         bvid: String(item?.bvid ?? contentId),
         item_key: canonical.item_key,
+        batch_ref: String(item?.batch_ref || ""),
+        stream_ref: String(item?.stream_ref || ""),
         content_id: contentId,
         title: displayRecommendationTitle(decodeHtmlEntities(item?.title ?? ""), bodyText, contentType) || "未命名内容",
         up: decodeHtmlEntities(item?.up_name ?? item?.up ?? (canonical.source_platform === "bangumi" ? "" : "未知创作者")),
@@ -2035,6 +2104,14 @@
     function describeInitReason(reason) {
       if (!reason || reason === "none") return "";
       return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function initStartErrorText(details, fallback) {
+      // Shared admission codes use the backend's source-specific recovery hint.
+      // Both init surfaces render this bounded guidance as plain text.
+      const detail = typeof details?.detail === "string" ? details.detail.trim().slice(0, 2000) : "";
+      return detail || describeInitReason(details?.error || details?.reason)
+        || fallback || "初始化没能启动，请稍后重试。";
     }
 
     function initStatusReasonText(status) {
@@ -2869,8 +2946,7 @@
         renderAll();
         scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
       } catch (error) {
-        const code = error?.details?.error || error?.details?.reason;
-        state.initReason = error?.details?.detail || describeInitReason(code) || error?.message || "初始化没能启动，请稍后重试。";
+        state.initReason = initStartErrorText(error?.details, error?.message);
         state.initBusy = false;
         renderAll();
       }
@@ -2998,9 +3074,8 @@
         // Jump back to the recommend tab so the progress panel is visible.
         openHomePage();
       } catch (error) {
-        const code = error?.details?.error || error?.details?.reason;
         if (statusEl) {
-          statusEl.textContent = describeInitReason(code) || error?.message || "重新初始化没能启动，请稍后重试。";
+          statusEl.textContent = initStartErrorText(error?.details, error?.message || "重新初始化没能启动，请稍后重试。");
         }
         if (btn) btn.disabled = false;
       }
@@ -3093,6 +3168,8 @@
       document.querySelectorAll(".drawer.is-open, .overlay.is-open").forEach((panel) => closePanel(panel.id));
       const forceBottom = !hasOpenedDialogueChatPage;
       showMainPage("chatPage");
+      // M8：探测 agent loop 链路是否可用（旧后端自动保持 legacy 布局与行为）。
+      void initDesktopAgentChat();
       renderChat({ forceBottom });
       hasOpenedDialogueChatPage = true;
       scheduleDialogueConfirmationRefresh();
@@ -3205,9 +3282,34 @@
     function removeDesktopSavedItem(listKind, itemKey) {
       return desktopSavedApi.remove(listKind, itemKey);
     }
+    // Card construction used to send 2*N fetches synchronously, before the
+    // browser could discover the newly inserted cover images. Yield once and
+    // bound background reads; explicit save/remove actions bypass this queue.
+    const desktopSavedStatusQueue = [];
+    let desktopSavedStatusActive = 0;
+    let desktopSavedStatusTimer = null;
+    function pumpDesktopSavedStatus() {
+      desktopSavedStatusTimer = null;
+      while (desktopSavedStatusActive < 2 && desktopSavedStatusQueue.length) {
+        const { listKind, itemKey, resolve, reject } = desktopSavedStatusQueue.shift();
+        desktopSavedStatusActive++;
+        Promise.resolve().then(() => desktopSavedApi.status(listKind, itemKey))
+          .then(resolve, reject).finally(() => {
+            desktopSavedStatusActive--;
+            scheduleDesktopSavedStatus();
+          });
+      }
+    }
+    function scheduleDesktopSavedStatus() {
+      if (desktopSavedStatusTimer !== null || !desktopSavedStatusQueue.length) return;
+      desktopSavedStatusTimer = setTimeout(pumpDesktopSavedStatus, 0);
+    }
     function savedStatus(listKind, itemOrBvid) {
       const itemKey = desktopSavedItem(itemOrBvid).item_key;
-      return desktopSavedApi.status(listKind, itemKey);
+      return new Promise((resolve, reject) => {
+        desktopSavedStatusQueue.push({ listKind, itemKey, resolve, reject });
+        scheduleDesktopSavedStatus();
+      });
     }
     function watchLaterStatus(itemOrBvid) { return savedStatus("watch_later", itemOrBvid); }
     function favoriteStatus(itemOrBvid) { return savedStatus("favorite", itemOrBvid); }
@@ -5068,6 +5170,7 @@ ${cardFeedbackBarHtml()}`;
         ? "video-card is-text-only"
         : "video-card";
       card.dataset.bvid = item.bvid || item.id;
+      recommendationDirector?.bindCard(card, item);
       card.innerHTML = html;
       const reason = card.querySelector(".reason");
       const toggleReason = () => {
@@ -5171,6 +5274,13 @@ ${cardFeedbackBarHtml()}`;
         const activePlatform = activePlatformSlug();
         const activePlatformCount = platformAvailableCount(activePlatform);
         const loadFailed = desktopRecommendationLoadState === "failed" || desktopRecommendationLoadState === "failed-exhausted";
+        const runtime = normalizeRuntimeStatus(state.runtimeStatus);
+        const discoveryFailure = !state.videos.length && !loadFailed && runtime?.manual_refresh_state !== "running"
+          && runtime?.pool_available_count === 0
+          ? runtime.manual_refresh_state === "failed"
+            ? runtime.manual_refresh_message || "内容发现未完成，请检查来源连接后重试内容发现。"
+            : runtime.discovery_failure_message
+          : "";
         const platformMessage = activePlatform && !loadFailed
           ? activePlatformCount === null
             ? `${escapeHtml(platformName(activePlatform))}还没有装入推荐，可以点「加载更多推荐」试试。`
@@ -5180,6 +5290,8 @@ ${cardFeedbackBarHtml()}`;
           : "";
         const message = state.query.trim()
           ? `没有找到包含“${escapeHtml(state.query.trim())}”的推荐。`
+          : discoveryFailure
+            ? escapeHtml(discoveryFailure)
           : platformMessage
             ? platformMessage
             : state.videos.length
@@ -5209,6 +5321,7 @@ ${cardFeedbackBarHtml()}`;
           source_platform: item.platform || item.source_platform,
           title: item.title,
           recommendation_id: item.id,
+          ...(item.batch_ref ? { batch_ref: item.batch_ref } : {}),
           topic_label: item.topic,
           up_name: item.up || item.up_name
       };
@@ -5243,7 +5356,10 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function submitFeedback(item, feedback_type, note = "", { keepalive = false } = {}) {
-      const payload = { recommendation_id: item.id, feedback_type, note };
+      const payload = {
+        recommendation_id: item.id, feedback_type, note,
+        ...(item.batch_ref ? { batch_ref: item.batch_ref } : {}),
+      };
       return requestJsonWithPendingId(
         ENDPOINTS.feedback,
         "feedback",
@@ -6552,6 +6668,9 @@ ${cardFeedbackBarHtml()}`;
       onError,
     }) {
       const base = getApiBase() || DEFAULT_API_BASE;
+      const watchdog = chatAgentCore?.createSseReadWatchdog
+        ? chatAgentCore.createSseReadWatchdog()
+        : null;
       const response = await fetch(`${base}${ENDPOINTS.chatStream}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -6564,8 +6683,12 @@ ${cardFeedbackBarHtml()}`;
           reply_to_turn_id: replyToTurnId,
           message,
         }),
+        signal: watchdog?.signal,
       });
-      if (!response.ok) throw new Error(`chat stream failed: ${response.status}`);
+      if (!response.ok) {
+        watchdog?.cancel();
+        throw new Error(`chat stream failed: ${response.status}`);
+      }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -6590,21 +6713,27 @@ ${cardFeedbackBarHtml()}`;
         currentEvent = "";
         currentData = "";
       };
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() || "";
-        for (const raw of lines) {
-          const line = raw.trim();
-          if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            currentData = line.slice(5).trim();
-            dispatch();
+      try {
+        while (true) {
+          // 每轮读前重置看门狗：服务端心跳注释行也算字节，会喂活它。
+          watchdog?.reset();
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+          for (const raw of lines) {
+            const line = raw.trim();
+            if (line.startsWith("event:")) {
+              currentEvent = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              currentData = line.slice(5).trim();
+              dispatch();
+            }
           }
         }
+      } finally {
+        watchdog?.cancel();
       }
     }
 
@@ -7348,11 +7477,25 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function chatHtml(messages) {
+      if (agentChatEnabled() && !messages.length && !state.agentChat.live) {
+        return '<p class="chat-session-empty">这个会话还没有消息，说点什么开始吧。</p>';
+      }
       return messages.map((msg) => {
         if (msg?.turn) {
+          // M8：后台任务汇总卡与带 agent_events 的 turn 走专属渲染。
+          if (chatAgentCore?.isAgentTaskSummaryTurn(msg.turn)) {
+            return chatAgentCore.taskSummaryCardMarkup(msg.turn, {
+              renderMarkdown,
+              handledSuggestions: state.agentChat.handledSuggestions,
+            });
+          }
           const waiting = desktopTurnIsWaitingForReply(msg.turn)
             ? desktopChatThinkingMarkup()
             : "";
+          const agentEvents = chatAgentCore ? chatAgentCore.turnAgentEvents(msg.turn) : [];
+          if (agentEvents.length) {
+            return `${replyQuoteMarkup(msg.turn, desktopDialogueTurns())}${desktopAgentTurnMarkup(msg.turn)}${waiting}`;
+          }
           return `${replyQuoteMarkup(msg.turn, desktopDialogueTurns())}${renderTurnMarkup(msg.turn, { surface: "desktop" })}${waiting}`;
         }
         if (msg?.thinking) return desktopChatThinkingMarkup(msg.text);
@@ -7376,18 +7519,39 @@ ${cardFeedbackBarHtml()}`;
       );
     }
 
+    function agentDetailKey(details) {
+      const turnId = details.closest("[data-dialogue-turn-id]")?.dataset.dialogueTurnId || "live";
+      const cls = details.classList.contains("agent-process")
+        ? "process"
+        : details.classList.contains("agent-tool")
+          ? "tool"
+          : "detail";
+      const label = (details.querySelector(":scope > summary")?.textContent || "").trim().slice(0, 60);
+      return `${turnId}|${cls}|${label}`;
+    }
+
     function renderChatLogElement(element, markup, { forceBottom = false } = {}) {
       if (!element) return;
+      const approvalDrafts = globalThis.OpenBiliClawAgentChat?.captureApprovalDrafts(element);
       const hadContent = element.childElementCount > 0;
       const shouldStickToBottom = forceBottom || !hadContent || isNearScrollBottom(element);
       const previousScrollTop = element.scrollTop;
       const openEvidenceTurnIds = openDialogueEvidenceTurnIds(element);
+      // M8：轮询重渲染时保留过程折叠组件的展开状态。
+      const openAgentKeys = new Set(
+        Array.from(element.querySelectorAll(".agent-process[open], .agent-tool[open], .agent-tool-detail[open]"))
+          .map(agentDetailKey)
+      );
 
       element.innerHTML = markup;
+      globalThis.OpenBiliClawAgentChat?.restoreApprovalDrafts(element, approvalDrafts);
 
       for (const details of element.querySelectorAll(".dialogue-evidence")) {
         const turnId = details.closest("[data-dialogue-turn-id]")?.dataset.dialogueTurnId || "";
         if (openEvidenceTurnIds.has(turnId)) details.open = true;
+      }
+      for (const details of element.querySelectorAll("details.agent-process, details.agent-tool, details.agent-tool-detail")) {
+        if (openAgentKeys.has(agentDetailKey(details))) details.open = true;
       }
       if (shouldStickToBottom) {
         element.scrollTop = element.scrollHeight;
@@ -7435,7 +7599,15 @@ ${cardFeedbackBarHtml()}`;
 
     function applyDialogueChatSnapshot(snapshot) {
       const items = selectDialogueTurns(Array.isArray(snapshot) ? snapshot : asArray(snapshot?.items));
-      if (!items.length) return;
+      if (!items.length) {
+        // agent 模式下空会话是合法状态（新会话），要清掉旧会话的残留渲染。
+        if (agentChatEnabled() && state.chat.length && lastDialogueChatSignature !== "[]") {
+          lastDialogueChatSignature = "[]";
+          state.chat = [];
+          renderChat();
+        }
+        return;
+      }
       const signature = JSON.stringify(items);
       if (signature === lastDialogueChatSignature) return;
       lastDialogueChatSignature = signature;
@@ -7444,10 +7616,24 @@ ${cardFeedbackBarHtml()}`;
     }
 
     async function refreshDialogueTurns() {
+      // M8：agent 模式按当前会话实体拉取（含 payload.agent_events 回放数据）；
+      // legacy 模式保持旧的共享 session 通道。
+      if (agentChatEnabled()) {
+        const sessionId = state.agentChat.sessionId || "default";
+        const generation = ++dialogueChatRefreshGeneration;
+        const detail = await requestJsonStrict(
+          `${ENDPOINTS.chatSessions}/${encodeURIComponent(sessionId)}?limit=100`,
+          { cache: "no-store" }
+        );
+        if (generation !== dialogueChatRefreshGeneration || sessionId !== (state.agentChat.sessionId || "default")) return;
+        applyDialogueChatSnapshot(detail?.items || []);
+        return;
+      }
       const snapshot = await requestJsonStrict(
         `${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`,
         { cache: "no-store" }
       );
+      if (agentChatEnabled()) return;
       applyDialogueChatSnapshot(snapshot);
     }
 
@@ -7575,6 +7761,8 @@ ${cardFeedbackBarHtml()}`;
       await Promise.allSettled([refreshDialogueTurns(), refreshDesktopPendingConfirmations()]);
       await validateDialogueContext({ announce: true });
       renderDialogueContextBar();
+      // M8：会话列表（标题异步生成、active_turns 指示）、待审批 badge、任务中心轮询。
+      await syncAgentChatSurface();
     }
 
     async function refreshSharedChatSurface() {
@@ -7600,6 +7788,1080 @@ ${cardFeedbackBarHtml()}`;
       chatHistoryRefreshTimer = window.setInterval(() => {
         void refreshSharedChatSurface();
       }, CHAT_HISTORY_REFRESH_INTERVAL_MS);
+    }
+
+    // ── 「聊一聊」agent loop（M8）：会话侧栏 / 流式过程 / skill / 审批 / 任务中心 ──
+
+    const AGENT_CHAT_SESSION_KEY = "openbiliclaw.webui.chatSessionId";
+    const AGENT_CHAT_SKILL_KEY = "openbiliclaw.webui.chatSkillBySession";
+    let chatSessionsSignature = "";
+    let chatSessionsGeneration = 0;
+    let chatApprovalsSignature = "";
+    let chatTasksSignature = "";
+    // 异步审批执行（approve 只入队）：本页批准、等待终态的审批 id，
+    // 以及后端 executing 记录（用于刷新/回放时把 pending 卡恢复成「执行中…」）。
+    const executingApprovalIds = new Set();
+    let approvalExecutingOverrides = new Map();
+    // 本页已观察到终态的记录：approval_result 事件落进 turn 回放前，
+    // 轮询重渲染也用这份快照保持终态展示。
+    const approvalTerminalOverrides = new Map();
+
+    function agentChatEnabled() {
+      return Boolean(chatAgentCore) && state.agentChat.mode === "agent";
+    }
+
+    function agentChatStorage() {
+      try { return window.localStorage; } catch { return null; }
+    }
+
+    function loadAgentChatPrefs() {
+      const storage = agentChatStorage();
+      if (!storage) return;
+      const savedSession = storage.getItem(AGENT_CHAT_SESSION_KEY) || "";
+      if (savedSession) state.agentChat.sessionId = savedSession;
+      try {
+        const map = JSON.parse(storage.getItem(AGENT_CHAT_SKILL_KEY) || "{}");
+        state.agentChat.skill = String(map?.[state.agentChat.sessionId] || "");
+      } catch {
+        state.agentChat.skill = "";
+      }
+    }
+
+    function persistAgentChatPrefs() {
+      const storage = agentChatStorage();
+      if (!storage) return;
+      storage.setItem(AGENT_CHAT_SESSION_KEY, state.agentChat.sessionId);
+      let map = {};
+      try { map = JSON.parse(storage.getItem(AGENT_CHAT_SKILL_KEY) || "{}"); } catch { map = {}; }
+      map[state.agentChat.sessionId] = state.agentChat.skill;
+      storage.setItem(AGENT_CHAT_SKILL_KEY, JSON.stringify(map));
+    }
+
+    function currentChatSession() {
+      return state.agentChat.sessions.find((item) => item?.session_id === state.agentChat.sessionId) || null;
+    }
+
+    function currentChatSkill() {
+      const name = state.agentChat.skill;
+      const found = state.agentChat.skills.find((item) => item?.name === name);
+      if (found) return found;
+      return state.agentChat.skills.find((item) => item?.default === true) || null;
+    }
+
+    function applyAgentChatChrome() {
+      const enabled = agentChatEnabled();
+      const chatPage = $("#chatPage");
+      chatPage?.classList.toggle("has-agent-side", enabled);
+      const side = $("#chatSide");
+      if (side) side.hidden = !enabled || !state.agentChat.sidebarOpen;
+      const bar = $("#chatSessionBar");
+      if (bar) bar.hidden = !enabled;
+      $("#chatSideToggle")?.setAttribute("aria-expanded", String(state.agentChat.sidebarOpen));
+      if (!enabled) return;
+      renderChatSidebar();
+      renderChatSessionBar();
+      renderChatBadges();
+    }
+
+    function renderChatSidebar() {
+      const list = $("#chatSessionList");
+      if (!list || !chatAgentCore) return;
+      list.innerHTML = chatAgentCore.sessionListMarkup(state.agentChat.sessions, state.agentChat.sessionId);
+      const archivedToggle = $("#chatArchivedToggle");
+      if (archivedToggle) {
+        archivedToggle.setAttribute("aria-pressed", String(state.agentChat.includeArchived));
+        archivedToggle.textContent = state.agentChat.includeArchived ? "隐藏已归档" : "显示已归档";
+      }
+    }
+
+    function renderChatSessionBar() {
+      if (!chatAgentCore) return;
+      const skill = currentChatSkill();
+      const icon = $("#chatSkillIcon");
+      const name = $("#chatSkillName");
+      if (icon) icon.textContent = chatAgentCore.skillIcon(skill?.name || "");
+      if (name) name.textContent = skill ? String(skill.title || skill.name) : "口味伙伴";
+      const sessionName = $("#chatSessionName");
+      if (sessionName) {
+        const session = currentChatSession();
+        sessionName.textContent = session
+          ? String(session.title || (session.session_id === "default" ? "默认会话" : "未命名会话"))
+          : "";
+      }
+      renderChatPersonaState();
+    }
+
+    function renderChatBadges() {
+      const approvalsBadge = $("#chatApprovalsBadge");
+      const pendingApprovals = state.agentChat.approvals.length;
+      if (approvalsBadge) {
+        approvalsBadge.hidden = pendingApprovals === 0;
+        approvalsBadge.textContent = pendingApprovals > 99 ? "99+" : String(pendingApprovals);
+      }
+      const tasksBadge = $("#chatTasksBadge");
+      const activeTasks = state.agentChat.tasks.filter((task) => chatAgentCore?.taskIsActive(task)).length;
+      if (tasksBadge) {
+        tasksBadge.hidden = activeTasks === 0;
+        tasksBadge.textContent = String(activeTasks);
+      }
+    }
+
+    async function initDesktopAgentChat() {
+      // agent 模式下不重探；legacy 模式每次进聊天页重试一次（后端可能先以
+      // degraded 形态启动、之后才具备 agent 链路）。
+      if (!chatAgentCore || state.agentChat.mode === "agent") return;
+      try {
+        const payload = await requestJsonStrict(ENDPOINTS.chatSkills, { cache: "no-store", timeoutMs: 8000 });
+        if (!payload || !Array.isArray(payload.skills)) throw new Error("bad skills payload");
+        state.agentChat.mode = "agent";
+        state.agentChat.skills = payload.skills;
+      } catch {
+        // 旧后端没有 agent loop 端点：保持既有 legacy 聊天行为。
+        state.agentChat.mode = "legacy";
+        applyAgentChatChrome();
+        return;
+      }
+      loadAgentChatPrefs();
+      // The startup snapshot belongs to the legacy shared channel, not to
+      // the restored agent conversation. Clear it before exposing its chrome.
+      state.chat = [];
+      lastDialogueChatSignature = null;
+      renderChat();
+      applyAgentChatChrome();
+      void refreshChatPersonas();
+      await Promise.allSettled([refreshChatSessions(), refreshChatApprovals(), refreshChatTasks()]);
+      await refreshDialogueTurns().catch(() => {});
+    }
+
+    async function refreshChatSessions() {
+      const generation = ++chatSessionsGeneration;
+      const query = state.agentChat.includeArchived ? "?include_archived=true" : "";
+      const payload = await requestJsonStrict(`${ENDPOINTS.chatSessions}${query}`, { cache: "no-store" });
+      if (generation !== chatSessionsGeneration) return;
+      const sessions = asArray(payload?.items);
+      const signature = JSON.stringify(sessions) + `|${state.agentChat.sessionId}|${state.agentChat.includeArchived}`;
+      for (const session of sessions) {
+        const previous = state.agentChat.sessions.find((item) => item?.session_id === session.session_id);
+        if (previous && previous.metadata?.persona !== session.metadata?.persona && !state.agentChat.personaSaves.has(session.session_id)) {
+          state.agentChat.personaStatusBySession.delete(session.session_id);
+        }
+      }
+      state.agentChat.sessions = sessions;
+      // 会话不存在（例如被另一端归档清理后）时回落默认会话。
+      if (
+        state.agentChat.sessionId !== "default" &&
+        sessions.length &&
+        !sessions.some((item) => item?.session_id === state.agentChat.sessionId)
+      ) {
+        state.agentChat.sessionId = "default";
+        toggleChatPersonaPicker(false);
+        persistAgentChatPrefs();
+      }
+      if (signature !== chatSessionsSignature) {
+        chatSessionsSignature = signature;
+        renderChatSidebar();
+        renderChatSessionBar();
+      }
+    }
+
+    async function selectChatSession(sessionId) {
+      const id = String(sessionId || "default");
+      if (id !== state.agentChat.sessionId) {
+        const input = $("#chatInput");
+        chatSessionDrafts.set(state.agentChat.sessionId || "default", input?.value ?? retainedChatDraft);
+        retainedChatDraft = chatSessionDrafts.get(id) || "";
+        if (input) input.value = retainedChatDraft;
+      }
+      state.agentChat.sessionId = id;
+      toggleChatPersonaPicker(false);
+      const storage = agentChatStorage();
+      let map = {};
+      try { map = JSON.parse(storage?.getItem(AGENT_CHAT_SKILL_KEY) || "{}"); } catch { map = {}; }
+      state.agentChat.skill = String(map?.[id] || "");
+      persistAgentChatPrefs();
+      if (window.innerWidth <= 900) state.agentChat.sidebarOpen = false;
+      lastDialogueChatSignature = null;
+      chatSessionsSignature = "";
+      state.chat = [];
+      applyAgentChatChrome();
+      renderChat({ forceBottom: true });
+      await refreshDialogueTurns().catch(() => {});
+      $("#chatInput")?.focus();
+    }
+
+    async function createChatSession() {
+      try {
+        const session = await requestJsonStrict(ENDPOINTS.chatSessions, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        await refreshChatSessions().catch(() => {});
+        if (session?.session_id) await selectChatSession(session.session_id);
+        showToast("新会话已创建");
+      } catch (error) {
+        showToast(contextErrorMessage(error));
+      }
+    }
+
+    function startChatSessionRename(button) {
+      const item = button.closest("[data-session-id]");
+      const sessionId = item?.dataset.sessionId || "";
+      const session = state.agentChat.sessions.find((entry) => entry?.session_id === sessionId);
+      if (!item || !session) return;
+      const main = item.querySelector(".chat-session-main");
+      if (!main || item.querySelector(".chat-session-rename")) return;
+      const input = document.createElement("input");
+      input.className = "chat-session-rename";
+      input.value = String(session.title || "");
+      input.placeholder = sessionId === "default" ? "默认会话" : "会话名称";
+      input.setAttribute("aria-label", "会话名称");
+      main.replaceWith(input);
+      input.focus();
+      input.select();
+      let committed = false;
+      const commit = async () => {
+        if (committed) return;
+        committed = true;
+        const title = input.value.trim();
+        if (!title || title === String(session.title || "")) {
+          renderChatSidebar();
+          return;
+        }
+        try {
+          await requestJsonStrict(`${ENDPOINTS.chatSessions}/${encodeURIComponent(sessionId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title }),
+          });
+          chatSessionsSignature = "";
+          await refreshChatSessions().catch(() => {});
+          showToast("已改名");
+        } catch (error) {
+          showToast(contextErrorMessage(error));
+          renderChatSidebar();
+        }
+      };
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); void commit(); }
+        if (event.key === "Escape") { committed = true; renderChatSidebar(); }
+      });
+      input.addEventListener("blur", () => void commit());
+    }
+
+    async function archiveChatSession(sessionId) {
+      const session = state.agentChat.sessions.find((entry) => entry?.sessionId === sessionId || entry?.session_id === sessionId);
+      if (!session) return;
+      const next = session.archived !== true;
+      try {
+        await requestJsonStrict(`${ENDPOINTS.chatSessions}/${encodeURIComponent(sessionId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived: next }),
+        });
+        if (next && state.agentChat.sessionId === sessionId) await selectChatSession("default");
+        chatSessionsSignature = "";
+        await refreshChatSessions().catch(() => {});
+        showToast(next ? "已归档这个会话" : "已恢复这个会话");
+      } catch (error) {
+        showToast(contextErrorMessage(error));
+      }
+    }
+
+    function setChatSkill(name, { announce = true } = {}) {
+      state.agentChat.skill = String(name || "");
+      persistAgentChatPrefs();
+      renderChatSessionBar();
+      if (announce) {
+        const skill = currentChatSkill();
+        showToast(`已切换到「${skill ? String(skill.title || skill.name) : "默认角色"}」，下一回合生效`);
+      }
+    }
+
+    function renderChatSkillPicker() {
+      const picker = $("#chatSkillPicker");
+      if (!picker || !chatAgentCore) return;
+      picker.hidden = !state.agentChat.skillPickerOpen;
+      $("#chatSkillChip")?.setAttribute("aria-expanded", String(state.agentChat.skillPickerOpen));
+      if (state.agentChat.skillPickerOpen) {
+        picker.innerHTML = chatAgentCore.skillPickerMarkup(state.agentChat.skills, state.agentChat.skill || currentChatSkill()?.name || "");
+      }
+    }
+
+    function toggleChatSkillPicker(open) {
+      state.agentChat.skillPickerOpen = open ?? !state.agentChat.skillPickerOpen;
+      if (state.agentChat.skillPickerOpen) toggleChatPersonaPicker(false);
+      renderChatSkillPicker();
+    }
+
+    // 聊天风格由会话 metadata 持久化；角色的工具白名单独立保留。
+    function currentChatPersonaId() {
+      return String(currentChatSession()?.metadata?.persona || "natural");
+    }
+
+    function currentChatPersona() {
+      return state.agentChat.personas.find((item) => item.id === currentChatPersonaId()) || null;
+    }
+
+    function chatPersonaIsSaving() {
+      return state.agentChat.personaSaves.has(state.agentChat.sessionId || "default");
+    }
+
+    async function refreshChatPersonas() {
+      const agent = state.agentChat;
+      if (agent.personaCatalogLoading) return;
+      agent.personaCatalogLoading = true;
+      agent.personaCatalogError = "";
+      renderChatPersonaPicker();
+      try {
+        const payload = await requestJsonStrict(ENDPOINTS.chatPersonas, { cache: "no-store", timeoutMs: 8000 });
+        if (!Array.isArray(payload?.personas) || !payload.personas.length ||
+            payload.personas.some((item) => !item || typeof item.id !== "string" || !item.id || typeof item.title !== "string")) {
+          throw new Error("聊天风格列表暂时不可用");
+        }
+        agent.personas = payload.personas;
+        agent.personaExamplePrompt = String(payload.example_prompt || "");
+        if (!agent.personaDraft) agent.personaDraft = currentChatPersonaId();
+      } catch {
+        agent.personaCatalogError = "聊天风格加载失败，可以重试；仍可正常聊天。";
+      } finally {
+        agent.personaCatalogLoading = false;
+        renderChatPersonaPicker();
+      }
+    }
+
+    function renderChatPersonaState() {
+      const agent = state.agentChat;
+      const saving = chatPersonaIsSaving();
+      const persona = currentChatPersona();
+      const name = $("#chatPersonaName");
+      if (name) name.textContent = `${persona?.title || (currentChatPersonaId() === "natural" ? "自然朋友" : "已设定")}${saving ? " · 保存中…" : ""}`;
+      $("#chatPersonaChip")?.setAttribute("aria-expanded", String(agent.personaPickerOpen));
+      const panel = $("#chatPersonaPicker");
+      if (panel) panel.hidden = !agent.personaPickerOpen;
+      const status = $("#chatPersonaStatus");
+      const feedback = agent.personaStatusBySession.get(agent.sessionId || "default");
+      if (status) {
+        status.textContent = saving ? "正在保存，完成后即可发送消息…" :
+          (feedback?.message || `当前风格：${persona?.title || (currentChatPersonaId() === "natural" ? "自然朋友" : "已设定")}`);
+        status.classList.toggle("is-error", !saving && Boolean(feedback?.error));
+      }
+      const save = $("#chatPersonaSave");
+      if (save) {
+        save.disabled = saving || agent.personaCatalogLoading || Boolean(agent.personaCatalogError) ||
+          !currentChatSession() || !agent.personas.some((item) => item.id === agent.personaDraft) ||
+          agent.personaDraft === currentChatPersonaId();
+        save.textContent = saving ? "保存中…" : "应用到当前会话";
+      }
+      const send = $("#chatForm button[type='submit']");
+      if (send) send.disabled = saving;
+      $("#chatForm")?.setAttribute("aria-busy", String(saving));
+    }
+
+    function renderChatPersonaPreview() {
+      const preview = $("#chatPersonaPreview");
+      if (!preview) return;
+      const agent = state.agentChat;
+      const draft = agent.personas.find((item) => item.id === agent.personaDraft);
+      preview.hidden = !draft;
+      preview.innerHTML = draft ? `<p class="chat-persona-example-label">回复示例${agent.personaExamplePrompt ? ` · ${escapeHtml(agent.personaExamplePrompt)}` : ""}</p><blockquote>${escapeHtml(String(draft.example || ""))}</blockquote>` : "";
+      renderChatPersonaState();
+    }
+
+    function renderChatPersonaPicker() {
+      renderChatPersonaState();
+      if (!state.agentChat.personaPickerOpen) return;
+      const options = $("#chatPersonaOptions");
+      if (!options) return;
+      const agent = state.agentChat;
+      if (agent.personaCatalogLoading) {
+        options.innerHTML = '<p class="chat-persona-help" role="status">正在加载聊天风格…</p>';
+      } else if (agent.personaCatalogError) {
+        options.innerHTML = `<p class="chat-persona-error" role="alert">${escapeHtml(agent.personaCatalogError)}</p><button type="button" class="pill-btn" data-persona-retry>重新加载</button>`;
+      } else {
+        options.innerHTML = `<fieldset class="chat-persona-options" ${chatPersonaIsSaving() ? "disabled" : ""}><legend class="sr-only">聊天风格模板</legend>${agent.personas.map((item) => `<label class="chat-persona-option"><input type="radio" name="chatPersona" value="${escapeHtml(item.id)}" ${item.id === agent.personaDraft ? "checked" : ""}><span><strong>${escapeHtml(item.title)}</strong><span class="chat-persona-description">${escapeHtml(String(item.description || ""))}</span></span></label>`).join("")}</fieldset>`;
+      }
+      renderChatPersonaPreview();
+    }
+
+    function toggleChatPersonaPicker(open, { restoreFocus = false } = {}) {
+      const agent = state.agentChat;
+      const next = open ?? !agent.personaPickerOpen;
+      if (next && !agent.personaPickerOpen) {
+        agent.personaDraft = agent.personaSaves.get(agent.sessionId || "default")?.personaId || currentChatPersonaId();
+        agent.skillPickerOpen = false;
+        renderChatSkillPicker();
+      }
+      agent.personaPickerOpen = next;
+      renderChatPersonaPicker();
+      if (next) {
+        if (!agent.personas.length && !agent.personaCatalogLoading) void refreshChatPersonas();
+        $("#chatPersonaOptions input:checked")?.focus();
+      } else if (restoreFocus) $("#chatPersonaChip")?.focus();
+    }
+
+    async function saveChatPersona() {
+      const agent = state.agentChat;
+      const sessionId = agent.sessionId || "default";
+      const personaId = agent.personaDraft;
+      if (agent.personaSaves.has(sessionId) || !currentChatSession() ||
+          !agent.personas.some((item) => item.id === personaId) || personaId === currentChatPersonaId()) return;
+      const operation = { personaId };
+      agent.personaSaves.set(sessionId, operation);
+      agent.personaStatusBySession.delete(sessionId);
+      ++chatSessionsGeneration;
+      renderChatPersonaPicker();
+      try {
+        const session = await requestJsonStrict(`${ENDPOINTS.chatSessions}/${encodeURIComponent(sessionId)}`, {
+          method: "PATCH",
+          timeoutMs: 10000,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ persona: personaId }),
+        });
+        if (session?.session_id !== sessionId || session?.metadata?.persona !== personaId) {
+          throw new Error("保存结果尚未确认，请刷新会话后重试");
+        }
+        // Invalidate older session-list GETs that could arrive after the PATCH.
+        ++chatSessionsGeneration;
+        const index = agent.sessions.findIndex((item) => item?.session_id === sessionId);
+        if (index >= 0) agent.sessions[index] = session;
+        chatSessionsSignature = "";
+        const title = agent.personas.find((item) => item.id === personaId)?.title || personaId;
+        agent.personaStatusBySession.set(sessionId, { message: `已保存「${title}」，从下一条消息生效。`, error: false });
+      } catch (error) {
+        agent.personaStatusBySession.set(sessionId, {
+          message: Number(error?.status) === 404 ? "会话暂时无法保存，请刷新会话后重试。" :
+            "风格保存未确认，请重试或刷新会话查看结果。", error: true,
+        });
+      } finally {
+        if (agent.personaSaves.get(sessionId) === operation) agent.personaSaves.delete(sessionId);
+        if (sessionId === (agent.sessionId || "default")) renderChatPersonaPicker();
+      }
+    }
+
+    // ── 流式 agent 对话 ──
+
+    function applyApprovalExecutingOverrides(process) {
+      // 刷新/回放时 approval_request 归约只到 pending；后端已在执行的审批
+      // 用 executing 列表把卡片恢复成「执行中…」，避免露出可重复点的按钮。
+      if (!process || !chatAgentCore) return process;
+      for (const record of approvalTerminalOverrides.values()) {
+        chatAgentCore.applyApprovalRecordToProcess(process, record);
+      }
+      for (const record of approvalExecutingOverrides.values()) {
+        chatAgentCore.applyApprovalRecordToProcess(process, record);
+      }
+      return process;
+    }
+
+    function liveAgentChatMarkup() {
+      const live = state.agentChat.live;
+      if (!live || !chatAgentCore) return "";
+      if (live.sessionId !== (state.agentChat.sessionId || "default")) return "";
+      const parts = [];
+      const hasProcess = live.process.steps.length || live.process.stepLimitText || live.process.errorText;
+      if (hasProcess) {
+        parts.push(chatAgentCore.agentProcessMarkup(applyApprovalExecutingOverrides(live.process), { live: !live.finished }));
+      }
+      if (live.replyText) {
+        parts.push(`<div class="chat-bubble agent"><div class="chat-markdown">${renderMarkdown(live.replyText)}</div></div>`);
+      }
+      if (!parts.length) parts.push(desktopChatThinkingMarkup());
+      return parts.join("");
+    }
+
+    function desktopAgentTurnMarkup(turn) {
+      const turnId = escapeHtml(turn.turn_id || "");
+      const userText = String(turn.message || "").trim();
+      const userBubble = userText
+        ? `<div class="chat-bubble user" data-dialogue-turn-id="${turnId}" data-part="user">${escapeHtml(userText)}</div>`
+        : "";
+      const process = chatAgentCore.agentProcessMarkup(
+        applyApprovalExecutingOverrides(chatAgentCore.buildAgentProcess(chatAgentCore.turnAgentEvents(turn))),
+      );
+      const failed = ["error", "failed"].includes(String(turn.status || "").toLowerCase());
+      const reply = failed
+        ? String(turn.error || "这句还没发出去，稍后再试。")
+        : String(turn.reply || turn.assistant_message || "");
+      const replyBubble = reply
+        ? `<div class="chat-bubble agent" data-dialogue-turn-id="${turnId}" data-part="assistant"><div class="chat-markdown">${renderMarkdown(reply)}</div></div>`
+        : "";
+      return `${userBubble}${process}${replyBubble}`;
+    }
+
+    function handleAgentStreamEvent(name, data, live) {
+      if (!chatAgentCore) return;
+      if (name === "done") {
+        live.replyText = String(data?.reply || live.process.finalText || live.replyText || "");
+        if (data?.skill && live.sessionId === state.agentChat.sessionId &&
+          state.agentChat.skill === live.skill && String(data.skill) !== state.agentChat.skill) {
+          state.agentChat.skill = String(data.skill);
+          persistAgentChatPrefs();
+        }
+        live.finished = true;
+        renderChat({ forceBottom: true });
+        return;
+      }
+      const event =
+        data && typeof data === "object" && !Array.isArray(data)
+          ? { ...data, type: data.type || name }
+          : { type: name };
+      if (event.type === "delta") {
+        // Token 级增量：直接追加到实时回复气泡；thinking（中间跳）会清空它，
+        // final / done 用完整文本整体替换。过程模型不记录 delta，
+        // 避免历史回放重复拼接。
+        live.replyText = String(live.replyText || "") + String(data?.text || "");
+        renderChat({ forceBottom: true });
+        return;
+      }
+      chatAgentCore.applyAgentEvent(live.process, event);
+      if (event.type === "thinking") live.replyText = "";
+      if (event.type === "final") live.replyText = String(event.text || "");
+      if (event.type === "error") live.finished = true;
+      renderChat({ forceBottom: true });
+    }
+
+    async function streamAgentChatTurn({ turnId, message, sessionId, skill, live }) {
+      const base = getApiBase() || DEFAULT_API_BASE;
+      const body = {
+        turn_id: turnId,
+        message,
+        session: SHARED_CHAT_SESSION,
+        scope: "chat",
+      };
+      if (sessionId && sessionId !== "default") body.session_id = sessionId;
+      if (skill) body.skill = skill;
+      const watchdog = chatAgentCore?.createSseReadWatchdog
+        ? chatAgentCore.createSseReadWatchdog()
+        : null;
+      const response = await fetch(`${base}${ENDPOINTS.chatAgentStream}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: watchdog?.signal,
+      });
+      if (!response.ok) {
+        watchdog?.cancel();
+        const error = new Error(`agent stream failed: ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const parser = chatAgentCore.createSseParser((name, data) => {
+        handleAgentStreamEvent(name, data, live);
+      });
+      try {
+        while (true) {
+          watchdog?.reset();
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.feed(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        watchdog?.cancel();
+      }
+      parser.end();
+      if (!live.finished) throw new Error("对话连接已中断，等待历史恢复。");
+    }
+
+    // 旧假流式端点回退（agent loop 被 `[agent] loop_enabled=false` 关掉时）。
+    async function legacyStreamForTurn(turn, payloadMessage) {
+      state.chat.push({ role: "agent", text: "阿B 正在思考，等待模型回复…", thinking: true });
+      renderChat({ forceBottom: true });
+      const thinkingIndex = state.chat.length - 1;
+      let accumulated = "";
+      const finish = async (text) => {
+        state.chat[thinkingIndex] = { role: "agent", text };
+        renderChat({ forceBottom: true });
+        await refreshDialogueConfirmationSurface();
+        await refreshUntilDialogueCardsSettle();
+      };
+      await streamChatTurn({
+        turnId: turn.turn_id,
+        message: payloadMessage,
+        session: SHARED_CHAT_SESSION,
+        scope: "chat",
+        onContent: (delta) => {
+          accumulated += delta;
+          state.chat[thinkingIndex] = { role: "agent", text: accumulated };
+          renderChat({ forceBottom: true });
+        },
+        onToolCall: (data) => {
+          accumulated += `\n\n🔧 调用工具：${String(data.name || "工具")}\n`;
+          state.chat[thinkingIndex] = { role: "agent", text: accumulated };
+          renderChat({ forceBottom: true });
+        },
+        onDone: (data) => {
+          accumulated = String(data.reply || accumulated);
+          void finish(accumulated);
+        },
+      });
+      if (state.chat[thinkingIndex]?.thinking) {
+        await finish(accumulated || "后端已完成这轮聊天。");
+      }
+    }
+
+    async function sendAgentChat(message) {
+      const replyToTurnId = dialogueContextSelection?.["reply_to_turn_id"] || "";
+      state.chat.push({ role: "user", text: message });
+      renderChat({ forceBottom: true });
+      const agentState = state.agentChat;
+      const sessionId = agentState.sessionId || "default";
+      const skill = agentState.skill || "";
+      const turnId = createClientTurnId("chat");
+      const payload = {
+        turn_id: turnId,
+        session: SHARED_CHAT_SESSION,
+        scope: "chat",
+        subject_id: "",
+        subject_title: "",
+        reply_to_turn_id: replyToTurnId,
+        message,
+        streaming: true,
+      };
+      if (sessionId !== "default") payload.session_id = sessionId;
+      if (skill) payload.skill = skill;
+      let turn;
+      try {
+        turn = await requestJsonStrict(ENDPOINTS.chatTurns, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        if (sessionId !== (agentState.sessionId || "default")) return;
+        retainedChatDraft = message;
+        const input = $("#chatInput");
+        if (input) input.value = message;
+        state.chat.push({ role: "agent", text: contextErrorMessage(error) });
+        renderChat();
+        showToast(contextErrorMessage(error));
+        return;
+      }
+      if (!turn?.turn_id) {
+        if (sessionId !== (agentState.sessionId || "default")) return;
+        state.chat.push({ role: "agent", text: "当前没有连上后端，聊天没有提交成功。请检查 FastAPI 地址后重试。" });
+        renderChat();
+        showToast("聊天提交失败：后端不可用");
+        return;
+      }
+      const live = {
+        process: chatAgentCore.createAgentProcess(),
+        replyText: "",
+        finished: false,
+        turnId: turn.turn_id,
+        sessionId,
+        skill,
+      };
+      if (sessionId === (agentState.sessionId || "default")) agentState.live = live;
+      renderChat({ forceBottom: true });
+      const finalize = async () => {
+        if (agentState.live === live) agentState.live = null;
+        lastDialogueChatSignature = null;
+        await refreshDialogueTurns().catch(() => {});
+        await refreshDesktopPendingConfirmations().catch(() => {});
+        await refreshChatSessions().catch(() => {});
+        await refreshChatApprovals().catch(() => {});
+        await refreshUntilDialogueCardsSettle();
+      };
+      try {
+        await streamAgentChatTurn({ turnId: turn.turn_id, message, sessionId, skill, live });
+        if (live.process.errorText) showToast(live.process.errorText);
+        await finalize();
+      } catch (error) {
+        if (Number(error?.status) === 503) {
+          // loop_enabled=false：这一轮回退到旧假流式端点，会话/历史功能不变。
+          if (agentState.live === live) agentState.live = null;
+          showToast("Agent 对话未在后端启用，本轮已回退到普通对话模式");
+          try {
+            if (sessionId === (agentState.sessionId || "default")) await legacyStreamForTurn(turn, message);
+          } catch {
+            if (sessionId === (agentState.sessionId || "default")) {
+              state.chat.push({ role: "agent", text: "聊天已提交，但流式连接中断，稍后会从历史自动恢复。" });
+              renderChat();
+            }
+          }
+          await finalize();
+          return;
+        }
+        if (agentState.live === live) agentState.live = null;
+        if (sessionId === (agentState.sessionId || "default")) {
+          state.chat.push({ role: "agent", text: "聊天已提交，但流式连接中断，稍后会从历史自动恢复。" });
+          renderChat();
+        }
+        await finalize();
+      }
+    }
+
+    // ── 审批卡 ──
+
+    async function refreshChatApprovals() {
+      // pending 列表之外同时拉 executing（回放恢复）与本页已批准记录的全量
+      // 快照（异步执行的终态跟踪），都挂在既有 2.5s 表面刷新节奏上。
+      const requests = [
+        requestJsonStrict(`${ENDPOINTS.chatApprovals}?status=pending`, { cache: "no-store" }),
+        requestJsonStrict(`${ENDPOINTS.chatApprovals}?status=executing`, { cache: "no-store" }),
+      ];
+      if (executingApprovalIds.size) {
+        requests.push(requestJsonStrict(`${ENDPOINTS.chatApprovals}?limit=100`, { cache: "no-store" }));
+      }
+      const [pendingPayload, executingPayload, allPayload] = await Promise.all(requests);
+      const items = asArray(pendingPayload?.items);
+      approvalExecutingOverrides = new Map(
+        asArray(executingPayload?.items)
+          .map((record) => [String(record?.approval_id || ""), record])
+          .filter(([id]) => id),
+      );
+      if (allPayload) trackQueuedApprovals(asArray(allPayload?.items));
+      const signature = JSON.stringify(items) + JSON.stringify([...approvalExecutingOverrides.keys()]);
+      state.agentChat.approvals = items;
+      renderChatBadges();
+      if (state.agentChat.approvalsOpen && signature !== chatApprovalsSignature) {
+        chatApprovalsSignature = signature;
+        renderChatApprovalsPanel();
+      }
+    }
+
+    // 本页批准的审批：全量快照里到达终态就把各处卡片落成结果。
+    function trackQueuedApprovals(records) {
+      if (!chatAgentCore) return;
+      for (const approvalId of executingApprovalIds) {
+        const record = records.find((item) => String(item?.approval_id || "") === approvalId);
+        if (!record) continue;
+        const status = String(record.status || "");
+        if (!chatAgentCore.isApprovalTerminalStatus(status)) continue;
+        executingApprovalIds.delete(approvalId);
+        approvalTerminalOverrides.set(approvalId, record);
+        const model = chatAgentCore.approvalCardModelFromRecord(record);
+        if (!model) continue;
+        const ok = status === "executed" && model.ok !== false;
+        const detail = String(model.resultText || "").trim();
+        const label =
+          status === "rejected"
+            ? "已拒绝"
+            : status === "expired"
+              ? "已过期"
+              : ok
+                ? "已批准并执行"
+                : `已批准，但执行失败${detail ? `：${detail}` : ""}`;
+        const toneClass = status === "rejected" ? "is-rejected" : ok ? "is-ok" : "is-failed";
+        document
+          .querySelectorAll(`[data-agent-approval-id="${CSS.escape(approvalId)}"]`)
+          .forEach((card) => setApprovalCardStatus(card, label, toneClass));
+        if (state.agentChat.live) chatAgentCore.applyApprovalRecordToProcess(state.agentChat.live.process, record);
+        showToast(ok ? "已批准并执行" : label);
+      }
+    }
+
+    function renderChatApprovalsPanel() {
+      const body = $("#chatApprovalsBody");
+      if (!body || !chatAgentCore) return;
+      const approvalDrafts = globalThis.OpenBiliClawAgentChat?.captureApprovalDrafts(body);
+      body.innerHTML = chatAgentCore.approvalsPanelMarkup([
+        ...state.agentChat.approvals,
+        ...approvalExecutingOverrides.values(),
+      ]);
+      globalThis.OpenBiliClawAgentChat?.restoreApprovalDrafts(body, approvalDrafts);
+    }
+
+    function renderChatApprovalsPanelVisibility() {
+      const drawer = $("#chatApprovalsPanel");
+      if (drawer) drawer.hidden = !state.agentChat.approvalsOpen;
+      $("#chatApprovalsToggle")?.setAttribute("aria-expanded", String(state.agentChat.approvalsOpen));
+      if (state.agentChat.approvalsOpen) renderChatApprovalsPanel();
+    }
+
+    function setApprovalCardStatus(card, label, toneClass) {
+      if (!card) return;
+      card.dataset.decided = "true";
+      card.querySelector(".agent-approval-reject")?.remove();
+      card.querySelector(".agent-approval-actions")?.remove();
+      let status = card.querySelector(".agent-approval-status");
+      if (!(status instanceof HTMLElement)) {
+        status = document.createElement("p");
+        card.appendChild(status);
+      }
+      status.className = `agent-approval-status ${toneClass}`.trim();
+      status.setAttribute("role", "status");
+      status.textContent = label;
+    }
+
+    function markApprovalCardDecided(card, label, toneClass) {
+      setApprovalCardStatus(card, label, toneClass);
+    }
+
+    async function handleAgentApprovalAction(button) {
+      const card = button.closest("[data-agent-approval-id]");
+      const approvalId = card?.dataset.agentApprovalId || "";
+      const action = button.dataset.approvalAction || "";
+      if (!approvalId || !action) return;
+      if (action === "reject") {
+        // 展开内联原因输入，再点一次「确认拒绝」才真正提交。
+        if (card.querySelector(".agent-approval-reject")) {
+          card.querySelector(".agent-approval-reason")?.focus();
+          return;
+        }
+        const row = document.createElement("div");
+        row.className = "agent-approval-reject";
+        row.innerHTML = `<input type="text" class="agent-approval-reason" placeholder="拒绝原因（可选）" aria-label="拒绝原因"><button type="button" class="pill-btn" data-approval-action="confirm-reject">确认拒绝</button>`;
+        card.querySelector(".agent-approval-actions")?.after(row);
+        row.querySelector(".agent-approval-reason")?.focus();
+        return;
+      }
+      button.disabled = true;
+      try {
+        if (action === "approve") {
+          const response = chatAgentCore.normalizeApproveResponse(
+            await requestJsonStrict(
+              `${ENDPOINTS.chatApprovals}/${encodeURIComponent(approvalId)}/approve`,
+              { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+            ),
+          );
+          if (response.kind === "queued") {
+            // 异步执行协议：批准只入队，卡片进「执行中…」，终态由
+            // refreshChatApprovals 的 2.5s 轮询落到 executed/failed。
+            executingApprovalIds.add(approvalId);
+            if (state.agentChat.live) {
+              chatAgentCore.applyApprovalRecordToProcess(state.agentChat.live.process, {
+                approval_id: approvalId,
+                status: "executing",
+              });
+            }
+            setApprovalCardStatus(card, "执行中…", "");
+            showToast(response.alreadyQueued ? "这项改动已在执行中" : "已批准，正在执行…");
+          } else {
+            // 旧协议（同步返回 ok/result）或幂等终态应答：直接显示结果。
+            const ok = response.ok !== false;
+            const detail = String(response.resultText || "").trim();
+            markApprovalCardDecided(
+              card,
+              ok ? "已批准并执行" : `已批准，但执行失败${detail ? `：${detail}` : ""}`,
+              ok ? "is-ok" : "is-failed",
+            );
+            showToast(ok ? "已批准并执行" : "已批准，但执行失败");
+          }
+        } else if (action === "confirm-reject") {
+          const reason = card.querySelector(".agent-approval-reason")?.value?.trim() || "";
+          await requestJsonStrict(
+            `${ENDPOINTS.chatApprovals}/${encodeURIComponent(approvalId)}/reject`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) },
+          );
+          markApprovalCardDecided(card, "已拒绝", "is-rejected");
+          showToast("已拒绝这项改动");
+        }
+      } catch (error) {
+        button.disabled = false;
+        showToast(
+          Number(error?.status)
+            ? contextErrorMessage(error)
+            : "审批操作没完成（可能是后端正在热重载），请稍后重试",
+        );
+        return;
+      }
+      void refreshChatApprovals().catch(() => {});
+      void refreshDialogueTurns().catch(() => {});
+    }
+
+    // ── skill 建议 / 后台任务确认卡 ──
+
+    function replaceAgentCardWithNote(card, note) {
+      if (!card) return;
+      const actions = card.querySelector(".agent-card-actions");
+      const p = document.createElement("p");
+      p.className = "agent-card-note";
+      p.setAttribute("role", "status");
+      p.textContent = note;
+      if (actions) actions.replaceWith(p);
+      else card.appendChild(p);
+    }
+
+    function handleSkillSuggestAction(button) {
+      const card = button.closest("[data-suggest-skill]");
+      const skill = card?.dataset.suggestSkill || "";
+      const action = button.dataset.skillAction || "";
+      if (!card || !action) return;
+      if (action === "accept" && skill) {
+        setChatSkill(skill);
+        replaceAgentCardWithNote(card, "已切换，从下一回合开始生效。");
+      } else if (action === "dismiss") {
+        replaceAgentCardWithNote(card, "已忽略这个建议。");
+      }
+    }
+
+    async function handleBackgroundTaskAction(button) {
+      const card = button.closest("[data-bg-task]");
+      const action = button.dataset.bgTaskAction || "";
+      if (!card || !action) return;
+      if (action === "dismiss") {
+        replaceAgentCardWithNote(card, "已忽略，任务不会启动。");
+        return;
+      }
+      let spec = {};
+      try {
+        spec = JSON.parse(card.dataset.bgTask || "{}");
+      } catch {
+        spec = {};
+      }
+      const prompt = String(spec.prompt || "").trim();
+      if (!prompt) {
+        replaceAgentCardWithNote(card, "这条任务提议缺少内容，无法发起。");
+        return;
+      }
+      button.disabled = true;
+      const body = { prompt };
+      if (spec.title) body.title = String(spec.title);
+      if (spec.skill) body.skill = String(spec.skill);
+      if (state.agentChat.sessionId && state.agentChat.sessionId !== "default") {
+        body.session_id = state.agentChat.sessionId;
+      }
+      try {
+        await requestJsonStrict(ENDPOINTS.chatTasks, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        replaceAgentCardWithNote(card, "已发起，可在任务中心查看进度。");
+        showToast("后台任务已开始");
+        state.agentChat.tasksOpen = true;
+        renderChatTaskCenter();
+        void refreshChatTasks().catch(() => {});
+      } catch (error) {
+        button.disabled = false;
+        if (Number(error?.status) === 503) showToast("后端未启用 Agent 任务，暂时无法发起后台任务");
+        else showToast(contextErrorMessage(error));
+      }
+    }
+
+    // ── 任务中心 ──
+
+    async function refreshChatTasks() {
+      const payload = await requestJsonStrict(`${ENDPOINTS.chatTasks}?limit=50`, { cache: "no-store" });
+      const items = asArray(payload?.items);
+      const signature = JSON.stringify(items) + `|${state.agentChat.taskDetailId}`;
+      state.agentChat.tasks = items;
+      renderChatBadges();
+      if (state.agentChat.tasksOpen && !state.agentChat.taskDetailId && signature !== chatTasksSignature) {
+        chatTasksSignature = signature;
+        renderChatTaskCenter();
+      }
+    }
+
+    function renderChatTaskCenter() {
+      const drawer = $("#chatTaskCenter");
+      const body = $("#chatTaskCenterBody");
+      if (!drawer || !body || !chatAgentCore) return;
+      drawer.hidden = !state.agentChat.tasksOpen;
+      $("#chatTasksToggle")?.setAttribute("aria-expanded", String(state.agentChat.tasksOpen));
+      if (!state.agentChat.tasksOpen) return;
+      if (state.agentChat.taskDetailId && state.agentChat.taskDetail) {
+        body.innerHTML = chatAgentCore.taskDetailMarkup(state.agentChat.taskDetail, {
+          renderMarkdown,
+          handledSuggestions: state.agentChat.handledSuggestions,
+        });
+      } else {
+        body.innerHTML = chatAgentCore.taskListMarkup(state.agentChat.tasks);
+      }
+    }
+
+    async function openChatTaskDetail(taskId) {
+      try {
+        const task = await requestJsonStrict(`${ENDPOINTS.chatTasks}/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+        state.agentChat.taskDetailId = taskId;
+        state.agentChat.taskDetail = task;
+        renderChatTaskCenter();
+      } catch (error) {
+        showToast(contextErrorMessage(error));
+      }
+    }
+
+    async function refreshChatTaskDetail() {
+      const taskId = state.agentChat.taskDetailId;
+      if (!taskId) return;
+      try {
+        const task = await requestJsonStrict(`${ENDPOINTS.chatTasks}/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+        const changed = JSON.stringify(task) !== JSON.stringify(state.agentChat.taskDetail);
+        state.agentChat.taskDetail = task;
+        if (changed && state.agentChat.tasksOpen) renderChatTaskCenter();
+      } catch {
+        // 详情刷新失败保持现状，下一次轮询再试。
+      }
+    }
+
+    async function cancelChatTask(taskId, button) {
+      if (button) button.disabled = true;
+      try {
+        await requestJsonStrict(`${ENDPOINTS.chatTasks}/${encodeURIComponent(taskId)}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        showToast("已取消这个任务");
+      } catch (error) {
+        if (Number(error?.status) === 409) showToast("任务已经结束，无需取消");
+        else showToast(contextErrorMessage(error));
+      }
+      chatTasksSignature = "";
+      await refreshChatTasks().catch(() => {});
+      if (state.agentChat.taskDetailId === taskId) await refreshChatTaskDetail();
+    }
+
+    function findSuggestion(source, index) {
+      const detail = state.agentChat.taskDetail;
+      if (detail && String(detail.task_id || "") === source && Array.isArray(detail.suggestions)) {
+        return { suggestion: detail.suggestions[index], sessionId: String(detail.session_id || "") };
+      }
+      const turn = state.chat.find((entry) => {
+        const payload = entry?.turn?.payload;
+        return payload?.type === "agent_task_summary" && String(payload.task_id || "") === source;
+      })?.turn;
+      if (turn && Array.isArray(turn.payload?.suggestions)) {
+        return { suggestion: turn.payload.suggestions[index], sessionId: String(turn.session_id || "") };
+      }
+      const listed = state.agentChat.tasks.find((task) => String(task?.task_id || "") === source);
+      if (listed && Array.isArray(listed.suggestions)) {
+        return { suggestion: listed.suggestions[index], sessionId: String(listed.session_id || "") };
+      }
+      return { suggestion: null, sessionId: "" };
+    }
+
+    // v1 建议执行统一走对话：soft_write 由 agent 立即执行（一键），hard_write
+    // 在对话中触发审批卡。确认动作 = 往来源会话发一条结构化执行指令。
+    async function handleSuggestionConfirm(button) {
+      const item = button.closest("[data-suggestion-index]");
+      const index = Number(item?.dataset.suggestionIndex);
+      const source = item?.dataset.suggestionSource || "";
+      if (!Number.isInteger(index) || index < 0) return;
+      const { suggestion, sessionId } = findSuggestion(source, index);
+      if (!suggestion || typeof suggestion !== "object") {
+        showToast("这条建议的内容还没加载，请打开任务详情再试");
+        return;
+      }
+      const action = String(suggestion.action || "");
+      const summary = String(suggestion.summary || "");
+      const payloadText = chatAgentCore.prettyJson(suggestion.payload);
+      const message = `请执行这条后台任务建议（${action}）：${summary}\n参数：${payloadText}`;
+      const key = `${source}:${index}`;
+      state.agentChat.handledSuggestions.add(key);
+      button.disabled = true;
+      if (sessionId && sessionId !== state.agentChat.sessionId) {
+        await selectChatSession(sessionId);
+      }
+      state.agentChat.tasksOpen = false;
+      renderChatTaskCenter();
+      await sendChat(message);
+      renderChatTaskCenter();
+      renderChat({ forceBottom: true });
+    }
+
+    // 轮询时保持进行中的任务详情实时更新。
+    async function syncAgentChatSurface() {
+      if (!agentChatEnabled()) return;
+      await Promise.allSettled([refreshChatSessions(), refreshChatApprovals(), refreshChatTasks()]);
+      if (state.agentChat.taskDetailId) {
+        const detail = state.agentChat.taskDetail;
+        if (!detail || chatAgentCore.taskIsActive(detail)) await refreshChatTaskDetail();
+      }
     }
 
     function updateDesktopDialogueTurn(turn) {
@@ -7704,7 +8966,8 @@ ${cardFeedbackBarHtml()}`;
       renderDialogueContextBar();
       renderDesktopPendingConfirmations();
       const chatLog = $("#chatLog");
-      renderChatLogElement(chatLog, chatHtml(state.chat), { forceBottom });
+      // M8：流式中的过程视图与部分答复追加在主聊天尾部（不进 state.chat）。
+      renderChatLogElement(chatLog, chatHtml(state.chat) + liveAgentChatMarkup(), { forceBottom });
       const messageChatLog = $("#messageChatLog");
       if (messageChatLog) {
         const baseMessages = state.messageChatPrompt
@@ -7746,6 +9009,16 @@ ${cardFeedbackBarHtml()}`;
     }
 
     async function sendChat(message, options = {}) {
+      // M8：主对话（scope=chat）在 agent 模式下走 /api/chat/agent/stream 多跳
+      // 流；delight/probe 等其它 scope 与 legacy 模式保持原路径不变。
+      if (
+        agentChatEnabled() &&
+        String(options.scope || "chat") === "chat" &&
+        !options.contextPrefix
+      ) {
+        await sendAgentChat(message);
+        return;
+      }
       const payloadMessage = options.contextPrefix ? `${options.contextPrefix}\n\n${message}` : message;
       const replyToTurnId = dialogueContextSelection?.["reply_to_turn_id"] || "";
       state.chat.push({ role: "user", text: message });
@@ -7860,7 +9133,7 @@ ${cardFeedbackBarHtml()}`;
         const requestBody = { excluded_bvids: excludedBvids };
         // "全部" 不带 source_platform：旧客户端 / 兼容路径的请求形状保持不变。
         if (requestPlatform) requestBody.source_platform = requestPlatform;
-        const payload = await requestJson(ENDPOINTS.reshuffle, {
+        const payload = recommendationDirector ? await recommendationDirector.generate(ENDPOINTS.reshuffle, requestBody) : await requestJson(ENDPOINTS.reshuffle, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody)
@@ -7878,6 +9151,8 @@ ${cardFeedbackBarHtml()}`;
         } else {
           showToast("暂时没有更多新推荐了");
         }
+      } catch {
+        showToast("这次换一批没有完成，当前卡片已保留；重试会恢复同一次请求。");
       } finally {
         schedulePlatformAvailabilityRefresh();
         if (reshuffleButton) reshuffleButton.disabled = false;
@@ -7904,7 +9179,7 @@ ${cardFeedbackBarHtml()}`;
       try {
         const requestBody = { excluded_bvids: state.videos.map((v) => v.bvid) };
         if (requestPlatform) requestBody.source_platform = requestPlatform;
-        const payload = await requestJson(ENDPOINTS.append, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
+        const payload = recommendationDirector ? await recommendationDirector.generate(ENDPOINTS.append, requestBody) : await requestJson(ENDPOINTS.append, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
         if (!payload) {
           showToast("加载更多失败，请稍后重试");
           return;
@@ -7942,6 +9217,8 @@ ${cardFeedbackBarHtml()}`;
           rememberEmptyAppend(requestPlatform);
           showToast(`候选池暂时没有新内容，已请求后台补货，${retryHint}`);
         }
+      } catch {
+        showToast("加载更多没有完成，当前卡片已保留；重试会恢复同一次请求。");
       } finally {
         removeAppendSkeletons();
         // showAppendSkeletons may have cleared an empty-state placeholder; if
@@ -7980,6 +9257,7 @@ ${cardFeedbackBarHtml()}`;
         recent_pool_topics: Array.isArray(merged.recent_pool_topics) ? merged.recent_pool_topics.map(String).filter(Boolean) : [],
         manual_refresh_state: manualRefreshState || "idle",
         manual_refresh_message: String(merged.manual_refresh_message || ""),
+        discovery_failure_message: Number(merged.pool_available_count) > 0 ? "" : String(merged.discovery_failure_message || ""),
         runtime_event_type: incomingType || String(merged.runtime_event_type || ""),
         last_account_sync_at: String(merged.last_account_sync_at ?? ""),
         last_account_sync_error: String(merged.last_account_sync_error ?? ""),
@@ -7991,6 +9269,7 @@ ${cardFeedbackBarHtml()}`;
         // silently, which is how the backend copy stopped reaching the chip.
         last_account_sync_message: String(merged.last_account_sync_message ?? ""),
         last_account_sync_severity: String(merged.last_account_sync_severity ?? ""),
+        bilibili_cookie_staged: Boolean(merged.bilibili_cookie_staged),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")
       };
     }
@@ -8032,6 +9311,16 @@ ${cardFeedbackBarHtml()}`;
         return runtime.pool_available_count > 0
           ? { available: `还有 ${runtime.pool_available_count} 条可换`, replenished: "后台继续在找更多", topics: "可以先换一批，新的随时进" }
           : { available: "暂无可换库存", replenished: "正在补货", topics: "后台还在继续给你找新的" };
+      }
+      if (runtime.pool_available_count === 0
+          && (runtime.discovery_failure_message || runtime.manual_refresh_state === "failed")) {
+        return {
+          available: "暂无可换库存",
+          replenished: "内容发现未完成",
+          topics: runtime.manual_refresh_state === "failed"
+            ? runtime.manual_refresh_message || "请检查来源连接后重试内容发现"
+            : runtime.discovery_failure_message,
+        };
       }
       return {
         available: `还有 ${runtime.pool_available_count} 条可换`,
@@ -8079,6 +9368,7 @@ ${cardFeedbackBarHtml()}`;
 
     function getPoolRefreshLabel(runtime) {
       if (!runtime) return "—";
+      if (runtime.manual_refresh_state !== "running" && runtime.discovery_failure_message) return runtime.discovery_failure_message;
       if (runtime.manual_refresh_message) return runtime.manual_refresh_message;
       if (runtime.manual_refresh_state === "running") return runtime.pool_available_count > 0 ? "后台继续补货中" : "正在补货";
       if (runtime.manual_refresh_state === "success") return "刚同步完成";
@@ -8104,6 +9394,7 @@ ${cardFeedbackBarHtml()}`;
       $("#poolAvailable").textContent = summary?.available || "后端未初始化";
       $("#poolReplenished").textContent = summary?.replenished || "—";
       $("#poolTopics").textContent = summary?.topics || "—";
+      $("#poolTopicsLabel").textContent = summary?.replenished === "内容发现未完成" ? "补货状态" : "最近主题";
       $("#poolRefreshState").textContent = getPoolRefreshLabel(runtime);
       renderDesktopRuntimeFailure();
     }
@@ -8118,10 +9409,12 @@ ${cardFeedbackBarHtml()}`;
         : [];
       const severity = String(runtime?.last_account_sync_severity || "");
       const sourceIssues = collectEnabledSourceIssues(state.sourceStatus);
+      const stagedCookie = Boolean(runtime?.bilibili_cookie_staged);
+      const stagedText = stagedCookie ? "B 站新 Cookie 已暂存，初始化完成后自动应用" : "";
       // Healthy installs (no sync or source issue) show nothing — zero visual
       // change. Pending verification alone is not an error and stays on the
       // source card instead of turning the dashboard into an alarm panel.
-      if (!error && !kind && !issues.length && !sourceIssues.length) {
+      if (!error && !kind && !issues.length && !sourceIssues.length && !stagedCookie) {
         el.hidden = true;
         el.textContent = "";
         el.classList.remove("is-auth-expired", "is-warning", "is-error");
@@ -8141,13 +9434,13 @@ ${cardFeedbackBarHtml()}`;
       const sourceText = sourceIssues.length
         ? `来源接入：${sourceIssues.map((issue) => `${issue.source}：${issue.detail}`).join("；")}`
         : "";
-      const combined = [accountText, sourceText].filter(Boolean).join("；");
+      const combined = [accountText, sourceText, stagedText].filter(Boolean).join("；");
       const hasSourceDanger = sourceIssues.some((issue) => issue.tone === "danger");
       if (kind === "auth_expired" && !hasSourceDanger) {
         el.classList.add("is-auth-expired", "is-warning");
         el.classList.remove("is-error");
         const fallback = "B 站登录已失效，账号同步已停止 — 请重新登录";
-        el.textContent = [message ? accountText : fallback, sourceText].filter(Boolean).join("；");
+        el.textContent = [message ? accountText : fallback, sourceText, stagedText].filter(Boolean).join("；");
         return;
       }
       const hasAccountIssue = Boolean(error || kind || issues.length);
@@ -8278,6 +9571,10 @@ ${cardFeedbackBarHtml()}`;
       ["hot", "weiboModeHot"],
       ["creator", "weiboModeCreator"],
     ];
+    const INSTAGRAM_SOURCE_MODE_FIELDS = [
+      ["topic", "instagramModeTopic"],
+      ["creator", "instagramModeCreator"],
+    ];
     const BANGUMI_SUBJECT_TYPE_FIELDS = [
       ["anime", "bangumiTypeAnime"],
       ["book", "bangumiTypeBook"],
@@ -8377,6 +9674,7 @@ ${cardFeedbackBarHtml()}`;
     const SOURCE_STATUS_REFRESH_EVENTS = new Set([
       "bilibili_cookie_synced",
       "douyin_cookie_synced",
+      "tiktok_cookie_synced",
       "x_cookie_synced",
       "reddit_cookie_synced"
     ]);
@@ -8390,13 +9688,15 @@ ${cardFeedbackBarHtml()}`;
       douyin: "douyinEnabled",
       weibo: "weiboEnabled",
       youtube: "youtubeEnabled",
+      tiktok: "tiktokEnabled",
       twitter: "twitterEnabled",
       zhihu: "zhihuEnabled",
       reddit: "redditEnabled",
       bangumi: "bangumiEnabled",
       github: "githubEnabled",
       linuxdo: "linuxdoEnabled",
-      v2ex: "v2exEnabled"
+      v2ex: "v2exEnabled",
+      instagram: "instagramEnabled"
     };
 
     function collectEnabledSourceIssues(data) {
@@ -8687,6 +9987,7 @@ ${cardFeedbackBarHtml()}`;
       xiaohongshu: "shareXhs",
       douyin: "shareDouyin",
       youtube: "shareYoutube",
+      tiktok: "shareTiktok",
       twitter: "shareTwitter",
       zhihu: "shareZhihu",
       reddit: "shareReddit",
@@ -8694,7 +9995,8 @@ ${cardFeedbackBarHtml()}`;
       github: "shareGitHub",
       linuxdo: "shareLinuxdo",
       v2ex: "shareV2EX",
-      weibo: "shareWeibo"
+      weibo: "shareWeibo",
+      instagram: "shareInstagram"
     };
     const SOURCE_CARD_LABELS = {
       bilibili: "Bilibili",
@@ -8702,13 +10004,15 @@ ${cardFeedbackBarHtml()}`;
       douyin: "抖音",
       weibo: "微博",
       youtube: "YouTube",
+      tiktok: "TikTok",
       twitter: "X (Twitter)",
       zhihu: "知乎",
       reddit: "Reddit",
       bangumi: "Bangumi",
       github: "GitHub",
       linuxdo: "Linux.do",
-      v2ex: "V2EX"
+      v2ex: "V2EX",
+      instagram: "Instagram"
     };
     const SOURCE_CARD_INLINE_COLORS = { linuxdo: "#1f6f43" };
 
@@ -8892,7 +10196,9 @@ ${cardFeedbackBarHtml()}`;
         else { syncEditing(); if (password?.focus) password.focus(); }
       });
       saveBtn?.addEventListener("click", () => void apply(true));
-      void load();
+      // Hidden settings must not compete with first-screen requests.
+      // openSettingsPage reloads the authoritative state before editing.
+      checkbox.disabled = true;
       return { reload: load };
     }
 
@@ -8957,7 +10263,9 @@ ${cardFeedbackBarHtml()}`;
         }
       }
       checkbox.addEventListener("change", () => void apply(Boolean(checkbox.checked)));
-      void load();
+      // Hidden settings must not compete with first-screen requests.
+      // openSettingsPage reloads the authoritative state before editing.
+      checkbox.disabled = true;
       return { reload: load };
     }
 
@@ -8968,6 +10276,9 @@ ${cardFeedbackBarHtml()}`;
       deepseek: "DeepSeek",
       openrouter: "OpenRouter",
       orcarouter: "OrcaRouter",
+      requesty: "Requesty",
+    api_route: "API Route",
+      cheaperinference: "Cheaper Inference",
       ollama: "Ollama",
       openai_compatible: "OpenAI-compatible"
     };
@@ -8978,6 +10289,9 @@ ${cardFeedbackBarHtml()}`;
       deepseek: { model: "deepseek-v4-flash", base_url: "https://api.deepseek.com" },
       openrouter: { model: "openai/gpt-4o-mini", base_url: "https://openrouter.ai/api/v1" },
       orcarouter: { model: "openai/gpt-4o", base_url: "https://api.orcarouter.ai/v1" },
+      requesty: { model: "openai/gpt-4o-mini", base_url: "https://router.requesty.ai/v1" },
+    api_route: { model: "gpt-5.5", base_url: "https://global.api-route.com/v1" },
+      cheaperinference: { model: "gpt-5.4-mini", base_url: "https://api.cheaperinference.com/v1" },
       ollama: { model: "qwen2.5:7b", base_url: "http://127.0.0.1:11434/v1" },
       openai_compatible: { model: "", base_url: "" }
     };
@@ -8986,6 +10300,9 @@ ${cardFeedbackBarHtml()}`;
       "deepseek",
       "openrouter",
       "orcarouter",
+      "requesty",
+      "api_route",
+      "cheaperinference",
       "ollama",
       "openai_compatible"
     ]);
@@ -9561,11 +10878,42 @@ ${cardFeedbackBarHtml()}`;
       syncLlmInstanceConditionalFields();
     }
 
+    const CLIENT_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+    function applyClientLocale(language) {
+      // The locale runtime translates rendered DOM text by exact catalog match;
+      // it is optional so a build served without /shared/i18n.js still works.
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (!runtime) return Promise.resolve();
+      const normalized = runtime.normalizeLocale(language || "zh-Hans");
+      try {
+        storageSet(CLIENT_LOCALE_STORAGE_KEY, normalized);
+      } catch {}
+      if (runtime.locale === normalized && runtime.ready) return Promise.resolve();
+      return runtime
+        .setLocale(normalized)
+        .then(() => {
+          // Counts/dates are computed by JS (331K vs 33.1万), so a live switch
+          // must re-render once; deferred to avoid re-entering the config apply.
+          requestAnimationFrame(() => {
+            try {
+              renderAll();
+            } catch (error) {
+              console.warn("界面重绘失败", error);
+            }
+          });
+        })
+        .catch((error) => {
+          console.warn("切换界面语言失败", error);
+        });
+    }
+
     function applyConfig(config) {
       if (!config || typeof config !== "object") return;
       ensureSourceDateFields();
       state.degraded = config.degraded === true;
       state.config = config;
+      void applyClientLocale(config.language);
       const scheduler = config.scheduler || {};
       setSelect("schedulerEnabled", scheduler.enabled === false ? "off" : "on");
       setSelect("pauseDisconnect", scheduler.pause_on_extension_disconnect === false ? "keep" : "pause");
@@ -9590,6 +10938,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("shareXhs", scheduler.pool_source_shares?.xiaohongshu);
       setInput("shareDouyin", scheduler.pool_source_shares?.douyin);
       setInput("shareYoutube", scheduler.pool_source_shares?.youtube);
+      setInput("shareTiktok", scheduler.pool_source_shares?.tiktok);
       setInput("shareTwitter", scheduler.pool_source_shares?.twitter);
       setInput("shareZhihu", scheduler.pool_source_shares?.zhihu);
       setInput("shareReddit", scheduler.pool_source_shares?.reddit);
@@ -9598,6 +10947,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("shareLinuxdo", scheduler.pool_source_shares?.linuxdo);
       setInput("shareV2EX", scheduler.pool_source_shares?.v2ex);
       setInput("shareWeibo", scheduler.pool_source_shares?.weibo);
+      setInput("shareInstagram", scheduler.pool_source_shares?.instagram);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -9615,6 +10965,13 @@ ${cardFeedbackBarHtml()}`;
 
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
+      const jevProvider = discovery.jev_provider || {};
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+        .load(jevProvider, discovery.jev_evaluation || {});
+      const jevStatus = $("#jevEvaluatorStatus");
+      if (jevStatus) {
+        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+      }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
       if (multimodalEvaluation) multimodalEvaluation.checked = discovery.multimodal_evaluation_enabled === true;
@@ -9751,6 +11108,13 @@ ${cardFeedbackBarHtml()}`;
       setInput("weiboDailyCreatorBudget", config.sources?.weibo?.daily_creator_budget);
       setInput("weiboRequestInterval", config.sources?.weibo?.request_interval_seconds);
       setInput("weiboMinInterval", config.sources?.weibo?.min_interval_minutes);
+      setSelect("instagramEnabled", config.sources?.instagram?.enabled === true ? "on" : "off");
+      setCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, config.sources?.instagram?.source_modes);
+      setInput("instagramDailyTopicBudget", config.sources?.instagram?.daily_topic_budget);
+      setInput("instagramDailyCreatorBudget", config.sources?.instagram?.daily_creator_budget);
+      setInput("instagramRequestInterval", config.sources?.instagram?.request_interval_seconds);
+      setInput("instagramMinInterval", config.sources?.instagram?.min_interval_minutes);
+      setInput("instagramBootstrapLimit", config.sources?.instagram?.bootstrap_limit);
       setSelect("youtubeEnabled", config.sources?.youtube?.enabled === true ? "on" : "off");
       const youtubeIncremental = document.getElementById("youtubeIncremental");
       if (youtubeIncremental) youtubeIncremental.checked = config.sources?.youtube?.incremental_enabled === true;
@@ -9759,6 +11123,20 @@ ${cardFeedbackBarHtml()}`;
       setInput("youtubeDailyChannelBudget", config.sources?.youtube?.daily_channel_budget);
       setInput("youtubeRequestInterval", config.sources?.youtube?.request_interval_seconds);
       setInput("youtubeMinInterval", config.sources?.youtube?.min_interval_minutes);
+      setSelect("tiktokEnabled", config.sources?.tiktok?.enabled === true ? "on" : "off");
+      setCookieOverrideInput("tiktokCookie", config.sources?.tiktok?.cookie, " TikTok");
+      setInput("tiktokCookieEnv", config.sources?.tiktok?.cookie_env);
+      setSelect("tiktokMode", config.sources?.tiktok?.mode || "auto");
+      setInput("tiktokRegion", config.sources?.tiktok?.region);
+      setInput("tiktokTzName", config.sources?.tiktok?.tz_name);
+      setInput("tiktokTags", (config.sources?.tiktok?.tags || []).join(", "));
+      setInput("tiktokCreators", (config.sources?.tiktok?.creators || []).join(", "));
+      setInput("tiktokDailyFeedBudget", config.sources?.tiktok?.daily_feed_budget);
+      setInput("tiktokDailySearchBudget", config.sources?.tiktok?.daily_search_budget);
+      setInput("tiktokDailyTagBudget", config.sources?.tiktok?.daily_tag_budget);
+      setInput("tiktokDailyUserBudget", config.sources?.tiktok?.daily_user_budget);
+      setInput("tiktokRequestInterval", config.sources?.tiktok?.request_interval_seconds);
+      setInput("tiktokMinInterval", config.sources?.tiktok?.min_interval_minutes);
       setSelect("twitterEnabled", config.sources?.twitter?.enabled === true ? "on" : "off");
       setCookieOverrideInput("twitterCookie", config.sources?.twitter?.cookie, " X");
       setInput("twitterCookieEnv", config.sources?.twitter?.cookie_env);
@@ -10811,7 +12189,7 @@ ${cardFeedbackBarHtml()}`;
         // Use the same scoped durable-turn renderer as later refreshes. The
         // initial snapshot must not briefly show delight-only history or
         // flatten probe turns into an untracked user/assistant pair.
-        applyDialogueChatSnapshot(snapshot);
+        if (!agentChatEnabled()) applyDialogueChatSnapshot(snapshot);
       }
 
       function applyDelightChatSnapshot(snapshot) {
@@ -10876,30 +12254,49 @@ ${cardFeedbackBarHtml()}`;
         (snapshot) => applyInitialRuntimeSnapshot(snapshot),
         () => markDesktopRuntimeFailedAndRecover(),
       );
+      // Auxiliary panels may take several batches. Start live updates after
+      // the initial runtime read rather than waiting for those panels.
+      void runtimeApplicationPromise.then(() => {
+        if (!document.hidden) connectRuntimeStream();
+      });
       const runtimeReconciliationPromise = recommendationApplicationPromise.then(
         () => reconcileRuntimeAfterRecommendations(),
         () => reconcileRuntimeAfterRecommendations(),
       );
 
-      const secondaryPromises = [
-        pendingConfirmationsPromise,
-        syncWatchLaterButtons(),
-        syncFavoriteButtons(),
-        requestJson(ENDPOINTS.health),
-        requestJson(ENDPOINTS.initStatus).then(applyInitStatusSnapshot),
-        requestJson(`${ENDPOINTS.activityFeed}?limit=5`).then(applyActivitySnapshot),
-        requestJson(ENDPOINTS.profile).then(applyProfileSnapshot),
-        requestJson(ENDPOINTS.delightBatch).then(applyDelightSnapshot),
-        requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
-        requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
-        requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
-        loadConfigSnapshot(),
-        refreshPlatformAvailability(),
+      const secondaryTasks = [
+        () => syncWatchLaterButtons(),
+        () => syncFavoriteButtons(),
+        () => requestJson(ENDPOINTS.health),
+        () => requestJson(ENDPOINTS.initStatus).then(applyInitStatusSnapshot),
+        () => requestJson(`${ENDPOINTS.activityFeed}?limit=5`).then(applyActivitySnapshot),
+        () => requestJson(ENDPOINTS.profile).then(applyProfileSnapshot),
+        () => requestJson(ENDPOINTS.delightBatch).then(applyDelightSnapshot),
+        () => requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
+        () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
+        () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
+        () => loadConfigSnapshot(),
+        () => refreshPlatformAvailability(),
       ];
 
-      // 预取 LAN IP，供二维码面板使用；它不参与任一首屏资源的应用顺序。
-      requestJson(ENDPOINTS.qrInfo).then((info) => { if (info?.lan_ip) _cachedLanIp = info.lan_ip; }).catch(() => {});
-      await Promise.allSettled(secondaryPromises);
+      // Keep auxiliary startup traffic from filling the HTTP/1 connection
+      // queue ahead of covers. Each task still settles independently, so one
+      // failed endpoint cannot prevent later panels from being hydrated.
+      secondaryTasks.push(() => requestJson(ENDPOINTS.qrInfo).then((info) => {
+        if (info?.lan_ip) _cachedLanIp = info.lan_ip;
+      }));
+      let secondaryIndex = 0;
+      async function hydrateSecondaryWorker() {
+        while (secondaryIndex < secondaryTasks.length) {
+          const task = secondaryTasks[secondaryIndex++];
+          try { await task(); } catch { /* Match the former allSettled policy. */ }
+        }
+      }
+      await Promise.allSettled([
+        pendingConfirmationsPromise,
+        hydrateSecondaryWorker(),
+        hydrateSecondaryWorker(),
+      ]);
       await validateDialogueContext({ announce: true });
       renderDialogueContextBar();
       await Promise.allSettled([
@@ -10930,7 +12327,7 @@ ${cardFeedbackBarHtml()}`;
       if (weightField) weightField.hidden = mode !== "custom";
     }
 
-    const DESKTOP_SOURCE_DATE_SLUGS = ["bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit", "bangumi", "linuxdo", "v2ex"];
+    const DESKTOP_SOURCE_DATE_SLUGS = ["bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit", "bangumi", "linuxdo", "v2ex", "instagram"];
 
     function ensureSourceDateFields() {
       for (const slug of DESKTOP_SOURCE_DATE_SLUGS) {
@@ -10997,6 +12394,7 @@ ${cardFeedbackBarHtml()}`;
     });
 
     function buildConfigUpdate() {
+      const jevUpdate = window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer")).collect();
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
       const embeddingFallbackProvider = getInput("embeddingFallbackProvider");
       const embedding = {
@@ -11012,6 +12410,7 @@ ${cardFeedbackBarHtml()}`;
       if (getInput("embeddingBaseUrl")) embedding.base_url = getInput("embeddingBaseUrl");
       const cookie = getInput("biliCookie");
       const douyinCookie = getInput("douyinCookie");
+      const tiktokCookie = getInput("tiktokCookie");
       const twitterCookie = getInput("twitterCookie");
       const redditCookie = getInput("redditCookie");
       const bilibiliDateMode = getInput("biliDateMode") || "soft";
@@ -11100,6 +12499,29 @@ ${cardFeedbackBarHtml()}`;
             request_interval_seconds: getIntInput("youtubeRequestInterval", 2),
             min_interval_minutes: getIntInput("youtubeMinInterval", 3),
             ...sourceDateFieldsForUpdate("youtube")
+          },
+          tiktok: {
+            enabled: $("#tiktokEnabled").value === "on",
+            mode: getInput("tiktokMode") || "auto",
+            ...(tiktokCookie ? { cookie: tiktokCookie } : {}),
+            cookie_env: getInput("tiktokCookieEnv"),
+            region: getInput("tiktokRegion"),
+            tz_name: getInput("tiktokTzName"),
+            tags: getInput("tiktokTags")
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean),
+            creators: getInput("tiktokCreators")
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean),
+            daily_feed_budget: getIntInput("tiktokDailyFeedBudget", 3),
+            daily_search_budget: getIntInput("tiktokDailySearchBudget", 3),
+            daily_tag_budget: getIntInput("tiktokDailyTagBudget", 0),
+            daily_user_budget: getIntInput("tiktokDailyUserBudget", 0),
+            request_interval_seconds: getIntInput("tiktokRequestInterval", 2),
+            min_interval_minutes: getIntInput("tiktokMinInterval", 3),
+            ...sourceDateFieldsForUpdate("tiktok")
           },
           twitter: {
             enabled: $("#twitterEnabled").value === "on",
@@ -11215,6 +12637,16 @@ ${cardFeedbackBarHtml()}`;
             request_interval_seconds: getIntInput("v2exRequestInterval", 2),
             min_interval_minutes: getIntInput("v2exMinInterval", 5),
             ...sourceDateFieldsForUpdate("v2ex")
+          },
+          instagram: {
+            enabled: $("#instagramEnabled").value === "on",
+            source_modes: collectCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, ["topic", "creator"]),
+            daily_topic_budget: getIntInput("instagramDailyTopicBudget", 60),
+            daily_creator_budget: getIntInput("instagramDailyCreatorBudget", 30),
+            request_interval_seconds: getIntInput("instagramRequestInterval", 3),
+            min_interval_minutes: getIntInput("instagramMinInterval", 10),
+            bootstrap_limit: getIntInput("instagramBootstrapLimit", 300),
+            ...sourceDateFieldsForUpdate("instagram")
           }
         },
         scheduler: {
@@ -11238,6 +12670,7 @@ ${cardFeedbackBarHtml()}`;
             xiaohongshu: getIntInput("shareXhs", 1),
             douyin: getIntInput("shareDouyin", 1),
             youtube: getIntInput("shareYoutube", 1),
+            tiktok: getIntInput("shareTiktok", 1),
             twitter: getIntInput("shareTwitter", 1),
             zhihu: getIntInput("shareZhihu", 1),
             reddit: getIntInput("shareReddit", 1),
@@ -11245,7 +12678,8 @@ ${cardFeedbackBarHtml()}`;
             github: getIntInput("shareGitHub", 1),
             linuxdo: getIntInput("shareLinuxdo", 1),
             v2ex: getIntInput("shareV2EX", 1),
-            weibo: getIntInput("shareWeibo", 1)
+            weibo: getIntInput("shareWeibo", 1),
+            instagram: getIntInput("shareInstagram", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -11266,6 +12700,7 @@ ${cardFeedbackBarHtml()}`;
         },
         discovery: {
           ...(state.config?.discovery || {}),
+          jev_evaluation: {...(state.config?.discovery?.jev_evaluation || {}), ...(jevUpdate.discovery?.jev_evaluation || {})},
           eval_scorer: $("#evalScorer")?.value || "llm",
           keyword_generation_mode: $("#keywordGenerationMode").value,
           candidate_eval_concurrency: getIntInput("candidateEvalConcurrency", 3),
@@ -11283,6 +12718,7 @@ ${cardFeedbackBarHtml()}`;
           danmaku_max_chars: getIntInput("danmakuMaxChars", 500)
         },
         saved_sync: { auto_sync_enabled: Boolean($("#savedAutoSync")?.checked) },
+        ...(jevUpdate.decision ? {decision: jevUpdate.decision} : {}),
         tailnet: {
           enabled: Boolean($("#tailnetEnabled")?.checked),
           hostname: getInput("tailnetHostname"),
@@ -12059,14 +13495,149 @@ ${cardFeedbackBarHtml()}`;
         : null;
       if (button instanceof HTMLButtonElement) void handleDesktopPendingOpen(button);
     });
+    // M8：chatLog 内的 agent 卡片（审批 / skill 建议 / 后台任务 / 建议清单）
+    // 与既有的假设卡动作共用同一个委托入口。
+    function handleAgentSurfaceClick(event) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const approvalButton = target.closest("[data-approval-action]");
+      if (approvalButton instanceof HTMLButtonElement) {
+        void handleAgentApprovalAction(approvalButton);
+        return;
+      }
+      const skillButton = target.closest("[data-skill-action]");
+      if (skillButton instanceof HTMLButtonElement) {
+        handleSkillSuggestAction(skillButton);
+        return;
+      }
+      const bgTaskButton = target.closest("[data-bg-task-action]");
+      if (bgTaskButton instanceof HTMLButtonElement) {
+        void handleBackgroundTaskAction(bgTaskButton);
+        return;
+      }
+      const suggestionButton = target.closest("[data-suggestion-action]");
+      if (suggestionButton instanceof HTMLButtonElement) {
+        void handleSuggestionConfirm(suggestionButton);
+        return;
+      }
+      const taskOpen = target.closest("[data-task-open]");
+      if (taskOpen instanceof HTMLElement && taskOpen.dataset.taskOpen) {
+        state.agentChat.tasksOpen = true;
+        renderChatTaskCenter();
+        void openChatTaskDetail(taskOpen.dataset.taskOpen);
+      }
+    }
+
     $("#chatLog")?.addEventListener("click", (event) => {
       activateReplyQuote(event, $("#chatLog"));
       const button = event.target instanceof Element
         ? event.target.closest("[data-card-action]")
         : null;
       if (button instanceof HTMLButtonElement) void handleDesktopCardAction(button);
+      handleAgentSurfaceClick(event);
     });
-    safeBind("#chatForm", "submit", (event) => { event.preventDefault(); const input = $("#chatInput"); const text = input?.value?.trim() || ""; if (!text) return; input.value = ""; sendChat(text); });
+    $("#chatApprovalsBody")?.addEventListener("click", handleAgentSurfaceClick);
+    $("#chatTaskCenterBody")?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const cancelButton = target.closest("[data-task-cancel]");
+      if (cancelButton instanceof HTMLButtonElement) {
+        void cancelChatTask(cancelButton.dataset.taskCancel, cancelButton);
+        return;
+      }
+      if (target.closest("[data-task-back]")) {
+        state.agentChat.taskDetailId = "";
+        state.agentChat.taskDetail = null;
+        chatTasksSignature = "";
+        renderChatTaskCenter();
+        return;
+      }
+      handleAgentSurfaceClick(event);
+    });
+    $("#chatSessionList")?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const actionEl = target?.closest("[data-session-action]");
+      if (!actionEl) return;
+      const sessionId = actionEl.closest("[data-session-id]")?.dataset.sessionId || "";
+      const action = actionEl.dataset.sessionAction;
+      if (action === "switch") void selectChatSession(sessionId);
+      else if (action === "rename") startChatSessionRename(actionEl);
+      else if (action === "archive") void archiveChatSession(sessionId);
+    });
+    safeBind("#chatNewSessionBtn", "click", () => void createChatSession());
+    safeBind("#chatArchivedToggle", "click", () => {
+      state.agentChat.includeArchived = !state.agentChat.includeArchived;
+      chatSessionsSignature = "";
+      void refreshChatSessions().catch(() => {});
+      renderChatSidebar();
+    });
+    safeBind("#chatSideToggle", "click", () => {
+      state.agentChat.sidebarOpen = !state.agentChat.sidebarOpen;
+      applyAgentChatChrome();
+    });
+    safeBind("#chatSkillChip", "click", () => toggleChatSkillPicker());
+    safeBind("#chatPersonaChip", "click", () => toggleChatPersonaPicker());
+    safeBind("#chatPersonaClose", "click", () => toggleChatPersonaPicker(false, { restoreFocus: true }));
+    safeBind("#chatPersonaSave", "click", () => void saveChatPersona());
+    $("#chatPersonaOptions")?.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || input.name !== "chatPersona" || chatPersonaIsSaving()) return;
+      state.agentChat.personaDraft = input.value;
+      state.agentChat.personaStatusBySession.delete(state.agentChat.sessionId || "default");
+      renderChatPersonaPreview();
+    });
+    $("#chatPersonaOptions")?.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("[data-persona-retry]")) void refreshChatPersonas();
+    });
+    $("#chatSkillPicker")?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const option = target?.closest("[data-skill-pick]");
+      if (!(option instanceof HTMLElement)) return;
+      setChatSkill(option.dataset.skillPick || "");
+      toggleChatSkillPicker(false);
+    });
+    // Escape 关闭 skill 选择弹层；点击弹层外也收起。
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.agentChat.skillPickerOpen) toggleChatSkillPicker(false);
+      if (event.key === "Escape" && state.agentChat.personaPickerOpen) {
+        event.preventDefault();
+        toggleChatPersonaPicker(false, { restoreFocus: true });
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (!state.agentChat.skillPickerOpen) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("#chatSkillPicker") || target?.closest("#chatSkillChip")) return;
+      toggleChatSkillPicker(false);
+    });
+    safeBind("#chatTasksToggle", "click", () => {
+      state.agentChat.tasksOpen = !state.agentChat.tasksOpen;
+      if (!state.agentChat.tasksOpen) {
+        state.agentChat.taskDetailId = "";
+        state.agentChat.taskDetail = null;
+      }
+      renderChatTaskCenter();
+      if (state.agentChat.tasksOpen) void refreshChatTasks().catch(() => {});
+    });
+    safeBind("#chatTaskCenterClose", "click", () => {
+      state.agentChat.tasksOpen = false;
+      state.agentChat.taskDetailId = "";
+      state.agentChat.taskDetail = null;
+      renderChatTaskCenter();
+    });
+    safeBind("#chatApprovalsToggle", "click", () => {
+      state.agentChat.approvalsOpen = !state.agentChat.approvalsOpen;
+      renderChatApprovalsPanelVisibility();
+      if (state.agentChat.approvalsOpen) {
+        chatApprovalsSignature = "";
+        void refreshChatApprovals().catch(() => {});
+      }
+    });
+    safeBind("#chatApprovalsClose", "click", () => {
+      state.agentChat.approvalsOpen = false;
+      renderChatApprovalsPanelVisibility();
+    });
+    safeBind("#chatForm", "submit", (event) => { event.preventDefault(); if (chatPersonaIsSaving()) return; const input = $("#chatInput"); const text = input?.value?.trim() || ""; if (!text) return; input.value = ""; sendChat(text); });
     safeBind("#messageChatBackBtn", "click", returnToMessages);
     safeBind("#messageChatForm", "submit", (event) => {
       event.preventDefault();
@@ -12149,13 +13720,14 @@ ${cardFeedbackBarHtml()}`;
       safeBind(`#${id}`, "change", () => renderSourcesStatusRows(state.sourceStatus));
     });
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", tiktok: $("#tiktokEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on", instagram: $("#instagramEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
         setInput("shareXhs", shares.xiaohongshu);
         setInput("shareDouyin", shares.douyin);
         setInput("shareYoutube", shares.youtube);
+        if (shares.tiktok !== undefined) setInput("shareTiktok", shares.tiktok);
         if (shares.twitter !== undefined) setInput("shareTwitter", shares.twitter);
         if (shares.zhihu !== undefined) setInput("shareZhihu", shares.zhihu);
         if (shares.reddit !== undefined) setInput("shareReddit", shares.reddit);
@@ -12164,6 +13736,7 @@ ${cardFeedbackBarHtml()}`;
         if (shares.linuxdo !== undefined) setInput("shareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setInput("shareV2EX", shares.v2ex);
         if (shares.weibo !== undefined) setInput("shareWeibo", shares.weibo);
+        if (shares.instagram !== undefined) setInput("shareInstagram", shares.instagram);
         renderShareOverview();
         markSettingsDirty();
         showToast("已应用来源占比建议");
@@ -12179,6 +13752,8 @@ ${cardFeedbackBarHtml()}`;
     let settingsSavePhase = "idle";
     let settingsPendingApplyRevision = 0;
     let settingsLastTerminalRevision = 0;
+    let settingsApplyStatusTimer = null;
+    let settingsApplyStatusInFlight = false;
 
     safeBind("#migrationExportBtn", "click", () => { void exportMigrationData(); });
     safeBind("#migrationImportBtn", "click", () => {
@@ -12296,8 +13871,20 @@ ${cardFeedbackBarHtml()}`;
         settingsLastTerminalRevision = Math.max(settingsLastTerminalRevision, terminalRevision);
         reachedTerminal = true;
       }
+      const configStatus = $("#configStatus");
+      if (configStatus && (settingsPendingApplyRevision > 0 || reachedTerminal)) {
+        const fallback = settingsSavePhase === "applied"
+          ? "配置已应用" : settingsSavePhase === "failed"
+            ? "配置应用失败，已恢复上一次生效配置" : "配置已保存，正在后台应用…";
+        configStatus.value = String(snapshot?.error || snapshot?.message || fallback);
+        configStatus.setAttribute("role", settingsSavePhase === "failed" ? "alert" : "status");
+      }
       renderSettingsDirty();
       if (reachedTerminal) {
+        if (settingsApplyStatusTimer !== null) {
+          window.clearTimeout(settingsApplyStatusTimer);
+          settingsApplyStatusTimer = null;
+        }
         if (settingsSavePhase === "failed" && settingsDirtyFields.size > 0) {
           // Keep a new local draft in the form, but refresh the canonical
           // snapshot used by Discard. Otherwise a failed save followed by a
@@ -12317,8 +13904,26 @@ ${cardFeedbackBarHtml()}`;
     }
 
     async function refreshConfigApplyStatus() {
-      const snapshot = await requestJson(ENDPOINTS.configApplyStatus, { cache: "no-store" });
-      if (snapshot) applyConfigApplyStatus(snapshot);
+      if (settingsApplyStatusInFlight) return;
+      if (settingsApplyStatusTimer !== null) {
+        window.clearTimeout(settingsApplyStatusTimer);
+        settingsApplyStatusTimer = null;
+      }
+      settingsApplyStatusInFlight = true;
+      try {
+        const snapshot = await requestJson(ENDPOINTS.configApplyStatus, { cache: "no-store" });
+        if (snapshot) applyConfigApplyStatus(snapshot);
+      } finally {
+        settingsApplyStatusInFlight = false;
+        // WebSocket events are best effort. Poll only while our save is pending,
+        // including after a transient request failure, until an authoritative result.
+        if (settingsPendingApplyRevision > 0) {
+          settingsApplyStatusTimer = window.setTimeout(() => {
+            settingsApplyStatusTimer = null;
+            void refreshConfigApplyStatus();
+          }, 2000);
+        }
+      }
     }
 
     function markSettingsDirty(target) {
@@ -12345,6 +13950,10 @@ ${cardFeedbackBarHtml()}`;
         ) return;
         markSettingsDirty(el);
       });
+    });
+
+    $("#language")?.addEventListener("change", () => {
+      void applyClientLocale($("#language").value);
     });
 
     safeBind("#testToneBtn", "click", async () => {
@@ -12512,6 +14121,24 @@ ${cardFeedbackBarHtml()}`;
 
     restoreBackendEndpoint();
     restoreFrontendSettings();
+    // Start authentication before presentation work; hydration still awaits it.
+    void startDesktopBackendSession({ forceHydrate: true });
+    {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime) {
+        let initialLocale = document.documentElement.lang || "zh-Hans";
+        try {
+          initialLocale = storageGet(CLIENT_LOCALE_STORAGE_KEY) || initialLocale;
+        } catch {}
+        void runtime
+          .init({ locale: initialLocale, basePath: "/i18n/ui/" })
+          // Re-apply after init (the shell renders while catalogs load), but
+          // never override a config locale that already arrived — otherwise a
+          // slow catalog fetch reverts the UI to yesterday's cached language.
+          .then(() => applyClientLocale(state.config?.language || initialLocale))
+          .catch((error) => console.warn("界面语言初始化失败", error));
+      }
+    }
     setSideDrawerOpen(!isMobileViewport() && storageGet(SIDE_DRAWER_OPEN_KEY) !== "0", { persist: false });
     initBackToTop();
     startSharedChatSurfaceSync();
@@ -12529,5 +14156,4 @@ ${cardFeedbackBarHtml()}`;
     if (["models", "sources", "scheduler", "advanced", "general", "frontend", "logging"].includes(requestedSettingsPanel)) {
       openSettingsPage(requestedSettingsPanel);
     }
-    void startDesktopBackendSession({ forceHydrate: true });
     })();

@@ -33,11 +33,21 @@ import os
 import re
 import tempfile
 import time
+from collections import OrderedDict
 from contextlib import suppress
 from dataclasses import dataclass
+from io import BytesIO
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
+
+from openbiliclaw.runtime.image_network import (
+    ImageTransport,
+    UnsafeImageAddressError,
+    image_proxy_for_host,
+    resolve_public_addresses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +59,52 @@ if TYPE_CHECKING:
 # "data/image-cache", which resolved against the process CWD (the read-only
 # install dir on packaged Windows) instead of the user's data dir.
 _CACHE_DIR: Path | None = None
+
+# Retain only rendered bytes, never the potentially 10 MB source buffers.
+# Both API modes use the same bounded cache; content hashes invalidate a render
+# when a CDN changes bytes at the same URL. Rendering remains off the event loop.
+_RENDER_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_RENDER_CACHE_MAX_ENTRIES = 128
+_render_cache: OrderedDict[tuple[bytes, str], tuple[bytes, str]] = OrderedDict()
+_render_cache_lock = Lock()
+
+
+def render_cover_for_display(data: bytes, content_type: str) -> tuple[bytes, str]:
+    """Return a cached 640px cover rendition, bounded by both bytes and entries."""
+    if not data or "image" not in content_type:
+        return data, content_type
+    key = (hashlib.sha256(data).digest(), content_type)
+    with _render_cache_lock:
+        cached = _render_cache.get(key)
+        if cached is not None:
+            _render_cache.move_to_end(key)
+            return cached
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(data)) as source:
+            image: Image.Image = source
+            if image.width <= 640:
+                return data, content_type
+            image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "P", "LA"}:
+                image = image.convert("RGB")
+            out = BytesIO()
+            image.save(out, format="JPEG", quality=80, optimize=True)
+            rendered = (out.getvalue(), "image/jpeg")
+    except Exception:
+        # Invalid/unsupported originals keep their existing fallback behaviour.
+        return data, content_type
+    if len(rendered[0]) <= _RENDER_CACHE_MAX_BYTES:
+        with _render_cache_lock:
+            _render_cache[key] = rendered
+            _render_cache.move_to_end(key)
+            while (
+                len(_render_cache) > _RENDER_CACHE_MAX_ENTRIES
+                or sum(len(value[0]) for value in _render_cache.values()) > _RENDER_CACHE_MAX_BYTES
+            ):
+                _render_cache.popitem(last=False)
+    return rendered
 
 
 def _resolve_cache_dir() -> Path:
@@ -283,10 +339,15 @@ ALLOWED_IMAGE_HOST_SUFFIXES: tuple[str, ...] = (
     "pstatp.com",
     "douyinpic.com",
     "douyinvod.com",
+    "tiktokcdn.com",
+    "tiktokcdn-us.com",
+    "tiktokcdn-eu.com",
     "ytimg.com",
     "ggpht.com",
     "lain.bgm.tv",
     "sinaimg.cn",
+    "cdninstagram.com",
+    "fbcdn.net",
     "twimg.com",
     "zhimg.com",
     "reddit.com",
@@ -405,6 +466,7 @@ def is_allowed_image_url(url: str) -> bool:
         parsed.scheme in {"http", "https"}
         and parsed.host
         and not parsed.userinfo
+        and parsed.port in {None, 443}
         and is_allowed_image_host(parsed.host)
     )
 
@@ -421,6 +483,8 @@ def _parse_image_url(raw_url: str) -> httpx.URL:
         raise CoverFetchError(400, "Invalid URL")
     if parsed.userinfo:
         raise CoverFetchError(400, "Invalid URL")
+    if parsed.port not in {None, 443}:
+        raise CoverFetchError(400, "Image destination port must be 443")
     if not is_allowed_image_host(parsed.host):
         raise CoverFetchError(403, "Domain not in whitelist")
     return parsed
@@ -455,11 +519,18 @@ async def _send_with_redirects(client: httpx.AsyncClient, url: httpx.URL) -> htt
         if current_key in seen:
             raise CoverFetchError(502, "Redirect loop")
         seen.add(current_key)
+        proxy = image_proxy_for_host(current.host, direct=_is_direct_fetch_host(current.host))
+        try:
+            addresses = await resolve_public_addresses(current.host, proxy=proxy)
+        except UnsafeImageAddressError as exc:
+            raise CoverFetchError(403, "Image destination is not public") from exc
         request = client.build_request(
             "GET",
             current_key,
             headers=_upstream_headers_for_host(str(current.host or "")),
         )
+        request.extensions["image_addresses"] = addresses
+        request.extensions["image_proxy"] = proxy
         response = await client.send(request, stream=True)
         if response.status_code in _REDIRECT_STATUSES:
             location = response.headers.get("location", "").strip()
@@ -521,11 +592,22 @@ async def fetch_cover_bytes(url: str) -> tuple[bytes, str]:
     network failures additionally emit a per-host rate-limited WARNING.
     """
     parsed = _parse_image_url(url)
+    if any(
+        parsed.host == suffix or parsed.host.endswith(f".{suffix}")
+        for suffix in ("tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com")
+    ):
+        from openbiliclaw.runtime.tiktok_images import fetch_tiktok_cover
+
+        return await fetch_tiktok_cover(parsed)
     try:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT_SECONDS,
             follow_redirects=False,
-            **_httpx_client_kwargs(str(parsed.host or "")),
+            # The transport owns routing *per redirect*, with pinned numeric
+            # destinations even through a proxy. Client proxy mounts must not
+            # bypass it. CN-CDN direct routing remains unconditional.
+            trust_env=False,
+            transport=ImageTransport(_is_direct_fetch_host),
         ) as client:
             response = await _send_with_redirects(client, parsed)
             try:

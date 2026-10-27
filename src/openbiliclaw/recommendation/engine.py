@@ -46,7 +46,7 @@ from openbiliclaw.sources.platforms import normalize_source_platform, source_fam
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
-    from openbiliclaw.discovery.engine import DiscoveredContent
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.runtime.serve_outbox import ServeOutbox
@@ -442,6 +442,16 @@ class ServeResult:
     timings: ServeTimings = field(default_factory=ServeTimings)
 
 
+@dataclass(frozen=True)
+class DirectorCandidateSnapshot:
+    """Read-only serving input; no history, shown or presentation changes."""
+
+    items: tuple[DiscoveredContent, ...]
+    source_rows: tuple[dict[str, Any], ...]
+    scores: dict[str, float]
+    pool_counts: dict[str, int]
+
+
 @dataclass
 class PersonalTopic:
     """A deeply personalized recommendation topic.
@@ -489,8 +499,11 @@ class RecommendationEngine:
         serve_snapshot_store: ServeSnapshotStore | None = None,
         serve_outbox: ServeOutbox | None = None,
         reply_style: str = "",
+        output_language: str = "",
+        content_evaluator: ContentDiscoveryEngine | None = None,
     ) -> None:
         self._llm = llm
+        self._content_evaluator = content_evaluator
         self._database = database
         self._curator = curator
         self._embedding_service = embedding_service
@@ -522,6 +535,9 @@ class RecommendationEngine:
         # Free-text reply-style instruction (issue #255) for the expression
         # tone blocks; empty (default) keeps prompts byte-identical.
         self._reply_style = " ".join(str(reply_style or "").split())
+        # Canonical locale for recommendation copy; empty keeps the historical
+        # Chinese-only prompts for tests and standalone callers.
+        self._output_language = str(output_language or "").strip()
         self._copy_pending_callback: Callable[[str], None] | None = None
         self._expression_batch_concurrency = max(1, min(16, int(expression_batch_concurrency)))
         # ``0`` is the compatibility/rollback contract: drain the durable
@@ -699,6 +715,78 @@ class RecommendationEngine:
             source_platform=source_platform,
         )
         return result.items
+
+    async def load_director_candidates(
+        self,
+        profile: SoulProfile,
+        *,
+        limit: int = 40,
+        source_platform: str = "",
+        excluded_keys: frozenset[str] = frozenset(),
+    ) -> DirectorCandidateSnapshot:
+        """Prepare a bounded, topic-stratified shortlist without consuming it.
+
+        The Director store performs the final eligibility check and atomic
+        commit. This reader deliberately does not call serve(), whose legacy
+        persistence contract can retain a partial batch.
+        """
+        if not 1 <= limit <= 40:
+            raise ValueError("director shortlist limit must be between 1 and 40")
+        scope = normalize_source_platform(source_platform)
+        snapshot = await self._database.load_pool_serve_snapshot_async(
+            limit=limit * 3,
+            source_platform=scope,
+            xhs_self_nickname=self._xhs_self_nickname(),
+            curator_history_limit=max(1, int(getattr(self._curator, "_history_window", 30))),
+        )
+        rows = [dict(row) for row in snapshot.candidate_rows]
+        candidates = self._enforce_platform_scope(self._rows_to_discovered(rows), scope)
+        candidates = [
+            card
+            for card in candidates
+            if card.item_key not in excluded_keys
+            and card.bvid not in excluded_keys
+            and card.bvid not in snapshot.seen_bvids
+        ]
+        # Unlike the legacy fuzzy fallback, Director admission never re-adds a
+        # candidate excluded by the supplied dislike view just to fill a screen.
+        candidates = self._exclude_disliked_topic_candidates(candidates, profile)
+        candidates = self._filter_candidates_for_publication_serving(candidates)
+        candidates = self._exclude_temporally_stale_candidates_for_serve(candidates)
+        score_override, _ = await asyncio.to_thread(
+            self._score_candidates_with_curator,
+            candidates,
+            (list(snapshot.curator_signals), list(snapshot.feedback_signals)),
+        )
+        score_override = score_override or {}
+        candidates.sort(
+            key=lambda card: (
+                -score_override.get(card.scoring_key, card.relevance_score),
+                card.item_key,
+            )
+        )
+        # Round-robin topic representatives keep lower-ranked directions in
+        # the bounded menu. The 3x read and 40-card cap are engineering limits,
+        # not calibrated relevance/diversity thresholds.
+        groups: dict[str, list[DiscoveredContent]] = {}
+        for card in candidates:
+            groups.setdefault(card.topic_group or "unknown", []).append(card)
+        selected: list[DiscoveredContent] = []
+        while len(selected) < limit and any(groups.values()):
+            for group in groups.values():
+                if group and len(selected) < limit:
+                    selected.append(group.pop(0))
+        selected_keys = {card.item_key for card in selected}
+        raw_rows = tuple(row for row in rows if str(row.get("item_key", "")) in selected_keys)
+        return DirectorCandidateSnapshot(
+            items=tuple(selected),
+            source_rows=raw_rows,
+            scores={
+                card.item_key: score_override.get(card.scoring_key, card.relevance_score)
+                for card in selected
+            },
+            pool_counts=dict(snapshot.readiness),
+        )
 
     async def serve_with_result(
         self,
@@ -999,8 +1087,8 @@ class RecommendationEngine:
         danmaku_bonus = await self._danmaku_bonus_map(candidates, profile)
         combined_bonus: dict[str, float] = dict(visual_bonus)
         for extra in (visual_profile_bonus, keyframe_bonus, danmaku_bonus):
-            for bvid, bonus in extra.items():
-                combined_bonus[bvid] = combined_bonus.get(bvid, 0.0) + bonus
+            for scoring_key, bonus in extra.items():
+                combined_bonus[scoring_key] = combined_bonus.get(scoring_key, 0.0) + bonus
 
         # Cross-platform fairness: align the stacked bonus within each
         # platform's own pool around semantic zero. Without this, a
@@ -1965,6 +2053,10 @@ class RecommendationEngine:
                 batch_size=batch_size,
             )
 
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Route legacy metadata recovery through the selected full evaluator."""
+        self._content_evaluator = evaluator
+
     async def _classify_pool_backlog_locked(
         self,
         *,
@@ -2001,6 +2093,13 @@ class RecommendationEngine:
             # Persist results back to the pool.
             persisted: list[DiscoveredContent] = []
             for item in batch:
+                if (
+                    getattr(self, "_content_evaluator", None) is not None
+                    and item.relevance_reason == "evaluation_response_missing"
+                ):
+                    # Failed Jev calls are not zero labels and cannot overwrite
+                    # older pool metadata or count as a completed evaluation.
+                    continue
                 # Use topic_group as topic_key when the original is empty —
                 # diversity tokens fall back to topic_key, so this is critical.
                 if not item.topic_key and item.topic_group:
@@ -2126,6 +2225,10 @@ class RecommendationEngine:
         Mutates each item in-place: sets relevance/classification fields,
         including the temporal evaluation used by the shared eligibility gate.
         """
+        evaluator = getattr(self, "_content_evaluator", None)
+        if evaluator is not None:
+            await evaluator.evaluate_cached_content_batch(batch, profile)
+            return
         from openbiliclaw.llm.prompts import (
             build_batch_content_evaluation_prompt,
             content_evaluation_clock,
@@ -2675,7 +2778,7 @@ class RecommendationEngine:
             warmed += 1
             bonus = self._cover_bonus_from_vec(cover_vec, anchor_vecs)
             if bonus > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         # Fairness guard: withhold the bonus for the whole batch until enough
         # cover-bearing candidates are warmed, so a half-backfilled pool doesn't
         # tilt the ranking toward freshly-discovered items over older ones.
@@ -3196,7 +3299,7 @@ class RecommendationEngine:
             # Signed: keep both boosts (>0) and suppressions (<0). A zero means
             # the candidate is in the contested/gray band — no entry, no nudge.
             if abs(bonus) > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         # Fairness guard (same rationale as _visual_bonus_map): withhold the
         # bonus for the whole batch until enough cover-bearing candidates are
         # warmed, so a half-backfilled pool doesn't tilt toward fresh items.
@@ -3242,16 +3345,16 @@ class RecommendationEngine:
         """
         if not combined_bonus:
             return combined_bonus
-        # bvid -> platform, defaulting bilibili (the historical single-platform
-        # behavior) so a missing/blank platform never forms its own singleton
-        # group and change the ranking for pre-existing rows.
+        # scoring_key -> platform, defaulting bilibili (the historical
+        # single-platform behavior) so a missing/blank platform never forms
+        # its own singleton group and change the ranking for pre-existing rows.
         platform_of: dict[str, str] = {}
         for cand in candidates:
-            bvid = str(getattr(cand, "bvid", "") or "")
-            if not bvid:
+            scoring_key = cand.scoring_key
+            if not scoring_key:
                 continue
             platform = str(getattr(cand, "source_platform", "") or "").strip() or "bilibili"
-            platform_of[bvid] = platform
+            platform_of[scoring_key] = platform
 
         # Group every current candidate, including missing bonus entries (which
         # are semantic zeroes), so a platform with only one signal still gets a
@@ -3259,19 +3362,21 @@ class RecommendationEngine:
         # missing rows. Unknown keys remain supported for legacy callers.
         groups: dict[str, list[tuple[str, float]]] = {}
         seen: set[str] = set()
-        for bvid, platform in platform_of.items():
-            seen.add(bvid)
-            groups.setdefault(platform, []).append((bvid, float(combined_bonus.get(bvid, 0.0))))
-        for bvid, bonus in combined_bonus.items():
-            if bvid not in seen:
-                groups.setdefault("bilibili", []).append((bvid, float(bonus)))
+        for scoring_key, platform in platform_of.items():
+            seen.add(scoring_key)
+            groups.setdefault(platform, []).append(
+                (scoring_key, float(combined_bonus.get(scoring_key, 0.0)))
+            )
+        for scoring_key, bonus in combined_bonus.items():
+            if scoring_key not in seen:
+                groups.setdefault("bilibili", []).append((scoring_key, float(bonus)))
 
         if not groups:
             return combined_bonus
 
         cap = _COMBINED_BONUS_CAP
-        normalized = {bvid: 0.0 for bvid in platform_of}
-        normalized.update({bvid: 0.0 for bvid in combined_bonus})
+        normalized = {scoring_key: 0.0 for scoring_key in platform_of}
+        normalized.update({scoring_key: 0.0 for scoring_key in combined_bonus})
         # A one-platform batch must preserve absolute semantics. With several
         # platforms, only the structurally shorter groups are stretched toward
         # the strongest currently observed group; no signal is inflated to the
@@ -3294,19 +3399,19 @@ class RecommendationEngine:
         for items in groups.values():
             positive_max = max((value for _, value in items if value > 0.0), default=0.0)
             negative_magnitude = max((-value for _, value in items if value < 0.0), default=0.0)
-            for bvid, bonus in items:
+            for scoring_key, bonus in items:
                 if bonus > 0.0 and positive_max > 0.0:
                     target = global_positive_max if multi_platform else min(cap, positive_max)
-                    normalized[bvid] = min(cap, target * bonus / positive_max)
+                    normalized[scoring_key] = min(cap, target * bonus / positive_max)
                 elif bonus < 0.0 and negative_magnitude > 0.0:
                     target = (
                         global_negative_magnitude
                         if multi_platform
                         else min(cap, negative_magnitude)
                     )
-                    normalized[bvid] = -min(cap, target * (-bonus) / negative_magnitude)
+                    normalized[scoring_key] = -min(cap, target * (-bonus) / negative_magnitude)
                 else:
-                    normalized[bvid] = 0.0
+                    normalized[scoring_key] = 0.0
         return normalized
 
     def _keyframe_bonus_from_vecs(
@@ -3462,7 +3567,7 @@ class RecommendationEngine:
                 frame_vecs, pos_centroids, neg_centroids, contested
             )
             if abs(bonus) > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         return bonuses
 
     async def prewarm_pool_keyframes(self, *, limit: int = 50) -> int:
@@ -3708,7 +3813,7 @@ class RecommendationEngine:
             norm = max(0.0, min(1.0, (max_sim - _DANMAKU_SIM_FLOOR) / span))
             bonus = _DANMAKU_BONUS_MAX * norm
             if bonus > 0.0:
-                bonuses[bvid] = bonus
+                bonuses[candidate.scoring_key] = bonus
         return bonuses
 
     async def _danmaku_anchor_vectors(self, profile: SoulProfile) -> list[list[float]]:
@@ -4071,6 +4176,7 @@ class RecommendationEngine:
             tone_profile=tone_profile,
             source_platform=batch[0].source_platform if batch else "bilibili",
             reply_style=self._reply_style,
+            output_language=self._output_language,
         )
 
         complete_structured = self._llm.complete_structured_task
@@ -4463,6 +4569,7 @@ class RecommendationEngine:
             tone_profile=tone_profile,
             source_platform=content.source_platform or "bilibili",
             reply_style=self._reply_style,
+            output_language=self._output_language,
         )
         try:
             complete_structured = self._llm.complete_structured_task
@@ -4534,13 +4641,13 @@ class RecommendationEngine:
         # ``bonus`` (opt-in cover-visual, default empty) is added to the
         # relevance term only — tier priority and the timestamp/view/bvid
         # tiebreakers are untouched, so an empty map is byte-identical ranking.
-        visual = (bonus or {}).get(item.bvid, 0.0)
+        visual = (bonus or {}).get(item.scoring_key, 0.0)
         return (
             0 if item.candidate_tier == "primary" else 1,
             -(item.relevance_score + visual),
             -RecommendationEngine._timestamp_score(item.last_scored_at or item.discovered_at),
             -item.view_count,
-            item.bvid,
+            item.scoring_key,
         )
 
     @staticmethod
@@ -4614,7 +4721,7 @@ class RecommendationEngine:
         startup) is responsible for filling the L2 SQLite cache so this
         lookup hits next time.
 
-        Returns ``{bvid: vector}`` only for items already cached. Pure
+        Returns ``{scoring_key: vector}`` only for items already cached. Pure
         synchronous-via-async; no I/O.
         """
         if self._embedding_service is None or not candidates:
@@ -4629,7 +4736,7 @@ class RecommendationEngine:
                 continue
             vec = lookup(text)
             if vec:
-                result[c.bvid] = vec
+                result[c.scoring_key] = vec
         return result
 
     async def warm_mmr_embeddings(
@@ -4752,7 +4859,9 @@ class RecommendationEngine:
         if score_override:
             ranked = sorted(
                 candidates,
-                key=lambda item: -(score_override.get(item.bvid, 0.0) + bonus.get(item.bvid, 0.0)),
+                key=lambda item: (
+                    -(score_override.get(item.scoring_key, 0.0) + bonus.get(item.scoring_key, 0.0))
+                ),
             )
         else:
             ranked = sorted(candidates, key=lambda item: cls._ranking_key(item, bonus))
@@ -5013,11 +5122,11 @@ class RecommendationEngine:
 
         def _relevance(item: DiscoveredContent) -> float:
             base = (
-                float(score_override.get(item.bvid, 0.0))
+                float(score_override.get(item.scoring_key, 0.0))
                 if score_override
                 else float(item.relevance_score or 0.0)
             )
-            return base + bonus.get(item.bvid, 0.0)
+            return base + bonus.get(item.scoring_key, 0.0)
 
         # Same vectors and cosine implementation throughout this selection.
         # Cache exact pair results locally; never share scores across batches.
@@ -5028,15 +5137,15 @@ class RecommendationEngine:
             cand: DiscoveredContent,
             picked: list[DiscoveredContent],
         ) -> float:
-            cand_vec = embeddings.get(cand.bvid)
+            cand_vec = embeddings.get(cand.scoring_key)
             if not cand_vec or not picked:
                 return 0.0
             best = 0.0
             for p in picked:
-                p_vec = embeddings.get(p.bvid)
+                p_vec = embeddings.get(p.scoring_key)
                 if not p_vec:
                     continue
-                pair = (cand.bvid, p.bvid)
+                pair = (cand.scoring_key, p.scoring_key)
                 sim = pair_similarity.get(pair)
                 if sim is None:
                     sim = cosine_similarity(cand_vec, p_vec)
@@ -5197,7 +5306,7 @@ class RecommendationEngine:
     ) -> float:
         if score_override is None:
             return item.relevance_score
-        return score_override.get(item.bvid, item.relevance_score)
+        return score_override.get(item.scoring_key, item.relevance_score)
 
     @staticmethod
     def _accessible_style_priority(item: DiscoveredContent) -> int:

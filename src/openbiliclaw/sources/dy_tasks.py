@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Iterable
 
     from openbiliclaw.storage.database import Database
@@ -303,6 +304,10 @@ def recent_dy_creator_sec_uids(
     return tuple(result)
 
 
+class DouyinDiscoveryCooldownError(RuntimeError):
+    """A recent browser failure is holding automatic discovery requests."""
+
+
 class DyTaskQueue:
     """Manages the dy_tasks table.
 
@@ -316,6 +321,104 @@ class DyTaskQueue:
     def __init__(self, db: Database) -> None:
         self._db = db
         self._ensure_table()
+
+    def discovery_retry_at(
+        self, *, connection: sqlite3.Connection | None = None
+    ) -> datetime | None:
+        """Read restart-safe discovery backoff from confirmed task outcomes.
+
+        Only claimed browser tasks count: an offline, never-claimed queue row
+        is not an upstream response. Partial videos do not erase a failure.
+        Successful discovery ends the failure streak. These conservative
+        15/30-minute floors and six-hour cap are local policy, not site limits.
+        """
+        conn = connection if connection is not None else self._db.conn
+        now = datetime.now(UTC)
+        rows = conn.execute(
+            """
+            SELECT status, completed_at, result_json FROM dy_tasks
+            WHERE type IN ('search', 'hot', 'feed') AND claimed_at IS NOT NULL
+              AND status IN ('completed', 'failed') AND completed_at >= ?
+            ORDER BY completed_at DESC, rowid DESC LIMIT 8
+            """,
+            ((now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"),),
+        ).fetchall()
+        latest: datetime | None = None
+        failures = 0
+        floor_minutes = 15
+        for row in rows:
+            if str(row["status"]) == "completed":
+                break
+            try:
+                completed = datetime.fromisoformat(str(row["completed_at"]))
+                if completed.tzinfo is None:
+                    completed = completed.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                continue
+            if completed > now + timedelta(minutes=1):
+                continue
+            if latest is None:
+                latest = completed
+            failures += 1
+            try:
+                payload = json.loads(str(row["result_json"] or "{}"))
+            except (TypeError, ValueError):
+                payload = {}
+            error = str(payload.get("error", "")) if isinstance(payload, dict) else ""
+            if any(
+                marker in error.lower()
+                for marker in (
+                    "rate_limit",
+                    "captcha",
+                    "hit_shark",
+                    "too_many",
+                    "risk_control",
+                )
+            ):
+                floor_minutes = 30
+        if latest is None:
+            return None
+        retry_at = latest + timedelta(minutes=min(360, floor_minutes * 2 ** (failures - 1)))
+        return retry_at if retry_at > now else None
+
+    def recent_hot_sentence_ids(self, *, within_seconds: float) -> tuple[str, ...]:
+        """Read recent enqueued hot-word choices across transport lifetimes.
+
+        Pending choices count as reservations too. No task timestamps or
+        outcomes are rewritten; the existing hot payload is the durable record.
+        """
+        if within_seconds <= 0:
+            return ()
+        now = datetime.now(UTC)
+        rows = self._db.conn.execute(
+            """
+            SELECT payload_json FROM dy_tasks
+            WHERE type = 'hot' AND created_at >= ? AND created_at <= ?
+            ORDER BY rowid DESC
+            """,
+            (
+                (now - timedelta(seconds=within_seconds)).strftime("%Y-%m-%d %H:%M:%S"),
+                (now + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        ).fetchall()
+        result: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                continue
+            hot_items = payload.get("hot_items") if isinstance(payload, dict) else None
+            if not isinstance(hot_items, list):
+                continue
+            for item in hot_items:
+                if not isinstance(item, dict):
+                    continue
+                sentence_id = str(item.get("sentence_id", "") or "").strip()
+                if sentence_id and sentence_id not in seen:
+                    seen.add(sentence_id)
+                    result.append(sentence_id)
+        return tuple(result)
 
     def _ensure_table(self) -> None:
         self._db.conn.executescript("""
@@ -365,6 +468,8 @@ class DyTaskQueue:
         then controlled by source deficits and their per-run throttles.
         """
         conn = self._db.conn
+        if task_type in {"search", "hot", "feed"} and self.discovery_retry_at() is not None:
+            raise DouyinDiscoveryCooldownError("douyin discovery cooldown active")
         participating_in_transaction = bool(conn.in_transaction)
         count_today = self._budgeted_count_today(task_type) if daily_budget > 0 else 0
 
@@ -429,6 +534,10 @@ class DyTaskQueue:
         conn = self._db.open_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            if self.discovery_retry_at(connection=conn) is not None:
+                # Hold new automatic requests. Already-claimed rows remain
+                # lease-recoverable, including staged terminal-result repair.
+                where += " AND (type NOT IN ('search', 'hot', 'feed') OR status = 'in_progress')"
             # The extension mutex is scoped to one service-worker global. Two
             # unpacked extension IDs or browser profiles do not share it and
             # could otherwise claim different Douyin tasks concurrently. Keep
@@ -665,17 +774,25 @@ class DyTaskQueue:
         error: str = "",
         debug: dict[str, Any] | None = None,
     ) -> bool:
-        """Mark an active task failed without overwriting a terminal result."""
-        result_payload: dict[str, Any] = {"error": error}
-        if debug is not None:
-            result_payload["debug"] = debug
+        """Fail an active task while retaining accepted partial content."""
+
+        def merge_failure(current: dict[str, Any]) -> dict[str, Any]:
+            result_payload = {**current, "error": error}
+            if debug is not None:
+                previous_debug = current.get("debug")
+                result_payload["debug"] = {
+                    **(previous_debug if isinstance(previous_debug, dict) else {}),
+                    **debug,
+                }
+            return result_payload
+
         from openbiliclaw.sources.task_result_protocol import mutate_unstaged_result
 
         mutated, _canonical = mutate_unstaged_result(
             self._db,
             table="dy_tasks",
             task_id=task_id,
-            mutate=lambda _current: result_payload,
+            mutate=merge_failure,
             terminal_status="failed",
         )
         return mutated

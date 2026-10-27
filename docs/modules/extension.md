@@ -1,5 +1,30 @@
 # 浏览器插件模块
 
+## 小鱼设置请求（2026-10-23）
+
+实际 MV3 验收发现小鱼面板把 `/api` 重复拼进 URL。面板现在统一向 `requestJson` 传 `/fish/*` 相对路径，由公共 helper 添加一次 `/api`；配置、状态、账号保存/清除、扫码生成/轮询与运行入口共用此约定。新增公共 helper 与面板事件组合回归，覆盖 HTTP 方法与最终路径。后端公开 API 不变。
+
+## 弹窗设置布局（2026-10-23）
+
+设置分类改为随弹窗宽度采用四列（极窄屏三列）换行，七个分类不再套用六列固定网格或窄屏 92px 最小列宽。320–600px 的真实 Chromium 布局回归检查所有分类可见、可点击；不改变设置字段与保存 API。验收详见 [布局与封面延迟报告](../verification/2026-10-23-popup-cover-latency.md)。
+
+Popup 的 LLM 实例、默认链与模块选择支持 `api_route`（API Route），新实例预填 `gpt-5.5` 与 `https://global.api-route.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
+
+Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
+
+## 完整候选评估器选项
+
+高级设置的候选评分下拉新增 canonical `jev`：纯文本完整评估、受控主题 / IP，未知
+不偷偷交给 LLM。插件与桌面显示 provider readiness 和多模态不兼容提示，后端验证
+缺少凭据或冲突配置；不把 Jev 塞进聊天模型列表。移动 Web 设置与 CLI 使用同一配置。
+
+Jev 连接配置区与 Web 共用 `web/shared/jev-settings.js/.css`，构建时按现有机制复制到
+`popup/shared/`：服务开关、完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
+超时/重试。`collectForm()` 合并公共表单的严格部分更新到 `decision.providers.jev`，
+后端原子校验/持久化/排队应用，可同次切换完整评估器。空 Token 保留，清除需明确勾选，
+更换 URL 必须重填，保存后输入框清空，缓存配置只有安全状态不含 Token。没有新 host permission
+或后台直连 Jev：请求仍从后端发出。Chrome API stub 的 Chromium 测试不是实际 MV3 安装验收。
+
 > popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
 
 ## 模块范围
@@ -11,6 +36,30 @@
 - 通过 background service worker 缓冲并上报到本地后端
 - 在 side panel 中展示连接状态、推荐结果、画像和聊天入口
 
+### 推荐导演三模式接线
+
+side panel 的推荐页支持后端 `jev_recurrent`、`agent_jev`、`agent_only` 三种
+编排策略；模式配置仍由后端 TOML / CLI 管理，不增加另一套插件侧模式开关。
+`popup-api.js`、`popup-helpers.js` 和 `popup.js` 接入
+`src/openbiliclaw/web/shared/director-client.js`，构建时通过已有 shared 资源
+复制流程分发，与桌面 / 移动 Web 共用协议实现。
+
+普通 GET 只恢复已提交卡片；后端标记需要首屏、面板实际可见且没有旧卡片时才
+显式提交 NEXT。追加推荐为 NEXT，换一批为 STAY；首次没有批次的 STAY 仅在
+收到明确 `stay_without_batch` 后转换一次 NEXT。生成 ID 在本地持久化，失败
+重试复用，不因网络超时额外消费一屏；加载时禁用操作，错误保留已有卡片。
+
+卡片归一化保留 `batch_ref`、`stream_ref`、canonical `item_key` 和精确推荐行
+`id`。只有 IntersectionObserver 确认卡片真实进入视口、面板不在后台时才
+发送可见 ACK；预取、返回数据、屏外和后台卡片不算曝光。ACK 保持稳定 ID，
+最多重试两次，重挂载不重复记账。点赞、点踩、评论和点击都附带原始批次归因。
+旧后端和导演 off 继续使用原协议，不添加空的批次字段。
+
+完整接口与桌面 / 移动验证见
+[推荐导演批次协议](desktop-web.md#推荐导演批次协议桌面--移动-web)。共享行为
+由 `tests/js/director-client.test.mjs` 覆盖；插件还需运行既有 popup API、
+归一化测试、`npm run typecheck` 与 `npm run build:bundle`。
+
 ### 配置页 HTML 结构约束
 
 插件与桌面 Web 的设置面板都依赖浏览器原生 HTML 解析后再由脚本切换 `hidden` 状态。桌面 Web 平台源列表中的每个来源卡（尤其 Linux.do / V2EX）必须保持同级 `<article>` 节点，并在来源列表结束前闭合；来源卡不能包住后续的来源总览或其它 `data-settings-panel`。修改来源卡片时同步运行 `tests/test_desktop_web_linuxdo_settings.py`，防止标签嵌套导致配置页只剩 tab 栏。
@@ -19,15 +68,26 @@
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
+| 抖音热榜种子与等待预算 | ✅ | 有热词时复用原生搜索采集；仅无词兼容分支在未成功点击时使用 board seed、跳过首页 DOM，并按实际经过时间结束 route wait。流式解析修复后，本机真实双词任务返回 12 条并 completed；失败仍保留 partial 和诊断。 |
+| TikTok / Instagram 默认站点权限 | ✅ | Chrome、Firefox、Safari 清单默认声明 `*://*.tiktok.com/*` 与 `https://*.instagram.com/*`；保存 Instagram 设置不再请求/撤销站点权限。来源启用与账号登录仍独立控制；此项不提升各浏览器的来源功能验收结论。 |
+| Instagram 有界采集与竞争恢复 | ✅ | 非空 Likes 连续 3 次无新增返回 `progress_stalled` partial；限速等待后才启动 20 秒请求超时，bootstrap idle 根据间隔有界调整为 90–185 秒，12 分钟绝对期限不变。跨源锁竞争另建 30 秒 durable alarm，领取前仍须持锁与站点权限。 |
+| 聊一聊会话隔离与流结束校验 | ✅ | popup / 移动 Web 仅在 `done` 后确认流完成；迟到历史与消息按会话隔离，恢复沿用原 turn 的角色；popup 网络断连保持 agent 轮询，仅明确 503 降级旧聊天 |
+| 审批拒绝输入保留 | ✅ | popup / 移动 Web / 桌面共用审批草稿保留助手，周期刷新和流式重绘保留已展开拒绝表单、原因与焦点，终态更新立即移除操作；原因只读取对应 input，避免同名说明元素遮蔽 |
+| 移动/插件聊天风格 | ✅ | 六种独立于角色的风格模板，含说明与回复示例；通过会话 PATCH 保存，详情轮询恢复跨设备选择；保存等待/失败、切会话与旧 GET/PATCH 竞态有独立处理 |
+| 移动/插件会话草稿隔离 | ✅ | 未发送输入按会话保存在本页面内存；切到新会话输入为空，切回恢复自己的草稿，发送/清空后不复活旧文字；不跨刷新、设备或客户端同步 |
+| 聊天连接恢复与会话编辑保护 | ✅ | popup 在对话页从离线恢复可达时重取角色、风格与会话目录，避免启动过早导致空列表/错误默认标签；移动端抽屉重绘按会话保留未保存名称、焦点和选区，改名切到另一会话不串草稿 |
+| 移动聊天即时反馈与键盘布局 | ✅ | 发送立即显示用户气泡和等待态，完成即显示回复而不等待历史刷新；重绘保留输入节点、选区和多行高度，完成回复不打断阅读旧消息；键盘可视区收缩时折叠外层导航，保留对话、输入和待审批入口；320px 窄屏顶部连接状态保持单行 |
 | 统一品牌图标 | ✅ | Chrome / Edge / Brave / Firefox manifest 使用 16 / 32 / 48 / 128px 精确尺寸图标，side panel 顶部品牌标记、普通透明 PWA 图标、专用不透明 `maskable` / Apple 主屏幕图标、32px 根 favicon、首次设置页、桌面 Web、移动 Web 和 GitHub Pages 官网统一从 `assets/brand/openbiliclaw-icon.png` 派生。源图的半透明边缘已去除旧白底消光色；扩展图标、favicon 与 maskable 图标使用满幅品牌粉底，页面头图容器也用品牌粉承接透明圆角。旧字母 `B`、CSS 圆环和官网重复的内联 SVG favicon 已移除；社交分享图、Chrome Web Store 素材与 README / 官网截图通过 `build_social_preview_assets.py`、`capture_chrome_webstore_ui.py --refresh-docs` 和既有构建脚本确定性重建。 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 与 Linux.do 另有只读插件任务源；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / V2EX 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 通过插件任务源接入初始化 saved/upvoted/subscribed 信号和 discovery search/hot/subreddit/related；V2EX 普通页面只采集被动阅读行为，任务页由独立 dispatcher 执行四个只读 bootstrap scope；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
+| 初始化拒绝原因 | ✅ | popup 的首次 / 重新初始化通过 `describeInitStartError` 优先展示后端 `detail`；只接受非空字符串并截到 2000 字符，以纯文本呈现。无详情的 `no_profile_signal_sources` 使用平台中性提示，不把 Instagram / Linux.do / 微博误说成 Bangumi；账号准入仍由后端决定。 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 内容库 / 画像 / 对话四个一级 tab；内容库内用「稍后再看 / 收藏 / 历史记录」三个语义子 tab，兼容旧 `?tab=watchLater|favorites|history` 入口。历史按点开、出现未点和最近移除三组分页读取 30 天本地事实，使用 opaque cursor 续页；同一内容的多个移除 context 同卡显示，收藏和稍后再看可独立恢复，封面 lazy + low-priority 走既有代理缓存。历史读取有 12 秒截止时间；续页失败保留已有卡片并显示可访问的重试提示，坏封面显示 SVG fallback。顶部功能区提供「手机版」入口（v0.3.154 起为手机图形 + 「手机版」文字标签，与相邻图标同款白底样式），按当前插件后端地址和 HTTP/HTTPS scheme 生成 `/m/` 扫码链接；460px 以下窄宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会以同一 scheme 调用轻量端点 `GET /api/qr-info`（不触发 embedding readiness probe）并读取响应中的 `lan_ip` 字段，用局域网 IP 生成二维码，提示为 info 状态；后端优先返回 RFC1918 IPv4 并排除 `198.18.x.x` 等 VPN/TUN 地址，没有可用 IPv4 时回退 ULA / global IPv6，二维码生成器会把 IPv6 literal 包进 `[]`；移动 Web 推荐页首屏先渲染 `/api/recommendations`，再异步补 runtime status / activity / delight，慢请求不会让页面无限停在 loading；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；主聊天与移动/桌面 Web 共用 `session=popup&scope=chat`，聊天 Tab 可见且在线时约每 2.5 秒增量刷新历史，内容未变化不重绘，阅读旧消息时保留滚动位置；底部「最近发生的事」活动栏在四个一级 Tab 始终可见，聊天记录区在剩余空间内独立滚动，输入框固定在聊天区底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
 | Durable 对话失败展示 | ✅ | side panel 的主聊天在 `turn.status === "failed"` 时优先渲染后端持久化的安全 `turn.error`，不把历史遗留 `turn.reply` 误当成功；惊喜/探针内联 turn 只有 `completed` 才显示成功并移除已处理探针，`failed` 显示 `turn.error`、恢复 handled/按钮状态并保留卡片供重试。 |
 | Issue #147 聊聊口味 Markdown 渲染 | ✅ | 主聊天、惊喜推荐和兴趣/避雷探针内嵌聊天复用 `web/shared/dialogue-confirmation.js` 的安全 Markdown renderer；popup、桌面 Web、移动 Web 的 AI 回复支持加粗、斜体、标题、列表、代码块、引用和 `http(s)` 链接，原始 HTML / `javascript:` 等不安全内容不会进入 DOM，用户消息仍按纯文本展示。 |
 | Issue #184 AI 文案换行保留 | ✅ | 除聊天 Markdown 外，推荐理由、惊喜理由、探针理由等 AI 生成文案在三端统一保留换行（`white-space: pre-wrap`），不再把多行输出显示成一整段。 |
 | 对话确认入口（Wave C/D + 单队列 cutover） | ✅ | popup、移动 Web 与桌面 Web 共用 `web/shared/dialogue-confirmation.js` 渲染 `hypothesis` 卡片、纯提问气泡和普通文字 turn：卡片提供「准 / 不准 / 聊聊 / 稍后」四动作、可展开依据与原地结算态；纯数字、UUID、事件 / note 前缀、BVID 或裸哈希等只有机器 ID 的依据会整项过滤，过滤后为空则不渲染「依据」区。桌面「待聊确认」与插件保持同一套紧凑视觉：柔和品牌色折叠条、数字徽标、轻量箭头和单列小卡片，不再额外加入说明文案或桌面仪表盘式重容器；猜测卡片仍按标题、依据、结算状态、主次动作分层，430px 以下动作改两列，深浅主题、可见 focus 与 reduced-motion 继续沿用全局设计令牌。action 先乐观更新；同步 `200` 直接采用服务端状态，`already_settled`（包括相反 verdict）覆盖本地乐观结果。收到 `202 processing` 才复用各端既有 `fetchChatTurn` 按 `1s/2s/5s`（随后 5s）读取 durable turn，30 秒总截止；终态立即停，连续读取失败、截止或页面 abort 只把本地卡片标为 `retryable_error`，允许刷新/重试，不伪造 durable 失败。三端各自持有 action AbortController，页面卸载会终止轮询。popup 与移动 Web 的「待聊确认」列表调用 `GET /api/chat/pending-confirmations`，主动打开用 `session="popup"`；桌面端镜像相同语义并用 `session="popup"`，侧栏「聊聊口味」显示待聊计数。三端对话记录和待聊列表都使用有界独立滚动，重绘保留读者位置与已展开依据；聊天可见且在线时约每 2.5 秒增量刷新历史，快照未变化不重绘；移动端动作保持两列 44px 触控目标。待聊数字只在三端对话入口显示；service worker 不请求 `?count_only=1`，也不把待聊数写入工具栏，工具栏角标只表达后端不可达或未初始化。三端的画像/认知更新区均只读，主动确认只存在于 durable 对话卡片。后端 deprecated legacy 端点继续保留，新客户端不调用。 |
+| 聊一聊 Agent Loop 前端（M9，2026-09-23） | ✅ | popup 与移动 Web 的「聊一聊」主聊天切到 `POST /api/chat/agent/stream` 多跳真流式：thinking / tool_call / tool_result 过程逐跳流式铺开（每步一行折叠摘要、可展开参数与结果，完成后整体折叠），`final` 为答复气泡，`error` 给中文友好提示，历史经 `payload.agent_events` 回放；`loop_enabled=false`（503）两端都回退旧 `/api/chat/stream` 单跳流式。token streaming（issue #83）新增的 `delta` 事件对 popup 透明：`applyAgentEvent` 忽略未知事件，答复仍在 `final` 到达时落成气泡；移动 Web（`web/js/views/chat.js`）会把 `delta` 逐 token 渲染进实时气泡。两端共用新的 `web/shared/agent-chat.js`（SSE 增量解析 + 过程流 run 归约 + 卡片 markup，popup 由 build.mjs 复制进 `popup/shared/`）。popup 在对话 tab 内以「对话 / 会话 / 任务」子 tab 适配小窗：紧凑过程流（11px 单行摘要）、skill 下拉选择（按会话持久化）、`suggest_skill` 建议卡一键切换、L2 审批卡（批准/拒绝可填理由，「待审批」折叠列表轮询；2026-09-25 起适配 approve 异步执行协议：批准只入队，卡片转「执行中…」防重复点击，终态由 2.5s 轮询 executing 列表 + 全量快照恢复，旧协议同步 ok/result 经 `normalizeApproveResponse` 兜底，刷新/回放用 `applyApprovalRecordToRun` 恢复 executing 中间态）、会话新建/切换/归档、精简任务中心（进行中徽标、取消、内联详情、建议「带入对话」）；移动 Web 为抽屉式会话列表（含改名）、skill chip + 选择浮层、待审批面板（复用待聊确认折叠习惯，并列展示 executing 记录）与完整任务中心浮层。两端都渲染 `start_background_task` 确认卡与 `agent_task_summary` 汇总卡；delight / 探针内嵌聊天保持旧单跳路径不变。 |
 | Turn binding 与三端对话 surface（2026-08-01） | ✅ | 本行 supersede 上一行 Wave C/D 的历史移动端只读描述：popup、mobile web、desktop web 共用 `web/shared/dialogue-confirmation.js` 的 context preview、context bar、reply quote、opaque-evidence 过滤与 stick-to-bottom 规则。`聊聊` 只 POST `reply_to_turn_id`，服务端 canonicalize；context GET 只读，失败保留 draft/target。三端都为历史与待聊列表提供独立有界滚动，重绘恢复已展开依据；移动端额外恢复草稿与焦点，并保留卡片 action/processing poll。卡片进入 terminal state 后，各端在下一次历史同步中静默清除已完成 context，避免把预期结算误报成英文错误；已知 context error 统一优先显示中文。移动端聊天页的回顶按钮对 360px 窄屏保留额外垂直间距，不与发送按钮相交。 |
 | Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；`refresh.pool_updated` 只合并池子状态并刷新 header / pool chips / 底部可换提示 / 空态文案，不再重拉推荐列表，避免覆盖用户已经 append 出来的历史卡片。`dy_task_available` 是扩展 dispatcher 的 transport wake-up，桌面 Web 不把它投影成用户可见活动。插件 side panel 从离线转在线时（包括首次 `/api/ping` 瞬时失败但 `/api/runtime-stream` 随后连上的竞态）会立即调度推荐刷新；popup 离线期间会每 1 秒轻量重探测 `/api/ping`，runtime-stream 自身也固定每 1 秒重连，成功后停止轮询并切回在线刷新流程，避免后端已启动但插件仍停在“后端还没开张”的旧空态。 |
 | 兴趣挑战探针 UI | ✅ | `interest.probe` 和 `speculative_interests` 会保留后端的 `probe_mode` / `challenge` metadata；profile 页确认会向 `/api/interest-probes/respond` 传 `surface="profile"`，写回为 `profile_confirmed`，而 inbox / runtime probe 卡片确认保持默认 `probe_confirmed`。插件 side panel、移动 Web 和桌面 Web 会把普通 `near` 兴趣探针与 `lateral/bridge/wildcard` 挑战探针拆成不同样式和提示：普通兴趣强调继续探索，挑战探针提示“把口味往侧边推一点”，区别于避雷探针。四个可见动作固定为「确认喜欢 / 暂时搁置 / 确认不喜欢 / 多聊聊」，分别提交 `confirm / defer / reject / chat`；用户处理同一 domain 后，三端会用 handled probe key 立即从 inbox、画像页和 runtime hydration 里隐藏该探针，避免后端旧快照/缓存再次把它展示出来。 |
@@ -40,20 +100,21 @@
 | 推荐点击幂等身份 | ✅ | side panel、移动 Web 与桌面 Web 的 `/recommendation-click` pending request ID 都以 `recommendation_id + content_id/bvid` 为稳定身份；只有内容没有稳定 ID 时才使用去 fragment 的规范化 URL fallback。小红书等来源的签名 token 或跳转 URL 在重渲染/响应丢失重试时可以变化，但同一 concrete click 仍复用原 request ID，不会重复学习。 |
 | 公开事件 ID 完整性 | ✅ | `/api/events` 每个 event 的 `event_id`、`/api/feedback` 与 `/api/recommendation-click` 的 `request_id` 均为必填 1–400 字符。MV3 buffer 在事件创建时补 ID 并随 `obc_event_buffer` 持久化，失败回填/`not_initialized` 停车场/worker 重启继续复用；popup、移动 Web、桌面 Web 的推荐反馈、点击和 saved-card 行为命令使用 pending ID store，只有 accepted/成功响应才删除。saved-card like/dislike/comment 的 retry identity 使用 item + action + note，同一动作重试稳定，新的独立动作重新生成。 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions`。固定使用项目自有 Gecko ID `openbiliclaw-firefox@whiteguo233.github.io`，签名凭据必须来自拥有该 ID 的 AMO 账号。GitHub Release 链路继续通过 `web-ext sign --channel=unlisted` 生成可直接安装的 signed XPI；公开商店则由独立 `Submit Firefox AMO Listed Package` workflow 使用 `amo-metadata.json`、同步后的隐私政策和同 commit 可复现源码包提交 `listed` 审核，并在结束前通过 AMO API 核验版本 channel。AMO 版本号跨 listed / unlisted 全局唯一，因此公开提审必须使用尚未用于 unlisted 签名的新扩展版本。 |
-| Safari Web Extension 支持（issue #156） | ✅ | `manifest.safari.json` + `build:safari` 产出自包含 `dist-safari/`，`convert:safari` 调 Apple `safari-web-extension-converter` 生成 Xcode 工程（仅 macOS + Xcode 可用）。Safari 无 side panel / OS 通知 / `world:"MAIN"` 内容脚本，改用 `action.default_popup` 承载同一套 popup UI，去掉 `side_panel`/`sidePanel`/`notifications` 与 `world` 字段并保留 `alarms`/`scripting`/`cookies`/`storage`；service worker 对 `chrome.notifications`/`chrome.alarms` 注册加空值守卫，Safari 构建经 esbuild banner 注入 `browser → chrome` shim（Chrome/Firefox 构建不带 banner）。MAIN-world tap 改由 `content/safari-page-injector.js` 以 page-context `<script>` 桥接注入，Cookie 同步改为全量读取 + JS 域过滤以规避 Safari `cookies.getAll({domain})` 精确域差异。全链路 build → convert → xcodebuild 已验证，构建/签名/限制矩阵见 [safari-extension-build.md](../safari-extension-build.md) |
-| 自动任务标签页默认静音（issue #163） | ✅ | 新增 `background/task-tab.ts` 共享助手 `createTaskTab()`：所有由后台 dispatcher 自动打开的标签页（B 站搜索兜底、小红书、抖音、知乎、Reddit、Linux.do、V2EX、微博、YouTube、原生保存任务与新开 E2E 平台页）创建后立即 `tabs.update(tabId, { muted: true })`，避免抖音等自动播放页面在无人值守时突然出声。Chrome 的 `tabs.create` 不接受 `muted`（Firefox 100+ / Safari 14+ 接受），因此统一走「先 create、再 update 静音」的跨引擎路径；静音状态跨后续 `tabs.update` 导航保持，用户可随时在标签栏手动取消静音，静音失败不影响任务执行。复用已有用户标签页（原生保存 / E2E 的 reuse 分支）保持原样，不会改用户自己标签的静音状态。 |
+| Safari Web Extension 支持（issue #156） | ✅ | `manifest.safari.json` + `build:safari` 产出自包含 `dist-safari/`，`convert:safari` 调 Apple `safari-web-extension-converter` 生成 Xcode 工程（仅 macOS + Xcode 可用）。Safari 无 side panel / OS 通知 / `world:"MAIN"` 内容脚本，改用 `action.default_popup` 承载同一套 popup UI，去掉 `side_panel`/`sidePanel`/`notifications` 与 `world` 字段并保留 `alarms`/`scripting`/`cookies`/`storage`；service worker 对 `chrome.notifications`/`chrome.alarms` 注册加空值守卫，Safari 构建经 esbuild banner 注入 `browser → chrome` shim（Chrome/Firefox 构建不带 banner）。MAIN-world tap 改由 `content/safari-page-injector.js` 以 page-context `<script>` 桥接注入，Cookie 同步改为全量读取 + JS 域过滤以规避 Safari `cookies.getAll({domain})` 精确域差异；仅 Safari 构建会在 B 站默认 Cookie store 缺少登录三件套时逐 store 查找，只有唯一候选 store 内完整才上传，不跨 store 合并，也不静默选择多个完整候选之一；缺失诊断只记录 Cookie 名称（issue #304）。全链路 build → convert → xcodebuild 已验证，构建/签名/限制矩阵见 [safari-extension-build.md](../safari-extension-build.md) |
+| 自动任务标签页默认静音（issue #163 / #332） | ✅ | 共享 `background/task-tab.ts` 的 `createTaskTab()` 先创建 `about:blank`、等待 `tabs.update({muted:true})` 成功，再导航到任务网址，消除先加载网站造成的自动播放竞态。静音或导航失败会关闭自建 tab 并拒绝任务，不再静音失败后继续播放。抖音恢复持久化任务时也会重新静音自建 tab，失败即关闭并回报 `task_tab_mute_failed`。保留调用者的前后台 / 窗口 / 索引选项，静音跨后续导航保持；复用用户自己标签页的分支不受影响。 |
+| 抖音任务状态跨 event page 持久化（issue #140） | ✅ | Firefox MV3 的 background scripts 是 event page（空闲约 30 秒即被浏览器卸载），Chrome MV3 service worker 同样会被回收；`dy-task-dispatcher.ts` 此前把任务执行状态全放在模块级内存、超时靠模块级 `setTimeout`，worker 卸载后超时回调丢失、迟到的 `DY_SEARCH_RESULT` 被丢弃、任务标签页残留。现在进行中任务的快照（任务体、任务 tab id、deadline、search/hot/feed/bootstrap 进度）在每次状态迁移时串行写穿到 `chrome.storage.session`（key `openbiliclaw_dy_active_task`），超时改用一次性 `chrome.alarms`（`openbiliclaw-dy-task-timeout`）作为权威兜底，模块级 `setTimeout` 仅作同进程精确快速路径。新 worker 经 `ensureDyTaskRecovery()`（service worker 启动、poll alarm、超时 alarm 与 `DY_*_RESULT` 消息入口共用同一 barrier）恢复快照：迟到的结果继续回传 partial/final 并正常收尾，已过期的记录补报 `failed + task_timeout` 并关闭记录的任务 tab，任务 tab 已消失时立即以 `task_tab_closed` 结算；无记录时按 `openbiliclaw_dy_task=1` URL 标记清扫孤儿任务标签页（不动用户自己的抖音标签）。`cleanupTask()` 同步清除 session 记录与超时 alarm；manifest 的 `storage` / `alarms` 权限 Chrome 与 Firefox 均已声明，无需新增。回归：`tests/dy-task-recovery.test.ts` 8 条（快照持久化、迟到结果、过期兜底、alarm 入口、tab 丢失、孤儿清扫、提前 alarm 不误伤、异关键词忽略）。 |
 | 来源周期回拉逐源开关 | ✅ | 插件 side panel 与桌面 Web 的平台源配置页为每个支持周期回拉的来源增加“允许扩展周期回拉”开关，默认关闭；调度页提供总开关 `source_incremental_enabled`，后端同时检查总开关与来源开关，只有两者都开启才入队周期 bootstrap 任务。关闭某来源时其 scheduler-owned 待执行任务会被取消。 |
-| 收藏夹 / 稍后再看 | ✅ | 推荐卡和 delight banner 的「时钟=稍后再看」「星星=收藏」统一把 canonical identity 交给 `/api/saved/*`；optimistic 状态只代表本地保存，平台失败不取消按下态。独立「稍后 / 收藏」页采用后端状态驱动：六个平台都保留手动同步入口；`pending` 只有在带非空 task ID 时才视为执行中并禁用重复动作，空 task ID 仍是可手动同步的本地保存；`unsupported_content_type` 才是 local-only / 无按钮，`unsupported_adapter_missing` 仅作滚动升级重试兼容；`extension_required` 显示连接已安装登录态插件的指引和重试，成功态展示真实 `resolved_target`。页面级「同步未同步内容（N）」继续保留，任务轮询完成后按平台显示成功/总数。移除只删本地 membership。「全部稍后看」只移除本地保存成功项。设置页默认关闭「保存时自动同步到对应平台」，首次开启确认账号写入警告；手动同步不受开关影响。saved/config 的单个 Abort deadline 覆盖设备会话交换与 401 强制刷新；批量同步和重试加载会在重渲染前捕获列表级焦点并优先还原到同一动作。 |
-| 原生保存验证边界 | ✅（6/6 executor + 真实账号验证） | 本地 / CI / 默认 smoke 只验证默认关闭、local-first membership、列表与任务状态。六平台真实 favorite / watch-later 只能在 `allow_state_changing=true` 且 exact platform/action/public content ID/expected target 的精确命名授权同时存在时，经 production durable broker 执行。Task 10 为 trusted-local `/api/extension/e2e/run` 增加 dedicated 模式：exact envelope 与 generic actions 互斥，扩展仅提交一个 canonical item 到 `/api/saved/{action}/sync`、严格关联同一 task/item/resolved target，再用 six-field callback 回传。通用捕捉 E2E runner 即使收到有效 envelope 也固定拒绝 favorite/bookmark。Reddit / X / YouTube / 小红书 / 抖音 / 知乎六个 executor 均已接入并完成 fixture；登录态只存在于已安装扩展，job 不含账号 ID、Cookie 或账号凭据，小红书仅可携带 saved membership 已有的公开笔记导航 `xsec_token/xsec_source`，授权与结果仍只有安全字段。一般 runner 只在 tab 创建/加载阶段占用共享 mutex；XHS 手动 native-save 使用 exact route + identity/control fence，可越过后台 discovery mutex并由 single-flight poll 防重复领取。YouTube duplicate exact `OpenBiliClaw` rows 优先 checked proof，否则稳定复用一个且不删除列表；知乎按 current `收藏 / 已收藏` aria 状态同步到 `知乎收藏`，不支持命名收藏夹且永不点击初始“已收藏”；小红书支持 current `noteContainer/collect-wrapper`。完整矩阵以 runbook 为准。 |
+| 收藏夹 / 稍后再看 | ✅ | 推荐卡和 delight banner 的「时钟=稍后再看」「星星=收藏」统一把 canonical identity 交给 `/api/saved/*`；optimistic 状态只代表本地保存，平台失败不取消按下态。独立「稍后 / 收藏」页采用后端状态驱动：七个平台都保留手动同步入口；`pending` 只有在带非空 task ID 时才视为执行中并禁用重复动作，空 task ID 仍是可手动同步的本地保存；`unsupported_content_type` 才是 local-only / 无按钮，`unsupported_adapter_missing` 仅作滚动升级重试兼容；`extension_required` 显示连接已安装登录态插件的指引和重试，成功态展示真实 `resolved_target`。页面级「同步未同步内容（N）」继续保留，任务轮询完成后按平台显示成功/总数。移除只删本地 membership。「全部稍后看」只移除本地保存成功项。设置页默认关闭「保存时自动同步到对应平台」，首次开启确认账号写入警告；手动同步不受开关影响。saved/config 的单个 Abort deadline 覆盖设备会话交换与 401 强制刷新；批量同步和重试加载会在重渲染前捕获列表级焦点并优先还原到同一动作。 |
+| 原生保存验证边界 | ✅（7/7 executor 注册；前六平台有真实账号验证，TikTok 授权 E2E 已运行，持久化未确认） | 本地 / CI / 默认 smoke 只验证默认关闭、local-first membership、列表与任务状态。七平台真实 favorite / watch-later 只能在 `allow_state_changing=true` 且 exact platform/action/public content ID/expected target 的精确命名授权同时存在时，经 production durable broker 执行。Task 10 为 trusted-local `/api/extension/e2e/run` 增加 dedicated 模式：exact envelope 与 generic actions 互斥，扩展仅提交一个 canonical item 到 `/api/saved/{action}/sync`、严格关联同一 task/item/resolved target，再用 six-field callback 回传。通用捕捉 E2E runner 即使收到有效 envelope 也固定拒绝 favorite/bookmark。Reddit / X / YouTube / 小红书 / 抖音 / 知乎 / TikTok 七个 executor 均已接入并完成 fixture；登录态只存在于已安装扩展，job 不含账号 ID、Cookie 或账号凭据，小红书仅可携带 saved membership 已有的公开笔记导航 `xsec_token/xsec_source`，授权与结果仍只有安全字段。一般 runner 只在 tab 创建/加载阶段占用共享 mutex；XHS 手动 native-save 使用 exact route + identity/control fence，可越过后台 discovery mutex并由 single-flight poll 防重复领取。YouTube duplicate exact `OpenBiliClaw` rows 优先 checked proof，否则稳定复用一个且不删除列表；知乎按 current `收藏 / 已收藏` aria 状态同步到 `知乎收藏`，不支持命名收藏夹且永不点击初始“已收藏”；小红书支持 current `noteContainer/collect-wrapper`。完整矩阵以 runbook 为准。 |
 | 原生保存不确定确认复核 | ✅ | 抖音 / 小红书 / YouTube / 知乎的 executor 在 mutation 后返回 `native_confirmation_not_observed` 时，runner 会先 abort 并 await 原 document sender，再重载 exact content URL；新 content document 必须通过 `NATIVE_SAVE_READY` 返回不同的 `document_instance_id`，随后才接收独立 `execution_id` 的 `verification_only`。平台 verifier 可只读打开必要弹窗并轮询 target 后置条件，但不创建容器、不点击目标项；知乎仅读取精确内容的全局 favorite 状态，任何复核路径都不点击“收藏”“已收藏”或“取消收藏”。明确命中后返回 `already_synced`，其它 verifier 终态或异常都保留原失败码。runner 在 `about:blank` 阶段先持久登记 task-tab owner，首次导航与 reload 都禁止普通 collector；callback 要求 2xx 并以同一 payload 有界重试，tab 删除不确定时保留 session 恢复记录。 |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
 | 海外网络模式设置 | ✅ | v0.3.165+ 通用 tab 与桌面 Web 对齐提供 `direct / system / custom` 三档和自定义代理地址；加载、保存及「测试网络」均提交同一 `network.mode + proxy` 草稿。默认直连明确忽略环境代理，只有 system 继承，custom 缺地址由后端 400 拒绝。 |
 | 封面图评估设置 | ✅ | side panel 高级功能 tab 的「多模态处理」section 补齐 `[discovery]` 多模态评估控制：可开关候选封面参与 LLM 评估，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存 payload 会保留已有 discovery 字段后覆盖 `multimodal_*` 参数，与桌面 Web 设置页保持同一配置面。图像 Embedding 能力是独立开关，P1/P3 依赖它而不依赖候选封面 LLM 评估。 |
 | 搜索词生成模式选择器 | ✅ | popup 高级功能 tab 的「搜索词生成」section（与桌面 Web `/web` 设置页一致）新增「搜索词生成模式」下拉 `#cfgKeywordGenerationMode`，三档 经典 / 混合 / 灵感（option value `legacy` / `hybrid` / `inspiration`，两端 option 值 / 顺序 / 文案一致），并附「混合最贵」成本提示。加载从 `cfg.discovery.keyword_generation_mode` 回填（缺省 `legacy`），保存把该键写进 discovery payload（**在 `...(state.runtimeConfig?.discovery \|\| {})` 展开之后**，避免加载快照覆盖用户选值）。它由后端 `inspiration_search_enabled` / `inspiration_replace_merged_keywords` 两布尔派生（`config.toml` 仍只存两布尔），`PUT /api/config` 把 mode 翻译回两布尔并规范化，非法值 → 422。详见 [config 模块的 `keyword_generation_mode` 映射表](config.md)。 |
 | 回复语气设置与测试 | ✅ | 桌面 Web（`/web` 设置页「回复语气」section）与插件 side panel（「画像理解」页签同区）均可编辑 `[soul] reply_style`（单行，≤200 字，追加式语气指令，影响对话 / 推荐文案 / 画像）与 `[soul] dialogue_tone_prompt`（多行 textarea，≤1000 字，整体替换聊天语气块，只影响聊天）；两端都有「测试语气」按钮：先经 `PUT /api/config` 局部保存这两个字段（字段级合并、空串可清空、即时热重载），再 POST `/api/chat` 发固定试句并把真实回复内联展示在按钮下方，无需切到聊天页。详见 [config 模块](config.md)。 |
 | 桌面 Web 设置页对齐插件 | ✅ | 桌面 Web（`/web`）设置页 `src/openbiliclaw/web/desktop/` 的可配置面与插件 side panel 拉齐：模型 tab 补 `llm.concurrency`、DeepSeek `reasoning_effort`，并提供 LLM / embedding 测试按钮（当前表单草稿 → `/api/config/probe-service`，不保存配置；v0.3.155+ 备选子页另有「测试备选 Provider」按钮走 `kind="llm_fallback"` 精确探测备选，且备选下拉会禁用与主 Provider 同名的选项并对同名旧配置显示行内警告）；平台源 tab 补完整 X(Twitter) 源块（`enabled` / `cookie_env` / 三项预算 / `request_interval` / `min_interval`）+ `GET /api/sources/x/status` 源健康提示、YouTube `min_interval_minutes`、知乎源块（`enabled` / search-hot-feed-creator-related 五项预算 / `request_interval` / `min_interval`）和候选池 X / 知乎占比；调度 tab 补 9 个真实 runtime 参数（`extension_disconnect_grace_seconds` / `refresh_check_interval_seconds` / `signal_event_threshold` / `feedback_batch_threshold` / `trending_refresh_minutes` / `explore_refresh_minutes` / `discovery_limit` / `proactive_push_interval_seconds` / `speculator_idle_interval_minutes`）；通用 tab 补局域网访问密码（`/auth/status` + `/auth/admin`，同源 loopback 视为可信本机）与开机自启（`/autostart-status` + `/autostart/apply`）。桌面 Web 同时移除了运行时不消费的 `discovery_cron` 旧字段，与插件一致；推荐页平台过滤 tab 会先按 `config.sources` / `pool_source_shares` 中启用的平台展示，再合并当前推荐卡真实来源，点击后只过滤当前已加载列表，命中为空时保留空结果状态 |
-| 平台源设置页卡片化 | ✅ | 桌面 Web（`/web`）和插件 side panel 的「平台源」tab 都改成**一个来源一张卡**：卡面常驻「图标 / 名称 / 来源与接入徽章 / 最近状态」，桌面端另在卡面直接编辑候选池占比并保留启用下拉，配置区默认折叠、按需展开。展开区对十二来源使用同一套分段骨架——`接入方式`（Cookie 粘贴 / 令牌 / 插件登录态 / 公开接口四种形态共用同一容器和脱敏预览）、`发现分支与每日预算`（分支开关与该分支预算并排成表；无 `source_modes` 的来源只渲染预算列，不伪造开关）、`节流`、`<平台> 专属`（B 站 agent-browser、Reddit 命令后端、Bangumi 条目类型与初始化上限、V2EX PAT / Node/Tab 配置、微博登录态 init 任务、GitHub 公开用户名与可选 PAT）、`验证`。停用的来源只留卡面、不可展开，配置项仍在 DOM 中参与保存 payload。桌面端把原先独立的「来源接入状态」列表与「Cookie / 登录凭据状态」折叠区并入各自卡片（`#sourceCredentialList` 已移除，状态与凭据渲染统一从 `#sourceStatusList` 取行），候选池占比另有一张带权重条形图的总览卡与卡面双向同步；两端新增吸底保存栏，显示「已修改 N 项」并就地保存（桌面端另有「放弃修改」按最近一次后端快照回滚）。插件保存栏固定在扩展视口底部，滚动区预留操作栏与安全区高度，长表单最后一项不会被遮挡。保存按钮在无修改和请求进行中禁用；输入、LLM 草稿及建议比例等程序化修改都会解锁，成功后重新禁用，失败时保留修改供重试。所有输入框 id 与保存 payload 未变，仅重排信息架构。 |
+| 平台源设置页卡片化 | ✅ | 桌面 Web（`/web`）和插件 side panel 的「平台源」tab 都改成**一个来源一张卡**：卡面常驻「图标 / 名称 / 来源与接入徽章 / 最近状态」，桌面端另在卡面直接编辑候选池占比并保留启用下拉，配置区默认折叠、按需展开。展开区对十三来源使用同一套分段骨架——`接入方式`（Cookie 粘贴 / 令牌 / 插件登录态 / 公开接口四种形态共用同一容器和脱敏预览）、`发现分支与每日预算`（分支开关与该分支预算并排成表；无 `source_modes` 的来源只渲染预算列，不伪造开关）、`节流`、`<平台> 专属`（B 站 agent-browser、Reddit 命令后端、Bangumi 条目类型与初始化上限、V2EX PAT / Node/Tab 配置、微博登录态 init 任务、GitHub 公开用户名与可选 PAT）、`验证`。停用的来源只留卡面、不可展开，配置项仍在 DOM 中参与保存 payload。桌面端把原先独立的「来源接入状态」列表与「Cookie / 登录凭据状态」折叠区并入各自卡片（`#sourceCredentialList` 已移除，状态与凭据渲染统一从 `#sourceStatusList` 取行），候选池占比另有一张带权重条形图的总览卡与卡面双向同步；两端新增吸底保存栏，显示「已修改 N 项」并就地保存（桌面端另有「放弃修改」按最近一次后端快照回滚）。插件保存栏固定在扩展视口底部，滚动区预留操作栏与安全区高度，长表单最后一项不会被遮挡。保存按钮在无修改和请求进行中禁用；输入、LLM 草稿及建议比例等程序化修改都会解锁，成功后重新禁用，失败时保留修改供重试。所有输入框 id 与保存 payload 未变，仅重排信息架构。 |
 | 统一来源接入状态 | ✅ | `GET /api/sources/status`（`SourcesStatusResponse`）只读本地配置、Cookie 文件、登录心跳、任务历史和 X 健康表；它不访问平台，也不执行 Reddit 命令。B站三字段完整为 `ready`、不全为 `partial`；抖音本地 Cookie 存在仅为 `unverified`，不冒充实际登录成功；小红书 / 知乎以插件最近上报的布尔登录态为权威，区分从未同步 `unverified`、显式登出 `missing`、新鲜已登录 `ready`、过期已登录 `stale`，知乎仅在从未同步时回落任务历史；Reddit `rdt` 只检查本地 credential 文件，非 rdt 后端显示 `unverified`；X 沿用已持久化的真实健康结果，YouTube 为 `no_auth`；Bangumi、V2EX 与 GitHub 使用匿名 / 可选 PAT 的 auth contract；GitHub PAT 拒绝只降低凭据验证态，不阻断匿名公开 discovery。插件 side panel、桌面 Web 与 setup 引导页三端加载**同一个** `src/openbiliclaw/web/shared/source-status.js`（插件由 `scripts/build.mjs` 在 build 时复制进包，因为 MV3 CSP 禁止从后端拉脚本；复制产物 `popup/shared/` 已 gitignore，勿提交），页面可见时每 30 秒只轮询本地后端；`ready` 显示「凭据已就绪」而不是「接入可用」，仅 `ok` 表示已有真实健康验证。凭据表单改由 `GET /api/sources/credentials` 的 `form` 描述符驱动：`extension_only`（小红书 / 知乎）**不渲染可粘贴输入框**（后端不存它们的 cookie），V2EX 与 GitHub 都只显示 PAT 是否存在、不回读明文；GitHub 仅接受固定专用环境变量或配置写入。状态标签与色调现由 `item.auth` 派生（`auth_required=false` → `credential` → `verification`），legacy `state` 仅在 `auth` 缺失或畸形时兜底；`verify_method` 作为独立的证据强度维度渲染，用字形（◆ 联网证据 / ◇ 本地或间接证据 / — 无验证能力）与边框编码，不依赖颜色。 |
 | 需要海外出网的来源提示 | ✅ | `SourceStatusItem` 增加 `requires_overseas_network`（平台是否在 GFW 外）与 `network_hint`（可直接渲染的文案，仅在 `[network].mode = direct` 时非空）。**清单与两份文案都只在 `sources/platforms.py` 一处**：海外桶 = bangumi / youtube / twitter / reddit / github，其中 bangumi / youtube / github 的后端 HTTP 出网由 `[network].mode` 掌管（GitHub 始终走后端 official REST client；X 走 `twitter_cli`+curl_cffi、Reddit 走 `rdt`/OpenCLI 子进程或插件，`direct` 从不清 `HTTP(S)_PROXY`，改设置修不好），因此两类给不同措辞。桌面 Web 与扩展 popup 都只做「`network_hint` 非空且该来源已启用就原样渲染」，不认识任何平台名，加新平台=改后端一行；`tests/test_source_network_hints.py` 钉死这一点 |
 | 来源首页问题定位 | ✅ | 共享 `source-status.js` 新增 `describeSourceIssue()`，只把已启用来源的缺凭据、不完整、过期、失败、受阻、限流和未知契约判为问题，并保留后端 `detail` 原文；普通 `unverified` / `syncing` 不误报。桌面首页将这组「来源接入」问题与 B站/X/画像的「账号同步」问题分开命名后组合显示。微博公开 discovery 可匿名，个人 init 只在登录态 heartbeat + 任务桥 ready 时运行。 |
@@ -62,6 +123,7 @@
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | B 站扩展搜索兜底任务 | ✅ | service worker 轮询 `/api/sources/bili/next-task` 并响应 `bili_task_available` 即时 kick；后台 tab 打开 `search.bilibili.com/all?keyword=...`，严格日期偏好还会携带 `pubtime_begin/pubtime_end`，B 站 content script 抓渲染后的搜索结果卡片，回传 `BILI_TASK_RESULT` 到 `/api/sources/bili/task-result`。该链路在后端 API search 冷却或短期 DOM fallback 降级信号存在且扩展在线时由 producer 入队，不取代 API 主路径；软偏好不向网页搜索下推硬边界。
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
+| TikTok Cookie 自动同步 | ✅ | service worker 在检测到 tiktok.com 登录（sessionid / sessionid_ss / sid_tt 至少其一）后读取完整 Cookie jar 推送到统一凭据端点 `/api/sources/tiktok/credential`（结构校验 + passport 会话心跳 live probe，与设置页粘贴同一强度），落盘 `data/tiktok_cookie.json`；访客身份无 Cookie 是合法状态，未登录 / 登出时静默跳过不打扰；冷启动、`cookies.onChanged`（按平台防抖）、runtime-stream `tiktok_cookie_sync_requested` 和小时 alarm 都会触发 |
 | 小红书 / 知乎 / Linux.do 登录态同步 | ✅ | service worker 分别判断 `xiaohongshu.com` 的 `web_session`、`zhihu.com` 的 `z_c0`、`linux.do` 的 `_t` 是否存在且非空，只把 `logged_in` 布尔值推送到各自 `/login-state`；Cookie 值不上传，后端也不保存或重放这三站 Cookie。冷启动、cookie 变化、runtime-stream 请求和每小时 alarm 都可刷新布尔心跳；这里只读取浏览器 Cookie store，不打开、刷新或请求平台页面。 |
 | Bangumi 身份自动识别 | ✅ | 新增 `*://*.bgm.tv/*`、`*://*.bangumi.tv/*` host permission（商店披露需同步）与两段脚本：MAIN-world `bgm-identity-bridge` 读取页面公开 `CHOBITS_UID`（>0 即已登录，登出不上报），isolated `content/bangumi.js` 只从本人专属导航区（idBadgerNeue/dock）解析 `/user/<username>`（泛化 avatar 兜底因真机实证会命中时间线路人已删除，抓不到就报空），`POST /api/sources/bangumi/identity` 经后端 `GET /v0/users/{username}` 权威比对 `id == uid` 后持久化（不一致只存 uid 并 WARNING），供 guided init/CLI 零配置识别账号（优先级：令牌 /v0/me > 显式用户名 > 扩展上报）。Bangumi 不是行为采集平台：只上报公开的 uid+username，不读 Cookie，不采集浏览行为 |
 | Cookie 同步重试按平台隔离 | ✅ | B站 / 抖音 / X / Reddit / 小红书登录态 / 知乎登录态 / Linux.do 登录态各用独立 retry alarm；一个平台同步成功不会重置另一个平台的快速重试，`cookies.onChanged` debounce 也按平台隔离。Linux.do alarm 为 `openbiliclaw-cookie-sync-linuxdo`，且 payload 永远只有布尔值。旧共享 alarm 仍兼容触发一轮全量同步后清除。 |
@@ -96,7 +158,7 @@
 | 抖音初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件依次访问抖音发布 / 收藏 / 喜欢 / 关注 scope，当前账号只接受 `profile/self` MAIN bridge 正面确认（或同一 tab 的已确认缓存）；`#RENDER_DATA` 仅在显式登录时作未确认候选，常驻 tap 不从被动请求 URL 提取身份。随后结合 DOM、fetch tap 与 API harvester 采集条目，并用 `partial` 分批回传给 `/api/sources/dy/task-result`；身份 / 分页不完整时终态为 `degraded`。动态 fetch-tap 注入兼容 release/unpacked 两种资源根布局，依次尝试 `dist/main/dy-fetch-tap.js` 与 `main/dy-fetch-tap.js` |
 | 扩展任务并发领取保护 | ✅ | XHS / 抖音 / YouTube 的 `/next-task` claim 使用短生命周期 SQLite 连接执行 `BEGIN IMMEDIATE`，避免多个 FastAPI threadpool 请求共享同一 connection 时出现嵌套事务错误 |
 | 抖音搜索任务 | ✅ | 后端可派发 `search` 任务；插件用后台 tab 先打开抖音首页，在已登录页面里模拟搜索框输入 / 点击搜索，并等待 URL 进入 `/jingxuan/search/<keyword>` 等真实搜索结果路由；任务 debug 用 `ui_triggered` 表示已提交、`search_navigation_ok` 表示已进入结果页，避免把搜索建议或登录弹窗误报成成功搜索；随后被动收集页面自身搜索响应和渲染 DOM，回传 `dy_search` 候选供 CLI smoke 和正式 `dy-plugin-search` discovery 使用；MAIN-world fetch tap 兼容 `/general/search/single/`、`/search/item/` 和新版 `/general/search/stream/` chunked JSON；runtime 会把候选写入统一待评估池。单任务默认等待 180 秒，但同一 discovery cycle 共享一份等待预算；后端超时 / 取消会把任务原子写成 `failed + wait_timeout/wait_cancelled`，不会留下 pending storm。 |
-| 抖音热点任务 | ✅ | 后端可派发 `hot` 任务；hot board 的 `group_id` 会作为 `seed_aweme_id` 透传，插件优先执行带 seed 的热词；后台 tab 仍从抖音首页出发模拟热榜点击并被动收集响应 / DOM，不足时用已登录页面的 related API bridge 拉取 `dy_hot` 候选供 `dy-plugin-hot-related` discovery 使用；runtime 会把候选写入统一待评估池 |
+| 抖音热点任务 | ✅ | 后端可派发 `hot` 任务；有真实 hot-board word 时复用搜索采集器，按该热词触发页面搜索、接收原生响应和 DOM，再映射为带 `sentence_id / hot_word` 的 `dy_hot` 候选。缺少热词时才保留 seed-related 路径。真实页面的热点词点击同样进入搜索页；单有 `group_id` 不能证明 related API 视频与热词相关。策略名 `dy-plugin-hot-related` 为兼容保留，runtime 继续写统一待评估池。 |
 | 抖音首页推荐流任务 | ✅ | 后端可派发 `feed` 任务；插件用后台 tab 打开已登录抖音首页，滚动推荐流触发页面加载，再被动收集 feed 响应和渲染 DOM，回传 `dy_feed` 候选供 `dy-plugin-feed` discovery 使用；runtime 会把候选写入统一待评估池 |
 | YouTube 初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件依次访问 `/feed/history`、`/feed/channels`、`/playlist?list=LL`，从 DOM 读取观看历史 / 订阅 / 点赞并用 `partial` 分批回传给 `/api/sources/yt/task-result`。`yt/task-executor.ts` 兼容新旧卡片布局：支持 shadow-root 递归、`yt-lockup-view-model` light DOM 类名（`a.ytLockupMetadataViewModelTitle` 等）和旧 `#video-title` / `#channel-name` / `img#img` 选择器 |
 | 知乎事件拉取任务 | ✅ | 后端可派发 `bootstrap_events` 任务；插件在已登录知乎页面内读取最近浏览记录、收藏夹条目和个人动态点赞 / 收藏，回传 `/api/sources/zhihu/task-result`。扩展会用 `/api/v4/me` 自动识别当前用户，收藏夹优先走 favlists API，旧 `/collections/mine` HTML 路径仅作 fallback。动态点赞和动态收藏各自独立使用单分支上限，不互相抢额度。`openbiliclaw fetch-zhihu` 默认只把该链路当事件爬取 smoke，不写 memory，也不触发画像初始化；加 `--write-memory` 可把本次抓取写入本地 memory，加 `--rebuild-profile` 会写入后触发真实画像重建。guided init 勾选知乎 / `init --yes-zhihu` 会显式收集同类任务结果并把统一事件喂给首轮画像；后端任务 payload 显式带 `profile_update=true` 时，`task-result` 新增事件会走 memory + `ProfileUpdatePipeline` 增量路径。任务 tab 使用 `openbiliclaw_zhihu_task` 标记进入静默模式，只安装 executor，不启动普通行为采集，避免 smoke / init 拉取污染 `/api/events` |
@@ -118,6 +180,8 @@
 | 对话历史自动定位 | ✅ | `popup/popup.js` 的 `scrollChatMessagesToBottom()` 统一处理聊天历史滚动：历史 hydrate、追加用户/助手消息、thinking 占位替换，以及从其他 tab 切回「对话」时都会把 `.chat-messages` 滚到最新 turn；切 tab 场景额外用下一帧滚动覆盖 hidden 容器恢复布局后的高度变化 |
 
 ### 初始化防假卡死反馈
+
+初始化已结束但首轮 discovery 失败时，popup 消费 runtime-status 的 `discovery_failure_message`，显示「内容发现未完成」、画像已保存及检查来源连接后重试内容发现的下一步，不把初始化留下的行为信号计数当作「正在补货」。正常空池、真实运行中、失败、后续成功与已有推荐分别渲染；pool 进展与推荐空态保持同一语义，失败摘要标注「补货状态」而非「最近主题/现在在忙」。桌面和移动 Web 同样保留该字段，刷新流事件会立即切换运行/失败/恢复状态，而不是等待旧错误提示自然消失；未实际执行的刷新不得清除首轮失败。Instagram 手动恢复使用 `openbiliclaw discover --source instagram --force`；不承诺「换一批」会强制重跑 Instagram 任务。
 
 popup 对 init-status / start / cancel 分别使用 45s / 60s / 15s deadline，并在 run 活跃时显示取消按钮。`popup-init-control.js` 分开跟踪 `last_heartbeat_at` 与 `progress_sequence/last_progress_at`：后台 owner 在线但当前步骤尚无结果时明确说明仍在等待，heartbeat 也停止才提示可能断开。`mode=indeterminate` 使用流动条 + 已用时，不显示虚假百分比；轮询失败保留最后进度并展示连接异常。`running` 优先于 `initialized`，阶段 3 画像已保存、阶段 4 尚未结束时不会提前跳完成页。
 
@@ -221,6 +285,72 @@ extension/
 
 ## 当前能力
 
+### 聊天风格选择
+
+移动 Web 在现有角色入口中显示当前角色与风格，选择面板分“聊天风格 / 功能角色”，
+保留 320px 的可用空间，模板卡片自然行高并在面板内滚动；插件有独立风格按钮和
+不透明背景的原生 dialog。两端读取
+`GET /api/chat/personas` 的六个模板和同题示例，通过
+`PATCH /api/chat/sessions/{id} {persona}` 写入 `metadata.persona`。不额外写 localStorage
+或全局配置。选择成功从新消息生效；保存等待期间避免抢先发送，失联提示未确认保存，
+切会话后的晚返回只更新来源会话。目录加载失败可重试，不影响原有聊天。
+
+连接状态由离线转为可达且当前在对话页时，popup 补读现有
+`GET /api/chat/skills`、`GET /api/chat/personas`、`GET /api/chat/sessions`；
+不会等用户重新切 Tab，也不会在 online/degraded 之间反复读取目录。
+
+### 蓝鱼实验室设置（popup）
+
+设置浮层新增「养蓝色大肥鱼」Tab（`popup/popup-fish.js`，ES module，复用
+`popup-api.js` 的 `requestJson` 以继承可配置后端地址 / 会话令牌 / 超时）。面板与桌面 Web
+对接同一组 `/api/fish/*` 接口：开关、只预览、独立小号 Cookie、可编辑人设 / 规矩 / 可选受众
+（只回哪类人）、配额、预览一轮 / 发一轮、最近账本。
+
+该面板的输入都带 `data-settings-ignore-dirty`，不会把弹窗全局保存条标脏；保存走面板自己的
+按钮，鱼的 Cookie 与实验室字段不经过 `PUT /api/config`。
+
+### 聊一聊会话隔离与断线恢复
+
+移动 Web 与 popup 的 `streamAgentChatTurn()` 只有收到终端 `done` 才成功返回；
+仅收到 `final` 后 EOF 会作为连接中断处理，由 durable 历史恢复真实终态。
+popup 仅在明确 503 时回退旧聊天端点，普通网络中断继续轮询原 agent turn，
+恢复时使用该 turn 保存的 `session_id` / `payload.agent_skill`。
+
+两端历史请求保存会话和请求代次，切换会话立即发起新快照，迟到的旧响应不覆盖
+当前会话。popup 的迟到流事件和 turn 更新也按来源会话过滤；移动 Web 旧流结束
+不会解锁另一个仍在回复的会话。角色选择仍按会话保存，当前回合完成不撤回下一回合的选择。
+
+`switchSession()` / `switchPopupChatSession()` 更换会话 ID 前保存输入框实时值，
+同步恢复目标会话的草稿后再加载历史；不新增 API 或本地持久存储。这样未发送文字不会
+随切换混入另一段对话。草稿只属于当前客户端页面，刷新后的权威历史仍由服务端恢复。
+
+移动端 `renderAgentOverlays()` 重绘会话抽屉前记录当前改名输入，仅在会话 ID 相同
+时恢复草稿、焦点和选区；“改名”操作聚焦重建后的新节点。保存仍用现有会话 PATCH。
+新增浏览器回归 `tests/test_mobile_chat_session_controls_e2e.py`，连接恢复回归位于
+`extension/tests/popup-chat-personas.test.ts`。真实三端操作见
+[三端逐项复验](../testing/2026-09-30-chat-three-surfaces-e2e.md)。
+
+回归入口：`tests/js/chat-agent-stream-integrity.test.mjs` 和
+`tests/js/chat-session-isolation.test.mjs`，通过实际 API 读流与三端交互函数验证
+提前 EOF、会话切换竞态、迟到消息与角色隔离。
+其中草稿用例覆盖新会话空输入、切回恢复和清空/发送后不复活；三端真实交互见
+[9 月 30 日完整复查](../testing/2026-09-30-chat-comprehensive-e2e.md)。
+
+共享 `captureApprovalDrafts(root)` / `restoreApprovalDrafts(root, drafts)` 在重绘前后
+保留正在编辑的审批拒绝输入（DOM 节点、内容、焦点），适用于待审批列表与过程卡；
+`tests/js/chat-approval-drafts.test.mjs` 覆盖草稿保留与终态优先。
+
+移动 Web 的乐观消息带 `scope=chat` 和创建时间，使用同一历史选择器即可立即显示在
+记录末尾；流完成直接填充 `reply`，随后历史刷新只校准持久化状态。`mountChatShell()`
+保留已挂载的输入框，回复和卡片刷新不重建正在编辑的 textarea，也不重置选区。
+历史刷新在实际渲染时读取当前滚动位置，不用请求前的旧位置覆盖期间的阅读或发送操作。
+`syncChatViewport()` 同时响应 `visualViewport` resize/scroll、窗口 resize 和焦点变化；
+键盘压缩可视区时按实际高度布局，收起品牌栏和底部导航，待确认/待审批仍可操作。
+空审批面板遵循 `hidden`，不再占用一行。普通尺寸不改变布局，缩放手势不视为键盘。
+360px 及以下缩小顶部状态区的内部间距，保留 44px 按钮，避免“在线”被挤成两行。
+回归入口：`tests/js/mobile-chat-experience.test.mjs`；真实浏览器验收包含 390×844、
+320×568 与 400px 可视高度，不等同于 iOS 实机键盘验收。
+
 ### `content/kernel.ts`
 
 负责内容脚本侧采集：
@@ -234,6 +364,19 @@ extension/
 - 动作点击会在 document capture 阶段先记录，再定位到最近的按钮 / 链接 / `aria-label` 节点，把外层文案交给平台 adapter 识别；真实站点里点中按钮内部图标或文字节点，或平台自己的 React handler 阻断冒泡，也能归因到外层动作
 
 同时支持 SPA 导航感知，在 URL 变化时重新发送快照并重绑视频监听。B 站 / 抖音 / YouTube 会绑定 `<video>` 产生 `view/pause/seek` 与视频停留 click；小红书和 X 当前按页面能力跳过视频监听。
+
+### `background/task-tab.ts`
+
+`createTaskTab(createProperties: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab>`
+供自动任务打开标签页使用。它始终先创建空白页并等待浏览器确认静音，再加载调用者指定的 URL；
+返回目标导航后的 tab（原本就是空白页时返回静音后的 tab），保留 `active` 等创建选项。
+无法取得 tab ID、静音失败或导航失败都会 reject；已知 ID 的失败 tab 会尽力关闭。
+各 dispatcher 按既有创建失败协议回传终态，不为继续取数而退回有声播放。
+
+Chrome 不支持在 `tabs.create` 传 `muted`，必须将静音放在目标导航之前。
+静音仅抑制声音，不阻止站点内部播放或内容提取。抖音 `ensureDyTaskRecovery()`
+会在恢复自建任务页时重申静音；失败先关页，再提交 `task_tab_mute_failed`，
+即使后端暂时不可达也不继续保留有声页面。普通用户页不在此恢复范围。
 
 ### `service-worker.ts`
 
@@ -254,9 +397,9 @@ extension/
 - 会启动知乎任务轮询；收到 runtime stream 的 `zhihu_task_available` 后立即打开带 `openbiliclaw_zhihu_task` 标记的知乎任务 tab。`bootstrap_events` 初始化 / 事件 smoke 使用前台 tab，会把浏览记录、收藏夹和个人动态条目回传到 `/api/sources/zhihu/task-result`；只有后端任务 payload 显式带 `profile_update=true` 时，新增条目才会由 API 自动写入 memory 并进入增量画像 pipeline。`search` / `hot` / `feed` / `creator` / `related` discovery 使用后台 tab，并把知乎候选分别回传为 `zhihu_search` / `zhihu_hot` / `zhihu_feed` / `zhihu_creator` / `zhihu_related`。任务 tab 不启动普通 `startCollector`，因此 CLI smoke、guided init 和 discovery 任务不会额外写入 `/api/events`
 - 会启动 Reddit 任务轮询；收到 runtime stream 的 `reddit_task_available` 后立即打开 / 复用带 `openbiliclaw_reddit_task` 标记的 Reddit 任务 tab。`bootstrap_events` 会先读 `/api/me.json`，再用当前浏览器的 `reddit.com` 登录态读取 saved、upvoted 和 subscribed subreddit，回传 `reddit_saved` / `reddit_upvoted` / `reddit_subscribed` 初始化信号；`search` / `hot` / `subreddit` / `related` discovery 则读取同源 `.json` endpoint，回传 `reddit_search` / `reddit_hot` / `reddit_subreddit` / `reddit_related` 候选到 `/api/sources/reddit/task-result`。dispatcher 在 tab load 后会对 content script listener 做短重试，吸收真实页面 complete 早于 isolated script 注册的时序抖动；service worker 冷启动和热 reload 后会在顶层启动 Reddit poll alarm，避免只靠 `onInstalled/onStartup` 导致新来源不轮询
 - 会启动 Linux.do 任务轮询；收到 `linuxdo_task_available` 后打开带稳定 query marker 的 `https://linux.do/?openbiliclaw_linuxdo_task=1` task tab。`bootstrap_events` 使用前台 tab 并先 GET `/session/current.json` 正面确认当前 username，再读 bookmarks / likes / read history；五种 discovery 使用后台 tab。任务模式只安装 executor，不运行普通 collector；结果只包含归一化 topic rows 与结构化错误，经 authenticated `/api/sources/linuxdo/task-result` 回传
-- 扩展账号周期回拉由 `source_incremental_enabled=false` 全局默认关闭，且每个来源的 `sources.<slug>.incremental_enabled` 也默认关闭；关闭时后端不会检查 presence、预排账号任务、打开或切换标签页。只有总开关改为 `true`、对应来源开关也改为 `true`，且画像就绪、guided init 空闲、runtime-stream presence 在线时，才会按配置周期复用现有 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX bootstrap scope。七源全局串行并继续走现有 dispatcher、登录态和 task-result 协议，不新增权限或抓取范围。这是“已安装扩展在线周期回拉”，不是后端绕过浏览器登录态的账号同步。抖音仍以 `douyin_incremental_hours=0` 逐源关闭；手动初始化 / 拉取和后台 discovery 不受影响。微博不参加周期回拉；GitHub 不创建任何扩展任务，始终使用后端官方 REST
+- 扩展账号周期回拉由 `source_incremental_enabled=false` 全局默认关闭，且每个来源的 `sources.<slug>.incremental_enabled` 也默认关闭；关闭时后端不会检查 presence、预排账号任务、打开或切换标签页。只有总开关改为 `true`、对应来源开关也改为 `true`，且画像就绪、guided init 空闲、runtime-stream presence 在线时，才会按配置周期复用现有 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / TikTok bootstrap scope。八源全局串行并继续走现有 dispatcher、登录态和 task-result 协议，不新增权限或抓取范围。这是“已安装扩展在线周期回拉”，不是后端绕过浏览器登录态的账号同步。抖音仍以 `douyin_incremental_hours=0` 逐源关闭；手动初始化 / 拉取和后台 discovery 不受影响。微博不参加周期回拉；GitHub 不创建任何扩展任务，始终使用后端官方 REST
 - 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送各浏览器登录态同步请求；Linux.do 的 `linuxdo_login_state_sync_requested` 只读取 `_t` 存在性并回传 bool。如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`；B 站与抖音也保留各自 Cookie 请求。小红书 / 知乎 / Linux.do 由 startup、`cookies.onChanged` 和独立小时 alarm 兜底。同步请求只在用户配置的 OpenBiliClaw 后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号
-- 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送 `xhs_login_state_sync_requested` / `zhihu_login_state_sync_requested`，扩展只读取 Cookie store 并上报两个布尔心跳；如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`，覆盖后端重启或 WebSocket 重连前已经发生的浏览器 Cookie 变化；如果本地缺少 B 站 Cookie，还会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`。小红书 / 知乎另由 startup、`cookies.onChanged` 和独立小时 alarm 兜底，X 也保留 startup、变更监听和小时 alarm 兜底。所有同步请求只在本机后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号：连接建立时允许后台 LLM 工作，最后一个连接断开后进入 `extension_disconnect_grace_seconds` 宽限；服务端 reader 会主动 `receive()` 检测 idle disconnect，避免浏览器断开后 presence 卡住
+- 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送 `xhs_login_state_sync_requested` / `zhihu_login_state_sync_requested`，扩展只读取 Cookie store 并上报两个布尔心跳；如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`，覆盖后端重启或 WebSocket 重连前已经发生的浏览器 Cookie 变化；如果本地缺少 B 站 Cookie，还会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`；`[sources.tiktok].enabled=true` 且缺少 TikTok Cookie 时会收到 `tiktok_cookie_sync_requested`（访客身份合法，扩展未登录 tiktok.com 时静默跳过）。小红书 / 知乎另由 startup、`cookies.onChanged` 和独立小时 alarm 兜底，X 也保留 startup、变更监听和小时 alarm 兜底。所有同步请求只在本机后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号：连接建立时允许后台 LLM 工作，最后一个连接断开后进入 `extension_disconnect_grace_seconds` 宽限；服务端 reader 会主动 `receive()` 检测 idle disconnect，避免浏览器断开后 presence 卡住
 - 收到 `extension_e2e_run` 后会调用 `background/e2e-runner.ts`：按目标平台打开或复用标签页，复用时也会导航到平台稳定入口，等待页面 ready，再向 content script 发送 `OBC_E2E_EXECUTE`；runner 会先等待捕捉 buffer settle 并 flush，再把执行结果 POST 到 `/api/extension/e2e/result`，sendMessage / tab load / 整体运行都有独立超时，避免单个平台页面卡住整个后端请求
 - generic event 若请求 `favorite` / `bookmark` mutation，runner 在打开 tab 前固定拒绝并且不发送 `OBC_E2E_EXECUTE`；即使同时塞入有效 envelope 也不放行。这是刻意的关联 fence：通用入口页 DOM runner 无法把授权的 `content_id` / target 绑定到将要点击的元素。只有 backend 发布的 dedicated event（空 generic platforms/actions + exact `native_save_authorization`）会调用单一 `/api/saved/{action}/sync`，轮询同一 durable task 并以 exact item/resolved action/target 关联后构造 six-field callback
 - 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/ping`（2 秒超时）做一次活性探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；探针失败后按固定 1 秒间隔继续重试，直到后端可达。探活不再打 `/api/health`：health 会同步等一次 embedding 实探（冷缓存可达数秒），2 秒预算下会把健康但冷启动的后端误判为掉线；`/api/ping` 返回 404（旧后端）时回退 `/api/health`（12 秒预算）
@@ -307,7 +450,7 @@ native-save mutation；dedicated 分支也不会开入口 tab 或发送 `OBC_E2E
 已存在且已由 canonical URL/content type/content ID 与 production route 共同验证的 exact saved
 membership 到 production sync API。后端发送比总 run timeout 少 1 秒的绝对 execution deadline，
 把最后 1 秒保留给 six-field callback，避免 registry cleanup 竞态；endpoint 解析、认证刷新、
-每个请求与按剩余时间截断的 poll sleep 均在相应 deadline 内。membership URL 预检与六平台
+每个请求与按剩余时间截断的 poll sleep 均在相应 deadline 内。membership URL 预检与七平台
 executor 使用相同的 exact host/path/query/fragment/port 规则，并同时匹配 fallback 后的
 `resolved_action`。真实 broker 数据流为
 `extension_native_save_jobs -> /api/sources/<slug>/next-task -> installed extension`，扩展只用
@@ -315,7 +458,7 @@ executor 使用相同的 exact host/path/query/fragment/port 规则，并同时�
 结果通过 authenticated `task-result` 回到后端。状态语义固定为
 `synced` / `already_synced` / `login_required` / `rate_limited` /
 `unsupported_content_type` / `extension_required` / `failed`，详细矩阵和安全记录格式见
-[六平台 runbook](../testing/six-platform-native-save-e2e.md)。
+[授权 E2E runbook](../testing/six-platform-native-save-e2e.md)（文件名沿六平台时期命名，现覆盖 TikTok 在内的七个平台）。
 
 content executor 的 selector 策略按平台收敛在 `src/content/e2e-executor.ts`：优先找当前页面可见的 action button / role button / aria-label，并排除“取消点赞”“已收藏”“Following”等反向或已激活状态；X / 小红书这类图标按钮会走平台专属 selector fallback，页面元素慢渲染时会在短窗口内重试。执行器只返回“是否点到了 DOM”，最终成功标准仍以后端是否在 `/api/events` 中看到对应平台、动作和时间窗口内的真实事件为准。
 
@@ -401,7 +544,27 @@ search / creator 任务的 note 路由与被动采集共用 `NOTE_ANCHOR_SELECTO
 
 后端 v0.3.57 的 `_extract_self_info_from_payload` 优先读顶层 `self_info`,fallback 到旧的 nested 位置,**新旧扩展+新旧后端的四种组合都不破**(老扩展配老后端不动;新扩展配老后端会 500——升级窗口期短暂)。这把"用户自己发的笔记进推荐池"问题(屎屎/自家165㎡大五房等)从 race condition 治成确定性过滤。
 
+### 抖音流式发现与有界执行（#332 续修）
+
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 原生流式响应不阻塞网页 | ✅ | `/general/search/stream/` 的原 `Response` 立即返回网页；只在 clone 上按完整 JSON 帧增量解析，支持跨 chunk 的 UTF-8、字符串转义与嵌套括号。观察副本最多 4 MiB / 60 秒，不等待 EOF、不取消网页原请求。 |
+| 多热词导航与剩余额度 | ✅ | 初次 ready 和词间不再重复加载首页；真实 document navigation 发送 resume-only 消息，同文档 execution key 去重。下一词只请求总额度剩余量。 |
+| 发现失败保持和停止 | ✅ | 已取得有效视频时不为填满 cap 再重放 API；搜索 UI / 路由失败不补 API。观察到 `验证码中间页` 即 `captcha_required`，明确限流优先于已有条数；新 partial 先取得后端 ACK，再 failed，不继续下一词。 |
+
+`DY_HOT_EXECUTE` 新增可选布尔 `resume_after_navigation`，沿 `runHot()` 透传给原生搜索 collector；
+新文档只采集当前结果，不再次提交热词。`isValidHotExecuteMessage()` 拒绝非布尔值。
+搜索 / 热榜共用带 source、tab、当前词与 generation 校验的导航观察器，恢复 MV3 任务时重新安装；
+结果一到达即使当前 generation 失效，先于 partial ACK 等待，过时注入回调不能重复提交当前词或推进下一词。
+调试结果新增 `requested_max_items`，并保留 `search_navigation_resumes`。
+
+主动搜索 API 兜底保持单一主端点，真实空、非零业务状态或 `hit_shark` 不再换接口试探。
+后页失败回传前页 items 与明确 error；429 不再被正向条数掩盖。流式观察失败仅影响副本，
+不向网页抛异常或修改其请求、响应和登录状态。旧无 word 的 seed-related 兼容入口保持。
+
 ### 抖音任务桥
+
+`runHot()` 对有词的 hot-board 任务复用 `runSearch()` 的输入、导航确认、被动响应、DOM 和 API 兜底采集，输入必须是后端榜单提供的热词。返回条目转换为 `dy_hot` 并保留 `sentence_id / hot_word`，失败保持原错误，不再用无关 related 结果覆盖失败；debug `hot_collection_method=hot_word_search` 标识这一路径。没有 word 的旧任务仍调用原 seed-related collector。2026-10-25 真实原生热点点击观察到 `/root/search/<热词>` 和 `/aweme/v1/web/general/search/stream/`；同轮 related API 对新闻、体育两个种子返回重叠游戏视频，因此不把“related 返回 200”单独当作热词对应内容通过。默认 collector 可在入口回归中注入，两条回归覆盖正确来源与失败保持，另有无词兼容回归；生产调用仍使用真实页面采集器。
 
 `src/background/dy-task-dispatcher.ts` 会轮询后端 `/api/sources/dy/next-task`。抖音 `bootstrap_profile` 属于显式账号信号导入，会打开前台抖音页面；`search` / `hot` / `feed` discovery 属于后台补池任务，统一用 `chrome.tabs.create({active:false})`，不抢用户焦点。当收到 `bootstrap_profile` 时，dispatcher 会按任务 payload 依次执行：
 
@@ -427,7 +590,7 @@ Douyin dispatcher 会先确认当前 worker 具备 `chrome.tabs.create`，再在
 
 扩展 mutex 只能覆盖同一 service worker。后端 `DyTaskQueue.next_pending()` 因此在 `BEGIN IMMEDIATE` 领取事务内额外检查全表未过期 `in_progress` lease：存在时返回 204，不把第二条任务交给另一个 unpacked 扩展 ID 或 Chrome profile；15 分钟过期 lease 仍按原协议优先重领并修复 staged result。
 
-本地 `npm run build` 只更新磁盘上的 bundle，不会替正在运行的 Chrome service worker 热换代码；真实账号复测前需要在 `chrome://extensions` 对 unpacked OpenBiliClaw 点一次“重新加载”，或在扩展 runtime-stream 已连接时调用本地开发端点 `POST /api/extension/reload`。后端 debug 若仍只出现 `Could not load file: 'dist/main/dy-fetch-tap.js'`，说明浏览器还在运行旧单路径 bundle，不能据此判断新 fallback 失败；新版本成功状态会携带实际命中的 `ok_file=<candidate>`。
+本地 `npm run build` 只更新磁盘上的 bundle，不会替正在运行的 Chrome service worker 热换代码；真实账号复测前需要在 `chrome://extensions` 对 unpacked OpenBiliClaw 点一次“重新加载”，或在扩展 runtime-stream 已连接时调用本地开发端点 `POST /api/extension/reload`。该端点重载浏览器当前注册的扩展目录，不会把 worktree 产物部署进商店包。Chrome 开发版须保持开发者模式开启：2026-10-25 在独立 Chrome for Testing 中实测，关闭时初次命令行加载可出现 worker，但 runtime reload 后浏览器会禁用该开发扩展；扩展页开启开发者模式后，同一端点返回 `delivered=true`，旧 worker 关闭、新 worker 出现并连接原测试 endpoint。不能仅用 HTTP 200 / delivered 判断更新成功，还应核对加载路径、实际脚本摘要及重连。后端 debug 若仍只出现 `Could not load file: 'dist/main/dy-fetch-tap.js'`，说明浏览器还在运行旧单路径 bundle，不能据此判断新 fallback 失败；新版本成功状态会携带实际命中的 `ok_file=<candidate>`。
 
 CLI 侧分两层使用这条链路：
 
@@ -470,9 +633,15 @@ CLI 侧分两层使用这条链路：
 }
 ```
 
-dispatcher 等待首页 ready 时会同时处理两种情况：正常的 `chrome.tabs.onUpdated(status="complete")`，以及抖音 SPA 没有再发完整 `complete` 事件的 fallback timer，避免任务卡住直到 `task_timeout`。search 任务按关键词数计算超时窗口，单关键词至少 180 秒，覆盖首页打开、DOM 搜索触发、搜索结果页路由确认、页面自身响应和 DOM 解析的真实耗时；后端 `DouyinPluginSearchClient` 默认也等 180 秒，避免插件刚开始执行 DOM 操作就被后端清成 stale。`src/content/douyin.ts` 会尝试触发页面搜索 UI、热点入口点击或推荐流滚动；search 会区分 `ui_triggered`（已提交）和 `search_navigation_ok`（URL 已进入真实搜索结果路由），防止搜索建议或登录弹窗被误判为搜索结果页。`src/main/dy-fetch-tap.ts` 作为 manifest 声明的 MAIN-world `document_start` 被动 fetch / XHR tap，把页面自己发出的 search / related / feed 响应转成候选；如果这些消息早于任务 collector，isolated content script 会按 `scope:aweme_id` 去重，最多保留 256 条 / 120 秒，并在对应任务启动时一次性 drain。feed 兼容当前页面实际发出的 `/aweme/v2/web/module/feed/`，search 兼容 `/aweme/v1/web/general/search/stream/` chunked JSON；DOM fallback 同时识别 `a[href*="/video/"]`、`div[data-aweme-id]`、非 anchor `href` 与 `video_<id>` class，并从卡片语义文本中补标题 / 作者，因此页面不再发续请求时仍可读取当前已渲染推荐。合法空响应会增加 `passive_responses_observed`，只有响应和 DOM 都未提供内容时才是 `feed_no_observed_response`。search / hot / feed discovery 不主动访问 `/search/...`、`/hot/...` 快捷 URL；search 在被动 fetch tap 和 DOM 解析不足时会调用已登录页面的 search API bridge 兜底，hot 会把 hot board 的 `group_id` 作为 `seed_aweme_id` 透传给扩展，优先执行带 seed 的热词，并在 DOM 点击 / 被动监听不足时用已登录页面的 related API bridge 拉取相关视频，feed 不主动调用 API bridge。搜索结果以 `scope="dy_search"`、热点结果以 `scope="dy_hot"`、首页推荐结果以 `scope="dy_feed"` 回写到 `dy_tasks.result_json`，不会转成初始化画像事件；content script 会在回传前按目标 scope 过滤候选，避免首页 feed 响应混入 search / hot 结果；`DouyinPluginSearchClient` 会把这些候选映射成 aweme-like JSON，分别以 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 进入 `discovery_candidates` 待评估池，再由后端共享 evaluator 判定是否进入推荐池。插件任务会区分真实 `empty` 与 `timeout / failed`：基础设施失败返回空候选但保留失败终态，direct-cookie fallback 仅保留给显式诊断路径。真实 search 响应带 `search_nil_info.search_nil_item="hit_shark"` 且无 `data/aweme_list` 时按反爬失败处理，让 runtime 使用故障退避而不是分钟级重试。
+dispatcher 等待首页 ready 时会同时处理两种情况：正常的 `chrome.tabs.onUpdated(status="complete")`，以及抖音 SPA 没有再发完整 `complete` 事件的 fallback timer，避免任务卡住直到 `task_timeout`。search 任务按关键词数计算超时窗口，单关键词至少 180 秒，覆盖首页打开、DOM 搜索触发、搜索结果页路由确认、页面自身响应和 DOM 解析的真实耗时；后端 `DouyinPluginSearchClient` 默认也等 180 秒，避免插件刚开始执行 DOM 操作就被后端清成 stale。`src/content/douyin.ts` 会尝试触发页面搜索 UI、热点入口点击或推荐流滚动；search 会区分 `ui_triggered`（已提交）和 `search_navigation_ok`（URL 已进入真实搜索结果路由），防止搜索建议或登录弹窗被误判为搜索结果页。`src/main/dy-fetch-tap.ts` 作为 manifest 声明的 MAIN-world `document_start` 被动 fetch / XHR tap，把页面自己发出的 search / related / feed 响应转成候选；如果这些消息早于任务 collector，isolated content script 会按 `scope:aweme_id` 去重，最多保留 256 条 / 120 秒，并在对应任务启动时一次性 drain。feed 兼容当前页面实际发出的 `/aweme/v2/web/module/feed/`，search 兼容 `/aweme/v1/web/general/search/stream/` chunked JSON；DOM fallback 同时识别 `a[href*="/video/"]`、`div[data-aweme-id]`、非 anchor `href` 与 `video_<id>` class，并从卡片语义文本中补标题 / 作者，因此页面不再发续请求时仍可读取当前已渲染推荐。合法空响应会增加 `passive_responses_observed`，只有响应和 DOM 都未提供内容时才是 `feed_no_observed_response`。search / hot / feed discovery 不主动访问 `/search/...`、`/hot/...` 快捷 URL；search 在被动 fetch tap 和 DOM 解析不足时会调用已登录页面的 search API bridge 兜底，hot 在有真实榜单 word 时复用原生搜索链路并映射为 `dy_hot`，没有 word 的兼容任务才使用 `seed_aweme_id` 和 related API bridge，feed 不主动调用 API bridge。搜索结果以 `scope="dy_search"`、热点结果以 `scope="dy_hot"`、首页推荐结果以 `scope="dy_feed"` 回写到 `dy_tasks.result_json`，不会转成初始化画像事件；content script 会在回传前按目标 scope 过滤候选，避免首页 feed 响应混入 search / hot 结果；`DouyinPluginSearchClient` 会把这些候选映射成 aweme-like JSON，分别以 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 进入 `discovery_candidates` 待评估池，再由后端共享 evaluator 判定是否进入推荐池。插件任务会区分真实 `empty` 与 `timeout / failed`：无 partial 的基础设施失败返回空候选，已回传 partial 保留且失败诊断不变；direct-cookie fallback 需显式启用（runtime direct mode 启用，独立客户端默认关闭）。真实 search 响应带 `search_nil_info.search_nil_item="hit_shark"` 且无 `data/aweme_list` 时按反爬失败处理，让 runtime 使用故障退避而不是分钟级重试。
 
 search 首次首页 ready 后直接注入并提交，不再对同一 URL 做冗余 `tabs.update`；多关键词任务会为下一关键词换用新的后台首页 tab，隔离上一关键词的迟到响应与虚拟列表 DOM。dispatcher 会在提交前监听目标搜索路由；若 UI 触发真实 document navigation，新文档 ready 后用 `resume_after_navigation` 只恢复采集，若只是 SPA 路由变化，同文档 execution key 会拒绝重复执行。search API bridge 的 isolated wait 收紧为 20 秒（MAIN request 自身仍有更短 abort），避免后台标签页计时延迟把单词任务推到总看门狗边缘。
+
+无 word 的兼容热榜任务在 UI 点击失败时才采用 hot board 提供的 `seed_aweme_id` 调 related API，跳过首页的视频路由等待、
+DOM 视频采集和滚动；首页当前视频不能冒充该热词的种子。点击成功后的 route wait 采用 monotonic 实际
+经过时间，后台 tab 定时器延迟不会按固定 200ms 累加等待预算。内部测试入口
+`resolveHotSeedAwemeId()` / `waitForCurrentVideoAwemeId()` 覆盖种子归属和延迟定时器；任务 payload、
+权限和 API 均未增加。后端发现客户端保留已经回传的 partial 内容，后续超时仍保留失败诊断。
 
 CLI 入口：
 
@@ -503,10 +672,55 @@ CLI 入口：
 
 当前 Linux.do adapter/task-mode/executor/dispatcher/cookie-sync 已有专属单测，Chrome 与 Firefox bundle 均构建通过。2026-08-09 已用实际安装的 Chrome unpacked extension 和真实已登录账号完成热重载、67 条 bootstrap 事件、五种 discovery 任务、正式候选入池与无敏感字段回传 E2E；Firefox 尚未做同等真实账号安装版验收。完整后端 schema、CLI、实测数据与审核边界见 [Linux.do 来源文档](linuxdo.md)。
 
+### Instagram 任务桥
+
+匿名 creator 还接受已实际观察的 `ScheduledServerJS.handle → __bbox.require → RelayPrefetchedStreamCache.next → __bbox.result.data.xig_user_by_username` 原生 SSR。只读取这条白名单包装（不执行模块表达式），要求路径/username、数字账号/媒体作者一致、明确 `is_private=false`。身份优先用正整数 `pk`，仅缺失时回退 `id`；真实 Relay 的两字段可能是不同命名空间，不要求彼此相同。无效 `pk` 不得靠 `id` 放行；作者不匹配、未知/私密、viewer、建议账号或其他模块不能提供公开证明。已观察的同路径无效/未知/私密状态会撤销缓存证明。扫描有4层、256模块和16个profile上限，截断时拒绝复用旧证明；Cookie/原始SSR不跨桥。
+
+profile 与 media author 共用严格用户主键校验，不接受复合媒体 ID、小数或不安全数字；只比较同字段身份。两侧都有 `pk` 时必须一致，不能靠相同备用 `id` 掩盖冲突；已证明的 `id→pk` 对应可归一 canonical author。一个 payload 的所有 matching profile 都必须明确公开且身份一致；同账号的弱证明仅合并，不丢失已知 `pk`。SSR 扫描禁止重入，最多初扫加一次补扫，兼容媒体先到而不会因强弱证明交替无限递归。
+
+仅“本响应没有profile证明”允许复用同页缓存；新鲜匹配profile的未知/冲突/私密证据，以及扫描深度/模块/参数/profile超限截断，均撤销旧证明并以 `creator_not_public` 失败关闭。不能把截断前的公开记录或旧缓存覆盖后来的未知/私密状态；topic解析不继承creator专属的截断失败。
+
+公开 discovery 的首屏 hydration 不消耗分页预算：首次常规等待后，最多再被动等待 20 秒有效 envelope/明确空态/风险终态，每 500ms 请求已有 MAIN replay，不主动重放上游、不滚动或续 idle。无响应仍 failed；达到最后允许页数后不再触发多余滚动。Chrome 单页任务约 3 秒过早退出、普通页稍后出现内容的实机反例及迟到响应/429/无响应红绿测试见验收台账。
+
+2026-10-03：执行器导出 `INSTAGRAM_API_REQUEST_TIMEOUT_MS=20000` 供 dispatcher 共用。`pacedFetch.waitForTurn()` 在请求计时器启动前等待，正常 30 秒限速不再提前 abort；网络与响应体仍受原 20 秒上限保护。bootstrap idle 窗口为 `max(90s, 4*interval + 3*20s + 5s)`，只由接受的 durable progress 推进，绝对期限仍为 12 分钟。非空 Likes 连续 3 次无新增保留 rows/`complete=false` 并报 `progress_stalled`，出现新增则重置计数，不把停滞误报为空或完整末页。周期 poll 失去共享锁后另建 30 秒 alarm，以免所有来源的分钟 alarm 重合时反复饿死；重试仍经同一 recovery、权限、互斥与原子 claim。
+
+2026-09-28：bootstrap tab 改为原生 Likes activity 页。身份由账户表单用户名与新鲜首页 `PolarisViewer` 双 ID 验证；Likes 被动观察三个只读 Bloks appid，saved/following 继续 GET。新增纯数据解析 `parseInstagramViewer` / `parseInstagramLikedBloks`，不执行 Bloks 动作、不重放其 POST。MAIN tap 补 `/graphql/query`，仅输出白名单媒体和标准错误。非空 Likes 快照缺可靠末页证据，始终 cap/page-cap partial；严格原生空状态才 complete。
+
+Instagram 普通页面不启动通用 behavior collector。只有带稳定 task marker、由 dispatcher 创建并绑定的 tab 安装 executor；sender、tab ID 与 current task 任一不匹配时消息被拒绝。任务支持 `discover`（`topic` / `creator`）和 `bootstrap_events`（`instagram_liked` / `instagram_saved` / `instagram_following`）。
+
+dispatcher 采用 durable 协议：service worker 启动先从 `chrome.storage.local` 恢复有界 task/tab/progress、deadline、accepted rows 与精确序列化的 pending result，兼容单向迁移旧 session 记录；确认 capability 后先取得跨来源 mutex，再 GET `next-task`。`task-result` 返回 2xx ACK 或明确终态拒绝才清 outbox 和关闭自建 tab。alarm、worker recycle、完整扩展/浏览器重启均复用同一 claim/payload；原任务页不存在时返回 `recovery_tab_gone`，有效已读内容保留为 partial，不等待后端 25 分钟 lease 才释放。存储中没有 Cookie、请求头或原始响应。
+
+2026-09-30 收尾修复：bootstrap 首个已验证账号冻结到同一 durable task；恢复后的 identity/progress/final 出现不同数字 ID 时立即以 `instagram_account_changed` 收尾，不合并或投影跨账号 rows。saved/following 非空坏行不再变成 empty/complete；全部拒绝为 failed，部分拒绝保留有效 rows 为 partial。公开 creator HTTP 429/401/403 走标准错误桥并停止滚动；媒体隐私未知时必须等待当前 profile 的正向公开证据（数字 ID + username 双匹配），私密 profile 返回 `creator_not_public`。这些错误码与后端终态白名单及下一任务 lease 回归同步验证。
+
+2026-10-01 账号连续性加固：executor 在 saved/following 每个可继续处理的私有页请求前后、原生 Likes 观察前后，以及未先命中终态风险时的正常结果提交前复核冻结账号。Likes 的早到 replay buffer 必须绑定到已加载任务页的 `PolarisViewer` 与新鲜初始身份；加载文档证据缺失、不可解析或不一致时，在接纳 progress 前以 0 items 失败。任一复核点观察到新数字账号时（即使 username 未变），返回 `instagram_account_changed` 和新账号 ID，由 dispatcher 终结并隔离本任务已持久 rows，不以混合 partial 收尾。
+
+身份加固沿用原有停止与节流语义：已观察的 429 / challenge / 登录墙先于新增身份 GET 终止，当前页请求返回这些错误后也不做页后复核；身份与私有数据请求共用冻结的 `request_interval_ms`，没有新增无界重试，现有页/条上限和 absolute deadline 仍是总上限。这只防护检查点可观测的切号，不声称获得了原子上游快照；完全发生在两次复核之间的“切出再切回”仍不可见。
+
+清理 tab 前重新读取当前 URL 并确认 HTTPS Instagram host 与 task marker；浏览器重启重用了 tab ID，或用户在等待 ACK 时导航离开任务页，均不得关闭普通页面。没有 ACK 的 pending result 与未收尾 claim 都受这一保护。
+
+Instagram API 错误分类使用 `classifyInstagramApiEnvelope(status, contentType, payload, responseUrl?)`：`fetchApi` 传入最终响应 URL，真实 `/challenge/`、`/checkpoint/`、`/accounts/login/` 重定向仍立即失败；普通 HTML 的 bundle / metadata 关键字不得误报验证或登录。HTML 只采用剔除非可见代码后的明确诊断 / 表单证据，JSON 只读错误字段值而非字段名。2026-09-26 真站账户接口重定向为首页 HTML 的反例已锁入 bootstrap 回归；HTTP 429、真实验证和未知 HTML 仍不允许变成 empty。
+
+需要读取页面自身 GraphQL/fetch 响应时，isolated receiver 在 MAIN-world tap 之前于 `document_start` 安装。tap 只允许 Instagram 同源白名单 endpoint，立即裁剪为有界 media/user rows、opaque cursor 与 terminal evidence；不会 `postMessage` raw body、Cookie、Authorization、CSRF 或请求头。有界 replay buffer 覆盖“响应早于 executor listener”，超限数据直接丢弃并让任务 degraded。
+
+公开 creator 页的 SSR timeline 兼容 `edge_owner_to_timeline_media`、`xdt_api__v1__feed__user_timeline_graphql_connection` 与 2026-08-31 真站观察到的 `polaris_ordered_timeline_connection`，三者都必须同时具备合法 rows 才能成为 observed envelope。HTML 错误分类只把明确的 challenge/checkpoint/captcha/feedback-required 证据视为 challenge；登录表单中的普通 `required` 属性不是 challenge 证据，含 `/accounts/login/` 的页面按 `login_required` 终止，不能伪造成空结果。
+
+公开页 HTTP 200 软 404 通过专用标题 + 损坏链接正文共同确认，返回 `public_page_unavailable`；普通页面的登录导航或 caption 文本不足以构成失败。已有 rows 遇到页面级失败仍为 partial、不宣称 complete。2026-09-30 授权后，直接 popular/hashtag 任务页可被动读取自然返回的 top-SERP MediaGrid；只接纳明确公开作者的媒体，持久化 `authenticated_topic_observed`，不冒充匿名 envelope、不构造搜索请求。未知单元拒绝，80 项截断撤销 terminal evidence。
+
+popup 保存 Instagram 设置时同步发起原生权限请求，保留浏览器 user gesture；等待超过 30 秒则解除保存锁、保留未保存编辑并提示重试，迟到授权不续写配置。授权成功、拒绝和超时与后端配置保存是独立状态，不把超时当作保存成功。
+
+`cookie-sync.ts` 只把 `sessionid` 是否存在上报为 `logged_in` 布尔值；startup、cookie change、runtime sync request 和小时 alarm 均复用同一路径。个人任务必须再从同源 current-account 响应确认数字账号 ID。首个 challenge/429/HTML/login wall 立即停止相应 lane，保留已接受 rows；任务不自动登录/2FA、不输入 Instagram Search、不调用 like/save/follow/comment/message 写端点。
+
+2026-10-01：Instagram 自动心跳区分来源禁用/未授予权限与后端配置暂不可用。配置不可用时不读 Cookie，保留 1 分钟重试；后端恢复后重新检查启用状态，上传纯布尔登录提示，成功后恢复每小时刷新。明确禁用或权限缺失不延续快速重试。真实安装态已验证“后端停机→扩展重新加载→1 分钟 alarm→后端恢复→自动 credential 200→60 分钟 alarm”，未手动 verify 或改 Cookie。
+
+2026-09-30 的真实非空 Likes 回归补齐 Bloks 网格兼容：复合媒体 ID 复用 `instagramMediaIdentity`，只跳过明确的全空末行占位，区分媒体定义与 visibility/template 对 ID 的引用；有未解析引用时仍不能声称空集合。解析器不执行动作、不恢复 Unlike/Select 能力。为测试而由用户逐对象授权的浏览器点赞/收藏/关注属于独立样本准备，不代表扩展新增任何站内写能力。
+
+Chrome 与 Firefox manifest 只增加 `https://*.instagram.com/*`，不增加 `<all_urls>`。build/asset verifier 必须覆盖 isolated content script、可选 MAIN-world tap、service worker entry 和两套输出目录。真实验收必须记录加载的是本 worktree 新构建；单纯 reload 旧安装不能当 provenance。
+
 ### `popup/`
 
 `popup/` 目录当前承载 side panel 页面，已具备：
 
+- guided init 来源选择新增 Bangumi 与 V2EX：Bangumi 不要求浏览器登录，选中后显示公开用户名输入，并通过 `source_options.bangumi.username` 发送；V2EX 可填写公开用户名，也可留空由真实 V2EX 页面导航栏观察账号，并通过 `source_options.v2ex.username` 发送。Bangumi-only 空用户名不在客户端拦截，由后端按令牌、公开用户名和扩展观察身份决定准入；V2EX 任务页只读采集四个 scope。混合来源空用户名允许继续。popup 把输入草稿保存在页面 state，前置检查失败或 idle 面板重渲染不会丢失；显式清空会原样送到后端，不会回退旧配置用户名。
 - guided init 来源选择包含 Bangumi、V2EX 与 GitHub：GitHub 显示公开用户名输入，可选 PAT 只通过固定专用环境变量 `OPENBILICLAW_GITHUB_TOKEN` 或 GitHub 配置保存；后端用公开 starred repositories 构建初始信号，只把 Star 映射为 `favorite`。GitHub 不触发扩展任务、Cookie 读取或 content script；单选 GitHub 且没有可用用户名时由后端权威拒绝，混合来源仍允许其它来源继续。popup 把输入草稿保存在页面 state，前置检查失败或 idle 面板重渲染不会丢失；显式清空会原样送到后端，不会回退旧配置用户名。
 
 - 后端连接状态检查：离线判定以 `/api/ping` 为准，顶部徽标区分绿色「已连接」、琥珀色「重连中」和红色「未连接」。`runtime-stream` 断开时先进入「重连中」并立即复检 `/api/ping`：HTTP 仍通则保留 API 可用状态并等待 WebSocket 自行重连，只有 ping 返回失败或抛错才进入「未连接」并启动 `popup-connection-poller.js` 每 1 秒重探测；HTTP 恢复后先回到「重连中」，流重新打开后才显示「已连接」。协调器使用 revision guard 忽略连接恢复后才返回的旧失败探活，主动切换后端地址关闭旧流也不会触发故障断线提示
@@ -518,7 +732,7 @@ CLI 入口：
 - `/api/profile-summary.active_insights` 在 popup、桌面 Web 和移动 Web 的画像/认知更新区只展示假设、置信度、证据与既有验证态，不再渲染「准 / 不准」按钮；需要处理的假设统一从对话 tab 的「待聊确认」进入 durable 卡片。兴趣/避雷 probe 仍是推荐流内独立探针，不属于洞察确认迁移范围
 - 收到 `avoidance.probe` runtime 事件后在 inbox 渲染避雷确认卡；「确认避雷 / 搁置避雷 / 不是雷点 / 多聊聊」分别以 `confirm / defer / reject / chat` 调 `/api/avoidance-probes/respond`，其中 `chat` 进入 `scope=avoidance_probe` 的 durable turn
 - 高级功能 Tab 在桌面 Web 与 side panel 保持同一信息架构：固定为「候选评分模式 / 推荐增强 / 多模态处理 / 搜索词生成 / 认知循环预算」五个 section。候选评分下拉把 canonical `llm / shadow / learned` 显示为 `Agent（默认） / Shadow（校准观察） / Learned（仅相关性，实验性）`，明确 Learned 只应在人工运行质量门禁并确认通过后启用、只影响后续候选且不会重算已有推荐，保存时仍写 `discovery.eval_scorer`，不新增不兼容的 `agent` wire 值。推荐增强的 P1/P2/P3 都是排序信号加权而非过滤，P1/P3 依赖图像 Embedding、P2 只需文本 Embedding，P1 每个极性反馈不足 8 条时安全 no-op；关闭开关会保留缓存和参数、回退原排序且不影响主流程，关键帧和弹幕目前仅作用于 B 站。多模态 section 明确区分图像 Embedding 能力与候选封面参与 LLM 评估，两者相互独立；模型 provider / 模型 / 凭据 / 探测仍在模型 Tab，调度 Tab 只保留调度项。两端都在 discovery 快照展开后显式覆盖用户可编辑字段，切换模式或关闭开关不会丢其它高级参数。
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十二来源 source 开关与 discovery 预算、Bangumi 公开用户名/条目类型、V2EX PAT/Node/Tab、微博登录态 init 边界，以及 GitHub 公开用户名/可选 PAT/三种发现分支/节流/初始化上限；数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数仍由原配置面维护。通用 Tab 另有应用内 Tailnet 控制：开关、节点名、脱敏状态，以及 write-only Auth Key / OAuth Client Secret + tag 的一次性入网输入；凭据只在扩展真实连接本机后端时可写，绝不进入扩展存储或配置缓存。GitHub 凭据行明确显示“公开发现匿名，PAT 可选”，明文 PAT 不回读。
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十三来源 source 开关与 discovery 预算、Bangumi 公开用户名/条目类型、V2EX PAT/Node/Tab、微博登录态 init 边界，以及 GitHub 公开用户名/可选 PAT/三种发现分支/节流/初始化上限；数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数仍由原配置面维护。通用 Tab 另有应用内 Tailnet 控制：开关、节点名、脱敏状态，以及 write-only Auth Key / OAuth Client Secret + tag 的一次性入网输入；凭据只在扩展真实连接本机后端时可写，绝不进入扩展存储或配置缓存。GitHub 凭据行明确显示“公开发现匿名，PAT 可选”，明文 PAT 不回读。
 - 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
 - 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues；模型实例/整链测试及模型发现属于无写入恢复控制面，在 degraded 状态仍使用当前草稿执行。保存响应正常为 `reloaded=true / restart_required=false`，同一进程立即解除降级；若旧后端或异常 bootstrap 返回 `restart_required=true`，插件仍用 warning tone 提示重启，并以重启后的权威 `/api/config` 为准，不把本地表单冒充已生效配置
 - 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
@@ -549,6 +763,7 @@ CLI 入口：
 - 桌面 Web 运行时看板的账号同步异常提示使用主题前景色与状态边界，深色主题下不再出现低对比度、难以辨认的错误文案
 - 桌面 Web 惊喜推荐的知乎、Reddit 等文字卡使用主题表面色和主题前景色，classic / 深色主题不再把文字压在相近色渐变上；普通无封面文字卡也复用同一套可读性规则
 - popup 打开期间现在会建立 `/api/runtime-stream` websocket 连接，底部提示条和池子状态会跟着后端事件实时变化
+- popup 每次 runtime-stream 连上（含首次订阅）会补读一次 `/api/runtime-status`，弥合启动 HTTP 快照与 WS 订阅之间漏掉终态的窗口。补读只更新池子、空态或已有卡片的提示，不重拉或替换推荐列表；迟到快照受连接归属和状态 generation 保护，后续 refresh 生命周期事件、明确的故障字段、断连或切换后端会使旧快照失效。仅含数量的 pool 事件使用固定字段覆盖层保留更新的计数，同时让补读填上缺失的终态；不缓存或重放整条活动事件。普通心跳、活动通知和来源 task wake-up 不会误丢弃唯一补读。补读失败保持现有界面，实时流继续工作。
 - popup 底部提示区已升级成可展开动态卡：默认两行显示“现在在忙什么 / 最近一次关键变化”，点 `更多` 可以展开最近历史
 - 新增 `/api/activity-feed` 聚合接口，popup 会把认知更新、反馈记下了、换一批和补货结果收成同一块动态面板
 - “换一批 / 继续追加”现在优先直接消费 discovery pool 里预生成好的 `expression / topic_label`；换批只有在后端返回非空新批次时才替换当前卡片，空批次会保留正在看的推荐、停止本轮自动续页并复读 runtime 库存，避免“明明有库存却被清成空页”
@@ -625,7 +840,7 @@ npm run build
 - popup 设置页字段与 `/api/config` schema 的基础对齐
 - popup API durable chat turn：`startChatTurn()`、`fetchChatTurn()`、`fetchChatTurns()` 会分别调用 `/api/chat/turns`、`/api/chat/turns/{turn_id}` 和列表接口
 - `renderDurableChatTurn(turn)`：`completed` 渲染 `turn.reply`，`failed` 渲染安全 `turn.error`，字段缺失时才使用本地固定兜底文案
-- popup 连接状态稳定性：`popup-connection-poller.js` 覆盖 HTTP / runtime-stream 三态投影、失败探活才离线、旧探活 revision guard、`/api/ping` 失败后持续重探测与恢复回调；`popup-stream.js` 另覆盖主动关闭不会误触发断线通知
+- popup 连接状态稳定性：`popup-connection-poller.js` 覆盖 HTTP / runtime-stream 三态投影、失败探活才离线、旧探活 revision guard、`/api/ping` 失败后持续重探测与恢复回调；`popup-stream.js` 另覆盖主动关闭不会误触发断线通知，以及首次订阅补读、迟到快照 / 旧连接隔离、控制帧保留补读和补读失败后的流可用性。`popup-stream-status-wiring.test.ts` 执行真实 popup 连接回调与 stream client，在网络 / 渲染边界验证空态终态和已有推荐 list / card identity 保留；安装版 DOM 与启动竞态仍需真实浏览器验收。
 - popup 聊天布局：历史 hydrate 与切回聊天 tab 都会触发滚到底部，避免 hidden view 恢复后停在旧消息
 - `dist/` 运行时脚本可被 Chrome 直接加载
 
@@ -634,6 +849,10 @@ npm run build
 普通用户下载入口是 GitHub Latest Release 的 `openbiliclaw-vX.Y.Z` 聚合页：该页会同时展示当前后端源码 tag、最新插件 zip 和可用桌面安装包。`extension-v*` 仍是插件自动化通道 tag，用于构建、商店提交和排查发布流水线，不再要求普通用户在 Releases 列表里手动筛选。
 
 插件内部 release 通道：
+
+本次版本 `0.3.232` 包含 #332 的任务静音、热词原生搜索、流式响应采集及后端跨进程发现修复；配套后端同为 `0.3.232`。构建、签名和 Chrome Web Store / Firefox AMO 提审状态见 [发布记录](../testing/2026-10-26-release-v0.3.232.md)，上游商店审核完成前不视为已上架。
+
+发版时也同步了旧静态回归的启动数组名和设置六列假设：当前徽标请求参与两个有界次级 worker 的 `allSettled`，设置页保持四列 / 窄屏三列；产品脚本和 CSS 无新增修改。
 
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：
@@ -645,7 +864,7 @@ npm run build
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
 - `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox / Safari 打包脚本；仅当 `FIREFOX_SIGNING_ENABLED` 未关闭且 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` 可用时，才执行 `npm run sign:firefox:only` 生成 signed XPI。发布尾部调用 `.github/scripts/sync-aggregate-release.sh`，把实际存在的插件 zip / xpi / Safari dmg 同步到当前 `openbiliclaw-v*` 聚合 Latest Release，并把该聚合页重新标记为 GitHub Latest。Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成未签名 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；配置 AMO 凭据后，`npm run sign:firefox:only` 会把当前 `dist-firefox/` 提交 AMO unlisted 签名并输出可直接安装的 `openbiliclaw-extension-vX.Y.Z-firefox.xpi`。Safari CI 在 Apple 凭据齐全时自动走 `npm run package:safari -- --notarize`，否则自动回退 `npm run package:safari` 产 ad-hoc DMG；本地同样可用 `npm run package:safari` 打包；完整流程见 [safari-extension-build.md](../safari-extension-build.md)
 - AMO 公开商店使用独立的手动 workflow `.github/workflows/publish-firefox-amo.yml`，不复用 `extension-v*` 的 unlisted 签名步骤。它从当前 commit 构建 Firefox 包，用 `git archive` 附带 `extension/`、共享 Web 模块、lockfile、构建说明和隐私政策，再执行 `web-ext sign --channel=listed --amo-metadata=... --upload-source-code=...`；提交后查询 authenticated versions API，只有目标版本真实显示为 `listed` 才成功。AMO 的 `eula_policy` API 对当前 developer JWT 实测返回无正文 HTTP 406，因此该字段改为提审后 best-effort 同步并发出显式 warning，不会阻断已经具备 manifest 数据类别、reviewer notes、listing 描述和随包 `docs/privacy.md` 的提审；若 Developer Hub 暴露该字段，维护者需手动回填。首次与后续公开提审都必须先准备未被任一 AMO channel 使用的新扩展版本。
-- v0.3.62 起，Chrome / Firefox 发布包移除默认授予的 `http://*/*` 宽泛主机权限；当前固定权限覆盖 B站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do 和 `127.0.0.1` / `localhost` 本机后端。`https://linux.do/*` 只用于同源只读任务、普通页行为 adapter 与 `_t` 布尔存在性判断，不上传 Cookie 值。局域网或远程后端通过 `optional_host_permissions` 在用户显式保存地址时请求对应 `scheme://host/*`，实际请求仍固定到配置端口。
+- v0.3.62 起，Chrome / Firefox 发布包移除默认授予的 `http://*/*` 宽泛主机权限；当前固定权限覆盖 B站 / 小红书 / 抖音 / TikTok / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / Bangumi / Instagram 和 `127.0.0.1` / `localhost` 本机后端。`https://linux.do/*` 只用于同源只读任务、普通页行为 adapter 与 `_t` 布尔存在性判断，不上传 Cookie 值。局域网或远程后端通过 `optional_host_permissions` 在用户显式保存地址时请求对应 `scheme://host/*`，实际请求仍固定到配置端口。
 - v0.3.64 起，Chrome / Firefox 发布包不再声明 `tabs` permission；后台任务仍可使用 `chrome.tabs.create/update/remove/onUpdated/sendMessage` 打开、导航和清理受支持平台任务页，发布包仅保留实际需要的最小 permission 集合。
 - 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新；GitHub Release 下载的 Chrome zip / Firefox signed XPI / Firefox 临时 zip / Safari dmg、开发者模式加载和临时加载用户按 release 页面下载新版并重新加载。
 
@@ -712,7 +931,7 @@ npm run build
 - side panel 主聊天和内联聊天回复已由后端 `chat_turns` 持久化；仍不提供完整聊天管理界面、删除能力或跨设备同步
 - inline comment 采用轻量输入，不支持复杂反馈历史浏览
 - side panel 视觉验证当前以静态快照 + extension 构建回归为主，仍建议结合真实后端做一次手动联调
-- 七源账号周期回拉默认关闭；显式设置 `source_incremental_enabled=true` 后，还要求至少一个 background runtime-stream 连接及对应平台有效登录态。自动测试只覆盖 dispatcher/协议，真实账号烟测必须在已安装扩展环境单独执行，不能用普通网页自动化冒充；Linux.do 已完成 Chrome 安装版真实登录只读 E2E，Firefox 同等安装版验收仍待执行。GitHub 不属于这七源，不需要也不会使用已安装扩展
+- 八源账号周期回拉默认关闭；显式设置 `source_incremental_enabled=true` 后，还要求至少一个 background runtime-stream 连接及对应平台有效登录态。自动测试只覆盖 dispatcher/协议，真实账号烟测必须在已安装扩展环境单独执行，不能用普通网页自动化冒充；Linux.do 已完成 Chrome 安装版真实登录只读 E2E，Firefox 同等安装版验收仍待执行。GitHub 不属于这八源，不需要也不会使用已安装扩展
 - V2EX 任务桥已接入 `*.v2ex.com` host permission、登录布尔心跳和四个只读 scope；当前仍没有 Cookie 值上报、私信读取或站内写操作。登出心跳会清除旧 observed identity；完整收藏 scope 会驱动后端双快照 retraction outbox，错误 route、条目 / 页数截断和失败 scope 不会推进缺失计数。已安装扩展 + 真实登录浏览器 E2E 已通过；自动化回归仍不能替代不同账号、隐藏主题和大收藏量账号的额外真机覆盖
 - 浏览器通知当前只推送一条最高分未通知内容，不做通知中心或多条队列
 - 惊喜推荐当前只维护一个首屏候选位，不做多条历史收件箱；`稍后看` / `收藏`
@@ -723,3 +942,112 @@ npm run build
 - 自动续页同样依赖 discovery pool 当前已有候选；如果池子暂时不够，续页结果可能少于 10 条，甚至直接提示先等后台再补一点新的
 - 池子摘要里的“最近在补”目前基于策略和候选标签做轻量聚合，属于方向提示，不是精确 taxonomy
 - 小红书初始化导入是 best-effort：后端不登录、不爬取小红书，只等待插件在用户已登录浏览器里解析页面；收藏/点赞/浏览记录任一 scope 不暴露时，会跳过该 scope。普通推荐流不会被标成 `xhs_history`；受控滚动只在任务显式设置 `max_scroll_rounds` 时启用
+
+### Agent 网页与笔记能力
+
+移动 Web 和插件 popup 共用后端 search_web/read_webpage 与聊天笔记读写，无需
+另开页面：现有 SSE 工具过程、来源链接、通用审批卡支持这些能力。delete_memory
+需批准后执行且校验原值，保存/更正仍沿用明确用户请求触发的 soft_write。
+共享 Markdown 渲染器将正文中的裸 http(s) 来源安全转为链接，代码与已有链接不重复
+处理；popup 构建时同步同一脚本，移动端与桌面端直接使用后端共享资源。
+
+### 2026-10-02 聊天真实请求复验
+
+Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复临时正文；`thinking` 清掉工具中间文本，`final`/`done` 权威全文替换，未收到 `done` 仍走恢复流程。新开待聊卡片成功后自动折叠列表并滚动到卡片，防止窄窗口列表把聊天区压到零高度；失败时保留列表重试入口。HTTP 接口不变。
+
+首次发送和历史恢复使用已有 turn 直接建立 agent SSE，不在连接前用 GET 唤醒后台补算；断流后仍回到 durable GET 恢复。这样保留断线恢复，同时避免刚发送就退化为最终正文重放。
+
+### 来源卡片启用框可访问性（2026-10-10）
+
+来源关闭后卡片折叠、禁止展开，但嵌套的启用复选框必须仍可操作。`syncSourceCardEnabledState()` 以 `data-source-off` 控制折叠行为，不在包裹复选框的祖先节点设置 `aria-disabled=true`，避免读屏器和浏览器自动化把重新启用入口也判定为禁用。TikTok 安装版设置页关闭→保存→重新开启回归覆盖该边界。
+
+## TikTok full-source 修复验收（2026-10-11）
+
+- dispatcher 接受真实 `bootstrap_profile + scopes[] + max_items_per_scope`，在后台自有 tab 顺序执行四 scope；校验实际 sender tab、固定首次 viewer 身份形式，每 scope 最多 300。
+- content 只接受本人 profile 的目标列表或明确选中 tabpanel，登录墙优先；拒绝全页 DOM fallback、陌生人 profile。每轮采集先持久化再继续，整页导航重入和重复消息可恢复。
+- partial/final 使用 durable FIFO，持久 idle deadline 为 120 秒、absolute deadline 最多 360 秒，仅业务进展可延长 idle；后续 timeout 不覆盖未 ACK 行；scope 失败保留既有 rows/degraded。native-save 等待/确认阶段重新核对当前视频，防 SPA 串视频。
+- fixtures / Python↔TS 协议测试不代表已安装真站验收；Chrome 控制连接当前失败。详见 [台账](../platform-source-acceptance.tiktok.md)。
+
+后端 CI 显式使用 Node 22 执行 Python next-task → 原始 TypeScript dispatcher → API ingress 协议回归，防止两端各自单测通过却不能互通；此测试使用合成浏览器响应。
+
+
+### TikTok 登录墙文本边界
+
+TikTok 内容脚本的 `detectTiktokAccessState` 仅以页面可见文字作为登录墙文字依据，避免 SSR/翻译脚本中的登录文案误报；可见登录控件仍优先，缺少正向登录证据仍失败关闭。开发热重载可通过 `POST /api/extension/reload` 广播到当前已连接的扩展；装载路径与产物摘要必须另行核对。
+
+2026-10-14 已用该本地入口完成 TikTok 修复包实机热加载：先比较注册目录的 manifest/生成文件，保留已有配置改动，再更新实际不同的产物，核对 delivered 与重连并用新建任务页验收。Chrome 管理通道不可用不必然阻塞该路径；delivered 本身只证明广播送达，不证明收藏成功，仍须核对正式任务终态与新文档持久化结果，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。
+
+`runScope` 在执行前有界等待可识别的已登录 viewer；本人资料导航等待页面 URL 与身份标题一致，最多 10 秒，不以点击成功代替归属证据。原 task idle/absolute deadline 与累计预算仍生效。
+
+渲染等待同时限制轮数和墙钟时间；已在本人 URL 时原地等待标题，避免重复点击资料入口导致整页导航恢复循环。
+
+本人资料归属验证兼容 `user-title` / `user-subtitle` 两个可见身份标题；必须精确匹配 viewer handle，并继续要求本人 URL。
+
+TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染等待和整页恢复；滚动预算公式、360 秒绝对上限与 120 秒 idle 限制保持。
+
+范围切换后先有界等待 `resolveTiktokScopeRoot` 成功，再进入收集器；未确认范围的容器不回退为整页扫描。
+
+
+### TikTok 分阶段渲染与回传有界等待（2026-10-11）
+
+- 本人标题出现后，喜欢/收藏标签仍可能尚未挂载；`navigateToProfileTab` 单独等待目标可见入口（最多 10 秒），然后点击并等待已证明的 scope root。实机已从提前 `scope_tab_not_found` 推进到 `liked-tab[aria-selected=true]`；列表识别尚未通过，不扩大为整页抓取。
+- 公共 API `TiktokTaskResultRetryOptions.requestTimeoutMs` 为结果回传单次尝试的可选上限，默认且最大 10 秒，覆盖 URL 解析与 POST。超时中止请求并释放串行等待，原 canonical body 留在 durable FIFO；迟到的 URL 解析不再发送 POST。回调重试不会重做上游收藏动作。
+- 已用永不完成的 POST 和迟到 URL 解析验证：失败可退出，原结果不丢失，恢复后按原 body 重放。该回归不冒充真实断连原因；本轮后续浏览器断连来自临时诊断包构建失败。
+
+
+### TikTok 当前桌面页兼容与消息注册等待（2026-10-11）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 喜欢/收藏/关注显式空态 | 当前页面形态的回归包括未知 viewer、他人弹窗、followers、隐藏/空白/通用错误等反例；不扩大到任意 main 下的视频列表。 |
+| session viewer 与设置页恢复 | canonical app-context user 需额外正向登录证据，显式 logout 覆盖 DOM；设置页无 nav-profile 时仍可识别 session viewer。 |
+| 分阶段 hydration | 登录与本人标题最多等待 20 秒，关注弹窗最多 20 秒；scope 基础预算 90 秒，总绝对上限 360 秒与 idle 120 秒不变。 |
+| 内容脚本投递 | 文档 complete/12 秒兜底之后，如果 receiver 尚未注册，以同一 scope 最多重试 20 秒；scope/任务切换或清理后停止，重试不延长任务 deadline，不重放站内写操作。 |
+
+公开 API：`readTiktokUniversalData` 新增显式登出字段，`resolveTiktokScopeRoot` 可传预期 viewer；`TIKTOK_SCOPE_EXECUTE` 和 task-result wire 不变。Chrome/Firefox 构建只能证明可打包，不能替代已安装 Chrome 的账号链路验收；实时结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok 慢加载和列表交接修复（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 列表内容晚于标签挂载 | 喜欢/收藏/历史 scope root 最多等待 60 秒，关注仍 20 秒；没有已证明的容器仍失败，不扩大到整页采集。dispatcher 的 idle/absolute deadline 仍优先。 |
+| scope 结果与下一 scope 交接 | 结果持久化后、等待后台 ACK 前释放采集锁；旧回调清理只能释放自己的锁和存储记录。同一文档在上一结果 ACK 前收到下一列表任务不再被忽略。 |
+| 原生收藏登录 hydration | 复用 TikTok 正向登录证据，明确登录墙或显式 logout 可提前终止；尚未挂载登录控件时继续等待，匿名上传按钮不能证明登录。 |
+
+公共 API：`waitForNativeSaveReadiness(ready, sleep, timeoutMs=10_000)` 新增可选等待预算（夹紧到 250–30,000ms，轮数和墙钟双重有界）；其他来源默认不变，TikTok save/verify 使用 20 秒。`TiktokNativeSaveEnvironment.isLoginRequired?()` 区分明确未登录和正在加载；wire、权限与配置均不变。真实验收状态见[台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok 原生收藏视口与持久化确认（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 精确视频的可见按钮 | 排除视口外、零尺寸和被裁切的控件，避免下一条预加载视频导致候选歧义；优先点击唯一可见的内层 button，多个内层按钮拒绝执行。 |
+| 当前桌面书签状态 | `favorite-icon` 内唯一 `SpanBookmarkWrapper` SVG 的已观察金色 `rgb(250, 206, 21)` 可作为即时选中态；继续支持 aria 和明确“取消收藏”文案，不把任意黄色图标当作收藏。 |
+| 刷新后持久化 | TikTok 的 `synced` / `already_synced` 即时结果也降为待确认，沿用一次刷新、新文档与 `verification_only` 路径；只有新文档的 `already_synced` 才能成功。无法刷新/未见新文档/再次未确认均失败，绝不再点一次。其他来源语义不变。 |
+
+公开函数和 wire 字段不变；`createTiktokBrowserEnvironment` 的实现与 `runNativeSaveTask` 的 TikTok 成功条件收紧，无新增权限、依赖、配置或架构连线。真实授权测试观察到请求成功和临时金色图标，但刷新后 25 秒仍未收藏，不能据此宣称原生写入通过；见[验收台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok scope 接收确认（2026-10-12）
+
+四列表真实复查仍出现喜欢已完成、下一 scope idle 超时，暴露原先把 `tabs.sendMessage` resolve 等同于执行接收的缺口。`TIKTOK_SCOPE_EXECUTE` 现在回复 `{accepted, task_id, scope}`：content 先持久化记录和 session 恢复指针，再允许肯定 ACK；重复同任务/同 scope 仅在可恢复后 ACK，忙于其它 scope 或存储失败拒绝接收。`executeTiktokScopeOnce(data, onAccepted?)` 新增可选回调。
+
+后台每次接收 ACK 最多等待 1 秒，缺失/错误 scope/否定/断开的 ACK 都沿原 20 秒投递预算重试同一只读 scope；正向 ACK 必须与任务和 scope 同时匹配。重试不扩展 idle/absolute deadline，不重放 native save。该改动补齐现有 dispatcher↔content 通道的接收边界，后端 wire、浏览器权限与配置不变；真实连续任务结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 收藏请求完成观察（2026-10-13）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 先观察再点击 | `TiktokNativeSaveEnvironment.watchFavoriteRequest(contentId)` 返回 `TiktokFavoriteRequestWatch`（`isComplete()` / `dispose()`）或 null；浏览器不支持观察时不执行写入。 |
+| 乐观 UI 不提前刷新 | 原生按钮已变金色仍须等待网页自身请求完成；只匹配同源 `/api/item/collect/`、`action=1`、精确 `itemId`、本次观察后的 fetch/XHR Resource Timing。不读取 Cookie 或响应体，不构造请求。 |
+| 完成与保存分开确认 | 观察请求完成不是证明服务端保存；runner 仍必须刷新并从新文档只读确认。未完成最多等待原有 100 轮/100ms 确认预算，未确认不报成功；所有退出路径释放观察器。 |
+
+只增加 content 内部环境接口，不改变后台 wire、权限、配置或跨模块架构。回归覆盖请求未完成时不刷新、旧请求/其他视频/取消收藏/异源请求不计入，以及观察器清理。实机人工点击等待响应后仍不保留收藏，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。
+
+### 多语言（v0.3.230+）
+
+设置 → 通用 → **默认语言（所有端共用）** 提供 `简体中文` / `繁體中文` / `English`，与 Web / CLI 共用同一份
+`[general].language`。侧边栏在 `initializePopup()` 最先初始化 `/shared/i18n.js`，目录由构建
+脚本从 `src/openbiliclaw/i18n/ui/` 复制到 `popup/locales/`（`extension/popup/locales/` 已
+gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新
+`language` 再切一次。`bg` / 通知里的用户可见文案随 `/i18n/ui` 目录一起覆盖。完整契约见
+[多语言模块](i18n.md)。

@@ -27,6 +27,8 @@ skills = build_agent_skills(adapter)
 ## 当前能力面
 
 - 多源推荐：推荐、换一批、追加、平台范围、排除项；内容使用 `item_key/content_id/source_platform`，同时保留 `bvid/up_name` 兼容字段。
+- 推荐导演：可配置 Jev 逐对编排、Agent 提前编排 + Jev 修补、纯 Agent 提前编排；共用整屏提交、恢复与实际呈现确认合同，独立 Jev 过滤也接入 bootstrap。
+- 完整候选评估：`discovery.eval_scorer="jev"` 复用同一纯文本 Jev evaluator，含旧推荐池补评；不要求开启导演，不隐式回退 LLM。需在宿主后端进程配置 provider 与环境变量凭据，失败保持待评估。
 - 反馈与主动发现：推荐反馈、惊喜卡片的 view/like/dislike/dismiss/chat、兴趣和避雷探针的 confirm/reject/defer/chat。
 - 画像与对话：画像摘要、完整 overlay 编辑状态、确定性编辑、带 durable `turn_id` 的 Socratic chat 和历史读取。
 - 运行态：runtime status、activity feed、平台库存可用量、账号同步。
@@ -34,6 +36,17 @@ skills = build_agent_skills(adapter)
 - 主动推送：`listen` 默认监听 delight、兴趣和避雷候选及结果事件。
 
 ## 写操作边界
+
+`[director].mode` 默认 `off`，旧推荐调用不变。开启后，`recommend / append / reshuffle`
+必须传稳定 `request_id`（1–128 字符）：前两者推进下一屏，后者保持当前方向换整屏；同一个
+动作重试复用原 ID，不能换参数。`stream_ref` 标识独立体验流，返回 `batch_ref` 冻结整屏身份。
+`restore` 只读，不推进、不生成；`present` 只接受宿主确认实际可见的 `item_keys` 子集和
+稳定 `ack_id`。**工具返回、Agent 读到卡片不等于用户看到，不能自动调用 present。**
+宿主无法确认实际呈现时保留未曝光，真实反馈可以隐式确认对应卡片。
+
+Python 宿主退出时调用 `await adapter.aclose()`，CLI 在同一事件循环自动关闭；相同配置的
+one-shot 重建保留未执行计划，配置切换会拦截旧进程的生成请求。推荐反馈传返回卡片的
+`recommendation_id` 和 `batch_ref`，只投影既有 durable event，避免重复学习。
 
 推荐反馈和 delight 反应的 durable 写入使用稳定 `request_id` 做幂等键；同一个 ID 不得复用
 到另一条内容或另一种动作。`save-local` 只写本地 SQLite；`sync-saved` 会触发 Bilibili

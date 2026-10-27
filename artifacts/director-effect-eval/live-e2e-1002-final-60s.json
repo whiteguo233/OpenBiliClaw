@@ -1,0 +1,508 @@
+{
+  "schema": "director-live-e2e.v1",
+  "policy_version": "director-screen-policy.v3",
+  "code_sha256": {
+    "scripts/run_director_live_e2e.py": "711fd55ff84cf53466b38a3176ac9f60b4ab7acbccf7e08c871ec858058c9a6e",
+    "scripts/director_codex_transport.py": "0af47294620a5e30cec1a463f4300d8d3ad2c64d4b37801fa78c6846325a8b08",
+    "src/openbiliclaw/recommendation/director/planner.py": "edfae00f54d54e4c7b14750b7772f209d2b76ed68124626678a88d3a220155f1",
+    "src/openbiliclaw/recommendation/director/policy.py": "719798ddd2183aab200410780e119f9585cb73bb73d36141aac77dc658196237",
+    "src/openbiliclaw/recommendation/director/horizon_models.py": "34ee5c1717da01cc1a730dea3bb1606865ce4a3a92f6f3aeff69ad1871704cc8",
+    "src/openbiliclaw/recommendation/director/planner_refs.py": "4ef5dd171c120f1a8e78e9c35c49556e7a5e5a551e475b3afd4d7c664186b350"
+  },
+  "started_at": "2026-10-02T04:48:30.136430+00:00",
+  "transport": "codex-cli",
+  "model": "gpt-6-luna",
+  "mode": "scripted_http_acceptance",
+  "planning_budget_seconds": 60.0,
+  "budget_class": "diagnostic_override",
+  "real_source_snapshot": true,
+  "source_configuration": "config_toml_plus_local_and_environment",
+  "feedback_is_isolated_acceptance_action": true,
+  "long_term_learning_and_discovery": "excluded",
+  "jev": "not_used_agent_only",
+  "asgi_background_lifespan": "disabled",
+  "http_requests": [
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/present",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/present",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendation-click",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendation-click",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    }
+  ],
+  "screens": [
+    {
+      "batch_sha256": "f9c912ec96984e1b6f799f4c6693b61b68a50473ac158d8cfecd7c37bf2640cb",
+      "plan_sha256": "18c7f3fdff9b86b5b28e34a4a4748097bb0249d82e289f2e6d7289fa66781ff9",
+      "item_count": 4,
+      "item_sequence_sha256": "9788041d4ce74581fe08479b21bc735ef300aced212a27c43bd62e14d9d27ca3",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "agent_only",
+      "execution_binding": "PLAN_SLOT",
+      "experience_step_seq": 1,
+      "state_revision": 0,
+      "planning_source": "fresh",
+      "planning_reason": "agent_horizon_prepared",
+      "planning_calls": 2,
+      "initial_screen_counts": [
+        4
+      ],
+      "coverage_reason": "semantic_shortage"
+    },
+    {
+      "batch_sha256": "1e8d5b129749ec344332a0302ce5351792e3c7abb6317063af11049cc240c12d",
+      "plan_sha256": "4d4ac792a7e54579c0b7340b45809929b3e8702fc40fd1af63b6c96eb21b5328",
+      "item_count": 6,
+      "item_sequence_sha256": "a087af599bdf3bac9b13a9fa77002c02e2101e3a3faa19b55bf448f2d923ef59",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "agent_only",
+      "execution_binding": "PLAN_SLOT",
+      "experience_step_seq": 2,
+      "state_revision": 2,
+      "planning_source": "fresh",
+      "planning_reason": "agent_horizon_prepared",
+      "planning_calls": 2,
+      "initial_screen_counts": [
+        6
+      ],
+      "coverage_reason": "semantic_shortage"
+    }
+  ],
+  "checks": [
+    "new_stream_restore_does_not_generate",
+    "exact_restore_and_idempotent_generate_without_foreground_model",
+    "actual_visible_subset_ack_is_idempotent"
+  ],
+  "passed": false,
+  "model_calls": [
+    {
+      "input_sha256": "a47e965c6ac4d74053a98d9b7f0826dbbde864a05bdfa99a1a532873bb46d49b",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 37090,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "844ccdb84f8dd1e74eb1b5203d73e2bb8f4f6dd7d55e03303e1fa1fd27525854",
+      "usage": {
+        "input_tokens": 19111,
+        "cached_input_tokens": 0,
+        "output_tokens": 524,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          4
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 2,
+        "omitted_count": 38
+      },
+      "elapsed_seconds": 16.8
+    },
+    {
+      "input_sha256": "7e7ae4bf268337c319aa9f49352ca4d67116bf2d7895ff61f35591870bc9665d",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 39632,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "ac9e78eaf72649fff36dc94d99e42fcdbb84de0c32dac84ed41971a33dc3167c",
+      "usage": {
+        "input_tokens": 19774,
+        "cached_input_tokens": 7936,
+        "output_tokens": 526,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          4
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 36
+      },
+      "elapsed_seconds": 25.133
+    },
+    {
+      "input_sha256": "cbb6ec3d53b810c9d5346b5e457e2ce5945d37fb69f0bea51ac9c5aa2f6eff5e",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 38057,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "response_sha256": "b3d3875c81ee0bd9a9d1a864da7d5721866a3c59b692bd5ef4db9d88a4897fa9",
+      "usage": {
+        "input_tokens": 19440,
+        "cached_input_tokens": 7936,
+        "output_tokens": 271,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 39
+      },
+      "elapsed_seconds": 19.99
+    },
+    {
+      "input_sha256": "df6cb27f68f5e634b4799a0c117c6650605753fa3a971c81cf950e48f84480ab",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 40912,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 2,
+      "feedback_kind_counts": {
+        "presented": 1,
+        "click": 1
+      },
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "def0da2765470e96a2fa7cb6524c860465620f59f3baed9072666e7900a73a4e",
+      "usage": {
+        "input_tokens": 20389,
+        "cached_input_tokens": 2816,
+        "output_tokens": 526,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          6
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 8
+      },
+      "elapsed_seconds": 18.794
+    },
+    {
+      "input_sha256": "e70cb1934cd91d752fd246fb04691b96ea273d41b82d60fd20ab13dc7cae3869",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 39448,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "response_sha256": "1382ec258c868129a94c1fbf2c1b7cc05e46064e69c0ec5c5b6114db81ae2286",
+      "usage": {
+        "input_tokens": 19812,
+        "cached_input_tokens": 7936,
+        "output_tokens": 408,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          2
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 1,
+        "omitted_count": 39
+      },
+      "elapsed_seconds": 20.705
+    },
+    {
+      "input_sha256": "cdb6f6d3944390e239a4ee614cf2916b01a3c5a2300f7793aebb9510b9f89e0d",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 43611,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 2,
+      "feedback_kind_counts": {
+        "presented": 1,
+        "click": 1
+      },
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "e2e5ef84b55fda0a51354130bdd5cd16f2f659d0e7211d114fe12a7b0c4cd381",
+      "usage": {
+        "input_tokens": 21131,
+        "cached_input_tokens": 2816,
+        "output_tokens": 576,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          6
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 34
+      },
+      "elapsed_seconds": 16.558
+    }
+  ],
+  "transport_records": [
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 540,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 184,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 184,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    }
+  ],
+  "snapshot": {
+    "source_open_mode": "sqlite_readonly_online_backup",
+    "source_data_path_sha256": "25c70f5d9b28fa6b8a5c499ec98df2c2480b34d54e533fe659937830ff64a936",
+    "memory_files": [
+      "soul.json",
+      "preference.json",
+      "awareness.json",
+      "insight.json",
+      "profile_overrides.json",
+      "speculative_state.json",
+      "discovery_runtime.json"
+    ],
+    "database_bytes": 228888576,
+    "private_snapshot_deleted_on_exit": true
+  },
+  "initial_shortlist_count": 40,
+  "error_class": "AcceptanceFailure",
+  "failure_code": "weak_click_discarded_future_plan",
+  "finished_at": "2026-10-02T04:50:04.699848+00:00"
+}

@@ -15,12 +15,14 @@ starts the normal runtime loop without an app restart.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.api.app import create_app
+from openbiliclaw.runtime.worker_status import WorkerStatusStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,6 +32,68 @@ logger = logging.getLogger(__name__)
 # Retry cadence while the config cannot build an LLM registry (construction
 # only, no network) or the runtime context comes up degraded.
 DEFAULT_LLM_PROBE_RETRY_SECONDS = 15.0
+# Coordinator status heartbeat: the API aggregates these payloads into
+# runtime-status while the heartbeat is younger than the max age.
+DISCOVERY_WORKER_HEARTBEAT_SECONDS = 10.0
+DISCOVERY_WORKER_STATUS_MAX_AGE_SECONDS = 45.0
+
+
+def _coordinator_status_payloads(controller: Any) -> dict[str, Any]:
+    """Collect live coordinator status payloads for cross-process publication.
+
+    The API process never starts these coordinators in the delegated
+    deployment, so its own instances would report a perpetual idle; this
+    worker's payloads are the authoritative ones.
+    """
+    coordinators: dict[str, Any] = {}
+    for attr, key in (
+        ("expression_copy_coordinator", "expression_copy"),
+        ("candidate_eval_coordinator", "candidate_eval"),
+    ):
+        coordinator = getattr(controller, attr, None)
+        status_payload = getattr(coordinator, "status_payload", None)
+        if callable(status_payload):
+            try:
+                coordinators[key] = status_payload()
+            except Exception:
+                logger.debug("discovery worker %s status payload failed", key, exc_info=True)
+    return {"coordinators": coordinators} if coordinators else {}
+
+
+def _status_store_for(ctx: Any) -> WorkerStatusStore:
+    data_path = getattr(getattr(ctx, "config", None), "data_path", None)
+    path = (data_path / "runtime" / "discovery_worker_status.json") if data_path else None
+    return WorkerStatusStore(path, max_age_seconds=DISCOVERY_WORKER_STATUS_MAX_AGE_SECONDS)
+
+
+async def _run_controller_with_status_heartbeat(
+    controller: Any,
+    status_store: WorkerStatusStore,
+) -> None:
+    """Run the controller loop while publishing coordinator status heartbeats."""
+    started_at = time.time()
+
+    async def _heartbeat() -> None:
+        while True:
+            try:
+                status_store.write(
+                    mode="discovery",
+                    pid=os.getpid(),
+                    started_at=started_at,
+                    heartbeat_at=time.time(),
+                    extra=_coordinator_status_payloads(controller),
+                )
+            except Exception:
+                logger.exception("Discovery worker status publish failed")
+            await asyncio.sleep(DISCOVERY_WORKER_HEARTBEAT_SECONDS)
+
+    heartbeat_task = asyncio.create_task(_heartbeat(), name="discovery_worker_status")
+    try:
+        await controller.run_forever()
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
 
 
 def _probe_llm_registry() -> None:
@@ -108,7 +172,7 @@ def run_discovery_worker(
 
         if waiting_logged:
             logger.info("Discovery worker LLM configuration recovered; starting runtime loop")
-        asyncio.run(run_forever())
+        asyncio.run(_run_controller_with_status_heartbeat(controller, _status_store_for(ctx)))
         return
 
 

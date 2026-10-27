@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.224"
+version = "0.3.232"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,9 +25,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx[socks]>=0.27",
+    "httpx[socks]>=0.28",
+    # Already installed by HTTPX; identify its CA bundle for image TLS reuse.
+    "certifi",
+    # Public network-backend API pins cover-image connections against DNS rebinding.
+    "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
+    # TikTok web API backend (sources/tiktok_web.py): Chrome TLS impersonation
+    # — TikTok's edge rejects plain-OpenSSL clients. Also an optional yt-dlp
+    # dependency, so the version lines stay compatible by construction.
+    "curl-cffi>=0.15",
     "bilibili-api-python>=16",
     # openai>=3 / anthropic>=1 vendor httpx internally as ``httpx2`` and their
     # isinstance guard rejects plain ``httpx.AsyncClient`` instances passed via
@@ -46,9 +54,15 @@ dependencies = [
     "websockets>=13",
     # Runtime cover-image preprocessing imports PIL directly.
     "Pillow>=10.0",
+    # Blue Fish Lab renders the account QR login code server-side (SVG) so the
+    # desktop / popup panels can show it without bundling a JS QR encoder.
+    # Already pulled in by bilibili-api-python; declared because we import it.
+    "qrcode>=8",
     "fastapi>=0.115",
     "rich>=13",
     "typer>=0.12",
+    # Multiline chat input (issue #83): PromptSession with custom key bindings.
+    "prompt_toolkit>=3.0",
     "pydantic>=2.0",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
@@ -61,6 +75,9 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.8",
     "mypy>=1.13",
+    # Build-time generator for the Traditional Chinese UI catalog
+    # (scripts/build_i18n_catalogs.py). The runtime never imports it.
+    "opencc-python-reimplemented>=0.1.7",
 ]
 local-llm = [
     "ollama>=0.4",
@@ -137,6 +154,8 @@ module = [
     "claude_agent_sdk",
     "claude_agent_sdk.*",
     "playwright.*",
+    "qrcode",
+    "qrcode.*",
     "twitter_cli",
     "twitter_cli.*",
     "x_client_transaction",

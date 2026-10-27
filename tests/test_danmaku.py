@@ -323,7 +323,7 @@ async def test_danmaku_bonus_positive_for_on_topic() -> None:
         )
         cand = DiscoveredContent(bvid="BV1", title="t", relevance_score=0.8)
         bonus = await engine._danmaku_bonus_map([cand], _profile())
-        assert bonus.get("BV1", 0.0) > 0.0
+        assert bonus.get(cand.scoring_key, 0.0) > 0.0
         db.close()
 
 

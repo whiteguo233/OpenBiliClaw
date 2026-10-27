@@ -113,6 +113,22 @@ class WorkerStatusStore:
             return None
         return raw
 
+    def read_if_fresh(self) -> dict[str, Any] | None:
+        """Return the latest status only while its heartbeat is within budget.
+
+        Callers aggregating cross-process coordinator state must not overlay
+        a dead worker's last-known payload over live local values, so a stale
+        or missing heartbeat reads as ``None`` here.
+        """
+        data = self.read()
+        if data is None:
+            return None
+        now = time.time() if self._now is None else self._now()
+        heartbeat = float(data.get("heartbeat_at") or 0.0)
+        if heartbeat <= 0 or now - heartbeat > self.max_age_seconds:
+            return None
+        return data
+
     def status_payload(self) -> dict[str, Any]:
         """Return runtime-status friendly worker health fields."""
         data = self.read()

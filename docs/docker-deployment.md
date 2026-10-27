@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 向量 GPU → CPU 自动回退仅适用于后端进程可见的 loopback Ollama 端点。Compose 默认通过 `http://ollama:11434` 访问独立容器，不自动更改其执行模式；该容器仍按部署的 GPU/CPU 配置运行。
+
 [← 返回 README](../README.md)
 
 > 🔒 **局域网访问安全（可选密码门禁）**：容器把后端暴露在 `8420`，同网段设备都能访问。需要为局域网 / 远程设备加登录密码时（本机与浏览器扩展仍免登录），设置环境变量 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…`（或进容器跑 `openbiliclaw set-password`）。若手动套其他反向代理，记得配 `[api.auth].trusted_proxies` 或让代理自行鉴权；仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见 [`docs/modules/api-auth.md`](modules/api-auth.md)。
@@ -10,11 +12,13 @@
 > 会继续运行，但远程入口会报告 helper 缺失。Docker 跨网络访问继续使用下文的 Caddy 公网
 > HTTPS overlay 或自管 TLS。完整边界见[应用内 Tailnet](modules/tailnet.md)。
 
+首次初始化先选语言：一键安装交互向导首先询问简体 / 繁体 / English；自动化可给 `scripts/agent_bootstrap.py` 传 `--language en`（或 `zh-Hans` / `zh-Hant`）。`/setup/` 页头也可保存语言；容器 CLI 可用 `docker exec -it openbiliclaw-backend openbiliclaw init --language zh-Hant`。不指定参数的非交互运行保留配置。安装日志与旧 CLI 提示尚未全部翻译。
+
 ## 前置条件
 
 - [Docker](https://docs.docker.com/get-docker/) 20.10+
 - [Docker Compose](https://docs.docker.com/compose/install/) V2（`docker compose` 命令）
-- 一个 LLM API Key（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter）—— **Embedding 用 compose 自带的 Ollama 不再需要单独申请**
+- 一个 LLM API Key（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty）—— **Embedding 用 compose 自带的 Ollama 不再需要单独申请**
 
 ### 自带 Ollama embedding sidecar（bge-m3 已烤进镜像,离线开箱即用）
 
@@ -47,6 +51,11 @@ docker buildx build --platform linux/amd64,linux/arm64 -t openbiliclaw-backend:v
 ```
 
 ## 多源接入前置：登录态来源使用宿主机浏览器
+
+Instagram 分支的共享封面传输依赖 `httpx[socks]>=0.28` 与显式 `httpcore>=1.0,<2`，随正常 Python/镜像构建安装，不需要新守护进程。海外图片选择代理时，容器须能通过该代理访问 TLS 校验的 `https://1.1.1.1/dns-query`；仅查询公开 CDN 域名，再将公网目的 IP 固定到隧道。direct/国内 CDN 仍使用本机 DNS；DoH 故障应排查代理，不关闭证书或内网地址防护。Instagram 内容任务本身由宿主机浏览器联网，和容器封面链路分开。此说明不代表未发布分支已进入公共镜像。
+
+- **TikTok / Instagram 插件权限**：扩展默认声明两者的站点访问权限，浏览器在安装/更新时处理；保存来源设置不再单独授权。来源仍需显式启用，浏览器被手动或策略禁止站点访问时需恢复。容器部署不改变浏览器的实际授权状态。
+- **Instagram（默认关闭）**：公开 topic/creator 可选登录，个人 liked/saved/following 初始化需在装扩展的同一浏览器登录。后端只收到布尔心跳与规范化条目，不收到 Cookie；首版 init-only，不周期回拉账号。自动采集授权由部署者确认，详见[验收边界](platform-source-acceptance.instagram.md)。
 
 OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当前浏览器的登录会话来读取你能看到的内容。Docker 部署后，这些来源仍需在装了扩展的同一个浏览器里登录；公开匿名来源会在各自条目中明确说明：
 
@@ -123,7 +132,7 @@ $env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliCl
 
 安装脚本会克隆 / 更新仓库，然后调用 `agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie`。bootstrap 的 Docker 顺序是：
 
-1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks the same LLM provider first.
+1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks language first, then the same LLM provider.
 2. 写入宿主机 `config.toml`。
 3. `docker compose up -d --build` 启动后端和 Ollama embedding sidecar。
 4. 把确认后的 `config.toml` / Cookie 文件同步到容器 `/app/runtime`。
@@ -227,6 +236,8 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 
 ## 配置
 
+通过 Web / 本机设置 API 成功应用模型配置后，`serve-api` 的父 supervisor 会等待应用队列结束，在下一次约 5 秒巡检重启后台 worker / 推荐 / 图片服务，使候选评估和文案使用新模型。已有候选保留，数据目录仍固定为父进程当前持锁路径；无新增 Compose 服务或依赖。直接编辑 TOML 不触发 API handoff，仍需重启 backend 容器。旧镜像遇到修正模型后空池持续为零，也应完整重启 backend 后核对 `child-discovery-worker.log`。
+
 一行安装脚本会先在宿主机生成 `config.toml`，再同步到 Docker volume 的 `/app/runtime/config.toml`。配置要改时，优先重跑同一条安装 / bootstrap 命令；高级排查时可以直接编辑容器内文件。
 
 ```bash
@@ -287,6 +298,9 @@ base_url = "https://relay.example.com/v1"
 | `claude` | ✅ | Anthropic 账户 | 高质量推理；无 embedding 接口，需独立配置 `[llm.embedding]` |
 | `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；embedding 不可靠，建议独立配置 Ollama / Gemini / OpenAI embedding |
 | `orcarouter` | ✅ | 一个 Key 跑 150+ 模型 + 网关级零信任安全 | 按调用计费；无 embedding 接口，需独立配置 `[llm.embedding]` |
+| `requesty` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；无 embedding 接口，需独立配置 `[llm.embedding]` |
+| `api_route` | ✅ | 一个 Key 使用多家模型 | 按调用计费；embedding 需独立配置 `[llm.embedding]` |
+| `cheaperinference` | ✅ | 一个 Key 使用多家模型 | 按调用计费；embedding 需独立配置 `[llm.embedding]` |
 | `ollama` | ❌ | 完全离线 / 不要 Key / 16GB+ 内存 | CPU 推理首次响应慢（10-60s）。Docker 里的 Ollama chat 实例必须把 `base_url` 设成 `http://host.docker.internal:11434/v1` 才能访问宿主机 |
 | OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 使用 `provider_type="openai_compatible"`，必须显式配置 `base_url`。**普通用户不要选这个** |
 
@@ -295,6 +309,43 @@ base_url = "https://relay.example.com/v1"
 > 当 `--provider openai` 显式给出但 `--llm-base-url` 未给（或选了官方），bootstrap 会清空它选中的 OpenAI 实例的旧 gateway URL，让 SDK 回到 `https://api.openai.com/v1`；其他实例和链顺序不受影响。旧配置文件仍按 `[llm.openai]` 兼容处理。
 
 **分模块链（可选）**：`[llm.routes.soul/discovery/recommendation/evaluation]` 默认 `inherit=true`；也可设 `inherit=false` 并提供有序 `chain`。典型用法是发现 / 评估优先便宜渠道，Soul 优先高质量渠道；自定义链耗尽后不会越界回到全局链。详见 [docs/modules/config.md](modules/config.md)。
+
+### 可选：Jev 决策与推荐导演
+
+模型仍由用户选择。`jev-1.13.0` 内置双容量登记；其它精确型号需在挂载的 TOML 中按
+`decision.providers.jev.context_limits."实际模型ID"` 填写核实后的两个 token 上限，完整
+重启后端生效，不自动换模型。评估字节护栏 0=auto，旧非零配置仍作额外收紧。
+画像按需加载无新依赖、数据迁移或安装步骤，详见[配置](modules/config.md#decisionprovidersjev)。
+
+导演三模式与独立语义过滤均默认关闭；它们使用现有依赖，无需安装 Jev SDK、模型
+或额外 sidecar。显式启用时，按[配置参考](modules/config.md#director)修改容器实际
+配置目录 `/app/runtime` 的 TOML，而不是宿主机未挂载的同名文件。`agent_only` 且
+过滤关闭时不需要 Jev；其余启用 Jev 的路由需独立凭据，不借用聊天 / embedding Key。
+
+宿主机的环境变量不会自动进入容器。在所用 Compose 文件的 backend 服务
+`environment` 中显式添加变量映射；以下只保存变量名，不保存 Key：
+
+```yaml
+services:
+  openbiliclaw-backend:
+    environment:
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?provide the Jev credential in the launch environment}
+```
+
+通过受控启动环境提供该变量；若 `api_key_env` 自定义，映射同名变量。不要输出 Key
+做校验，也不要提交包含秘密的 Compose / `.env` 文件。修改 TOML 或凭据后完整重建
+后端容器，使 API、推荐、发现进程一并重新启动；单纯刷新页面不生效，普通
+`docker compose restart` 也不会更新环境变量。源码 Compose 的命令为：
+
+```bash
+docker compose up -d --force-recreate openbiliclaw-backend
+```
+
+预构建部署使用同一命令并加 `-f docker-compose.prebuilt.yml`（放在 `up` 前）；保留
+原有 HTTPS 等 overlay。重建不会删除 named volumes。启动后检查日志与经过当前
+认证方式访问的 `GET /api/recommendations/director/status`；`config-show` 只验证配置
+展示，不会证明凭据可用或自动做付费探测。过滤先用 shadow；enforce 所需的模型固定
+与真实校准记录见配置参考，填一个标签本身不算质量验证。
 
 ## 日常命令
 
@@ -508,8 +559,11 @@ curl -s http://127.0.0.1:8420/api/health | python -m json.tool
 
 v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。
 
-### 可选 Sponsored Runtime 协议兼容
+## macOS 桌面包签名
 
-源码/AI 安装与 Docker 默认保持 `[llm.sponsored].enabled=false`，不引入私有二进制或 Rust 构建依赖。可选正式 bundle 需与 IPC v2 Core、签名 Policy 成套使用；旧 v1 不兼容，禁止用生产 `--public-key`/`--mock` 等开关放宽校验。桌面 bundle 的签名/公证和安装更新接入仍需发行验证；本分支不会自动启用赞助。见[固定任务设计](plans/2026-10-27-sponsored-fixed-tasks.md)。
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
-全项目 SDK 接线也覆盖文本、JSON、工具、视觉和独立向量任务，详情见[覆盖设计](plans/2026-10-27-sponsored-all-tasks.md)。默认源码/Docker 仍关闭；正式私有 bundle 需包含全套新增任务策略，并先核实免费额度实际覆盖的模型和预算，不能沿用单画像合并策略宣称全功能可用。
+
+## 可选全项目 Sponsored SDK（未发布）
+
+源码/AI安装及Docker保持默认关闭，不自动下载私有Runtime或引入Rust依赖。正式bundle需全套任务策略、获批免费/赠送额度模型和有限预算；OS签名、公证与安装更新仍待发行验证。覆盖见[设计](plans/2026-10-27-sponsored-all-tasks.md)。

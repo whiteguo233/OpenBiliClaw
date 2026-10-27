@@ -63,10 +63,18 @@ def inventory(root: Path = ROOT) -> list[dict[str, str]]:
                     family = "vision"
                 elif "complete_socratic" in leaf or "complete_with_core_memory" in leaf:
                     family = "text"
-                elif leaf == "complete_with_tools":
-                    family = "tools"
+                elif "native_tools" in leaf or leaf == "complete_with_tools":
+                    family = "tools/stream" if leaf.startswith("stream") else "tools"
+                elif leaf.startswith("stream_") and ("complete" in leaf or "socratic" in leaf):
+                    family = "text/stream"
                 elif "complete_structured" in leaf or leaf == "execute_sponsored_or_structured":
                     family = "structured"
+                elif (
+                    "/api/" in self.rel
+                    and self.scope == "_complete_probe"
+                    and leaf in {"complete", "complete_provider"}
+                ):
+                    family, route = "probe", "explicit configured-provider connectivity check"
                 elif leaf in {"complete_project_task", "complete"} and (
                     leaf == "complete_project_task"
                     or fn == "complete"

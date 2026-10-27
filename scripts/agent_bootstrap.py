@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Constants
 
+INSTALL_LANGUAGES = ("zh-Hans", "zh-Hant", "en")
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8420
 DEFAULT_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw.git"
@@ -91,6 +93,9 @@ SUPPORTED_PROVIDERS = (
     "openrouter",
     "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 )
 REMOTE_PROVIDERS = (
     "openai",
@@ -100,6 +105,9 @@ REMOTE_PROVIDERS = (
     "openrouter",
     "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 )
 
 # Providers whose backend has no embeddings endpoint. When a user picks
@@ -108,7 +116,15 @@ REMOTE_PROVIDERS = (
 # pulls the embedding model (otherwise embeddings silently fall back at
 # runtime to whatever the registry can find — see registry.py
 # build_embedding_service).
-PROVIDERS_WITHOUT_EMBED = ("claude", "deepseek", "openrouter", "orcarouter")
+PROVIDERS_WITHOUT_EMBED = (
+    "claude",
+    "deepseek",
+    "openrouter",
+    "orcarouter",
+    "requesty",
+    "api_route",
+    "cheaperinference",
+)
 
 
 def ensure_local_no_proxy() -> str:
@@ -142,7 +158,7 @@ LLM_PRESETS: dict[str, dict[str, str]] = {
     },
     "minimax": {
         "base_url": "https://api.minimax.io/v1",
-        "model": "MiniMax-M2.7",
+        "model": "MiniMax-M3.1-Flash",
     },
     "qwen": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -192,6 +208,9 @@ HUMAN_LLM_MENU: tuple[tuple[str, str, str], ...] = (
     ("claude", "Claude 官方", "claude-sonnet-4-6"),
     ("openrouter", "OpenRouter 聚合", "openai/gpt-5-nano"),
     ("orcarouter", "OrcaRouter 聚合", "openai/gpt-4o"),
+    ("requesty", "Requesty 聚合", "openai/gpt-4o-mini"),
+    ("api_route", "API Route 聚合", "gpt-5.5"),
+    ("cheaperinference", "Cheaper Inference 聚合", "gpt-5.4-mini"),
 )
 
 HUMAN_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
@@ -214,6 +233,9 @@ PROVIDER_MODEL_DEFAULTS: dict[str, str] = {
     "claude": "claude-sonnet-4-6",
     "openrouter": "openai/gpt-5-nano",
     "orcarouter": "openai/gpt-4o",
+    "requesty": "openai/gpt-4o-mini",
+    "api_route": "gpt-5.5",
+    "cheaperinference": "gpt-5.4-mini",
     "ollama": "qwen2.5:7b",
 }
 
@@ -222,6 +244,9 @@ PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
     "ollama": "http://127.0.0.1:11434/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "orcarouter": "https://api.orcarouter.ai/v1",
+    "requesty": "https://router.requesty.ai/v1",
+    "api_route": "https://global.api-route.com/v1",
+    "cheaperinference": "https://api.cheaperinference.com/v1",
 }
 
 
@@ -272,6 +297,7 @@ class HumanInstallAnswers:
     bilibili_cookie: str = ""
     bilibili_favorite_limit: int = DEFAULT_BILIBILI_FAVORITE_LIMIT
     bilibili_follow_limit: int = DEFAULT_BILIBILI_FOLLOW_LIMIT
+    language: str = "zh-Hans"
 
     def __post_init__(self) -> None:
         if self.provider not in SUPPORTED_PROVIDERS:
@@ -688,6 +714,28 @@ def _collect_human_cookie_config(
     return "extension", ""
 
 
+def collect_human_language(input_func: Any, existing: str = "zh-Hans") -> str:
+    """Choose the UI/output language without importing pre-install dependencies."""
+    tag = existing.strip().lower().replace("_", "-")
+    default = (
+        "en"
+        if tag.startswith("en")
+        else (
+            "zh-Hant"
+            if any(part in tag.split("-") for part in ("hant", "tw", "hk", "mo"))
+            else "zh-Hans"
+        )
+    )
+    print("\n语言 / 語言 / Language")
+    print("  1. 简体中文 (zh-Hans)\n  2. 繁體中文 (zh-Hant)\n  3. English (en)")
+    while True:
+        raw = str(input_func(f"选择 / 選擇 / Select [{default}]: ")).strip() or default
+        language = INSTALL_LANGUAGES[int(raw) - 1] if raw in {"1", "2", "3"} else raw
+        if language in INSTALL_LANGUAGES:
+            return language
+        print("请输入 / 請輸入 / Enter: 1, 2, 3 / zh-Hans, zh-Hant, en")
+
+
 def collect_human_install_wizard(
     *,
     input_func: Any = input,
@@ -696,11 +744,14 @@ def collect_human_install_wizard(
     existing_api_key: str = "",
     existing_base_url: str = "",
     existing_model: str = "",
+    language: str | None = None,
+    existing_language: str = "zh-Hans",
 ) -> HumanInstallAnswers:
     """Collect full human one-line installer choices before bootstrap starts."""
 
     ensure_human_wizard_tty(input_func)
     secret_input_func = secret_input_func or read_secret_no_echo
+    selected_language = language or collect_human_language(input_func, existing_language)
     llm = collect_human_llm_config(
         input_func=input_func,
         secret_input_func=secret_input_func,
@@ -749,6 +800,7 @@ def collect_human_install_wizard(
     cookie_mode, bilibili_cookie = _collect_human_cookie_config(input_func, secret_input_func)
 
     return HumanInstallAnswers(
+        language=selected_language,
         provider=llm.provider,
         llm_api_key=llm.llm_api_key,
         llm_base_url=llm.llm_base_url,
@@ -804,6 +856,8 @@ def apply_human_install_answers_to_args(
 
     if answers.provider not in SUPPORTED_PROVIDERS:
         raise RuntimeError(f"unknown provider from human install wizard: {answers.provider}")
+    if args.language is None:
+        args.language = answers.language
     if args.provider is None:
         args.provider = answers.provider
     if args.llm_api_key is None and answers.llm_api_key:
@@ -848,6 +902,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Automated OpenBiliClaw bootstrap for AI coding agents.",
         allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--language",
+        choices=INSTALL_LANGUAGES,
+        default=None,
+        help="UI/output language: zh-Hans / zh-Hant / en; preserve config when omitted.",
     )
     parser.add_argument(
         "--project-dir",
@@ -923,7 +983,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "installs don't have to remember each vendor's endpoint. "
             "Implies --provider=openai_compatible. --llm-base-url / --llm-model still "
             "override the preset on a per-field basis. Presets: "
-            "kimi (Moonshot), minimax (M2.7), qwen (DashScope), zhipu (GLM), "
+            "kimi (Moonshot), minimax (M3.1-Flash), qwen (DashScope), zhipu (GLM), "
             "sensenova (商汤日日新, 免费额度), yi (零一万物), self-hosted (vLLM/LMStudio), "
             "relay (中转站/OneAPI), azure (Azure OpenAI), custom (no preset)."
         ),
@@ -2093,6 +2153,9 @@ def _ensure_llm_instance(project_dir: Path, provider: str) -> str:
         "openrouter": "OpenRouter",
         "orcarouter": "OrcaRouter",
         "openai_compatible": "OpenAI-compatible",
+        "requesty": "Requesty",
+        "api_route": "API Route",
+        "cheaperinference": "Cheaper Inference",
     }
     update_config_secret(
         config_path,
@@ -3196,7 +3259,18 @@ config_path = Path("/app/runtime/config.toml")
 cookie_path = Path("/app/runtime/data/bilibili_cookie.json")
 data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
 llm = data.get("llm", {})
-remote = {"openai", "claude", "gemini", "deepseek", "openrouter", "orcarouter", "openai_compatible"}
+remote = {
+    "openai",
+    "claude",
+    "gemini",
+    "deepseek",
+    "openrouter",
+    "orcarouter",
+    "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
+}
 instances = llm.get("instances", {}) if isinstance(llm.get("instances"), dict) else {}
 chain = llm.get("default_chain", []) if isinstance(llm.get("default_chain"), list) else []
 try:
@@ -3424,6 +3498,12 @@ def run(args: argparse.Namespace) -> int:
                 read_simple_toml(project_dir / "config.toml")
             )
             answers = collect_human_install_wizard(
+                language=args.language,
+                existing_language=str(
+                    read_simple_toml(project_dir / "config.toml")
+                    .get("general", {})
+                    .get("language", "zh-Hans")
+                ),
                 existing_provider=provider,
                 existing_api_key=str(provider_cfg.get("api_key", "") or ""),
                 existing_base_url=str(provider_cfg.get("base_url", "") or ""),
@@ -3449,6 +3529,10 @@ def run(args: argparse.Namespace) -> int:
                 },
             )
         )
+
+    if args.language:
+        update_config_secret(project_dir / "config.toml", "general", "language", args.language)
+        emit(BootstrapResult("ok", "language_set", {"language": args.language}))
 
     if args.provider:
         apply_provider_override(project_dir, args.provider)

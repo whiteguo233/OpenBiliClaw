@@ -59,6 +59,74 @@ class _FakeCandidatePipeline:
         return {"evaluated": batch_size, "cached": 2, "rejected": 0}
 
 
+async def test_partial_supply_does_not_clear_the_failure_cooldown() -> None:
+    pipeline = _FakeCandidatePipeline()
+
+    async def discover(profile: Any, options: DouyinDiscoveryOptions) -> DouyinDiscoveryResult:
+        return DouyinDiscoveryResult(
+            items=[SimpleNamespace()],
+            cached=False,
+            source_counts={"dy-plugin-hot-related": 1},
+            source_outcomes={"hot": "failed"},
+        )
+
+    producer = DouyinDiscoveryProducer(
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        min_interval_minutes=0,
+        sources=("hot",),
+        candidate_pipeline=pipeline,
+        candidate_evaluation_owned_by_coordinator=True,
+    )
+    first = await producer.produce_if_due(limit=12)
+    assert first["enqueued"] == 1, "valid partial supply must still reach admission"
+    assert first["reason"] == "error"
+    assert producer._retry_not_before is not None
+    assert producer._retry_not_before > datetime.now(UTC) + timedelta(minutes=14)
+    assert (await producer.produce_if_due(limit=12))["reason"] == "throttled"
+
+
+async def test_restarted_producer_checks_shared_cooldown_before_claiming_keywords(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    db = Database(tmp_path / "shared-cooldown.db")
+    db.initialize()
+    queue = DyTaskQueue(db)
+    task_id = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == task_id
+    queue.fail(task_id, error="api_rate_limited")
+    calls = 0
+
+    async def discover(profile: Any, options: DouyinDiscoveryOptions) -> DouyinDiscoveryResult:
+        nonlocal calls
+        calls += 1
+        return DouyinDiscoveryResult(items=[], cached=False)
+
+    class UnclaimedKeywords:
+        def should_claim(self) -> bool:
+            return True
+
+        def claim(self, *args: Any, **kwargs: Any) -> list[Any]:
+            raise AssertionError("cooling discovery must not consume a keyword claim")
+
+    producer = DouyinDiscoveryProducer(
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        min_interval_minutes=0,
+        sources=("search",),
+        database=db,
+        keyword_fetch=UnclaimedKeywords(),
+    )
+    try:
+        assert (await producer.produce_if_due(limit=6))["reason"] == "throttled"
+        assert calls == 0
+    finally:
+        db.close()
+
+
 async def test_douyin_producer_invokes_discovery_with_cache_options() -> None:
     calls: list[tuple[dict[str, object], DouyinDiscoveryOptions]] = []
 
@@ -844,3 +912,77 @@ async def test_build_douyin_producer_enables_direct_cookie_fallback(
         DouyinDiscoveryOptions(sources=("search",)),
     )
     assert captured.get("allow_direct_fallback") is True
+
+
+async def test_runtime_hot_rounds_rotate_across_recreated_plugin_clients(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The runtime creates a new transport client on each discovery call."""
+    import asyncio
+    import json
+
+    from openbiliclaw.config import Config
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+    class DirectClient:
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> DirectClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get_hot_terms(self, *, limit: int) -> list[dict[str, object]]:
+            return [
+                {"sentence_id": str(i), "word": f"热点{i}", "aweme_id": str(100 + i)}
+                for i in range(1, 5)
+            ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.douyin_auth.resolve_douyin_cookie", lambda **_: "unit-cookie"
+    )
+    monkeypatch.setattr("openbiliclaw.sources.douyin_direct.DouyinDirectClient", DirectClient)
+    monkeypatch.setattr(
+        "openbiliclaw.sources.douyin_plugin_search.kick_douyin_task_dispatcher", lambda: None
+    )
+    db = _mk_db(tmp_path)
+    queue = DyTaskQueue(db)
+    config = Config(data_dir=str(tmp_path))
+    config.sources.douyin.enabled = True
+    producer = build_douyin_discovery_producer(
+        config=config, database=db, soul_engine=_FakeSoulEngine(), discovery_engine=None
+    )
+    assert producer is not None
+    selections: list[list[str]] = []
+
+    async def complete_two_tasks() -> None:
+        for round_index in range(2):
+            for _ in range(1000):
+                task = queue.next_pending()
+                if task:
+                    break
+                await asyncio.sleep(0.005)
+            else:
+                raise AssertionError("runtime did not enqueue the hot task")
+            payload = json.loads(task["payload_json"])
+            selections.append([item["sentence_id"] for item in payload["hot_items"]])
+            queue.merge_result(
+                str(task["id"]),
+                videos=[{"scope": "dy_hot", "aweme_id": str(1000 + round_index), "title": "热点"}],
+                scope_counts={"dy_hot": 1},
+                complete=True,
+            )
+
+    async def discover_twice() -> None:
+        for _ in range(2):
+            await producer.discover(
+                {},
+                DouyinDiscoveryOptions(
+                    sources=("hot",), limit=12, per_source_limit=12, cache=False, evaluate=False
+                ),
+            )
+
+    await asyncio.gather(discover_twice(), complete_two_tasks())
+    assert selections == [["1", "2"], ["3", "4"]]

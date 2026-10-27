@@ -2,16 +2,16 @@
 
 All FastAPI endpoint closures access runtime components through a single
 ``RuntimeContext`` instance.  When configuration changes at runtime (via
-``PUT /api/config``), the context atomically rebuilds every swappable
-component so the new settings take effect immediately — no server restart
-required.
+``PUT /api/config``), the context atomically rebuilds swappable components.
+Changes confined to the five explicitly supported chat knobs instead replace
+only the agent loop and configuration, leaving active learning owners intact.
 
 **Stable components** (never rebuilt):
   - ``database`` — owns the SQLite connection
   - ``memory_manager`` — owns file-backed memory layers
   - ``event_hub`` — holds live WebSocket subscriber queues
   - ``extension_native_save_broker`` — owns durable extension save jobs
-  - ``presence`` — tracks shared extension runtime-stream presence
+  - ``presence`` — shares API runtime-stream presence with headless workers
 
 **Swappable components** (rebuilt on hot-reload):
   - ``llm_registry``, ``llm_service``, ``bilibili_client``, ``saved_sync_service``
@@ -28,7 +28,7 @@ import inspect
 import logging
 import os
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.config import (
@@ -38,6 +38,7 @@ from openbiliclaw.config import (
     publication_date_preference_for_source,
     source_date_preferences,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from openbiliclaw.config import Config
+    from openbiliclaw.fish.engine import FishCandidate
     from openbiliclaw.soul.dialogue_learn_queue import (
         DialogueDispatcher,
         DialogueJobKind,
@@ -59,6 +61,15 @@ _BACKGROUND_TASK_CANCEL_TIMEOUT_SECONDS = 1.5
 # timeout in one worker job.  Give it the same 25-minute no-progress envelope
 # as guided preference analysis instead of rolling config.toml back after 30s.
 _DIALOGUE_SETTLEMENT_DRAIN_TIMEOUT_SECONDS = 25 * 60.0
+_LIVE_AGENT_CONFIG_FIELDS = frozenset(
+    {
+        "loop_enabled",
+        "loop_max_steps",
+        "tool_result_max_chars",
+        "session_title_enabled",
+        "task_max_steps",
+    }
+)
 
 
 class _BackgroundTaskHost(Protocol):
@@ -74,6 +85,13 @@ class _BackgroundTaskHost(Protocol):
 
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
     return effective_pool_source_shares(config)
+
+
+def _persist_agent_config(config: Any) -> str:
+    """Persist hook for the M7 ``update_config`` tool; returns the saved path."""
+    from openbiliclaw.config import save_config
+
+    return str(save_config(config))
 
 
 def build_youtube_discovery_strategies(
@@ -161,6 +179,307 @@ def _build_yt_scraper_client() -> Any:
     from openbiliclaw.youtube.client import YtScraperClient
 
     return YtScraperClient()
+
+
+def build_tiktok_discovery_strategies(
+    *,
+    config: Any,
+    client: Any,
+    llm_service: Any,
+    concurrency: Any,
+    database: Database | None = None,
+    strategy_unit_budget: dict[str, int] | None = None,
+) -> list[Any]:
+    """Build TikTok discovery strategies from `[sources.tiktok]` config."""
+
+    from openbiliclaw.discovery.strategies.tiktok import (
+        TiktokFeedStrategy,
+        TiktokSearchStrategy,
+        TiktokTagStrategy,
+        TiktokUserStrategy,
+    )
+
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    tt_date_preference = publication_date_preference_for_source(tt_cfg)
+    budgets = strategy_unit_budget or {}
+    scheduler = getattr(config, "scheduler", None)
+    default_run_budget = max(1, int(getattr(scheduler, "discovery_limit", 30)))
+
+    def _strategy_budget(strategy: str, attr: str) -> int:
+        if strategy in budgets:
+            return int(budgets[strategy])
+        configured = int(getattr(tt_cfg, attr, 0))
+        return default_run_budget if configured <= 0 else configured
+
+    search_budget = _strategy_budget("tiktok_search", "daily_search_budget")
+    tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
+    user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
+    strategies: list[Any] = [
+        TiktokFeedStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            results_per_run=12,
+            date_preference=tt_date_preference,
+        ),
+    ]
+    # Keyword search is opt-in by credential: only mounted when the router
+    # says it can work (web backend + login cookie). Guest identities are
+    # gated upstream and logged-in scraping carries account risk, so the
+    # strategy simply does not exist without a cookie.
+    if bool(getattr(client, "search_available", False)):
+        strategies.append(
+            TiktokSearchStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                keywords_per_run=max(1, search_budget),
+                date_preference=tt_date_preference,
+            )
+        )
+    strategies.extend(
+        [
+            TiktokTagStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                tags=tuple(getattr(tt_cfg, "tags", ()) or ()),
+                tags_per_run=max(1, tag_budget),
+                date_preference=tt_date_preference,
+            ),
+            TiktokUserStrategy(
+                client=client,
+                llm_service=llm_service,
+                concurrency=concurrency,
+                database=database,
+                creators=tuple(getattr(tt_cfg, "creators", ()) or ()),
+                max_creators=max(0, user_budget),
+                date_preference=tt_date_preference,
+            ),
+        ]
+    )
+    return strategies
+
+
+def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
+    """Return the execution units consumed by one TikTok strategy run."""
+    name = str(getattr(strategy, "name", ""))
+    intermediates = getattr(strategy, "last_intermediates", {}) or {}
+    if name == "tiktok_feed":
+        # One unit = one feed pull (the daily budget caps pulls, not items).
+        fetched = intermediates.get("fetched")
+        if isinstance(fetched, int):
+            return 1
+    if name == "tiktok_search":
+        queries = intermediates.get("queries")
+        if isinstance(queries, list):
+            return len(queries)
+    if name == "tiktok_tag":
+        tags = intermediates.get("tags")
+        if isinstance(tags, list):
+            return len(tags)
+    if name == "tiktok_user":
+        creators = intermediates.get("creators")
+        if isinstance(creators, list):
+            return len(creators)
+    return max(0, int(fallback))
+
+
+def _build_tiktok_client(config: Any, tt_cfg: Any) -> Any:
+    """Build the mode-dispatching TikTok router client.
+
+    ``mode`` (``[sources.tiktok].mode``): ``auto`` = web API backend with
+    yt-dlp fallback, ``web`` = web API only, ``ytdlp`` = yt-dlp only. The
+    web backend needs ``curl_cffi``; in ``auto`` mode a missing dependency
+    degrades to yt-dlp-only with a log line, while ``web`` mode lets the
+    ``ImportError`` propagate so the producer stays disabled loudly.
+    """
+    from openbiliclaw.sources.tiktok import TiktokClient
+    from openbiliclaw.sources.tiktok_web import (
+        _TIKTOK_MODES,
+        TiktokRouterClient,
+        TiktokWebClient,
+        TiktokWebIdentity,
+    )
+
+    mode = str(getattr(tt_cfg, "mode", "auto") or "auto").strip().lower()
+    if mode not in _TIKTOK_MODES:
+        logger.warning("tiktok: unsupported mode %r, falling back to 'auto'", mode)
+        mode = "auto"
+
+    web_client: Any = None
+    if mode in {"auto", "web"}:
+        try:
+            from openbiliclaw.network import outbound_ytdlp_proxy
+            from openbiliclaw.sources.tiktok_auth import (
+                TIKTOK_COOKIE_ENV,
+                resolve_tiktok_cookie,
+            )
+
+            cookie_env = str(getattr(tt_cfg, "cookie_env", TIKTOK_COOKIE_ENV) or TIKTOK_COOKIE_ENV)
+            cookie = ""
+            try:
+                cookie = resolve_tiktok_cookie(
+                    data_dir=config.data_path,
+                    cookie_env=cookie_env,
+                )
+            except Exception as exc:  # defensive: guest mode stays legitimate
+                logger.debug("tiktok cookie resolution failed (guest mode): %s", exc)
+            # Same outbound policy as the yt-dlp backend: None = inherit env,
+            # "" = force direct, URL = pinned proxy.
+            from openbiliclaw.sources.tiktok_state import TiktokRequestState
+
+            identity = TiktokWebIdentity(
+                request_state=TiktokRequestState(
+                    config.data_path / "tiktok_request_state.sqlite3",
+                    interval_seconds=float(getattr(tt_cfg, "request_interval_seconds", 2)),
+                ),
+                proxy=outbound_ytdlp_proxy(),
+                login_cookie=cookie,
+                region=str(getattr(tt_cfg, "region", "JP") or "JP").strip() or "JP",
+                tz_name=str(getattr(tt_cfg, "tz_name", "Asia/Tokyo") or "Asia/Tokyo").strip()
+                or "Asia/Tokyo",
+            )
+            web_client = TiktokWebClient(identity=identity)
+        except ImportError:
+            if mode == "web":
+                raise
+            logger.info("tiktok web backend unavailable (curl_cffi?); yt-dlp only")
+
+    return TiktokRouterClient(web=web_client, ytdlp=TiktokClient(), mode=mode)
+
+
+def build_tiktok_discovery_producer(
+    *,
+    config: Any,
+    database: Any,
+    soul_engine: Any,
+    discovery_engine: Any,
+    llm_service: Any,
+    concurrency: Any,
+    candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
+    enabled_override: bool | None = None,
+) -> Any | None:
+    """Build the runtime TikTok producer if TikTok discovery is enabled."""
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        return None
+    scheduler = getattr(config, "scheduler", None)
+    producer_enabled = (
+        bool(getattr(scheduler, "enabled", True))
+        if enabled_override is None
+        else bool(enabled_override)
+    )
+    if not hasattr(database, "conn"):
+        logger.info("tiktok producer disabled: database does not expose sqlite connection")
+        return None
+
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES,
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        TiktokDiscoveryProducer,
+        TiktokStrategyRunResult,
+    )
+
+    try:
+        tt_client = _build_tiktok_client(config, tt_cfg)
+    except ImportError as exc:
+        logger.info("tiktok producer disabled: TikTok dependencies unavailable: %s", exc)
+        return None
+
+    async def _discover(
+        profile: Any,
+        *,
+        strategy: str,
+        unit_budget: int,
+        result_limit: int,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> TiktokStrategyRunResult:
+        strategies = build_tiktok_discovery_strategies(
+            config=config,
+            client=tt_client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            strategy_unit_budget={strategy: unit_budget},
+        )
+        selected = [item for item in strategies if item.name == strategy]
+        if not selected:
+            return TiktokStrategyRunResult(items=[], units_used=0, source_counts={})
+
+        selected_strategy = selected[0]
+        discovery_engine.register_strategy(selected_strategy)
+        # Unified keyword planner injection (P1.7): forward claimed words to the
+        # engine as ``keywords``; the engine maps them onto the strategy's
+        # ``queries`` param (``tiktok_search`` consumes them verbatim,
+        # ``tiktok_tag`` maps them onto hashtags). ``None`` keeps the legacy
+        # self-generating behavior.
+        inject: dict[str, Any] = {}
+        if queries is not None:
+            inject["keywords"] = list(queries)
+        # P1.8 yield provenance: forward the keyword→id map so the engine stamps
+        # each produced item's ``source_keyword_id`` for admit-time backfill.
+        if keyword_ids:
+            inject["keyword_ids"] = dict(keyword_ids)
+        produce_fn = getattr(discovery_engine, "produce_candidates", None)
+        if callable(produce_fn):
+            raw_items = await produce_fn(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        else:
+            raw_items = await discovery_engine.discover(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        items = [
+            item
+            for item in raw_items
+            if str(getattr(item, "source_platform", "")) == "tiktok"
+            or str(getattr(item, "source_strategy", "")).startswith("tiktok_")
+        ]
+        units_used = _tiktok_strategy_units_used(
+            selected_strategy,
+            fallback=max(0, int(unit_budget)),
+        )
+        return TiktokStrategyRunResult(
+            items=items,
+            units_used=units_used,
+            source_counts={strategy: len(items)},
+            errors=dict(selected_strategy.last_intermediates.get("errors", {})),
+        )
+
+    strategies: tuple[str, ...] = (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH
+        if bool(getattr(tt_client, "search_available", False))
+        else TIKTOK_DISCOVERY_STRATEGIES
+    )
+    if str(getattr(tt_cfg, "mode", "auto")) == "ytdlp":
+        strategies = tuple(name for name in strategies if name != "tiktok_feed")
+    return TiktokDiscoveryProducer(
+        cooldown_remaining=getattr(tt_client, "cooldown_remaining", None),
+        database=database,
+        soul_engine=soul_engine,
+        discover=_discover,
+        enabled=producer_enabled,
+        min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
+        daily_feed_budget=int(getattr(tt_cfg, "daily_feed_budget", 3)),
+        daily_search_budget=int(getattr(tt_cfg, "daily_search_budget", 3)),
+        daily_tag_budget=int(getattr(tt_cfg, "daily_tag_budget", 0)),
+        daily_user_budget=int(getattr(tt_cfg, "daily_user_budget", 0)),
+        strategies=strategies,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+    )
 
 
 def _build_dialogue_settlement_dispatcher(
@@ -465,13 +784,38 @@ class RuntimeContext:
     saved_sync_service: Any = None
     soul_engine: Any = None
     dialogue: Any = None
+    # Multi-hop chat agent loop (「聊一聊」 M2); rebuilt alongside dialogue.
+    agent_loop: Any = None
+    # Full v1 agent tool registry (M3) the loop subsets per skill, and the
+    # chat skill catalog (M4: builtin skills + data/skills/ overrides).
+    agent_tool_registry: Any = None
+    skill_catalog: Any = None
+    # Durable background task runner (「聊一聊」 M6); lazily built by the API
+    # layer and resolves loop/registry/catalog from this context at run start,
+    # so one instance survives the hot-reload atomic swap.
+    agent_task_runner: Any = None
+    # M7: the AgentToolContext behind the registry (kept so the API layer can
+    # inspect/rewire hooks) and the durable hard-write approval store backing
+    # the loop's approval gate and the /api/chat/approvals endpoints.
+    agent_tool_context: Any = None
+    chat_approval_store: Any = None
+    # Stable app-owned delegate (set once by create_app) used by the
+    # update_config tool to hot-reload through the lane-handoff path. Not
+    # reassigned by _rebuild_components.
+    config_reload_delegate: Any = None
     # Wave 1: the one self-owned typed dialogue settlement queue. It is not in
     # cancel_all and uses pause/drain + exact permit handoff on hot reload.
     dialogue_settlement_queue: Any = None
     dialogue_settlement_handlers: dict[Any, Any] = field(default_factory=dict)
     dialogue_settlement_guard: Any = None
     discovery_engine: Any = None
+    # Discovery-candidate pipeline owned by this runtime. Kept so a
+    # composition-root caller (the Blue Fish loop) can push one extra discovery
+    # route through the same enqueue → evaluate path every other strategy uses.
+    candidate_pipeline: Any = None
     recommendation_engine: Any = None
+    director_runtime: Any = None
+    director_replenish_callback: Any = None
     runtime_controller: Any = None
     account_sync_service: Any = None
     auto_update_service: Any = None
@@ -518,6 +862,116 @@ class RuntimeContext:
         """Register a stable post-commit observer once for this context."""
         if callback not in self._pool_inventory_commit_subscribers:
             self._pool_inventory_commit_subscribers.append(callback)
+
+    def configure_director(self, config: Any = None) -> None:
+        """Attach opt-in decision routes to injected or freshly built runtimes."""
+        cfg = config or self.config
+        if self.director_runtime is not None or self.recommendation_engine is None:
+            return
+        mode = getattr(getattr(cfg, "director", None), "mode", "off")
+        filter_mode = getattr(
+            getattr(getattr(cfg, "discovery", None), "semantic_filter", None), "mode", "off"
+        )
+        eval_scorer = getattr(getattr(cfg, "discovery", None), "eval_scorer", "llm")
+        if mode == "off" and filter_mode == "off" and eval_scorer != "jev":
+            return
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+        self.director_runtime = build_director_runtime(
+            cfg,
+            self.database,
+            self.recommendation_engine,
+            self.llm_service or getattr(self.recommendation_engine, "_llm", None),
+        )
+        if self.discovery_engine is not None and self.director_runtime is not None:
+            self.discovery_engine._semantic_filter = self.director_runtime.semantic_filter
+        controller_discovery = getattr(self.runtime_controller, "discovery_engine", None)
+        if controller_discovery is not None and self.director_runtime is not None:
+            controller_discovery._semantic_filter = self.director_runtime.semantic_filter
+        if eval_scorer == "jev" and self.director_runtime is not None:
+            from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+
+            evaluator = self.director_runtime.jev_evaluator
+            if evaluator is None:
+                raise ValueError("configured Jev full evaluator was not constructed")
+            if self.discovery_engine is None:
+                self.discovery_engine = ContentDiscoveryEngine(
+                    database=self.database, eval_scorer="jev", jev_evaluator=evaluator
+                )
+            for discovery in (self.discovery_engine, controller_discovery):
+                if discovery is not None:
+                    discovery._eval_scorer = "jev"
+                    discovery._jev_evaluator = evaluator
+                    discovery.multimodal_evaluation_enabled = False
+            self.recommendation_engine.bind_content_evaluator(self.discovery_engine)
+
+    def _request_config_reload(self, new_config: Any) -> Any:
+        """Reload hook for the M7 ``update_config`` tool.
+
+        Delegates to the app-layer lane-handoff rebuild when wired (returns
+        its awaitable so the tool handler can await it); returns ``None``
+        when no delegate is installed, letting the tool note that a restart
+        is required instead.
+        """
+        delegate = self.config_reload_delegate
+        if not callable(delegate):
+            return None
+        return delegate(new_config)
+
+    async def run_discovery_route(self, *, strategies: list[str], limit: int) -> int:
+        """Run one named discovery route and enqueue its raw candidates.
+
+        Seam for callers that own their own cadence (the Blue Fish loop): the
+        route is a normal registered strategy and its output goes through the
+        same candidate pipeline (enqueue → batch evaluator → admission) as
+        search / trending / explore. A discovery failure returns ``0`` so the
+        caller's loop keeps running; the real cause is logged here.
+
+        The route always runs — a full pool must not stop a route whose reader
+        has its own side effect (the comment-thread plan) — but its candidates
+        are only enqueued when the pool has room, mirroring
+        ``produce_and_enqueue``'s guard.
+        """
+
+        engine = self.discovery_engine
+        if engine is None or self.soul_engine is None:
+            return 0
+        try:
+            from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+            try:
+                profile = await self.soul_engine.get_profile()
+            except SoulProfileNotInitializedError:
+                # Before the first profile commit there is nothing to discover
+                # for; the loop retries on the next tick. Not an error worth a
+                # traceback every five minutes.
+                logger.debug(
+                    "discovery route %s skipped: soul profile not initialized",
+                    ",".join(str(item) for item in strategies),
+                )
+                return 0
+            items = await engine.produce_candidates(
+                profile,
+                strategies=list(strategies),
+                limit=max(1, int(limit)),
+            )
+            if not items:
+                return 0
+            pipeline = self.candidate_pipeline
+            if pipeline is None:
+                return 0
+            pool_full = getattr(pipeline, "pool_full", None)
+            if callable(pool_full) and pool_full():
+                return 0
+            inserted = pipeline.enqueue_candidates(list(items), source_context="mixed")
+        except Exception:  # noqa: BLE001 - a background route must not kill its owner
+            logger.warning(
+                "discovery route %s failed",
+                ",".join(str(item) for item in strategies),
+                exc_info=True,
+            )
+            return 0
+        return int(inserted or 0)
 
     async def _handle_pool_inventory_commit(
         self,
@@ -695,6 +1149,61 @@ class RuntimeContext:
             payload.get("worker_mode"),
         )
 
+    def try_apply_agent_config(self, new_config: Config) -> bool:
+        """Publish only known chat knobs, preserving active owners and loops.
+
+        Called under the API's reload lock after validation and persistence.
+        Any difference outside the explicit whitelist requires a full rebuild.
+        Construction precedes a synchronous publication: existing turns retain
+        their loop and budget, while newly admitted turns use the replacement.
+        """
+        from openbiliclaw.agent.loop import AgentLoop
+        from openbiliclaw.config import Config
+
+        current = self.config
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or any(
+                component is None
+                for component in (
+                    self.llm_service,
+                    self.agent_loop,
+                    self.agent_tool_registry,
+                    self.agent_tool_context,
+                    self.chat_approval_store,
+                )
+            )
+        ):
+            return False
+        # The API pins data_dir to its canonical process-lifetime path. Alias
+        # normalization alone is not an unrelated configuration change.
+        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
+        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        if before == after:
+            # Repeating an already-applied value still completes its durable
+            # revision, without replacing a loop or waiting for learning.
+            return True
+        expected_agent = replace(
+            before.agent,
+            **{name: getattr(after.agent, name) for name in _LIVE_AGENT_CONFIG_FIELDS},
+        )
+        if replace(before, agent=expected_agent) != after:
+            return False
+        new_loop = AgentLoop.from_config(
+            self.llm_service,
+            self.agent_tool_registry,
+            new_config,
+            caller="agent.chat",
+            bypass_semaphore=True,
+            approval_gate=self.chat_approval_store,
+        )
+        self.config = new_config
+        self.agent_tool_context.config = new_config
+        self.agent_loop = new_loop
+        return True
+
     async def rebuild_from_config(self, new_config: Config) -> None:
         """Rebuild all swappable components from *new_config*.
 
@@ -740,8 +1249,14 @@ class RuntimeContext:
         try:
             # Keep a running guided-init task alive across rebuild — config
             # writes are gated during init, but this exemption prevents an
-            # in-flight init from being silently cancelled.
-            cancelled = await self.task_registry.cancel_all(exclude=frozenset({"guided_init"}))
+            # in-flight init from being silently cancelled. Chat approval
+            # executions are excluded too: they are user-confirmed writes
+            # (and update_config executions are themselves the reload
+            # caller), so cancelling them mid-dispatch would leave the
+            # approval stuck in ``executing``.
+            cancelled = await self.task_registry.cancel_all(
+                exclude=frozenset({"guided_init", "chat_approval_execute"})
+            )
             if cancelled:
                 logger.info(
                     "Hot-reload: cancelled %d background task(s) before rebuild",
@@ -839,6 +1354,7 @@ class RuntimeContext:
             dialogue_tone_prompt=str(
                 getattr(getattr(new_config, "soul", None), "dialogue_tone_prompt", "") or ""
             ),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         # 2. Bilibili client
@@ -950,6 +1466,7 @@ class RuntimeContext:
             posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
             dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
             module_overrides=new_module_overrides,
             llm_concurrency=llm_concurrency,
             llm_concurrency_gate=new_llm_gate,
@@ -1094,9 +1611,20 @@ class RuntimeContext:
             ),
             serve_outbox=ServeOutbox(new_config.data_path / "runtime" / "serve_outbox.jsonl"),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)
+
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+        new_director_runtime = build_director_runtime(
+            new_config,
+            self.database,
+            new_recommendation_engine,
+            new_llm_service,
+            activate=False,
+        )
 
         # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
         # word-lifecycle helper shared by B站 search / explore and external
@@ -1135,7 +1663,11 @@ class RuntimeContext:
             ),
             eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
             eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
+            semantic_filter=new_director_runtime.semantic_filter if new_director_runtime else None,
+            jev_evaluator=new_director_runtime.jev_evaluator if new_director_runtime else None,
         )
+        if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+            new_recommendation_engine.bind_content_evaluator(new_discovery_engine)
         search_strategy = SearchStrategy(
             llm_service=new_llm_service,
             bilibili_client=new_bilibili_client,
@@ -1177,6 +1709,35 @@ class RuntimeContext:
         new_discovery_engine.register_strategy(trending_strategy)
         new_discovery_engine.register_strategy(related_strategy)
         new_discovery_engine.register_strategy(explore_strategy)
+
+        # 7a. Comment-thread route (Blue Fish Lab): the lab's reading half.
+        # Registered only in the API runtime because the action layer that
+        # executes its plans exists only here — CLI discovery has no executor
+        # and would just leave dead plans behind. The route itself is inert
+        # unless the lab is enabled and has its own cookie, so registering it
+        # is zero behaviour change with the default (off) config.
+        from openbiliclaw.discovery.strategies.comment_thread import CommentThreadStrategy
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
+
+        async def _comment_thread_seeds(limit: int) -> list[FishCandidate]:
+            return recommendation_pool_seeds(self.database, limit)
+
+        comment_thread_strategy = CommentThreadStrategy(
+            data_dir=new_config.data_path,
+            seed_provider=_comment_thread_seeds,
+            client_factory=lambda cookie: BilibiliAPIClient(
+                cookie=cookie,
+                proxy=new_config.bilibili.proxy or None,
+            ),
+            plan_store=FishPlanStore(new_config.data_path),
+            # The ledger says which videos the fish already spoke under, so the
+            # route plans the next unanswered seed instead of replaying the
+            # top-ranked one every tick.
+            store=FishStore(new_config.data_path),
+        )
+        new_discovery_engine.register_strategy(comment_thread_strategy)
 
         # 7b. Register Bilibili source adapter (multi-source Phase 1)
         from openbiliclaw.sources.bilibili_adapter import BilibiliAdapter
@@ -1255,6 +1816,7 @@ class RuntimeContext:
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
+        new_tiktok_producer: Any = None
         new_x_producer: Any = None
         new_zhihu_producer: Any = None
         new_reddit_producer: Any = None
@@ -1263,6 +1825,7 @@ class RuntimeContext:
         new_linuxdo_producer: Any = None
         new_v2ex_producer: Any = None
         new_weibo_producer: Any = None
+        new_instagram_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -1315,6 +1878,32 @@ class RuntimeContext:
                 min_interval_minutes=int(getattr(xhs_cfg, "min_interval_minutes", 20)),
                 keyword_fetch=new_keyword_fetch,
             )
+            # Formal discover runtime registration for the instagram source.
+            from openbiliclaw.runtime.instagram_producer import (
+                build_instagram_discovery_producer,
+            )
+
+            async def _kick_instagram_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "instagram_task_available", "source": "task_kick"})
+
+            new_instagram_producer = build_instagram_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_instagram_extension,
+                presence=self.presence,
+                # Explicit guided init owns this producer even with all
+                # background work disabled. Periodic ticks keep their gate.
+                manual=True,
+                presence_grace_seconds=int(
+                    getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
+                ),
+            )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
 
             new_douyin_producer = build_douyin_discovery_producer(
@@ -1337,6 +1926,16 @@ class RuntimeContext:
                 candidate_pipeline=new_candidate_pipeline,
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
+                concurrency=concurrency,
+                keyword_fetch=new_keyword_fetch,
+            )
+            new_tiktok_producer = build_tiktok_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                discovery_engine=new_discovery_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                llm_service=new_llm_service,
                 concurrency=concurrency,
                 keyword_fetch=new_keyword_fetch,
             )
@@ -1516,6 +2115,7 @@ class RuntimeContext:
         if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
             from openbiliclaw.config import derive_inspiration_breadth_params
             from openbiliclaw.discovery.inspiration_provider import (
+                InspirationGroundingKeys,
                 build_inspiration_search_provider,
                 build_platform_source_backends,
             )
@@ -1526,9 +2126,7 @@ class RuntimeContext:
             inspiration_provider = build_inspiration_search_provider(
                 getattr(discovery_cfg, "inspiration_search_backends", None),
                 database=self.database,
-                exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
-                you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
-                serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
+                grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery_cfg),
                 platform_backends=build_platform_source_backends(
                     new_config,
                     database=self.database,
@@ -1578,6 +2176,7 @@ class RuntimeContext:
                 "reddit": _source_enabled("reddit"),
                 "linuxdo": _source_enabled("linuxdo"),
                 "v2ex": _source_enabled("v2ex"),
+                "tiktok": _source_enabled("tiktok"),
             },
             scheduler_config=new_config.scheduler,
             profile_ready=lambda: bool(new_soul_engine.is_profile_ready()),
@@ -1617,6 +2216,7 @@ class RuntimeContext:
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
+            tiktok_producer=new_tiktok_producer,
             x_producer=new_x_producer,
             zhihu_producer=new_zhihu_producer,
             reddit_producer=new_reddit_producer,
@@ -1625,6 +2225,7 @@ class RuntimeContext:
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
             weibo_producer=new_weibo_producer,
+            instagram_producer=new_instagram_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided
@@ -1720,11 +2321,39 @@ class RuntimeContext:
             # so without this the Phase 3/4 hooks are dead code in production.
             # Guarded for controllers/test doubles lacking the helper.
             pre_admit_hook=getattr(new_runtime_controller, "run_pool_share_maintenance", None),
+            # Dead-letter recovery: re-queue failed_eval rows on resume
+            # notifications (startup after a config rebuild, config_*/manual_*
+            # wakes). Guarded so test-double pipelines without the hook keep
+            # the previous no-revival behavior.
+            revive_failed_eval_callback=getattr(
+                new_candidate_pipeline, "revive_failed_eval_candidates", None
+            ),
             safety_wake_seconds=float(
                 getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
             ),
         )
         new_runtime_controller.candidate_eval_coordinator = new_candidate_eval_coordinator
+        # Delegated deployment (``openbiliclaw start``): the coordinators live
+        # in the discovery-worker process while this process's instances never
+        # start and would report a perpetual idle. Aggregate the worker's live
+        # payloads through the existing worker-status file channel; a missing
+        # or stale heartbeat keeps the local (single-process) values.
+        from openbiliclaw.runtime.worker_status import WorkerStatusStore
+
+        _discovery_status_store = WorkerStatusStore(
+            new_config.data_path / "runtime" / "discovery_worker_status.json"
+        )
+
+        def _read_delegated_coordinator_status() -> dict[str, Any] | None:
+            data = _discovery_status_store.read_if_fresh()
+            if data is None:
+                return None
+            coordinators = data.get("coordinators")
+            return coordinators if isinstance(coordinators, dict) else None
+
+        new_runtime_controller.delegated_coordinator_status_reader = (
+            _read_delegated_coordinator_status
+        )
         new_candidate_pipeline.on_candidates_enqueued = lambda _count: (
             new_candidate_eval_coordinator.notify("candidate_enqueued:pipeline")
         )
@@ -1741,12 +2370,14 @@ class RuntimeContext:
         for producer in (
             new_douyin_producer,
             new_youtube_producer,
+            new_tiktok_producer,
             new_zhihu_producer,
             new_bangumi_producer,
             new_github_producer,
             new_linuxdo_producer,
             new_v2ex_producer,
             new_weibo_producer,
+            new_instagram_producer,
         ):
             if producer is not None:
                 producer.candidate_evaluation_owned_by_coordinator = True
@@ -1801,6 +2432,15 @@ class RuntimeContext:
         )
         if callable(bind_settlement_queue):
             bind_settlement_queue(new_settlement_queue)
+        # Chat link ingestion (issue #83): shared links are fetched for
+        # context and recorded as share events on the unified interest line.
+        from openbiliclaw.sources.link_ingest import LinkIngestor
+
+        propagate_event = getattr(self.memory_manager, "propagate_event", None)
+        new_link_ingestor = LinkIngestor(
+            bilibili_client=new_bilibili_client,
+            event_sink=propagate_event if callable(propagate_event) else None,
+        )
         new_dialogue = SocraticDialogue(
             llm=None,
             soul_engine=new_soul_engine,
@@ -1811,6 +2451,64 @@ class RuntimeContext:
             database=self.database,
             learning_mode=DialogueLearningMode.QUEUED,
             settlement_queue=new_settlement_queue,
+            link_ingestor=new_link_ingestor,
+        )
+
+        # Multi-hop chat agent loop (「聊一聊」 M2): same LLM service and
+        # database as the legacy single-hop path; the interactive chat lane
+        # bypasses the background LLM semaphore like ``_respond_with_tools``.
+        # M3/M4: the loop runs against the full v1 tool registry (built from
+        # an AgentToolContext over the freshly rebuilt components); the chat
+        # endpoint subsets it per skill via ``ToolRegistry.subset``.
+        from pathlib import Path
+
+        from openbiliclaw.agent.approvals import ApprovalStore
+        from openbiliclaw.agent.loop import AgentLoop
+        from openbiliclaw.agent.skill import load_skill_catalog
+        from openbiliclaw.agent.tools import AgentToolContext, build_agent_tool_registry
+
+        # M7: hard_write calls are parked in a durable approval store instead
+        # of executing in-loop; the approve endpoint re-dispatches them.
+        # The store instance is reused across rebuilds (same backing file):
+        # it is the single in-memory authority for the approval state
+        # machine, so a rebuild mid-execution can never resurrect stale
+        # states from a freshly reloaded copy (issue: approved/executing
+        # records regressing after a hot reload).
+        # Runtime pinning normalizes data_dir during reload. Compare canonical
+        # paths so relative paths and symlink aliases (e.g. /tmp on macOS) keep
+        # the live authority instead of invoking crash recovery mid-execution.
+        approval_store_path = new_config.data_path.expanduser().resolve() / "chat_approvals.json"
+        existing_approval_store = getattr(self, "chat_approval_store", None)
+        existing_approval_path = getattr(existing_approval_store, "path", None)
+        if (
+            existing_approval_store is not None
+            and existing_approval_path is not None
+            and Path(existing_approval_path).expanduser().resolve() == approval_store_path
+        ):
+            new_chat_approval_store = existing_approval_store
+        else:
+            new_chat_approval_store = ApprovalStore(approval_store_path)
+        new_agent_tool_context = AgentToolContext(
+            database=self.database,
+            soul_engine=new_soul_engine,
+            memory_manager=self.memory_manager,
+            recommendation_engine=new_recommendation_engine,
+            config=new_config,
+            saved_sync_service=new_saved_sync_service,
+            config_persist_hook=_persist_agent_config,
+            config_reload_hook=self._request_config_reload,
+        )
+        new_agent_tool_registry = build_agent_tool_registry(new_agent_tool_context)
+        new_agent_loop = AgentLoop.from_config(
+            new_llm_service,
+            new_agent_tool_registry,
+            new_config,
+            caller="agent.chat",
+            bypass_semaphore=True,
+            approval_gate=new_chat_approval_store,
+        )
+        new_skill_catalog = load_skill_catalog(
+            user_dir=Path(str(getattr(new_config, "data_dir", "data"))) / "skills"
         )
 
         # 11. Auto-update service
@@ -1858,9 +2556,26 @@ class RuntimeContext:
         self.saved_sync_service = new_saved_sync_service
         self.soul_engine = new_soul_engine
         self.dialogue = new_dialogue
+        self.agent_loop = new_agent_loop
+        self.agent_tool_registry = new_agent_tool_registry
+        self.agent_tool_context = new_agent_tool_context
+        self.chat_approval_store = new_chat_approval_store
+        self.skill_catalog = new_skill_catalog
         self.dialogue_settlement_queue = new_settlement_queue
         self.discovery_engine = new_discovery_engine
+        self.candidate_pipeline = new_candidate_pipeline
         self.recommendation_engine = new_recommendation_engine
+        old_director_runtime = self.director_runtime
+        if new_director_runtime is not None:
+            new_director_runtime.activate()
+        self.director_runtime = new_director_runtime
+        if old_director_runtime is not None:
+            # Fence immediately, before any asynchronous close yields control.
+            old_director_runtime._closed = True
+            old_director_runtime.store.invalidate_all(
+                new_director_runtime.context_digest if new_director_runtime else "director-off"
+            )
+            self.task_registry.track("close_old_director_runtime", old_director_runtime.aclose())
         self.runtime_controller = new_runtime_controller
         self.account_sync_service = new_account_sync
         self.auto_update_service = new_auto_update
@@ -1899,7 +2614,7 @@ class RuntimeContext:
 
         logger.info(
             "Hot-reload complete — rebuilt %d swappable components",
-            12,
+            13,
         )
 
     async def restart_background_tasks(
@@ -2281,6 +2996,9 @@ def build_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -2359,6 +3077,9 @@ def build_degraded_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

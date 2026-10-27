@@ -14,7 +14,7 @@
 ## Short Description
 
 ```text
-需本地后端的十二来源内容发现 AI Agent：跨平台推荐、私有画像与可反馈侧边栏
+需本地后端的十四来源内容发现 AI Agent：跨平台推荐、私有画像与可反馈侧边栏
 ```
 
 ## Detailed Description
@@ -22,7 +22,7 @@
 将下面的纯文本完整复制到 Chrome Web Store 的 `Detailed description` 字段。
 
 ```text
-OpenBiliClaw 是一个需要本地后端运行的、本地优先、私有、开源的个性化内容发现 Agent。它把你授权范围内的 B站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与 GitHub 内容汇合成跨来源推荐、可查看和纠正的个人画像，以及能继续反馈调教的浏览器侧边栏。数据默认保存在你的本机。
+OpenBiliClaw 是一个需要本地后端运行的、本地优先、私有、开源的个性化内容发现 Agent。它把你授权范围内的 B站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 与 Instagram 内容汇合成跨来源推荐、可查看和纠正的个人画像，以及能继续反馈调教的浏览器侧边栏。数据默认保存在你的本机。
 
 项目主页：
 https://whiteguo233.github.io/OpenBiliClaw/
@@ -45,6 +45,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 小红书
 - 抖音
 - YouTube
+- TikTok（正式可用；后端 Web API 访客身份匿名发现，可选登录 Cookie 由插件同步以解锁关键词搜索）
 - X（Twitter）
 - 知乎
 - Reddit
@@ -52,12 +53,15 @@ https://github.com/whiteguo233/OpenBiliClaw
 - Bangumi
 - V2EX
 - 微博（公开 discovery 匿名；初始化时可通过已登录浏览器只读导入个人收藏、关注和互动）
+- Instagram（正式可用、默认关闭；公开 topic / creator discovery，初始化时可通过已登录浏览器只读导入近期点赞、收藏和关注）
 - GitHub（官方 REST 匿名发现公开 repository；公开 starred 初始化可填用户名，PAT 可选）
 
 这个插件能做什么：
 - 在支持的平台页面识别你授权范围内的内容与互动信号，或执行本地后端下发的来源任务。
 - 把跨平台候选统一筛选，在侧边栏、PC Web 和移动 Web 中展示推荐及推荐理由。
 - 展示可查看、可纠正的私有画像，并通过喜欢、少来点、不感兴趣和聊天反馈继续调整推荐。
+- 提供实验性的「蓝鱼实验室」：为独立 B 站小号预览或执行评论区互动；默认只预览，真实发布受账号隔离、配额、间隔与重复检查保护。
+- 桌面、移动 Web、插件和 CLI 提供简体中文、繁体中文与英文界面。
 - 在配置页分别展示“来源是否启用”和“接入状态”；“凭据已就绪”“状态待验证”“无需登录”含义不同，不会把仅保存在本地的令牌冒充成实时登录成功。
 
 重要说明：
@@ -71,7 +75,10 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 插件申请 `https://linux.do/*` host permission，用于普通 Linux.do 页面上的统一行为 adapter，以及扩展自己创建的隔离任务 tab。任务 tab 只执行同源只读 GET：公开 search / hot / feed / creator / related discovery 不要求登录，个人 bookmarks / likes / read history 则先由 `/session/current.json` 正面确认当前账号。插件只把 `_t` 是否存在转换为登录布尔；`_t` 值、其他 Cookie、CSRF 数据、原始 JSON/HTML 和挑战页正文都不会上传。任务只回传归一化 topic 字段、scope 计数或结构化错误，不会发帖、点赞、收藏、关注、编辑或执行任何站内状态变更。自动化测试已覆盖任务协议、分页、资源上限、超时和 tab 隔离；2026-08-09 又以已登录 Chrome unpacked extension 完成 bootstrap、五路 discovery、候选入池和无敏感字段回传的真实只读 E2E。Firefox 已完成构建与测试，但尚未做同等实号 E2E。
 - 插件在 `bgm.tv` / `bangumi.tv` 上申请的 host permission 仅用于账号身份识别：读取页面公开的用户 uid 与用户名，实现零配置识别你的 Bangumi 账号；在这两个站点上不读取 Cookie、不采集浏览行为，也不上传任何个人令牌。Bangumi 内容本身由本地后端通过官方匿名只读 API 获取。
 - 插件在 `*.v2ex.com` 上申请的 host permission 仅用于只读 Topic / Node 阅读事件，以及你主动触发的四类初始化或增量任务：本人主题、本人公开回复、收藏主题和收藏 Node。插件只检查 A2 Cookie 是否存在并向你配置的后端发送登录布尔值，不访问、存储或发送 Cookie 值；任务只返回有界的公开渲染字段，不返回页面 HTML、请求头、CSRF / once、私信或浏览器完整历史。V2EX 公开发现由本地后端通过官方只读 API / Feed 完成；OpenBiliClaw 不向 V2EX 发帖、回复、感谢、收藏、取消收藏或关注 Node。
+- TikTok 与 Instagram 的站点访问均随插件默认主机权限声明，由浏览器在安装或更新时处理；保存来源设置无需二次授权，两个来源仍需显式启用。
+- 插件在 `*.instagram.com` 上申请的 host permission 仅用于扩展创建的隔离只读任务 tab。公开任务读取有界 topic/creator 内容，登录态初始化任务在同源 current-account 响应确认数字账号 ID 后读取 liked/saved/following；`sessionid` 只转成布尔 readiness。Cookie value、Authorization/CSRF、请求头、原始响应与挑战页都不会上传；任务不输入 Instagram Search，也不执行点赞、收藏、关注、评论或消息写入。该来源默认关闭，技术隔离不替代 Meta 的自动采集许可。
 - GitHub 不申请任何新增 host permission、content script、Cookie 或来源任务能力；公开 repository discovery 与公开 starred 初始化均由本地后端调用官方 REST API。插件只展示配置、状态和 repository 文字卡，本地收藏不会调用 GitHub Star。
+- 插件在 `tiktok.com` 上申请的 host permission 仅用于可选登录 Cookie 同步：在你登录 tiktok.com 后把 Cookie 头回传给你配置的本地后端，解锁 TikTok 关键词搜索；不执行页面任务、不采集浏览行为。TikTok 推荐流 / 话题标签 / 创作者发现由本地后端以 Web API 访客身份匿名完成，不需要该权限。
 - 「个人通讯」采集范围除侧边栏聊天消息外，还包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）。
 
 > **发版待办（商店后台隐私披露表单）**：Chrome Web Store 与 Firefox AMO 的数据用途申报中，「个人通讯 / Personal communications」条目需更新描述，覆盖新增的用户提交评论与弹幕正文采集（Firefox manifest 已声明 `personalCommunications`，无需改动权限，仅需同步商店后台文案）。
@@ -87,7 +94,7 @@ https://github.com/whiteguo233/OpenBiliClaw/blob/main/README_EN.md
 
 以下文件均为 1280×800，使用固定脱敏数据和当前真实 UI 生成。Developer Dashboard 中删除旧图后，按下面顺序上传：
 
-1. `01-seven-platform-recommendations.png` — 当前仓库素材仍是十一来源主视觉；GitHub 发版前必须重新生成并目检十二来源版本（文件名为兼容既有上传顺序而保留）
+1. `01-seven-platform-recommendations.png` — 14 个来源的推荐主视觉（文件名为兼容既有上传顺序而保留）
 2. `02-three-surfaces.png` — PC、插件、手机三端推荐体验
 3. `03-truthful-status-local-data.png` — 诚实接入状态与本地数据
 
@@ -125,7 +132,7 @@ npm run webstore:metadata -- \
 
 ## 提交前检查
 
-- 发版时把本文件的 `Short description` 与 `Detailed description` 粘贴到后台，确认十二类来源名称完整，并单独解释 Linux.do / V2EX / 微博任务权限理由，以及 GitHub 不扩展权限、后端官方 REST 只读的能力边界；本分支尚未执行粘贴或提审。
+- 发版时把本文件的 `Short description` 与 `Detailed description` 粘贴到后台，确认十四类来源名称完整，并单独解释 Linux.do / V2EX / 微博 / Instagram 任务权限理由，以及 GitHub 不扩展权限、后端官方 REST 只读的能力边界；本分支尚未执行粘贴或提审。
 - 3 张截图已按上面的文件名顺序上传，尺寸均为 1280×800。
 - `Website URL` 使用项目主页：`https://whiteguo233.github.io/OpenBiliClaw/`。
 - `Support URL` 使用 GitHub Issues：`https://github.com/whiteguo233/OpenBiliClaw/issues`。

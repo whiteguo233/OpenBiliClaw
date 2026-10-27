@@ -80,6 +80,7 @@ export const NATIVE_SAVE_E2E_TARGETS: Readonly<
   "twitter": { favorite: "X Bookmarks", watch_later: "X Bookmarks" },
   "zhihu": { favorite: "知乎收藏", watch_later: "知乎收藏" },
   "reddit": { favorite: "Reddit Saved", watch_later: "Reddit Saved" },
+  "tiktok": { favorite: "TikTok Favorites", watch_later: "TikTok Favorites" },
 };
 
 const E2E_PLATFORMS = new Set<E2EPlatform>(["douyin", "xiaohongshu", "twitter", "reddit"]);

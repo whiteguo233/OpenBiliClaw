@@ -899,7 +899,6 @@ async def test_submit_feedback_records_event_and_cognition_returns_queued() -> N
     # background schedulers, so submit_feedback no longer calls them here.
 
 
-
 @pytest.mark.asyncio
 async def test_submit_feedback_keeps_commit_success_when_cognition_fails() -> None:
     adapter, soul_engine, memory, database, *_ = _build_adapter()

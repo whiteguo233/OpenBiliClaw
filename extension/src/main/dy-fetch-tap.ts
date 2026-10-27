@@ -542,6 +542,73 @@ async function readJsonResponse(resp: Response): Promise<unknown> {
   }
 }
 
+/** Observe complete JSON frames without waiting for a search stream to end. */
+async function observeSearchStream(
+  response: Response, onFrame: (frame: unknown) => void,
+): Promise<void> {
+  const body = response.clone().body;
+  if (!body) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let scan = 0;
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let bytes = 0;
+  // Observation alone is bounded. Cancel only this clone's reader; the
+  // website retains its original Response and controls its own request.
+  const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 60_000);
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 4 * 1024 * 1024) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (; scan < buffer.length; scan += 1) {
+        const char = buffer[scan];
+        if (start < 0) {
+          if (char === "{" || char === "[") {
+            start = scan;
+            depth = 1;
+            inString = false;
+            escaped = false;
+          }
+          continue;
+        }
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === '"') inString = false;
+          continue;
+        }
+        if (char === '"') inString = true;
+        else if (char === "{" || char === "[") depth += 1;
+        else if (char === "}" || char === "]") depth -= 1;
+        if (depth !== 0) continue;
+        try { onFrame(JSON.parse(buffer.slice(start, scan + 1))); } catch {
+          // Ignore malformed frames without affecting the page's consumer.
+        }
+        start = -1;
+      }
+      if (start < 0) {
+        buffer = "";
+        scan = 0;
+      } else if (start > 0) {
+        buffer = buffer.slice(start);
+        scan -= start;
+        start = 0;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 /**
  * Install the fetch-tap onto `target.fetch`. Wraps whatever
  * `target.fetch` is at install time, which in production is the
@@ -595,6 +662,16 @@ export function installFetchTap(
         // the page's React app would observe the rejection.
       }
     } else if (resp.ok && isPassiveDiscoveryResponseUrl(url) && postSearchBack) {
+      if (url.split("?", 1)[0]?.includes("/general/search/stream/")) {
+        // Never hold the native fetch promise until EOF. The page must be
+        // able to render its own chunks while the tap observes its clone.
+        void observeSearchStream(resp, json => {
+          if (isValidPassiveDiscoveryEnvelope("dy_search", json)) {
+            postSearchBack(parseSearchAwemeResponse(json), "dy_search");
+          }
+        }).catch(() => {});
+        return resp;
+      }
       try {
         const json: unknown = await readJsonResponse(resp);
         const discoveryScope = classifyPassiveDiscoveryScope(url);
@@ -827,6 +904,7 @@ interface ScopeApiResult {
 interface SearchApiResult {
   items: DouyinSearchItem[];
   pages_fetched: number;
+  error?: string;
 }
 
 const SCOPE_API_MAX_PAGES = 50;
@@ -1168,7 +1246,6 @@ async function harvestSearchViaApi(
   const pageSize = Math.min(20, Math.max(1, cap || 1));
   const paths = [
     "/aweme/v1/web/general/search/single/",
-    "/aweme/v1/web/search/item/",
   ];
   let pages = 0;
 
@@ -1198,10 +1275,18 @@ async function harvestSearchViaApi(
           clearTimeout(timer);
         }
       } catch (err) {
-        if (page === 0 && path === paths[0]) throw err;
-        break;
+        return { items, pages_fetched: pages,
+          error: String(err instanceof Error ? err.message : err) };
       }
       pages += 1;
+      const root = json as Record<string, unknown>;
+      const statusError = scopeApiStatusError(root);
+      if (statusError) return { items, pages_fetched: pages, error: statusError };
+      const nilInfo = root.search_nil_info;
+      if (nilInfo && typeof nilInfo === "object"
+        && (nilInfo as Record<string, unknown>).search_nil_item === "hit_shark") {
+        return { items, pages_fetched: pages, error: "hit_shark" };
+      }
       for (const item of parseSearchAwemeResponse(json)) {
         const key = item.aweme_id || `${item.title}:${item.author}`;
         if (!key || seen.has(key)) continue;
@@ -1209,7 +1294,6 @@ async function harvestSearchViaApi(
         items.push(item);
         if (items.length >= cap) break;
       }
-      const root = json as Record<string, unknown>;
       const hasMore = Boolean(root.has_more);
       const nextOffset = Number(root.cursor ?? offset + pageSize);
       if (!hasMore || !Number.isFinite(nextOffset) || nextOffset === offset) break;
@@ -1436,6 +1520,7 @@ export function installApiHarvester(
             requestId,
             items: result.items,
             pages_fetched: result.pages_fetched,
+            ...(result.error ? { error: result.error } : {}),
           });
         } catch (err) {
           post({

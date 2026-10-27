@@ -1140,3 +1140,26 @@ async def test_explore_stage_cold_start_no_domains_is_noop(db: Database) -> None
     assert ledger == {}
     assert host.inserted == []
     assert report["explore_degraded"] is False
+
+
+async def test_pipeline_materializes_tiktok_inspiration_axis_keywords(db: Database) -> None:
+    profile = _profile()
+    host = _FakeHost(profile=profile)
+    payload = _axis_payload()
+    keywords = payload["keywords"]
+    assert isinstance(keywords, list)
+    assert isinstance(keywords[0], dict)
+    keywords[0]["platform"] = "tiktok"
+    keywords[0]["core_concept"] = "local LLM agent framework"
+    keywords[0]["decoration"] = "open source"
+    pipeline = _make_pipeline(
+        db,
+        llm=_FakeLLM(payload=payload),
+        host=host,
+        provider=_FakeProvider(previews_by_query={}),
+    )
+
+    ledger = await pipeline._run_inspiration_stage(["tiktok"], profile=profile, digest="d1")
+
+    assert ledger == {"tiktok": 1}
+    assert host.inserted == [("tiktok", ["local LLM agent framework open source"])]

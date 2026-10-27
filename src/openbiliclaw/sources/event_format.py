@@ -505,6 +505,7 @@ SOURCE_XIAOHONGSHU = "xiaohongshu"
 SOURCE_DOUYIN = "douyin"
 SOURCE_WEB = "web"
 SOURCE_YOUTUBE = "youtube"
+SOURCE_TIKTOK = "tiktok"
 SOURCE_TWITTER = "twitter"
 SOURCE_GITHUB = "github"
 SOURCE_ZHIHU = "zhihu"
@@ -513,6 +514,7 @@ SOURCE_BANGUMI = "bangumi"
 SOURCE_LINUXDO = "linuxdo"
 SOURCE_WEIBO = "weibo"
 SOURCE_V2EX = "v2ex"
+SOURCE_INSTAGRAM = "instagram"
 
 # Human-readable platform labels used to render the context string.
 # Keys must match the source_platform values stored in event metadata.
@@ -522,6 +524,7 @@ _PLATFORM_LABELS: dict[str, str] = {
     SOURCE_DOUYIN: "抖音",
     SOURCE_WEB: "网页",
     SOURCE_YOUTUBE: "YouTube",
+    SOURCE_TIKTOK: "TikTok",
     SOURCE_TWITTER: "X",
     SOURCE_GITHUB: "GitHub",
     SOURCE_ZHIHU: "知乎",
@@ -530,6 +533,7 @@ _PLATFORM_LABELS: dict[str, str] = {
     SOURCE_LINUXDO: "Linux.do",
     SOURCE_WEIBO: "微博",
     SOURCE_V2EX: "V2EX",
+    SOURCE_INSTAGRAM: "Instagram",
 }
 
 # Action verbs per event_type. Designed so the rendered sentence reads

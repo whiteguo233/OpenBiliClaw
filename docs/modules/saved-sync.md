@@ -6,6 +6,8 @@
 
 当前模块已经实现 canonical identity / typed contracts、capability router、local-first sync service、SQLite DAO 边界、首个生产实现 `BilibiliNativeSaveAdapter`、平台中立 HTTP API / runtime 注册，以及插件 side panel、插件设置、桌面 Web、移动 Web 的保存与同步界面。旧端点仍只做本地 B 站兼容保存，不会因本次 wiring 自动修改平台账号。
 
+Instagram 推荐卡可使用 `instagram:<numeric-media-id>` 进入同一 local-first membership，但当前没有 Instagram native-save adapter。`favorite` / `watch_later` 都只保存在 OpenBiliClaw 本地；不会调用 Instagram 保存按钮、不会把 init 导入的 saved membership 当作本地列表写回依据，也不会因删除本地 membership 反向修改 Instagram。UI 必须显示「仅本地保存」，这与来源 contract 的 `media.native_save=false` 一致。
+
 ## 已实现功能
 
 | 功能 | 状态 | 说明 |
@@ -15,7 +17,7 @@
 | Local-first 保存 | ✅ | `SavedSyncService.save_local()` 先提交 membership；自动同步关闭时只落 `pending` native state，不调用 adapter。 |
 | GitHub / 微博显式 local-only | ✅ | 两个平台在 canonical source registry 中固定为 `local_only_source`：本地收藏 / 稍后看照常提交 membership，但 native state 当场进入不可重试终态，不创建 `native_save_tasks` 或扩展 broker job。GitHub repository identity 固定为 `github:repository:<numeric-id>`，绝不把本地收藏映射成 GitHub Star。 |
 | 持久化同步任务 | ✅ | 自动 / 手动触发统一经 `create_sync_task()` 生成一个非空 UUID，并在单个 `BEGIN IMMEDIATE` 事务中写入 `native_save_tasks` / `native_save_task_items` 快照，同时 claim eligible 项。显式选择按调用者顺序写入不可变 `ordinal`；缺失、已完成和已有 owner 的选择也会得到稳定的 terminal 快照；空的 all-eligible 请求仍持久化零项 task。执行前另以唯一 `task_runner_id` 原子领取 batch runner。 |
-| 六平台扩展保存 adapter 与 durable broker | ✅（6/6 executor + 真实账号验证） | YouTube / 小红书 / 抖音 / X / 知乎 / Reddit 的 production adapter 已注册并委托稳定 `ExtensionNativeSaveBroker`，job 写入独立 `extension_native_save_jobs` ledger；`owns(task_id)` 继续提供 global native ownership。YouTube 使用 exact `OpenBiliClaw` / `YouTube Watch Later`；其余五个平台的 watch-later 按能力矩阵回退 favorite。YouTube 同名重复列表按 checked proof、再按稳定 DOM 顺序安全复用，不删除列表。2026-08-31 的真实页面复核确认知乎已改为条目级全局 `收藏 / 已收藏` 开关，因此目标为 `知乎收藏`、不再宣称命名收藏夹；初始“已收藏”只读返回 `already_synced`，绝不反向点击。 |
+| 七平台扩展保存 adapter 与 durable broker | ✅（7/7 executor 注册；前六平台有真实账号验证，TikTok 授权 E2E 已运行，持久化未确认） | YouTube / 小红书 / 抖音 / X / 知乎 / Reddit / TikTok 的 production adapter 已注册并委托稳定 `ExtensionNativeSaveBroker`，job 写入独立 `extension_native_save_jobs` ledger；`owns(task_id)` 继续提供 global native ownership。YouTube 使用 exact `OpenBiliClaw` / `YouTube Watch Later`；其余六个平台的 watch-later 按能力矩阵回退 favorite。YouTube 同名重复列表按 checked proof、再按稳定 DOM 顺序安全复用，不删除列表。2026-08-31 的真实页面复核确认知乎已改为条目级全局 `收藏 / 已收藏` 开关，因此目标为 `知乎收藏`、不再宣称命名收藏夹；初始“已收藏”只读返回 `already_synced`，绝不反向点击。 |
 | 不确定写入的只读确认与 callback 幂等 | ✅ | 抖音 / 小红书 / YouTube / 知乎只有在 mutation 返回 `native_confirmation_not_observed` 时才进入同一 job 的 read-only continuation。runner 终止旧 sender、reload exact URL，并以新 document generation 只读核对 persisted target state；知乎只读取全局“已收藏”状态，不点击任何控件。只有 `already_synced` 正面证据可升级原结果，`synced`、登录/限流/控件错误、超时和异常均保留原不确定失败。任务结果 POST 必须收到 2xx；断线/非 2xx 在独立总 deadline 内以同一对象最多重试 3 次。数据库只对 task/slug/item/status/code/canonical message 完全一致的 terminal replay 返回成功，任何变化仍冲突，既能修复“服务端已落盘但首个 2xx 丢失”，又不会允许重写终态。 |
 | 批量逐项执行 | ✅ | `run_sync_task()` 只读取该 task ID 仍存在的 membership，按平台分组、同平台严格按任务快照 `ordinal` 串行执行，并以 `execution_id` 原子 claim / 完成每一项；membership 的 `added_at` 不会改变显式批次顺序，同一任务的并发 runner 不会重复调用 adapter，平台组之间仍可并行。执行中每 30 秒 owner-fenced heartbeat；heartbeat、broker poll 与 terminal persistence 均在线程中的独立短连接上执行，SQLite lock 有界退避重试，durable terminal row 在 heartbeat completion race 中优先。240 秒是调用方响应 deadline，不假定能强制终止不遵守 cancellation 的底层 I/O。 |
 | 可恢复任务查询 | ✅ | `get_sync_task()` 从独立 task/item ledger 重建结果，不依赖当前 membership 或可变的 `native_save_states.task_id`。删除本地 membership、service/API 重建后仍可按 UUID 查询同一批逐项快照；未知 UUID 在 HTTP 层返回 404。 |
@@ -25,9 +27,9 @@
 | 三个图形化保存界面 + CLI 配置可见（现统一为三端内容库子项） | ✅ | 插件 side panel、移动 Web、桌面 Web 都把「稍后再看 / 收藏 / 历史记录」收进单一内容库入口；两个保存子项复用原有列表与状态实现，不复制 API 或平台路由矩阵，旧直达链接会迁移到对应子项。推荐卡只对本地保存做 optimistic update；状态与并发 fence 按 `list_kind:item_key` 隔离，迟到 status 水合不能覆盖新 mutation。保存列表均由后端 `sync_status / sync_task_id / resolved_target / error_code` 驱动：`pending + 空 sync_task_id` 表示自动同步关闭后的本地待同步，保留手动按钮；`pending + 非空 sync_task_id` 与 `syncing` 显示可访问的同步中状态并禁用重复提交。只有 `unsupported_content_type` 显示「仅本地保存」且无同步按钮；历史 `unsupported_adapter_missing` 作为滚动升级兼容状态保留重试；`extension_required` 给出连接登录态插件指引，登录、限流和失败状态给出可操作重试文案，成功态原样显示后端 `resolved_target`。插件 / 移动 saved 与 config 请求、桌面 saved 请求均有有界 timeout；插件的单个 deadline 覆盖初次设备会话交换、401 强制换票与受保护请求。列表成功加载后从持久化 `sync_task_id` 去重恢复任务，task→item ownership 排除重复提交；页面重新可见时恢复查询，销毁时清理 tracker。刷新失败保留最后成功快照并显示重试。保存卡封面在真实 403、网络错误或已缓存失败时移除破图 `<img>`，三端都在原尺寸位置显示 SVG 占位并保留卡片按钮的可访问名称。批量同步与重试加载先捕获列表级焦点并在重渲染后优先还原同一动作；Task/result 文本先清洗再用 textContent/转义渲染；本地删除只调用 `/remove`。桌面 Web 首屏仍可并行水合 `watch_later` / `favorite` 数量，响应 `total` 分别更新内容库的两个子项徽标（不相加）；数量为零或读取失败时保持隐藏，进入子项后的完整刷新以 per-list generation fence 阻止迟到首屏响应覆盖新徽标。CLI 仅由 `config-show` 展示自动同步开关，不提供保存 / 同步动作。 |
 | 本地移除历史与恢复（issue #112） | ✅ | `remove_saved_membership()` 删除 normalized membership 时，在同一 SQLite 事务写入 `saved_item_removals` metadata snapshot；不会反向删除平台保存，也不会复制 native task ledger。三端「最近移除」固定只投影 30 天窗口；物理快照在数据库初始化和后续 membership 删除时 opportunistic prune，不宣称存在独立周期任务保证到点即删。同一 canonical `item_key` 的 favorite / watch_later / dismiss / dislike 以 `contexts[]` 在一张卡中返回，各 context 只保留自己的最新事实；favorite 与 watch_later 分别按对应 `list_kind + item_key` 计算 restored，用户可通过原有 `POST /api/saved/{list_kind}` 独立恢复。顶层 `context/restored` 只保留为旧客户端兼容投影，新界面不得用它代替完整 contexts。 |
 | 保存卡片反馈操作（issue #111，三个图形界面） | ✅（桌面 Web + 移动 Web + 插件 popup;CLI 无卡片 UI 排除） | 桌面 Web 的「稍后再看 / 我的收藏」列表卡片复用推荐卡反馈操作条(喜欢 / 不感兴趣 / 忽略 / 稍后再看 / 收藏 / 聊一聊):共享 `cardFeedbackBarHtml()` 渲染、`wireSavedCardFeedback()` 接线。稍后再看 / 收藏走共享 `handleCardAction`(`item_key` 维度、所属列表按钮默认 `aria-pressed=true`、取消即 reload 移出、跨列表加另一清单、`setSaved` 与推荐卡状态同步);喜欢 / 不感兴趣 / 忽略 / 聊一聊因 saved 项无 `recommendation_id`(推荐维度 `/api/feedback` 会 404),改走内容维度信号 `/api/events`(与扩展原生 like/dislike 同通道,事件 `type=feedback` + `metadata.feedback_type`,不带 `recommendation_id`)。三端(桌面 / 移动 `web/js/saved.js` / 插件 popup)统一实现:一行低调幽灵图标(喜欢 / 不感兴趣 / 聊一聊 靠左)+ 单个「跨列表」保存 toggle(靠右),经 ui-ux-pro-max 去冗——删掉与「移除」重复的所属 toggle 与桌面 dismiss,所属成员由「移除」管理;喜欢/不感兴趣/聊一聊走 `/api/events` 内容信号,跨列表 toggle 复用各端 saved 注册表。三端均真机 E2E 验证(桌面/移动走隔离后端,popup 真机加载扩展)。 |
-| Runtime wiring | ✅ | `RuntimeContext` 一次创建稳定 broker，并在 local/degraded 与每次 config rebuild 注册六平台 adapter；热重载替换 router/service 与 Bilibili client，但保留同一 broker。`BilibiliNativeSaveAdapter` 仍是唯一 direct adapter。broker best-effort 发布 `<slug>_task_available`；无 event hub 的测试/降级构造仍可用。六平台 pending job 随调用方取消安全变为 `cancelled`；已 claim 的 `in_progress` job 则继续等 durable 终态，由原 service watchdog 跨 rebuild 持有 native state heartbeat，不重放平台 mutation。 |
+| Runtime wiring | ✅ | `RuntimeContext` 一次创建稳定 broker，并在 local/degraded 与每次 config rebuild 注册七平台 adapter；热重载替换 router/service 与 Bilibili client，但保留同一 broker。`BilibiliNativeSaveAdapter` 仍是唯一 direct adapter。broker best-effort 发布 `<slug>_task_available`；无 event hub 的测试/降级构造仍可用。七平台 pending job 随调用方取消安全变为 `cancelled`；已 claim 的 `in_progress` job 则继续等 durable 终态，由原 service watchdog 跨 rebuild 持有 native state heartbeat，不重放平台 mutation。 |
 
-### 六平台目标与授权 E2E
+### 七平台目标与授权 E2E
 
 | 平台 | favorite | watch-later |
 | --- | --- | --- |
@@ -37,9 +39,10 @@
 | X/Twitter | `X Bookmarks` | `X Bookmarks` fallback |
 | 知乎 | exact `OpenBiliClaw` collection | 同 collection fallback |
 | Reddit | `Reddit Saved` | `Reddit Saved` fallback |
+| TikTok | `TikTok Favorites` | `TikTok Favorites` fallback |
 
 自动同步保持 `auto_sync_enabled = false`；手动 `/sync` 是独立的当次账号写入触发。
-真实写入必须使用[六平台授权 E2E runbook](../testing/six-platform-native-save-e2e.md)，为
+真实写入必须使用[授权 E2E runbook](../testing/six-platform-native-save-e2e.md)（TikTok 沿用同一授权 envelope 与流程），为
 exact platform / action / public `content_id` / `expected_target` 取得当前**精确命名授权**，
 并同时显式设置 `allow_state_changing=true`。授权 envelope 只接受五个固定字段，结果只记录
 `platform/action/content_id/expected_target/task_status/error_code`；账号 ID、Cookie、账号凭据、
@@ -51,7 +54,7 @@ trusted-local `POST /api/extension/e2e/run` 的 dedicated native-save 模式只�
 `native_save_authorization`，且与 generic `actions` 互斥。后端把 envelope 经 runtime stream
 交给已安装扩展之前，先读取 exact list membership，并用其 platform/content ID/content type/
 canonical HTTPS content URL 以及 production router 重建身份与目标；缺失或 account/profile URL
-固定 422 且不 publish。canonical URL 校验与六平台 production executor 等价：拒绝凭据、显式
+固定 422 且不 publish。canonical URL 校验与七平台 production executor 等价：拒绝凭据、显式
 端口、fragment、多余 query/path segment/host，并校验 watch-later fallback 的 exact
 `resolved_action=favorite`。扩展只用已验证 envelope 构造单一 canonical `item_key`，调用对应
 `/api/saved/{favorite|watch_later}/sync` 并轮询同一个 durable task。创建与轮询结果都必须
@@ -104,7 +107,7 @@ if job is not None:
 - `ExtensionNativeSaveResultIn` 只接受计划明确的 status/code 组合。扩展传入的 message 永不原样持久化；SQLite 只写后端自有固定文案，并拒绝 Unicode category-C 字符。
 - `save()` 的一个 dispatch deadline 同时覆盖 best-effort wake 与 pending poll；wake 挂起或抛错不会越过 deadline。claim 后改用 execution lease，超时结果不会重新进入 pending。
 - `/api/sources/{xhs,dy,yt,x,zhihu,reddit}` 共用 `next-task`、`task-result` 与 `kick`；领取 broker job 时返回 `type: native_save` 和脱敏 canonical 字段。结果在 broker/DAO 层严格关联 `platform_slug + task_id + item_key`，格式错误返回 422；首个 canonical terminal 写入成功，完全相同的 terminal replay 幂等返回 2xx，跨 source、改变 status/code/canonical message 的冲突或晚回调仍返回 409。
-- Native job 优先于同源 discovery/bootstrap queue；路由先查 global ownership，任何 native UUID 都不进入任一 legacy namespace，再查 exact slug 决定提交或 409。全局未归属 ID 只有在当前 legacy queue 实际拥有该 ID 时才进入旧 handler。X 目前只有 native queue 形态。XHS alarm 与 runtime-stream wake 共用 single-flight poll，手动 native-save 在无精确复用页时可越过后台 discovery tab mutex 打开 exact tokenized note route；executor 的 identity/control fence 仍保证只操作目标内容。production adapter/broker 与六个平台 executor 已全部接入；知乎当前使用全局 `知乎收藏`，不再把命名 `OpenBiliClaw` 收藏夹列为能力。未经用户对命名测试内容明确授权，不执行或重试新的真实账号写入。
+- Native job 优先于同源 discovery/bootstrap queue；路由先查 global ownership，任何 native UUID 都不进入任一 legacy namespace，再查 exact slug 决定提交或 409。全局未归属 ID 只有在当前 legacy queue 实际拥有该 ID 时才进入旧 handler。X 目前只有 native queue 形态。XHS alarm 与 runtime-stream wake 共用 single-flight poll，手动 native-save 在无精确复用页时可越过后台 discovery tab mutex 打开 exact tokenized note route；executor 的 identity/control fence 仍保证只操作目标内容。production adapter/broker 与七个平台 executor 已全部接入；知乎当前使用全局 `知乎收藏`，不再把命名 `OpenBiliClaw` 收藏夹列为能力。未经用户对命名测试内容明确授权，不执行或重试新的真实账号写入。
 
 ### B 站 adapter
 
@@ -181,9 +184,9 @@ SavedItemInput
 
 验证边界同样分层：自动化和默认 smoke 只使用 mock adapter 或本地 membership，不发送任何
 平台 favorite / watch-later 请求。Bilibili 的既有 runbook 要求为具体 BV ID 取得用户当次授权；
-六平台 runbook 则逐项要求 exact platform/action/public content ID/expected target，并只记录
-六字段安全结果。YouTube、小红书、抖音、X、知乎与 Reddit 的 production adapter、runtime
-broker registration 及六个平台 executor wiring 已完成；fixture 自动化覆盖当前能力矩阵，
+七平台 runbook 则逐项要求 exact platform/action/public content ID/expected target，并只记录
+六字段安全结果。YouTube、小红书、抖音、X、知乎、Reddit 与 TikTok 的 production adapter、runtime
+broker registration 及七个平台 executor wiring 已完成；fixture 自动化覆盖当前能力矩阵，
 其中知乎目标为条目级全局 `知乎收藏`、所有 verifier 零点击。历史逐平台实号记录只覆盖当时
 runbook 中精确命名的公开测试内容，不授权自动重试或
 删除平台账号中的保存记录。
@@ -192,3 +195,22 @@ runbook 中精确命名的公开测试内容，不授权自动重试或
 开启配置后的自动收藏均返回 `synced`；删除三条本地 membership 后，两条平台收藏与一条
 平台稍后再看仍可读，自动同步配置也恢复为测试前的关闭值。该结果只证明 Bilibili direct
 adapter 的授权链路，不扩大其它平台边界。
+
+## TikTok 精确视频确认（2026-10-11）
+
+TikTok executor 在内容等待结束、点击前与确认循环内重新读取当前 URL。SPA 切换到其他视频时停止，不点击其按钮，也不把该页选中态报告为成功；verify 始终只读。真实站内保存仍需已安装登录态扩展及 exact platform/action/content_id/target 授权，当前未执行。见 [验收台账](../platform-source-acceptance.tiktok.md)。
+
+## TikTok 登录渲染等待（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 冷页面等待登录和内容同时就绪 | save/verify 不再因登录控件尚未挂载而立即返回 login_required；两者最多等待 20 秒，显式登录墙/登出仍停止。 |
+| 共享正向账号证据 | 使用账号采集的 DOM 与 canonical SSR 判定；仅有匿名 upload 控件不证明登录，明确 logout 优先。 |
+
+公共扩展接口 `TiktokNativeSaveEnvironment` 新增可选 `isLoginRequired()`；共享等待函数新增可选 timeoutMs，其他来源仍默认 10 秒。精确 URL、点击前复核和只读 persisted-state 确认保持。此修复有冷加载及否定案例回归，不能替代授权站内写入实测；详见[验收台账](../platform-source-acceptance.tiktok.md)。
+
+## TikTok 真实写入与刷新确认（2026-10-12）
+
+已取得当前用户对具体公开视频及 `TikTok Favorites` 的明确授权并执行实际写入尝试。实机暴露两个页面适配缺口：下一条预加载视频的书签仍有可见 CSS，以及选中后 aria 文案仍写“添加到收藏”。现在限制完整视口内的唯一控件，点击唯一内层 button，并识别其特定金色书签。
+
+即时金色是乐观 UI，不能直接入账。`runNativeSaveTask` 对 TikTok 即时成功一律要求刷新、新 document instance 的只读 `already_synced`；未确认继续返回 `native_confirmation_not_observed`。不二次点击，不取消上游收藏。公开 API、local-first 和 auto-sync 默认关闭保持不变。真实请求的 HTTP 200 / 业务状态 0 未能通过刷新持久化核验，当前仍是 **FAIL**，非空画像和周期链路仍 **BLOCKED**；不是缺少授权，亦没有证据指向 Intel CPU。

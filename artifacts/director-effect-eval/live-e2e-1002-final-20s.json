@@ -1,0 +1,402 @@
+{
+  "schema": "director-live-e2e.v1",
+  "policy_version": "director-screen-policy.v3",
+  "code_sha256": {
+    "scripts/run_director_live_e2e.py": "711fd55ff84cf53466b38a3176ac9f60b4ab7acbccf7e08c871ec858058c9a6e",
+    "scripts/director_codex_transport.py": "0af47294620a5e30cec1a463f4300d8d3ad2c64d4b37801fa78c6846325a8b08",
+    "src/openbiliclaw/recommendation/director/planner.py": "edfae00f54d54e4c7b14750b7772f209d2b76ed68124626678a88d3a220155f1",
+    "src/openbiliclaw/recommendation/director/policy.py": "719798ddd2183aab200410780e119f9585cb73bb73d36141aac77dc658196237",
+    "src/openbiliclaw/recommendation/director/horizon_models.py": "34ee5c1717da01cc1a730dea3bb1606865ce4a3a92f6f3aeff69ad1871704cc8",
+    "src/openbiliclaw/recommendation/director/planner_refs.py": "4ef5dd171c120f1a8e78e9c35c49556e7a5e5a551e475b3afd4d7c664186b350"
+  },
+  "started_at": "2026-10-02T04:53:15.328280+00:00",
+  "transport": "codex-cli",
+  "model": "gpt-6-luna",
+  "mode": "scripted_http_acceptance",
+  "planning_budget_seconds": 20.0,
+  "budget_class": "production_default",
+  "real_source_snapshot": true,
+  "source_configuration": "config_toml_plus_local_and_environment",
+  "feedback_is_isolated_acceptance_action": true,
+  "long_term_learning_and_discovery": "excluded",
+  "jev": "not_used_agent_only",
+  "asgi_background_lifespan": "disabled",
+  "http_requests": [
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/present",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/present",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendation-click",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendation-click",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    }
+  ],
+  "screens": [
+    {
+      "batch_sha256": "70b55c95fa0bdf99a75ced83460da419a8adfb7ba7ac0dbc3c178e9231cdfa4f",
+      "plan_sha256": "70498b5fe1ce7b7a284dc8bf36441c041ebe9a4acc95ab392a4e1fbf8573ca57",
+      "item_count": 5,
+      "item_sequence_sha256": "b24b34d90cc6a806c47c5704b958fc8664bdfc4f8de5432fac365a9d431cd98b",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "agent_only",
+      "execution_binding": "PLAN_SLOT",
+      "experience_step_seq": 1,
+      "state_revision": 0,
+      "planning_source": "fresh",
+      "planning_reason": "agent_horizon_prepared",
+      "planning_calls": 1,
+      "initial_screen_counts": [
+        5
+      ],
+      "coverage_reason": "semantic_shortage"
+    },
+    {
+      "batch_sha256": "4dcc2d7f123393212c739cb44ec26200ed646f9d98f0d41b28fb0017eb723fe6",
+      "plan_sha256": null,
+      "item_count": 6,
+      "item_sequence_sha256": "19cc6c1c89ae81de935216cfefc9024cf8884978ba6407524411eec5d1dbb5b9",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "deterministic",
+      "execution_binding": "SESSION_STEP",
+      "experience_step_seq": 2,
+      "state_revision": 2,
+      "planning_source": "fresh",
+      "planning_reason": "planner_timeout",
+      "planning_calls": 2,
+      "initial_screen_counts": null,
+      "coverage_reason": null
+    }
+  ],
+  "checks": [
+    "new_stream_restore_does_not_generate",
+    "exact_restore_and_idempotent_generate_without_foreground_model",
+    "actual_visible_subset_ack_is_idempotent"
+  ],
+  "passed": false,
+  "model_calls": [
+    {
+      "input_sha256": "049452be5df423b4d70fe08abe47b9939ffd8e0617fe1798d231f33d99c51c9b",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 37090,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "7e0bb080d9b94d763146307a1a0bfcbfebe6660190aafd848e46c20538bc6cba",
+      "usage": {
+        "input_tokens": 19121,
+        "cached_input_tokens": 7936,
+        "output_tokens": 423,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          5
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 35
+      },
+      "elapsed_seconds": 13.486
+    },
+    {
+      "input_sha256": "0ec7f38e96be78fba646a559547883254e927f1beb3d93c5aaf03856bd1f585a",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 38035,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "response_sha256": "3029e09c68517294c6a9065ffba3e2c353bb1ee48ecbb774ea0debd6320f8314",
+      "usage": {
+        "input_tokens": 19439,
+        "cached_input_tokens": 7936,
+        "output_tokens": 283,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 40
+      },
+      "elapsed_seconds": 16.552
+    },
+    {
+      "input_sha256": "dc6020797c1c4d9069ffb7770c93815cce9084765443aa50843fce68a816eebb",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 40402,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 2,
+      "feedback_kind_counts": {
+        "presented": 1,
+        "click": 1
+      },
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "40c2886cc02ffa434f55a64ffd8d4e2fdf85e4c6bc7cd26e75bfb80a77c0f01a",
+      "usage": {
+        "input_tokens": 20222,
+        "cached_input_tokens": 7936,
+        "output_tokens": 208,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 39
+      },
+      "elapsed_seconds": 9.745
+    },
+    {
+      "input_sha256": "470c74baf421c06d6783ce39fb71cc407373e586b99ee5c7d727b3e2b399a590",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 41621,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 2,
+      "feedback_kind_counts": {
+        "presented": 1,
+        "click": 1
+      },
+      "requested_horizon": 3,
+      "background": false,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 10.255
+    },
+    {
+      "input_sha256": "107b784a623ea9ebcb4452b7042783c953b9d0191d6b018a225eaafc2d9476aa",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 39465,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 3.446
+    },
+    {
+      "input_sha256": "26565ce3a31d0855428672905f8861116e73205518f96a1f43f7744e13d45835",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 39314,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 2,
+      "feedback_kind_counts": {
+        "presented": 1,
+        "click": 1
+      },
+      "requested_horizon": 3,
+      "background": true,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 0.72
+    }
+  ],
+  "transport_records": [
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 540,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    }
+  ],
+  "snapshot": {
+    "source_open_mode": "sqlite_readonly_online_backup",
+    "source_data_path_sha256": "25c70f5d9b28fa6b8a5c499ec98df2c2480b34d54e533fe659937830ff64a936",
+    "memory_files": [
+      "soul.json",
+      "preference.json",
+      "awareness.json",
+      "insight.json",
+      "profile_overrides.json",
+      "speculative_state.json",
+      "discovery_runtime.json"
+    ],
+    "database_bytes": 228888576,
+    "private_snapshot_deleted_on_exit": true
+  },
+  "initial_shortlist_count": 40,
+  "error_class": "AcceptanceFailure",
+  "failure_code": "screen_not_agent_only",
+  "finished_at": "2026-10-02T04:54:01.966988+00:00"
+}

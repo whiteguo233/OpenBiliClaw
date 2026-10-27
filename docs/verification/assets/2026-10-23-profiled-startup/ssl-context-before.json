@@ -1,0 +1,1 @@
+{"outbound_requests":0,"measurement":"httpx.create_ssl_context; 1 warmup + 20 samples each","results":[{"trust_env":false,"samples":20,"median_ms":88.268,"p95_ms":120.522,"min_ms":77.802,"max_ms":122.779},{"trust_env":true,"samples":20,"median_ms":88.01,"p95_ms":118.207,"min_ms":77.698,"max_ms":137.112}]}

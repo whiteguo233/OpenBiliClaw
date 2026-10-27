@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -350,3 +351,126 @@ async def test_work_allowed_false_parks_loop_without_drain() -> None:
 
     await coordinator.stop()
     await task
+
+
+@pytest.mark.asyncio
+async def test_transient_backoff_logs_delay_pending_and_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = _FakeClock()
+    pending = _Pending(19)
+    calls = 0
+
+    def drain(_limit: int) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ExpressionCopyTransientError(kind="rate_limited", completed=0, retry_after=45.0)
+        pending.value = 0
+        return 8
+
+    coordinator = _coordinator(pending, drain, time_fn=clock, wait_fn=clock.wait)
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.runtime.expression_copy"):
+        task = asyncio.create_task(coordinator.run_forever())
+        coordinator.notify("start")
+        await _wait_until(
+            lambda: coordinator.status_payload()["expression_batch_state"] == "backoff"
+        )
+        # The clock may hold a stale cancelled safety-wake waiter, so wait for
+        # the actual backoff waiter before advancing.
+        await _wait_until(
+            lambda: any(
+                deadline == 45.0 and not future.done() for deadline, future in clock._waiters
+            )
+        )
+        await clock.advance(45.0)
+        await _wait_until(lambda: coordinator.status_payload()["expression_last_completed"] == 8)
+        await coordinator.stop()
+        await task
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "transient failure (rate_limited)" in message
+        and "backing off 45s" in message
+        and "pending=19" in message
+        and "streak=1" in message
+        for message in warnings
+    )
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("expression copy recovered: completed=8 pending=0" in message for message in infos)
+
+
+@pytest.mark.asyncio
+async def test_zero_progress_backoff_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    clock = _FakeClock()
+    pending = _Pending(8)
+    calls: list[int] = []
+    coordinator = _coordinator(
+        pending, lambda limit: calls.append(limit) or 0, time_fn=clock, wait_fn=clock.wait
+    )
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.runtime.expression_copy"):
+        task = asyncio.create_task(coordinator.run_forever())
+        coordinator.notify("start")
+        await _wait_until(lambda: calls == [8])
+        await _wait_until(
+            lambda: coordinator.status_payload()["expression_batch_state"] == "backoff"
+        )
+        await coordinator.stop()
+        await task
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "made no progress" in message and "15s" in message and "pending=8" in message
+        for message in warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_and_resume_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    pending = _Pending(8)
+    calls = 0
+
+    def drain(_limit: int) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LLMFallbackError("No provider was available to process the request.")
+        pending.value = 0
+        return 8
+
+    coordinator = _coordinator(pending, drain, safety_wake_seconds=0.01)
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.runtime.expression_copy"):
+        task = asyncio.create_task(coordinator.run_forever())
+        await _wait_until(
+            lambda: coordinator.status_payload()["expression_batch_state"] == "paused"
+        )
+        coordinator.notify("config_reloaded")
+        await _wait_until(lambda: calls == 2)
+        await coordinator.stop()
+        await task
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "expression copy paused on no_provider" in message and "pending=8" in message
+        for message in messages
+    )
+    assert any("expression copy resumed on config_reloaded" in message for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_clean_drain_does_not_spam_warnings(caplog: pytest.LogCaptureFixture) -> None:
+    pending = _Pending(8)
+
+    def drain(limit: int) -> int:
+        pending.value = 0
+        return min(limit, 8)
+
+    coordinator = _coordinator(pending, drain)
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.runtime.expression_copy"):
+        task = asyncio.create_task(coordinator.run_forever())
+        coordinator.notify("start")
+        await _wait_until(lambda: coordinator.status_payload()["expression_last_completed"] == 8)
+        await coordinator.stop()
+        await task
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

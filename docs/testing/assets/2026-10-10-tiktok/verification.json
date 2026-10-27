@@ -1,0 +1,24 @@
+{
+  "local_full_initial": {
+    "passed": 10323,
+    "skipped": 65,
+    "failed": 7,
+    "seconds": 2057.77
+  },
+  "desktop_after_fix": {
+    "passed": 34
+  },
+  "roster_docs_contract_after_fix": {
+    "passed": 82
+  },
+  "extension_after_fix": {
+    "passed": 1681
+  },
+  "ruff": "PASS",
+  "mypy_files": 317,
+  "chrome_build_assets": "PASS",
+  "firefox_build_assets": "PASS",
+  "llm_and_network_match_production": true,
+  "sensitive_test_runtime_removed": true,
+  "note": "Local full initial failures and fixed targeted reruns are separate executions. Final PR checks are authoritative for the branch."
+}

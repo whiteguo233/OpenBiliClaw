@@ -35,7 +35,8 @@ OpenClaw bootstrap 与 API/CLI production composition 使用同一组近期供�
 | Agent Bridge adapter operations | ✅ | 已提供 `sync_account / get_profile / recommend / reshuffle / append_recommendations / submit_feedback / get_delight / respond_delight / get_runtime_status / get_activity_feed / get_platform_availability / chat / get_chat_history / profile edit / probe feedback / saved-list operations`；chat 仍显式固定为 `legacy_direct`，但新增 durable `turn_id`，不提交 API runtime 的 queue、也不持有 worker guard permit。失败转为携带安全 LLM 分类文案的 `AdapterOperationError`，不暴露原始上游细节。 |
 | 推荐消费后的 durable inventory 同步 | ✅ | API 与 OpenClaw composition 都给真实 `RecommendationEngine` 注入 post-commit callback；独立 serve DB worker 把 recommendation + shown 在同一短事务提交成功后，callback 直接携带 `pool_counts_after` 更新共享 gate，不再同步重读共享连接。写失败不触发 callback，callback 失败也不改写 durable 提交结果；API 另在响应关键路径外读取精确 canonical snapshot 收敛广播。 |
 | Agent capability manifest | ✅ | `get_capabilities` / `capabilities` 返回 `agent-bridge/v2`、宿主兼容名和完整 skill 名称；`skill.py` 是唯一注册表，防止核心功能只进 HTTP/UI 而漏进 Agent |
-| Agent skill descriptors | ✅ | 已提供协议中立的 24 个 descriptor 与 async handler；OpenClaw 前缀保留为兼容命名 |
+| Agent skill descriptors | ✅ | 已提供协议中立的 26 个 descriptor 与 async handler；OpenClaw 前缀保留为兼容命名 |
+| 推荐导演与独立过滤 | ✅ | bootstrap 复用 `DirectorRuntime`：`jev_recurrent / agent_jev / agent_only` 三种策略与 API 一致；`recommend / append` 为 NEXT，`reshuffle` 为 STAY，全部原子提交完整屏幕；`restore` 不生成、不曝光，`present` 只确认宿主实际呈现的子集。filter 可在导演关闭时独立接到 discovery；启用配置不能静默回到 legacy。one-shot CLI 在同一 event loop 内关闭 runtime/provider、client 和数据库。 |
 | Agent CLI bridge | ✅ | 已提供 `python -m openbiliclaw.integrations.openclaw.cli`，输出稳定 JSON；Hermes / WorkBuddy 可直接复用该命令或从 `integrations.agent` 导入别名 |
 | Agent 主动探针闭环 | ✅ | 可拉取/响应 `interest.probe` 与 `avoidance.probe` 的 confirm/reject/defer/chat；`listen` 默认转发 delight、兴趣和避雷的候选及结果事件 |
 | Workspace skill pack | ✅ | 仓库根目录新增 `skills/openbiliclaw-adapter/SKILL.md`，可被 OpenClaw 直接发现 |
@@ -111,6 +112,8 @@ skills = build_openclaw_skills(adapter)
   输出同时携带 Bilibili 兼容别名和 `item_key/content_id/source_platform/content_type/body_text`
   等多源字段
 - `reshuffle(...)` / `append_recommendations(...)`：对应当前 UI 的换一批和追加分页能力
+- `restore_recommendations(stream_ref="openclaw", batch_ref="", source_platform="")`：导演开启时只恢复已提交整屏，不重新选择候选。
+- `present_recommendations(batch_ref, ack_id, item_keys)`：宿主确认真实可见子集，稳定 `ack_id` 保证重试不重复曝光。工具返回或 Agent 读取内容不构成曝光证据。
 - `submit_feedback(request)`：trim 后非空、最长 400 字符的 `request_id` 必填，并在 `openclaw` producer namespace 内唯一；adapter 不生成默认值。durable event 首写与 recommendation 投影提交后 operation 即成功，后续认知记录、内容反馈 owner drain 和摘要刷新只决定 `processing=completed/queued`，失败不会撤销或误报已经提交的反馈。相同 ID 携带不同 recommendation/type/note 会返回 validation conflict，绝不覆盖第一份 payload。
 - `get_delight()` / `respond_delight(request)`：支持 `view/like/dislike/dismiss/chat`；like/dislike/dismiss 要求稳定 `request_id`
 - `get_runtime_status()`
@@ -136,6 +139,7 @@ skills = build_openclaw_skills(adapter)
 
 - `openbiliclaw_sync_account`, `openbiliclaw_get_profile`, `openbiliclaw_get_capabilities`
 - `openbiliclaw_recommend`, `openbiliclaw_reshuffle`, `openbiliclaw_append_recommendations`
+- `openbiliclaw_restore_recommendations`, `openbiliclaw_present_recommendations`
 - `openbiliclaw_submit_feedback`, `openbiliclaw_get_delight`, `openbiliclaw_respond_delight`
 - `openbiliclaw_get_runtime_status`, `openbiliclaw_get_activity_feed`,
   `openbiliclaw_get_platform_availability`
@@ -147,6 +151,30 @@ skills = build_openclaw_skills(adapter)
   `openbiliclaw_sync_saved`
 
 ### 通过 CLI bridge 调用
+
+导演默认关闭，下面已有命令保持 legacy 行为。开启 `[director].mode` 后，推荐、追加与换一批
+必须携带稳定 `--request-id`（1–128 字符，每次用户动作一个 ID，重试复用），可指定
+`--stream-ref` 和 `--explicit-intent`；每屏允许 1–20 张卡。响应及每张卡携带
+`batch_ref / stream_ref`，反馈可用 `--batch-ref` 验证精确归属。NEXT 推进体验步骤；STAY
+保留根方向且排除整个换屏链。相同配置的短命令重建不会清掉未来计划，配置变化会拒绝旧进程
+继续生成。已有提交屏幕始终不可重写。
+如果新增避雷偏好使旧屏不再可展示，restore 或同 ID 重试返回空项与
+`requires_generation=true`，不修改原屏、不偷偷分配下一屏；下一次生成须由宿主显式发起。
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli recommend --limit 4 --request-id screen-1
+uv run python -m openbiliclaw.integrations.openclaw.cli restore
+uv run python -m openbiliclaw.integrations.openclaw.cli append --limit 4 --request-id screen-2
+uv run python -m openbiliclaw.integrations.openclaw.cli reshuffle --limit 4 --request-id replacement-2
+# 仅在人确实看到卡片后，用返回的真实标识确认；不是工具返回后自动确认。
+uv run python -m openbiliclaw.integrations.openclaw.cli present \
+  --batch-ref RETURNED_BATCH_REF --ack-id visible-1 --item-key RETURNED_ITEM_KEY
+```
+
+没有可见性确认能力的宿主应保持未曝光；用户真实 like/dislike/comment 等动作通过原有
+canonical event ingress 入库，再投影至该屏会话，既不等待 Soul 异步分析，也不重复写学习事件。
+Python 长生命周期宿主应在退出时 `await adapter.aclose()`；CLI 自动完成清理。独立过滤的
+`off / shadow / enforce` 配置与校准约束详见 [discovery 模块](discovery.md)，不依赖导演开关。
 
 ```bash
 uv run python -m openbiliclaw.integrations.openclaw.cli get-profile

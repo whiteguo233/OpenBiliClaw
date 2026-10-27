@@ -94,6 +94,9 @@ from openbiliclaw.sources.platforms import (
     PLATFORM_REDDIT as _REDDIT_SOURCE_FAMILY,
 )
 from openbiliclaw.sources.platforms import (
+    PLATFORM_TIKTOK as _TIKTOK_SOURCE_FAMILY,
+)
+from openbiliclaw.sources.platforms import (
     PLATFORM_XIAOHONGSHU as _XHS_SOURCE_FAMILY,
 )
 from openbiliclaw.sources.platforms import (
@@ -267,7 +270,14 @@ def _looks_like_serialized_llm_payload(value: str) -> bool:
 
 @dataclass(frozen=True)
 class PoolMaintenanceResult:
-    """Observable outcome of one bounded recommendation-pool maintenance pass."""
+    """Observable outcome of one bounded recommendation-pool maintenance pass.
+
+    When ``rolled_back`` is true the transaction was reverted: the
+    ``trimmed_*`` / ``deferred_*`` counters and ``mutation_count`` describe
+    the attempted (uncommitted) batch, while ``available_after`` /
+    ``raw_after`` / ``recovered_suppressed`` describe the durable
+    post-rollback state (the before view, restored).
+    """
 
     available_before: int
     available_after: int
@@ -440,6 +450,12 @@ _MAINTENANCE_DB_BUSY_TIMEOUT_MS = 75
 # while bounding every write transaction; the async runner releases the lock
 # and yields the loop between batches.
 _POOL_MAINTENANCE_BATCH_SIZE = 50
+# failed_eval dead-letter revival: one resume event re-queues at most this
+# many rows, and each row can be resurrected at most this many times ever
+# (persisted in ``eval_revive_count``) so a process restarting against a
+# still-broken provider cannot re-burn LLM quota without bound.
+_FAILED_EVAL_REVIVE_BATCH_SIZE = 500
+_FAILED_EVAL_MAX_REVIVES = 3
 _NATIVE_INTERNAL_RUNNER_PREFIX = "__openbiliclaw_"
 _LEGACY_NATIVE_SAVE_RUNNER_ID = f"{_NATIVE_INTERNAL_RUNNER_PREFIX}legacy_runner__"
 _EXTENSION_NATIVE_SAVE_PLATFORM_SLUGS = {
@@ -449,6 +465,7 @@ _EXTENSION_NATIVE_SAVE_PLATFORM_SLUGS = {
     "twitter": "x",
     "zhihu": "zhihu",
     "reddit": "reddit",
+    "tiktok": "tiktok",
 }
 _EXTENSION_NATIVE_SAVE_HOSTS = {
     "youtube": ("youtube.com", "youtu.be"),
@@ -457,6 +474,7 @@ _EXTENSION_NATIVE_SAVE_HOSTS = {
     "twitter": ("x.com", "twitter.com"),
     "zhihu": ("zhihu.com",),
     "reddit": ("reddit.com", "redd.it"),
+    "tiktok": ("tiktok.com",),
 }
 _EXTENSION_NATIVE_SAVE_IDENTITY_QUERY_FIELDS = {
     "youtube": frozenset({"v"}),
@@ -1015,8 +1033,53 @@ _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 # Schema version for migrations.  V4 adds the atomic temporal-evidence and
 # review lifecycle fields to both discovery candidates and cached content; V6
-# records the event source-attribution schema marker.
-_SCHEMA_VERSION = 6
+# records the event source-attribution schema marker; V7 adds the chat
+# multi-session model (chat_sessions + chat_turns.session_id); V8 adds the
+# durable background task center (agent_tasks).
+_SCHEMA_VERSION = 8
+
+# Well-known chat session that owns every legacy chat turn whose session_id
+# stayed ''.  It can be renamed but never archived.
+DEFAULT_CHAT_SESSION_ID = "default"
+DEFAULT_CHAT_SESSION_TITLE = "默认会话"
+
+# Durable agent task center (「聊一聊」 M6).  ``interrupted`` marks tasks a
+# previous process (or a config hot reload) left in pending/running; it is a
+# terminal state — tasks are never auto-resumed, the user re-issues them.
+AGENT_TASK_STATUSES: tuple[str, ...] = (
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+)
+AGENT_TASK_TERMINAL_STATUSES: tuple[str, ...] = (
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+)
+AGENT_TASK_ACTIVE_STATUSES: tuple[str, ...] = ("pending", "running")
+# Bounds on the JSON step log kept inline in agent_tasks.steps: at most 200
+# entries, each entry's text truncated to 2000 chars, and the serialized
+# array capped at 200_000 chars (a truncation marker replaces further
+# appends).  Reports and suggestions have their own caps.
+MAX_AGENT_TASK_STEPS = 200
+MAX_AGENT_TASK_STEP_CHARS = 2000
+MAX_AGENT_TASK_STEPS_CHARS = 200_000
+MAX_AGENT_TASK_SUGGESTIONS = 20
+MAX_AGENT_TASK_REPORT_CHARS = 8000
+
+# SQL fragment matching the turns owned by one chat session (sessions aliased
+# ``s``, turns aliased ``t``).  The default session also owns legacy turns
+# whose session_id stayed ''.
+_CHAT_SESSION_TURN_MEMBERSHIP_SQL = (
+    f"(s.session_id = '{DEFAULT_CHAT_SESSION_ID}' "
+    f"AND t.session_id IN ('', '{DEFAULT_CHAT_SESSION_ID}')) "
+    f"OR (s.session_id <> '{DEFAULT_CHAT_SESSION_ID}' "
+    "AND t.session_id = s.session_id)"
+)
 
 _SCHEMA_SQL = """
 -- Event log (behavioral data from browser extension)
@@ -1272,6 +1335,7 @@ CREATE TABLE IF NOT EXISTS chat_turns (
     reply         TEXT NOT NULL DEFAULT '',
     error         TEXT NOT NULL DEFAULT '',
     payload       TEXT NOT NULL DEFAULT '{}',
+    session_id    TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -1279,6 +1343,50 @@ CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created
     ON chat_turns(session, created_at, turn_id);
 CREATE INDEX IF NOT EXISTS idx_chat_turns_scope_subject
     ON chat_turns(scope, subject_id, created_at);
+
+-- Multi-session chat model (「聊一聊」 M5).  One row per user-facing
+-- conversation; chat_turns.session_id links turns to it.  ``metadata`` is
+-- an additive JSON bag reserved for skill bindings (M4).  The well-known
+-- row ``default`` owns every legacy turn whose session_id stayed ''.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    session_id      TEXT PRIMARY KEY,
+    title           TEXT NOT NULL DEFAULT '',
+    archived        INTEGER NOT NULL DEFAULT 0,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_message_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_activity
+    ON chat_sessions(archived, last_message_at);
+
+-- Durable background task center (「聊一聊」 M6).  Tasks are first-class
+-- persistent objects independent of their originating chat session: each
+-- row carries its read-only execution log (``steps``, a capped JSON array
+-- of AgentEvent-shaped entries), the final ``report`` and the structured
+-- ``suggestions`` list handed back to the conversation for user-confirmed
+-- writes.  ``started_at``/``finished_at`` bracket the actual execution.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    task_id     TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    prompt      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    skill       TEXT NOT NULL DEFAULT '',
+    progress    TEXT NOT NULL DEFAULT '',
+    report      TEXT NOT NULL DEFAULT '',
+    suggestions TEXT NOT NULL DEFAULT '[]',
+    steps       TEXT NOT NULL DEFAULT '[]',
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at  TIMESTAMP,
+    finished_at TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created
+    ON agent_tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_created
+    ON agent_tasks(session_id, created_at);
 
 -- Atomic winner receipt for durable dialogue-confirmation cards. Dialogue
 -- effects are serialized by the single in-process settlement worker.
@@ -2195,7 +2303,12 @@ class Database:
                 source: dict(stats) for source, stats in self._publication_date_filter_stats.items()
             }
 
-    def _publication_date_row_is_eligible(self, row: Mapping[str, Any]) -> bool:
+    def _publication_date_row_is_eligible(
+        self,
+        row: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> bool:
         """Apply strict Bilibili date preference without deleting stored rows."""
         preference = self._publication_date_preference
         if preference is None:
@@ -2214,6 +2327,7 @@ class Database:
                 ),
                 published_at=row.get("published_at", ""),
                 preference=cast("PublicationDatePreference", preference),
+                now=now,
             )
         except (TypeError, ValueError):
             logger.warning("Ignoring invalid publication preference in pool read", exc_info=True)
@@ -2256,6 +2370,8 @@ class Database:
         self._normalize_legacy_style_keys()
         self._ensure_llm_usage_cache_columns()
         self._ensure_chat_turns_table()
+        self._ensure_chat_sessions_table()
+        self._ensure_agent_tasks_table()
         self._ensure_profile_update_ledger_table()
         self._ensure_confusions_table()
         self._ensure_watch_later_table()
@@ -3291,6 +3407,246 @@ class Database:
     # Durable popup chat turns
     # ------------------------------------------------------------------
 
+    # --- Multi-session chat model (「聊一聊」 M5) ---
+
+    @staticmethod
+    def _normalize_chat_session_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Decode the additive session metadata while tolerating corrupt rows."""
+        normalized = dict(row)
+        raw_metadata = normalized.get("metadata", "{}")
+        try:
+            parsed = json.loads(str(raw_metadata or "{}"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = {}
+        normalized["metadata"] = parsed if isinstance(parsed, dict) else {}
+        normalized["archived"] = bool(normalized.get("archived", 0))
+        normalized["title"] = str(normalized.get("title", "") or "")
+        normalized["last_message_at"] = str(normalized.get("last_message_at", "") or "")
+        return normalized
+
+    def ensure_default_chat_session(self) -> dict[str, Any]:
+        """Create the well-known default chat session if missing and return it."""
+        self._execute_write(
+            "INSERT OR IGNORE INTO chat_sessions (session_id, title) VALUES (?, ?)",
+            (DEFAULT_CHAT_SESSION_ID, DEFAULT_CHAT_SESSION_TITLE),
+        )
+        row = self.get_chat_session(DEFAULT_CHAT_SESSION_ID)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError("Failed to create the default chat session")
+        return row
+
+    def create_chat_session(
+        self,
+        *,
+        session_id: str,
+        title: str = "",
+        metadata: Mapping[str, object] | None = None,
+    ) -> dict[str, Any]:
+        """Create one chat session; idempotent on the session id."""
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            raise ValueError("Chat session id is required")
+        serialized_metadata = json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True)
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO chat_sessions (session_id, title, metadata)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_id, title.strip(), serialized_metadata),
+        )
+        row = self.get_chat_session(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError(f"Failed to create chat session {normalized_id!r}")
+        return row
+
+    def get_chat_session(self, session_id: str) -> dict[str, Any] | None:
+        """Return one chat session by id."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """
+            SELECT session_id, title, archived, metadata,
+                   created_at, updated_at, last_message_at
+            FROM chat_sessions
+            WHERE session_id = ?
+            """,
+            (session_id.strip(),),
+        ).fetchone()
+        return self._normalize_chat_session_row(row) if row is not None else None
+
+    def list_chat_sessions(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return chat sessions ordered by latest activity, most recent first.
+
+        Each row carries a ``last_message_preview`` (truncated latest user
+        message), ``turn_count``, ``active_turns`` (pending replies) and the
+        computed ``last_activity`` used for ordering.  The default session
+        also owns legacy turns whose ``session_id`` stayed ''.
+        """
+        self._ensure_fresh_read()
+        membership = _CHAT_SESSION_TURN_MEMBERSHIP_SQL
+        cursor = self.conn.execute(
+            f"""
+            SELECT s.session_id, s.title, s.archived, s.metadata,
+                   s.created_at, s.updated_at, s.last_message_at,
+                   (SELECT COUNT(*) FROM chat_turns t WHERE {membership}) AS turn_count,
+                   (SELECT COUNT(*) FROM chat_turns t
+                    WHERE ({membership}) AND t.status = 'pending') AS active_turns,
+                   (SELECT substr(t.message, 1, 120) FROM chat_turns t
+                    WHERE {membership}
+                    ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1) AS last_message_preview,
+                   COALESCE(
+                       s.last_message_at,
+                       (SELECT MAX(t.created_at) FROM chat_turns t WHERE {membership}),
+                       s.updated_at
+                   ) AS last_activity
+            FROM chat_sessions s
+            WHERE (? OR s.archived = 0)
+            ORDER BY last_activity DESC, turn_count DESC, s.session_id ASC
+            LIMIT ?
+            """,
+            (1 if include_archived else 0, max(1, int(limit))),
+        )
+        return [self._normalize_chat_session_row(row) for row in cursor.fetchall()]
+
+    def get_chat_session_summary(self, session_id: str) -> dict[str, Any] | None:
+        """Return one session with the same aggregate preview fields as the list."""
+        self._ensure_fresh_read()
+        membership = _CHAT_SESSION_TURN_MEMBERSHIP_SQL
+        row = self.conn.execute(
+            f"""
+            SELECT s.session_id, s.title, s.archived, s.metadata,
+                   s.created_at, s.updated_at, s.last_message_at,
+                   (SELECT COUNT(*) FROM chat_turns t WHERE {membership}) AS turn_count,
+                   (SELECT COUNT(*) FROM chat_turns t
+                    WHERE ({membership}) AND t.status = 'pending') AS active_turns,
+                   (SELECT substr(t.message, 1, 120) FROM chat_turns t
+                    WHERE {membership}
+                    ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1) AS last_message_preview,
+                   COALESCE(
+                       s.last_message_at,
+                       (SELECT MAX(t.created_at) FROM chat_turns t WHERE {membership}),
+                       s.updated_at
+                   ) AS last_activity
+            FROM chat_sessions s
+            WHERE s.session_id = ?
+            """,
+            (session_id.strip(),),
+        ).fetchone()
+        return self._normalize_chat_session_row(row) if row is not None else None
+
+    def rename_chat_session(self, session_id: str, *, title: str) -> bool:
+        """Rename one chat session; returns False when the session is missing."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (title.strip(), session_id.strip()),
+        )
+        return cursor.rowcount == 1
+
+    def set_chat_session_archived(self, session_id: str, *, archived: bool) -> bool:
+        """Archive/unarchive one session. The default session cannot be archived."""
+        normalized_id = session_id.strip()
+        if normalized_id == DEFAULT_CHAT_SESSION_ID and archived:
+            raise ValueError("The default chat session cannot be archived")
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET archived = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (1 if archived else 0, normalized_id),
+        )
+        return cursor.rowcount == 1
+
+    def set_chat_session_persona(self, session_id: str, *, persona: str) -> bool:
+        """Atomically replace only the persona key, preserving other metadata."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET metadata = json_set(
+                    CASE WHEN json_valid(metadata) THEN
+                        CASE WHEN json_type(metadata) = 'object' THEN metadata ELSE '{}' END
+                    ELSE '{}' END,
+                    '$.persona', ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (persona, session_id.strip()),
+        )
+        return cursor.rowcount == 1
+
+    def touch_chat_session(self, session_id: str) -> bool:
+        """Bump one session's last-message activity timestamp."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET last_message_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (session_id.strip(),),
+        )
+        return cursor.rowcount == 1
+
+    def list_chat_turns_by_session(
+        self,
+        *,
+        session_id: str,
+        scope: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page one session's turns (newest page first) plus the total count.
+
+        Rows come back in ascending display order within the requested page,
+        matching ``list_chat_turns``.  The default session includes legacy
+        turns whose ``session_id`` stayed ''.
+        """
+        self._ensure_fresh_read()
+        normalized_id = session_id.strip()
+        if normalized_id == DEFAULT_CHAT_SESSION_ID:
+            clauses = ["session_id IN ('', ?)"]
+            params: list[Any] = [DEFAULT_CHAT_SESSION_ID]
+        else:
+            clauses = ["session_id = ?"]
+            params = [normalized_id]
+        if scope:
+            clauses.append("scope = ?")
+            params.append(scope)
+        where = " AND ".join(clauses)
+        total_row = self.conn.execute(
+            f"SELECT COUNT(*) AS count FROM chat_turns WHERE {where}",
+            params,
+        ).fetchone()
+        total = int(total_row["count"] if total_row is not None else 0)
+        cursor = self.conn.execute(
+            f"""
+            SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
+                   status, reply, error, payload, session_id, created_at, updated_at
+            FROM (
+                SELECT rowid AS insertion_rowid,
+                       turn_id, session, scope, subject_id, subject_title,
+                       reply_to_turn_id, message,
+                       status, reply, error, payload, session_id, created_at, updated_at
+                FROM chat_turns
+                WHERE {where}
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ? OFFSET ?
+            )
+            ORDER BY created_at ASC, insertion_rowid ASC
+            """,
+            [*params, max(1, int(limit)), max(0, int(offset))],
+        )
+        rows = [self._normalize_chat_turn_row(row) for row in cursor.fetchall()]
+        return rows, total
+
     def create_chat_turn(
         self,
         *,
@@ -3302,16 +3658,18 @@ class Database:
         subject_title: str = "",
         reply_to_turn_id: str = "",
         payload: Mapping[str, object] | None = None,
+        session_id: str = "",
     ) -> dict[str, Any]:
         """Create a pending popup chat turn if it does not already exist."""
         serialized_payload = json.dumps(dict(payload or {}), ensure_ascii=False, sort_keys=True)
+        normalized_session_id = session_id.strip()
         self._execute_write(
             """
             INSERT OR IGNORE INTO chat_turns (
                 turn_id, session, scope, subject_id, subject_title, reply_to_turn_id,
-                message, status, payload
+                message, status, payload, session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
             (
                 turn_id,
@@ -3322,8 +3680,11 @@ class Database:
                 reply_to_turn_id or "",
                 message,
                 serialized_payload,
+                normalized_session_id,
             ),
         )
+        if normalized_session_id:
+            self.touch_chat_session(normalized_session_id)
         row = self.get_chat_turn(turn_id)
         if row is None:
             raise RuntimeError(f"Failed to create chat turn {turn_id!r}")
@@ -3366,6 +3727,41 @@ class Database:
                 (session or "popup", ref, ref),
             ).fetchone()
             return self._normalize_chat_turn_row(row) if row is not None else None
+        finally:
+            conn.close()
+
+    def get_chat_confirmation_refs(self, *, session: str) -> set[str]:
+        """Read active confirmation identities for one surface in a single query.
+
+        Uses the same scope, status and payload conditions as
+        ``get_chat_confirmation_turn`` without opening one connection per
+        hypothesis when a chat client polls its pending-confirmation list.
+        """
+        conn = self.open_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT subject_id
+                FROM chat_turns
+                WHERE session = ?
+                  AND status = 'completed'
+                  AND json_valid(payload)
+                  AND json_extract(payload, '$.ref') = subject_id
+                  AND (
+                        (
+                            scope = 'hypothesis'
+                            AND json_extract(payload, '$.type') = 'card'
+                            AND json_extract(payload, '$.state') IN ('pending', 'discussing')
+                        )
+                        OR (
+                            scope = 'confusion'
+                            AND json_extract(payload, '$.type') = 'question'
+                        )
+                      )
+                """,
+                (session or "popup",),
+            ).fetchall()
+            return {str(row["subject_id"]) for row in rows}
         finally:
             conn.close()
 
@@ -3531,6 +3927,8 @@ class Database:
             """,
             (reply, turn_id),
         )
+        if cursor.rowcount == 1:
+            self._touch_chat_session_for_turn(turn_id)
         return cursor.rowcount == 1
 
     def fail_chat_turn(self, turn_id: str, *, error: str, reply: str = "") -> bool:
@@ -3547,7 +3945,23 @@ class Database:
             """,
             (reply, error, turn_id),
         )
+        if cursor.rowcount == 1:
+            self._touch_chat_session_for_turn(turn_id)
         return cursor.rowcount == 1
+
+    def _touch_chat_session_for_turn(self, turn_id: str) -> None:
+        """Reflect a turn outcome in its owning session's activity timestamp."""
+        self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET last_message_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = (
+                SELECT session_id FROM chat_turns WHERE turn_id = ?
+            )
+            """,
+            (turn_id,),
+        )
 
     def get_chat_turn(self, turn_id: str) -> dict[str, Any] | None:
         """Return one durable popup chat turn by id."""
@@ -3556,7 +3970,7 @@ class Database:
             """
             SELECT turn_id, session, scope, subject_id, subject_title,
                    reply_to_turn_id, message,
-                   status, reply, error, payload, created_at, updated_at
+                   status, reply, error, payload, session_id, created_at, updated_at
             FROM chat_turns
             WHERE turn_id = ?
             """,
@@ -3583,18 +3997,63 @@ class Database:
         cursor = self.conn.execute(
             f"""
             SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
-                   status, reply, error, payload, created_at, updated_at
+                   status, reply, error, payload, session_id, created_at, updated_at
             FROM (
                    SELECT rowid AS insertion_rowid,
                        turn_id, session, scope, subject_id, subject_title,
                        reply_to_turn_id, message,
-                       status, reply, error, payload, created_at, updated_at
+                       status, reply, error, payload, session_id, created_at, updated_at
                 FROM chat_turns
                 WHERE {" AND ".join(clauses)}
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
             )
             ORDER BY created_at ASC, insertion_rowid ASC
+            """,
+            params,
+        )
+        return [self._normalize_chat_turn_row(row) for row in cursor.fetchall()]
+
+    def search_chat_turns(
+        self,
+        *,
+        keyword: str = "",
+        session: str = "",
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search durable chat turns by keyword and optional time range, newest first.
+
+        Backs the agent-loop ``search_history`` tool: keyword matches against
+        both the user message and the assistant reply.
+        """
+        self._ensure_fresh_read()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if keyword:
+            like = f"%{keyword}%"
+            clauses.append("(message LIKE ? OR reply LIKE ?)")
+            params.extend([like, like])
+        if session:
+            clauses.append("session = ?")
+            params.append(session)
+        if start_time is not None:
+            clauses.append("created_at >= ?")
+            params.append(start_time.isoformat(sep=" "))
+        if end_time is not None:
+            clauses.append("created_at <= ?")
+            params.append(end_time.isoformat(sep=" "))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        cursor = self.conn.execute(
+            f"""
+            SELECT turn_id, session, scope, subject_id, subject_title, reply_to_turn_id, message,
+                   status, reply, error, payload, session_id, created_at, updated_at
+            FROM chat_turns
+            {where}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
             """,
             params,
         )
@@ -3661,6 +4120,9 @@ class Database:
         # Additive relation migration: legacy rows have no relation and must
         # hydrate as explicitly unbound rather than crashing or guessing.
         normalized.setdefault("reply_to_turn_id", "")
+        # Additive multi-session migration (M5): legacy rows have no owning
+        # session entity and are read through the default session.
+        normalized.setdefault("session_id", "")
         return normalized
 
     def update_chat_turn_payload_state(
@@ -3717,6 +4179,317 @@ class Database:
             (f"$.{receipt_key}", serialized, turn_id),
         )
         return int(cursor.rowcount or 0) == 1
+
+    def store_chat_turn_agent_events(
+        self,
+        turn_id: str,
+        *,
+        events: list[Mapping[str, object]],
+    ) -> bool:
+        """Persist one agent-loop event stream inside the turn payload.
+
+        The events (``AgentEvent.to_dict()`` shapes: thinking / tool_call /
+        tool_result / step_limit_reached / final) live under
+        ``payload.agent_events`` so chat history replay can re-render the
+        loop's steps without a schema migration.
+        """
+        serialized = json.dumps([dict(event) for event in events], ensure_ascii=False)
+        cursor = self._execute_write(
+            """
+            UPDATE chat_turns
+            SET payload = json_set(
+                    CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,
+                    '$.agent_events',
+                    json(?)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE turn_id = ?
+            """,
+            (serialized, turn_id),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    # --- Durable agent task center (「聊一聊」 M6) ---
+
+    @staticmethod
+    def _normalize_agent_task_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Decode the JSON columns while tolerating corrupt rows."""
+        normalized = dict(row)
+        json_list_fields: tuple[tuple[str, list[Any]], ...] = (
+            ("suggestions", []),
+            ("steps", []),
+        )
+        for field_name, fallback in json_list_fields:
+            raw_value = normalized.get(field_name, fallback)
+            try:
+                parsed = json.loads(str(raw_value)) if isinstance(raw_value, str) else raw_value
+            except (json.JSONDecodeError, TypeError, ValueError):
+                parsed = fallback
+            normalized[field_name] = parsed if isinstance(parsed, list) else []
+        for field_name in (
+            "session_id",
+            "title",
+            "prompt",
+            "status",
+            "skill",
+            "progress",
+            "report",
+            "error",
+        ):
+            normalized[field_name] = str(normalized.get(field_name, "") or "")
+        for field_name in ("created_at", "started_at", "finished_at", "updated_at"):
+            normalized[field_name] = str(normalized.get(field_name, "") or "")
+        return normalized
+
+    def create_agent_task(
+        self,
+        *,
+        task_id: str,
+        session_id: str = "",
+        title: str = "",
+        prompt: str,
+        skill: str = "",
+    ) -> dict[str, Any]:
+        """Create one durable background task in ``pending`` state (idempotent)."""
+        normalized_id = task_id.strip()
+        if not normalized_id:
+            raise ValueError("Agent task id is required")
+        if not prompt.strip():
+            raise ValueError("Agent task prompt is required")
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO agent_tasks (task_id, session_id, title, prompt, skill)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_id,
+                session_id.strip(),
+                title.strip(),
+                prompt.strip(),
+                skill.strip(),
+            ),
+        )
+        row = self.get_agent_task(normalized_id)
+        if row is None:  # pragma: no cover - guarded by the INSERT above
+            raise RuntimeError(f"Failed to create agent task {normalized_id!r}")
+        return row
+
+    def get_agent_task(self, task_id: str) -> dict[str, Any] | None:
+        """Return one agent task by id, with ``suggestions``/``steps`` decoded."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """
+            SELECT task_id, session_id, title, prompt, status, skill, progress,
+                   report, suggestions, steps, error,
+                   created_at, started_at, finished_at, updated_at
+            FROM agent_tasks
+            WHERE task_id = ?
+            """,
+            (task_id.strip(),),
+        ).fetchone()
+        return self._normalize_agent_task_row(row) if row is not None else None
+
+    def list_agent_tasks(
+        self,
+        *,
+        status: str = "",
+        session_id: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page agent tasks (newest first) plus the total count.
+
+        ``status`` filters one exact status; ``session_id`` filters the
+        originating conversation.  Step logs are included per row — the API
+        layer strips them from list responses.
+        """
+        self._ensure_fresh_read()
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_status = status.strip()
+        if normalized_status:
+            if normalized_status not in AGENT_TASK_STATUSES:
+                raise ValueError(f"Unknown agent task status: {normalized_status}")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+        if session_id.strip():
+            clauses.append("session_id = ?")
+            params.append(session_id.strip())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total_row = self.conn.execute(
+            f"SELECT COUNT(*) AS count FROM agent_tasks {where}",
+            params,
+        ).fetchone()
+        total = int(total_row["count"] if total_row is not None else 0)
+        cursor = self.conn.execute(
+            f"""
+            SELECT task_id, session_id, title, prompt, status, skill, progress,
+                   report, suggestions, steps, error,
+                   created_at, started_at, finished_at, updated_at
+            FROM agent_tasks
+            {where}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, max(1, int(limit)), max(0, int(offset))],
+        )
+        rows = [self._normalize_agent_task_row(row) for row in cursor.fetchall()]
+        return rows, total
+
+    def update_agent_task_status(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        progress: str = "",
+        error: str = "",
+        expected: tuple[str, ...] | None = None,
+    ) -> bool:
+        """CAS one task into ``status``; returns False when the transition lost.
+
+        ``expected`` defaults to the active states (pending/running) so
+        terminal rows are never overwritten.  Entering ``running`` stamps
+        ``started_at``; entering any terminal status stamps ``finished_at``.
+        """
+        if status not in AGENT_TASK_STATUSES:
+            raise ValueError(f"Unknown agent task status: {status}")
+        allowed = expected if expected is not None else AGENT_TASK_ACTIVE_STATUSES
+        if not allowed:
+            return False
+        placeholders = ", ".join("?" for _ in allowed)
+        assignments = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
+        params: list[Any] = [status]
+        if progress:
+            assignments.append("progress = ?")
+            params.append(progress)
+        if error or status in AGENT_TASK_TERMINAL_STATUSES:
+            assignments.append("error = ?")
+            params.append(error)
+        if status == "running":
+            assignments.append("started_at = COALESCE(started_at, CURRENT_TIMESTAMP)")
+        if status in AGENT_TASK_TERMINAL_STATUSES:
+            assignments.append("finished_at = CURRENT_TIMESTAMP")
+        cursor = self._execute_write(
+            f"""
+            UPDATE agent_tasks
+            SET {", ".join(assignments)}
+            WHERE task_id = ?
+              AND status IN ({placeholders})
+            """,
+            (*params, task_id.strip(), *allowed),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def append_agent_task_step(self, task_id: str, *, step: Mapping[str, object]) -> bool:
+        """Append one execution-log entry to a non-terminal task's step log.
+
+        Entries are ``AgentEvent.to_dict()``-shaped dicts with text truncated
+        to ``MAX_AGENT_TASK_STEP_CHARS``.  The log is bounded: once it reaches
+        ``MAX_AGENT_TASK_STEPS`` entries or ``MAX_AGENT_TASK_STEPS_CHARS``
+        serialized, further appends collapse into a single trailing
+        ``steps_truncated`` marker.  The task's ``progress`` summary follows
+        the latest step.
+        """
+        row = self.conn.execute(
+            "SELECT status, steps FROM agent_tasks WHERE task_id = ?",
+            (task_id.strip(),),
+        ).fetchone()
+        if row is None or str(row["status"] or "") in AGENT_TASK_TERMINAL_STATUSES:
+            return False
+        try:
+            steps = json.loads(str(row["steps"] or "[]"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            steps = []
+        if not isinstance(steps, list):
+            steps = []
+        entry = dict(step)
+        text = str(entry.get("text", "") or "")
+        if len(text) > MAX_AGENT_TASK_STEP_CHARS:
+            entry["text"] = text[:MAX_AGENT_TASK_STEP_CHARS] + "…（已截断）"
+            entry["truncated"] = True
+        steps.append(entry)
+        serialized = json.dumps(steps, ensure_ascii=False)
+        if len(steps) > MAX_AGENT_TASK_STEPS or len(serialized) > MAX_AGENT_TASK_STEPS_CHARS:
+            marker = {
+                "type": "steps_truncated",
+                "text": (
+                    f"执行记录已达上限（{MAX_AGENT_TASK_STEPS} 条 / "
+                    f"{MAX_AGENT_TASK_STEPS_CHARS} 字符），后续步骤省略。"
+                ),
+            }
+            steps = steps[: MAX_AGENT_TASK_STEPS - 1] + [marker]
+            serialized = json.dumps(steps, ensure_ascii=False)
+        progress = str(entry.get("summary", "") or "") or text[:120]
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET steps = ?,
+                progress = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+              AND status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+            """,
+            (serialized, progress, task_id.strip()),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def set_agent_task_report(
+        self,
+        task_id: str,
+        *,
+        report: str,
+        suggestions: list[Mapping[str, object]] | None = None,
+    ) -> bool:
+        """Publish the final report + suggestion list and complete the task.
+
+        CAS from the active states only, so a cancel or failure that landed
+        first is never overwritten by a late report.
+        """
+        trimmed_report = report.strip()
+        if len(trimmed_report) > MAX_AGENT_TASK_REPORT_CHARS:
+            trimmed_report = trimmed_report[:MAX_AGENT_TASK_REPORT_CHARS] + "…（报告已截断）"
+        normalized_suggestions = [
+            dict(item) for item in (suggestions or [])[:MAX_AGENT_TASK_SUGGESTIONS]
+        ]
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET status = 'completed',
+                report = ?,
+                suggestions = ?,
+                error = '',
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+              AND status IN ('pending', 'running')
+            """,
+            (
+                trimmed_report,
+                json.dumps(normalized_suggestions, ensure_ascii=False),
+                task_id.strip(),
+            ),
+        )
+        return int(cursor.rowcount or 0) == 1
+
+    def interrupt_stale_agent_tasks(self) -> int:
+        """Mark tasks a previous process left active as ``interrupted``.
+
+        Called once at app startup: in-flight asyncio tasks never survive a
+        restart, so any row still pending/running belongs to a dead process.
+        Tasks are never auto-resumed — the user re-issues them from the task
+        center.  Returns the number of rows marked.
+        """
+        cursor = self._execute_write(
+            """
+            UPDATE agent_tasks
+            SET status = 'interrupted',
+                error = '服务重启或热重载中断了该任务，可从任务中心重新发起。',
+                finished_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('pending', 'running')
+            """,
+        )
+        return int(cursor.rowcount or 0)
 
     def try_create_card_settlement(
         self,
@@ -6433,6 +7206,7 @@ class Database:
                 claimed_at = CURRENT_TIMESTAMP,
                 claim_token = ?,
                 eval_error = CASE
+                    WHEN eval_error = 'semantic_filter_deferred' THEN eval_error
                     WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
                     THEN eval_error
                     ELSE ''
@@ -6841,6 +7615,30 @@ class Database:
                 updated_ids.add(candidate_id)
         return updated_ids
 
+    def defer_claimed_semantic_filter_candidates(
+        self,
+        candidate_ids: Sequence[int],
+        *,
+        claim_token: str,
+    ) -> int:
+        """Release a soft refusal once, without learning/rejection or retry penalties.
+
+        The marker survives the next claim and forces full evaluator review,
+        preventing repeat-refusal loops. Ownership is checked atomically.
+        """
+        ids = [int(value) for value in candidate_ids if int(value) > 0]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        cursor = self._execute_write(
+            f"""UPDATE discovery_candidates SET status='pending_eval',
+            claimed_at=NULL, claim_token=NULL, eval_error='semantic_filter_deferred',
+            last_seen_at=CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders}) AND status='evaluating' AND claim_token=?""",
+            (*ids, str(claim_token)),
+        )
+        return int(cursor.rowcount)
+
     def reset_claimed_discovery_candidates_to_pending(
         self,
         candidate_ids: Sequence[int],
@@ -7015,6 +7813,60 @@ class Database:
               AND status = 'evaluating'
             """,
             (attempts_limit, str(reason), attempts_limit, attempts_limit, *ids),
+        )
+        return int(cursor.rowcount)
+
+    def revive_failed_eval_candidates(
+        self,
+        *,
+        limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE,
+        max_revives: int = _FAILED_EVAL_MAX_REVIVES,
+    ) -> int:
+        """Re-queue a bounded batch of dead-lettered candidates for evaluation.
+
+        ``failed_eval`` rows have no organic path back to ``pending_eval``:
+        once a provider outage burns through the attempt budget the pool can
+        only drain (field log 2026-08: 568 candidates died to a deepseek
+        401/404 misconfiguration and the pool never refilled). The candidate
+        evaluation coordinator calls this on resume signals — startup after a
+        config rebuild, ``config_*``/``manual_*`` wakes — so rows dead-lettered
+        by a transient provider failure get fresh attempts once evaluation may
+        work again.
+
+        Boundedness: at most ``limit`` rows revive per call, and each row
+        carries a persistent ``eval_revive_count`` capped at ``max_revives``,
+        so restarting against a still-broken provider cannot resurrect the
+        same candidates (and re-burn their LLM attempts) forever. Rows parked
+        for temporal re-review keep their existing owner and are not touched.
+        Returns the number of rows moved back to ``pending_eval``.
+        """
+
+        max_rows = max(0, int(limit))
+        if max_rows <= 0:
+            return 0
+        revive_cap = max(0, int(max_revives))
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_candidates
+            SET status = 'pending_eval',
+                eval_attempts = 0,
+                batch_eval_attempts = 0,
+                eval_revive_count = eval_revive_count + 1,
+                eval_error = '',
+                claimed_at = NULL,
+                claim_token = NULL,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE id IN (
+                SELECT id
+                FROM discovery_candidates
+                WHERE status = 'failed_eval'
+                  AND eval_revive_count < ?
+                  AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
+                ORDER BY id ASC
+                LIMIT ?
+            )
+            """,
+            (revive_cap, max_rows),
         )
         return int(cursor.rowcount)
 
@@ -7222,6 +8074,7 @@ class Database:
         conn: sqlite3.Connection,
         *,
         source_platform: str | None = None,
+        _now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Return non-terminal discovery rows that still count as supply.
 
@@ -7229,6 +8082,9 @@ class Database:
         so they remain fail-open. ``evaluated`` rows can cross a temporal TTL
         while waiting for pool headroom and are rechecked here before they
         influence readiness, raw ceilings, or source-share rebalancing.
+
+        ``_now`` pins the temporal recheck clock so callers measuring inside
+        one transaction (pool maintenance) share a single time baseline.
         """
 
         source = str(source_platform or "").strip()
@@ -7254,7 +8110,7 @@ class Database:
             """,
             (source,) if source else (),
         )
-        temporal_now = datetime.now(UTC)
+        temporal_now = _now or datetime.now(UTC)
         rows: list[dict[str, Any]] = []
         for row in cursor.fetchall():
             item = dict(row)
@@ -7751,6 +8607,7 @@ class Database:
         xhs_self_nickname: str,
         *,
         pool_status: str = "fresh",
+        _delight_threshold: float | None = None,
     ) -> tuple[str, tuple[Any, ...]]:
         """Shared WHERE fragment + params defining a ``serve()``-loadable row.
 
@@ -7761,12 +8618,21 @@ class Database:
         rows carrying an ``xsec_token``, not claimed by the delight channel,
         and not already recommended. Returns the fragment (no leading
         ``WHERE``, references the ``content_cache`` table) and its bind params.
+
+        ``_delight_threshold`` pins the delight guard's score boundary; the
+        pool-maintenance transaction passes its pre-mutation snapshot so the
+        guard cannot drift as the transaction rewrites ``pool_status`` rows
+        that feed the dynamic percentile sample.
         """
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = self._dynamic_delight_threshold_on(
-            conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        delight_threshold = (
+            float(_delight_threshold)
+            if _delight_threshold is not None
+            else self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            )
         )
         delight_guard_sql = _delight_claim_guard_sql()
         clause = f"""
@@ -7959,6 +8825,8 @@ class Database:
         max_per_topic_group: int = 3,
         xhs_self_nickname: str = "",
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
+        _delight_threshold: float | None = None,
         full_rows: bool = False,
     ) -> list[dict[str, Any]]:
         """Load rows counted by the frontend-visible pool availability gate.
@@ -7971,12 +8839,22 @@ class Database:
         rows without touching the gate or ordering, so platform-scoped serve
         reads can hand complete candidates to the recommendation path while
         still coming from the exact set the counts report.
+
+        ``_now`` / ``_delight_threshold`` pin the measurement baseline: the
+        pool-maintenance transaction passes one shared timestamp and one
+        pre-mutation threshold snapshot to every scan so before/after
+        availability cannot diverge on clock drift or on a percentile
+        boundary the transaction's own writes shifted.
         """
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = self._dynamic_delight_threshold_on(
-            conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        delight_threshold = (
+            float(_delight_threshold)
+            if _delight_threshold is not None
+            else self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            )
         )
         delight_guard_sql = _delight_claim_guard_sql()
         projection = (
@@ -8040,6 +8918,7 @@ class Database:
         filtered = self._filter_available_pool_candidate_rows(
             rows,
             viewed_content_keys=viewed_content_keys,
+            now=_now,
         )
         return self._apply_pool_topic_window(
             filtered,
@@ -8051,18 +8930,24 @@ class Database:
         rows: Sequence[Mapping[str, Any]],
         *,
         viewed_content_keys: set[str],
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Apply the Python half of the canonical availability gate."""
+        """Apply the Python half of the canonical availability gate.
+
+        ``now`` defaults to the current time; the pool-maintenance
+        transaction passes one shared timestamp so its before/after scans
+        cannot disagree about rows sitting on a temporal boundary.
+        """
 
         filtered: list[dict[str, Any]] = []
-        now = datetime.now(UTC)
+        effective_now = now or datetime.now(UTC)
         for row in rows:
             row_dict = dict(row)
             if not str(row_dict.get("bvid", "")).strip():
                 continue
-            if not Database._temporal_eligibility_for_row(row_dict, now=now):
+            if not Database._temporal_eligibility_for_row(row_dict, now=effective_now):
                 continue
-            if not self._publication_date_row_is_eligible(row_dict):
+            if not self._publication_date_row_is_eligible(row_dict, now=effective_now):
                 continue
             if Database._is_viewed_row(row_dict, viewed_content_keys):
                 continue
@@ -8171,8 +9056,14 @@ class Database:
         conn: sqlite3.Connection,
         *,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Connection-aware raw content-cache rows governed by the ceiling."""
+        """Connection-aware raw content-cache rows governed by the ceiling.
+
+        ``_now`` pins the temporal-eligibility clock; the pool-maintenance
+        transaction passes its shared timestamp so raw counts and trim plans
+        inside one transaction cannot disagree at a temporal boundary.
+        """
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = conn.execute(
             f"""
@@ -8215,7 +9106,7 @@ class Database:
             else _viewed_content_keys
         )
         rows: list[dict[str, Any]] = []
-        now = datetime.now(UTC)
+        now = _now or datetime.now(UTC)
         for row in cursor.fetchall():
             row_dict = dict(row)
             if not str(row_dict.get("bvid", "")).strip():
@@ -8238,13 +9129,15 @@ class Database:
         conn: sqlite3.Connection,
         *,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> int:
         return len(
             self._load_pool_raw_material_rows_on(
                 conn,
                 _viewed_content_keys=_viewed_content_keys,
+                _now=_now,
             )
-        ) + len(self._load_temporally_eligible_admission_waiting_rows_on(conn))
+        ) + len(self._load_temporally_eligible_admission_waiting_rows_on(conn, _now=_now))
 
     def count_pool_raw_material_by_source(self) -> dict[str, int]:
         """Return raw fresh material grouped by source family.
@@ -9063,19 +9956,26 @@ class Database:
         *,
         protected_ids: set[str],
         max_age_days: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
+        # Compute the age cutoff against the caller's time baseline instead of
+        # per-statement ``datetime('now')`` so every planner inside one
+        # maintenance transaction measures staleness against the same instant.
+        cutoff = ((_now or datetime.now(UTC)) - timedelta(days=max(0, int(max_age_days)))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         rows = conn.execute(
             """
             SELECT bvid
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
-              AND discovered_at < datetime('now', '-' || ? || ' days')
+              AND discovered_at < ?
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
             ORDER BY discovered_at ASC, bvid ASC
             """,
-            (max_age_days,),
+            (cutoff,),
         ).fetchall()
         stale_ids = [str(row["bvid"]) for row in rows]
         return _ContentTrimPlan(
@@ -9089,6 +9989,7 @@ class Database:
         *,
         protected_ids: set[str],
         max_per_cluster: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         admission_sql, admission_params = self._pool_admission_sql()
         rows = [
@@ -9111,7 +10012,7 @@ class Database:
             ).fetchall()
         ]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        temporal_now = datetime.now(UTC)
+        temporal_now = _now or datetime.now(UTC)
         for row in rows:
             if not self._temporal_eligibility_for_row(row, now=temporal_now):
                 continue
@@ -9142,6 +10043,7 @@ class Database:
         *,
         protected_ids: set[str],
         max_per_topic_group: int,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         if max_per_topic_group <= 0:
             return _ContentTrimPlan()
@@ -9171,7 +10073,7 @@ class Database:
             ).fetchall()
         ]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        temporal_now = datetime.now(UTC)
+        temporal_now = _now or datetime.now(UTC)
         for row in rows:
             if not self._temporal_eligibility_for_row(row, now=temporal_now):
                 continue
@@ -9202,11 +10104,13 @@ class Database:
         protected_ids: set[str],
         source_share_quotas: Mapping[str, int],
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> _ContentTrimPlan:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in self._load_pool_raw_material_rows_on(
             conn,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
         ):
             if not self._content_is_ready_reserve(row):
                 continue
@@ -9266,13 +10170,15 @@ class Database:
         raw_ceiling: int,
         raw_source_share_quotas: Mapping[str, int],
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
     ) -> _RawTrimPlan:
         content_rows = self._load_pool_raw_material_rows_on(
             conn,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
         )
         candidate_rows = [
-            row for row in self._load_temporally_eligible_admission_waiting_rows_on(conn)
+            row for row in self._load_temporally_eligible_admission_waiting_rows_on(conn, _now=_now)
         ]
         raw_count = len(content_rows) + len(candidate_rows)
         excess = max(0, raw_count - raw_ceiling)
@@ -9416,6 +10322,8 @@ class Database:
         xhs_self_nickname: str,
         max_restore: int = _POOL_MAINTENANCE_BATCH_SIZE,
         _viewed_content_keys: set[str] | None = None,
+        _now: datetime | None = None,
+        _delight_threshold: float | None = None,
     ) -> list[str]:
         """Restore a bounded set of paid-for rows without rescanning per row.
 
@@ -9436,6 +10344,8 @@ class Database:
             conn,
             xhs_self_nickname=xhs_self_nickname,
             _viewed_content_keys=_viewed_content_keys,
+            _now=_now,
+            _delight_threshold=_delight_threshold,
         )
         desired_available = len(available_rows) + clean_deficit
         current_family_count: dict[str, int] = defaultdict(int)
@@ -9452,6 +10362,7 @@ class Database:
             conn,
             xhs_self_nickname,
             pool_status="suppressed",
+            _delight_threshold=_delight_threshold,
         )
         candidate_rows = [
             dict(row)
@@ -9470,7 +10381,7 @@ class Database:
             if _viewed_content_keys is None
             else _viewed_content_keys
         )
-        temporal_now = datetime.now(UTC)
+        temporal_now = _now or datetime.now(UTC)
         eligible_rows = [
             row
             for row in candidate_rows
@@ -9589,6 +10500,26 @@ class Database:
         write_ms = 0.0
         temporal_due_count = 0
         temporal_due_has_more = False
+        # Rollback reporting: track the attempted batch so a rolled-back
+        # result can describe what the transaction tried to write instead of
+        # fabricating zeros. Every write is still reverted on rollback; these
+        # counters only record intent up to the failure point.
+        recovered_ids: list[str] = []
+        stale_plan = _ContentTrimPlan()
+        explore_plan = _ContentTrimPlan()
+        topic_plan = _ContentTrimPlan()
+        source_plan = _ContentTrimPlan()
+        raw_plan = _RawTrimPlan()
+        stale_ids: set[str] = set()
+        explore_ids: set[str] = set()
+        topic_ids: set[str] = set()
+        source_ids: set[str] = set()
+        initial_raw_rows: dict[str, dict[str, Any]] = {}
+        all_content_victims: set[str] = set()
+        trimmed_ready_reserve = 0
+        trimmed_evaluated = 0
+        trimmed_raw = 0
+        trimmed_by_source: dict[str, int] = {}
         try:
             conn = self.open_connection()
             if isinstance(conn, sqlite3.Connection):
@@ -9596,12 +10527,29 @@ class Database:
             lock_started = time.perf_counter()
             conn.execute("BEGIN IMMEDIATE")
             lock_wait_ms = (time.perf_counter() - lock_started) * 1000.0
+            # One measurement baseline for the whole transaction. Both
+            # canonical availability scans (before/after) and every planner
+            # below must observe identical time and delight-threshold inputs:
+            # a fresh clock per scan lets a row crossing temporal_valid_until
+            # mid-transaction fake an inventory drop, and recomputing the
+            # dynamic delight threshold per scan lets the transaction's own
+            # pool_status writes shift the percentile sample. Either noise
+            # source makes after < min(before, target) and rolled a healthy
+            # batch back forever once the pool sat below target (field log
+            # 2026-08: 652 consecutive rollbacks with mutations=0).
+            maintenance_now = datetime.now(UTC)
             temporal_due_count, temporal_due_has_more = (
                 self._transition_temporally_due_pool_items_on(
                     conn,
-                    now=datetime.now(UTC),
+                    now=maintenance_now,
                     limit=mutation_budget,
                 )
+            )
+            # Snapshot the delight threshold after the temporal transitions
+            # (they already rewrote pool_status for this batch) but before any
+            # trim/recovery write below can shift the percentile sample.
+            delight_threshold = self._dynamic_delight_threshold_on(
+                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
             )
             maintenance_budget = max(0, mutation_budget - temporal_due_count)
             # All maintenance reads share one write transaction, so the view
@@ -9613,17 +10561,19 @@ class Database:
                 conn,
                 xhs_self_nickname=xhs_self_nickname,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+                _delight_threshold=delight_threshold,
             )
             available_before = len(before_rows)
             snapshot_acquired = True
             raw_before = self._count_pool_raw_material_on(
                 conn,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
             )
             protected_ids = {
                 str(row["bvid"]) for row in before_rows[: min(len(before_rows), clean_target)]
             }
-            recovered_ids: list[str] = []
             # Suppressed rows do not count as raw material until restored. Never
             # restore through an already-exhausted raw ceiling: doing so used to
             # alternate forever with the next batch's capacity trim while the
@@ -9641,12 +10591,16 @@ class Database:
                     xhs_self_nickname=xhs_self_nickname,
                     max_restore=recovery_budget,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
+                    _delight_threshold=delight_threshold,
                 )
                 recovery_ms = (time.perf_counter() - phase_started) * 1000.0
                 recovered_available_rows = self._load_available_pool_candidate_rows_on(
                     conn,
                     xhs_self_nickname=xhs_self_nickname,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
+                    _delight_threshold=delight_threshold,
                 )
                 recovered_set = set(recovered_ids)
                 visible_recovered = {
@@ -9688,6 +10642,7 @@ class Database:
                 for row in self._load_pool_raw_material_rows_on(
                     conn,
                     _viewed_content_keys=viewed_content_keys,
+                    _now=maintenance_now,
                 )
             }
 
@@ -9696,6 +10651,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_age_days=clean_stale_days,
+                _now=maintenance_now,
             )
             stale_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -9703,6 +10659,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_per_cluster=clean_explore_cap,
+                _now=maintenance_now,
             )
             explore_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -9710,6 +10667,7 @@ class Database:
                 conn,
                 protected_ids=protected_ids,
                 max_per_topic_group=clean_topic_cap,
+                _now=maintenance_now,
             )
             topic_trim_ms = (time.perf_counter() - phase_started) * 1000.0
             phase_started = time.perf_counter()
@@ -9718,6 +10676,7 @@ class Database:
                 protected_ids=protected_ids,
                 source_share_quotas=clean_source_quotas,
                 _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
             )
             source_trim_ms = (time.perf_counter() - phase_started) * 1000.0
 
@@ -9775,24 +10734,11 @@ class Database:
                 untrimmed_excess=full_raw_plan.untrimmed_excess,
             )
             raw_trim_ms = (time.perf_counter() - phase_started) * 1000.0
-            write_started = time.perf_counter()
-            self._apply_raw_trim_on(conn, raw_plan)
-            write_ms += (time.perf_counter() - write_started) * 1000.0
-            after_rows = self._load_available_pool_candidate_rows_on(
-                conn,
-                xhs_self_nickname=xhs_self_nickname,
-                _viewed_content_keys=viewed_content_keys,
-            )
-            raw_after = self._count_pool_raw_material_on(
-                conn,
-                _viewed_content_keys=viewed_content_keys,
-            )
-            self._validate_pool_maintenance_invariant(
-                available_before=available_before,
-                available_after=len(after_rows),
-                target=clean_target,
-            )
 
+            # Victim statistics derive only from the plans and the pre-write
+            # raw snapshot, so they stay valid even when the invariant below
+            # rolls the transaction back; the rollback branch reports them
+            # instead of fabricating zeros.
             all_content_victims = (
                 stale_ids | explore_ids | topic_ids | source_ids | set(raw_plan.content_bvids)
             )
@@ -9808,13 +10754,11 @@ class Database:
                 if bvid in initial_raw_rows
             ) + sum(status == "pending_eval" for status in candidate_statuses.values())
             trimmed_evaluated = sum(status == "evaluated" for status in candidate_statuses.values())
-            trimmed_by_source: dict[str, int] = defaultdict(int)
+            by_source: dict[str, int] = defaultdict(int)
             for bvid in all_content_victims:
                 row = initial_raw_rows.get(bvid)
                 if row is not None:
-                    trimmed_by_source[
-                        _pool_source_family(row["source"], row["source_platform"])
-                    ] += 1
+                    by_source[_pool_source_family(row["source"], row["source_platform"])] += 1
             if raw_plan.candidate_ids:
                 placeholders = ", ".join("?" for _ in raw_plan.candidate_ids)
                 for row in conn.execute(
@@ -9825,9 +10769,31 @@ class Database:
                     """,
                     raw_plan.candidate_ids,
                 ).fetchall():
-                    trimmed_by_source[
+                    by_source[
                         _pool_source_family(row["source_strategy"], row["source_platform"])
                     ] += 1
+            trimmed_by_source = dict(by_source)
+
+            write_started = time.perf_counter()
+            self._apply_raw_trim_on(conn, raw_plan)
+            write_ms += (time.perf_counter() - write_started) * 1000.0
+            after_rows = self._load_available_pool_candidate_rows_on(
+                conn,
+                xhs_self_nickname=xhs_self_nickname,
+                _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+                _delight_threshold=delight_threshold,
+            )
+            raw_after = self._count_pool_raw_material_on(
+                conn,
+                _viewed_content_keys=viewed_content_keys,
+                _now=maintenance_now,
+            )
+            self._validate_pool_maintenance_invariant(
+                available_before=available_before,
+                available_after=len(after_rows),
+                target=clean_target,
+            )
 
             recovered_suppressed = 0
             if recovered_ids:
@@ -9866,7 +10832,7 @@ class Database:
                 trimmed_ready_reserve=trimmed_ready_reserve,
                 trimmed_evaluated=trimmed_evaluated,
                 trimmed_raw=trimmed_raw,
-                trimmed_by_source=dict(trimmed_by_source),
+                trimmed_by_source=trimmed_by_source,
                 deferred_topic_trim=topic_plan.deferred,
                 deferred_source_trim=source_plan.deferred,
                 deferred_stale_trim=stale_plan.deferred,
@@ -9913,28 +10879,41 @@ class Database:
                     "pool maintenance snapshot unavailable"
                 ) from exc
             logger.error("pool maintenance rolled back: %s", exc)
+            # Truthful rollback reporting: the trim/recovery counters describe
+            # the attempted (now reverted) batch so operators can see what the
+            # transaction tried to do; inventory counts describe the durable
+            # post-rollback state (the rollback restored the before view).
             return PoolMaintenanceResult(
                 available_before=available_before,
                 available_after=available_before,
                 target=clean_target,
                 protected_available=len(protected_ids),
                 recovered_suppressed=0,
-                trimmed_stale=0,
-                trimmed_explore_cluster=0,
-                trimmed_ready_reserve=0,
-                trimmed_evaluated=0,
-                trimmed_raw=0,
-                trimmed_by_source={},
-                deferred_topic_trim=0,
-                deferred_source_trim=0,
-                deferred_stale_trim=0,
-                deferred_explore_cluster_trim=0,
+                trimmed_stale=len(stale_ids),
+                trimmed_explore_cluster=len(explore_ids),
+                trimmed_ready_reserve=trimmed_ready_reserve,
+                trimmed_evaluated=trimmed_evaluated,
+                trimmed_raw=trimmed_raw,
+                trimmed_by_source=trimmed_by_source,
+                deferred_topic_trim=topic_plan.deferred,
+                deferred_source_trim=source_plan.deferred,
+                deferred_stale_trim=stale_plan.deferred,
+                deferred_explore_cluster_trim=explore_plan.deferred,
                 raw_before=raw_before,
                 raw_after=raw_before,
                 raw_ceiling=clean_raw_ceiling,
                 untrimmed_raw_excess=max(0, raw_before - clean_raw_ceiling),
                 rolled_back=True,
                 reason=str(exc),
+                mutation_count=(
+                    temporal_due_count
+                    + len(recovered_ids)
+                    + len(all_content_victims)
+                    + len(raw_plan.candidate_ids)
+                ),
+                # A rollback must never spin the per-tick batch loop: the next
+                # scheduled tick re-attempts with a fresh transaction.
+                has_more=False,
                 lock_wait_ms=lock_wait_ms,
                 recovery_ms=recovery_ms,
                 stale_trim_ms=stale_trim_ms,
@@ -11659,6 +12638,27 @@ class Database:
         cursor = self.conn.execute("SELECT COUNT(*) AS count FROM recommendations")
         row = cursor.fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def has_current_recommendation_supply(self) -> bool:
+        """Whether recommendation history still points at usable, unretired content."""
+        self._ensure_fresh_read()
+        admission_sql, admission_params = self._pool_admission_sql(
+            score_expr="COALESCE(r.confidence, 0.0)", source_expr="c.source"
+        )
+        row = self.conn.execute(
+            f"""
+            SELECT 1
+            FROM recommendations AS r
+            JOIN content_cache AS c ON c.item_key = r.item_key
+            WHERE COALESCE(c.pool_status, 'fresh') IN ('fresh', 'shown')
+              AND TRIM(COALESCE(c.title, '')) != ''
+              AND TRIM(COALESCE(r.expression, '')) != ''
+              AND {admission_sql}
+            LIMIT 1
+            """,
+            admission_params,
+        ).fetchone()
+        return row is not None
 
     def count_unread_recommendations(self) -> int:
         """Return temporally eligible recommendations not yet presented."""
@@ -13967,6 +14967,9 @@ class Database:
             "temporal_evidence_complete": "INTEGER NOT NULL DEFAULT 0",
             "temporal_review_attempts": "INTEGER NOT NULL DEFAULT 0",
             "temporal_review_retry_at": "TEXT NOT NULL DEFAULT ''",
+            # Dead-letter revival budget: persisted so restarting against a
+            # still-broken provider cannot resurrect the same rows forever.
+            "eval_revive_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
@@ -14106,10 +15109,61 @@ class Database:
             self.conn.execute(
                 "ALTER TABLE chat_turns ADD COLUMN reply_to_turn_id TEXT NOT NULL DEFAULT ''"
             )
+        if "session_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE chat_turns ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_turns_reply_to ON chat_turns(reply_to_turn_id)"
         )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id_created "
+            "ON chat_turns(session_id, created_at, turn_id)"
+        )
         self._migrate_card_settlements_to_wave_2()
+
+    def _ensure_chat_sessions_table(self) -> None:
+        """Create the multi-session chat model for existing databases (M5)."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                session_id      TEXT PRIMARY KEY,
+                title           TEXT NOT NULL DEFAULT '',
+                archived        INTEGER NOT NULL DEFAULT 0,
+                metadata        TEXT NOT NULL DEFAULT '{}',
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_message_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_activity
+                ON chat_sessions(archived, last_message_at);
+        """)
+        self.ensure_default_chat_session()
+
+    def _ensure_agent_tasks_table(self) -> None:
+        """Create the durable agent task center for existing databases (M6)."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS agent_tasks (
+                task_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL DEFAULT '',
+                title       TEXT NOT NULL DEFAULT '',
+                prompt      TEXT NOT NULL DEFAULT '',
+                status      TEXT NOT NULL DEFAULT 'pending',
+                skill       TEXT NOT NULL DEFAULT '',
+                progress    TEXT NOT NULL DEFAULT '',
+                report      TEXT NOT NULL DEFAULT '',
+                suggestions TEXT NOT NULL DEFAULT '[]',
+                steps       TEXT NOT NULL DEFAULT '[]',
+                error       TEXT NOT NULL DEFAULT '',
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at  TIMESTAMP,
+                finished_at TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created
+                ON agent_tasks(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_created
+                ON agent_tasks(session_id, created_at);
+        """)
 
     def _migrate_card_settlements_to_wave_2(self) -> None:
         """Rebuild legacy claim/segment receipts into the Wave 2 winner schema."""
@@ -19516,6 +20570,90 @@ class Database:
             timestamp_key="weibo_login_state_at",
         )
 
+    def set_instagram_login_state(self, logged_in: bool, when_iso: str | None = None) -> None:
+        """Persist only whether the extension observed a non-empty sessionid.
+
+        The cookie value never crosses the browser/backend boundary.
+        """
+
+        if not isinstance(logged_in, bool):
+            raise TypeError("logged_in must be bool")
+        if when_iso is None:
+            from datetime import UTC, datetime
+
+            when_iso = datetime.now(UTC).isoformat()
+        self._set_browser_login_state(
+            state_key="instagram_login_state",
+            timestamp_key="instagram_login_state_at",
+            logged_in=logged_in,
+            when_iso=str(when_iso),
+        )
+
+    def get_instagram_login_state(self) -> tuple[bool, str]:
+        """Return ``(logged_in, iso_timestamp)`` for Instagram."""
+
+        return self._get_browser_login_state(
+            state_key="instagram_login_state",
+            timestamp_key="instagram_login_state_at",
+        )
+
+    def project_instagram_login_state_if_not_newer(
+        self,
+        logged_in: bool,
+        evidence_at: str,
+    ) -> bool:
+        """Project task evidence unless a newer browser heartbeat already won.
+
+        The compare and write share one ``BEGIN IMMEDIATE`` transaction.  This
+        closes both the stage/replay crash window and the race where logout is
+        observed while profile-event projection is still running.
+        """
+
+        if not isinstance(logged_in, bool):
+            raise TypeError("logged_in must be bool")
+
+        def parsed(value: object) -> datetime | None:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            try:
+                result = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if result.tzinfo is None:
+                result = result.replace(tzinfo=UTC)
+            return result.astimezone(UTC)
+
+        evidence_time = parsed(evidence_at)
+        if evidence_time is None:
+            raise ValueError("invalid Instagram heartbeat evidence timestamp")
+        normalized_evidence = evidence_time.isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM auth_state WHERE key='instagram_login_state_at'"
+            ).fetchone()
+            current_time = parsed(row["value"] if row is not None else "")
+            if current_time is not None and current_time > evidence_time:
+                conn.commit()
+                return False
+            conn.executemany(
+                "INSERT OR REPLACE INTO auth_state (key, value) VALUES (?, ?)",
+                [
+                    ("instagram_login_state", "1" if logged_in else "0"),
+                    ("instagram_login_state_at", normalized_evidence),
+                ],
+            )
+            conn.commit()
+            return True
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def set_v2ex_browser_identity(
         self,
         username: str,
@@ -20724,6 +21862,20 @@ class Database:
             video_index = path_parts.index("video")
             if len(path_parts) > video_index + 1:
                 return path_parts[video_index + 1]
+        if platform == _TIKTOK_SOURCE_FAMILY and "video" in path_parts:
+            # https://www.tiktok.com/@user/video/<numeric id> (photo posts use
+            # /photo/<id>; both map onto the same numeric content id space).
+            video_index = path_parts.index("video")
+            if len(path_parts) > video_index + 1:
+                candidate = path_parts[video_index + 1]
+                return candidate if candidate.isdigit() else ""
+            return ""
+        if platform == _TIKTOK_SOURCE_FAMILY and "photo" in path_parts:
+            photo_index = path_parts.index("photo")
+            if len(path_parts) > photo_index + 1:
+                candidate = path_parts[photo_index + 1]
+                return candidate if candidate.isdigit() else ""
+            return ""
         if platform == _YOUTUBE_SOURCE_FAMILY:
             query_video_id = parse_qs(parsed.query).get("v", [""])[0].strip()
             if query_video_id:

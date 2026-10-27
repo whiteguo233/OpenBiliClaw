@@ -1042,3 +1042,35 @@ async def test_sqlite_random_completion_soak(tmp_path: Any) -> None:
         ).fetchone()[0]
         == 0
     )
+
+
+def test_rate_limit_backoff_and_pause_transitions_are_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pipeline = _FakeStagedPipeline(candidate_count=0)
+    coordinator = _coordinator(pipeline)
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.runtime.candidate_eval"):
+        coordinator._record_failure(LLMRateLimitError("429 slow down"))
+        coordinator._record_failure(
+            LLMFallbackError("No provider was available to process the request.")
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "candidate evaluation rate limited; backing off 15s (streak=1)" in message
+        for message in warnings
+    )
+    assert any("candidate evaluation paused on no_provider" in message for message in warnings)
+    assert coordinator._paused is True
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.runtime.candidate_eval"):
+        coordinator.notify("config_reloaded")
+
+    assert coordinator._paused is False
+    assert any(
+        "candidate evaluation resumed on config_reloaded" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO
+    )

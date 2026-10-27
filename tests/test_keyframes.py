@@ -392,7 +392,7 @@ async def test_keyframe_bonus_positive_for_on_taste_frames() -> None:
         engine._visual_profile_cache = None
         cand = DiscoveredContent(bvid="BVX", title="t", relevance_score=0.8)
         bonus = await engine._keyframe_bonus_map([cand])
-        assert bonus.get("BVX", 0.0) > 0.0
+        assert bonus.get(cand.scoring_key, 0.0) > 0.0
         db.close()
 
 
@@ -413,7 +413,7 @@ async def test_keyframe_bonus_max_pools_across_frames() -> None:
         engine._visual_profile_cache = None
         cand = DiscoveredContent(bvid="BVX", title="t", relevance_score=0.8)
         bonus = await engine._keyframe_bonus_map([cand])
-        assert bonus.get("BVX", 0.0) > 0.0
+        assert bonus.get(cand.scoring_key, 0.0) > 0.0
         db.close()
 
 
@@ -440,7 +440,7 @@ async def test_keyframe_bonus_contested_pair_grays_out() -> None:
         cand = DiscoveredContent(bvid="BVX", title="t", relevance_score=0.8)
         bonus = await engine._keyframe_bonus_map([cand])
         # Contested → gray: no entry.
-        assert bonus.get("BVX", 0.0) == 0.0
+        assert bonus.get(cand.scoring_key, 0.0) == 0.0
         db.close()
 
 
@@ -465,8 +465,8 @@ async def test_keyframe_bonus_clear_pos_boosts_clear_neg_suppresses() -> None:
         pos_cand = DiscoveredContent(bvid="BVPOS", title="t", relevance_score=0.8)
         neg_cand = DiscoveredContent(bvid="BVNEG", title="t", relevance_score=0.8)
         bonus = await engine._keyframe_bonus_map([pos_cand, neg_cand])
-        assert bonus.get("BVPOS", 0.0) > 0.0  # leans liked → boost
-        assert bonus.get("BVNEG", 0.0) < 0.0  # leans disliked → suppress
+        assert bonus.get(pos_cand.scoring_key, 0.0) > 0.0  # leans liked → boost
+        assert bonus.get(neg_cand.scoring_key, 0.0) < 0.0  # leans disliked → suppress
         db.close()
 
 

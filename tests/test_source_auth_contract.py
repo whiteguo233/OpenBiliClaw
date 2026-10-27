@@ -44,11 +44,16 @@ from openbiliclaw.api.source_auth import (
 )
 from openbiliclaw.api.source_auth.forms import WRITABLE_FORM_KINDS
 from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
-from openbiliclaw.api.source_auth.providers import _DOUYIN_DETAIL, SOURCE_AUTH_PROVIDERS
+from openbiliclaw.api.source_auth.providers import (
+    _DOUYIN_DETAIL,
+    SOURCE_AUTH_PROVIDERS,
+    SourceAuthContext,
+)
 from openbiliclaw.api.source_auth.verify import (
     _BROWSER_HEARTBEAT_PREFIXES,
     VERIFY_ACTIONS,
     VERIFY_DEBOUNCE,
+    VerifyDebounce,
     _verify_browser_heartbeat,
     verify_source,
 )
@@ -1147,6 +1152,7 @@ def contract_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Env:
     for var in (
         "OPENBILICLAW_DOUYIN_COOKIE",
         "OPENBILICLAW_X_COOKIE",
+        "OPENBILICLAW_TIKTOK_COOKIE",
         "OPENBILICLAW_GITHUB_TOKEN",
         "GITHUB_TOKEN",
         "GH_TOKEN",
@@ -1563,6 +1569,11 @@ _EXPECTED_VERIFY_METHODS = {
     "xiaohongshu": "browser_heartbeat",
     "douyin": "live_probe",
     "youtube": "none",
+    # TikTok runs on a guest identity, so without a login cookie there is
+    # nothing to verify (invariant I3) — same ``none`` as YouTube. With a
+    # cookie configured the contract reports ``live_probe`` (passport beat);
+    # see the tiktok probe tests below.
+    "tiktok": "none",
     "twitter": "live_probe",
     "zhihu": "browser_heartbeat",
     "reddit": "local_file",
@@ -1580,6 +1591,9 @@ _EXPECTED_VERIFY_METHODS = {
     # the fixed verify action remains browser_heartbeat.
     "linuxdo": "none",
     "weibo": "none",
+    # Instagram's fixed verify action can request the first heartbeat, while
+    # the source-wide legacy method stays none until evidence exists (I3).
+    "instagram": "none",
     # V2EX is anonymous by default; its optional PAT only becomes probeable
     # after the caller supplies a token.
     "v2ex": "none",
@@ -1825,6 +1839,136 @@ def test_douyin_probe_distinguishes_login(
         ("ready", True) if expected_verification == "verified" else ("unverified", False)
     )
     assert check_legacy_consistency("douyin", contract) == []
+
+
+# ── TikTok passport-beat probe ────────────────────────────────────────
+
+
+def _tt_cookie_file(env: _Env) -> None:
+    from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+    env.cfg.sources.tiktok.enabled = True
+    TiktokCookieManager(env.cfg.data_path).set_cookie(
+        "sessionid=tt-test; ttwid=guest", source="test"
+    )
+
+
+def _install_tiktok_probe(env: _Env, payload: object) -> list[str]:
+    """Fake TikTok's transport; keep the verdict mapping itself real.
+
+    Same discipline as ``_install_douyin_probe``: patched at the identity
+    (the transport seam), not at ``probe_tiktok_login``, so the test runs the
+    real HTTP-status / ``message`` → verdict mapping. *payload* is either a
+    ``TiktokWebResponse`` to return or an exception to raise.
+    """
+    from openbiliclaw.sources.tiktok_web import LOGIN_PROBE_PATH
+
+    calls: list[str] = []
+
+    class _FakeIdentity:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def unsigned_get(self, path: str, _params: dict[str, str]) -> object:
+            calls.append(path)
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    env.monkeypatch.setattr("openbiliclaw.sources.tiktok_web.TiktokWebIdentity", _FakeIdentity)
+    assert LOGIN_PROBE_PATH
+    return calls
+
+
+def _tt_response(body: bytes, *, status: int = 200) -> object:
+    from openbiliclaw.sources.tiktok_web import TiktokWebResponse
+
+    return TiktokWebResponse(status, body, {})
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_verification", "expected_outcome"),
+    [
+        (_tt_response(b'{"message":"success"}'), "verified", "verified"),
+        (_tt_response(b'{"message":"error"}'), "failed", "failed"),
+        (_tt_response(b"", status=401), "failed", "failed"),
+    ],
+    ids=["session-alive", "explicit-error", "unauthorized"],
+)
+def test_tiktok_probe_distinguishes_login(
+    contract_env: _Env,
+    payload: object,
+    expected_verification: str,
+    expected_outcome: str,
+) -> None:
+    """The passport-beat discriminator: success / explicit rejection.
+
+    A beat answering ``{"message": "success"}`` means the session is alive;
+    an explicit error message or 401/403 is the platform refusing the session
+    — a real ``failed`` verdict. The cookie is optional (guest identity
+    remains a complete mode), so ``legacy_state`` stays ``no_auth`` either
+    way and ``auth_required`` never flips.
+    """
+    _tt_cookie_file(contract_env)
+    calls = _install_tiktok_probe(contract_env, payload)
+
+    body = _verify_post(contract_env, "tiktok")
+
+    assert calls == ["/passport/token/beat/web/"]
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.verification == expected_verification
+    assert contract.verify_method == "live_probe"
+    assert contract.credential == "present"
+    assert contract.credential_origin == "data_file"
+    assert contract.auth_required is False
+    assert body["outcome"] == expected_outcome
+    assert contract.verified_at
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ConnectionError("tls reset"),
+        # Risk-control gate: an empty body is not a cookie verdict.
+        _tt_response(b""),
+        # A 200 the probe cannot interpret says nothing about the cookie.
+        _tt_response(b"not-json"),
+    ],
+    ids=["transport", "empty-body", "unparseable"],
+)
+def test_tiktok_probe_transport_failures_stay_indeterminate(
+    contract_env: _Env, payload: object
+) -> None:
+    """A flaky proxy / risk control is not an expired cookie (invariant I3)."""
+    _tt_cookie_file(contract_env)
+    _install_tiktok_probe(contract_env, payload)
+
+    body = _verify_post(contract_env, "tiktok")
+
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.verification == "unverified"
+    assert body["outcome"] == "indeterminate"
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
+
+
+def test_tiktok_verify_without_cookie_stays_guest_and_offline(contract_env: _Env) -> None:
+    """Guest mode is legitimate: no cookie → indeterminate, no network."""
+    _install_tiktok_probe(contract_env, AssertionError("must not go out"))
+
+    body = _verify_post(contract_env, "tiktok")
+
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.credential == "none"
+    # Without a credential the contract honestly reports ``none`` even though
+    # the platform's verify *action* is live_probe (the Bangumi split).
+    assert contract.verify_method == "none"
+    assert contract.auth_required is False
+    assert body["outcome"] == "indeterminate"
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
 
 
 def test_verify_debounce(contract_env: _Env) -> None:
@@ -2418,6 +2562,79 @@ async def test_weibo_browser_heartbeat_roundtrip_updates_verification(
     assert result.changed is True
 
 
+async def test_instagram_browser_heartbeat_roundtrip_updates_verification(
+    contract_env: _Env,
+) -> None:
+    """Instagram verification asks the extension for boolean login evidence."""
+    contract_env.cfg.sources.instagram.enabled = True
+    _seed_browser_login_state(
+        contract_env.db,
+        prefix="instagram",
+        logged_in=True,
+        when_iso=_iso_hours_ago(73),
+    )
+
+    class _RespondingHub:
+        async def publish(self, event: dict[str, object]) -> bool:
+            assert event["type"] == "instagram_login_state_sync_requested"
+            _seed_browser_login_state(
+                contract_env.db,
+                prefix="instagram",
+                logged_in=True,
+                when_iso=_iso_hours_ago(0),
+            )
+            return True
+
+    result = await verify_source(
+        "instagram",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        event_hub=_RespondingHub(),
+    )
+
+    assert result.contract.verify_method == "browser_heartbeat"
+    assert result.contract.verification == "verified"
+    assert result.contract.capabilities["bootstrap"].readiness == "ready"
+    assert result.changed is True
+
+
+async def test_instagram_first_verify_requests_initial_browser_heartbeat(
+    contract_env: _Env,
+) -> None:
+    """No prior row must not disable the extension heartbeat action."""
+
+    contract_env.cfg.sources.instagram.enabled = True
+
+    class _RespondingHub:
+        async def publish(self, event: dict[str, object]) -> bool:
+            assert event["type"] == "instagram_login_state_sync_requested"
+            _seed_browser_login_state(
+                contract_env.db,
+                prefix="instagram",
+                logged_in=True,
+                when_iso=_iso_hours_ago(0),
+            )
+            return True
+
+    before = SOURCE_AUTH_PROVIDERS["instagram"](
+        SourceAuthContext(cfg=contract_env.cfg, database=contract_env.db)
+    )
+    assert before.can_verify_now is True
+    assert before.verify_method == "none"
+
+    result = await verify_source(
+        "instagram",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        event_hub=_RespondingHub(),
+        debounce=VerifyDebounce(),
+    )
+
+    assert result.contract.verification == "verified"
+    assert result.contract.capabilities["bootstrap"].readiness == "ready"
+    assert result.changed is True
+
+
 @pytest.mark.parametrize(
     ("slug", "prefix"),
     [("xiaohongshu", "xhs"), ("zhihu", "zhihu"), ("linuxdo", "linuxdo")],
@@ -2537,6 +2754,8 @@ _INVALID_CREDENTIALS: dict[str, tuple[str, str]] = {
     "twitter": ("auth_token=at-only; guest_id=gx", "missing_x_cookies"),
     # rdt-cli's hard requirement.
     "reddit": ("loid=abc; token_v2=tok", "missing_reddit_session"),
+    # A guest TikTok jar: ttwid / msToken but no session family.
+    "tiktok": ("ttwid=guest-tt; msToken=abc", "cookie_invalid"),
 }
 
 #: Where each platform's credential would land. Asserting on these is the point
@@ -2545,6 +2764,7 @@ _INVALID_CREDENTIALS: dict[str, tuple[str, str]] = {
 _CREDENTIAL_STORES: dict[str, str] = {
     "bilibili": "bilibili_cookie.json",
     "douyin": "douyin_cookie.json",
+    "tiktok": "tiktok_cookie.json",
     "twitter": "x_cookie.json",
 }
 
@@ -2568,7 +2788,11 @@ def _write_client(env: _Env) -> TestClient:
     # than an unrelated config-validation refusal.
     env.cfg.llm.deepseek.api_key = "sk-test-not-used"
     env.monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: env.cfg)
-    return TestClient(create_app(memory_manager=object(), database=env.db, soul_engine=object()))
+    return TestClient(
+        create_app(memory_manager=object(), database=env.db, soul_engine=object()),
+        client=("127.0.0.1", 5000),
+        base_url="http://127.0.0.1:8420",
+    )
 
 
 def _stub_live_probe(env: _Env, *, authenticated: bool = True) -> list[tuple[str, str]]:
@@ -2708,6 +2932,7 @@ def test_credential_write_states_what_it_could_not_verify(contract_env: _Env) ->
         for slug, body in (
             ("bilibili", {"value": _FULL_BILI_COOKIE}),
             ("douyin", {"value": "sessionid=dy-sess; ttwid=tw"}),
+            ("tiktok", {"value": "sessionid=tt-sess; ttwid=tw"}),
             ("twitter", {"value": "auth_token=at; ct0=csrf"}),
             ("reddit", {"value": "reddit_session=rs; loid=l"}),
             ("xiaohongshu", {"kind": "login_state", "value": True}),
@@ -2732,6 +2957,7 @@ def test_credential_write_states_what_it_could_not_verify(contract_env: _Env) ->
     # Probed platforms say so...
     assert accepted["bilibili"]["checked"] == "live_probe"
     assert accepted["douyin"]["checked"] == "live_probe"
+    assert accepted["tiktok"]["checked"] == "live_probe"
     # ...and the ones that cannot be probed say *that*, with a reason.
     for slug in ("twitter", "reddit", "xiaohongshu", "zhihu", "linuxdo", "v2ex"):
         assert accepted[slug]["checked"] != "live_probe", slug
@@ -2791,6 +3017,192 @@ def test_transport_failure_refuses_rather_than_storing_an_unchecked_cookie(
     assert SourceAuthContract.model_validate(body["auth"]).verification != "failed"
 
 
+def _stub_live_probe_network_error(env: _Env) -> list[tuple[str, str]]:
+    """Answer the shared live gate with a transport failure; return the asks."""
+    from openbiliclaw.api.source_auth import verify as verify_module
+
+    calls: list[tuple[str, str]] = []
+
+    async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+        calls.append((slug, str(cookie or "")))
+        return verify_module.LiveProbeOutcome(
+            slug=slug,
+            has_credential=True,
+            authenticated=False,
+            network_error=True,
+            message="B站 检测请求失败（proxy died），无法判定登录态。",
+        )
+
+    env.monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+    return calls
+
+
+def test_bilibili_transport_failure_persists_cookie_marked_unverified(
+    contract_env: _Env,
+) -> None:
+    """B站 is the exception to transport-refusal: its account-sync loop
+    re-validates the stored cookie on every tick (-101 → auth_expired), so an
+    uncheckable candidate is safe to persist with an explicit unverified
+    marker — while refusing it deadlocked users whose only route to bilibili
+    differed from the probe's (flaky proxy)."""
+    from openbiliclaw.api.source_auth import write as write_module
+    from openbiliclaw.bilibili.auth import AuthManager
+
+    contract_env.monkeypatch.setattr(write_module, "_NETWORK_PROBE_BACKOFF_SECONDS", 0.0)
+    calls = _stub_live_probe_network_error(contract_env)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["ok"] is True
+    # Persisted, but NOT reported as a confirmed login.
+    assert body["authenticated"] is False
+    # The legacy response must surface the unverified outcome additively:
+    # ok stays True (the extension treats that as accepted) while the new
+    # fields name what happened, and the message is the gate's own honest
+    # copy rather than a bare "synced and refreshed".
+    assert body["error_code"] == ""
+    assert body["unverified"] is True
+    assert body["unverified_reason"] == "保存时无法连接平台完成登录验证，已按未验证凭据保存。"
+    assert "已按未验证 Cookie 保存" in body["message"]
+    assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == _FULL_BILI_COOKIE
+    # Transient blips get a couple of retries before settling for unverified.
+    assert len(calls) == 1 + write_module._NETWORK_PROBE_RETRIES
+    # The recorded verdict is a network failure, never a clean negative —
+    # the status surfaces must not claim the cookie failed a check it
+    # never took.
+    verdict = LIVE_PROBES.peek("bilibili")
+    assert verdict is not None
+    assert verdict.network_error is True
+    assert verdict.authenticated is False
+
+
+def test_bilibili_transport_failure_unverified_write_via_unified_endpoint(
+    contract_env: _Env,
+) -> None:
+    """The unified write shape exposes the same accept with the reason named."""
+    from openbiliclaw.api.source_auth import write as write_module
+
+    contract_env.monkeypatch.setattr(write_module, "_NETWORK_PROBE_BACKOFF_SECONDS", 0.0)
+    _stub_live_probe_network_error(contract_env)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/sources/bilibili/credential",
+            json={"value": _FULL_BILI_COOKIE},
+        )
+
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["checked"] == "live_probe"
+    assert body["unverified_reason"]
+    assert body["persisted"] is True
+    assert SourceAuthContract.model_validate(body["auth"]).verification != "failed"
+
+
+def test_bilibili_definitive_rejection_still_refused(contract_env: _Env) -> None:
+    """A real platform 'not logged in' (not a transport failure) still refuses.
+
+    The unverified-persist escape only covers ``network_error``; a definitive
+    negative verdict remains evidence and must not land."""
+    from openbiliclaw.api.source_auth import verify as verify_module
+    from openbiliclaw.bilibili.auth import AuthManager
+
+    async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+        return verify_module.LiveProbeOutcome(
+            slug=slug,
+            has_credential=True,
+            authenticated=False,
+            network_error=False,
+            message="B站 Cookie 未登录或已失效。",
+        )
+
+    contract_env.monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["ok"] is False
+    assert body["error_code"] == "cookie_invalid"
+    # A definitive refusal is the opposite of the unverified-persist outcome.
+    assert body["unverified"] is False
+    assert body["unverified_reason"] == ""
+    assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == ""
+
+
+def test_landed_bilibili_cookie_clears_persisted_auth_expired(contract_env: _Env) -> None:
+    """A persisted auth_expired sync issue must not outlive its cookie.
+
+    The banner state in ``account_sync_state.json`` was previously cleared
+    only by a completed sync tick; a paused or crash-looping daemon never
+    ran one, so the banner survived the fix. The credential-landed path now
+    clears it directly.
+    """
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    _stub_live_probe(contract_env)
+    memory_manager = MemoryManager(contract_env.cfg.data_path, database=contract_env.db)
+    memory_manager.save_account_sync_state(
+        {
+            "last_sync_error": "账号登录已失效 (-101)",
+            "last_sync_error_kind": "auth_expired",
+            "last_sync_issues": [{"stage": "bilibili_history", "kind": "auth_expired"}],
+        }
+    )
+
+    class _IdleClient:
+        """The app's background sync loop ticks against the injected service;
+        empty fetches keep a completed tick from writing new issues."""
+
+        async def get_user_history(self, max_items: int = 100) -> list[object]:
+            return []
+
+        async def get_all_favorites(self, **_kwargs: object) -> list[object]:
+            return []
+
+        async def get_following(self, **_kwargs: object) -> list[object]:
+            return []
+
+    class _IdleSoulEngine:
+        async def analyze_events(self, events: list[object]) -> None:
+            return None
+
+    sync_service = AccountSyncService(
+        memory_manager=memory_manager,
+        bilibili_client=_IdleClient(),
+        soul_engine=_IdleSoulEngine(),
+    )
+    contract_env.monkeypatch.setattr(
+        "openbiliclaw.config.load_config", lambda *_a, **_kw: contract_env.cfg
+    )
+    app = create_app(
+        memory_manager=memory_manager,
+        database=contract_env.db,
+        soul_engine=object(),
+        account_sync_service=sync_service,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    state = memory_manager.load_account_sync_state()
+    assert state["last_sync_error"] == ""
+    assert state["last_sync_error_kind"] == ""
+    assert state["last_sync_issues"] == []
+
+
 class _Dynamic:
     """A response field whose value cannot be a literal (timestamp, tmp path).
 
@@ -2818,6 +3230,10 @@ class _Dynamic:
 #: and so is a key that survives with a hollowed-out value, which is why
 #: comparing key sets alone was not enough. The bodies below are all refusals,
 #: the branch where an ``error_code`` and its message have to survive intact.
+#: (The bilibili route's ``unverified`` / ``unverified_reason`` pair is the one
+#: sanctioned shape change: purely additive, both defaulting to the "nothing
+#: to say" values on every pre-existing branch, so parsers that predate them
+#: read exactly the response they always did.)
 _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object]], ...] = (
     (
         "/api/bilibili/cookie",
@@ -2832,6 +3248,8 @@ _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object
                 "请在已登录的浏览器重新复制完整 Cookie。"
             ),
             "error_code": "cookie_invalid",
+            "unverified": False,
+            "unverified_reason": "",
         },
     ),
     (
@@ -2936,9 +3354,14 @@ def test_legacy_credential_endpoints_keep_their_success_shape(contract_env: _Env
         "user_id",
         "message",
         "error_code",
+        # Additive unverified-persist markers; False/"" on a verified success.
+        "unverified",
+        "unverified_reason",
     }
     assert bili.json()["ok"] is True
     assert bili.json()["authenticated"] is True
+    assert bili.json()["unverified"] is False
+    assert bili.json()["unverified_reason"] == ""
     assert douyin.json()["ok"] is True
     assert douyin.json()["cookie_names"] == ["sessionid", "ttwid"]
     assert twitter.json()["ok"] is True
@@ -3072,7 +3495,12 @@ def test_extension_only_platforms_expose_no_writable_input(contract_env: _Env) -
         slug for slug, item in payload.items() if item["form"]["kind"] == "extension_only"
     }
 
-    assert extension_only == {"xiaohongshu", "zhihu", "linuxdo"}, extension_only
+    assert extension_only == {
+        "xiaohongshu",
+        "zhihu",
+        "linuxdo",
+        "instagram",
+    }, extension_only
     for slug in extension_only:
         form = payload[slug]["form"]
         assert form["placeholder"] == "", slug
@@ -4012,3 +4440,41 @@ def test_a_failing_deferred_credential_write_names_what_landed(contract_env: _En
     assert "twitter" in message, message
     assert "douyin" in message, "the error must say which credentials did land"
     assert "disk full" in message, "the real cause has to survive"
+
+
+def test_tiktok_cookie_sync_refreshes_runtime_only_on_effective_change(contract_env: _Env) -> None:
+    """Late extension login must replace the guest client without restart loops."""
+    from unittest.mock import AsyncMock
+
+    _stub_live_probe(contract_env)
+    contract_env.cfg.sources.tiktok.enabled = True
+    with _write_client(contract_env) as client:
+        runtime = client.app.state.runtime_context
+        rebuild = AsyncMock()
+        contract_env.monkeypatch.setattr(runtime, "rebuild_from_config", rebuild)
+        for cookie, expected in [
+            ("sessionid=first", 1),
+            ("sessionid=first", 1),
+            ("sessionid=second", 2),
+        ]:
+            response = client.post("/api/sources/tiktok/credential", json={"value": cookie})
+            assert response.status_code == 200
+            assert response.json()["accepted"] is True
+            assert rebuild.await_count == expected
+
+
+def test_tiktok_cookie_sync_respects_environment_precedence(contract_env: _Env) -> None:
+    """A lower-priority file update must not restart an unchanged live client."""
+    from openbiliclaw.api.source_auth.write import persist_credential
+
+    contract_env.monkeypatch.setenv(contract_env.cfg.sources.tiktok.cookie_env, "sessionid=env")
+    result = persist_credential(
+        "tiktok",
+        "cookie",
+        "sessionid=file",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        source="test",
+    )
+    assert result.persisted
+    assert not result.runtime_dirty

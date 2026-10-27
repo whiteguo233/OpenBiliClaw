@@ -308,6 +308,30 @@ def test_parser_accepts_openai_compatible_provider(tmp_path: Path) -> None:
     assert args.provider == "openai_compatible"
 
 
+def test_minimax_bootstrap_default_and_explicit_model_preservation(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    (tmp_path / "config.toml").write_text(
+        (project_root / "config.example.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    parser = bootstrap.build_arg_parser()
+    args = parser.parse_args(["--project-dir", str(tmp_path), "--llm-preset", "minimax"])
+    assert bootstrap.apply_llm_preset_args(args) is None
+    assert args.llm_model == "MiniMax-M3.1-Flash"
+    assert args.provider == "openai_compatible"
+    bootstrap.apply_provider_override(tmp_path, args.provider)
+    bootstrap.apply_llm_model(tmp_path, args.provider, args.llm_model)
+    data = bootstrap.read_simple_toml(tmp_path / "config.toml")
+    instance_id = data["llm"]["default_chain"][0]
+    assert data["llm"]["instances"][instance_id]["model"] == "MiniMax-M3.1-Flash"
+    for model in ("MiniMax-M3", "MiniMax-M2.7", "custom-text-model"):
+        args = parser.parse_args(["--llm-preset", "minimax", "--llm-model", model])
+        assert bootstrap.apply_llm_preset_args(args) is None
+        bootstrap.apply_llm_model(tmp_path, args.provider, args.llm_model)
+        data = bootstrap.read_simple_toml(tmp_path / "config.toml")
+        assert data["llm"]["instances"][instance_id]["model"] == model
+
+
 def test_detect_missing_secrets_flags_openai_compatible_connection_fields(
     tmp_path: Path,
 ) -> None:
@@ -741,6 +765,12 @@ def test_human_install_choice_parser_accepts_numbers_and_aliases() -> None:
     assert bootstrap.resolve_human_llm_choice("") == "deepseek"
     assert bootstrap.resolve_human_llm_choice("1") == "deepseek"
     assert bootstrap.resolve_human_llm_choice("2") == "openai_compatible"
+    assert bootstrap.resolve_human_llm_choice("9") == "api_route"
+    assert bootstrap.resolve_human_llm_choice("api_route") == "api_route"
+    assert bootstrap.PROVIDER_MODEL_DEFAULTS["api_route"] == "gpt-5.5"
+    assert bootstrap.resolve_human_llm_choice("10") == "cheaperinference"
+    assert bootstrap.resolve_human_llm_choice("cheaperinference") == "cheaperinference"
+    assert bootstrap.PROVIDER_MODEL_DEFAULTS["cheaperinference"] == "gpt-5.4-mini"
     assert bootstrap.resolve_human_llm_choice("relay") == "openai_compatible"
     assert bootstrap.resolve_human_llm_choice("ollama") == "ollama"
     assert bootstrap.resolve_human_llm_choice("bad") is None
@@ -860,6 +890,7 @@ def test_collect_human_install_wizard_default_path() -> None:
     prompts: list[tuple[str, str]] = []
     plain_inputs = iter(
         [
+            "",  # language
             "",
             "",
             "",
@@ -894,6 +925,7 @@ def test_collect_human_install_wizard_manual_cookie() -> None:
     prompts: list[tuple[str, str]] = []
     plain_inputs = iter(
         [
+            "2",  # Traditional Chinese
             "ollama",
             "qwen2.5:7b",
             "3",
@@ -912,6 +944,8 @@ def test_collect_human_install_wizard_manual_cookie() -> None:
         secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
     )
 
+    assert answer.language == "zh-Hant"
+    assert "Select" in prompts[0][1]
     assert answer.provider == "ollama"
     assert answer.embedding_provider == ""
     assert answer.embedding_model == ""
@@ -1024,6 +1058,7 @@ def test_run_interactive_confirm_collects_full_human_install_choices(
         bootstrap,
         "collect_human_install_wizard",
         lambda **_kwargs: bootstrap.HumanInstallAnswers(
+            language="zh-Hant",
             provider="deepseek",
             llm_api_key="sk-new",
             llm_model="deepseek-v4-flash",
@@ -1047,6 +1082,7 @@ def test_run_interactive_confirm_collects_full_human_install_choices(
     text = (tmp_path / "config.toml").read_text(encoding="utf-8")
     output = capsys.readouterr().out
 
+    assert bootstrap.read_simple_toml(tmp_path / "config.toml")["general"]["language"] == "zh-Hant"
     assert returncode == 0
     assert 'default_provider = "deepseek"' in text
     assert 'api_key = "sk-new"' in text
@@ -1745,3 +1781,28 @@ def test_llm_preset_keeps_explicit_non_compat_provider_as_conflict(
         ]
     )
     assert bootstrap.apply_llm_preset_args(args) == 2
+
+
+@pytest.mark.parametrize(
+    ("existing", "answers", "expected"),
+    [
+        ("zh", ["3"], "en"),
+        ("zh-TW", [""], "zh-Hant"),
+        ("en-US", [""], "en"),
+        ("zh", ["fr", "2"], "zh-Hant"),
+    ],
+)
+def test_installer_language_selection(existing: str, answers: list[str], expected: str) -> None:
+    values = iter(answers)
+    assert bootstrap.collect_human_language(lambda _: next(values), existing) == expected
+
+
+def test_installer_language_flag_and_choices_match_runtime() -> None:
+    from openbiliclaw.i18n import SUPPORTED_LOCALES
+
+    assert bootstrap.INSTALL_LANGUAGES == SUPPORTED_LOCALES
+    args = bootstrap.build_arg_parser().parse_args(["--language", "en"])
+    bootstrap.apply_human_install_answers_to_args(
+        args, bootstrap.HumanInstallAnswers(provider="deepseek", language="zh-Hant")
+    )
+    assert args.language == "en"

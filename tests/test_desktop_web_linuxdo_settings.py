@@ -62,7 +62,9 @@ def test_desktop_source_cards_are_siblings_not_nested() -> None:
     linuxdo_attr = html.index('data-source-status="linuxdo"')
     linuxdo_start = html.rfind("<article", 0, linuxdo_attr)
     v2ex_start = html.index('data-source-status="v2ex"')
-    source_list_end = html.index('<div class="source-aux-card">', v2ex_start)
+    # Later source cards may follow V2EX; keep this assertion scoped to the
+    # adjacent pair whose accidental nesting originally caused the bug.
+    source_list_end = html.index("</article>", v2ex_start) + len("</article>")
     source_list = html[linuxdo_start:source_list_end]
 
     assert source_list.count('<article class="source-status-row source-card"') == 2

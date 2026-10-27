@@ -1,5 +1,12 @@
 # 推荐引擎
 
+## 可切换完整评估器的旧池补评
+
+`RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下
+旧池 `_classify_batch()` 通过 `evaluate_cached_content_batch()` 更新完整元数据，不再
+直调 LLM。失败项不覆盖既有缓存、不计为完成。单纯切换设置不会重算全部历史推荐。
+Jev 的受控分类与模板理由不替代推荐表达，表达生成仍使用独立 LLM 路由。
+
 > 从 discovery 缓存中挑出最值得推的内容，并逐步生成像朋友一样的推荐表达。
 
 runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extra_requests=6)` 作为 copy-only 入口：pending 达 8 条立即执行，1–7 条从首次通知起固定等待最多 3 秒；provider 每批最多 30 条、fan-out 2，malformed/partial batch 默认最多额外拆分请求 6 次。分类完成只通过 `set_copy_pending_callback()` 通知，不 inline 等待 copy。OpenClaw direct one-shot 是受限例外，调用 `limit=4, max_extra_requests=0`，持久化首 batch 的有效 subset 并将剩余行留作下一请求。参数来自 2026-07-12 生产日志校准。
@@ -19,11 +26,17 @@ HTTPS URL。
 - **RecommendationEngine** — 推荐排序、朋友式表达和推荐历史更新入口
 - **Recommendation** — 单条推荐结果
 - **PersonalTopic** — 后续个性化主题分组的占位结构
+- **推荐导演** — [三策略与屏级运行时](director.md)；默认关闭，显式启用后使用独立原子屏提交，含二卡递推、Agent 多屏规划、Jev 局部修补与真实曝光反馈
 
 ## 已实现功能
 
+导演画像已从静态 top-N 切为本地目录按意图／候选加载，三策略共用命名视图；Jev 逐对和
+修补按用户选择模型的双上下文护栏运行，不自动换模型。完整源画像与视图身份分开，
+候选变化不导致无意义重排，真实偏好变化仍使未来计划失效。详见[导演上下文](director.md)。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 推荐导演三策略 | ✅ 默认关闭 | `DirectorRuntime` 接通逐对 Jev、Agent+Jev 局部修补和纯 Agent 多屏计划；屏原子提交、真实曝光反馈及配置换代 fencing，详见[模块合同](director.md) |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
@@ -90,8 +103,9 @@ HTTPS URL。
 | durable shown commit callback | ✅ | `serve_with_result()` 只在独立连接已原子提交 recommendation + shown 后返回 `ServeResult(items, pool_counts_after, timings)`，随后 detached 通知 `set_pool_inventory_commit_callback()` 注入的 sync/async hook。API 先用结果中的扣减库存更新 refill gate / 广播，不在响应关键路径重新扫描；再后台读取精确 canonical snapshot 收敛 topic-window 补位等近似差异。写失败不触发 callback，callback 自身失败只记录日志、不取消已完成提交。 |
 | v0.3.x PC Web 空推荐展示 | ✅ | 桌面 Web `/web` 不再携带内置演示推荐作为初始 `state.videos`；后端 `/api/recommendations` 返回空数组时必须覆盖并清空当前卡片，和插件 side panel 的空列表语义保持一致。 |
 | v0.3.x available-target pool refill | ✅ | `count_pool_available_candidates_by_source()` 按 `count_pool_candidates()` 同口径统计各平台族的真实可换数量；`count_pool_raw_material_by_source()` 统计 fresh / 非 dislike / 未推荐 / 未看过的 raw material（含 `discovery_candidates` 待评估素材）用于 raw ceiling。补池不再因为 raw/linkable B 站库存达到 300 而停在前端 246 可换，raw trim 也不会在可换未达标时把库存压回 `pool_target_count`。 |
-| v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / Linux.do / V2EX / 微博 / GitHub raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
+| v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / Linux.do / V2EX / 微博 / GitHub / Instagram raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
 | 文字来源卡片 + body_text | ✅ | X 推文 / thread、知乎回答 / 文章 / 问题、Reddit post / comment、微博 post 与 GitHub repository 以 `body_text` 进入推荐池；前端在 `content_type` 为文字态或 `cover_url` 为空时渲染**无封面文字卡**（显示正文而非断图），franchise / diversity / MMR 对空 `cover_url` / `duration=0` 容错；推荐解释 / 评估 builder 的 user_prompt 带上 `body_text`，system prompt 仍保持字节静态（prompt-cache 约定） |
+| Instagram canonical 候选 | ✅ | Instagram `topic` / `creator` browser-task 归一化为 `post` / `reel` / `carousel`，携带 numeric media id、authoritative `/p/` 或 `/reel/` URL、作者、发布时间和可用封面后进入统一 `discovery_candidates`。推荐层不把加载/曝光当 view，不伪造 aggregate engagement，也不从 liked/saved/following bootstrap 直接生成推荐候选；来源默认关闭时不会占用平台 share。 |
 | X append 文字形态保持 | ✅ | `append_recommendations()` 从 discovery pool row 还原候选时保留 `content_type/body_text`，避免 X tweet 在续页链路退回默认 `video` 并丢正文；真实浏览器 E2E 覆盖 PC Web、移动 Web 与扩展 side panel |
 | Canonical 保存身份 | ✅ | 推荐、append 与 delight 输出保留同一个 `item_key/source_platform/content_id/content_url/content_type`；插件、桌面和移动保存按钮把这五项交给平台中立 `/api/saved/*`。本地保存失败才回滚按钮；平台同步失败保留本地已保存态并展示逐项状态。 |
 | v0.3.91 新兴趣放大保护 | ✅ | 新确认兴趣会生成 amplification key，`PoolCurator` 用最近 24h 推荐历史计算滚动占比，超过 25% 的方向会被降权；最终批量选择还会硬限制同一新方向最多 `max(1, floor(limit * 0.25))` 条，避免刚确认的兴趣短期刷屏 |
@@ -123,6 +137,13 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+`DirectorRuntime` 为 controller/composer/repair 注入 `JevContextBudget`；
+`CompositionSession.profile_source_digest` 用于计划新鲜度，实际视图仍绑定 `input_digest`。
+
+`RecommendationEngine.load_director_candidates()` 只读准备 topic 分层 shortlist；
+`DirectorRuntime` 统一驱动三种模式，由 `DirectorStore` 原子提交，而非借用旧接口的部分入库逻辑。
+纯 `PairComposer` 仍返回 tentative 提案；[完整合同](director.md#公共-api)包含持久化与反馈边界。
 
 2026-09-08：公开方法签名、候选窗口和返回协议不变；批次选择内部仅复用同一候选对的精确余弦值，下一批重新计算，完整多样性规则与补满流程保持不变。
 
@@ -534,7 +555,7 @@ B 站候选池打分保留历史 `weight` 语义：范围外候选的最终分�
 # 从当前数据库状态构建评分上下文
 context: ScoringContext = curator.build_context()
 
-# 对候选列表评分，返回 bvid → rec_score 的映射（不修改输入）
+# 对候选列表评分，返回 scoring_key → rec_score 的映射（不修改输入）
 scores: dict[str, float] = curator.score_candidates(candidates, context)
 
 # 聚合比较含 bonus 排序与 no-bonus 反事实；不改变 scores/serving
@@ -545,7 +566,7 @@ curator.record_temporal_ranking_shadow_audit(candidates, scores, context)
 report: PoolHealthReport = curator.check_pool_health()
 ```
 
-`score_candidates()` 以叠加覆盖层的形式返回新的分数映射，不会修改传入的候选对象。`PoolCurator` 的所有方法均不修改输入数据。shadow 的年龄桶固定为 `<=1d / 1-7d / 7-30d / 30-180d / >180d / unknown`，用于与 2026-08 历史回放口径连续比较；它只回答“bonus 改了谁的相对位置”，本身不改变 eligibility 或自动调整硬期限。
+`score_candidates()` 以叠加覆盖层的形式返回新的分数映射，不会修改传入的候选对象。映射键统一取 `DiscoveredContent.scoring_key`：正常候选使用平台限定的 `item_key`，只有缺少 `item_key` 的旧行才回退到 `bvid`。MMR embedding、封面/视觉画像/关键帧/弹幕加分、跨平台归一化和最终排序使用同一键契约，避免非 B 站空 `bvid` 碰撞，也避免生产端与消费端键不一致而静默丢失信号。`PoolCurator` 的所有方法均不修改输入数据。shadow 的年龄桶固定为 `<=1d / 1-7d / 7-30d / 30-180d / >180d / unknown`，用于与 2026-08 历史回放口径连续比较；它只回答“bonus 改了谁的相对位置”，本身不改变 eligibility 或自动调整硬期限。
 
 ## 示例：记忆如何影响推荐结果
 

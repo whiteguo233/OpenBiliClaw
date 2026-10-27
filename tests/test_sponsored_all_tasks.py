@@ -345,3 +345,162 @@ async def test_explicit_task_helper_routes_other_project_callers_through_the_sdk
     assert response.provider == "sponsored"
     assert provider.calls[-1][0] == "llm.structured"
     assert provider.calls[-1][1]["caller"] == "soul.preference"
+
+
+async def test_current_main_native_tool_interface_keeps_schema_and_multihop_results() -> None:
+    class NativeSponsor(RecordingSponsored):
+        async def execute_task(self, **kwargs: Any) -> LLMResponse:
+            response = await super().execute_task(**kwargs)
+            response.content = '{"tool_call":{"name":"lookup","arguments":{"query":"topic"}}}'
+            return response
+
+    provider = NativeSponsor()
+    service = LLMService(registry=NoUserProvider(), memory=None, sponsored_provider=provider)  # type: ignore[arg-type]
+    schema = {
+        "type": "function",
+        "function": {
+            "name": "lookup",
+            "description": "lookup sources",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    }
+    messages = [
+        {"role": "system", "content": "project dialogue"},
+        {"role": "user", "content": "find something"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "old",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"query":"prior"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "old", "content": "prior tool evidence"},
+    ]
+    response = await service.complete_with_native_tools(
+        messages=messages, tools=[schema], caller="soul.dialogue.agent"
+    )
+    assert response.tool_calls and response.tool_calls[0]["name"] == "lookup"
+    assert response.tool_calls[0]["arguments"] == {"query": "topic"}
+    assert response.content == ""
+    operation, payload = provider.calls[-1]
+    assert operation == "llm.tools"
+    assert "prior tool evidence" in str(payload["messages"])
+    assert "parameters" in payload["messages"][0]["content"]
+
+
+async def test_current_main_stream_entry_points_work_with_sponsored_client() -> None:
+    provider = RecordingSponsored()
+    service = LLMService(registry=NoUserProvider(), memory=None, sponsored_provider=provider)  # type: ignore[arg-type]
+    chunks = [
+        c
+        async for c in service.stream_complete_with_core_memory(
+            system_instruction="project", user_input="chat", caller="soul.dialogue"
+        )
+    ]
+    assert "".join(c.delta for c in chunks) == '{"reply":"project reply"}'
+    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+    chunks = [
+        c
+        async for c in service.stream_complete_with_native_tools(
+            messages=[
+                {"role": "system", "content": "project"},
+                {"role": "user", "content": "chat"},
+            ],
+            tools=[],
+            caller="soul.dialogue.agent",
+        )
+    ]
+    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+    assert provider.calls[-1][0] == "llm.tools"
+
+
+async def test_current_main_raw_registry_native_and_stream_interfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm import sponsored_router
+
+    provider = RecordingSponsored()
+    install_sponsored_settings(SponsoredRuntimeSettings(enabled=True))
+    monkeypatch.setattr(sponsored_router, "shared_sponsored_provider", lambda: provider)
+    registry = LLMRegistry()
+    messages = [{"role": "user", "content": "project task"}]
+    assert (await registry.complete_with_tools(messages, [])).provider == "sponsored"
+    chunks = [c async for c in registry.stream_complete(messages)]
+    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+    chunks = [c async for c in registry.stream_complete_with_tools(messages, [])]
+    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+
+
+@pytest.mark.parametrize(
+    "emits_first,allow_fallback", [(False, True), (True, True), (False, False)]
+)
+async def test_sponsored_stream_fallback_cannot_repeat_partial_output_or_spend_unapproved_quota(
+    emits_first: bool, allow_fallback: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openbiliclaw.llm import sponsored_router
+    from openbiliclaw.llm.base import LLMStreamChunk
+
+    class BrokenStream:
+        async def stream_complete(self, *_args: Any, **_kwargs: Any) -> Any:
+            if emits_first:
+                yield LLMStreamChunk(delta="partial sponsor output")
+            raise SponsoredQuotaExceededError("exhausted")
+
+    fallback_calls = []
+    alerts = []
+
+    async def user_stream() -> Any:
+        assert sponsored_router.sponsored_bypassed()
+        fallback_calls.append(True)
+        yield LLMStreamChunk(response=LLMResponse(content="fallback", provider="user"))
+
+    install_sponsored_settings(
+        SponsoredRuntimeSettings(enabled=True, fallback_to_user_provider=allow_fallback)
+    )
+    monkeypatch.setattr(sponsored_router, "_notify_fallback", lambda *a, **kw: alerts.append(kw))
+    stream = sponsored_router.stream_project_completion(
+        [{"role": "user", "content": "project task"}],
+        provider=BrokenStream(),
+        fallback=user_stream,
+        caller="soul.dialogue",
+    )
+    if emits_first or not allow_fallback:
+        with pytest.raises(SponsoredQuotaExceededError):
+            async for _chunk in stream:
+                assert not sponsored_router.sponsored_bypassed()
+        assert fallback_calls == [] and alerts == []
+    else:
+        chunks = [chunk async for chunk in stream]
+        assert chunks[-1].response and chunks[-1].response.provider == "user"
+        assert fallback_calls == [True] and alerts == [{"caller": "soul.dialogue"}]
+    assert not sponsored_router.sponsored_bypassed()
+
+
+def test_explicit_probe_factories_keep_targets_and_active_sponsored_settings() -> None:
+    from openbiliclaw.llm.registry import build_embedding_service, build_llm_registry
+    from openbiliclaw.llm.sponsored_router import bypass_sponsored
+    from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+    active = SponsoredRuntimeSettings(enabled=True, runtime_path="active-runtime")
+    install_sponsored_settings(active)
+    cfg = Config()
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path="draft-runtime")
+    cfg.llm.embedding.provider = ""
+
+    class ProbeProvider(NoUserProvider):
+        name = "openai"
+
+    with bypass_sponsored():
+        registry = build_llm_registry(cfg, provider_overrides={"openai": ProbeProvider()})  # type: ignore[dict-item]
+        assert registry.default_provider == "openai"
+        assert "sponsored" not in registry.available_providers
+        assert build_embedding_service(cfg, registry) is None
+    assert current_sponsored_settings() == active

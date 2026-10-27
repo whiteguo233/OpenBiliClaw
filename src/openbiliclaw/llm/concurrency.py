@@ -353,6 +353,14 @@ _INTERACTIVE_CALLERS = {
     "soul.dialogue.tools",
     "soul.dialogue.tool_followup",
     "api.sentiment",
+    # 「聊一聊」 agent loop lanes are user-initiated: the interactive chat
+    # loop ("agent.chat") answers live in the conversation, and durable
+    # background tasks ("agent.task") are launched by an explicit user
+    # request from the chat. Neither is daemon maintenance, so neither may
+    # be parked behind the empty-pool refill reservation.
+    "agent.chat",
+    "agent.task",
+    "recommendation.director.plan",
 }
 _EXPRESSION_CALLERS = {
     "recommendation.expression",
@@ -375,13 +383,20 @@ _SUPPLY_PREFIXES = (
     "yt_search.generate_queries",
 )
 _KNOWN_MAINTENANCE_PREFIXES = (
+    "recommendation.director.preplan",
     "discovery.",
     "eval.",
     "pool_purge.",
     "soul.",
     "sources.",
 )
-_MAINTENANCE_CALLERS: set[str] = set()
+_MAINTENANCE_CALLERS: set[str] = {
+    # Blue Fish Lab: one reply per scheduled pass. It is daemon work (not
+    # interactive, not supply), so it shares the maintenance lane instead of
+    # being classified as an unknown caller.
+    "fish.comment_reply",
+    "fish.owner_notice",
+}
 
 
 class LLMConcurrencyGate:

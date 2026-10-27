@@ -1,0 +1,124 @@
+{
+  "schema": "director-live-e2e.v1",
+  "started_at": "2026-10-02T04:32:31.680585+00:00",
+  "transport": "codex-cli",
+  "model": "gpt-6-luna",
+  "mode": "scripted_http_acceptance",
+  "planning_budget_seconds": 20.0,
+  "budget_class": "production_default",
+  "real_source_snapshot": true,
+  "source_configuration": "config_toml_plus_local_and_environment",
+  "feedback_is_isolated_acceptance_action": true,
+  "long_term_learning_and_discovery": "excluded",
+  "jev": "not_used_agent_only",
+  "asgi_background_lifespan": "disabled",
+  "http_requests": [
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    }
+  ],
+  "screens": [
+    {
+      "batch_sha256": "5bf34f25c346c1f1a02a39cc38ba089d661fa73d376edb69463db40d519efff5",
+      "plan_sha256": null,
+      "item_count": 6,
+      "item_sequence_sha256": "d5099db1a329fd33aeb44255629c8edeec7dd49c5a8286c957dfe44b8e60cf8d",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "deterministic",
+      "execution_binding": "SESSION_STEP",
+      "experience_step_seq": 1,
+      "state_revision": 0,
+      "planning_source": "fresh",
+      "planning_reason": "planner_timeout",
+      "planning_calls": 1,
+      "initial_screen_counts": null,
+      "coverage_reason": null
+    }
+  ],
+  "checks": [
+    "new_stream_restore_does_not_generate"
+  ],
+  "passed": false,
+  "model_calls": [
+    {
+      "input_sha256": "39cdad3ac1ef95c06ceb292d4350fad3ae857081b38b267059b8713cb78e31a8",
+      "system_sha256": "4a6e4e25024e4e48778f12089614f5a8d3c393a034390ef062c6db6e06e00634",
+      "input_bytes": 38020,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 20.003
+    },
+    {
+      "input_sha256": "a3f7876d2e9f1263e3994c30b8d975cd9c91f6e5988d77f1a154bb5a3a464532",
+      "system_sha256": "4a6e4e25024e4e48778f12089614f5a8d3c393a034390ef062c6db6e06e00634",
+      "input_bytes": 37229,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 0.607
+    }
+  ],
+  "transport_records": [
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    }
+  ],
+  "snapshot": {
+    "source_open_mode": "sqlite_readonly_online_backup",
+    "source_data_path_sha256": "25c70f5d9b28fa6b8a5c499ec98df2c2480b34d54e533fe659937830ff64a936",
+    "memory_files": [
+      "soul.json",
+      "preference.json",
+      "awareness.json",
+      "insight.json",
+      "profile_overrides.json",
+      "speculative_state.json",
+      "discovery_runtime.json"
+    ],
+    "database_bytes": 228888576,
+    "private_snapshot_deleted_on_exit": true
+  },
+  "initial_shortlist_count": 40,
+  "error_class": "AcceptanceFailure",
+  "failure_code": "screen_not_agent_only",
+  "finished_at": "2026-10-02T04:32:59.043555+00:00"
+}

@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-13",
+  "baseline": "cecb1b6e",
+  "scope": "capability-increment",
+  "history": {
+    "applicability": "N/A for default init and incremental",
+    "reason": "User explicitly waived unavailable history on this turn",
+    "default_scopes": [
+      "tt_like",
+      "tt_collect",
+      "tt_follow"
+    ],
+    "explicit_history_tasks": "supported; unavailable UI still fails honestly"
+  },
+  "code_fixes": [
+    "default bootstrap no longer requests unavailable history",
+    "production RuntimeContext now wires TikTok enabled policy into SourceIncrementalSync on startup and reload"
+  ],
+  "installed_extension": {
+    "changed_this_turn": false,
+    "path": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-source-readiness/extension",
+    "hash_algorithm": "SHA256 sorted relative path + NUL + file bytes for manifest/dist/icons/popup",
+    "sha256": "da3beb7b7ec82ab3631c907e134fe237713daaa01bf6bbc00187ff8628245c73",
+    "prior_request_timing_fix_hot_reloaded": false
+  },
+  "backend": {
+    "normal_create_app": true,
+    "checkout": "/Users/white/workspace/OpenBiliClaw/.worktrees/tiktok-full-readiness",
+    "storage": "temporary isolated data/SQLite; deleted at server shutdown",
+    "provider": "openai_compatible (existing configured route)",
+    "network": "system (existing configured route)",
+    "production_config_modified": false,
+    "code_snapshot": "baseline plus this turn source_bootstrap/runtime_context repairs; final CLI wording edited after process launch"
+  },
+  "live_account_task": {
+    "presence": 1,
+    "task_status": "completed",
+    "scopes": [
+      "tt_like",
+      "tt_collect",
+      "tt_follow"
+    ],
+    "result_status": "ok",
+    "scope_counts": {
+      "tt_like": 0,
+      "tt_follow": 0,
+      "tt_collect": 0
+    },
+    "debug": {
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty",
+        "tt_follow": "empty"
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": true,
+        "tt_follow": true
+      }
+    },
+    "error": null,
+    "rows": 0,
+    "profile_ready": false
+  },
+  "formal_init": {
+    "initialized": false,
+    "running": false,
+    "current_stage": 1,
+    "reason": "empty_signals",
+    "partial_success": false
+  },
+  "native_save": {
+    "mutations_this_turn": 0,
+    "original_authorized_video_playable": true,
+    "own_favorites_list": "explicit empty",
+    "remaining": "prior upstream response-success but unpersisted membership unresolved; alternate-video mutation permission pending"
+  },
+  "validation": {
+    "runtime_wiring_red": "actual runtime policy omitted tiktok; regression failed",
+    "runtime_wiring_green": "startup/reload, opt-in, actual queue, next-period clock, cancellation passed",
+    "protocol_profile_events": "fixture nonempty rows accepted through API and generic owner; duplicates ignored across initial and incremental tasks; not live-model profile proof",
+    "selected_tests": "142 passed",
+    "broader_backend_tests": "374 passed; 5 proxy tests initially blocked by sandbox listener, all 5 passed on permitted retry",
+    "audit": {
+      "MANUAL": 14,
+      "MISSING": 0,
+      "N/A": 2,
+      "PASS": 46,
+      "fully_verified": false,
+      "registration_check_passed": true,
+      "required_missing": 0
+    },
+    "ruff": "PASS",
+    "mypy": "318 files PASS",
+    "config_show": "PASS"
+  },
+  "remaining": {
+    "nonempty_live_profile": "BLOCKED: actual account signal count zero; formal init empty_signals",
+    "live_periodic_incremental": "BLOCKED: profile_not_ready; actual runtime/queue cadence regression passed"
+  },
+  "cleanup": {
+    "isolated_server_stopped": true,
+    "raw_private_data_committed": false
+  }
+}

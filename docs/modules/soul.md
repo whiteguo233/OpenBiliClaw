@@ -6,6 +6,23 @@
 
 ## 概述
 
+推荐导演与 Jev 完整评估通过公共纯函数 `profile_views.build_profile_catalog(profile)` 和
+`select_profile_context(catalog, query_texts=..., max_bytes=..., purpose=...)` 按需消费有效画像。
+完整目录只在本地；视图完整保留负偏好原树、风格和场景，再选本任务相关兴趣、全局偏好与
+近期事实。返回不可变 `ProfileContextProjection`（payload 每次复制、digest、fits、used_bytes、
+included_interest_names）；必需内容超过容量则 fits=false，不能当成功摘要使用。无全局
+兴趣条数截断、无摘要模型调用、无源画像写入。归档正偏好和用户否定洞察不进入视图，
+推测保留置信度／来源，不含人格散文和创作者列表。旧 `build_director_profile_view` 保留兼容，
+不再是生产导演入口。具体上下文见[导演](director.md)与[使用登记](../profile-usage.md)。
+
+`resize_profile_context(payload, max_bytes=..., query_texts=...)` 仅对命名按需视图重新选择
+已经加载的整条可选事实，供更长的 audit/repair 包二次适配；不补入未加载事实，未知字段
+作为必需语义保留，未知 schema 拒绝。最小必需块装不下仍返回 fits=false。
+
+`build_shared_evaluation_profiles(contexts)` 为完整 Jev 评估拆出相同的负偏好、风格和场景，
+在共享 `profile` 只发送一次；候选相关的正偏好仍保留在各自 `candidate_profiles.cN`。
+该纯函数复制输入，不修改已选事实、源画像或导演视图。
+
 `soul/` 包实现了用户理解的核心逻辑，包括：
 
 - **SoulEngine** — 编排器，从事件出发驱动各层分析
@@ -14,7 +31,7 @@
 - **InsightAnalyzer** — 基于觉察、偏好和画像生成洞察假设；合并同名假设时按 `user_verdict` 决定置信度走向（见下「假设置信度与用户判断」）
 - **DialogueInsightAnalyzer** — 从聊天中提取候选长期理解信号
 - **ToneProfile** — 从画像、偏好和近期反馈推断语气风格，用于推荐、画像总结和对话；`[soul] reply_style`（issue #255）可在语气块追加一行自由文本指令，`[soul] dialogue_tone_prompt` 可整体替换对话 prompt 的语气块（仅对话，其余 prompt 不受影响），两者为空时 prompt 均逐字节不变
-- **SocraticDialogue** — 苏格拉底式用户对话，通过追问深化理解
+- **SocraticDialogue** — 需求优先的用户对话，在用户主动探索时通过有限追问深化理解
 - **AvoidanceSpeculator** — 主动确认用户可能想避开的内容方向
 - **SoulProfile** — 用户灵魂画像数据结构
 
@@ -35,6 +52,8 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 可选 Sponsored SDK（未发布） | 已接线 | 画像初始化、分析、合并、觉察、洞察、推测与对话统一走 LLMService；合并保留 contract2 簇数据入口，其余业务使用完整 SDK，默认关闭 |
+| 按需画像公共 API | ✅ | `build_profile_catalog` / `select_profile_context` 分离本地全集与预算视图；确定性词法检索、整条事实选择、完整负偏好底线，供 Jev 评估和导演共享 |
 | OnionProfile 五层重构 | ✅ | 将 SoulProfile 重构为五层洋葱模型（CoreLayer → ValuesLayer → InterestLayer → RoleLayer → SurfaceLayer） |
 | MBTI 人格类型 | ✅ | Core 层新增 MBTI 类型与维度强度（E/I, S/N, T/F, J/P），支持置信度标注 |
 | 树形兴趣结构 | ✅ | InterestLayer 改为领域树结构 (domain → specifics)，支持”国际时事 → 中东局势 / 欧洲政治”的多层级兴趣 |
@@ -53,6 +72,11 @@
 | filter_events_by_satisfaction | ✅ | `soul/event_filters.py` 中的纯函数，按 `inferred_satisfaction` 过滤事件，`"unknown"` 同时匹配缺失 / `None`，使 pre-migration 老行可被显式 opt-in 保留 |
 | recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 16 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像；同一 dialogue 实例逐轮串行执行普通与工具调用，用户 turn 在真实回复完成前仅为临时历史，异常/取消只回滚本轮且不触发学习 |
+| Agent 显式聊天笔记 | ✅ | 通过 LLMService.memory 读取有界 agent_notes，仅 chat 且角色允许 read_memory 时加入 user 引用；原消息、system 与学习载荷不变 |
+| Agent 表达风格 | ✅ | `stream_agent_reply(persona_id=...)` 为 chat scope 叠加已冻结的表达模板；natural、legacy 与非 chat 保持原 prompt，风格不更改学习输入或权限 |
+| SocraticDialogue.stream_agent_reply()（M2） | ✅ | 多跳 agent loop 的对话侧入口（`POST /api/chat/agent/stream` 调用）：在 `_respond_lock` 下与 `respond()` 串行，复用共享朋友人设与长期记忆，采用按当前请求调整深度的聊天风格（简单问题简答、复杂任务充分展开，追问遵循共享收敛规则，访谈由用户探索意愿触发）；显式 `session_id` 的短期历史按会话隔离，首次使用从本会话 durable rows 恢复；`dialogue_binding` 同时用于 prompt 和学习冻结锚；user turn 先 append（loop 异常/空答复回滚本轮且不触发学习），完成后 append agent 答复并按 learning mode 走与 `respond()` 相同的 `_queue_dialogue_learning()` 提交（queued / legacy_direct / reply_only_test 语义一致） |
+| SocraticDialogue.respond_stream()（issue #83） | ✅ | `respond()` 的流式变体：逐 token yield 回复增量（`LLMService.stream_socratic_dialogue()`），历史追加 / 回滚 / 学习语义与 `respond()` 完全一致；工具回合保持一次性工具流、最终回复作为单个 delta 吐出；service 缺少流式方法时回退一次性 `complete_socratic_dialogue()`。CLI `chat` 与 legacy `/api/chat/stream` 均走此路径 |
+| 对话内链接摄入（issue #83，`sources/link_ingest.py`） | ✅ | `SocraticDialogue` 可选接收 `LinkIngestor`；`respond()`、`respond_stream()` 与 `stream_agent_reply()` 在 user turn append 后、LLM 调用前对消息做链接预处理：提取 URL（无 `://` 快速短路）→ 展开 b23.tv / xhslink.com 短链（跟随重定向，8s 超时 + 256 KiB 上限 + 非 HTML 拒绝，httpx 一律 `trust_env=False`）→ 按 `sources/platforms.py` 注册表识别平台（bilibili 复用 `BilibiliAPIClient.get_video_info` 拿标题/简介/UP 主/标签，其余平台抓 title/description/og 元数据）→ 摘要块注入当轮 prompt（历史与审计仍存用户原文，仅靠 `relation_prefix` 让后续轮次知道「分享了链接《…》」），并把每个抓取成功的链接经注入的 `event_sink`（生产 = `MemoryManager.propagate_event`）记为 `share` 事件（显式正向偏好，默认强度 0.85，用户消息摘录进 `comment_text`）。单链接失败降级为「仅链接」形态进上下文，事件写入失败只记 WARNING，绝不阻塞聊天；未接 ingestor 时 prompt 逐字节不变 |
 | ProfileBuilder 历史抽样（2026-07-26+） | ✅ | `_summarize_history` 不再按到达顺序切`titles[:100]` / `contexts[:100]` / `recent|older[:50]`——真实拉取顺序是最新在前，1000 条历史里模型只看得到最近约 100 条，再久的长期兴趣无论互动多强都不可见（实测生产数据：旧法只覆盖**最近 0.6 天**，且漏掉了全量里唯一一条收藏）。现按「强信号保底 + 时间分层」抽样，与增量链路同源判据：① 权重复用满意度语义——明确互动（收藏/点赞/投币…）3.0 > 高完播 2.0 > 一般 1.0 > 划走 0.3（不归零，划走也是信号）；② 先用 `_HISTORY_STRONG_RESERVE=0.4` 的预算无条件收下明确互动（避免一段时间内集中的收藏被其他时间桶的配额挤掉，与「疑惑被高置信假设埋掉」同类问题），余额再按 `_HISTORY_TIME_BUCKETS=6` 个时间桶均摊，薄桶剩余配额回流给最有代表性的行为；③ 输出按时间排序，`count` 仍报真实总量并附 `sampling_hint` 告知模型这是抽样。无有效时间戳（超过半数缺失）时退回到达顺序，不丢数据。**未改动**：`analyze_events` 的偏好分片仍是 `events[i:i+200]` 全量覆盖，init 的觉察/洞察（`_init_cognition_context`）也无截断——截断问题只存在于画像构建的历史摘要这一处 |
 | ProfileBuilder | ✅ | 结构化 prompt + JSON 校验 + `OnionProfile` 构建；`build_soul_profile_prompt()` 的 system prompt 保持静态，user prompt 按 `<tone_profile>` → `<preference_summary>` → `<recent_awareness>` → `<active_insights>` → `<history_summary>` 排列并使用确定性 JSON，让超大的历史摘要位于 provider cache 前缀末端 |
 | SoulEngine.build_initial_profile() | ✅ | 从 history + preference 生成并持久化 `soul.json` |
@@ -85,17 +109,18 @@
 | 对话确认入口与锚（Wave A–D + 单队列 cutover，v0.3.182+） | ✅ | `DialogueAnchorManager` 持久化至多一个 `{kind,ref,generation,established_at,unrelated_streak,origin_turn_id,ambiguous_count}`，四种释放为结算、连续两轮 unrelated、2h TTL、replaced。card discuss 在 admission 先建立 owner reservation，worker 内把 durable payload 从 `pending` 改为 `discussing` 后建锚；建锚失败立即补偿回 `pending`。不存在 `attempt_token/discussing_at` CAS 或 stale scanner；GET 只提交 `card.reconcile`，由 worker 把没有对应 active anchor 的 orphan `discussing` 校正回 `pending`。学习任务入 LLM 前校验一次 ref+generation；LLM 返回后的首个持久副作用由 `note_relation(expected_generation=...)` 在同一状态锁内完成重读+CAS，engine 必须消费返回值，失配整批丢弃、WARNING 并写 `anchor_stale_generation_drop`。结算赢家 payload 固化 `anchor_generation`，applied 收据只能释放该代，同 ref 新锚不会被旧收据碰掉。待聊列表主动 open 以 `pending_open` 建锚且不受 12h/72h 时间 gate；这种卡片仍保持 `pending`，其 defer 会先持久化 `deferred`，再按 origin turn + generation 精确释放锚，不能只覆盖传统 `discussing` 卡。系统疑惑提问也建锚，系统假设卡等待用户操作。Dialogue 回灌统一读取所有 session 的 completed `{chat,hypothesis,confusion}` scope（含 agent-only 疑惑 question，probe 仍排除），而 API turn 列表继续按 session 过滤；durable 请求把产生端 session 逐请求传给学习 payload。新客户端只在对话卡片主动结算假设，三处认知更新区与 CLI 列表均只读；deprecated legacy API 仅为旧客户端转发兼容。归属矩阵、ambiguous/Jaccard 防双计与 confusion FIFO 语义不变。 |
 | Turn 级上下文绑定（2026-08-01） | ✅ | `DialogueTurnContext` / `DialogueTurnBinding` 是 frozen typed value object；digest 覆盖 canonical target 事实而不覆盖 capture 时间。API 在 user INSERT 前冻结 `kind/ref/generation/title/evidence`，`SocraticDialogue`、learn queue、engine analyzer、raw event、candidate/ledger provenance 与 settlement 只消费同一 binding；bound stale 只能 drop，不能读取 current anchor 猜测归属。CLI/OpenClaw 继续显式 `legacy_direct` 兼容。 |
 | 三端「聊聊口味」长列表与证据展示（v0.3.191+） | ✅ | `/web`、`/m/` 与扩展 side panel 的确认卡 / 疑惑提问都按自然高度进入独立滚动区，不会在固定页高中共同缩短后被裁掉；待聊 inbox 自己限高滚动，底部 composer 始终留在视口。三端重绘遵循 stick-to-bottom：只有读者原本贴近底部或主动发送 / 进入页面时才跟随最新消息，向上阅读则保留 `scrollTop`，并按 durable turn id 恢复已展开依据；移动端额外保留草稿与焦点。共享 renderer 会过滤纯数字、UUID、事件 / note 前缀、BVID 与裸哈希等机器 ID，若无可读证据则整块「依据」隐藏；这只是 UI 展示清洗，不修改 durable payload 或内部证据归属。移动 Web、桌面 Web 与扩展 side panel 现按 `session=popup` 读取并对齐 `{chat,hypothesis,confusion,probe,avoidance_probe}` 可见历史；`delight` 仍留在推荐卡的独立内聊中。真实三端请求验证覆盖长卡、待聊独立滚动、探针聊天跨消息 / 主对话恢复、结算状态跨客户端投影与 composer 可见性。 |
-| 对话窗口 + 时间事实（v0.3.182+） | ✅ | `DIALOGUE_WINDOW_TURNS=20`：`_history_to_messages` 截断到最近 20 轮。每个历史 turn 用创建时定死的本地绝对前缀 `[MM-DD HH:mm]`，SQLite 无时区 `created_at` 由公开 `format_dialogue_turn_timestamp(..., local_timezone=...)` 单点转本地；当前时间只追加在当轮 user prompt 尾部，不改写历史前缀。带数据库的非 CLI Dialogue 回灌所有 session 的 completed `chat/hypothesis/confusion`（probe 排除），API 可见列表仍按 session 过滤。 |
+| 对话窗口 + 时间事实（v0.3.182+） | ✅ | `DIALOGUE_WINDOW_TURNS=20`：`_history_to_messages` 截断到最近 20 轮。legacy 历史保留创建时定死的本地绝对前缀 `[MM-DD HH:mm]`；Agent 历史以引用记录分开保存 `role`、`content`、`local_time` 和可选 `reply_context`，避免时间标签成为回答模板。SQLite 无时区 `created_at` 仍由公开 `format_dialogue_turn_timestamp(..., local_timezone=...)` 单点转本地；当前时间只追加在当轮 user prompt 尾部。legacy 非 CLI Dialogue 回灌所有 session 的 completed `chat/hypothesis/confusion`（probe 排除），显式 Agent `session_id` 仅恢复本会话；API 可见列表仍按 session 过滤。 |
 | 对话结算 settles（v0.3.182+；单队列 executor） | ✅ | `build_dialogue_insight_prompt(..., anchor=None)` 保持模块级静态 system + `sort_keys=True`，无锚输入/输出逐字节不变；非空 anchor 只在 user message 加契约。`learn_from_dialogue` 仅在**无活锚的 scope='chat'** 处理检索式 settles；锚定轮跳过检索式 settles，`support/contradict/revise/answer` 由锚处理器在当前 worker 内调用 `_apply_*`。普通 `speculation/insight/confusion` settles 同样直接调用 worker-only apply，不再 submit 自己，也不直调旧 direct executor。apply 总是先采用 stored winner payload，按 frozen kind/ref/generation 做 exact validation；stale/failed dependency 在 receipt 前终止。故障边界固定为 event → object → derived → rebuild marker → `applied=1` → projection → anchor release，并提供七个精确 checkpoint。object、derived upsert、marker set-union 与 ledger stable key 均可安全重放；`applied=1` 后只走 publication-only，不再调用前三类 mutator。白名单仍等于当轮 `active_list`，台账保留 `turn_id`；hash8=SHA-256(NFC+strip+空白折叠)hex 前 8，碰撞升 hex16。 |
 | 疑惑对象「看不懂」（`soul/confusion.py` + `confusions` 表，v0.3.175+） | ✅ | 当系统无法干净解读某行为时产出**疑惑**（不写画像，只驱动澄清与冻结）。两产生源：①觉察——`analyze_with_confusions()` + 独立 builder `build_awareness_with_confusions_prompt`（静态 system，入 invariance 清单；`analyze()`/`build_awareness_prompt` 一字不动，`cognition_cycle` 切新 API 属有意变更），候选 ≤2/轮、白名单校验落库；②推测僵局——`SpeculatorTickResult.stalemate`=expire 时 `0<confirmation_count<threshold`（现存字段判定），pipeline 转疑惑。状态机 `open→clarifying→resolved\|dismissed`（+TTL `expired`）；`clarifying` 全局 ≤1 由 partial unique index 跨连接原子保证。TTL 扫描并入 12h `cognition_cycle` |
 | 疑惑澄清三路 + 唯一结算所有者 + 冻结（v0.3.182+） | ✅ | **ask**：durable chat `scope="confusion"` 先 claim `clarifying` 并立即建锚，72h 冷却持久化于 `asked_at`；待聊列表的显式用户 open 可传 `ignore_cooldown`，只绕过时间冷却，数据库 partial unique index 的全局 `clarifying <= 1` 仍强制生效。API 完成侧效应不再调用 `resolve/defer`，唯一所有者是串行学习队列中的锚处理器。分类结果先写 `confusions.replay_queue`（FIFO、上限 5、超限逐出最旧并记 dropped 台账），队头失败保留，新轮只能入尾；成功后从队头续跑。四种锚释放都会清队列并记 dropped；12h `CognitionCycle` 先重放**任意状态的非空队列**（覆盖 resolve 已提交、pop 前崩溃的 terminal 行，并续做未 applied 对象收据），再扫描晚于 ask receipt 且 completed、尚无 payload receipt 的 classification gap。三出口仍为 `real_interest` / `proxy_behavior` / `dismissed`；两次 ambiguous 走 defer，恢复 open 行时不重复增加 defer_count。topic 冻结与 held-update 重放状态机保持不变。 |
-| 态势门控（`soul/posture_gate.py`，v0.3.176+） | ✅ | 深层写入一致性门控（Phase 3）。`build_posture_gate_prompt` 静态 system（三判定 accept/downgrade/reject + 「冲突不是错误是新假设」）+ `sort_keys`（入 invariance 清单）。`PostureGate` 三模式：`off`=完全旁路、**门控 LLM 零调用**、逐字节等价；`shadow`(默认)=**commit boundary 捕获不可变快照**（before/after/source_refs/gate_id），异步旁路任务只消费快照（判定前对活状态再写入不污染判定，带断言）、判定落台账 `shadow_*`、provider 异常/非法 JSON/非白名单 verdict 均落 `shadow_error`、**零延迟不阻塞原写入**；`enforce`=同步判定，同一组判定错误保守 downgrade 且 `GateDecision.is_error=True`，供重建调用方保留 marker 重试；只有明确白名单 accept/downgrade/reject（含真实 refusal）为 `is_error=False`。**深层线归一后**（见「深层影响唯一模式」），有效接入点为两条：①对话 goal/value/state 深层候选（interest/dislike 快线不过；downgrade 置信=confidence×0.6 转 insight）；③soul 整份重建，泛化承载三触发源（dialogue / feedback_batch / confirmed_hypotheses），downgrade/reject→放弃本次 rebuild + 台账。**接入点②（管线 VALUES/CORE 层 updater 门控）已随 P1 退役**：`update_layer` 对 VALUES/CORE 直接封死 no-op + WARNING，不再有逐层门控。新 caller `soul.posture_gate` 注册 usage recorder。enforce 受 save-time 三条件校验（见 config.md，`posture_gate_force_enforce` 逃生门） |
+| 态势门控（`soul/posture_gate.py`，v0.3.176+） | ✅ | 深层写入一致性门控（Phase 3）。`build_posture_gate_prompt` 静态 system（三判定 accept/downgrade/reject + 「冲突不是错误是新假设」）+ `sort_keys`（入 invariance 清单）。`PostureGate` 三模式：`off`=完全旁路、**门控 LLM 零调用**、逐字节等价；`shadow`(默认)=**commit boundary 捕获不可变快照**（before/after/source_refs/gate_id），异步旁路任务只消费快照（判定前对活状态再写入不污染判定，带断言）、判定落台账 `shadow_*`、provider 异常/非法 JSON/非白名单 verdict 均落 `shadow_error`、**零延迟不阻塞原写入**；`enforce`=同步判定，同一组判定错误保守 downgrade 且 `GateDecision.is_error=True`，供重建调用方保留 marker 重试；只有明确白名单 accept/downgrade/reject（含真实 refusal）为 `is_error=False`。**深层线归一后**（见「深层影响唯一模式」），有效接入点为两条：①对话 goal/value/state 深层候选（interest/dislike 快线不过；downgrade 置信=confidence×0.6 转 insight）；③soul 整份重建，泛化承载三触发源（dialogue / feedback_batch / confirmed_hypotheses），判定快照按 spec 携带 compact 兴趣 diff 摘要（`interest_diff`：added/removed/changed + 计数，条目仅留 name/category/weight/evidence_count，剔除占字节约 55% 的四个时间戳字段；#288），downgrade/reject→放弃本次 rebuild + 台账。**接入点②（管线 VALUES/CORE 层 updater 门控）已随 P1 退役**：`update_layer` 对 VALUES/CORE 直接封死 no-op + WARNING，不再有逐层门控。新 caller `soul.posture_gate` 注册 usage recorder。enforce 受 save-time 三条件校验（见 config.md，`posture_gate_force_enforce` 逃生门） |
 | 疑惑代理行为证据折价（v0.3.176+） | ✅ | 疑惑 `resolve()` 走 `proxy_behavior`（误读）出口时，对 `evidence_refs` 中可解析为事件 id 的关联事件调用 `Database.discount_events_by_confusion`（`sources/event_format.apply_confusion_discount`）：盖 `metadata.discounted_by_confusion=true` + `signal_strength` 折至 0.2（与 retraction 折价同底、幂等不回升）。非 id ref（话题/note）跳过；`real_interest` 出口不折价 |
 | topic 生命周期状态机（`soul/topic_lifecycle.py`，v0.3.177+） | ✅ | interest（flat 与 Onion domain 两层）叠加状态元数据 `state ∈ {trial\|active\|decaying\|archived}` + `evidence_count` + `last_evidence_at` + `parent_topic`；旧数据缺字段默认 `active`，且**默认 `active` 的 topic 序列化不写这些键**（回放门：`interest_tag_to_dict` 只在非默认时 emit）。跃迁（常量带首轮校准注释，见模块 docstring）：新 topic 首见→`trial`；证据 ≥5 **或** 持续 ≥7 天→`active`（`apply_evidence`，接在 `analyze_events`/`learn_from_dialogue`/反馈批**以及增量 pipeline `layer_updaters._update_interest`** 的偏好写 chokepoint，每次分析计一次证据；增量 pipeline 是日常浏览的主路径，早期漏接导致这条路径产出的 interest 没有 `state`，而 `get_state()` 把无 state 读成 `active`——新 topic 因此跳过 trial 直接参与推荐权重，12h `scan_lifecycle` 也不会补，因为无 state 的 interest 看起来已经是 active）；`last_evidence_at` 静默 ≥30 天→`decaying`（权重×0.5）；再 ≥30 天（共 60 天）→`archived`（不删）；`archived`/`decaying` 遇新证据→直接复燃 `active`；**衰减扫描 `scan_lifecycle` 并入 12h `ProfileConsolidator`**（`last_evidence_at` 缺失的旧 topic 永不被扫衰减，避免启用即团灭）；**dislike 改「归档+避雷」**（`archive_topics`：匹配 topic 置 `archived` 保留台账，不再从库删）；**细分提议**（子类占父域权重 ≥60%）只经 `topic_subdivision_proposal` 记台账不执行（shadow）。所有跃迁进 `profile_update_ledger`（`topic_lifecycle` 写点）。**最小消费**：见下「觉察提炼节奏」下方 `topic_lifecycle_serialization` 开关（默认 off） |
 | 觉察提炼节奏（`soul/cognition_cycle.py`，v0.3.182+） | ✅ | 除 12h 兜底节流外支持未提炼事件 ≥30 或强信号提前触发；`asyncio.Lock` 保证 due-check + watermark 单飞，state JSON 以 tmp+fsync+`os.replace` 原子写，失败/取消不推进水位。每次真正 due 的周期还调用 `confusion_replay_hook`：先重试已持久化 classifier 输出，再扫描 completed clarification crash gap；失败 best-effort 留待下轮，不阻断 awareness/insight 与 pending rebuild hook |
 | 兴趣探针聊天情绪判断 | ✅ | `/api/interest-probes/respond` 的 chat 分支会先让对话引擎回复，再用非 JSON 的单词分类 LLM 调用判断 `strong_positive / weak_positive / neutral_deferred / neutral / negative`（系统提示是 `llm/prompts.py:build_probe_sentiment_prompt` 的静态常量，走 prompt 缓存），失败时回退关键词；强正向直接确认，弱正向进入短期探索 buffer，`neutral_deferred`（用户主动说「先放着」「稍后再看」）走 defer 搁置状态机，`neutral`（态度模糊，如「再看看」）不改状态，避免一句“有点意思”立刻写成长期兴趣 |
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
+| Instagram 初始化画像信号 | ✅（init-only） | 用户显式启用后，`openbiliclaw init` 把同源只读任务确认的 `instagram_liked` / `instagram_saved` / `instagram_following` 分别映射为 `like` / `favorite` / `follow`。任务必须先解析当前数字账号并按 account key 分区；partial 保留已确认事件但不声明完整快照，普通浏览/Feed 曝光不进入画像。 |
 | 抖音初始化画像信号 | ✅ | `openbiliclaw init --yes-douyin` 会把插件解析到的抖音 `dy_post/dy_collect/dy_like/dy_follow` 转成 `view/favorite/like/follow` 事件，并进入偏好分析和初始画像 history |
 | GitHub 初始化画像信号 | 🧪 接线；验收见 ledger | 选中 GitHub 且解析出公开账号后，后端通过官方 REST 读取 public starred repositories，并把每个 Star 转成 `favorite` 事件进入同一偏好分析与初始画像 history。它不依赖扩展、不读取私有仓库，也不进入后台增量账号同步；真实终态见 GitHub acceptance ledger |
 | Durable 行为事件增量画像 | ✅ | profile 已存在时，`POST /api/events`、推荐点击与带画像语义的 source task 只经 `EventIngressService` 提交 durable event 并 wake。app-owned scheduler 的 `profile_events` generic consumer 与 `content_feedback` consumer 按显式 owner、各自 cursor 扫描，使用 event-row 稳定 signal ID，通过 `checkpointed_enqueue_batch()` 原子发布 buffer+cursor，再调用 `tick_if_buffered()`；独立周期维护才调用完整 `tick()`，HTTP 不直调 pipeline/LLM。retraction 投影在 generic cursor 前完成；hypothesis/import feedback 由其它 owner 处理或只越过 feedback cursor；rejected/not_initialized 不入 pipeline。 |
@@ -472,7 +497,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 首次初始化时，走的是 `SoulEngine.build_initial_profile(history)`：
 
 1. 先读取已有 `preference` 层。
-2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书、抖音、YouTube、知乎、Reddit、Linux.do、Bangumi、GitHub bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
+2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书、抖音、YouTube、知乎、Reddit、Linux.do、Bangumi、GitHub、Instagram bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
 3. 再加载历史 `awareness_notes` 和 `active_insights`。首次新装通常为空；如果第 2 步的初始化分片输出了临时 `awareness_candidates` / `insight_candidates`，`SoulEngine` 会把它们追加到本次 profile-build prompt 的 awareness / insights 输入中。
 4. `ProfileBuilder.build()` 把 `history_summary + preference_summary + awareness + insights` 一起送给 LLM。临时 chunk cognition 只参与这次 prompt，不持久化到 awareness / insight 层。
 5. LLM 返回结构化 JSON，必须包含：
@@ -982,6 +1007,18 @@ queue/guard。每个 `SocraticDialogue` 实例用独立异步锁串行执行完�
 
 `respond(..., session="")` 可逐请求覆盖 UI ownership 标签；认知 history 仍跨 session 共享。`local_timezone` 与测试用 `now_provider` 固定历史时间事实，公开 `format_dialogue_turn_timestamp(timestamp, local_timezone=...)` 将 SQLite 的无时区 UTC 或带 offset 时间统一渲染为 `[MM-DD HH:mm]`，不读取当前时钟。
 
+`stream_agent_reply()` 使用 `build_socratic_dialogue_prompt(..., socratic=False)`，提供按需深度风格；新旧入口同时共享 `build_socratic_dialogue_prompt()` 的收敛规则：明确需求直接回应，普通需求默认最多澄清一轮，主动探索连续两轮提问后总结并等待用户继续。信息足够即可结束，不以画像完整为继续追问的理由。最近 20 轮历史作为一份明确标注的 JSON 引用记录进入上下文，原角色、原正文、本地时间和回复目标分字段保存，不再把系统时间前缀拼到历史 assistant 消息上作为回答示范。已有历史中泄露的标签仍保留在原文中，时间问答和明确引用不丢信息；不清洗模型输出或修改数据库。该选择不增加分类模型调用、不缩减复杂任务预算，旧 `respond()` 的历史格式保持，但同样遵循共享收敛规则；其苏格拉底式探索仅在用户主动要求时使用。
+
+`stream_agent_reply()` 在构建本轮上下文时读取 `LLMService.memory.render_agent_notes_prompt()`，
+仅 chat scope 且角色可 read_memory 时作为 user 引用加入；每轮重新读取，因此笔记
+更正/删除从后续对话生效。共享纪律明确网页、搜索摘要和笔记都不是执行指令。
+
+`stream_agent_reply(..., persona_id="concise")` 只为普通 Agent chat 叠加表达层；
+该 ID 由服务端从 turn 的 `agent_persona` 读取，不能由客户端伪造 payload。当前用户
+要求优先，非 natural 风格优先于旧全局语气中的冲突措辞；功能角色与工具审批规则不变。
+
+`stream_agent_reply(..., session_id="chat-…", dialogue_binding=binding)` 接受独立对话 id 和已冻结的回复目标。短期 prompt 只包含该会话近期完成的消息；长期画像与记忆继续共享。省略 `session_id` 的旧调用保留共享历史兼容，`clear_history()` 同时清除全部内存会话历史。绑定的卡片/问题标题进入本轮 prompt，同一 binding 随学习任务提交并冻结目标锚，避免把回复记到后来切换的目标上。
+
 ### DialogueAnchorManager / ConfusionManager
 
 ```python
@@ -1414,3 +1451,12 @@ tone = build_tone_profile(
 
 **未改动**：深层重建的准入仍是 `validated AND confidence >= _REBUILD_MIN_CONFIDENCE(0.75)` 的与门——
 事件只能影响置信度，给不了 `validated`，因此「事件自动下沉深层」依然不成立（深层线归一的边界未变）。
+
+### 2026-10-02 流式链接一致性
+
+`respond_stream()` 与 `respond()`、`stream_agent_reply()` 一样摄取当轮用户链接并注入元数据；原始消息、卡片绑定和学习输入保持原值，历史用关系前缀表达分享。无链接不调用摄取器，摄取失败不阻断回复。
+
+
+### 画像合并与可选赞助 SDK
+
+`SoulConsolidator` 通过 `execute_sponsored_or_structured()` 把有界 likes/dislikes clusters 交给旧合并子契约；原 Prompt 仍用于 BYOK 路径，输出继续使用既有解析和写回规则。其他 Soul 任务通过 LLMService 的文本/结构化/工具入口接入全项目 SDK，包含 Agent 工具循环与缓冲流式接口。配置、回退与真实能力验收边界见[全项目设计](../plans/2026-10-27-sponsored-all-tasks.md)。

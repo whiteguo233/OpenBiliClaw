@@ -1,0 +1,39 @@
+{
+  "timeline": [
+    {
+      "event": "thread.started"
+    },
+    {
+      "event": "item.completed",
+      "item": "error"
+    },
+    {
+      "event": "turn.started"
+    },
+    {
+      "event": "error",
+      "retry_progress": [
+        2,
+        5
+      ],
+      "markers": [
+        "stream disconnected"
+      ]
+    },
+    {
+      "event": "item.completed",
+      "item": "agent_message",
+      "phase": null,
+      "json_object": true,
+      "planner_shape": true,
+      "screen_counts": [
+        6,
+        4,
+        2
+      ]
+    },
+    {
+      "event": "turn.completed"
+    }
+  ]
+}

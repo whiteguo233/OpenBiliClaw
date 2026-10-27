@@ -41,7 +41,12 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from openbiliclaw.proc import ChildProcessSupervisor, ManagedChild
+from openbiliclaw.proc import (
+    ChildProcessSupervisor,
+    ManagedChild,
+    backend_child_env,
+    backend_config_generation,
+)
 from openbiliclaw.recommendation_runtime import ensure_recommendation_transport_env
 
 if TYPE_CHECKING:
@@ -1367,29 +1372,25 @@ def main() -> None:
                     "full-worker",
                     lambda: _spawn_backend_child(
                         "openbiliclaw.worker",
-                        env={**os.environ, "OPENBILICLAW_FULL_WORKER": "1"},
+                        env=backend_child_env(app, OPENBILICLAW_FULL_WORKER="1"),
                     ),
                 ),
                 ManagedChild(
                     "discovery-worker",
                     lambda: _spawn_backend_child(
                         "openbiliclaw.discovery_worker",
-                        env={
-                            **os.environ,
-                            "OPENBILICLAW_DISCOVERY_WORKER": "1",
-                            "OPENBILICLAW_FULL_WORKER": "1",
-                        },
+                        env=backend_child_env(
+                            app, OPENBILICLAW_DISCOVERY_WORKER="1", OPENBILICLAW_FULL_WORKER="1"
+                        ),
                     ),
                 ),
                 ManagedChild(
                     "recommendation-server",
                     lambda: _spawn_backend_child(
                         "openbiliclaw.recommendation_server",
-                        env={
-                            **os.environ,
-                            "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
-                            "OPENBILICLAW_FULL_WORKER": "1",
-                        },
+                        env=backend_child_env(
+                            app, OPENBILICLAW_RECOMMENDATION_ONLY="1", OPENBILICLAW_FULL_WORKER="1"
+                        ),
                     ),
                 ),
             ]
@@ -1400,10 +1401,12 @@ def main() -> None:
     children.append(
         ManagedChild(
             "image-service",
-            lambda: _spawn_backend_child("openbiliclaw.image_service", env={**os.environ}),
+            lambda: _spawn_backend_child("openbiliclaw.image_service", env=backend_child_env(app)),
         )
     )
-    child_supervisor = ChildProcessSupervisor(children)
+    child_supervisor = ChildProcessSupervisor(
+        children, config_generation_provider=lambda: backend_config_generation(app)
+    )
 
     try:
         child_supervisor.start()

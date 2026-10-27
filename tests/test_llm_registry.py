@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from openbiliclaw.config import Config, EmbeddingConfig, LLMConfig, LLMProviderConfig
+from openbiliclaw.config import (
+    Config,
+    EmbeddingConfig,
+    LLMConfig,
+    LLMInstanceConfig,
+    LLMProviderConfig,
+)
 from openbiliclaw.llm.base import (
     LLMFallbackError,
     LLMProvider,
@@ -173,6 +179,127 @@ def test_build_llm_registry_omits_orcarouter_without_api_key() -> None:
     registry = build_llm_registry(config)
 
     assert "orcarouter" not in registry.available_providers
+
+
+def test_build_llm_registry_registers_requesty() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="requesty",
+            requesty=LLMProviderConfig(
+                api_key="rqsty-test",
+                model="openai/gpt-4o-mini",
+            ),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "requesty"
+    assert "requesty" in registry.available_providers
+    provider = registry.get("requesty")
+    assert provider.name == "requesty"
+    assert provider.base_url == "https://router.requesty.ai/v1"
+
+
+def test_build_llm_registry_registers_api_route() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="api_route",
+            api_route=LLMProviderConfig(api_key="test-key"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "api_route"
+    assert registry.get("api_route").base_url == "https://global.api-route.com/v1"
+    assert registry.get("api_route")._model == "gpt-5.5"
+
+
+def test_build_llm_registry_registers_api_route_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "api-route-main": LLMInstanceConfig(
+                    name="API Route",
+                    provider_type="api_route",
+                    api_key="test-key",
+                    model="gpt-5.5",
+                )
+            },
+            default_chain=["api-route-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "api-route-main"
+    assert registry.get("api-route-main").name == "api_route"
+    assert registry.get("api-route-main").base_url == "https://global.api-route.com/v1"
+
+
+def test_build_llm_registry_registers_cheaperinference() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="cheaperinference",
+            cheaperinference=LLMProviderConfig(api_key="ci_live_test"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "cheaperinference"
+    assert registry.get("cheaperinference").base_url == "https://api.cheaperinference.com/v1"
+    assert registry.get("cheaperinference")._model == "gpt-5.4-mini"
+
+
+def test_build_llm_registry_registers_cheaperinference_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "cheaperinference-main": LLMInstanceConfig(
+                    name="Cheaper Inference",
+                    provider_type="cheaperinference",
+                    api_key="ci_live_test",
+                    model="gpt-5.4-mini",
+                )
+            },
+            default_chain=["cheaperinference-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "cheaperinference-main"
+    assert registry.get("cheaperinference-main").name == "cheaperinference"
+    assert registry.get("cheaperinference-main").base_url == "https://api.cheaperinference.com/v1"
+
+
+def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+            cheaperinference=LLMProviderConfig(model="gpt-5.4-mini"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "cheaperinference" not in registry.available_providers
+
+
+def test_build_llm_registry_omits_requesty_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "requesty" not in registry.available_providers
 
 
 def test_build_llm_registry_registers_openai_compatible() -> None:
@@ -608,6 +735,77 @@ def test_ollama_embedding_without_base_url_uses_local_default(
     assert service._provider.name == "ollama"
     assert service._provider.base_url == "http://127.0.0.1:11434/v1"
     assert "back-compat" not in caplog.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Regression: issue #318 — the packaged Windows desktop build shipped an
+# openai SDK whose vendored httpx wrapper raised from ``aclose()``
+# ("'AsyncHttpxClientWrapper' object has no attribute '_mounts'"). Ollama
+# embedding inherited OpenAIProvider, so building it constructed an
+# AsyncOpenAI client the embedding path never used; that raise was swallowed
+# by ``build_embedding_service`` and every probe reported "misconfigured"
+# (init 409 forever, recommendation pool permanently empty). Embedding must
+# not depend on the chat SDK at all.
+
+
+def test_ollama_embedding_builds_without_openai_sdk(tmp_path, monkeypatch) -> None:
+    """Building Ollama embedding must not construct an AsyncOpenAI client."""
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import openai_provider as openai_provider_mod
+
+    def _broken_async_openai(*args, **kwargs):
+        raise AttributeError("'AsyncHttpxClientWrapper' object has no attribute '_mounts'")
+
+    monkeypatch.setattr(openai_provider_mod, "AsyncOpenAI", _broken_async_openai)
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="test-key", model="gpt-4o"),
+            embedding=EmbeddingConfig(
+                provider="ollama",
+                model="bge-m3",
+                base_url="http://127.0.0.1:11435/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._model == "bge-m3"
+    assert service._provider.base_url == "http://127.0.0.1:11435/v1"
+    # No chat SDK client is built, so a broken openai/httpx pair in a packaged
+    # build cannot take embedding down with it.
+    assert not hasattr(service._provider, "_client")
+
+
+def test_embedding_build_failure_is_logged_with_cause(tmp_path, monkeypatch, caplog) -> None:
+    """A failed embedding build must say why instead of silently returning None."""
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated provider construction failure")
+
+    monkeypatch.setattr("openbiliclaw.llm.embedding.EmbeddingService", _boom)
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="test-key", model="gpt-4o"),
+            embedding=EmbeddingConfig(provider="ollama", model="bge-m3"),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is None
+    assert "embedding service" in caplog.text.lower()
+    assert "simulated provider construction failure" in caplog.text
 
 
 # ---------------------------------------------------------------------------

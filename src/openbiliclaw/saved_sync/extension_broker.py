@@ -34,6 +34,7 @@ _PLATFORM_SLUGS = {
     "twitter": "x",
     "zhihu": "zhihu",
     "reddit": "reddit",
+    "tiktok": "tiktok",
 }
 _TERMINAL_JOB_STATUSES = frozenset(
     {

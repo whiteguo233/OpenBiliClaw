@@ -389,9 +389,7 @@ def _no_proxy_value(*values: object) -> str:
         if raw is None:
             continue
         raw_items = (
-            raw
-            if isinstance(raw, (list, tuple, set, frozenset))
-            else re.split(r"[,\s]+", str(raw))
+            raw if isinstance(raw, (list, tuple, set, frozenset)) else re.split(r"[,\s]+", str(raw))
         )
         for item in raw_items:
             if item is None:

@@ -14,14 +14,14 @@ import logging
 import os
 import shlex
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw import __version__
 from openbiliclaw.proc import no_window_kwargs
 
-from .base import LLMResponse
+from .base import LLMResponse, LLMStreamChunk
 from .sponsored_errors import (
     SponsoredContractMismatchError,
     SponsoredError,
@@ -231,6 +231,87 @@ class SponsoredProvider:
                 "caller": caller,
             },
         )
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        caller: str = "",
+    ) -> LLMResponse:
+        """Adapt the project's native-FC interface using its existing simulation contract.
+
+        The upstream sponsor model need not support native HTTP tool fields.
+        Tool schemas and results remain prompt data; only Core executes tools.
+        """
+        from .service import (
+            _flatten_agent_messages,
+            _parse_simulated_tool_calls,
+            _render_simulated_tool_block,
+            _tool_schema_name,
+        )
+
+        system, history, user = _flatten_agent_messages(messages)
+        names = [name for tool in tools if (name := _tool_schema_name(tool))]
+        if tools:
+            system += (
+                "\n\n<available_tools>\n" + _render_simulated_tool_block(tools) + "\n"
+                "</available_tools>\n\n<tool_call_format>\n"
+                "如果你需要调用工具，请返回如下 JSON（不要附带任何其他文字）：\n"
+                '{"tool_call": {"name": "工具名", "arguments": {参数}}}\n'
+                "需要连续调用多个工具时可以返回：\n"
+                '{"tool_calls": [{"name": "工具名", "arguments": {参数}}, ...]}\n'
+                "如果不需要调用工具，正常回复用户即可（不要输出 JSON）。\n"
+                "</tool_call_format>"
+            )
+        canonical = [
+            {"role": "system", "content": system.strip()},
+            *history,
+            {"role": "user", "content": user},
+        ]
+        response = await self.execute_task(
+            task_id="llm.tools",
+            user_payload={
+                "messages": canonical,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
+                "caller": caller,
+            },
+        )
+        calls = _parse_simulated_tool_calls(response.content, names) if tools else None
+        if calls:
+            response.tool_calls = calls
+            response.content = ""
+        return response
+
+    async def stream_complete(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Use the project's buffered stream adapter: one content delta and a terminal.
+
+        This provides the stream interface, not an upstream token-level SSE claim.
+        """
+        response = await self.complete(messages, **kwargs)
+        if response.content:
+            yield LLMStreamChunk(delta=response.content)
+        yield LLMStreamChunk(response=response)
+
+    async def stream_complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        response = await self.complete_with_tools(messages, tools, **kwargs)
+        if response.content:
+            yield LLMStreamChunk(delta=response.content)
+        yield LLMStreamChunk(response=response)
 
     async def embedding(self, value: str, *, image: bool = False) -> list[float]:
         """Return a validated vector in the signed model's fixed embedding space."""

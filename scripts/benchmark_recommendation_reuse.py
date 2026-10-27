@@ -123,34 +123,50 @@ def main() -> None:
                 if row:
                     vector = decode_embedding_vector_payload(row[0])
                     if vector:
-                        embeddings[item.bvid] = vector
+                        embeddings[item.scoring_key] = vector
         curator = PoolCurator(b)
         context = curator.build_context()
         scores = curator.score_candidates(candidates, context)
+        legacy_embeddings = {
+            item.bvid: embeddings[item.scoring_key]
+            for item in candidates
+            if item.scoring_key in embeddings
+        }
+        legacy_scores = {
+            item.bvid: scores[item.scoring_key] for item in candidates if item.scoring_key in scores
+        }
         for count in [40, 80]:
             items = candidates[:count]
             timings = [[], []]
-            kwargs = dict(
-                limit=10,
-                score_override=scores,
-                embeddings=embeddings,
-                amplification_guard=context.over_budget_amplification_keys,
-            )
+            selector_kwargs = [
+                dict(
+                    limit=10,
+                    score_override=legacy_scores,
+                    embeddings=legacy_embeddings,
+                    amplification_guard=context.over_budget_amplification_keys,
+                ),
+                dict(
+                    limit=10,
+                    score_override=scores,
+                    embeddings=embeddings,
+                    amplification_guard=context.over_budget_amplification_keys,
+                ),
+            ]
             for i in range(args.rounds):
                 picked = [None, None]
                 for j in [i % 2, 1 - i % 2]:
                     start = time.perf_counter()
                     batch = [before_engine, RecommendationEngine][j]._select_diversified_batch(
-                        items, **kwargs
+                        items, **selector_kwargs[j]
                     )
                     timings[j].append((time.perf_counter() - start) * 1000)
                     picked[j] = [x.bvid for x in batch]
                 assert picked[0] == picked[1]
             result["selector_" + str(count)] = {
                 "candidates": len(items),
-                "embedding_coverage": sum(x.bvid in embeddings for x in items),
+                "embedding_coverage": sum(x.scoring_key in embeddings for x in items),
                 "dimensions": sorted(
-                    {len(embeddings[x.bvid]) for x in items if x.bvid in embeddings}
+                    {len(embeddings[x.scoring_key]) for x in items if x.scoring_key in embeddings}
                 ),
                 "selected": len(picked[0]),
                 "before_median_ms": round(statistics.median(timings[0][1:]), 2),
@@ -178,22 +194,33 @@ def main() -> None:
                 )
                 for i in range(count)
             ]
-            vectors = {
+            vectors_by_bvid = {
                 x.bvid: ([0.0] * 32 if i % 9 == 0 else [rng.uniform(-1, 1) for _ in range(32)])
                 for i, x in enumerate(candidates)
                 if seed % 3 == 0 or i % 4 != 0
             }
-            kwargs = dict(
+            scores_by_bvid = {x.bvid: (0.5 if seed % 5 == 0 else rng.random()) for x in candidates}
+            bonuses_by_bvid = {x.bvid: rng.uniform(-0.1, 0.1) for x in candidates}
+            legacy_kwargs = dict(
                 limit=limit,
-                embeddings=vectors,
-                score_override={
-                    x.bvid: (0.5 if seed % 5 == 0 else rng.random()) for x in candidates
-                },
-                relevance_bonus={x.bvid: rng.uniform(-0.1, 0.1) for x in candidates},
+                embeddings=vectors_by_bvid,
+                score_override=scores_by_bvid,
+                relevance_bonus=bonuses_by_bvid,
                 amplification_guard={"topic-0", "topic-1"},
             )
-            x = before_engine._select_diversified_batch(candidates, **kwargs)
-            y = RecommendationEngine._select_diversified_batch(candidates, **kwargs)
+            current_kwargs = dict(
+                limit=limit,
+                embeddings={
+                    x.scoring_key: vectors_by_bvid[x.bvid]
+                    for x in candidates
+                    if x.bvid in vectors_by_bvid
+                },
+                score_override={x.scoring_key: scores_by_bvid[x.bvid] for x in candidates},
+                relevance_bonus={x.scoring_key: bonuses_by_bvid[x.bvid] for x in candidates},
+                amplification_guard={"topic-0", "topic-1"},
+            )
+            x = before_engine._select_diversified_batch(candidates, **legacy_kwargs)
+            y = RecommendationEngine._select_diversified_batch(candidates, **current_kwargs)
             assert [r.bvid for r in x] == [r.bvid for r in y], seed
         result["edge_scenarios_identical"] = 48
         result["baseline_commit"] = baseline_commit

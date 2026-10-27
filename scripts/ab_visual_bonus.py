@@ -198,7 +198,7 @@ def _compute_bonus_map(
     contents: list[DiscoveredContent],
     emb: _SyntheticEmb,
 ) -> dict[str, float]:
-    """Per-bvid bonus using the production _cover_bonus_from_vec + URL-keyed lookup."""
+    """Per-scoring-key bonus using the production formula and URL-keyed lookup."""
     anchor_vecs = [emb._anchor]  # one anchor; embed() returns it for any text
     bonus: dict[str, float] = {}
     for content in contents:
@@ -207,7 +207,7 @@ def _compute_bonus_map(
             continue
         b = RecommendationEngine._cover_bonus_from_vec(cover_vec, anchor_vecs)
         if b > 0.0:
-            bonus[content.bvid] = b
+            bonus[content.scoring_key] = b
     return bonus
 
 
@@ -308,7 +308,8 @@ def _bonus_stats(bonus_map: dict[str, float], specs: list[CandidateSpec]) -> dic
     # them keeps n_nonzero/min_nonzero meaningful and prevents min_nonzero from
     # silently reporting the semantic anchor.
     values = [value for value in bonus_map.values() if abs(value) > 0.0]
-    all_bonus = [bonus_map.get(s.bvid, 0.0) for s in specs]
+    scoring_keys = {spec.bvid: _spec_to_content(spec).scoring_key for spec in specs}
+    all_bonus = [bonus_map.get(scoring_keys[s.bvid], 0.0) for s in specs]
     # Per-bucket mean bonus.
     buckets: list[dict[str, Any]] = []
     for label, lo, hi in SIM_BUCKETS:
@@ -317,7 +318,7 @@ def _bonus_stats(bonus_map: dict[str, float], specs: list[CandidateSpec]) -> dic
             for s in specs
             if lo <= s.target_cos < hi or (label == "[0.45,0.60]" and s.target_cos >= lo)
         ]
-        bonused = [bonus_map.get(s.bvid, 0.0) for s in in_bucket]
+        bonused = [bonus_map.get(scoring_keys[s.bvid], 0.0) for s in in_bucket]
         buckets.append(
             {
                 "bucket": label,
@@ -522,7 +523,7 @@ def _profile_bonus_map(
     pos_centroids: list[list[float]],
     neg_centroids: list[list[float]],
 ) -> dict[str, float]:
-    """Per-bvid visual-profile bonus using the real engine helper."""
+    """Per-scoring-key visual-profile bonus using the real engine helper."""
     engine = RecommendationEngine
     from openbiliclaw.recommendation.visual_profile import VisualCluster, contested_pairs
 
@@ -540,7 +541,7 @@ def _profile_bonus_map(
             cover_vec, pos_centroids, neg_centroids, contested
         )
         if abs(b) > 0.0:
-            bonus[content.bvid] = b
+            bonus[content.scoring_key] = b
     return bonus
 
 
@@ -570,8 +571,8 @@ def run_ab_visual_bonus(config: ABConfig | None = None) -> dict[str, Any]:
     pos_cent, neg_cent = _build_profile_centroids(specs, contents, emb, pool.dim)
     profile_bonus = _profile_bonus_map(specs, contents, emb, pos_cent, neg_cent)
     combined = dict(baseline["bonus"])
-    for bvid, b in profile_bonus.items():
-        combined[bvid] = combined.get(bvid, 0.0) + b
+    for scoring_key, b in profile_bonus.items():
+        combined[scoring_key] = combined.get(scoring_key, 0.0) + b
     profile_effect = _effect_metrics(specs, contents, combined, cfg.k)
     profile_stats = _bonus_stats(_production_bonus_map(contents, combined), specs)
 

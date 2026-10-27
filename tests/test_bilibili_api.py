@@ -994,6 +994,117 @@ async def test_get_video_comments_returns_top_n_comments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_reply_notifications_returns_feed_items() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=def")
+    client._client = RouteAsyncClient(
+        {
+            "/x/msgfeed/reply": [
+                {
+                    "code": 0,
+                    "data": {
+                        "items": [
+                            {"id": 2, "item": {"at_details": [{"mid": 99}]}},
+                            {"id": 1, "item": {"at_details": []}},
+                        ],
+                        "cursor": {"is_end": True},
+                    },
+                }
+            ]
+        }
+    )
+
+    items = await client.get_reply_notifications()
+
+    assert [item["id"] for item in items] == [2, 1]
+    assert client._client.calls[0][0].endswith("/x/msgfeed/reply")
+
+
+async def test_get_reply_notifications_tolerates_a_missing_feed() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=def")
+    client._client = RouteAsyncClient({"/x/msgfeed/reply": [{"code": 0, "data": {}}]})
+
+    assert await client.get_reply_notifications() == []
+
+
+async def test_get_video_comments_follows_cursor_pages() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 123, "stat": {}, "owner": {}}}],
+            "/x/v2/reply/main": [
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 1,
+                                "member": {"uname": "alice"},
+                                "content": {"message": "第一条"},
+                            }
+                        ],
+                        "cursor": {"next": 2, "is_end": False},
+                    },
+                },
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 2,
+                                "member": {"uname": "bob"},
+                                "content": {"message": "第二条"},
+                            }
+                        ],
+                        "cursor": {"next": 0, "is_end": True},
+                    },
+                },
+            ],
+        }
+    )
+
+    comments = await client.get_video_comments("BV1xx", limit=2)
+
+    assert [comment.uname for comment in comments] == ["alice", "bob"]
+    pages = [
+        params["next"]
+        for url, params, _headers in client._client.calls
+        if url.endswith("/x/v2/reply/main") and params is not None
+    ]
+    assert pages == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_get_video_comments_stops_when_cursor_is_missing() -> None:
+    """The pre-cursor response shape must stay a single request, not a loop."""
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 123, "stat": {}, "owner": {}}}],
+            "/x/v2/reply/main": [
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 1,
+                                "member": {"uname": "alice"},
+                                "content": {"message": "第一条"},
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+
+    comments = await client.get_video_comments("BV1xx", limit=5)
+
+    assert len(comments) == 1
+    requests = [url for url, _params, _headers in client._client.calls]
+    assert sum(1 for url in requests if url.endswith("/x/v2/reply/main")) == 1
+
+
+@pytest.mark.asyncio
 async def test_get_ranking_returns_empty_list_when_data_is_null() -> None:
     """Regression: B站 ``ranking/v2`` may return ``"data": null`` for empty
     regions or under rate-limiting. The client must degrade to ``[]`` instead
@@ -1302,3 +1413,105 @@ async def test_delete_comment_sends_aid_csrf_and_rpid() -> None:
     assert post_data["type"] == 1
     assert post_data["rpid"] == "987"
     assert post_data["csrf"] == "csrf123"
+
+
+async def test_send_private_message_posts_to_the_chat_endpoint() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123; DedeUserID=789")
+    fake = RouteAsyncClient({"/web_im/v1/web_im/send_msg": [{"code": 0, "data": {"msg_key": 42}}]})
+    client._client = fake
+
+    result = await client.send_private_message(123, "  推荐你看这条  ")
+
+    assert result == {"msg_key": 42}
+    url, payload, headers = fake.calls[-1]
+    assert url == "https://api.vc.bilibili.com/web_im/v1/web_im/send_msg"
+    assert payload["msg[sender_uid]"] == "789"
+    assert payload["msg[receiver_id]"] == "123"
+    assert payload["msg[receiver_type]"] == "1"
+    assert payload["msg[msg_type]"] == "1"
+    assert payload["csrf"] == payload["csrf_token"] == "csrf123"
+    assert payload["msg[dev_id]"].startswith("web_")
+    assert '"content": "推荐你看这条"' in str(payload["msg[content]"])
+    assert headers is not None and headers["referer"] == "https://www.bilibili.com"
+
+
+async def test_send_private_message_surfaces_upstream_refusal() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123; DedeUserID=789")
+    fake = RouteAsyncClient(
+        {
+            "/web_im/v1/web_im/send_msg": [
+                {"code": 25005, "message": "发送失败，对方设置了不接收陌生人私信"}
+            ]
+        }
+    )
+    client._client = fake
+
+    with pytest.raises(BilibiliAPIError) as excinfo:
+        await client.send_private_message(123, "hi")
+
+    assert "陌生人私信" in str(excinfo.value)
+    assert excinfo.value.code == 25005
+
+
+async def test_send_private_message_requires_a_logged_in_cookie() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+
+    with pytest.raises(BilibiliAuthExpiredError):
+        await client.send_private_message(123, "hi")
+
+
+async def test_get_space_profile_signs_the_wbi_request() -> None:
+    client = BilibiliAPIClient(cookie="")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                        }
+                    },
+                }
+            ],
+            "/x/space/wbi/acc/info": [{"code": 0, "data": {"mid": 222156, "name": "littlewish"}}],
+        }
+    )
+    client._client = fake
+
+    data = await client.get_space_profile(222156)
+
+    assert data["name"] == "littlewish"
+    url, params, _headers = fake.calls[-1]
+    assert url.endswith("/x/space/wbi/acc/info")
+    assert params["mid"] == "222156"
+    assert params["w_rid"]
+    assert params["wts"]
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [(0, "confirmed"), (86101, "pending"), (86090, "scanned"), (86038, "expired")],
+)
+async def test_qr_poll_preserves_codes_and_only_returns_confirmed_cookies(code, status):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"code": code, "url": "https://www.bilibili.com/"}},
+            headers=[
+                ("set-cookie", "SESSDATA=fake-session; Path=/"),
+                ("set-cookie", "unrelated=excluded; Path=/"),
+            ],
+        )
+
+    client = BilibiliAPIClient(cookie="")
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.poll_qrcode("fake-key")
+        assert result["raw_code"] == code
+        assert result["status"] == status
+        assert result["cookie"] == ("SESSDATA=fake-session" if code == 0 else "")
+    finally:
+        await client.close()

@@ -893,3 +893,174 @@ def test_raw_ceiling_blocks_recovery_and_stops_on_untrimmable_excess(
         ).fetchone()[0]
         == "suppressed"
     )
+
+
+class _SteppingDatetime(datetime):
+    """Deterministic clock: returns each queued instant once, then the last."""
+
+    times: list[datetime] = []
+    calls = 0
+
+    @classmethod
+    def now(cls, tz: Any = None) -> datetime:
+        value = cls.times[min(cls.calls, len(cls.times) - 1)]
+        cls.calls += 1
+        if tz is None:
+            return value.replace(tzinfo=None)
+        return value.astimezone(tz)
+
+
+_BOUNDARY_T0 = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
+_BOUNDARY_T1 = datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
+
+
+def _seed_temporal_boundary_row(db: Database, bvid: str) -> None:
+    """Seed a row eligible at t0 but review-due at t1 (legacy 3-day TTL)."""
+    _seed_ready(db, bvid, topic_group="boundary")
+    db.conn.execute(
+        """
+        UPDATE content_cache
+        SET temporal_class = 'breaking',
+            temporal_confidence = 1.0,
+            temporal_policy_version = 'v1',
+            published_at = '2026-09-28T00:00:00+00:00'
+        WHERE bvid = ?
+        """,
+        (bvid,),
+    )
+    db.conn.commit()
+
+
+def test_availability_scan_result_depends_on_pinned_now(tmp_path: Path) -> None:
+    """Document the noise mechanism: an unpinned clock flips boundary rows."""
+    db = _database(tmp_path)
+    _seed_ready(db, "BV_STABLE_1", topic_group="stable-1")
+    _seed_ready(db, "BV_STABLE_2", topic_group="stable-2")
+    _seed_temporal_boundary_row(db, "BV_BOUNDARY")
+
+    at_t0 = db._load_available_pool_candidate_rows_on(
+        db.conn,
+        _now=_BOUNDARY_T0,
+    )
+    at_t1 = db._load_available_pool_candidate_rows_on(
+        db.conn,
+        _now=_BOUNDARY_T1,
+    )
+
+    assert len(at_t0) == 3
+    assert len(at_t1) == 2
+    assert {str(row["bvid"]) for row in at_t1} == {"BV_STABLE_1", "BV_STABLE_2"}
+
+
+def test_maintenance_below_target_commits_when_clock_crosses_temporal_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pool below target + a mid-transaction temporal flip must not roll back.
+
+    Regression: before/after availability scans each took a fresh clock (and
+    a fresh delight threshold), so a row crossing its temporal boundary — or
+    a percentile boundary shifted by the transaction's own writes — faked an
+    inventory drop and the invariant rolled every batch back forever once
+    the pool sat below target (field log 2026-08: 652 consecutive rollbacks).
+    Both scans now share one baseline captured at transaction start.
+    """
+    db = _database(tmp_path)
+    _seed_ready(db, "BV_STABLE_1", topic_group="stable-1")
+    _seed_ready(db, "BV_STABLE_2", topic_group="stable-2")
+    _seed_temporal_boundary_row(db, "BV_BOUNDARY")
+    _SteppingDatetime.times = [_BOUNDARY_T0] * 5 + [_BOUNDARY_T1] * 100
+    _SteppingDatetime.calls = 0
+    monkeypatch.setattr(database_module, "datetime", _SteppingDatetime)
+
+    result = db.maintain_pool_inventory(
+        target=10,
+        raw_ceiling=100,
+        source_share_quotas={"bilibili": 100},
+    )
+
+    assert result.rolled_back is False
+    assert result.available_before == 3
+    assert result.available_after == 3
+    # The boundary row is still measured against the transaction baseline:
+    # maintenance neither drops it from the after scan nor transitions it.
+    assert db.conn.execute(
+        "SELECT pool_status FROM content_cache WHERE bvid = 'BV_BOUNDARY'"
+    ).fetchone()[0] in (None, "fresh")
+
+
+def test_maintenance_snapshots_delight_threshold_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One dynamic-threshold computation per transaction, shared by all scans."""
+    db = _database(tmp_path)
+    for index in range(4):
+        _seed_ready(db, f"BV_THRESHOLD_{index}", topic_group=f"threshold-{index}")
+    calls = 0
+    original = db._dynamic_delight_threshold_on
+
+    def _counting(conn: Any, *, default_threshold: float) -> float:
+        nonlocal calls
+        calls += 1
+        return original(conn, default_threshold=default_threshold)
+
+    monkeypatch.setattr(db, "_dynamic_delight_threshold_on", _counting)
+
+    result = db.maintain_pool_inventory(
+        target=10,
+        raw_ceiling=100,
+        source_share_quotas={"bilibili": 100},
+    )
+
+    assert result.rolled_back is False
+    assert calls == 1
+
+
+def test_rollback_result_reports_attempted_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rolled-back result must describe the reverted batch, not fake zeros."""
+    db = _database(tmp_path)
+    for index in range(3):
+        _seed_ready(db, f"BV_KEEP_{index}", topic_group=f"keep-{index}")
+    for index in range(2):
+        _seed_unready(db, f"BV_STALE_{index}", topic_group=f"stale-{index}")
+    db.conn.execute(
+        "UPDATE content_cache SET discovered_at = '2026-01-01 00:00:00' "
+        "WHERE bvid LIKE 'BV_STALE_%'"
+    )
+    db.conn.commit()
+    content_before = {
+        str(row["bvid"]): str(row["pool_status"])
+        for row in db.conn.execute(
+            "SELECT bvid, pool_status FROM content_cache ORDER BY bvid"
+        ).fetchall()
+    }
+
+    def _force_failure(**_: Any) -> None:
+        raise database_module.PoolMaintenanceInvariantError("forced test failure")
+
+    monkeypatch.setattr(db, "_validate_pool_maintenance_invariant", _force_failure)
+
+    result = db.maintain_pool_inventory(
+        target=10,
+        raw_ceiling=100,
+        source_share_quotas={"bilibili": 100},
+    )
+
+    assert result.rolled_back is True
+    assert result.reason == "forced test failure"
+    assert result.trimmed_stale == 2
+    assert result.mutation_count == 2
+    assert result.has_more is False
+    # Inventory counters still describe the durable post-rollback state.
+    assert result.available_after == result.available_before == 3
+    content_after = {
+        str(row["bvid"]): str(row["pool_status"])
+        for row in db.conn.execute(
+            "SELECT bvid, pool_status FROM content_cache ORDER BY bvid"
+        ).fetchall()
+    }
+    assert content_after == content_before

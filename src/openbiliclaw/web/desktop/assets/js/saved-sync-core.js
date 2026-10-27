@@ -9,11 +9,13 @@
     bili: "bilibili",
     xhs: "xiaohongshu",
     dy: "douyin",
+    tt: "tiktok",
     yt: "youtube",
     x: "twitter",
     zh: "zhihu",
     rd: "reddit",
     wb: "weibo",
+    ig: "instagram",
     gh: "github",
   });
 
@@ -44,11 +46,13 @@
     try {
       const host = new URL(text(item?.content_url || item?.url)).hostname.toLowerCase();
       if (host === "youtu.be" || host.endsWith(".youtube.com")) return "youtube";
+      if (host === "tiktok.com" || host.endsWith(".tiktok.com")) return "tiktok";
       if (host === "x.com" || host.endsWith(".x.com") || host.endsWith(".twitter.com")) return "twitter";
       if (host.endsWith(".zhihu.com")) return "zhihu";
       if (["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"].some(
         (domain) => host === domain || host.endsWith(`.${domain}`),
       )) return "weibo";
+      if (host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am" || host.endsWith(".instagr.am")) return "instagram";
       if (host.endsWith(".bilibili.com") || host === "b23.tv") return "bilibili";
       if (["bgm.tv", "bangumi.tv"].some((domain) => host === domain || host.endsWith(`.${domain}`))) return "bangumi";
       if (host === "github.com" || host === "www.github.com") return "github";

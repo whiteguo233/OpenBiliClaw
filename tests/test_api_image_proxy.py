@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -124,6 +125,10 @@ class FakeHTTPX:
 def fake_httpx(monkeypatch: pytest.MonkeyPatch) -> FakeHTTPX:
     fake = FakeHTTPX()
     monkeypatch.setattr(httpx, "AsyncClient", fake.client_class())
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.image_cache.resolve_public_addresses",
+        AsyncMock(return_value=("1.1.1.1",)),
+    )
     return fake
 
 
@@ -406,3 +411,52 @@ async def test_hot_reload_rebinds_new_controller_to_same_app_coordinator(
 
     assert new_controller.image_fetch_coordinator is coordinator
     assert restart_bindings == [coordinator]
+
+
+@pytest.mark.asyncio
+async def test_image_service_forwarding_reuses_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A batch of cached covers must share the app-owned forwarding pool."""
+    monkeypatch.setenv("OPENBILICLAW_IMAGE_SERVICE_URL", "http://127.0.0.1:18475")
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    original_client = httpx.AsyncClient
+    created: list[httpx.AsyncClient] = []
+
+    def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+        client = original_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    content=b"cover",
+                    headers={
+                        "content-type": "image/jpeg",
+                        "x-image-cache": "hit",
+                    },
+                )
+            ),
+            **kwargs,
+        )
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(httpx, "AsyncClient", client_factory)
+    try:
+        async with original_client(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as browser:
+            for name in ("one", "two", "three"):
+                response = await browser.get(
+                    "/api/image-proxy", params={"url": f"https://i0.hdslb.com/{name}.jpg"}
+                )
+                assert response.status_code == 200
+                assert response.content == b"cover"
+        assert len(created) == 1
+        assert not created[0].is_closed
+        # FastAPI >= 0.161 (Starlette >= 1.0) dropped ``Router.shutdown()``;
+        # the registered shutdown handlers are the stable surface.
+        for shutdown_handler in app.router.on_shutdown:
+            await shutdown_handler()
+        assert created[0].is_closed
+        assert app.state.image_service_client is None
+    finally:
+        for client in created:
+            await client.aclose()

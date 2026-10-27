@@ -39,6 +39,7 @@ import {
   handleDySearchTaskResult,
   handleDyHotTaskResult,
   handleDyFeedTaskResult,
+  ensureDyTaskRecovery,
   pollDyTaskNow,
   type DyFeedResult,
   type DyHotResult,
@@ -46,6 +47,14 @@ import {
   type DySearchResult,
   type DyTaskResult,
 } from "./dy-task-dispatcher.js";
+import {
+  startTiktokTaskPolling,
+  handleTiktokTaskAlarm,
+  handleTiktokScopeResult,
+  ensureTiktokTaskRecovery,
+  pollTiktokTaskNow,
+} from "./tiktok-task-dispatcher.ts";
+import type { TiktokScopeResult } from "../content/tiktok/task-executor.ts";
 import {
   startYtTaskPolling,
   handleYtTaskAlarm,
@@ -85,6 +94,14 @@ import {
   pollV2EXTaskNow,
 } from "./v2ex-task-dispatcher.ts";
 import {
+  ensureInstagramTaskRecovery,
+  handleInstagramTaskAlarm,
+  handleInstagramTaskProgress,
+  handleInstagramTaskResult,
+  pollInstagramTaskNow,
+  startInstagramTaskPolling,
+} from "./instagram-task-dispatcher.ts";
+import {
   startXTaskPolling,
   handleXTaskAlarm,
   pollXTaskNow,
@@ -106,6 +123,10 @@ import type { WeiboTaskResult } from "../content/weibo/task-executor.ts";
 import type { RedditTaskResult } from "../content/reddit/task-executor.ts";
 import type { LinuxdoTaskResult } from "../content/linuxdo/task-executor.ts";
 import type { V2EXScopeResult } from "../content/v2ex/task-executor.ts";
+import type {
+  InstagramTaskProgress,
+  InstagramTaskResult,
+} from "../content/instagram/task-executor.ts";
 import {
   openExtensionUi,
   parseDelightBvid,
@@ -298,6 +319,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
     pollDyTaskNow();
     return;
   }
+  if (eventType === "tiktok_task_available") {
+    pollTiktokTaskNow();
+    return;
+  }
   if (eventType === "yt_task_available") {
     pollYtTaskNow();
     return;
@@ -320,6 +345,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
   }
   if (eventType === "v2ex_task_available") {
     pollV2EXTaskNow();
+    return;
+  }
+  if (eventType === "instagram_task_available") {
+    pollInstagramTaskNow();
     return;
   }
   if (eventType === "x_task_available") {
@@ -605,8 +634,10 @@ function startPlatformTaskPolling(): void {
   startRedditTaskPolling();
   startLinuxdoTaskPolling();
   startV2EXTaskPolling();
+  startInstagramTaskPolling();
   startXTaskPolling();
   startBiliTaskPolling();
+  startTiktokTaskPolling();
 }
 
 async function startServiceWorkerAfterRecovery(): Promise<void> {
@@ -620,6 +651,9 @@ async function startServiceWorkerAfterRecovery(): Promise<void> {
   await ensureLinuxdoTaskRecovery();
   await ensureNativeSaveTaskRecovery();
   await ensureV2EXTaskRecovery();
+  await ensureInstagramTaskRecovery();
+  await ensureDyTaskRecovery();
+  await ensureTiktokTaskRecovery();
   await runtimeStreamReady;
   startPlatformTaskPolling();
   startCookieSync();
@@ -765,6 +799,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "TIKTOK_SCOPE_RESULT") {
+    void handleTiktokScopeResult(message.data as TiktokScopeResult, sender.tab?.id ?? -1)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
   if (message.action === "YT_SCOPE_RESULT") {
     void handleYtScopeResult(message.data as YtScopeResult)
       .then(() => {
@@ -825,6 +869,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "INSTAGRAM_TASK_PROGRESS") {
+    void ensureInstagramTaskRecovery()
+      .then(() => handleInstagramTaskProgress(message.data as InstagramTaskProgress, sender))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error: unknown) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
+  if (message.action === "INSTAGRAM_TASK_RESULT") {
+    void ensureInstagramTaskRecovery()
+      .then(() => handleInstagramTaskResult(message.data as InstagramTaskResult, sender))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error: unknown) => sendResponse({ ok: false, error: String(error) }));
+    return true;
+  }
   if (message.action === "BILI_TASK_RESULT") {
     void handleBiliTaskResult(message.data as BiliTaskResult)
       .then(() => {
@@ -863,12 +921,14 @@ if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     handleXhsTaskAlarm(alarm.name);
     handleDyTaskAlarm(alarm.name);
+    handleTiktokTaskAlarm(alarm.name);
     handleYtTaskAlarm(alarm.name);
     handleZhihuTaskAlarm(alarm.name);
     handleWeiboTaskAlarm(alarm.name);
     void handleRedditTaskAlarm(alarm.name);
     void handleLinuxdoTaskAlarm(alarm.name);
     handleV2EXTaskAlarm(alarm.name);
+    handleInstagramTaskAlarm(alarm.name);
     void handleXTaskAlarm(alarm.name);
     handleBiliTaskAlarm(alarm.name);
     if (handleCookieSyncAlarm(alarm.name)) {

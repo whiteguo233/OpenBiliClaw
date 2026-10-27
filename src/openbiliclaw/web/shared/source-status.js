@@ -63,8 +63,8 @@
 
   /** Platform slugs the contract covers, in settings-page display order. */
   const SOURCE_KEYS = Object.freeze([
-    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",
-    "bangumi", "linuxdo", "v2ex",
+    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit",
+    "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 
   const SOURCE_CAPABILITIES = Object.freeze({
@@ -73,6 +73,9 @@
     douyin: Object.freeze({ guidedInit: true }),
     weibo: Object.freeze({ guidedInit: true }),
     youtube: Object.freeze({ guidedInit: true }),
+    // TikTok account bootstrap (likes/favorites/history/follows) runs through
+    // the extension tiktok_tasks queue, so it participates in guided init.
+    tiktok: Object.freeze({ guidedInit: true }),
     twitter: Object.freeze({ guidedInit: true }),
     github: Object.freeze({ guidedInit: true }),
     zhihu: Object.freeze({ guidedInit: true }),
@@ -80,6 +83,7 @@
     bangumi: Object.freeze({ guidedInit: true }),
     linuxdo: Object.freeze({ guidedInit: true }),
     v2ex: Object.freeze({ guidedInit: true }),
+    instagram: Object.freeze({ guidedInit: true }),
   });
   const INIT_SOURCE_KEYS = Object.freeze(
     SOURCE_KEYS.filter((key) => SOURCE_CAPABILITIES[key]?.guidedInit === true),
@@ -98,6 +102,7 @@
     douyin: "抖音",
     weibo: "微博",
     youtube: "YouTube",
+    tiktok: "TikTok",
     twitter: "X",
     github: "GitHub",
     zhihu: "知乎",
@@ -105,6 +110,7 @@
     bangumi: "Bangumi",
     linuxdo: "Linux.do",
     v2ex: "V2EX",
+    instagram: "Instagram",
   });
 
   function sourceLabel(key) {

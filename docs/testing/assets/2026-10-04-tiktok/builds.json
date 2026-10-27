@@ -1,0 +1,26 @@
+{
+  "chrome": {
+    "root": "extension",
+    "files": 159,
+    "included": [
+      "dist",
+      "popup",
+      "icons",
+      "manifest.json"
+    ],
+    "tree_sha256": "c24f4588af490385ddddc412bfe42a9758c15fb63af4715e7f35723043e379c3",
+    "version": "0.3.226",
+    "installed": false
+  },
+  "firefox": {
+    "root": "extension/dist-firefox",
+    "files": 61,
+    "included": [
+      ".",
+      "manifest.json"
+    ],
+    "tree_sha256": "8803c250c39ff8bf9b9294aa0faed89c0b4d5fc09e8b0b75ff8ab2a5c545d8a5",
+    "version": "0.3.226",
+    "installed": false
+  }
+}

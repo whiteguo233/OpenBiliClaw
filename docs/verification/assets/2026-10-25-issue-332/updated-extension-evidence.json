@@ -1,0 +1,136 @@
+{
+  "scope": "capability-increment: repaired extension load and reload, then hot12 retest",
+  "recorded_at_utc": "2026-10-25T11:03:12.872179+00:00",
+  "provenance": {
+    "source_commit": "1f1d66cc144a9692b033a21d35df3f3feccbf4fc",
+    "python_import": "/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence/src/openbiliclaw/__init__.py",
+    "extension_source_commit": "3e7069078c462d3887178b95c8e2cdfa4785011b",
+    "extension_path": "/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence/outputs/issue332-extension-review",
+    "extension_content_sha256": "c56f51d768269efe5baa04995e8e8d845fcb9715c7a0904e63ab531b92791443",
+    "browser": "Chrome for Testing",
+    "browser_executable": "/Users/white/Library/Caches/ms-playwright/chromium-1234/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "isolated_profile": true,
+    "isolated_config_and_database": true,
+    "direct_fallback": false,
+    "backend_port": 52445,
+    "original_service_port": 18420,
+    "original_service_interrupted": false
+  },
+  "browser": {
+    "extension_id": "oegfehdndnlolhgmbbiibkilonegcndi",
+    "version": "0.3.231",
+    "content_sha256": "c56f51d768269efe5baa04995e8e8d845fcb9715c7a0904e63ab531b92791443",
+    "backend_port": 52445,
+    "reload": {
+      "http_status": 200,
+      "ok": true,
+      "delivered": true,
+      "old_worker_closed": true,
+      "new_worker_observed": true
+    },
+    "initial_reload_without_developer_mode": {
+      "new_worker_observed": false,
+      "browser_ui_reason": "开发者模式关闭；已在独立测试浏览器中开启后成功重试"
+    },
+    "source_before_discovery": {
+      "state": "ready",
+      "logged_in": true
+    },
+    "background_connections_observed": 3
+  },
+  "tasks": [
+    {
+      "id": "f13f68d6-9d29-4325-9221-66425341d58f",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 10:58:51",
+      "claimed_at": "2026-10-25 10:58:51",
+      "completed_at": "2026-10-25 10:58:53",
+      "max_items": 12,
+      "hot_seed_count": 2,
+      "video_ids": [],
+      "scope_counts": null,
+      "error": "hot_ui_not_triggered",
+      "debug": {
+        "fetch_tap_install_status": "unknown",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "dom_items_harvested": 0,
+        "api_error": "Failed to execute 'json' on 'Response': Unexpected end of JSON input",
+        "ui_triggered": false,
+        "seed_aweme_id": "7553058116880930083",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1",
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 0,
+        "early_buffer_items": 0
+      }
+    }
+  ],
+  "fetch": {
+    "received": 0,
+    "enqueued": 0,
+    "elapsed_seconds": 2.312,
+    "source_counts": {},
+    "source_outcomes": {
+      "hot": "failed"
+    },
+    "thresholds": []
+  },
+  "source_access": {
+    "browser_page_title": "验证码中间页",
+    "browser_page_origin": "https://www.douyin.com",
+    "browser_page_path": "/",
+    "task_marker": true,
+    "challenge_observed_at_utc": "2026-10-25T10:59:52Z",
+    "challenge_solved_by_agent": false,
+    "human_verification_requested": true,
+    "hot_failure_cause_note": "The failed task was closed by its dispatcher. A subsequent navigation to the same task entry in the same test profile showed the challenge. Attribution of the earlier JSON-empty error to that challenge is an inference, not a captured DOM result from the closed task.",
+    "authorized_visible_puzzle_attempts": {
+      "count": 2,
+      "method": "normal browser pointer drag on the visible puzzle",
+      "result": "verification page and puzzle iframe still present; no access grant observed",
+      "agent_stopped_retrying": true
+    }
+  },
+  "storage_counts": {
+    "events": 0,
+    "seen_items": 0,
+    "profile_update_ledger": 0,
+    "saved_memberships": 0,
+    "discovery_candidates": 0,
+    "content_cache": 0,
+    "recommendations": 0
+  },
+  "original_checks": {
+    "config_sha256_unchanged": true,
+    "health_http_status": 200
+  },
+  "validation": {
+    "backend_scoped": {
+      "passed": 57,
+      "exit": 0
+    },
+    "extension_scoped": {
+      "passed": 113,
+      "failed": 0,
+      "exit": 0
+    },
+    "diff_check": "PASS"
+  },
+  "gates": {
+    "loaded_repaired_artifact": "PASS",
+    "backend_reload_worker_restart": "PASS",
+    "new_hot12_fetch": "FAIL",
+    "browser_source_access": "BLOCKED: human verification required",
+    "new_hot_positive_card": "NOT_RUN: no candidates returned"
+  },
+  "completion": "incremental only",
+  "cleanup": {
+    "worker_pid_stopped": true,
+    "api_pid_stopped": true,
+    "browser_retained_for_human_verification": true,
+    "private_runtime_retained_for_resume": true,
+    "redundant_cookie_import_file_removed": true,
+    "raw_api_worker_logs_removed": true
+  }
+}

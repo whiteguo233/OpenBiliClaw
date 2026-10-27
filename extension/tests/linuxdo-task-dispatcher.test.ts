@@ -102,8 +102,12 @@ test("dispatcher isolates discovery in an inactive Linux.do task tab", async () 
     await flush();
     assert.deepEqual(chromeMock.createdTabs.at(-1), {
       active: false,
-      url: "https://linux.do/?openbiliclaw_linuxdo_task=1",
+      url: "about:blank",
     });
+    assert.deepEqual(chromeMock.updatedTabs, [
+      { tabId: 42, muted: true },
+      { tabId: 42, url: "https://linux.do/?openbiliclaw_linuxdo_task=1" },
+    ]);
     assert.deepEqual(chromeMock.executedScripts.at(-1), {
       files: ["dist/content/linuxdo.js"],
       tabId: chromeMock.sentMessages.at(-1)?.tabId,

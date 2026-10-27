@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -22,7 +24,9 @@ from .base import (
     LLMRateLimitError,
     LLMResponse,
     LLMResponseError,
+    LLMStreamChunk,
     LLMTimeoutError,
+    LLMToolCallUnsupportedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +44,19 @@ _BILLING_BACKOFF_MARKERS = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
+# A reasoning-first endpoint can burn the entire output budget on invisible
+# thinking and finish truncated — ``finish_reason=length`` on chat
+# completions, ``status="incomplete"`` with
+# ``incomplete_details.reason="max_output_tokens"`` on the Responses API —
+# either with empty ``content`` or with a JSON payload truncated mid-stream.
+# Retrying with the same budget cannot succeed, so ``complete()`` reissues
+# the request once with a doubled budget, capped here to stay within common
+# provider ceilings (DeepSeek documents 64K; many gateways reject anything
+# above 32K).
+_LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens"})
+_LENGTH_RETRY_MAX_TOKENS_CAP = 32768
 
 
 class _NonRetryableRequestError(LLMProviderError):
@@ -96,10 +112,17 @@ class OpenAIProvider(LLMProvider):
         # "responses" → /v1/responses — needed by third-party gateways that
         # expose GPT models only through the Responses API (issue #72).
         self._api_flavor = api_flavor.strip().lower()
+        # Native function calling is implemented on the chat-completions
+        # flavor only (M1); responses-flavor instances use the service
+        # layer's prompt-simulation fallback.
+        self.supports_tool_calling = self._api_flavor != "responses"
         self._token_provider = token_provider
         self._timeout = timeout
         self._embedding_output_dimensionality = max(0, int(embedding_output_dimensionality or 0))
         self._reasoning_effort = reasoning_effort.strip()
+        # Volatile, successful wire adaptations only. Provider replacement
+        # clears these; model and reasoning/JSON modes must never share hints.
+        self._compatibility_hints: dict[tuple[str, str, bool, bool], tuple[bool, bool]] = {}
         # Overseas routing policy: custom injects a proxy, direct injects a
         # proxy-env-immune client, and system leaves SDK construction untouched.
         self._proxy = proxy.strip()
@@ -143,13 +166,22 @@ class OpenAIProvider(LLMProvider):
             )
         effective_model = (model or "").strip() or self._model
         effective_reasoning_effort = self._effective_reasoning_effort(reasoning_effort)
+        hint_key = (
+            effective_model,
+            effective_reasoning_effort,
+            reasoning_effort is not None,
+            json_mode,
+        )
+        omit_format, disable_thinking = self._compatibility_hints.get(hint_key, (False, False))
+        learned_omit_format = False
+        learned_disable_thinking = False
         kwargs: dict[str, Any] = {
             "model": effective_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if json_mode:
+        if json_mode and not omit_format:
             fmt = self._json_response_format()
             if fmt is not None:
                 kwargs["response_format"] = fmt
@@ -163,12 +195,15 @@ class OpenAIProvider(LLMProvider):
         if openai_effort is not None:
             kwargs["reasoning_effort"] = openai_effort
         extra_body = self._extra_body(reasoning_effort=effective_reasoning_effort)
+        if disable_thinking:
+            extra_body = {**(extra_body or {}), "thinking": {"type": "disabled"}}
         if extra_body:
             kwargs["extra_body"] = extra_body
 
         try:
             response = await self._chat_request_with_temperature_compat(**kwargs)
         except LLMProviderError as exc:
+            self._compatibility_hints.pop(hint_key, None)
             # Retry at most once: after replacement kwargs["response_format"]
             # is no longer json_object, so _uses_json_object returns False.
             if (
@@ -186,6 +221,19 @@ class OpenAIProvider(LLMProvider):
                 raise
         choice = response.choices[0]
         content = choice.message.content or ""
+        if json_mode and content.strip() and self._length_truncated(choice):
+            # The model was cut off mid-JSON by the output cap; the partial
+            # payload is unparseable for structured callers. Retry once with
+            # a doubled budget instead of handing truncated text downstream.
+            retried = await self._retry_with_larger_budget(
+                kwargs,
+                max_tokens=max_tokens,
+                send=lambda kw: self._chat_request_with_temperature_compat(**kw),
+            )
+            if retried is not None:
+                response, max_tokens = retried
+                choice = response.choices[0]
+                content = choice.message.content or ""
         if not content.strip():
             # Some OpenAI-compatible backends return HTTP 200 and report
             # completion_tokens > 0, yet ``message.content`` is empty when
@@ -199,15 +247,18 @@ class OpenAIProvider(LLMProvider):
                     kwargs["response_format"].get("type", "?"),
                 )
                 kwargs.pop("response_format")
+                learned_omit_format = True
                 response = await self._chat_request_with_temperature_compat(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
             if (
                 not content.strip()
                 and self._provider_name == "openai_compatible"
+                and not self._is_minimax_flash(effective_model)
                 and reasoning_effort is not None
                 and not effective_reasoning_effort
                 and self._reasoning_like_content(getattr(choice, "message", None))
+                and kwargs.get("extra_body", {}).get("thinking") != {"type": "disabled"}
             ):
                 # Generic OpenAI-compatible gateways do not share one
                 # portable switch for disabling thinking. Omitting
@@ -223,36 +274,50 @@ class OpenAIProvider(LLMProvider):
                 retry_extra_body = dict(kwargs.get("extra_body") or {})
                 retry_extra_body["thinking"] = {"type": "disabled"}
                 kwargs["extra_body"] = retry_extra_body
+                learned_disable_thinking = True
                 response = await self._chat_request_with_temperature_compat(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
+            if not content.strip() and self._length_truncated(choice):
+                # A reasoning-first endpoint spent the whole budget on thinking
+                # and returned reasoning-only output; only a larger budget lets
+                # the final answer through. This is the generic recovery for
+                # callers that keep the provider's configured effort (e.g. the
+                # keyword planner's merged generation).
+                retried = await self._retry_with_larger_budget(
+                    kwargs,
+                    max_tokens=max_tokens,
+                    send=lambda kw: self._chat_request_with_temperature_compat(**kw),
+                )
+                if retried is not None:
+                    response, max_tokens = retried
+                    choice = response.choices[0]
+                    content = choice.message.content or ""
             if not content.strip():
+                self._compatibility_hints.pop(hint_key, None)
                 raise self._empty_content_error(choice)
 
-        usage = None
-        if response.usage:
-            usage = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
-            # Normalize cache fields across the OpenAI-protocol family.
-            # OpenAI exposes `prompt_tokens_details.cached_tokens` since
-            # GPT-4o; DeepSeek injects `prompt_cache_hit_tokens` /
-            # `prompt_cache_miss_tokens` on the same usage object;
-            # Kimi / 通义 / 中转站 vary. We probe known fields and
-            # surface whichever the backend sent under the universal
-            # ``cached_input_tokens`` key. Downstream pricing /
-            # observability code reads only this normalized field.
-            cached = 0
-            details = getattr(response.usage, "prompt_tokens_details", None)
-            if details is not None:
-                cached = int(getattr(details, "cached_tokens", 0) or 0)
-            if not cached:
-                # DeepSeek explicit fields
-                cached = int(getattr(response.usage, "prompt_cache_hit_tokens", 0) or 0)
-            if cached:
-                usage["cached_input_tokens"] = cached
+        if self._provider_name == "openai_compatible" and (
+            learned_omit_format or learned_disable_thinking
+        ):
+            valid = True
+            if json_mode:
+                try:
+                    valid = isinstance(json.loads(content), (dict, list))
+                except (TypeError, ValueError):
+                    valid = False
+            if valid:
+                if (
+                    len(self._compatibility_hints) >= 32
+                    and hint_key not in self._compatibility_hints
+                ):
+                    self._compatibility_hints.pop(next(iter(self._compatibility_hints)))
+                self._compatibility_hints[hint_key] = (
+                    omit_format or learned_omit_format,
+                    disable_thinking or learned_disable_thinking,
+                )
+
+        usage = self._chat_usage(response)
 
         return LLMResponse(
             content=content,
@@ -261,6 +326,389 @@ class OpenAIProvider(LLMProvider):
             usage=usage,
             raw=response,
         )
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        """Chat completion with OpenAI-native function calling.
+
+        Sends ``tools=[{"type": "function", ...}]`` plus ``tool_choice="auto"``
+        and normalizes ``message.tool_calls`` into ``LLMResponse.tool_calls``
+        entries of ``{"id", "name", "arguments", "arguments_raw"}``. A response
+        with tool calls and no text content is a valid result (unlike
+        ``complete()``, which raises on empty content).
+
+        The ``/v1/responses`` flavor is not wired for tool calling in M1;
+        those instances report ``supports_tool_calling = False`` and the
+        service layer falls back to prompt simulation.
+        """
+        if self._api_flavor == "responses":
+            raise LLMToolCallUnsupportedError(
+                f"{self._provider_name} (api_flavor=responses) has no native tool calling."
+            )
+        effective_model = (model or "").strip() or self._model
+        effective_reasoning_effort = self._effective_reasoning_effort(reasoning_effort)
+        kwargs: dict[str, Any] = {
+            "model": effective_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        extra_headers = self._extra_headers()
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+        openai_effort = self._openai_reasoning_effort(
+            effective_model,
+            effective_reasoning_effort,
+        )
+        if openai_effort is not None:
+            kwargs["reasoning_effort"] = openai_effort
+        extra_body = self._extra_body(reasoning_effort=effective_reasoning_effort)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+
+        response = await self._chat_request_with_temperature_compat(**kwargs)
+        choice = response.choices[0]
+        message = choice.message
+        content = message.content or ""
+        tool_calls = self._parse_native_tool_calls(message)
+        if not content.strip() and not tool_calls and self._length_truncated(choice):
+            # A reasoning-first endpoint burned the whole output budget on
+            # thinking before emitting content or tool calls; only a larger
+            # budget lets the turn complete. The retry keeps the tools
+            # payload intact; a response with tool calls never enters here.
+            retried = await self._retry_with_larger_budget(
+                kwargs,
+                max_tokens=max_tokens,
+                send=lambda kw: self._chat_request_with_temperature_compat(**kw),
+            )
+            if retried is not None:
+                response, max_tokens = retried
+                choice = response.choices[0]
+                message = choice.message
+                content = message.content or ""
+                tool_calls = self._parse_native_tool_calls(message)
+        if not content.strip() and not tool_calls:
+            raise self._empty_content_error(choice)
+
+        return LLMResponse(
+            content=content,
+            model=response.model,
+            provider=self._provider_name,
+            usage=self._chat_usage(response),
+            raw=response,
+            tool_calls=tool_calls or None,
+            reasoning_content=(
+                str(getattr(message, "reasoning_content", "") or "")
+                if self._is_minimax_flash(effective_model)
+                else ""
+            ),
+        )
+
+    def _chat_completion_kwargs(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float,
+        max_tokens: int,
+        model: str | None,
+        reasoning_effort: str | None,
+    ) -> dict[str, Any]:
+        """Assemble the shared chat-completions request kwargs."""
+        effective_model = (model or "").strip() or self._model
+        effective_reasoning_effort = self._effective_reasoning_effort(reasoning_effort)
+        kwargs: dict[str, Any] = {
+            "model": effective_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        extra_headers = self._extra_headers()
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+        openai_effort = self._openai_reasoning_effort(
+            effective_model,
+            effective_reasoning_effort,
+        )
+        if openai_effort is not None:
+            kwargs["reasoning_effort"] = openai_effort
+        extra_body = self._extra_body(reasoning_effort=effective_reasoning_effort)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return kwargs
+
+    async def _chat_stream_request(self, **kwargs: Any) -> Any:
+        """Open a streaming chat request, adapting to backend quirks.
+
+        Reuses the temperature-compat retry of the one-shot path; older
+        gateways that reject ``stream_options`` get one retry without it
+        (usage accounting is then simply absent for that stream).
+        """
+        try:
+            return await self._chat_request_with_temperature_compat(**kwargs)
+        except LLMProviderError as exc:
+            if "stream_options" in kwargs and "stream_options" in str(exc).lower():
+                logger.info(
+                    "%s rejected stream_options; retrying the stream without it",
+                    self._provider_name,
+                )
+                kwargs.pop("stream_options")
+                return await self._chat_request_with_temperature_compat(**kwargs)
+            raise
+
+    async def stream_complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Stream a chat completion token by token (chat-completions flavor).
+
+        The Responses-API flavor and ``json_mode`` deliberately keep the
+        base class's one-shot fallback over ``complete()``: structured
+        callers depend on the json-format rejection retries, and the
+        Responses flavor's streaming events are not wired here. Unlike
+        ``complete()``, the streaming path does not reissue truncated or
+        empty requests with a larger budget — mid-stream retries would
+        duplicate already-displayed text; the registry's pre-delta fallback
+        still covers failures before the first token.
+        """
+        if self._api_flavor == "responses" or json_mode:
+            async for chunk in super().stream_complete(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            ):
+                yield chunk
+            return
+        kwargs = self._chat_completion_kwargs(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+        stream = await self._chat_stream_request(**kwargs)
+        parts: list[str] = []
+        model_seen = ""
+        usage: dict[str, int] | None = None
+        try:
+            async for event in stream:
+                model_seen = str(getattr(event, "model", "") or model_seen)
+                if getattr(event, "usage", None):
+                    usage = self._chat_usage(event)
+                choices = getattr(event, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                content = str(getattr(delta, "content", "") or "")
+                if content:
+                    parts.append(content)
+                    yield LLMStreamChunk(delta=content)
+        except Exception as exc:
+            raise self._map_error(exc) from exc
+        content = "".join(parts)
+        if not content.strip():
+            raise LLMResponseError(f"{self._provider_name} returned an empty streamed response")
+        yield LLMStreamChunk(
+            response=LLMResponse(
+                content=content,
+                model=model_seen,
+                provider=self._provider_name,
+                usage=usage,
+            )
+        )
+
+    async def stream_complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Stream a chat completion with native function calling.
+
+        Content deltas flow live; ``tool_calls`` deltas are accumulated
+        silently and surface only on the terminal chunk's response, so the
+        agent loop can decide per hop whether the streamed text was the
+        final reply or intermediate reasoning.
+        """
+        if self._api_flavor == "responses":
+            raise LLMToolCallUnsupportedError(
+                f"{self._provider_name} (api_flavor=responses) has no native tool calling."
+            )
+        kwargs = self._chat_completion_kwargs(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+        stream = await self._chat_stream_request(**kwargs)
+        parts: list[str] = []
+        reasoning_parts: list[str] = []
+        pending_calls: dict[int, dict[str, Any]] = {}
+        model_seen = ""
+        usage: dict[str, int] | None = None
+        try:
+            async for event in stream:
+                model_seen = str(getattr(event, "model", "") or model_seen)
+                if getattr(event, "usage", None):
+                    usage = self._chat_usage(event)
+                choices = getattr(event, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+                content = str(getattr(delta, "content", "") or "")
+                if content:
+                    parts.append(content)
+                    yield LLMStreamChunk(delta=content)
+                if self._is_minimax_flash(kwargs["model"]):
+                    reasoning_parts.append(str(getattr(delta, "reasoning_content", "") or ""))
+                for raw_call in getattr(delta, "tool_calls", None) or []:
+                    index = int(getattr(raw_call, "index", 0) or 0)
+                    entry = pending_calls.setdefault(
+                        index, {"id": "", "name": "", "arguments_parts": []}
+                    )
+                    call_id = getattr(raw_call, "id", None)
+                    if call_id:
+                        entry["id"] = str(call_id)
+                    function = getattr(raw_call, "function", None)
+                    if function is not None:
+                        name = getattr(function, "name", None)
+                        if name:
+                            entry["name"] += str(name)
+                        arguments = getattr(function, "arguments", None)
+                        if arguments:
+                            entry["arguments_parts"].append(str(arguments))
+        except Exception as exc:
+            raise self._map_error(exc) from exc
+        content = "".join(parts)
+        normalized_message = SimpleNamespace(
+            tool_calls=[
+                {
+                    "id": entry["id"],
+                    "function": {
+                        "name": entry["name"],
+                        "arguments": "".join(entry["arguments_parts"]),
+                    },
+                }
+                for _index, entry in sorted(pending_calls.items())
+            ]
+        )
+        tool_calls = self._parse_native_tool_calls(normalized_message)
+        if not content.strip() and not tool_calls:
+            raise LLMResponseError(
+                f"{self._provider_name} returned an empty streamed response "
+                "(no content, no tool calls)"
+            )
+        yield LLMStreamChunk(
+            response=LLMResponse(
+                content=content,
+                model=model_seen,
+                provider=self._provider_name,
+                usage=usage,
+                tool_calls=tool_calls or None,
+                reasoning_content="".join(reasoning_parts),
+            )
+        )
+
+    @staticmethod
+    def _parse_native_tool_calls(message: Any) -> list[dict[str, Any]]:
+        """Normalize OpenAI ``message.tool_calls`` into plain dicts.
+
+        ``arguments`` arrives as a JSON string on the wire; parse failures
+        keep the raw payload in ``arguments_raw`` (with ``arguments={}``) so
+        the agent loop can feed the malformed call back to the model.
+        """
+        raw_calls = OpenAIProvider._read_message_field(message, "tool_calls")
+        if not isinstance(raw_calls, (list, tuple)):
+            return []
+        calls: list[dict[str, Any]] = []
+        for index, raw in enumerate(raw_calls):
+            function = (
+                raw.get("function") if isinstance(raw, dict) else getattr(raw, "function", None)
+            )
+            name = str(OpenAIProvider._read_message_field(function, "name") or "")
+            arguments_raw = str(OpenAIProvider._read_message_field(function, "arguments") or "")
+            raw_id = raw.get("id") if isinstance(raw, dict) else getattr(raw, "id", None)
+            call_id = str(raw_id or f"call_{index}")
+            arguments: dict[str, Any] = {}
+            if arguments_raw.strip():
+                try:
+                    parsed = json.loads(arguments_raw)
+                    if isinstance(parsed, dict):
+                        arguments = parsed
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Tool call %s returned malformed arguments JSON", name or call_id
+                    )
+            calls.append(
+                {
+                    "id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                    "arguments_raw": arguments_raw,
+                }
+            )
+        return calls
+
+    def _chat_usage(self, response: Any) -> dict[str, int] | None:
+        """Normalize a chat-completions usage object into the shared dict shape."""
+        if not response.usage:
+            return None
+        usage = {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens,
+        }
+        # Normalize cache fields across the OpenAI-protocol family.
+        # OpenAI exposes `prompt_tokens_details.cached_tokens` since
+        # GPT-4o; DeepSeek injects `prompt_cache_hit_tokens` /
+        # `prompt_cache_miss_tokens` on the same usage object;
+        # Kimi / 通义 / 中转站 vary. We probe known fields and
+        # surface whichever the backend sent under the universal
+        # ``cached_input_tokens`` key. Downstream pricing /
+        # observability code reads only this normalized field.
+        cached = 0
+        details = getattr(response.usage, "prompt_tokens_details", None)
+        if details is not None:
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+        if not cached:
+            # DeepSeek explicit fields
+            cached = int(getattr(response.usage, "prompt_cache_hit_tokens", 0) or 0)
+        if cached:
+            usage["cached_input_tokens"] = cached
+        return usage
 
     async def _complete_via_responses(
         self,
@@ -287,6 +735,10 @@ class OpenAIProvider(LLMProvider):
                 instructions = msg["content"]
             else:
                 input_messages.append(msg)
+        # Some Responses endpoints validate only input, excluding instructions.
+        # Keep the cached system prefix and caller-owned messages intact (#265).
+        if json_mode and not any("json" in msg["content"].lower() for msg in input_messages):
+            input_messages.append({"role": "user", "content": "Return valid json."})
         kwargs: dict[str, Any] = {
             "model": effective_model,
             "input": input_messages,
@@ -313,20 +765,50 @@ class OpenAIProvider(LLMProvider):
 
         response = await self._responses_request_dropping_rejected_temperature(kwargs)
         content = self._responses_output_text(response)
-        if not content.strip() and json_mode and "text" in kwargs:
-            # Same backend quirk as the chat-completions path: HTTP 200 with
-            # empty content when an output-format constraint is set. The
-            # prompt already demands JSON, so drop the constraint and retry.
-            logger.warning(
-                "%s returned empty content with text.format=json_object; "
-                "retrying without the format constraint",
-                self._provider_name,
+        if json_mode and content.strip() and self._responses_output_truncated(response):
+            # The model was cut off mid-JSON by the output cap; the partial
+            # payload is unparseable for structured callers. Retry once with
+            # a doubled budget instead of handing truncated text downstream.
+            retried = await self._retry_with_larger_budget(
+                kwargs,
+                max_tokens=max_tokens,
+                send=self._responses_request_dropping_rejected_temperature,
+                budget_key="max_output_tokens",
+                truncation="status=incomplete (max_output_tokens)",
             )
-            kwargs.pop("text")
-            response = await self._responses_request_dropping_rejected_temperature(kwargs)
-            content = self._responses_output_text(response)
+            if retried is not None:
+                response, max_tokens = retried
+                content = self._responses_output_text(response)
         if not content.strip():
-            raise LLMResponseError(f"{self._provider_name} returned empty content")
+            if json_mode and "text" in kwargs:
+                # Same backend quirk as the chat-completions path: HTTP 200
+                # with empty content when an output-format constraint is set.
+                # The prompt already demands JSON, so drop the constraint and
+                # retry.
+                logger.warning(
+                    "%s returned empty content with text.format=json_object; "
+                    "retrying without the format constraint",
+                    self._provider_name,
+                )
+                kwargs.pop("text")
+                response = await self._responses_request_dropping_rejected_temperature(kwargs)
+                content = self._responses_output_text(response)
+            if not content.strip() and self._responses_output_truncated(response):
+                # A reasoning-first model spent the whole output budget on
+                # thinking and the response stayed incomplete; only a larger
+                # budget lets the final answer through.
+                retried = await self._retry_with_larger_budget(
+                    kwargs,
+                    max_tokens=max_tokens,
+                    send=self._responses_request_dropping_rejected_temperature,
+                    budget_key="max_output_tokens",
+                    truncation="status=incomplete (max_output_tokens)",
+                )
+                if retried is not None:
+                    response, max_tokens = retried
+                    content = self._responses_output_text(response)
+        if not content.strip():
+            raise self._responses_empty_content_error(response)
 
         usage = None
         raw_usage = getattr(response, "usage", None)
@@ -443,10 +925,16 @@ class OpenAIProvider(LLMProvider):
         return await self._send_with_retry(self._create_response, **kwargs)
 
     async def _create_chat_completion(self, **kwargs: Any) -> Any:
-        return await self._client.chat.completions.create(**kwargs)
+        # SDK resources are lazy cached properties: the first access imports
+        # openai.resources synchronously, which can stall unrelated HTTP work
+        # during a startup readiness probe. Resolve only that resource off-loop;
+        # the async transport and stream continue on their original event loop.
+        completions = await asyncio.to_thread(lambda: self._client.chat.completions)
+        return await completions.create(**kwargs)
 
     async def _create_response(self, **kwargs: Any) -> Any:
-        return await self._client.responses.create(**kwargs)
+        responses = await asyncio.to_thread(lambda: self._client.responses)
+        return await responses.create(**kwargs)
 
     async def _send_with_retry(self, send: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
         """Send a request with bounded retry for transient failures."""
@@ -679,6 +1167,27 @@ class OpenAIProvider(LLMProvider):
             str(getattr(item, "id", "") or "").strip()
             for item in (getattr(page, "data", None) or [])
         }
+        current: list[str] = []
+        text_pattern = ""
+        if self._is_minimax_endpoint():
+            current = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
+            text_pattern = r"(?:minimax-(?:m\d|text-\d|vl-\d)|abab\d)"
+        elif (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai":
+            # Live catalog (2026-10-23) lists the paid route only; a ``:free``
+            # variant is absent. Prioritize whatever the endpoint advertises.
+            current = ["minimax/minimax-m3.1-flash", "minimax/minimax-m3"]
+            text_pattern = r"minimax/(?:minimax-(?:m\d|\d|text-\d|vl-\d)|abab\d)"
+        if current:
+            # Discovery is advisory: saved/custom IDs still pass through requests.
+            # Leave non-text model IDs untouched and never invent unadvertised routes.
+            other = {
+                identifier
+                for identifier in identifiers
+                if not re.match(text_pattern, identifier, re.IGNORECASE)
+            }
+            return [model for model in current if model in identifiers] + sorted(
+                (identifier for identifier in other if identifier), key=str.casefold
+            )
         return sorted((identifier for identifier in identifiers if identifier), key=str.casefold)
 
     async def _create_model_list(self) -> Any:
@@ -710,6 +1219,16 @@ class OpenAIProvider(LLMProvider):
         """
 
         normalized = effort.strip().lower()
+        if self._is_minimax_flash(model):
+            # Flash always reasons: empty means the API default, not disabled.
+            if normalized and normalized not in {"low", "medium", "high", "xhigh", "max"}:
+                raise LLMProviderError(
+                    "MiniMax-M3.1-Flash requires adaptive reasoning; use low, medium, "
+                    "high, xhigh, max, or leave reasoning_effort empty."
+                )
+            if self._provider_name == "openrouter":
+                return None  # Its adapter emits the gateway's nested reasoning object.
+            return normalized or None
         if not normalized:
             return None
         if self._provider_name == "openai_compatible":
@@ -719,6 +1238,16 @@ class OpenAIProvider(LLMProvider):
         if normalized in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
             return normalized
         return DEFAULT_REASONING_EFFORT
+
+    def _is_minimax_endpoint(self) -> bool:
+        parsed = urlparse(self.base_url)
+        return (parsed.hostname or "").lower() in {"api.minimax.io", "api.minimaxi.com"}
+
+    def _is_minimax_flash(self, model: str) -> bool:
+        return (self._is_minimax_endpoint() and model == "MiniMax-M3.1-Flash") or (
+            (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai"
+            and model == "minimax/minimax-m3.1-flash"
+        )
 
     def _is_official_openai_endpoint(self) -> bool:
         if not self.base_url.strip():
@@ -742,6 +1271,98 @@ class OpenAIProvider(LLMProvider):
         """
         del reasoning_effort
         return {}
+
+    @staticmethod
+    def _length_truncated(choice: Any) -> bool:
+        """Whether the choice was cut off by the output-token cap."""
+        return str(getattr(choice, "finish_reason", "") or "") in _LENGTH_FINISH_REASONS
+
+    @staticmethod
+    def _responses_output_truncated(response: Any) -> bool:
+        """Whether a Responses payload was cut off by the output-token cap.
+
+        The Responses API signals output truncation with
+        ``status="incomplete"`` and
+        ``incomplete_details.reason="max_output_tokens"``.
+        """
+        if str(getattr(response, "status", "") or "") != "incomplete":
+            return False
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None)
+        if reason is None and isinstance(details, dict):
+            reason = details.get("reason")
+        return str(reason or "") == "max_output_tokens"
+
+    @staticmethod
+    def _responses_reasoning_output(response: Any) -> bool:
+        """Whether a Responses payload contains reasoning-phase output items."""
+        for item in getattr(response, "output", None) or []:
+            item_type = getattr(item, "type", None)
+            if item_type is None and isinstance(item, dict):
+                item_type = item.get("type")
+            if str(item_type or "") == "reasoning":
+                return True
+        return False
+
+    def _responses_empty_content_error(self, response: Any) -> LLMResponseError:
+        """Empty-content error for the Responses flavor.
+
+        When the payload carries reasoning-phase output but no final message,
+        mirror the chat path's marker pair (``returned reasoning but no final
+        content`` + ``finish_reason=length``) so
+        ``is_reasoning_budget_exhausted()`` — and the evaluation
+        batch-halving self-heal built on it — recognizes the failure. The
+        Responses API expresses chat's ``finish_reason=length`` as
+        ``status="incomplete"`` with reason ``max_output_tokens``; any other
+        terminal status maps to its own name and stays unrecognized, exactly
+        like a non-length finish reason on the chat path.
+        """
+        if self._responses_reasoning_output(response):
+            finish_reason = (
+                "length"
+                if self._responses_output_truncated(response)
+                else str(getattr(response, "status", "") or "unknown")
+            )
+            return LLMResponseError(
+                f"{self._provider_name} returned reasoning but no final content "
+                f"(finish_reason={finish_reason}); "
+                "disable thinking/reasoning or increase max_tokens"
+            )
+        return LLMResponseError(f"{self._provider_name} returned empty content")
+
+    async def _retry_with_larger_budget(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        max_tokens: int,
+        send: Callable[[dict[str, Any]], Awaitable[Any]],
+        budget_key: str = "max_tokens",
+        truncation: str = "finish_reason=length",
+    ) -> tuple[Any, int] | None:
+        """Reissue a length-truncated request once with a doubled output budget.
+
+        ``budget_key`` is ``max_tokens`` for chat completions and
+        ``max_output_tokens`` for the Responses API; ``truncation`` is the
+        wire-level truncation marker for the log line. Returns
+        ``(response, new_max_tokens)`` when a retry was sent, or ``None``
+        when the budget is already at the cap (a retry would send the same
+        request). ``kwargs`` is updated in place so any later retry in the
+        same call keeps the enlarged budget.
+        """
+        new_budget = min(max(max_tokens, 1) * 2, _LENGTH_RETRY_MAX_TOKENS_CAP)
+        if new_budget <= max_tokens:
+            return None
+        logger.warning(
+            "%s hit %s with %s=%s; retrying with %s=%s",
+            self._provider_name,
+            truncation,
+            budget_key,
+            max_tokens,
+            budget_key,
+            new_budget,
+        )
+        kwargs[budget_key] = new_budget
+        return await send(kwargs), new_budget
 
     def _empty_content_error(self, choice: Any) -> LLMResponseError:
         reasoning = self._reasoning_like_content(getattr(choice, "message", None))
@@ -894,6 +1515,43 @@ class DeepSeekProvider(OpenAIProvider):
                 reasoning_effort="",
                 model=model,
             )
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        # Same thinking-budget floor as ``complete``: DeepSeek's max_tokens
+        # caps thinking + response combined, and a tool-calling turn still
+        # needs headroom for the reasoning phase before it can emit
+        # ``tool_calls``.
+        requested_effort = (
+            reasoning_effort if reasoning_effort is not None else self._reasoning_effort
+        ).strip()
+        effort = self._normalize_deepseek_effort(requested_effort)
+        if effort:
+            floor = _DEEPSEEK_THINKING_MAX_TOKENS_FLOOR.get(effort, 16384)
+            if max_tokens < floor:
+                logger.debug(
+                    "deepseek: bumping max_tokens from %s to %s for effort=%s",
+                    max_tokens,
+                    floor,
+                    effort,
+                )
+                max_tokens = floor
+        return await super().complete_with_tools(
+            messages,
+            tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=effort,
+            model=model,
+        )
 
     def _extra_body(self, *, reasoning_effort: str | None = None) -> dict[str, Any]:
         requested = self._reasoning_effort if reasoning_effort is None else reasoning_effort

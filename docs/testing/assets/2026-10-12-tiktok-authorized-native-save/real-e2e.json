@@ -1,0 +1,225 @@
+{
+  "date": "2026-10-12",
+  "scope": "capability-increment",
+  "baseline": "68f0fb4f",
+  "verdict": "incremental only",
+  "authorization": "Current user explicitly authorized the exact public video and TikTok Favorites target. No additional authorization is missing.",
+  "provenance": {
+    "backend": "normal create_app on loopback 8420; isolated data/config/SQLite",
+    "llm_network_config": "unchanged from real user configuration",
+    "browser": "registered Chrome unpacked extension; existing login",
+    "installed_final_package_sha256": "206e517b18a5462c8ae8742812dab6c57304ccf8e5397f5e9ccb7632d6e0524d",
+    "package_parts": [
+      "manifest.json",
+      "dist",
+      "icons",
+      "popup"
+    ],
+    "chrome_assets": 22,
+    "firefox_assets": 22,
+    "firefox_installed_e2e": "NOT_RUN",
+    "native_diagnostics": "Temporary read-only DOM and passive page-request observation; source restored after every build; final installed package has no probes.",
+    "final_native_executor_e2e": "NOT_RUN after final glyph/mandatory-reload change; repeated upstream mutation paused pending manual-click comparison."
+  },
+  "observations": {
+    "baseline_candidate_count": 2,
+    "viewport": {
+      "width": 1280,
+      "height": 723
+    },
+    "favorite_rects": [
+      {
+        "x": 729.84375,
+        "y": 499,
+        "width": 48,
+        "height": 78
+      },
+      {
+        "x": 729.84375,
+        "y": 1222,
+        "width": 48,
+        "height": 78
+      }
+    ],
+    "post_click_bookmark_color": "rgb(250, 206, 21)",
+    "post_click_add_label_stale": true,
+    "read_only_reload_checks_ms": [
+      0,
+      3004,
+      8004,
+      15005,
+      25005
+    ],
+    "read_only_reload_all_unselected": true,
+    "passive_requests": [
+      {
+        "method": "GET",
+        "endpoint_class": "list",
+        "action_value": null,
+        "http_status": 200,
+        "app_status": 0,
+        "target_in_request": false
+      },
+      {
+        "method": "POST",
+        "endpoint_class": "collect_item",
+        "action_value": "1",
+        "http_status": 200,
+        "app_status": 0,
+        "target_in_request": true
+      }
+    ]
+  },
+  "gates": {
+    "exact_authorization": "PASS",
+    "viewport_candidate_fix": "PASS (regression and live installed DOM)",
+    "native_write_persisted": "FAIL; native_confirmation_not_observed",
+    "nonempty_profile": "BLOCKED; no persisted nonempty account signal",
+    "periodic_incremental": "BLOCKED; no initialized real profile",
+    "manual_mouse_control": "WAITING for user comparison; Chrome direct UI listing timed out",
+    "sequential_like_collect_follow": "PASS (empty/complete in final four-scope run; not nonempty or repeated-stability proof)",
+    "history": "FAIL; history_entry_not_found"
+  },
+  "validation": {
+    "extension_full": {
+      "passed": 1809,
+      "failed": 0
+    },
+    "final_targeted_including_no_document_regression": {
+      "passed": 56,
+      "failed": 0
+    },
+    "backend_and_docs": {
+      "passed": 112,
+      "failed": 0
+    },
+    "chrome_build_assets": "PASS",
+    "firefox_build_assets": "PASS",
+    "mypy": "PASS (318 source files)",
+    "ruff": "PASS",
+    "scope_ack_red_green": {
+      "before_failed": 3,
+      "after_passed": 37
+    }
+  },
+  "account_tasks": [
+    {
+      "task_id": "0ddcb98c-f210-466b-bf49-24b05d44985e",
+      "build": "diagnostic; unchanged production account collector",
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "64c4af5b-4026-4c61-9709-9a485de41ff2",
+      "build": "diagnostic; unchanged production account collector",
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "32b6e0e3-641d-4aba-87c3-02c0ed98f39a",
+      "build": "diagnostic; unchanged production account collector",
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "1dd34a30-a7f9-4a43-91c2-9fa11f903637",
+      "build": "diagnostic; unchanged production account collector",
+      "scope_counts": {
+        "tt_collect": 0
+      },
+      "scope_statuses": {
+        "tt_collect": "empty"
+      },
+      "scope_complete": {
+        "tt_collect": true
+      }
+    },
+    {
+      "task_id": "8884d1f7-a756-4fb0-a94a-78c515c8d47f",
+      "build": "production before scope acceptance ACK",
+      "error": "task_idle_timeout",
+      "scope_counts": {
+        "tt_follow": 0,
+        "tt_collect": 0,
+        "tt_history": 0,
+        "tt_like": 0
+      },
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "failed",
+        "tt_follow": "failed",
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "task_idle_timeout",
+        "tt_collect": "task_idle_timeout",
+        "tt_follow": "task_idle_timeout",
+        "tt_history": "task_idle_timeout"
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": false,
+        "tt_follow": false,
+        "tt_history": false
+      }
+    },
+    {
+      "task_id": "92100a57-8d9c-4cf2-bc00-f422e74fd635",
+      "build": "final production with scope acceptance ACK",
+      "error": "history_entry_not_found",
+      "scope_counts": {
+        "tt_follow": 0,
+        "tt_collect": 0,
+        "tt_history": 0,
+        "tt_like": 0
+      },
+      "scope_statuses": {
+        "tt_like": "empty",
+        "tt_collect": "empty",
+        "tt_follow": "empty",
+        "tt_history": "failed"
+      },
+      "scope_errors": {
+        "tt_like": "",
+        "tt_collect": "",
+        "tt_follow": "",
+        "tt_history": "history_entry_not_found"
+      },
+      "scope_complete": {
+        "tt_like": true,
+        "tt_collect": true,
+        "tt_follow": true,
+        "tt_history": false
+      }
+    }
+  ],
+  "cleanup": {
+    "owned_backend_stopped": true,
+    "private_diagnostic_sink_stopped": true,
+    "temporary_config_cookie_database_and_probes_removed": true,
+    "production_config_unchanged": true,
+    "upstream_unfavorite_performed": false,
+    "installed_production_build_retained": true
+  }
+}

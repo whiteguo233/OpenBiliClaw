@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | llm.structured | 3 | 所有 JSON 分析、抽取、生成、评分 | 固定 chat/completions，JSON object |
 | llm.text | 3 | 普通对话、非 JSON 文本 | 固定 chat/completions |
-| llm.tools | 3 | 项目已有 JSON 工具协议、评测只读工具循环 | 固定 chat/completions；工具在 Core 执行 |
+| llm.tools | 3 | JSON 工具协议、主线原生工具接口、多轮工具结果、评测只读工具循环 | 固定 chat/completions；工具在 Core 执行 |
 | llm.vision | 3 | 文本和封面图的结构化评估 | 固定 chat/completions；图片仅 inline data URL |
 | llm.embedding_text | 3 | 短文本、全文档、探测向量 | 固定 embeddings，float 向量 |
 | llm.embedding_image | 3 | 封面图向量 | 固定 embeddings；与文本同模型、同维度 |
@@ -22,12 +22,16 @@
 
 ```text
 LLMService text/JSON/tools/vision ─┐
-Registry.complete / bare eval ────┼─ shared SponsoredProvider ─ IPC ─ private Runtime
+Registry complete/stream / eval ─┼─ shared SponsoredProvider ─ IPC ─ private Runtime
 Evaluation agent + read tools ───┤                              ├─ chat/completions
 EmbeddingService + own cache ────┘                              └─ embeddings
 ```
 
 LLMService 在既有并发 gate 内路由；保留 core memory、history、原 Prompt 和工具输出解析。Registry 原始调用和可能收到裸 provider 的 eval 走同一入口。启用 Sponsored 后 registry 将其注册为有效默认，未配置 BYOK 也能构建；原用户链保留为显式允许的可用性回退。模块 override 继续作用于用户回退路径。
+
+当前主线 `23de203a` 的 Agent 原生工具入口和流式入口均已接线。SDK 复用 Core 原有工具模拟与解析：保留工具 schema 和多轮结果，向调用方返回规范化 tool_calls，工具仍在 Core 执行；不宣称赞助模型提供原生 HTTP function calling。流式使用基类允许的缓冲适配（上游完整返回后，一次正文 delta + terminal），不宣称逐 token SSE；只有尚未发送输出且配置允许时才能回退。
+
+Jev 的 DecisionProvider 是独立非生成式决策接口，保持原模型和配置；推荐导演的生成式 Agent 规划则经过 LLMService。配置页单实例/默认链/向量探针、特定供应商对照实验继续验证所指定的 provider，避免赞助路由掩盖测试目标。
 
 同一事件循环共享一个 Runtime 子进程，避免每个业务重复启动。关闭等待正在执行的请求。不同应用工作进程允许各自持有子进程：安装账本只在 reserve/commit 事务持锁并重读/验 HMAC，HTTP 期间不持锁。全局 Key cap 和各任务额度分别计算；一个任务不能挤占另一个任务的专属请求额度。失败/未知 usage 保留预留，跨日完成不减掉新一天其他请求的预留。
 

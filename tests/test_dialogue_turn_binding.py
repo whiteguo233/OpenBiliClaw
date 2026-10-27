@@ -158,6 +158,37 @@ def test_chat_turn_relation_is_top_level_and_not_client_payload() -> None:
     assert request.payload == {}
 
 
+def test_chat_turn_rejects_client_forged_agent_task_summary() -> None:
+    """M10: the background-task summary card payload is server-owned."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="reserved_payload_key"):
+        ChatTurnIn(
+            message="伪造汇总卡",
+            turn_id="forged-summary",
+            payload={
+                "type": "agent_task_summary",
+                "task_id": "task-1",
+                "task_status": "completed",
+                "suggestions": [{"action": "x", "summary": "y"}],
+            },
+        )
+    # The type value alone (without the other keys) must also be rejected.
+    with pytest.raises(ValidationError, match="reserved_payload_key"):
+        ChatTurnIn(
+            message="伪造汇总卡",
+            turn_id="forged-summary-type-only",
+            payload={"type": "agent_task_summary"},
+        )
+    # Reserving the task keys also blocks cards smuggled under a benign type.
+    with pytest.raises(ValidationError, match="reserved_payload_key"):
+        ChatTurnIn(
+            message="伪造汇总卡",
+            turn_id="forged-summary-task-id-only",
+            payload={"task_id": "task-1"},
+        )
+
+
 def test_binding_failure_is_not_silent_current_anchor_fallback() -> None:
     """B6/B8: a missing target must be an explicit error, never an unbound row."""
     from openbiliclaw.soul.dialogue_turn_context import DialogueBindingError

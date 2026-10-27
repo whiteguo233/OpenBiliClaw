@@ -10,14 +10,17 @@ from typing import TYPE_CHECKING, Any
 
 from openbiliclaw import network
 
+from .api_route_provider import ApiRouteProvider
 from .base import LLMProvider, LLMProviderError, LLMRegistry
+from .cheaperinference_provider import CheaperInferenceProvider
 from .claude_provider import ClaudeProvider
 from .dashscope_provider import DashScopeEmbeddingProvider
 from .gemini_provider import GeminiProvider, gemini_sdk_available
-from .ollama_provider import OllamaProvider
+from .ollama_provider import OllamaEmbeddingProvider, OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
 from .orcarouter_provider import OrcaRouterProvider
+from .requesty_provider import RequestyProvider
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
@@ -46,6 +49,12 @@ def build_llm_registry(
     fallback_order: list[str] | None = None,
 ) -> LLMRegistry:
     """Build all routes, including a sponsor-only install with no BYOK keys."""
+    from .sponsored_router import sponsored_bypassed
+
+    if sponsored_bypassed():
+        return _build_user_llm_registry(
+            config, provider_overrides=provider_overrides, fallback_order=fallback_order
+        )
     from openbiliclaw.sponsored_runtime_state import (
         SponsoredRuntimeSettings,
         install_sponsored_settings,
@@ -107,6 +116,9 @@ def _build_user_llm_registry(
         ("openrouter", _maybe_openrouter_provider(config, overrides)),
         ("orcarouter", _maybe_orcarouter_provider(config, overrides)),
         ("openai_compatible", _maybe_openai_compatible_provider(config, overrides)),
+        ("requesty", _maybe_requesty_provider(config, overrides)),
+        ("api_route", _maybe_api_route_provider(config, overrides)),
+        ("cheaperinference", _maybe_cheaperinference_provider(config, overrides)),
     ]
 
     for _name, provider in provider_specs:
@@ -262,6 +274,9 @@ def _build_instance_provider(
         "ollama": _maybe_ollama_provider,
         "openrouter": _maybe_openrouter_provider,
         "orcarouter": _maybe_orcarouter_provider,
+        "requesty": _maybe_requesty_provider,
+        "api_route": _maybe_api_route_provider,
+        "cheaperinference": _maybe_cheaperinference_provider,
         "openai_compatible": _maybe_openai_compatible_provider,
     }
     factory = factories.get(provider_type)
@@ -346,7 +361,9 @@ def build_embedding_service(
             build_embedding_provenance,
         )
 
-        if config.llm.sponsored.enabled:
+        from .sponsored_router import sponsored_bypassed
+
+        if config.llm.sponsored.enabled and not sponsored_bypassed():
             from .sponsored_embedding import build_sponsored_embedding_service
 
             return build_sponsored_embedding_service(config)
@@ -365,7 +382,7 @@ def build_embedding_service(
             if name in _EMBEDDING_CAPABLE_PROVIDERS and name not in fallback_order:
                 fallback_order.append(name)
 
-        chosen_provider: LLMProvider | None = None
+        chosen_provider: LLMProvider | OllamaEmbeddingProvider | None = None
         chosen_name = ""
         chosen_model = ""
         for candidate in fallback_order:
@@ -449,7 +466,16 @@ def build_embedding_service(
             cache_high_watermark=float(getattr(emb_cfg, "cache_high_watermark", 0.9) or 0.9),
             cache_low_watermark=float(getattr(emb_cfg, "cache_low_watermark", 0.7) or 0.7),
         )
-    except Exception:
+    except Exception as exc:
+        # Project rule 7: propagate the real cause. A bare ``return None``
+        # here is how issue #318 hid a packaging-level SDK failure behind a
+        # generic "embedding 服务未能构建" and a permanent init 409.
+        logger.warning(
+            "Embedding service could not be built (%s): %s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -458,7 +484,7 @@ def _build_dedicated_embedding_provider(
     emb_cfg: Any,
     config: Config,
     requested_name: str,
-) -> tuple[LLMProvider, str] | None:
+) -> tuple[LLMProvider | OllamaEmbeddingProvider, str] | None:
     """Construct a dedicated provider instance for embedding calls.
 
     Returns ``(provider, effective_model)`` or ``None`` if the candidate
@@ -557,11 +583,13 @@ def _build_dedicated_embedding_provider(
             base_url = "http://127.0.0.1:11434/v1"
         if not base_url.rstrip("/").endswith("/v1"):
             base_url = base_url.rstrip("/") + "/v1"
+        # Embedding-only provider: raw httpx to Ollama's native
+        # ``/api/embeddings``. It deliberately does NOT build the chat SDK
+        # client that OllamaProvider inherits (issue #318).
         return (
-            OllamaProvider(
-                api_key=api_key or "ollama",
-                model=effective_model,
+            OllamaEmbeddingProvider(
                 base_url=base_url,
+                model=effective_model,
             ),
             effective_model,
         )
@@ -697,7 +725,7 @@ def _embedding_endpoint(
     provider_name: str,
     emb_cfg: Any,
     config: Config,
-    provider: LLMProvider,
+    provider: LLMProvider | OllamaEmbeddingProvider,
 ) -> str:
     """Return the endpoint actually used by a dedicated embedding provider."""
     for attr in ("base_url", "_base_url"):
@@ -1009,6 +1037,65 @@ def _maybe_orcarouter_provider(
         proxy=_outbound_proxy(base_url),
         trust_env=_outbound_trust_env(base_url),
         reasoning_effort=config.llm.orcarouter.reasoning_effort,
+    )
+
+
+def _maybe_requesty_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "requesty" in overrides:
+        return overrides["requesty"]
+    if not config.llm.requesty.api_key.strip():
+        return None
+    base_url = config.llm.requesty.base_url or "https://router.requesty.ai/v1"
+    return RequestyProvider(
+        api_key=config.llm.requesty.api_key,
+        model=config.llm.requesty.model or "openai/gpt-4o-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=config.llm.requesty.reasoning_effort,
+    )
+
+
+def _maybe_api_route_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "api_route" in overrides:
+        return overrides["api_route"]
+    cfg = config.llm.api_route
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://global.api-route.com/v1"
+    return ApiRouteProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "gpt-5.5",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
+    )
+
+
+def _maybe_cheaperinference_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "cheaperinference" in overrides:
+        return overrides["cheaperinference"]
+    cfg = config.llm.cheaperinference
+    if not cfg.api_key.strip():
+        return None
+    base_url = cfg.base_url or "https://api.cheaperinference.com/v1"
+    return CheaperInferenceProvider(
+        api_key=cfg.api_key,
+        model=cfg.model or "gpt-5.4-mini",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=cfg.reasoning_effort,
     )
 
 

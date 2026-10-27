@@ -79,6 +79,8 @@ class RecommendationItem:
     rating_count: int = 0
     source_rank: int = 0
     up_mid: int = 0
+    batch_ref: str = ""
+    stream_ref: str = ""
 
 
 @dataclass(slots=True)
@@ -86,6 +88,23 @@ class RecommendationResponse:
     """Recommendation result returned to OpenClaw."""
 
     items: list[RecommendationItem] = field(default_factory=list)
+    batch_ref: str = ""
+    stream_ref: str = ""
+    request_id: str = ""
+    director_mode: str = "off"
+    director_strategy: str = ""
+    requires_generation: bool = False
+
+
+@dataclass(slots=True)
+class PresentationResponse:
+    """Acknowledgement of cards actually visible to the user, not tool delivery."""
+
+    batch_ref: str
+    ack_id: str
+    item_keys: list[str] = field(default_factory=list)
+    state_revision: int = 0
+    event_ids: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -96,6 +115,7 @@ class FeedbackRequest:
     feedback_type: str
     note: str = ""
     request_id: str = ""
+    batch_ref: str = ""
 
     def __post_init__(self) -> None:
         if self.recommendation_id <= 0:
@@ -107,6 +127,8 @@ class FeedbackRequest:
             raise AdapterValidationError("request_id is required.")
         if len(self.request_id) > 400:
             raise AdapterValidationError("request_id is too long.")
+        if len(self.batch_ref) > 256:
+            raise AdapterValidationError("batch_ref is too long.")
         if self.feedback_type not in _VALID_FEEDBACK_TYPES:
             raise AdapterValidationError(f"Unsupported feedback type: {self.feedback_type}")
         if self.feedback_type == "comment" and not self.note:

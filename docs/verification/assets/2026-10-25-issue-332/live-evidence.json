@@ -1,0 +1,535 @@
+{
+  "scope": "issue-332 capability-increment, real read-only Douyin discovery",
+  "code_commit": "f201187ad5b5a75f57a378ac4ab4a32b5256c33a",
+  "recorded_at": 1792914464.061261,
+  "extension": {
+    "id": "cdfjfkdjjhdaccbldipkjhpibnfbiamg",
+    "version": "0.3.231",
+    "artifact_path": "/Users/white/Library/Application Support/Google/Chrome/Default/Extensions/cdfjfkdjjhdaccbldipkjhpibnfbiamg/0.3.231_0",
+    "worker_sha256": "a64489d44aa541bd1f7dc04172a9a5daedac70dae957b13918787f018c43e759",
+    "manifest_sha256": "3966fe13e7155ac94f3f34cf6585a8deabe64ac368561ce7fab14318c032f386",
+    "identity_limit": "legacy callback has no extension ID; installation/endpoint/unique background client correlation"
+  },
+  "environment": {
+    "api_port": 18420,
+    "api_data_root": "/tmp/openbiliclaw-issue332-live-20261025-run1/data",
+    "model_instances": {
+      "openai_compatible": {
+        "name": "OpenAI-compatible",
+        "model": "deepseek-v4-flash"
+      },
+      "openai-compatible": {
+        "name": "OpenAI-compatible",
+        "model": "sensenova-6.8-flash-lite"
+      },
+      "openai-compatible-2": {
+        "name": "OpenAI-compatible",
+        "model": "glm-5.3-flash"
+      }
+    },
+    "embedding": {
+      "provider": "ollama",
+      "model": "nomic-embed-text"
+    },
+    "database_initial_counts": {
+      "events": 0,
+      "discovery_candidates": 0,
+      "content_cache": 0,
+      "recommendations": 0,
+      "dy_tasks": 0
+    },
+    "original_configs_unchanged": {
+      "config.toml": true
+    },
+    "restored": {
+      "stage": "restored",
+      "at": 1792914401.657738,
+      "bootstrap_returncode": 0,
+      "production_port_open": false
+    }
+  },
+  "worker_provenance": {
+    "stage": "worker_started",
+    "at": 1792912693.8693151,
+    "pid": 61590,
+    "import": "/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence/src/openbiliclaw/__init__.py",
+    "config_root": "/tmp/openbiliclaw-issue332-live-20261025-run1",
+    "data_root": "/tmp/openbiliclaw-issue332-live-20261025-run1/data",
+    "presence_snapshot": {
+      "active_count": 0,
+      "last_disconnect_at": 2593117.659485776,
+      "seconds_since_disconnect": 1.907245412003249
+    },
+    "profile_ready": true
+  },
+  "negative_control": {
+    "stage": "worker_absent",
+    "at": 1792912788.906005,
+    "elapsed": 95.04,
+    "result": {
+      "discovered": 0,
+      "reason": "extension_absent"
+    },
+    "presence_snapshot": {
+      "active_count": 0,
+      "last_disconnect_at": 2593117.659485776,
+      "seconds_since_disconnect": 96.94536743406206
+    },
+    "tasks": 0
+  },
+  "presence_samples": [
+    {
+      "observed_at": 1792912914.288311,
+      "elapsed": 0.0,
+      "heartbeat_age": 18.14,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912896.152152
+      },
+      "clients": [
+        "background"
+      ]
+    },
+    {
+      "observed_at": 1792912934.2938108,
+      "elapsed": 20.01,
+      "heartbeat_age": 18.04,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912916.2583969
+      },
+      "clients": [
+        "background"
+      ]
+    },
+    {
+      "observed_at": 1792912954.3002,
+      "elapsed": 40.01,
+      "heartbeat_age": 17.99,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912936.306517
+      },
+      "clients": [
+        "background"
+      ]
+    },
+    {
+      "observed_at": 1792912974.3109179,
+      "elapsed": 60.02,
+      "heartbeat_age": 18.0,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912956.311994
+      },
+      "clients": [
+        "background"
+      ]
+    },
+    {
+      "observed_at": 1792912994.323206,
+      "elapsed": 80.03,
+      "heartbeat_age": 18.01,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912976.316287
+      },
+      "clients": [
+        "background"
+      ]
+    },
+    {
+      "observed_at": 1792913014.345002,
+      "elapsed": 100.05,
+      "heartbeat_age": 18.02,
+      "shared": {
+        "version": 1,
+        "active_count": 1,
+        "updated_at": 1792912996.3267
+      },
+      "clients": [
+        "background"
+      ]
+    }
+  ],
+  "presence_file_mode": "0o600",
+  "first_formal_run": {
+    "stage": "worker_produced",
+    "at": 1792913237.849859,
+    "result": {
+      "discovered": 0,
+      "source_counts": {},
+      "reason": "timeout",
+      "source_outcomes": {
+        "search": "timeout",
+        "hot": "timeout"
+      },
+      "enqueued": 0,
+      "keyword_outcome_counts": {
+        "timeout": 3
+      }
+    },
+    "elapsed": 543.93
+  },
+  "browser_feed_probe": {
+    "stage": "browser_feed_probe",
+    "elapsed": 180.71,
+    "outcome": "timeout",
+    "rows": 0,
+    "public_ids": [],
+    "all_have_titles": true,
+    "direct_fallback": false,
+    "events_delta": 0
+  },
+  "browser_feed_retry": {
+    "stage": "browser_feed_retry",
+    "elapsed": 21.58,
+    "outcome": "used",
+    "rows": 3,
+    "public_ids": [
+      "7696817106876953017",
+      "7693803179472899328",
+      "7699483133506374921"
+    ],
+    "all_have_titles": true,
+    "direct_fallback": false,
+    "events_delta": 0
+  },
+  "formal_feed_start": {
+    "stage": "formal_feed_start",
+    "at": 1792913747.4449651,
+    "elapsed": 95.0,
+    "snapshot": {
+      "active_count": 0,
+      "last_disconnect_at": 2594076.328190946,
+      "seconds_since_disconnect": 96.81743277376518
+    },
+    "shared": {
+      "version": 1,
+      "active_count": 1,
+      "updated_at": 1792913736.6341739
+    },
+    "present": true
+  },
+  "formal_feed_produced": {
+    "stage": "formal_feed_produced",
+    "at": 1792913896.6009579,
+    "result": {
+      "discovered": 3,
+      "source_counts": {
+        "dy-plugin-feed": 3
+      },
+      "reason": "ok",
+      "source_outcomes": {
+        "feed": "used"
+      },
+      "enqueued": 3
+    },
+    "elapsed": 244.16
+  },
+  "formal_feed_evaluated": {
+    "stage": "formal_feed_evaluated",
+    "at": 1792914204.192348,
+    "result": {
+      "evaluated": 5,
+      "cached": 0,
+      "rejected": 5
+    },
+    "elapsed": 551.74
+  },
+  "formal_feed_finished": {
+    "stage": "formal_feed_finished",
+    "at": 1792914204.233087,
+    "copied": 0,
+    "recommendations": 0,
+    "events_delta": 0,
+    "candidate_status": [
+      [
+        "rejected_low_score",
+        "dy-direct-feed",
+        2
+      ],
+      [
+        "rejected_low_score",
+        "dy-plugin-feed",
+        3
+      ]
+    ],
+    "llm_usage": [
+      [
+        "openai_compatible",
+        "deepseek-v4-flash",
+        "discovery.evaluate_batch",
+        1,
+        1
+      ],
+      [
+        "openai_compatible",
+        "sensenova-6.8-flash-lite",
+        "discovery.douyin.keyword_gen",
+        1,
+        1
+      ],
+      [
+        "openai_compatible",
+        "sensenova-6.8-flash-lite",
+        "discovery.evaluate_batch",
+        1,
+        1
+      ]
+    ],
+    "elapsed": 551.78
+  },
+  "direct_transport": [
+    {
+      "name": "get_hot_terms",
+      "status": "ok",
+      "rows": 3,
+      "has_stable_ids": true,
+      "elapsed": 0.4
+    },
+    {
+      "name": "get_recommend_feed",
+      "status": "ok",
+      "rows": 2,
+      "has_stable_ids": true,
+      "elapsed": 1.73
+    }
+  ],
+  "direct_pipeline_fetched": {
+    "stage": "direct_pipeline_fetched",
+    "at": 1792913534.603766,
+    "transport": "direct-cookie",
+    "count": 2,
+    "enqueued": 2,
+    "source_counts": {
+      "dy-direct-feed": 2
+    },
+    "elapsed": 2.02
+  },
+  "first_evaluation_invalidated_by_harness": {
+    "reason": "Concurrent pipeline construction reset an active evaluating lease; rerun serially with existing worker. Not counted as completed evaluation."
+  },
+  "tasks": [
+    {
+      "id": "e886a3e3-3553-4559-9583-7fbc225c53c7",
+      "type": "search",
+      "status": "failed",
+      "created_at": "2026-10-25 07:24:16",
+      "claimed_at": "2026-10-25 07:25:25",
+      "completed_at": "2026-10-25 07:27:17",
+      "videos": 0,
+      "error": "wait_timeout",
+      "debug": {
+        "wait_seconds": 180.0
+      }
+    },
+    {
+      "id": "3802170c-2be2-4af5-9965-5e54475bbb96",
+      "type": "feed",
+      "status": "failed",
+      "created_at": "2026-10-25 07:25:24",
+      "claimed_at": null,
+      "completed_at": "2026-10-25 07:28:25",
+      "videos": 0,
+      "error": "wait_timeout",
+      "debug": {
+        "wait_seconds": 180.0
+      }
+    },
+    {
+      "id": "d7ace161-cb91-4c4b-91b4-7bef429dc275",
+      "type": "feed",
+      "status": "completed",
+      "created_at": "2026-10-25 07:31:29",
+      "claimed_at": "2026-10-25 07:31:29",
+      "completed_at": "2026-10-25 07:31:49",
+      "videos": 3,
+      "error": "",
+      "debug": {
+        "feed_status": "ok",
+        "feed_capture_retries": 0,
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "dom_items_harvested": 3,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 0,
+        "early_buffer_items": 0,
+        "api_error": "",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "b5bbb396-f4c5-4207-b4ed-1a7a120b4465",
+      "type": "feed",
+      "status": "completed",
+      "created_at": "2026-10-25 07:35:47",
+      "claimed_at": "2026-10-25 07:38:01",
+      "completed_at": "2026-10-25 07:38:16",
+      "videos": 3,
+      "error": "",
+      "debug": {
+        "feed_status": "ok",
+        "feed_capture_retries": 0,
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "dom_items_harvested": 0,
+        "passive_items_harvested": 12,
+        "passive_responses_observed": 2,
+        "early_buffer_items": 0,
+        "api_error": "",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    }
+  ],
+  "api": {
+    "claims": [
+      "200",
+      "200",
+      "200"
+    ],
+    "callback_statuses": [
+      "200",
+      "200",
+      "200",
+      "200",
+      "200",
+      "200"
+    ],
+    "background_connections": 2,
+    "manual_kick_required_for_custom_port": true,
+    "extension_reload": {
+      "at": 1792913934.4763572,
+      "status": 200,
+      "result": {
+        "ok": true,
+        "delivered": true
+      }
+    },
+    "recommendations": {
+      "status": 200,
+      "keys": [
+        "items"
+      ],
+      "items_count": 0
+    }
+  },
+  "candidate_scores": [
+    {
+      "source_strategy": "dy-direct-feed",
+      "status": "rejected_low_score",
+      "relevance_score": 0.15,
+      "score_threshold": 0.0,
+      "n": 1
+    },
+    {
+      "source_strategy": "dy-direct-feed",
+      "status": "rejected_low_score",
+      "relevance_score": 0.3,
+      "score_threshold": 0.0,
+      "n": 1
+    },
+    {
+      "source_strategy": "dy-plugin-feed",
+      "status": "rejected_low_score",
+      "relevance_score": 0.25,
+      "score_threshold": 0.6,
+      "n": 2
+    },
+    {
+      "source_strategy": "dy-plugin-feed",
+      "status": "rejected_low_score",
+      "relevance_score": 0.55,
+      "score_threshold": 0.6,
+      "n": 1
+    }
+  ],
+  "final_business_counts": {
+    "dy_tasks": 4,
+    "events": 0,
+    "seen_items": 0,
+    "profile_update_ledger": 0,
+    "discovery_candidates": 5,
+    "content_cache": 0,
+    "recommendations": 0,
+    "favorites": 0,
+    "saved_items": 0,
+    "saved_memberships": 0
+  },
+  "llm_usage": [
+    {
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "discovery.douyin.keyword_gen",
+      "prompt_tokens": 4690,
+      "completion_tokens": 3073,
+      "success": 1
+    },
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "discovery.evaluate_batch",
+      "prompt_tokens": 11900,
+      "completion_tokens": 427,
+      "success": 1
+    },
+    {
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "discovery.evaluate_batch",
+      "prompt_tokens": 12970,
+      "completion_tokens": 12600,
+      "success": 1
+    }
+  ],
+  "not_verified": [
+    "positive recommendation admission/card",
+    "search success",
+    "installed hot discovery",
+    "private account init/profile rebuild",
+    "three UI surfaces",
+    "Windows frozen desktop",
+    "Firefox",
+    "Docker deployment"
+  ],
+  "restoration_checks": {
+    "at": 1792914541.688381,
+    "health_http": 200,
+    "health": {
+      "status": "ok",
+      "service": "openbiliclaw-api",
+      "profile_ready": true,
+      "embedding_ready": true,
+      "llm_registered": true
+    },
+    "sources_http": 200,
+    "douyin": {
+      "enabled": true,
+      "state": "ready",
+      "logged_in": true
+    },
+    "bilibili_enabled": true,
+    "listeners": [
+      "python3.1 64996 white   23u  IPv4 0x6ec911ce78550a49      0t0  TCP 127.0.0.1:18420 (LISTEN)"
+    ],
+    "supervisor_started_exited": true,
+    "isolated_api_started_exited": true,
+    "final_check_at": 1792914853.193045,
+    "douyin_verification": "verified",
+    "browser_task_tabs_remaining": 0,
+    "browser_task_tabs_check": "browser inventory after service restore",
+    "observer_page_close_confirmed": false,
+    "observer_page_close_detail": "Two temporary observation tabs: documented close API failed with Debugger unattached; CDP close also timed out. Agent-created tabs remain eligible for automatic turn cleanup.",
+    "original_config_checksum_matches": {
+      "config.toml": true
+    },
+    "temporary_config_credentials_profile_database_logs_removed": true
+  }
+}

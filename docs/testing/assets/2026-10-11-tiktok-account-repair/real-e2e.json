@@ -1,0 +1,59 @@
+{
+  "scope": "capability-increment",
+  "baseline": "618843fb",
+  "evidence_level": "installed-app",
+  "transport": "normal create_app Uvicorn TCP + installed Chrome dispatcher",
+  "isolated_data": true,
+  "real_llm_network_config_preserved": true,
+  "production_data_used_as_write_target": false,
+  "runs": [
+    {
+      "error": "scope_tab_not_found",
+      "signed_in": true,
+      "own_profile_url": true,
+      "heading_matches_viewer": true,
+      "visible_liked_tab_selected": false,
+      "scope_root_proven": false,
+      "accepted_rows": 0
+    },
+    {
+      "error": "Error: scope_root_not_proven",
+      "signed_in": true,
+      "own_profile_url": true,
+      "heading_matches_viewer": true,
+      "visible_liked_tab_selected": true,
+      "scope_root_proven": false,
+      "accepted_rows": 0
+    }
+  ],
+  "diagnostic_builds": [
+    "5769dc356a30685425897068a016a0ef7661b0b528315b3c3ef0e472a650a9a5",
+    "22fb0bfd7a0a48fbc2d7837fe6372610f7046ed20a20c95cd59f99d8e5534824"
+  ],
+  "subsequent_run": "NOT_RUN: diagnostic TypeScript compilation failed; incomplete temporary package broke extension connection. Valid assets rebuilt; further installed testing requires extension reload.",
+  "upstream_mutations": [],
+  "verdict": "incremental only",
+  "cleanup": {
+    "installed_package_restored": true,
+    "original_package_sha256": "bbb0ac2f943713daa297fefdf36d077cbb1e70109d5a37a13a902236aed90f50",
+    "pending_owned_test_cancelled": true,
+    "profile_created": false
+  },
+  "validation": {
+    "extension": {
+      "passed": 1783,
+      "failed": 0
+    },
+    "backend_focused": {
+      "passed": 312,
+      "skipped": 37
+    },
+    "docs_index": {
+      "passed": 5
+    },
+    "chrome_build_assets": "PASS",
+    "firefox_build_assets": "PASS",
+    "ruff": "PASS",
+    "mypy_318_files": "PASS"
+  }
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -106,6 +107,60 @@ def test_load_config_installs_settings_and_warns_missing_runtime(tmp_path: Path)
     assert current_sponsored_settings() == config.llm.sponsored
     assert config.llm.sponsored.request_timeout_seconds == 33.0
     assert any(issue.field == "llm.sponsored.runtime_path" for issue in diagnostics.issues)
+
+
+def test_sponsor_only_instance_config_accepts_no_user_keys_and_a_command_with_arguments() -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    config = _build_config(
+        {
+            "llm": {
+                "routing_version": 2,
+                "instances": {},
+                "default_chain": [],
+                "sponsored": {
+                    "enabled": True,
+                    "runtime_path": shlex.join([sys.executable, "-m", "unused.module"]),
+                },
+            }
+        },
+        consult_environment=False,
+    )
+    assert _collect_config_issues(config) == []
+
+    config.llm.soul.inherit = False
+    config.llm.soul.chain = ["missing"]
+    assert any(issue.field == "llm.routes.soul.chain" for issue in _collect_config_issues(config))
+
+
+@pytest.mark.parametrize("instance_routing", [False, True])
+def test_sponsored_settings_survive_editing_and_serializing_other_configuration(
+    instance_routing: bool,
+) -> None:
+    import tomllib
+
+    from openbiliclaw.config import _render_config_toml
+
+    raw: dict[str, Any] = {
+        "sponsored": {
+            "enabled": True,
+            "runtime_path": shlex.join([sys.executable, "-m", "unused.module"]),
+            "fallback_to_user_provider": False,
+            "notify_on_fallback": False,
+            "request_timeout_seconds": 75.0,
+        }
+    }
+    if instance_routing:
+        raw.update(routing_version=2, instances={}, default_chain=[])
+    config = _build_config({"llm": raw}, consult_environment=False)
+    config.llm.concurrency = 4
+    serialized = _render_config_toml(
+        config, consult_local=False, consult_environment=False, include_api_auth=False
+    )
+    loaded = _build_config(tomllib.loads(serialized), consult_environment=False)
+    assert loaded.llm.sponsored == config.llm.sponsored
+    assert loaded.llm.concurrency == 4
+    assert loaded.llm.instance_routing == instance_routing
 
 
 async def test_service_builds_provider_from_installed_settings() -> None:

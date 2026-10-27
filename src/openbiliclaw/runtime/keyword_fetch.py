@@ -48,10 +48,16 @@ from openbiliclaw.sources.platforms import (
     PLATFORM_DOUYIN as PLATFORM_DOUYIN,
 )
 from openbiliclaw.sources.platforms import (
+    PLATFORM_INSTAGRAM as PLATFORM_INSTAGRAM,
+)
+from openbiliclaw.sources.platforms import (
     PLATFORM_LINUXDO as PLATFORM_LINUXDO,
 )
 from openbiliclaw.sources.platforms import (
     PLATFORM_REDDIT as PLATFORM_REDDIT,
+)
+from openbiliclaw.sources.platforms import (
+    PLATFORM_TIKTOK as PLATFORM_TIKTOK,
 )
 from openbiliclaw.sources.platforms import (
     PLATFORM_TWITTER as PLATFORM_TWITTER,

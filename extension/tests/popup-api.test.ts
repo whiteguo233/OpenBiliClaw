@@ -28,6 +28,7 @@ import {
   respondToAvoidanceProbe,
   startInit,
   startChatTurn,
+  streamChatTurn,
   updateConfig,
   __resetPopupHealthCacheForTests,
 } from "../popup/popup-api.js";
@@ -1304,6 +1305,7 @@ test("startChatTurn posts durable chat turn metadata", async () => {
     subject_id: "BV1DL",
     subject_title: "复杂系统入门",
     message: "我想聊聊这条",
+    streaming: false,
   });
   assert.equal(result.status, "pending");
 });
@@ -1486,5 +1488,104 @@ test("updateConfig uses the shared 60s config PUT timeout", async () => {
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("streamChatTurn read watchdog aborts a silently stalled SSE stream", async () => {
+  // The shared agent-chat helper (copied to popup/shared at build time)
+  // provides createSseReadWatchdog + the SSE parser.
+  await import("../../src/openbiliclaw/web/shared/agent-chat.js");
+  __resetBackendEndpointForTests();
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({});
+        },
+      },
+    },
+  };
+
+  let capturedSignal: AbortSignal | null = null;
+  globalThis.fetch = (async (_url: string, options: { signal?: AbortSignal }) => {
+    capturedSignal = options?.signal ?? null;
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: () =>
+            new Promise((_resolve, reject) => {
+              // 永不返回字节，只在请求被 abort 时 reject —— 模拟僵尸流。
+              capturedSignal?.addEventListener("abort", () =>
+                reject((capturedSignal as AbortSignal).reason),
+              );
+            }),
+        }),
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  try {
+    const startedAt = Date.now();
+    await assert.rejects(streamChatTurn({ turnId: "t-stall", message: "你好", watchdogMs: 30 }));
+    assert.ok(capturedSignal, "fetch should receive the watchdog abort signal");
+    assert.ok(Date.now() - startedAt < 5_000, "watchdog abort should settle the stream quickly");
+  } finally {
+    (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    __resetBackendEndpointForTests();
+  }
+});
+
+test("streamChatTurn completes when heartbeat comments keep the stream alive", async () => {
+  await import("../../src/openbiliclaw/web/shared/agent-chat.js");
+  __resetBackendEndpointForTests();
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({});
+        },
+      },
+    },
+  };
+
+  const chunks = [": ping\n\n", 'event: content\ndata: {"delta":"你"}\n\n', 'event: done\ndata: {"reply":"你好"}\n\n'];
+  globalThis.fetch = (async () => ({
+    ok: true,
+    body: {
+      getReader: () => {
+        let index = 0;
+        return {
+          read: async () => {
+            if (index >= chunks.length) return { done: true };
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            const value = new TextEncoder().encode(chunks[index]);
+            index += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    },
+  })) as unknown as typeof fetch;
+
+  try {
+    const deltas: string[] = [];
+    let doneReply = "";
+    await streamChatTurn({
+      turnId: "t-ok",
+      message: "你好",
+      watchdogMs: 200,
+      onContent: (delta: string) => deltas.push(delta),
+      onDone: (data: { reply?: string }) => {
+        doneReply = String(data?.reply || "");
+      },
+    });
+    assert.deepEqual(deltas, ["你"]);
+    assert.equal(doneReply, "你好");
+  } finally {
+    (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    __resetBackendEndpointForTests();
   }
 });

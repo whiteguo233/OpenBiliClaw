@@ -8,17 +8,23 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
+import shlex
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from openbiliclaw.discovery.inspiration_backends import (
+    DEFAULT_INSPIRATION_SEARCH_BACKENDS,
+    normalize_inspiration_search_backends,
+)
 from openbiliclaw.sponsored_runtime_state import (
     DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
     SponsoredRuntimeSettings,
@@ -77,6 +83,9 @@ _SUPPORTED_CHAT_PROVIDERS = {
     "openrouter",
     "orcarouter",
     "openai_compatible",
+    "requesty",
+    "api_route",
+    "cheaperinference",
 }
 _LLM_INSTANCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _TAILNET_HOSTNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -90,6 +99,9 @@ _LLM_PROVIDER_DISPLAY_NAMES = {
     "openrouter": "OpenRouter",
     "orcarouter": "OrcaRouter",
     "openai_compatible": "OpenAI-compatible",
+    "requesty": "Requesty",
+    "api_route": "API Route",
+    "cheaperinference": "Cheaper Inference",
 }
 _MIN_POOL_TARGET_COUNT = 1
 _MAX_POOL_TARGET_COUNT = 600
@@ -173,20 +185,15 @@ _DEFAULT_INSPIRATION_SEARCH_RESULTS_PER_QUERY = 5
 _DEFAULT_INSPIRATION_MAX_SEEDS_PER_ASPECT = 3
 _DEFAULT_INSPIRATION_MAX_KEYWORDS_PER_PLATFORM = 12
 _DEFAULT_INSPIRATION_BREADTH = "high"
-_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = (
-    "local_cache",
-    "platform_sources",
-    "bing_rss",
-    "exa",
-    "you",
-    "serply",
-)
+# Shared with `discovery.inspiration_provider` so the default chain and the alias
+# table live in one place — see `openbiliclaw/discovery/inspiration_backends.py`.
+_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = DEFAULT_INSPIRATION_SEARCH_BACKENDS
 _DEFAULT_ADMISSION_MIN_SCORE = 0.60
 _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
-_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned", "jev"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -207,6 +214,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "tiktok": 1,
     "twitter": 1,
     "zhihu": 1,
     "reddit": 1,
@@ -214,6 +222,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "linuxdo": 1,
     "v2ex": 1,
     "weibo": 1,
+    "instagram": 1,
     "github": 1,
 }
 
@@ -227,6 +236,7 @@ _SOURCE_INCREMENTAL_ENV_FIELDS = {
     "OPENBILICLAW_SCHEDULER_REDDIT_INCREMENTAL_HOURS": "reddit_incremental_hours",
     "OPENBILICLAW_SCHEDULER_LINUXDO_INCREMENTAL_HOURS": "linuxdo_incremental_hours",
     "OPENBILICLAW_SCHEDULER_V2EX_INCREMENTAL_HOURS": "v2ex_incremental_hours",
+    "OPENBILICLAW_SCHEDULER_TIKTOK_INCREMENTAL_HOURS": "tiktok_incremental_hours",
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -239,6 +249,9 @@ _REMOTE_PROVIDER_FIELDS = {
     "deepseek": "llm.deepseek.api_key",
     "openrouter": "llm.openrouter.api_key",
     "orcarouter": "llm.orcarouter.api_key",
+    "requesty": "llm.requesty.api_key",
+    "api_route": "llm.api_route.api_key",
+    "cheaperinference": "llm.cheaperinference.api_key",
     # v0.3.32+ — generic OpenAI-protocol-compatible provider (Groq /
     # Together / Azure OpenAI / vLLM / self-hosted, etc.). Distinct from
     # ``openai`` so users can run both in parallel (chat = openai for
@@ -365,6 +378,15 @@ _REMOVED_INSPIRATION_DISCOVERY_KEYS: tuple[str, ...] = (
     "inspiration_max_keywords_per_platform",
 )
 
+# Keys removed for their own, non-breadth reason; each carries its own notice so
+# an old config gets an actionable message instead of a silent drop.
+_REMOVED_DISCOVERY_KEY_MESSAGES: dict[str, str] = {
+    "keenable_api_key": (
+        "`keenable_api_key` 已移除：Keenable grounding 固定使用匿名免费端点，无需 API Key，"
+        "该值被忽略，请删除这一行。"
+    ),
+}
+
 
 def derive_inspiration_breadth_params(breadth: object) -> InspirationBreadthParams:
     """Return the effective inspiration knobs for a breadth tier.
@@ -385,7 +407,7 @@ def _removed_discovery_key_issues(raw: dict[str, Any]) -> list[ConfigIssue]:
     discovery_raw = raw.get("discovery")
     if not isinstance(discovery_raw, dict):
         return []
-    return [
+    issues = [
         ConfigIssue(
             field=f"discovery.{key}",
             message=(
@@ -395,6 +417,12 @@ def _removed_discovery_key_issues(raw: dict[str, Any]) -> list[ConfigIssue]:
         for key in _REMOVED_INSPIRATION_DISCOVERY_KEYS
         if key in discovery_raw
     ]
+    issues.extend(
+        ConfigIssue(field=f"discovery.{key}", message=message)
+        for key, message in _REMOVED_DISCOVERY_KEY_MESSAGES.items()
+        if key in discovery_raw
+    )
+    return issues
 
 
 @dataclass
@@ -442,6 +470,125 @@ class LLMInstanceConfig(LLMProviderConfig):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+
+
+@dataclass(frozen=True)
+class JevContextLimits:
+    """Operator-confirmed dual token limits bound to one exact model ID."""
+
+    max_request_tokens: int
+    max_state_question_tokens: int
+
+
+@dataclass
+class JevDecisionConfig:
+    """Independent Jev settings; a local saved token takes precedence over env.
+
+    Enabling the client does not enable a recommendation or filtering route.
+    ``max_attempts`` includes the initial request. Timeout and attempt defaults
+    are conservative initial transport budgets, not a measured latency SLA.
+    """
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    api_key: str = field(default="", repr=False)
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
+    context_limits: dict[str, JevContextLimits] = field(default_factory=dict)
+
+
+@dataclass
+class DecisionProvidersConfig:
+    """Provider settings independent of chat and embedding configuration."""
+
+    jev: JevDecisionConfig = field(default_factory=JevDecisionConfig)
+
+
+@dataclass
+class DecisionConfig:
+    """Typed decision-provider configuration, without business routing."""
+
+    providers: DecisionProvidersConfig = field(default_factory=DecisionProvidersConfig)
+
+
+@dataclass
+class DirectorConfig:
+    """Recommendation rollout and orchestration policy, independent of filtering."""
+
+    mode: str = "off"
+    strategy: str = "agent_jev"
+    decision_provider: str = "jev"
+    planning_horizon_screens: int = 3
+    plan_ttl_seconds: int = 300
+    planning_budget_seconds: float = 20.0
+    decision_budget_seconds: float = 8.0
+    max_decision_calls: int = 10
+    max_candidates: int = 40
+
+
+@dataclass
+class SemanticFilterConfig:
+    """Opt-in discovery rejection evidence; enforcement needs versioned calibration.
+
+    The threshold is a conservative shadow starting point, NOT a calibrated
+    quality claim. Enforce requires an operator's calibration tag bound to the
+    exact pinned provider model; provider swaps must reopen calibration.
+    """
+
+    mode: str = "off"
+    provider: str = "jev"
+    refusal_threshold: float = 1.0
+    calibration_tag: str = ""
+    calibration_model: str = ""
+    max_candidates_per_cycle: int = 30
+    max_calls_per_cycle: int = 1
+    decision_budget_seconds: float = 2.0
+
+
+@dataclass
+class JevEvaluationConfig:
+    """Pure typed evaluator vocabulary and conservative UTF-8 wire budgets.
+
+    These byte guards are engineering headroom, not tokenizer measurements or
+    quality calibration. Unknown is adapter-owned and never a configurable label.
+    """
+
+    topic_labels: list[str] = field(
+        default_factory=lambda: [
+            "科技",
+            "编程",
+            "科学",
+            "游戏",
+            "影视",
+            "音乐",
+            "动漫",
+            "生活",
+            "美食",
+            "旅行",
+            "运动",
+            "财经",
+            "教育",
+            "历史",
+            "社会",
+            "艺术",
+            "其他",
+        ]
+    )
+    franchise_labels: list[str] = field(default_factory=list)
+    # Zero adapts to the selected model. Existing explicit values remain
+    # operator-owned stricter guards; they never redefine model capacity.
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
+    # Initial engineering exposure bound, not a calibrated accuracy claim.
+    # Native Jev has no independent question-count cap; zero leaves that guard
+    # to the dual context budgets. A complete candidate currently needs 10 questions.
+    max_candidates_per_request: int = 4
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
+    max_calls: int = 32
+    budget_seconds: float = 30.0
 
 
 @dataclass
@@ -520,6 +667,12 @@ class LLMConfig:
     openai_compatible: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     # OrcaRouter model-routing gateway (OpenAI-compatible, ``sk-orca-`` key).
     orcarouter: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # Requesty LLM gateway (OpenAI-compatible).
+    requesty: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # API Route multi-model gateway (OpenAI-compatible).
+    api_route: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    # Cheaper Inference LLM gateway (OpenAI-compatible, ``ci_live_`` key).
+    cheaperinference: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     # Per-module overrides (empty = use global default)
     soul: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
@@ -1025,6 +1178,7 @@ class SchedulerConfig:
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS
     eval_min_batch_size: int = _DEFAULT_EVAL_MIN_BATCH_SIZE
     eval_max_wait_seconds: float = _DEFAULT_EVAL_MAX_WAIT_SECONDS
@@ -1152,8 +1306,11 @@ class DiscoveryConfig:
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
     # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
-    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    # with learned-vs-LLM audit), "learned" (learned relevance with LLM metadata),
+    # or "jev" (pure text-only typed full evaluation with controlled metadata).
     eval_scorer: str = "llm"
+    semantic_filter: SemanticFilterConfig = field(default_factory=SemanticFilterConfig)
+    jev_evaluation: JevEvaluationConfig = field(default_factory=JevEvaluationConfig)
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -1278,6 +1435,52 @@ class YoutubeSourceConfig(SourceDatePreferenceConfig):
     daily_search_budget: int = 0
     daily_trending_budget: int = 0
     daily_channel_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
+@dataclass
+class TiktokSourceConfig(SourceDatePreferenceConfig):
+    """TikTok experimental source configuration.
+
+    TikTok steady-state discovery runs through a backend-direct runtime
+    producer. Two backends exist, selected by ``mode``: the signed web API
+    backend (``sources/tiktok_web.py``, guest identity, no login needed;
+    ``auto`` default with yt-dlp fallback) and the yt-dlp backend
+    (``sources/tiktok.py``). yt-dlp ships no TikTok *search* extractor and
+    guest keyword search is gated upstream, so keyword-planner words are
+    mapped onto hashtags instead of a search endpoint. ``tags`` /
+    ``creators`` seed the two listing strategies; the budget knobs cap
+    per-day execution units. A login cookie (``cookie_env`` /
+    ``data/tiktok_cookie.json``) is optional and unlocks keyword search.
+    """
+
+    enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
+    # Backend selector: "auto" (web with yt-dlp fallback) | "web" | "ytdlp".
+    mode: str = "auto"
+    # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
+    # is the fallback. Guest identity remains a legitimate mode without it.
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    # Geo parameters sent with every web API request; they should match the
+    # proxy egress region. When TikTok gates every response (empty body +
+    # ``tt_orcas_res: 1``), these two are the first thing to check.
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    # Baseline hashtags for the tag strategy (without the leading ``#``).
+    tags: tuple[str, ...] = ()
+    # TikTok creator handles for the user strategy (``@`` prefix optional).
+    creators: tuple[str, ...] = ()
+    # For-You feed pulls per day (high-visibility surface; kept small).
+    daily_feed_budget: int = 3
+    # Keyword search runs per day. Search only works with a login cookie and
+    # logged-in scraping carries account risk (TikTok ToS), so it is off
+    # unless a cookie is configured; the budget stays small regardless.
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
     request_interval_seconds: int = 2
     min_interval_minutes: int = 3
 
@@ -1468,6 +1671,19 @@ class WeiboSourceConfig(SourceDatePreferenceConfig):
     min_interval_minutes: int = 10
 
 
+@dataclass
+class InstagramSourceConfig(SourceDatePreferenceConfig):
+    """Instagram browser-task discovery and personal-signal configuration."""
+
+    enabled: bool = False
+    source_modes: tuple[str, ...] = ("topic", "creator")
+    daily_topic_budget: int = 60
+    daily_creator_budget: int = 30
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 10
+    bootstrap_limit: int = 300
+
+
 V2EX_ALLOWED_SOURCE_MODES = frozenset({"search", "node", "tab", "hot", "latest"})
 V2EX_CONFIG_INTEGER_LIMITS: dict[str, tuple[int, int]] = {
     "daily_search_budget": (0, 100_000),
@@ -1549,6 +1765,7 @@ class SourcesConfig:
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
+    tiktok: TiktokSourceConfig = field(default_factory=TiktokSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
     reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
@@ -1557,6 +1774,7 @@ class SourcesConfig:
     linuxdo: LinuxdoSourceConfig = field(default_factory=LinuxdoSourceConfig)
     v2ex: V2EXSourceConfig = field(default_factory=V2EXSourceConfig)
     weibo: WeiboSourceConfig = field(default_factory=WeiboSourceConfig)
+    instagram: InstagramSourceConfig = field(default_factory=InstagramSourceConfig)
 
 
 @dataclass
@@ -1696,6 +1914,31 @@ class SoulConfig:
 
 
 @dataclass
+class AgentConfig:
+    """Chat agent-loop knobs (「聊一聊」 multi-hop tool calling).
+
+    ``loop_enabled`` gates the streaming agent chat endpoint
+    (``POST /api/chat/agent/stream``); the legacy single-hop endpoints stay
+    available either way. ``loop_max_steps`` caps the think → tool → observe
+    hops per user turn; when exhausted the model is asked to wrap up and
+    report progress. ``tool_result_max_chars`` bounds each tool result fed
+    back into the prompt (longer results are truncated with a marker).
+    ``session_title_enabled`` (M5) lets the backend auto-title new chat
+    sessions from their first message via the LLM (falling back to a
+    truncated message prefix); when false the truncated prefix is used
+    directly.  ``task_max_steps`` (M6) caps the hops of one durable
+    background task run — background tasks get a smaller budget than
+    interactive turns since they run unattended.
+    """
+
+    loop_enabled: bool = True
+    loop_max_steps: int = 64
+    tool_result_max_chars: int = 4000
+    session_title_enabled: bool = True
+    task_max_steps: int = 32
+
+
+@dataclass
 class ApiAuthConfig:
     """Optional password gate for LAN / remote access (see
     ``docs/plans/2026-05-30-web-password-auth-design.md``).
@@ -1772,6 +2015,8 @@ class Config:
     data_dir: str = "data"
     api: ApiConfig = field(default_factory=ApiConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
+    director: DirectorConfig = field(default_factory=DirectorConfig)
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     # Overseas-outbound proxy (LLM SDKs / YouTube / Bangumi / updater).
     # CN-direct clients never use it — see NetworkConfig docstring.
@@ -1788,6 +2033,8 @@ class Config:
     # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
     # provider override): this carries soul-engine behavior toggles.
     soul: SoulConfig = field(default_factory=SoulConfig)
+    # Top-level `[agent]` carries the chat agent-loop budgets (M1).
+    agent: AgentConfig = field(default_factory=AgentConfig)
     tls_proxy: TlsProxyConfig = field(default_factory=TlsProxyConfig)
     tailnet: TailnetConfig = field(default_factory=TailnetConfig)
 
@@ -1875,6 +2122,13 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
     for env_key, env_value in os.environ.items():
         if not env_key.startswith(prefix):
             continue
+        if env_key == "OPENBILICLAW_RUNTIME_DATA_DIR":
+            # Internal parent -> child fence: a hot-respawn must retain the
+            # parent's migration-locked path even if the saved data_dir awaits
+            # a full application restart. Disk-only reads ignore this override.
+            if env_value.strip():
+                raw.setdefault("general", {})["data_dir"] = env_value
+            continue
         # Auth vars are multi-word (PASSWORD_HASH, SESSION_TTL_HOURS, …); the naive
         # `_` split would mis-nest them — e.g. PASSWORD_HASH → api.auth.password.hash,
         # injecting a dict at auth.password (later hashed as its repr) or raising
@@ -1931,14 +2185,16 @@ def _filter_dataclass_kwargs(
 def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
     """Warn once per process for per-source budgets that look like misused toggles.
 
-    ``daily_*_budget`` is a per-UTC-day task-count cap, not an on/off switch; ``0``
-    means unlimited. A value of 1–4 almost always means the user typed ``1`` to
-    "enable" a source and unknowingly throttled it to a single task per day.
+    ``daily_*_budget`` is a per-UTC-day source-work cap, not an on/off switch;
+    ``0`` means unlimited. Individual producers define whether work means
+    retained candidates or upstream requests. A value of 1–4 almost always
+    means the user typed ``1`` to "enable" a source and unknowingly throttled it.
     """
     source_configs: list[tuple[str, Any]] = [
         ("xiaohongshu", sources.xiaohongshu),
         ("douyin", sources.douyin),
         ("youtube", sources.youtube),
+        ("tiktok", sources.tiktok),
         ("twitter", sources.twitter),
         ("zhihu", sources.zhihu),
         ("reddit", sources.reddit),
@@ -1946,6 +2202,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("github", sources.github),
         ("linuxdo", sources.linuxdo),
         ("weibo", sources.weibo),
+        ("instagram", sources.instagram),
     ]
     for source_name, source_config in source_configs:
         for source_field in fields(source_config):
@@ -1957,12 +2214,19 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
                 continue
             if not (_SUSPICIOUS_BUDGET_LOW <= value <= _SUSPICIOUS_BUDGET_HIGH):
                 continue
+            # The shipped default cannot be a misused toggle — TikTok's official
+            # daily_feed_budget/daily_search_budget default is 3, which sits in
+            # the suspicious 1-4 band. A hand-written non-default still warns.
+            if source_field.default is not MISSING and value == source_field.default:
+                continue
             key = f"sources.{source_name}.{name}"
             if key in _warned_budget_keys:
                 continue
             _warned_budget_keys.add(key)
             logger.warning(
-                "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
+                "config: %s=%d — 这是每日保留候选条数上限,不是开关;想不限条数请设为 0"
+                if source_name == "instagram"
+                else "config: %s=%d — 这是每日任务次数上限,不是开关;想不限次数请设为 0",
                 key,
                 value,
             )
@@ -2267,6 +2531,9 @@ def _build_config(
         openrouter=_provider_config("openrouter"),
         openai_compatible=_provider_config("openai_compatible"),
         orcarouter=_provider_config("orcarouter"),
+        requesty=_provider_config("requesty"),
+        api_route=_provider_config("api_route"),
+        cheaperinference=_provider_config("cheaperinference"),
         embedding=EmbeddingConfig(
             **_filter_dataclass_kwargs(
                 EmbeddingConfig,
@@ -2327,6 +2594,7 @@ def _build_config(
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
+    tiktok_raw = sources_raw.get("tiktok", {})
     twitter_raw = sources_raw.get("twitter", {})
     zhihu_raw = sources_raw.get("zhihu", {})
     reddit_raw = sources_raw.get("reddit", {})
@@ -2335,6 +2603,7 @@ def _build_config(
     linuxdo_raw = sources_raw.get("linuxdo", {})
     v2ex_raw = sources_raw.get("v2ex", {})
     weibo_raw = sources_raw.get("weibo", {})
+    instagram_raw = sources_raw.get("instagram", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -2369,6 +2638,24 @@ def _build_config(
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 3))),
+        ),
+        tiktok=TiktokSourceConfig(
+            enabled=bool(tiktok_raw.get("enabled", False)),
+            incremental_enabled=bool(tiktok_raw.get("incremental_enabled", False)),
+            mode=str(tiktok_raw.get("mode", "auto")),
+            cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
+            # Empty geo values are meaningless and would gate every request;
+            # fall back to the verified defaults instead of saving them.
+            region=str(tiktok_raw.get("region", "JP")).strip() or "JP",
+            tz_name=str(tiktok_raw.get("tz_name", "Asia/Tokyo")).strip() or "Asia/Tokyo",
+            tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
+            creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
+            daily_feed_budget=int(tiktok_raw.get("daily_feed_budget", 3)),
+            daily_search_budget=int(tiktok_raw.get("daily_search_budget", 3)),
+            daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
+            daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
+            request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
+            min_interval_minutes=max(0, int(tiktok_raw.get("min_interval_minutes", 3))),
         ),
         twitter=TwitterSourceConfig(
             enabled=bool(twitter_raw.get("enabled", False)),
@@ -2581,6 +2868,40 @@ def _build_config(
                 weibo_raw.get("min_interval_minutes", 10), "min_interval_minutes"
             ),
         ),
+        instagram=InstagramSourceConfig(
+            enabled=bool(instagram_raw.get("enabled", False)),
+            source_modes=_normalize_instagram_source_modes(
+                instagram_raw.get("source_modes", ["topic", "creator"])
+            ),
+            daily_topic_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_topic_budget", 60), "daily_topic_budget"
+            ),
+            daily_creator_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_creator_budget", 30), "daily_creator_budget"
+            ),
+            request_interval_seconds=min(
+                30,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("request_interval_seconds", 3),
+                        "request_interval_seconds",
+                    ),
+                ),
+            ),
+            min_interval_minutes=_normalize_instagram_non_negative_int(
+                instagram_raw.get("min_interval_minutes", 10), "min_interval_minutes"
+            ),
+            bootstrap_limit=min(
+                300,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("bootstrap_limit", 300), "bootstrap_limit"
+                    ),
+                ),
+            ),
+        ),
     )
     normalize_github_source_config(sources.github, strict=False)
     normalize_v2ex_source_config(sources.v2ex, strict=False)
@@ -2591,6 +2912,7 @@ def _build_config(
         xiaohongshu=xhs_raw,
         douyin=douyin_raw,
         youtube=youtube_raw,
+        tiktok=tiktok_raw,
         twitter=twitter_raw,
         zhihu=zhihu_raw,
         reddit=reddit_raw,
@@ -2599,6 +2921,7 @@ def _build_config(
         linuxdo=linuxdo_raw,
         v2ex=v2ex_raw,
         weibo=weibo_raw,
+        instagram=instagram_raw,
     )
     _warn_suspicious_budgets(sources)
 
@@ -2663,9 +2986,33 @@ def _build_config(
         dialogue_tone_prompt=raw_dialogue_tone_prompt,
     )
 
+    agent_raw = raw.get("agent", {}) if isinstance(raw.get("agent"), dict) else {}
+    agent = AgentConfig(
+        loop_enabled=bool(agent_raw.get("loop_enabled", True)),
+        loop_max_steps=_normalize_scheduler_int(
+            agent_raw.get("loop_max_steps"),
+            default=64,
+            min_value=1,
+            max_value=256,
+        ),
+        tool_result_max_chars=_normalize_scheduler_int(
+            agent_raw.get("tool_result_max_chars"),
+            default=4000,
+            min_value=200,
+            max_value=100000,
+        ),
+        session_title_enabled=bool(agent_raw.get("session_title_enabled", True)),
+        task_max_steps=_normalize_scheduler_int(
+            agent_raw.get("task_max_steps"),
+            default=32,
+            min_value=1,
+            max_value=256,
+        ),
+    )
+
     api_auth = _build_api_auth(api_raw, consult_environment=consult_environment)
 
-    return Config(
+    config = Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
         api=ApiConfig(
@@ -2674,6 +3021,8 @@ def _build_config(
             auth=api_auth,
         ),
         llm=llm,
+        decision=_build_decision_config(raw.get("decision", {})),
+        director=_build_director_config(raw.get("director", {})),
         bilibili=bilibili,
         network=_build_network_config(raw),
         sources=sources,
@@ -2757,6 +3106,11 @@ def _build_config(
                     ),
                     "v2ex_incremental_hours": _normalize_source_incremental_hours(
                         sched_raw.get("v2ex_incremental_hours"),
+                        default=None,
+                        allow_none=True,
+                    ),
+                    "tiktok_incremental_hours": _normalize_source_incremental_hours(
+                        sched_raw.get("tiktok_incremental_hours"),
                         default=None,
                         allow_none=True,
                     ),
@@ -2916,9 +3270,371 @@ def _build_config(
             )
         ),
         soul=soul,
+        agent=agent,
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
         tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
+    validate_director_routes(config)
+    return config
+
+
+def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
+    """Check typed Jev settings without reading or revealing credentials."""
+    from openbiliclaw.decision.context_budget import (
+        JevContextError,
+        parse_jev_context_limits,
+        resolve_jev_context,
+        validate_jev_model_id,
+    )
+
+    issues: list[ConfigIssue] = []
+
+    def add(name: str, message: str) -> None:
+        issues.append(
+            ConfigIssue(
+                field=f"decision.providers.jev.{name}", message=message, severity="blocking"
+            )
+        )
+
+    if not isinstance(config.enabled, bool):
+        add("enabled", "必须为 TOML 布尔值 true 或 false。")
+    from openbiliclaw.decision.jev_provider import validate_jev_endpoint_url
+
+    try:
+        validate_jev_endpoint_url(config.endpoint_url)
+    except ValueError as exc:
+        add("endpoint_url", str(exc))
+    if not isinstance(config.api_key, str) or (
+        config.api_key
+        and (
+            not config.api_key.isascii()
+            or any(ord(char) < 33 or ord(char) == 127 for char in config.api_key)
+        )
+    ):
+        add("api_key", "Token 必须是有效 Bearer 凭据，不能含空白或控制字符。")
+    if (
+        not isinstance(config.model, str)
+        or not config.model.strip()
+        or config.model != config.model.strip()
+    ):
+        add("model", "必须为非空模型名称，且不能含首尾空白。")
+    if (
+        not isinstance(config.api_key_env, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", config.api_key_env) is None
+    ):
+        add("api_key_env", "必须为合法环境变量名；请勿填写实际 API Key。")
+    timeout = config.timeout_seconds
+    try:
+        valid_timeout = (
+            isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(timeout)
+            and timeout > 0
+        )
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        add("timeout_seconds", "必须为大于 0 的有限秒数。")
+    if (
+        not isinstance(config.max_attempts, int)
+        or isinstance(config.max_attempts, bool)
+        or config.max_attempts < 1
+    ):
+        add("max_attempts", "必须为大于等于 1 的整数（包含首次请求）。")
+    if not isinstance(config.context_limits, dict):
+        add("context_limits", "必须为按精确模型 ID 索引的上下文容量表。")
+    else:
+        for model, limits in config.context_limits.items():
+            try:
+                validate_jev_model_id(model)
+                resolve_jev_context(model, {model: parse_jev_context_limits(limits)})
+            except JevContextError as exc:
+                add("context_limits", str(exc))
+    return issues
+
+
+def validate_jev_decision_config(config: JevDecisionConfig) -> None:
+    """Reject invalid Jev client settings; credential resolution is separate."""
+    issues = _jev_decision_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def _build_decision_config(raw: object) -> DecisionConfig:
+    """Parse the isolated decision namespace without credential lookup."""
+    from openbiliclaw.decision.context_budget import JevContextError, parse_jev_context_limits
+
+    def table(value: object, section: str, allowed: set[str]) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ConfigError(f"`[{section}]` 必须是 TOML table。")
+        unknown = set(value) - allowed
+        if unknown:
+            # Do not echo values: a mistaken api_key entry can be a secret.
+            raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+        return value
+
+    decision_raw = table(raw, "decision", {"providers"})
+    providers_raw = table(decision_raw.get("providers", {}), "decision.providers", {"jev"})
+    jev_raw = table(
+        providers_raw.get("jev", {}),
+        "decision.providers.jev",
+        {item.name for item in fields(JevDecisionConfig)},
+    )
+    context_raw = jev_raw.get("context_limits", {})
+    if not isinstance(context_raw, dict):
+        raise ConfigError("decision.providers.jev.context_limits 必须为 TOML table。")
+    try:
+        context_limits = {
+            model: parse_jev_context_limits(limits) for model, limits in context_raw.items()
+        }
+    except JevContextError as exc:
+        raise ConfigError(f"decision.providers.jev.context_limits: {exc}") from None
+    jev = JevDecisionConfig(**{**jev_raw, "context_limits": context_limits})
+    validate_jev_decision_config(jev)
+    return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
+
+
+def update_decision_config(current: DecisionConfig, update: object) -> DecisionConfig:
+    """Apply a strict partial Jev update, preserving omitted/blank secrets.
+
+    Clear is explicit. Changing the destination requires a fresh token to avoid
+    forwarding a previously saved or environment credential to another service.
+    No credential is resolved and no network probe happens here.
+    """
+    if not isinstance(update, dict) or set(update) - {"providers"}:
+        raise ConfigError("decision 仅支持 providers 配置。")
+    providers = update.get("providers", {})
+    if not isinstance(providers, dict) or set(providers) - {"jev"}:
+        raise ConfigError("decision.providers 仅支持 jev。")
+    values = providers.get("jev", {})
+    if not isinstance(values, dict):
+        raise ConfigError("decision.providers.jev 必须是对象。")
+    values = dict(values)
+    clear = values.pop("clear_api_key", False)
+    if type(clear) is not bool:
+        raise ConfigError("clear_api_key 必须是布尔值。")
+    token = values.get("api_key", "")
+    if not isinstance(token, str) or "****" in token:
+        raise ConfigError("请填写有效 Token，不接受掩码或非文本值。")
+    if clear and token:
+        raise ConfigError("不能同时替换和清除 Jev Token。")
+    if (
+        values.get("endpoint_url", current.providers.jev.endpoint_url)
+        != current.providers.jev.endpoint_url
+        and not token
+    ):
+        raise ConfigError("修改 Jev URL 时请重新填写 Token，避免误发旧凭据。")
+    merged = asdict(current.providers.jev)
+    if not token:
+        values.pop("api_key", None)
+    merged.update(values)
+    if clear:
+        merged["api_key"] = ""
+    return _build_decision_config({"providers": {"jev": merged}})
+
+
+def _strict_route_table(raw: object, cls: type[Any], section: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{section}] 必须是 TOML table。")
+    unknown = set(raw) - {item.name for item in fields(cls)}
+    if unknown:
+        raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+    return raw
+
+
+def _build_director_config(raw: object) -> DirectorConfig:
+    return DirectorConfig(**_strict_route_table(raw, DirectorConfig, "director"))
+
+
+def _build_semantic_filter_config(raw: object) -> SemanticFilterConfig:
+    return SemanticFilterConfig(
+        **_strict_route_table(raw, SemanticFilterConfig, "discovery.semantic_filter")
+    )
+
+
+def build_jev_evaluation_config(raw: object) -> JevEvaluationConfig:
+    """Parse evaluator settings strictly; do not silently trim or discard context."""
+    config = JevEvaluationConfig(
+        **_strict_route_table(raw, JevEvaluationConfig, "discovery.jev_evaluation")
+    )
+    validate_jev_evaluation_config(config)
+    return config
+
+
+def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+    prefix = "discovery.jev_evaluation"
+
+    def add(name: str, message: str) -> None:
+        issues.append(ConfigIssue(field=f"{prefix}.{name}", message=message, severity="blocking"))
+
+    def valid_label(label: object) -> bool:
+        if not isinstance(label, str) or not label.strip() or label != label.strip():
+            return False
+        if label.casefold() == "unknown" or any(ord(char) < 32 for char in label):
+            return False
+        try:
+            return len(label.encode("utf-8")) <= 80
+        except UnicodeEncodeError:
+            return False
+
+    for name in ("topic_labels", "franchise_labels"):
+        labels = getattr(evaluation, name)
+        if (
+            not isinstance(labels, list)
+            or len(labels) > 254
+            or not all(valid_label(label) for label in labels)
+        ):
+            add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
+        elif len(set(labels)) != len(labels):
+            add(name, "标签不能重复；不会自动截断或合并。")
+    for name in ("max_state_question_bytes", "max_request_bytes", "max_question_bytes"):
+        value = getattr(evaluation, name)
+        if type(value) is not int or (value != 0 and not 256 <= value <= 75_000_000):
+            add(name, "必须为 0（按模型自适应）或 256..75000000 的更严字节护栏。")
+    for name, low, high in (("max_calls", 1, 64), ("max_candidates_per_request", 1, 64)):
+        value = getattr(evaluation, name)
+        if type(value) is not int or not low <= value <= high:
+            add(name, f"必须为 {low}..{high} 的整数。")
+    questions = evaluation.max_questions_per_request
+    if type(questions) is not int or (questions != 0 and not 10 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 10..640；完整候选不可拆题。")
+    if (
+        type(evaluation.max_request_bytes) is int
+        and type(evaluation.max_state_question_bytes) is int
+        and evaluation.max_request_bytes > 0
+        and evaluation.max_state_question_bytes > 0
+        and evaluation.max_request_bytes < evaluation.max_state_question_bytes
+    ):
+        add("max_request_bytes", "不能小于 max_state_question_bytes。")
+    budget = evaluation.budget_seconds
+    if type(budget) not in (int, float) or not 0.01 <= budget <= 120:
+        add("budget_seconds", "必须为 0.01..120 的有限数值。")
+    return issues
+
+
+def validate_jev_evaluation_config(config: JevEvaluationConfig) -> None:
+    """Validate direct adapter injection as strictly as persisted configuration."""
+    issues = _jev_evaluation_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def decision_routes_enabled(config: Config) -> bool:
+    """Whether runtime must construct the independent decision provider."""
+    return (
+        config.discovery.eval_scorer == "jev"
+        or config.discovery.semantic_filter.mode != "off"
+        or (config.director.mode != "off" and config.director.strategy != "agent_only")
+    )
+
+
+def _director_route_issues(config: Config) -> list[ConfigIssue]:
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
+    issues: list[ConfigIssue] = []
+
+    def add(path: str, message: str) -> None:
+        issues.append(ConfigIssue(field=path, message=message, severity="blocking"))
+
+    def enum(path: str, value: object, allowed: set[str]) -> None:
+        if not isinstance(value, str) or value not in allowed:
+            add(path, f"必须为 {' / '.join(sorted(allowed))}。")
+
+    def integer(path: str, value: object, low: int, high: int) -> None:
+        if type(value) is not int or not low <= value <= high:
+            add(path, f"必须为 {low}..{high} 的整数。")
+
+    def number(path: str, value: object, low: float, high: float) -> None:
+        if (
+            type(value) not in (int, float)
+            or not low <= value <= high  # type: ignore[operator]
+            or not math.isfinite(value)  # type: ignore[arg-type]
+        ):
+            add(path, f"必须为 {low:g}..{high:g} 的有限数值。")
+
+    director = config.director
+    filtering = config.discovery.semantic_filter
+    enum("director.mode", director.mode, {"off", "shadow", "enforce"})
+    enum("director.strategy", director.strategy, {"jev_recurrent", "agent_jev", "agent_only"})
+    enum("director.decision_provider", director.decision_provider, {"jev"})
+    integer("director.planning_horizon_screens", director.planning_horizon_screens, 1, 3)
+    integer("director.plan_ttl_seconds", director.plan_ttl_seconds, 1, 3600)
+    number("director.planning_budget_seconds", director.planning_budget_seconds, 0.01, 60)
+    number("director.decision_budget_seconds", director.decision_budget_seconds, 0.01, 60)
+    integer("director.max_decision_calls", director.max_decision_calls, 1, 10)
+    integer("director.max_candidates", director.max_candidates, 2, 40)
+    prefix = "discovery.semantic_filter"
+    enum(f"{prefix}.mode", filtering.mode, {"off", "shadow", "enforce"})
+    enum(f"{prefix}.provider", filtering.provider, {"jev"})
+    number(f"{prefix}.refusal_threshold", filtering.refusal_threshold, 0.5, 1.0)
+    integer(f"{prefix}.max_candidates_per_cycle", filtering.max_candidates_per_cycle, 1, 90)
+    integer(f"{prefix}.max_calls_per_cycle", filtering.max_calls_per_cycle, 1, 3)
+    number(f"{prefix}.decision_budget_seconds", filtering.decision_budget_seconds, 0.01, 30)
+    for name in ("calibration_tag", "calibration_model"):
+        value = getattr(filtering, name)
+        if not isinstance(value, str) or len(value) > 200 or value != value.strip():
+            add(f"{prefix}.{name}", "必须为至多 200 字符的文本，且不能含首尾空白。")
+    if filtering.mode == "enforce":
+        if not filtering.calibration_tag:
+            add(f"{prefix}.calibration_tag", "enforce 需要显式领域校准记录标识；标识不是质量证明。")
+        model = config.decision.providers.jev.model
+        if (
+            filtering.calibration_model != model
+            or not isinstance(model, str)
+            or model in {"jev-latest", "jev-preview"}
+        ):
+            add(f"{prefix}.calibration_model", "enforce 校准模型必须与当前固定 Jev 模型完全一致。")
+        if config.discovery.eval_prefilter_mode == "enforce":
+            add(f"{prefix}.mode", "Jev 与 embedding 预过滤不能同时 enforce。")
+    if decision_routes_enabled(config) and not config.decision.providers.jev.enabled:
+        add(
+            "decision.providers.jev.enabled",
+            "启用 Jev 评估、编排或过滤路由时必须显式启用 provider。",
+        )
+    issues.extend(_jev_evaluation_config_issues(config.discovery.jev_evaluation))
+    # Inactive routes may retain an unknown model for later setup, but must
+    # not silently borrow another model's capacity when the route is enabled.
+    try:
+        context = resolve_jev_context(
+            config.decision.providers.jev.model, config.decision.providers.jev.context_limits
+        )
+    except JevContextError as exc:
+        if decision_routes_enabled(config):
+            add("decision.providers.jev.context_limits", str(exc))
+    else:
+        evaluation = config.discovery.jev_evaluation
+        for name in ("max_request_bytes", "max_state_question_bytes"):
+            value = getattr(evaluation, name)
+            if type(value) is int and value > getattr(context, name):
+                add(f"discovery.jev_evaluation.{name}", "只能收紧所选模型字节预算，不能放宽。")
+    if config.discovery.eval_scorer == "jev":
+        if config.decision.providers.jev.model in {"jev-latest", "jev-preview"}:
+            add(
+                "decision.providers.jev.model",
+                "完整 Jev 评估必须使用固定模型版本；latest/preview 会使缓存与质量校准身份漂移。",
+            )
+        if config.discovery.multimodal_evaluation_enabled:
+            add(
+                "discovery.multimodal_evaluation_enabled",
+                "纯 Jev 评估仅支持文本；请关闭候选封面 LLM 评估。",
+            )
+        if filtering.mode != "off":
+            add(
+                "discovery.semantic_filter.mode",
+                "完整 Jev 评估与 Jev 预过滤不能同时启用；请设为 off。",
+            )
+    return issues
+
+
+def validate_director_routes(config: Config) -> None:
+    """Validate routes without resolving environment credentials or making I/O."""
+    issues = _director_route_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
 
 
 def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
@@ -2931,6 +3647,8 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     (``OPENBILICLAW_DISCOVERY_*``) normalize identically to TOML values.
     """
     return DiscoveryConfig(
+        semantic_filter=_build_semantic_filter_config(discovery_raw.get("semantic_filter", {})),
+        jev_evaluation=build_jev_evaluation_config(discovery_raw.get("jev_evaluation", {})),
         unified_keyword_planner_enabled=_coerce_bool(
             discovery_raw.get("unified_keyword_planner_enabled"),
             default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
@@ -3387,40 +4105,9 @@ def normalize_github_source_config(
 
 
 def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
-    """Normalize inspiration search backend names for the mcporter provider chain."""
+    """Normalize inspiration search backend names onto the shared canonical set."""
 
-    raw_values = (
-        list(_DEFAULT_INSPIRATION_SEARCH_BACKENDS) if value is None else _coerce_str_list(value)
-    )
-    aliases = {
-        "bing": "bing_rss",
-        "bing_rss": "bing_rss",
-        "bing-rss": "bing_rss",
-        "exa": "exa",
-        "local": "local_cache",
-        "cache": "local_cache",
-        "local_cache": "local_cache",
-        "local-cache": "local_cache",
-        "platform-source": "platform_sources",
-        "platform_sources": "platform_sources",
-        "platform": "platform_sources",
-        "you": "you",
-        "you.com": "you",
-        "youcom": "you",
-        "you-search": "you",
-        "you_search": "you",
-        "serply": "serply",
-        "serply.io": "serply",
-    }
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        backend = aliases.get(raw.strip().lower())
-        if backend is None or backend in seen:
-            continue
-        normalized.append(backend)
-        seen.add(backend)
-    return tuple(normalized or _DEFAULT_INSPIRATION_SEARCH_BACKENDS)
+    return normalize_inspiration_search_backends(value)
 
 
 # Single source of truth: every env var ``_build_api_auth`` honors for
@@ -3621,6 +4308,37 @@ def normalize_tls_san_names(value: object) -> list[str]:
             seen.add(key)
             normalized.append(canonical)
     return normalized
+
+
+def _normalize_instagram_source_modes(value: object) -> tuple[str, ...]:
+    """Return the ordered, bounded Instagram discovery mode set.
+
+    Creator expansion is seeded from topic results, so a creator-only value
+    must retain the topic lane instead of producing a permanently empty run.
+    """
+
+    if isinstance(value, str):
+        raw = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        raw = [str(part).strip() for part in value]
+    else:
+        raw = ["topic", "creator"]
+    selected = tuple(
+        dict.fromkeys(item.lower() for item in raw if item.lower() in {"topic", "creator"})
+    )
+    if selected == ("creator",):
+        return ("topic", "creator")
+    return selected or ("topic", "creator")
+
+
+def _normalize_instagram_non_negative_int(value: object, field_name: str) -> int:
+    """Validate one Instagram budget/interval integer without bool coercion."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"sources.instagram.{field_name} 必须是非负整数")
+    if value < 0:
+        raise ConfigError(f"sources.instagram.{field_name} 不能为负数")
+    return value
 
 
 def normalize_tls_enabled(value: object) -> bool:
@@ -4047,7 +4765,7 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
     issues: list[ConfigIssue] = []
     instances = llm.instances
 
-    if not instances:
+    if not instances and not llm.sponsored.enabled:
         issues.append(
             ConfigIssue(
                 field="llm.instances",
@@ -4229,7 +4947,7 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                     )
                 )
 
-    _validate_chain("llm.default_chain", llm.default_chain, allow_empty=False)
+    _validate_chain("llm.default_chain", llm.default_chain, allow_empty=llm.sponsored.enabled)
     for bucket in _LLM_MODULE_BUCKETS:
         route = getattr(llm, bucket)
         field_name = f"llm.routes.{bucket}.chain"
@@ -4258,6 +4976,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "zhihu",
     "reddit",
@@ -4266,6 +4985,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 
 
@@ -4343,7 +5063,8 @@ def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
-    issues: list[ConfigIssue] = []
+    issues: list[ConfigIssue] = _jev_decision_config_issues(config.decision.providers.jev)
+    issues.extend(_director_route_issues(config))
 
     try:
         normalize_tailnet_hostname(config.tailnet.hostname)
@@ -4359,6 +5080,10 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     sponsored = getattr(config.llm, "sponsored", None)
     if sponsored is not None and sponsored.enabled:
         runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
+        try:
+            command = shlex.split(runtime_path)
+        except ValueError:
+            command = []
         if not runtime_path:
             issues.append(
                 ConfigIssue(
@@ -4370,7 +5095,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                     severity="blocking",
                 )
             )
-        elif not Path(runtime_path).exists():
+        elif not command or shutil.which(command[0]) is None:
             issues.append(
                 ConfigIssue(
                     field="llm.sponsored.runtime_path",
@@ -4391,6 +5116,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         ("reddit_incremental_hours", config.scheduler.reddit_incremental_hours, True),
         ("linuxdo_incremental_hours", config.scheduler.linuxdo_incremental_hours, True),
         ("v2ex_incremental_hours", config.scheduler.v2ex_incremental_hours, True),
+        ("tiktok_incremental_hours", config.scheduler.tiktok_incremental_hours, True),
     )
     for field_name, value, allow_none in incremental_intervals:
         try:
@@ -4779,6 +5505,9 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         "openrouter": config.llm.openrouter,
         "openai_compatible": config.llm.openai_compatible,
         "orcarouter": config.llm.orcarouter,
+        "requesty": config.llm.requesty,
+        "api_route": config.llm.api_route,
+        "cheaperinference": config.llm.cheaperinference,
     }
 
     provider_config = provider_configs.get(provider_name)
@@ -4958,7 +5687,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         issues.append(
             ConfigIssue(
                 field="discovery.eval_scorer",
-                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned", "jev"。',
                 severity="blocking",
             )
         )
@@ -5617,6 +6346,8 @@ def save_config(
         validate_bangumi_username,
     )
 
+    validate_jev_decision_config(config.decision.providers.jev)
+    validate_director_routes(config)
     date_preference_issues = _source_date_preference_issues(config)
     if date_preference_issues:
         first_issue = date_preference_issues[0]
@@ -5632,6 +6363,7 @@ def save_config(
         ("reddit_incremental_hours", True),
         ("linuxdo_incremental_hours", True),
         ("v2ex_incremental_hours", True),
+        ("tiktok_incremental_hours", True),
     ):
         _normalize_source_incremental_hours(
             getattr(config.scheduler, field_name),
@@ -5698,6 +6430,9 @@ def save_config(
     )
     if config.llm.instance_routing and path.exists():
         _create_llm_migration_backup(path)
+    if config.decision.providers.jev.api_key:
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
     path.write_text(rendered, encoding="utf-8")
     return path
 
@@ -5736,6 +6471,11 @@ def _render_config_toml(
     include_api_auth: bool = True,
 ) -> str:
     """Render a Config dataclass into TOML."""
+    from openbiliclaw.decision.context_budget import parse_jev_context_limits
+
+    jev = config.decision.providers.jev
+    validate_jev_decision_config(jev)
+    validate_director_routes(config)
     api_auth_lines = (
         _api_auth_lines(
             config,
@@ -5747,6 +6487,63 @@ def _render_config_toml(
         else []
     )
     lines = [
+        "[director]",
+        f"mode = {_toml_string(config.director.mode)}",
+        f"strategy = {_toml_string(config.director.strategy)}",
+        f"decision_provider = {_toml_string(config.director.decision_provider)}",
+        f"planning_horizon_screens = {config.director.planning_horizon_screens}",
+        f"plan_ttl_seconds = {config.director.plan_ttl_seconds}",
+        f"planning_budget_seconds = {config.director.planning_budget_seconds}",
+        f"decision_budget_seconds = {config.director.decision_budget_seconds}",
+        f"max_decision_calls = {config.director.max_decision_calls}",
+        f"max_candidates = {config.director.max_candidates}",
+        "",
+        "[discovery.semantic_filter]",
+        f"mode = {_toml_string(config.discovery.semantic_filter.mode)}",
+        f"provider = {_toml_string(config.discovery.semantic_filter.provider)}",
+        f"refusal_threshold = {config.discovery.semantic_filter.refusal_threshold}",
+        f"calibration_tag = {_toml_string(config.discovery.semantic_filter.calibration_tag)}",
+        f"calibration_model = {_toml_string(config.discovery.semantic_filter.calibration_model)}",
+        f"max_candidates_per_cycle = {config.discovery.semantic_filter.max_candidates_per_cycle}",
+        f"max_calls_per_cycle = {config.discovery.semantic_filter.max_calls_per_cycle}",
+        f"decision_budget_seconds = {config.discovery.semantic_filter.decision_budget_seconds}",
+        "",
+        "[discovery.jev_evaluation]",
+        f"topic_labels = {_toml_str_list(config.discovery.jev_evaluation.topic_labels)}",
+        f"franchise_labels = {_toml_str_list(config.discovery.jev_evaluation.franchise_labels)}",
+        f"max_state_question_bytes = {config.discovery.jev_evaluation.max_state_question_bytes}",
+        f"max_request_bytes = {config.discovery.jev_evaluation.max_request_bytes}",
+        "max_candidates_per_request = "
+        f"{config.discovery.jev_evaluation.max_candidates_per_request}",
+        f"max_questions_per_request = {config.discovery.jev_evaluation.max_questions_per_request}",
+        f"max_question_bytes = {config.discovery.jev_evaluation.max_question_bytes}",
+        f"max_calls = {config.discovery.jev_evaluation.max_calls}",
+        f"budget_seconds = {config.discovery.jev_evaluation.budget_seconds}",
+        "",
+        "[decision.providers.jev]",
+        f"enabled = {_toml_bool(jev.enabled)}",
+        f"model = {_toml_string(jev.model)}",
+        f"api_key_env = {_toml_string(jev.api_key_env)}",
+        *([f"api_key = {_toml_string(jev.api_key)}"] if jev.api_key else []),
+        *(
+            [f"endpoint_url = {_toml_string(jev.endpoint_url)}"]
+            if jev.endpoint_url != "https://api.typesafe.ai/v1/systemone"
+            else []
+        ),
+        f"timeout_seconds = {jev.timeout_seconds}",
+        f"max_attempts = {jev.max_attempts}",
+        "",
+        *[
+            line
+            for model, raw_limits in sorted(jev.context_limits.items())
+            for limits in (parse_jev_context_limits(raw_limits),)
+            for line in (
+                f"[decision.providers.jev.context_limits.{_toml_string(model)}]",
+                f"max_request_tokens = {limits.max_request_tokens}",
+                f"max_state_question_tokens = {limits.max_state_question_tokens}",
+                "",
+            )
+        ],
         "[general]",
         f"language = {_toml_string(config.language)}",
         f"data_dir = {_toml_string(config.data_dir)}",
@@ -5804,8 +6601,19 @@ def _render_config_toml(
         lines.extend(_render_provider_section("openrouter", config.llm.openrouter))
         lines.extend(_render_provider_section("orcarouter", config.llm.orcarouter))
         lines.extend(_render_provider_section("openai_compatible", config.llm.openai_compatible))
+        lines.extend(_render_provider_section("requesty", config.llm.requesty))
+        lines.extend(_render_provider_section("api_route", config.llm.api_route))
+        lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
     lines.extend(
         [
+            "[llm.sponsored]",
+            f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
+            f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
+            "fallback_to_user_provider = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_user_provider)}",
+            f"notify_on_fallback = {_toml_bool(config.llm.sponsored.notify_on_fallback)}",
+            f"request_timeout_seconds = {config.llm.sponsored.request_timeout_seconds}",
+            "",
             "[llm.embedding]",
             f"provider = {_toml_string(config.llm.embedding.provider)}",
             f"model = {_toml_string(config.llm.embedding.model)}",
@@ -5916,6 +6724,23 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.youtube),
+            "",
+            "[sources.tiktok]",
+            f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.tiktok.incremental_enabled)}",
+            f"mode = {_toml_string(config.sources.tiktok.mode)}",
+            f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
+            f"region = {_toml_string(config.sources.tiktok.region)}",
+            f"tz_name = {_toml_string(config.sources.tiktok.tz_name)}",
+            f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
+            f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
+            f"daily_feed_budget = {config.sources.tiktok.daily_feed_budget}",
+            f"daily_search_budget = {config.sources.tiktok.daily_search_budget}",
+            f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
+            f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
+            f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.tiktok.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.tiktok),
             "",
             "[sources.twitter]",
             f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
@@ -6035,6 +6860,16 @@ def _render_config_toml(
             f"min_interval_minutes = {config.sources.weibo.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.weibo),
             "",
+            "[sources.instagram]",
+            f"enabled = {_toml_bool(config.sources.instagram.enabled)}",
+            f"source_modes = {_toml_str_list(list(config.sources.instagram.source_modes))}",
+            f"daily_topic_budget = {config.sources.instagram.daily_topic_budget}",
+            f"daily_creator_budget = {config.sources.instagram.daily_creator_budget}",
+            f"request_interval_seconds = {config.sources.instagram.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.instagram.min_interval_minutes}",
+            f"bootstrap_limit = {config.sources.instagram.bootstrap_limit}",
+            *_render_source_date_preference_lines(config.sources.instagram),
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             f"llm_budget_max_calls = {config.scheduler.llm_budget_max_calls}",
@@ -6083,6 +6918,11 @@ def _render_config_toml(
             *(
                 [f"v2ex_incremental_hours = {config.scheduler.v2ex_incremental_hours}"]
                 if config.scheduler.v2ex_incremental_hours is not None
+                else []
+            ),
+            *(
+                [f"tiktok_incremental_hours = {config.scheduler.tiktok_incremental_hours}"]
+                if config.scheduler.tiktok_incremental_hours is not None
                 else []
             ),
             f"refresh_check_interval_seconds = {config.scheduler.refresh_check_interval_seconds}",
@@ -6144,6 +6984,7 @@ def _render_config_toml(
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
+            f"tiktok = {int(config.scheduler.pool_source_shares.get('tiktok', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",
@@ -6152,6 +6993,7 @@ def _render_config_toml(
             f"linuxdo = {int(config.scheduler.pool_source_shares.get('linuxdo', 1))}",
             f"v2ex = {int(config.scheduler.pool_source_shares.get('v2ex', 1))}",
             f"weibo = {int(config.scheduler.pool_source_shares.get('weibo', 1))}",
+            f"instagram = {int(config.scheduler.pool_source_shares.get('instagram', 1))}",
             "",
             "[discovery]",
             "unified_keyword_planner_enabled = "
@@ -6260,6 +7102,28 @@ def _render_config_toml(
             "satisfaction_filter_enabled = "
             f"{_toml_bool(config.soul.preference.satisfaction_filter_enabled)}",
             "",
+            "[agent]",
+            "# 「聊一聊」 agent loop switch (M2). When false, the streaming",
+            "# agent endpoint POST /api/chat/agent/stream is disabled; the",
+            "# legacy single-hop chat endpoints stay available.",
+            f"loop_enabled = {_toml_bool(config.agent.loop_enabled)}",
+            "# 「聊一聊」 agent loop budgets (M1). loop_max_steps caps the",
+            "# think -> tool -> observe hops per user turn; when exhausted",
+            "# the model is asked to wrap up and report progress.",
+            f"loop_max_steps = {max(1, int(config.agent.loop_max_steps))}",
+            "# Per-tool-result character budget fed back into the prompt;",
+            "# longer results are truncated with a marker.",
+            f"tool_result_max_chars = {max(200, int(config.agent.tool_result_max_chars))}",
+            "# 「聊一聊」 multi-session auto-titling (M5). When true, a new",
+            "# session's first message gets an LLM-generated short title",
+            "# (falling back to a truncated message prefix); when false the",
+            "# truncated prefix is used directly without an LLM call.",
+            f"session_title_enabled = {_toml_bool(config.agent.session_title_enabled)}",
+            "# 「聊一聊」 background task budget (M6). One durable background",
+            "# task run gets a smaller hop budget than interactive turns",
+            "# since it runs unattended with read-only tools.",
+            f"task_max_steps = {max(1, int(config.agent.task_max_steps))}",
+            "",
         ]
     )
     return "\n".join(lines)
@@ -6301,6 +7165,9 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
         "openrouter",
         "orcarouter",
         "openai_compatible",
+        "requesty",
+        "api_route",
+        "cheaperinference",
     }:
         lines.append(f"base_url = {_toml_string(provider.base_url)}")
     if name == "openai":

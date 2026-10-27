@@ -642,7 +642,7 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
         Write-Host 'Next steps (credentials are missing):'
         Write-Host ''
         Write-Host '  1. Choose your LLM chat provider (default: deepseek):'
-        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | openai_compatible'
+        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible'
         Write-Host '     (Local Ollama is embedding-only here - not offered as a chat provider.)'
         Write-Host ''
         if ($missing -match 'api_key') {
@@ -652,6 +652,9 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
             Write-Host '         Gemini:     https://aistudio.google.com/apikey'
             Write-Host '         Claude:     https://console.anthropic.com/settings/keys'
             Write-Host '         OpenRouter: https://openrouter.ai/keys'
+            Write-Host '         Requesty:   https://app.requesty.ai/api-keys'
+            Write-Host '         API Route:  https://global.api-route.com/'
+            Write-Host '         Cheaper Inference: https://cheaperinference.com/signup'
             Write-Host ''
         }
         if ($missing -match 'bilibili.cookie') {
@@ -723,6 +726,11 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
     Write-Host '      1. Install Ollama from https://ollama.com/download'
     Write-Host '      2. Start Ollama (the desktop app launches the local service automatically)'
     Write-Host '      3. Set-Location ' "$InstallDir" ' ; uv run openbiliclaw setup-embedding'
+    Write-Host ''
+    Write-Host 'Optional recommendation director / Jev filter (disabled by default):'
+    Write-Host '  Configure TOML only after opting in; fully restart the backend.'
+    Write-Host '  Jev routes need the configured key environment variable in the backend.'
+    Write-Host "  See: $InstallDir\docs\modules\config.md#director"
     Write-Host ''
     Write-Host 'Reference docs:'
     Write-Host "  - $InstallDir\docs\agent-install.md     (install guide)"

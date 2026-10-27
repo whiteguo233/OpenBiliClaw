@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -16,6 +17,7 @@ from openbiliclaw.sources.dy_tasks import DyTaskQueue
 from openbiliclaw.sources.linuxdo_tasks import LinuxdoTaskQueue
 from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
 from openbiliclaw.sources.task_result_protocol import staged_terminal_status
+from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
 from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 from openbiliclaw.sources.yt_tasks import YtTaskQueue
 from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
@@ -116,6 +118,24 @@ SOURCE_CASES: tuple[dict[str, Any], ...] = (
         "bootstrap_key": "t3_source-protocol-reddit",
     },
     {
+        "source": "tiktok",
+        "table": "tiktok_tasks",
+        "queue": TiktokTaskQueue,
+        "task_type": "bootstrap_profile",
+        "task_payload": {"scopes": ["tt_like"], "max_items_per_scope": 2, "profile_update": True},
+        "field": "videos",
+        "item": {
+            "scope": "tt_like",
+            "title": "ORIGINAL tiktok",
+            "video_id": "123456789",
+            "url": "https://www.tiktok.com/@creator/video/123456789",
+        },
+        "state_key": "tiktok_seen_item_keys",
+        "bootstrap_key": "sha256:"
+        + hashlib.sha256(b"handle:protocol_viewer").hexdigest()
+        + ":tt_like:123456789",
+    },
+    {
         "source": "linuxdo",
         "table": "linuxdo_tasks",
         "queue": LinuxdoTaskQueue,
@@ -211,6 +231,8 @@ def _callback(case: dict[str, Any], task_id: str, *, changed: bool = False) -> d
         "status": "failed" if changed else "ok",
         case["field"]: [item],
     }
+    if case["source"] == "tiktok":
+        payload["viewer_handle"] = "changed_viewer" if changed else "protocol_viewer"
     if case["source"] == "xhs":
         payload["self_info"] = {
             "user_id": "changed-user" if changed else "original-user",
@@ -308,7 +330,9 @@ def test_retry_repairs_crash_after_canonical_stage_before_event_ingress(
 
 
 @pytest.mark.parametrize(
-    "case", (SOURCE_CASES[0], SOURCE_CASES[-1]), ids=lambda case: str(case["source"])
+    "case",
+    (SOURCE_CASES[0], SOURCE_CASES[-2], SOURCE_CASES[-1]),
+    ids=lambda case: str(case["source"]),
 )
 def test_retry_repairs_crash_after_ingress_before_strict_seen_key_update(
     durable_source_app: tuple[TestClient, Database, MemoryManager],
@@ -350,7 +374,9 @@ def test_retry_repairs_crash_after_ingress_before_strict_seen_key_update(
 
 
 @pytest.mark.parametrize(
-    "case", (SOURCE_CASES[0], SOURCE_CASES[-1]), ids=lambda case: str(case["source"])
+    "case",
+    (SOURCE_CASES[0], SOURCE_CASES[-2], SOURCE_CASES[-1]),
+    ids=lambda case: str(case["source"]),
 )
 def test_retry_repairs_crash_after_seen_key_before_terminal_flip(
     durable_source_app: tuple[TestClient, Database, MemoryManager],

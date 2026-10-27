@@ -174,7 +174,7 @@ def _dialogue_entry_source(symbol: str, branch_predicate: str = "") -> str:
             id="pending-open-anchor",
         ),
         pytest.param(
-            "SocraticDialogue.respond",
+            "SocraticDialogue._queue_dialogue_learning",
             "self._learning_mode is DialogueLearningMode.QUEUED",
             ("queue.submit(", "DialogueJobKind.LEARN"),
             ("learn_fn(", "_apply_dialogue_settlement("),
@@ -326,7 +326,7 @@ def test_injected_runtime_adopts_shared_soul_controller_gate(monkeypatch, tmp_pa
     assert ctx.llm_concurrency_gate is gate
     assert soul._llm_service.concurrency_gate is gate  # type: ignore[attr-defined]
     assert ctx.dialogue._build_service() is soul._llm_service  # type: ignore[attr-defined]
-    response = TestClient(app).post(
+    response = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420").post(
         "/api/config/probe-service",
         json={"kind": "llm", "config": {}},
     )
@@ -1647,7 +1647,8 @@ class TestBackendAPI:
         assert response.headers.get("cache-control") == "no-store"
         assert 'href="/web/assets/css/app.css?v=' in response.text
         assert 'href="/web/assets/css/classic.css?v=' in response.text
-        assert 'src="/web/assets/js/app.js?v=' in response.text
+        assert 'src="/web/assets/desktop-bundle.js?v=' in response.text
+        assert 'href="/shared/jev-settings.css?v=' in response.text
 
     def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:
         from fastapi.testclient import TestClient
@@ -2395,7 +2396,7 @@ class TestBackendAPI:
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             response = await asyncio.wait_for(
                 client.put("/api/config", json={"language": "zh"}),
@@ -2444,7 +2445,7 @@ class TestBackendAPI:
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             response = await client.put(
                 "/api/config",
@@ -2507,6 +2508,7 @@ class TestBackendAPI:
                 concurrency_gate: object | None = None,
                 reply_style: str = "",
                 dialogue_tone_prompt: str = "",
+                output_language: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2516,6 +2518,7 @@ class TestBackendAPI:
                 self.concurrency_gate = concurrency_gate
                 self.reply_style = reply_style
                 self.dialogue_tone_prompt = dialogue_tone_prompt
+                self.output_language = output_language
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:
@@ -2693,6 +2696,7 @@ class TestBackendAPI:
         import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.sources.bili_tasks as bili_tasks_module
         import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.tiktok_tasks as tiktok_tasks_module
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
@@ -2762,6 +2766,7 @@ class TestBackendAPI:
                 concurrency_gate: object | None = None,
                 reply_style: str = "",
                 dialogue_tone_prompt: str = "",
+                output_language: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2771,6 +2776,7 @@ class TestBackendAPI:
                 self.concurrency_gate = concurrency_gate
                 self.reply_style = reply_style
                 self.dialogue_tone_prompt = dialogue_tone_prompt
+                self.output_language = output_language
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:
@@ -2848,6 +2854,10 @@ class TestBackendAPI:
             def __init__(self, database: object) -> None:
                 self.database = database
 
+        class FakeTiktokTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
         class FakeZhihuTaskQueue:
             def __init__(self, database: object) -> None:
                 self.database = database
@@ -2873,6 +2883,7 @@ class TestBackendAPI:
                 database: object | None = None,
                 learning_mode: object,
                 settlement_queue: object | None = None,
+                link_ingestor: object | None = None,
             ) -> None:
                 self.llm = llm
                 self.soul_engine = soul_engine
@@ -2881,6 +2892,7 @@ class TestBackendAPI:
                 self.database = database
                 self.learning_mode = learning_mode
                 self.settlement_queue = settlement_queue
+                self.link_ingestor = link_ingestor
 
         fake_config = SimpleNamespace(
             data_path=Path("/tmp/openbiliclaw-test-data"),
@@ -2958,6 +2970,7 @@ class TestBackendAPI:
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
         monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
         monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(tiktok_tasks_module, "TiktokTaskQueue", FakeTiktokTaskQueue)
         monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
         monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
         monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
@@ -3001,6 +3014,7 @@ class TestBackendAPI:
             "reddit": False,
             "linuxdo": False,
             "v2ex": False,
+            "tiktok": False,
         }
         assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
         assert (
@@ -3042,6 +3056,17 @@ class TestBackendAPI:
         assert runtime_context.llm_service.concurrency_gate is shared_gate
         assert captured["soul_engine_kwargs"]["llm_concurrency_gate"] is shared_gate
         assert shared_gate.status_payload()["llm_total_concurrency"] == 2
+        # Chat link ingestion (issue #83): the production dialogue carries a
+        # LinkIngestor bound to the runtime bilibili client and the durable
+        # memory event path.
+        from openbiliclaw.sources.link_ingest import LinkIngestor
+
+        dialogue = runtime_context.dialogue
+        assert isinstance(dialogue.link_ingestor, LinkIngestor)
+        assert dialogue.link_ingestor._bilibili_client is runtime_context.bilibili_client
+        # FakeMemoryManager 没有 propagate_event:装配必须防御性降级为 None,
+        # 而不是让上下文构建炸掉。生产 MemoryManager 一定带该方法。
+        assert dialogue.link_ingestor._event_sink is None
 
     def test_cap_by_franchise_keeps_at_most_n_per_franchise(self) -> None:
         """Regression for the 'one popup full of 原神' bug. The API
@@ -4173,8 +4198,9 @@ class TestBackendAPI:
 
         assert service.calls == 1
 
+    @pytest.mark.parametrize("cpu_fallback", [False, True])
     def test_health_endpoint_treats_loopback_ollama_timeout_as_cold_load(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, cpu_fallback: bool
     ) -> None:
         import asyncio
 
@@ -4183,6 +4209,11 @@ class TestBackendAPI:
         import openbiliclaw.api.app as appmod
 
         monkeypatch.setattr(appmod, "_EMBEDDING_PROBE_TIMEOUT_SECONDS", 0.01)
+        from openbiliclaw.llm import ollama_embedding_runtime
+
+        monkeypatch.setattr(
+            ollama_embedding_runtime, "cpu_fallback_active", lambda *_: cpu_fallback
+        )
 
         class _SlowProbeService:
             async def probe(self) -> bool:
@@ -4206,7 +4237,7 @@ class TestBackendAPI:
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json()["embedding_ready"] is True
+        assert response.json()["embedding_ready"] is (not cpu_fallback)
 
     @pytest.mark.parametrize(
         ("provider", "base_url"),
@@ -4423,6 +4454,16 @@ class TestBackendAPI:
         assert body["authenticated"] is True
         assert body["username"] == "test_user"
         assert body["user_id"] == 12345
+        # A verified write is never marked unverified — the additive fields
+        # stay at their defaults so the success shape is unchanged. The
+        # message remains one of the two legacy strings (the sandboxed
+        # rebuild has no LLM registry, so runtime_refreshed varies).
+        assert body["unverified"] is False
+        assert body["unverified_reason"] == ""
+        assert body["message"] in {
+            "Cookie synced and runtime refreshed.",
+            "Cookie already synced; runtime unchanged.",
+        }
 
         # Side effect 1: data/bilibili_cookie.json got written.
         cookie_file = tmp_path / "data" / "bilibili_cookie.json"
@@ -6358,6 +6399,7 @@ class TestBackendAPI:
             "recommendation_count": 5,
             "pending_signal_events": 3,
             "last_refresh_at": "2026-03-10T12:00:00",
+            "discovery_failure_message": "",
             "last_notification_at": "2026-03-10T12:30:00",
             "unread_count": 2,
             "pool_available_count": 28,
@@ -6405,6 +6447,9 @@ class TestBackendAPI:
             # same sentence; the raw error above stays for diagnostics.
             "last_account_sync_message": "",
             "last_account_sync_severity": "",
+            # True only while a bilibili cookie pushed during guided init sits
+            # staged on disk waiting to be applied.
+            "bilibili_cookie_staged": False,
             "event_lane_depth": 0,
             "event_lane_active": False,
             "event_lane_paused": False,
@@ -6917,6 +6962,79 @@ class TestBackendAPI:
                 "reason": "missing_cookie",
                 "source": "runtime-stream",
             }
+
+    def test_runtime_stream_requests_tiktok_cookie_sync_for_background_client(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            assert websocket.receive_json() == {
+                "type": "xhs_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "zhihu_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "tiktok_cookie_sync_requested",
+                "reason": "missing_cookie",
+                "source": "runtime-stream",
+            }
+
+    def test_runtime_stream_skips_tiktok_sync_request_when_cookie_present(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Guest mode is legitimate: a configured cookie means no request."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+        TiktokCookieManager(cfg.data_path).set_cookie("sessionid=tt", source="test")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            # Only the two login-state pings; no tiktok cookie request.
+            assert websocket.receive_json()["type"] == "xhs_login_state_sync_requested"
+            assert websocket.receive_json()["type"] == "zhihu_login_state_sync_requested"
 
     def test_runtime_stream_requests_reddit_cookie_sync_for_background_client(
         self, monkeypatch, tmp_path: Path
@@ -12695,7 +12813,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12752,7 +12870,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12798,7 +12916,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12850,7 +12968,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12904,7 +13022,7 @@ class TestBackendAPI:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12970,7 +13088,7 @@ class TestBackendAPI:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         unsafe_slug = client.put(
             "/api/config",
@@ -13038,7 +13156,11 @@ class TestBackendAPI:
         database = Database(tmp_path / "bangumi-token-put.db")
         database.initialize()
         app = create_app(memory_manager=object(), database=database, soul_engine=object())
-        return cfg, database, TestClient(app)
+        return (
+            cfg,
+            database,
+            TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        )
 
     def test_put_config_bangumi_token_validates_live_and_writes_username(
         self, monkeypatch, tmp_path
@@ -13225,7 +13347,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         # PUT — supply dedicated embedding credentials.
         put_resp = client.put(
@@ -13305,7 +13427,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -14312,6 +14434,78 @@ class TestPendingDialogueConfirmations:
             },
         )
 
+    def test_pending_poll_reuses_dedup_without_caching_mutable_card_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        title = "用户可能通过机械键盘组装过程获得自主创作与掌控的满足感"
+        self._seed_hypothesis(memory, title, 0.9)
+        self._seed_hypothesis(memory, title + "并探索不同轴体", 0.8)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        first = client.get("/api/chat/pending-confirmations").json()
+        assert first["total"] == 1
+        assert calls
+        calls.clear()
+        insight = memory.get_layer("insight")
+        insight.data["hypotheses"][0]["confidence"] = 0.95
+        insight.save()
+        second = client.get("/api/chat/pending-confirmations").json()
+        assert second["items"][0]["confidence"] == 0.95
+        assert calls == [], "unchanged ordered titles must not repeat quadratic fuzzy matching"
+
+        self._seed_hypothesis(
+            memory, "用户对长距离徒步的兴趣可能来自身体挑战与自然环境的恢复感", 0.7
+        )
+        third = client.get("/api/chat/pending-confirmations").json()
+        assert third["total"] == 2, "a changed title snapshot must invalidate the cached selection"
+
+    def test_pending_dedup_skips_impossible_string_matches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, chr(0x4E00 + index) * 40, 0.9)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        body = client.get("/api/chat/pending-confirmations").json()
+        assert body["total"] == 30
+        assert calls == [], "disjoint titles cannot reach the similarity threshold"
+
+    def test_pending_session_filter_does_not_open_one_connection_per_hypothesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, f"独立短假设{index}", 0.9)
+        connections: list[None] = []
+        original_open = memory._database.open_connection
+
+        def counted_open():  # type: ignore[no-untyped-def]
+            connections.append(None)
+            return original_open()
+
+        monkeypatch.setattr(memory._database, "open_connection", counted_open)
+        body = client.get("/api/chat/pending-confirmations?session=popup").json()
+        assert body["total"] == 30
+        assert len(connections) <= 3, "session filtering must use one batch of active references"
+
     def test_pending_list_filters_high_priority_caps_at_ten_and_has_count_only(
         self,
         tmp_path: Path,
@@ -15126,7 +15320,7 @@ class TestEmbeddingAndCompatProviderE2E:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     # ── GET masking & shape ─────────────────────────────────────────
 
@@ -15657,6 +15851,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 3,
             "zhihu": 1,
             "reddit": 1,
@@ -15665,6 +15860,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["refresh_check_interval_seconds"] == 75
@@ -16322,6 +16518,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 1,
             "github": 1,
             "zhihu": 1,
@@ -16330,6 +16527,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert cfg.scheduler.refresh_check_interval_seconds == 75
         assert cfg.scheduler.eval_min_batch_size == 23
@@ -16492,6 +16690,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "tiktok": 0,
                 "twitter": 0,
                 "zhihu": 0,
                 "reddit": 225,
@@ -16499,6 +16698,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
                 "github": 0,
                 "unknown": 0,
             },
@@ -16507,6 +16707,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": True,
                 "douyin": True,
                 "youtube": True,
+                "tiktok": False,
                 "twitter": False,
                 "zhihu": False,
                 "reddit": False,
@@ -16515,6 +16716,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "github": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 8,
@@ -16649,6 +16851,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "tiktok": 0,
                 "twitter": 0,
                 "zhihu": 0,
                 "reddit": 225,
@@ -16656,6 +16859,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
                 "github": 0,
                 "unknown": 0,
             },
@@ -16664,6 +16868,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": False,
                 "douyin": False,
                 "youtube": True,
+                "tiktok": False,
                 "twitter": False,
                 "zhihu": False,
                 "reddit": True,
@@ -16672,6 +16877,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "github": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 6,
@@ -16913,7 +17119,7 @@ class TestProfileEditEndpoints:
         layer.data.update(profile.to_dict())
         layer.save()
         app = create_app(memory_manager=memory, database=memory._database, soul_engine=engine)
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     def test_edit_state_returns_untruncated_fields(self, tmp_path: Path) -> None:
         client = self._client(tmp_path)
@@ -17538,6 +17744,25 @@ class TestGuidedInitEndpoints:
         # Rejected before reserving — no run row created at all.
         assert db.get_latest_init_run() is None
 
+    def test_init_accepts_tiktok_as_only_profile_signal_source(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """TikTok joined guided init with its account bootstrap queue
+        (tt_like/tt_collect/tt_history/tt_follow), so a tiktok-only selection
+        is a legal run and must reach the shared pipeline."""
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["tiktok"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["tiktok"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured, key="include_tiktok")
+        assert captured["include_bili"] is False
+        assert captured["include_tiktok"] is True
+        assert db.get_latest_init_run() is not None
+
     def test_init_accepts_reddit_as_only_profile_signal_source(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -17598,6 +17823,51 @@ class TestGuidedInitEndpoints:
             "readiness": "login_required",
         }
         assert db.get_latest_init_run() is None
+
+    def test_init_rejects_tiktok_only_when_profile_capability_is_signed_out(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["tiktok"],
+            capability_readiness={("tiktok", "profile"): "login_required"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["tiktok"]})
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "no_profile_signal_sources"
+        assert response.json()["capability"] == "profile"
+        assert response.json()["readiness"] == "login_required"
+        assert db.get_latest_init_run() is None
+
+    def test_init_drops_unready_tiktok_from_mixed_selection_with_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "tiktok"],
+            capability_readiness={("tiktok", "profile"): "unverified"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["bilibili", "tiktok"]})
+            assert response.status_code == 202
+            assert any("TikTok 个人信号未就绪" in w for w in response.json()["warnings"])
+            self._drive_until(client, captured, key="include_tiktok")
+
+        assert captured["include_bili"] is True
+        assert captured["include_tiktok"] is False
+        assert db.get_latest_init_run() is not None
 
     def test_init_records_douyin_degraded_as_partial_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -19267,6 +19537,84 @@ class TestGuidedInitEndpoints:
                 assert resp.status_code == 409, f"{path} not gated ({resp.status_code})"
                 assert resp.json().get("error") == "init_running", path
 
+    def test_failed_runtime_rebuild_logged_and_retried_on_next_push(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed post-write rebuild must be loud and must not stick.
+
+        The old ``suppress(Exception)`` left the runtime on the stale cookie
+        with no log, and the next identical push was an accepted no-op that
+        never retried the rebuild — the app synced with the dead cookie
+        forever.
+        """
+        import logging
+
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth import verify as verify_module
+        from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
+
+        full_cookie = "SESSDATA=sess; bili_jct=jct; DedeUserID=12345"
+
+        async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+            return verify_module.LiveProbeOutcome(
+                slug=slug,
+                has_credential=True,
+                authenticated=True,
+                network_error=False,
+                message="stubbed probe",
+                username="tester",
+            )
+
+        monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+        LIVE_PROBES.clear()
+
+        app, _ = self._make_app(tmp_path)
+        ctx = app.state.runtime_context
+        rebuild_calls = 0
+
+        async def _flaky_rebuild(new_config: object) -> None:
+            nonlocal rebuild_calls
+            rebuild_calls += 1
+            if rebuild_calls == 1:
+                raise RuntimeError("rebuild boom")
+
+        monkeypatch.setattr(ctx, "rebuild_from_config", _flaky_rebuild)
+
+        with (
+            TestClient(app) as client,
+            caplog.at_level(logging.ERROR, logger="openbiliclaw.api.app"),
+        ):
+            first = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert first.status_code == 200
+            assert first.json()["ok"] is True
+            assert rebuild_calls == 1
+            assert any(
+                "runtime rebuild after bilibili credential write failed" in record.getMessage()
+                for record in caplog.records
+            )
+
+            # Identical re-push: persisted value unchanged, so this used to be
+            # an accepted no-op; now it retries the owed rebuild.
+            second = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert second.status_code == 200
+            assert rebuild_calls == 2
+            assert second.json()["message"] == "Cookie synced and runtime refreshed."
+
+            # Debt cleared: a third identical push is the old cheap no-op.
+            third = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert third.status_code == 200
+            assert rebuild_calls == 2
+
     def test_cookie_same_value_is_noop_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
@@ -19286,8 +19634,14 @@ class TestGuidedInitEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_cookie_changed_during_init_is_rejected(self, tmp_path: Path) -> None:
+    def test_cookie_changed_during_init_is_staged(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth.staged import (
+            peek_staged_bilibili_cookie,
+            staged_cookie_path,
+        )
+        from openbiliclaw.config import load_config
 
         app, _ = self._make_app(tmp_path)
         with TestClient(app) as client:
@@ -19295,10 +19649,107 @@ class TestGuidedInitEndpoints:
             resp = client.post(
                 "/api/bilibili/cookie", json={"cookie": "SESSDATA=different", "source": "test"}
             )
-        # A genuinely different cookie during init is rejected (not silently
-        # dropped, not a mid-init rebuild) so the user knows it didn't apply.
-        assert resp.status_code == 409
-        assert resp.json()["error"] == "init_running"
+        # A genuinely different cookie during init is staged (not dropped,
+        # not a mid-init rebuild) and applies automatically once init
+        # completes — the old 409 left the fix to the extension's backoff.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["authenticated"] is False
+        assert body["error_code"] == "cookie_staged"
+        staged = peek_staged_bilibili_cookie(load_config().data_path)
+        assert staged is not None
+        assert staged["cookie"] == "SESSDATA=different"
+        assert staged["source"] == "test"
+        assert staged_cookie_path(load_config().data_path).exists()
+
+    def test_staged_cookie_visible_in_runtime_status(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        # runtime-status caches for 1s per app instance, so each read below
+        # uses a fresh app; both share the same isolated data dir.
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            before = client.get("/api/runtime-status")
+        assert before.status_code == 200
+        assert before.json()["bilibili_cookie_staged"] is False
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            client.post(
+                "/api/bilibili/cookie", json={"cookie": "SESSDATA=different", "source": "test"}
+            )
+            after = client.get("/api/runtime-status")
+        assert after.status_code == 200
+        assert after.json()["bilibili_cookie_staged"] is True
+
+    def test_staged_cookie_applied_after_init_completes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth import verify as verify_module
+        from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import load_config
+
+        full_cookie = "SESSDATA=sess; bili_jct=jct; DedeUserID=12345"
+
+        async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+            return verify_module.LiveProbeOutcome(
+                slug=slug,
+                has_credential=True,
+                authenticated=True,
+                network_error=False,
+                message="stubbed probe",
+                username="tester",
+            )
+
+        monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+        LIVE_PROBES.clear()
+
+        app, _ = self._make_app(tmp_path)
+        data_dir = load_config().data_path
+        with TestClient(app) as client:
+            coord = app.state.runtime_context.init_coordinator
+            coord.try_start("active")
+            staged = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert staged.status_code == 200
+            # Mid-init the cookie is staged only, not applied.
+            assert AuthManager(data_dir=data_dir).load_cookie() != full_cookie
+
+            coord.reset_to_idle("active", reason="test_done")
+            completed = client.post("/api/init-completed")
+            assert completed.status_code == 200
+
+        # Completion ran the normal validate+persist path for the staged jar.
+        assert AuthManager(data_dir=data_dir).load_cookie() == full_cookie
+
+    def test_cookie_same_value_during_init_drops_older_staged_cookie(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth.staged import peek_staged_bilibili_cookie
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import load_config
+
+        app, _ = self._make_app(tmp_path)
+        data_dir = load_config().data_path
+        AuthManager(data_dir=data_dir).set_cookie("SESSDATA=same")
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            client.post("/api/bilibili/cookie", json={"cookie": "SESSDATA=older", "source": "test"})
+            assert peek_staged_bilibili_cookie(data_dir) is not None
+            resp = client.post(
+                "/api/bilibili/cookie", json={"cookie": "SESSDATA=same", "source": "test"}
+            )
+        # The pushed jar now matches the live one, so the older staged value
+        # describes a session the user has since replaced.
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert peek_staged_bilibili_cookie(data_dir) is None
 
     def test_deny_by_default_gates_arbitrary_writer_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
@@ -20932,7 +21383,9 @@ class TestLlmFallbackConfigValidationAndProbe:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app), config_path
+        return TestClient(
+            app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+        ), config_path
 
     def _base_config(self):
         from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
@@ -21165,7 +21618,9 @@ class TestKeywordGenerationModeWrite:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app), config_path
+        return TestClient(
+            app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+        ), config_path
 
     @pytest.mark.parametrize(
         ("mode", "enabled", "replace"),
@@ -21335,7 +21790,11 @@ def _make_defer_app(interest_defer=None, avoidance_defer=None, llm_reply="neutra
         dialogue=FakeDialogue(),
         recommendation_engine=SimpleNamespace(_llm=FakeLLM()),
     )
-    return TestClient(app), interest, avoidance
+    return (
+        TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        interest,
+        avoidance,
+    )
 
 
 def test_interest_probe_defer_button_returns_deferred() -> None:
@@ -21456,7 +21915,7 @@ def test_interest_pending_excludes_deferred_probes(tmp_path) -> None:
 
     app = create_app(soul_engine=FakeSoulEngine(), memory_manager=object(), database=object())
     app.state.runtime_context.config = SimpleNamespace(data_path=tmp_path)
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     items = client.get("/api/interest-probes/pending").json()["items"]
     domains = {i["domain"] for i in items}
@@ -21504,7 +21963,7 @@ def test_reshuffle_endpoint_forwards_visible_card_exclusions() -> None:
         recommendation_engine=engine,
         runtime_controller=FakeRuntimeController(),
     )
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     no_body = client.post("/api/recommendations/reshuffle")
     with_exclusions = client.post(
@@ -21586,7 +22045,7 @@ def test_successful_reshuffle_records_one_batch_event_and_empty_result_records_n
         recommendation_engine=FakeRecommendationEngine(),
         runtime_controller=FakeRuntimeController(),
     )
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     success = client.post(
         "/api/recommendations/reshuffle",
@@ -21912,7 +22371,7 @@ class TestRootRedirectLanding:
         from fastapi.testclient import TestClient
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=soul_engine)
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     def test_root_redirects_to_web_when_initialized(self) -> None:
         client = self._client(SimpleNamespace(is_profile_ready=lambda: True))

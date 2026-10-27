@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,6 +15,7 @@ from openbiliclaw.llm.base import (
     LLMFallbackError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMRegistry,
     LLMResponse,
     LLMResponseError,
     LLMTimeoutError,
@@ -23,6 +25,7 @@ from openbiliclaw.llm.base import (
     is_llm_moderation_error,
     is_reasoning_budget_exhausted,
 )
+from openbiliclaw.llm.openai_provider import OpenAIProvider
 from openbiliclaw.llm.service import (
     MIN_STRUCTURED_MAX_TOKENS,
     LLMProviderExecutionError,
@@ -396,7 +399,7 @@ def test_describe_llm_failure_model_not_found() -> None:
         )
     )
     assert reason is not None
-    assert "404" in reason
+    assert "找不到所配置的模型" in reason
     assert "ollama pull" in reason.lower() or "拉取" in reason
 
 
@@ -565,6 +568,7 @@ async def test_llm_service_calls_registry_with_memory_context(tmp_path: Path) ->
     assert registry.calls[0][0]["role"] == "system"
     assert "结构化表达" in registry.calls[0][0]["content"]
     assert "老B友" in registry.calls[0][0]["content"]
+    assert "同一需求默认最多澄清一轮" in registry.calls[0][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -1105,6 +1109,45 @@ def test_is_reasoning_budget_exhausted_ignores_other_failures() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_budget_exhausted_from_responses_flavor_survives_service_wrapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration: a responses-flavor instance that burns the whole output
+    budget on thinking raises an error the evaluation batch-halving self-heal
+    recognizes even after registry fallback + service-layer wrapping."""
+    provider = OpenAIProvider(api_key="test-key", api_flavor="responses")
+    registry = LLMRegistry()
+    registry.register(provider)
+    service = LLMService(registry=registry, memory=object())  # type: ignore[arg-type]
+    calls = {"count": 0}
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        return SimpleNamespace(
+            model="gpt-5-mini",
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="reasoning", summary=[])],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5, total_tokens=15),
+        )
+
+    monkeypatch.setattr(provider._client.responses, "create", fake_create)
+
+    with pytest.raises(LLMProviderExecutionError) as exc_info:
+        await service.complete_with_core_memory(
+            system_instruction="sys",
+            user_input="hi",
+            caller="discovery.eval",
+            max_tokens=512,
+            inject_core_memory=False,
+        )
+
+    assert is_reasoning_budget_exhausted(exc_info.value)
+    # The doubled-budget retry fired before the error propagated.
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_structured_task_floors_small_max_tokens() -> None:
     registry = FakeRegistry(response=LLMResponse(content='{"ok": true}', provider="openai"))
     service = LLMService(registry=registry, memory=FakeMemoryManager("core"))  # type: ignore[arg-type]
@@ -1210,3 +1253,13 @@ async def test_llm_service_default_dialogue_tone_prompt_leaves_prompt_untouched(
     await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
 
     assert "- 信息密度" in registry.calls[0][0]["content"]
+
+
+def test_remote_model_missing_does_not_blame_local_ollama() -> None:
+    reason = describe_llm_failure(
+        LLMProviderError("remote gateway HTTP 404: model 'configured-model' not found")
+    )
+    assert reason is not None
+    assert "Ollama" not in reason
+    assert "ollama pull" not in reason
+    assert "模型" in reason

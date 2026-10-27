@@ -11,7 +11,9 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from .base import LLMResponse
+    from collections.abc import AsyncIterator, Callable
+
+    from .base import LLMResponse, LLMStreamChunk
     from .sponsored_provider import SponsoredProvider
 
 from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
@@ -70,26 +72,36 @@ async def try_sponsored_completion(
     """Return None only for disabled mode or an explicitly permitted availability fallback."""
     if _BYPASS.get() or (provider is None and not sponsored_enabled()):
         return None
-    from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
-
     settings = current_sponsored_settings()
     try:
         provider = provider or shared_sponsored_provider()
         if provider is None:
             raise SponsoredUnavailableError("sponsored runtime is not configured")
+        tools = kwargs.pop("tools", None)
+        if tools is not None:
+            kwargs.pop("json_mode", None)
+            return cast(
+                "LLMResponse", await provider.complete_with_tools(messages, tools, **kwargs)
+            )
         return cast("LLMResponse", await provider.complete(messages, **kwargs))
     except SponsoredError as exc:
         if not is_fallback_allowed(exc) or not settings.fallback_to_user_provider:
             raise
-        if settings.notify_on_fallback:
-            record_diagnostics_alert(
-                category="llm",
-                code=f"sponsored_{exc.code.lower()}",
-                message=f"Sponsored {kwargs.get('caller', '')} unavailable: {exc.code}",
-                source="sponsored",
-                severity="warning",
-            )
+        _notify_fallback(exc, caller=kwargs.get("caller", ""))
         return None
+
+
+def _notify_fallback(exc: SponsoredError, *, caller: str) -> None:
+    from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
+
+    if current_sponsored_settings().notify_on_fallback:
+        record_diagnostics_alert(
+            category="llm",
+            code=f"sponsored_{exc.code.lower()}",
+            message=f"Sponsored {caller} unavailable: {exc.code}",
+            source="sponsored",
+            severity="warning",
+        )
 
 
 async def close_shared_provider() -> None:
@@ -114,3 +126,48 @@ async def complete_project_task(
         return response
     with bypass_sponsored():
         return cast("LLMResponse", await llm.complete(messages, **kwargs))
+
+
+async def stream_project_completion(
+    messages: list[dict[str, Any]],
+    *,
+    fallback: Callable[[], AsyncIterator[LLMStreamChunk]],
+    provider: Any = None,
+    **kwargs: Any,
+) -> AsyncIterator[LLMStreamChunk]:
+    """Respect the main stream contract; fall back only before any emitted content."""
+    emitted = False
+    if not _BYPASS.get() and (provider is not None or sponsored_enabled()):
+        settings = current_sponsored_settings()
+        try:
+            provider = provider or shared_sponsored_provider()
+            if provider is None:
+                raise SponsoredUnavailableError("sponsored runtime is not configured")
+            sdk_kwargs = dict(kwargs)
+            tools = sdk_kwargs.pop("tools", None)
+            if tools is not None:
+                sdk_kwargs.pop("json_mode", None)
+                stream = provider.stream_complete_with_tools(messages, tools, **sdk_kwargs)
+            else:
+                stream = provider.stream_complete(messages, **sdk_kwargs)
+            async for chunk in stream:
+                emitted = emitted or bool(chunk.delta) or chunk.response is not None
+                yield chunk
+            return
+        except SponsoredError as exc:
+            if emitted or not is_fallback_allowed(exc) or not settings.fallback_to_user_provider:
+                raise
+            _notify_fallback(exc, caller=kwargs.get("caller", ""))
+    stream = fallback().__aiter__()
+    try:
+        while True:
+            try:
+                with bypass_sponsored():
+                    chunk = await anext(stream)
+            except StopAsyncIteration:
+                break
+            yield chunk
+    finally:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
