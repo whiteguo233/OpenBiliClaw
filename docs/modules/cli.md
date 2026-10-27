@@ -1801,6 +1801,9 @@ $ openbiliclaw db-repair
 | `sources run SOURCE_ID --limit 20` | 单次有界抓取与现有候选评估；持续定时运行依赖 `start` / `serve-api` |
 | `browser install` | 为既有旧版 Playwright 流程安装对应 Chromium；不是新网页来源的 Ego Lite 安装入口 |
 
+`prepare-ego` 成功输出记录退出前的原生握手；命令退出时会清理没有活跃会话的托管宿主。
+长驻 API 的准备完成与采集结束共用默认 120 秒空闲退出，实际网页任务再按需启动。
+
 macOS 上的本机源码安装会在依赖完成后、`--skip-start` 返回前自动准备 Ego。
 实际 `start` / `serve-api` 启动服务时也会在后台补齐未完成环境，不阻塞 HTTP/UI，
 无需先聊天或手动运行 `prepare-ego`。准备使用当前数据库目录的 `ego-managed`，下载并

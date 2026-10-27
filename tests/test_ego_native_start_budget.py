@@ -28,7 +28,7 @@ async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
         }
     )
     executor = EgoLiteWorkflowExecutor(tmp_path)
-    monkeypatch.setattr(executor, "_schedule_idle_stop", lambda **kwargs: None)
+    monkeypatch.setattr(executor, "schedule_idle_stop", lambda **kwargs: None)
     monkeypatch.setattr(executor._setup, "_pid", lambda: None)
     monkeypatch.setattr(ego_executor, "_host_pid", lambda name: None)
     lock = asyncio.Lock()
@@ -126,7 +126,7 @@ async def test_only_managed_unready_connection_retries_after_cleanup(
     )
     executor = EgoLiteWorkflowExecutor(tmp_path)
     executor.managed = managed
-    monkeypatch.setattr(executor, "_schedule_idle_stop", lambda **kwargs: None)
+    monkeypatch.setattr(executor, "schedule_idle_stop", lambda **kwargs: None)
     monkeypatch.setattr(executor._setup, "status", lambda: {"available": True})
     monkeypatch.setattr(
         executor,

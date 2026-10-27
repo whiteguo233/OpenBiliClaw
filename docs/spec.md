@@ -362,6 +362,7 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      login required → human takeover → resume/trial → same draft/workflow
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
+                     Preparation complete / last session closed → shared 120s idle grace → stop only without session leases; CLI exit cleanup
                      Managed opening timeout → cleanup → one retry with saved task identity within original total budget
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
@@ -711,6 +712,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   独立新来源 -> 独立 task space 会话；profile Cookie 共享、显式会话可复用 │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
+│  │   准备完成 / 末个会话关闭 → 120 秒保温 → 租约保护回收；CLI 退出清理 │ │
 │  │   托管初始只读打开超时 → 清理 → 原总预算内复用身份重试一次         │ │
 │  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
 │  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │

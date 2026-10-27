@@ -124,6 +124,8 @@ def create_custom_sources_router(
             if status.get("setup_state") == "ready" and status.get("installed") is True:
                 # Prepared/offline is sufficient at deployment startup. Actual
                 # collection starts that host when needed; don't launch it here.
+                if status.get("available") is True:
+                    manager.schedule_idle_stop()
                 return
             schedule_ego_preparation(manager)
         except Exception as exc:
@@ -141,6 +143,7 @@ def create_custom_sources_router(
         if status.get("platform_supported") is False or status.get("setup_state") == "unsupported":
             raise HTTPException(409, str(status.get("detail", "当前环境不支持准备 Ego Lite。")))
         if status.get("setup_state") == "ready" and status.get("available") is True:
+            manager.schedule_idle_stop()
             return dict(status)
         schedule_ego_preparation(manager)
         return ego_setup_status()

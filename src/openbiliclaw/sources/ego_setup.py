@@ -8,6 +8,7 @@ External OPENBILICLAW_EGO_* hosts are never installed, stopped, or reconfigured.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import errno
 import hashlib
 import json
@@ -46,6 +47,9 @@ _RETRY_DELAYS = (1.0, 3.0)
 # the final native handshake; each phase still has a hard cancellation budget.
 _INSTALL_TIMEOUT = 1200
 _CONNECT_TIMEOUT = 300
+_IDLE_STOP_SECONDS = 120.0
+_IDLE_TASKS: dict[str, asyncio.Task[None]] = {}
+_EXIT_REAPERS: set[str] = set()
 _DETAILS = {
     "idle": "Prepare an isolated Ego Lite browser for OpenBiliClaw",
     "download": "Downloading the official Ego Lite application",
@@ -91,6 +95,15 @@ async def _command(*args: str, timeout: float = 30) -> str:
 
 def _external() -> bool:
     return any(os.environ.get(name) for name in _EXTERNAL_ENV)
+
+
+def _idle_stop_seconds() -> float:
+    raw = os.environ.get("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "")
+    try:
+        value = float(raw) if raw.strip() else _IDLE_STOP_SECONDS
+    except ValueError:
+        value = _IDLE_STOP_SECONDS
+    return min(max(value, 0.0), 86400.0)
 
 
 async def _retry_command(*args: str, timeout: float = 30) -> str:
@@ -784,7 +797,67 @@ class EgoSetupManager:
 
     async def prepare(self) -> dict[str, Any]:
         """Explicitly install/initialize; repeated calls reuse this root's setup lock."""
-        return await self._operate(initialize=True)
+        result = await self._operate(initialize=True)
+        if result.get("available") is True:
+            self.schedule_idle_stop()
+        return result
+
+    def register_exit_cleanup(self) -> None:
+        """Reclaim this managed host on interpreter exit when no session is live."""
+        if _external() or sys.platform != "darwin":
+            return
+        key = str(self.root)
+        if key in _EXIT_REAPERS:
+            return
+        _EXIT_REAPERS.add(key)
+
+        def reap() -> None:
+            try:
+                lease = self.try_exclusive_session_lease()
+            except Exception:
+                return
+            if lease is None:
+                return
+            try:
+                self.stop_sync()
+            except Exception:
+                logger.info("Managed Ego host was not stopped at interpreter exit")
+            finally:
+                self.release_session_lease(lease)
+
+        atexit.register(reap)
+
+    def schedule_idle_stop(self, *, grace: float | None = None) -> None:
+        """Reclaim a prepared or used host after all processes release session leases."""
+        if _external() or sys.platform != "darwin":
+            return
+        self.register_exit_cleanup()
+        key = str(self.root)
+        delay = _idle_stop_seconds() if grace is None else max(grace, 0.0)
+        previous = _IDLE_TASKS.pop(key, None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        _IDLE_TASKS[key] = asyncio.create_task(self._stop_when_idle(key, delay))
+
+    async def _stop_when_idle(self, key: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            lease = self.try_exclusive_session_lease()
+            if lease is None:
+                logger.info("Keeping the managed Ego host: a session is still active")
+                return
+            try:
+                await self.stop()
+                logger.info("Stopped the idle managed Ego host")
+            finally:
+                self.release_session_lease(lease)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Idle stop of the managed Ego host failed", exc_info=False)
+        finally:
+            if _IDLE_TASKS.get(key) is asyncio.current_task():
+                _IDLE_TASKS.pop(key, None)
 
     async def ensure_running(self) -> dict[str, Any]:
         """At actual work time, restart only a previously initialized managed host."""

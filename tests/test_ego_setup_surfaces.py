@@ -36,7 +36,9 @@ def _fixture(monkeypatch, tmp_path, *, managed=True, supported=True, deployment=
         state.update(setup_state="ready", phase="ready", installed=True, available=True)
         return dict(state)
 
-    setup = SimpleNamespace(status=lambda: dict(state), prepare=prepare)
+    setup = SimpleNamespace(
+        status=lambda: dict(state), prepare=prepare, schedule_idle_stop=lambda: None
+    )
     monkeypatch.setattr(custom_sources, "_ego_setup_manager", lambda _: setup, raising=False)
     service = SimpleNamespace(
         database=SimpleNamespace(_db_path=tmp_path / "test.db"),

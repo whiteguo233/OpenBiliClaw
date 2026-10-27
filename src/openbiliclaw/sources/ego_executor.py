@@ -8,7 +8,6 @@ No executable page or host program is accepted from workflow/model data.
 from __future__ import annotations
 
 import asyncio
-import atexit
 import base64
 import json
 import logging
@@ -44,13 +43,6 @@ logger = logging.getLogger(__name__)
 
 _LOCKS: dict[str, asyncio.Lock] = {}
 _READY: dict[str, tuple[int, str]] = {}
-# A managed Ego host is expensive to start and is shared by every workflow in
-# this data directory. Keep it warm briefly, then stop it once no session lease
-# is held in any process. Browser processes previously stayed alive until the
-# next reboot, burning a renderer for days.
-_IDLE_STOP_SECONDS = 120.0
-_IDLE_TASKS: dict[str, asyncio.Task[None]] = {}
-_EXIT_REAPERS: set[str] = set()
 
 
 def _save_session_state(path: Path, state: dict[str, Any]) -> None:
@@ -59,15 +51,6 @@ def _save_session_state(path: Path, state: dict[str, Any]) -> None:
     temporary.write_text(json.dumps(state))
     temporary.chmod(0o600)
     temporary.replace(path)
-
-
-def _idle_stop_seconds() -> float:
-    raw = os.environ.get("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "")
-    try:
-        value = float(raw) if raw.strip() else _IDLE_STOP_SECONDS
-    except ValueError:
-        value = _IDLE_STOP_SECONDS
-    return min(max(value, 0.0), 86400.0)
 
 
 def _error(code: str, detail: str = "") -> Exception:
@@ -199,7 +182,7 @@ class EgoLiteWorkflowSession:
         if not self.executor._setup.executable.is_file():
             return
         self._lease = self.executor._setup.acquire_session_lease()
-        self.executor._install_exit_reaper()
+        self.executor._setup.register_exit_cleanup()
 
     async def start(self, state_file: Path, state: dict[str, Any]) -> None:
         self._ensure_lease()
@@ -614,7 +597,7 @@ class EgoLiteWorkflowSession:
                 # A tab that refused to close keeps rendering even after the
                 # native host exits, so a failed close shortens the idle grace
                 # and the managed browser is stopped outright.
-                self.executor._schedule_idle_stop(grace=0.0 if close_failed else None)
+                self.executor.schedule_idle_stop(grace=0.0 if close_failed else None)
 
 
 class EgoLiteWorkflowExecutor:
@@ -673,62 +656,9 @@ class EgoLiteWorkflowExecutor:
             "dns_pinned": False,
         }
 
-    def _install_exit_reaper(self) -> None:
-        """Stop our managed host on interpreter shutdown when no session is live."""
-        if not self.managed:
-            return
-        key = str(self._setup.root)
-        if key in _EXIT_REAPERS:
-            return
-        _EXIT_REAPERS.add(key)
-        setup = self._setup
-
-        def reap() -> None:
-            try:
-                lease = setup.try_exclusive_session_lease()
-            except Exception:
-                return
-            if lease is None:
-                return
-            try:
-                setup.stop_sync()
-            except Exception:
-                logger.info("Managed Ego host was not stopped at interpreter exit")
-            finally:
-                setup.release_session_lease(lease)
-
-        atexit.register(reap)
-
-    def _schedule_idle_stop(self, *, grace: float | None = None) -> None:
-        """Stop the managed host once no session lease is held in any process."""
-        if not self.managed:
-            return
-        key = str(self._setup.root)
-        delay = _idle_stop_seconds() if grace is None else max(grace, 0.0)
-        previous = _IDLE_TASKS.pop(key, None)
-        if previous is not None and not previous.done():
-            previous.cancel()
-        _IDLE_TASKS[key] = asyncio.create_task(self._stop_when_idle(key, delay))
-
-    async def _stop_when_idle(self, key: str, delay: float) -> None:
-        try:
-            await asyncio.sleep(delay)
-            lease = self._setup.try_exclusive_session_lease()
-            if lease is None:
-                logger.info("Keeping the managed Ego host: a session is still active")
-                return
-            try:
-                await self._setup.stop()
-                logger.info("Stopped the idle managed Ego host")
-            finally:
-                self._setup.release_session_lease(lease)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("Idle stop of the managed Ego host failed", exc_info=False)
-        finally:
-            if _IDLE_TASKS.get(key) is asyncio.current_task():
-                _IDLE_TASKS.pop(key, None)
+    def schedule_idle_stop(self, *, grace: float | None = None) -> None:
+        """Reclaim a prepared or used host once no process holds a session lease."""
+        self._setup.schedule_idle_stop(grace=grace)
 
     async def open_session(
         self,

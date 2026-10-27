@@ -945,6 +945,10 @@ scale to 1/2/3 times their initial values). Installation has a 1200-second deadl
 A timed-out setup action is not replayed: the owned host is stopped, then a fresh connection
 observes the actual page and resumes. Explicit signature/trust refusals and unknown screens
 remain failures. Exhausted failures can retry explicitly or at the next service start.
+Successful preparation and completed workflows share a 120-second idle grace, even if no
+workflow was opened. Reusing an online host also schedules reclamation. The source-install
+CLI reclaims an unused managed host when it exits; the printed success describes the
+completed handshake, not a permanently running browser. Active session leases prevent cleanup.
 The API owns and cancels its preparation task on shutdown.
 
 The settings action **Prepare Ego Lite** and the command below remain explicit retry paths.

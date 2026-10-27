@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openbiliclaw.sources import ego_executor
+from openbiliclaw.sources import ego_setup
 from openbiliclaw.sources.browser_workflow import compile_browser_workflow
 from openbiliclaw.sources.ego_executor import EgoLiteWorkflowExecutor, EgoLiteWorkflowSession
 from openbiliclaw.sources.ego_setup import EgoSetupManager
@@ -56,7 +56,7 @@ async def test_last_session_close_schedules_idle_stop(plan, tmp_path, monkeypatc
     await session.close()
     await asyncio.sleep(0.2)
     stop.assert_awaited_once()
-    assert str(executor._setup.root) not in ego_executor._IDLE_TASKS
+    assert str(executor._setup.root) not in ego_setup._IDLE_TASKS
 
 
 async def test_idle_stop_keeps_host_while_another_session_lease_is_held(tmp_path, monkeypatch):
@@ -66,7 +66,7 @@ async def test_idle_stop_keeps_host_while_another_session_lease_is_held(tmp_path
     monkeypatch.setattr(executor._setup, "stop", stop)
     other = executor._setup.acquire_session_lease()
     try:
-        await executor._stop_when_idle(str(executor._setup.root), 0.0)
+        await executor._setup._stop_when_idle(str(executor._setup.root), 0.0)
     finally:
         executor._setup.release_session_lease(other)
     stop.assert_not_awaited()
@@ -76,8 +76,8 @@ async def test_external_host_is_never_reclaimed(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENBILICLAW_EGO_BROWSER", str(tmp_path / "ego-browser"))
     executor = EgoLiteWorkflowExecutor(tmp_path)
     assert executor.managed is False
-    executor._schedule_idle_stop(grace=0.0)
-    assert str(executor._setup.root) not in ego_executor._IDLE_TASKS
+    executor.schedule_idle_stop(grace=0.0)
+    assert str(executor._setup.root) not in ego_setup._IDLE_TASKS
 
 
 async def test_stop_escalates_to_sigkill_for_a_hung_host(tmp_path, monkeypatch):
@@ -116,7 +116,7 @@ async def test_failed_native_close_shortens_idle_grace(plan, tmp_path, monkeypat
     _fake_app(executor._setup)
     scheduled: list[float | None] = []
     monkeypatch.setattr(
-        executor, "_schedule_idle_stop", lambda *, grace=None: scheduled.append(grace)
+        executor, "schedule_idle_stop", lambda *, grace=None: scheduled.append(grace)
     )
     lock = asyncio.Lock()
     await lock.acquire()
