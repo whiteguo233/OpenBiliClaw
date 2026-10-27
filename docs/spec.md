@@ -334,6 +334,8 @@ candidate full evaluator (settings switch; LLM default):
     mandatory baseline + optional positive facts (borrow room before excerpting)
     + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
     → jev_context whole source spans / coverage → complete-question-group batch packing
+    → identical selected profile fields shared once → first-fit open-batch backfill
+    dual byte ceilings use configured capacity integers (no extra 25%); not exact tokenizer
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
     Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery

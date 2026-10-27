@@ -113,6 +113,70 @@ class NativeProvider:
         pass
 
 
+async def test_default_batch_fills_selected_window_beyond_four_candidates() -> None:
+    model = "operator-roomy-jev"
+    provider = NativeProvider(
+        lambda request: native_evidence(request).model_copy(
+            update={"requested_model": model, "actual_model": model}
+        )
+    )
+    budget = resolve_jev_context(model, {model: JevContextLimits(128000, 128000)})
+    adapter = JevContentEvaluator(
+        provider, model=model, context_budget=budget, config=JevEvaluationConfig()
+    )
+    items = [{**ITEM, "content_id": f"candidate-{index}"} for index in range(8)]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert len(provider.requests) == 1
+    assert len(provider.requests[0].questions) == 80
+    assert budget.fits_request(provider.requests[0])
+
+
+async def test_short_later_candidate_fills_an_earlier_request_without_reassessment() -> None:
+    provider = NativeProvider(
+        lambda request: native_evidence(
+            request, levels={"c0.score": 6.0, "c1.score": 7.0, "c2.score": 8.0}
+        )
+    )
+    adapter = JevContentEvaluator(
+        provider,
+        model=MODEL,
+        config=JevEvaluationConfig(
+            max_calls=2, max_request_bytes=48000, max_state_question_bytes=24000
+        ),
+    )
+    items = [
+        {**ITEM, "content_id": name, "body_text": text * length}
+        for name, text, length in (
+            ("medium", "a", 9000),
+            ("large", "b", 15000),
+            ("small", "c", 5000),
+        )
+    ]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert [row["score"] for row in results] == pytest.approx([6 / 9, 7 / 9, 8 / 9])
+    assert [
+        set(key.split(".")[0] for key in request.questions) for request in provider.requests
+    ] == [{"c0", "c2"}, {"c1"}]
+    assert sum(len(request.questions) for request in provider.requests) == 30
+    assert all(resolve_jev_context(MODEL).fits_request(request) for request in provider.requests)
+
+
+async def test_automatic_window_uses_room_previously_reserved_as_extra_byte_headroom() -> None:
+    provider = NativeProvider()
+    adapter = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+    items = [{**ITEM, "content_id": str(index), "body_text": "x" * 10000} for index in range(2)]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert len(provider.requests) == 1
+    measured = resolve_jev_context(MODEL).measure(
+        provider.requests[0].state, provider.requests[0].questions
+    )
+    assert 24000 < measured.max_state_question_bytes <= 32000
+    assert measured.request_bytes <= 64000
+
+
 def evaluator(
     provider: NativeProvider,
     **config_overrides: Any,
@@ -782,8 +846,8 @@ def test_unpinned_model_is_rejected_before_requests(model: str) -> None:
         {"max_calls": 0},
         {"max_calls": True},
         {"budget_seconds": float("nan")},
-        {"max_request_bytes": 48001},
-        {"max_state_question_bytes": 24001},
+        {"max_request_bytes": 64001},
+        {"max_state_question_bytes": 32001},
         {"topic_labels": ["重复", "重复"]},
         {"franchise_labels": ["unknown"]},
     ],

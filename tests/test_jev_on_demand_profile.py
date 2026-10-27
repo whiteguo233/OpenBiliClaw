@@ -52,14 +52,17 @@ async def test_same_candidate_projection_is_independent_of_batch_peers() -> None
     catalog = build_profile_catalog(_mature_profile())
     target = {**ITEM, "title": "古琴漆艺教程"}
     await adapter.evaluate(profile_summary=catalog, content_items=[target])
-    alone = provider.requests[0].state["candidate_profiles"]["c0"]
+    alone = {
+        **provider.requests[0].state["profile"],
+        **provider.requests[0].state["candidate_profiles"]["c0"],
+    }
     provider.requests.clear()
     await adapter.evaluate(
         profile_summary=catalog,
         content_items=[{**ITEM, "title": "通用兴趣10"}, target],
     )
     together = next(
-        request.state["candidate_profiles"]["c1"]
+        {**request.state["profile"], **request.state["candidate_profiles"]["c1"]}
         for request in provider.requests
         if "c1" in request.state["candidate_profiles"]
     )

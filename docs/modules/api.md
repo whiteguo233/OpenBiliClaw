@@ -72,6 +72,9 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
 完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
 改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+自动预算现在使用容量整数作为字节上限（标准 64,000/32,000 bytes），不再额外扣 25%；
+`JevEvaluationConfigOut.max_candidates_per_request` 默认 64，实际合批取决于双容量。
+三端读取同一合同并保留旧手动小上限，readiness 仍只说明配置就绪，不等于已联网测试。
 
 `PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
 （完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、

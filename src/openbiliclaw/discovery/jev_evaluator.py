@@ -58,8 +58,9 @@ if TYPE_CHECKING:
     from openbiliclaw.decision.models import DecisionAnswer, DecisionQuestion
 
 logger = logging.getLogger(__name__)
-_SCHEMA = "jev-full-evaluation-v3"
+_SCHEMA = "jev-full-evaluation-v4"
 _PROFILE_ALLOCATION = "mandatory-plus-optional-third-positive-v2"
+_BATCH_PACKING = "first-fit-open-batches-v1"
 _UNKNOWN = "u"
 _TEXT_FIELDS = TEXT_FIELDS
 _FAILURE_REASONS = frozenset(
@@ -98,8 +99,10 @@ _SHARED_GUARD = (
     "content.text_spans: each has text and origins identifying its source field. "
     "Read these spans in source order. text_coverage describes omitted source data; "
     "do not treat a partial view as the complete source. Preserve explicit exclusions, "
-    "style and context from the shared profile. candidate_profiles contains separate "
-    "partial positive selections: use only the target candidate's selection, never a peer's. "
+    "style and context from the shared profile. Shared profile fields are identical "
+    "in EVERY candidate's selected view. Overlay only the target candidate's fields "
+    "from candidate_profiles onto profile to reconstruct its partial selection. "
+    "Never borrow any other candidate's fields. "
     "Missing interests do not imply dislike. If candidate_profiles is absent use profile. "
 )
 _RELEVANCE_INSTRUCTIONS = (
@@ -314,6 +317,7 @@ class JevContentEvaluator:
             "context_budget": self._context_budget.fingerprint,
             "profile_policy": PROFILE_CONTEXT_VERSION,
             "profile_allocation": _PROFILE_ALLOCATION,
+            "batch_packing": _BATCH_PACKING,
             "guard": _GUARD,
             "shared_guard": _SHARED_GUARD,
             "relevance": [_RELEVANCE_INSTRUCTIONS, _RELEVANCE_RUBRIC],
@@ -656,12 +660,15 @@ class JevContentEvaluator:
             logger.info(
                 "Jev full evaluator context usage: model=%s candidates=%d "
                 "request_bytes=%d max_state_question_bytes=%d "
+                "request_byte_utilization_pct=%.1f state_question_byte_utilization_pct=%.1f "
                 "actual_input_tokens=%d actual_output_tokens=%d "
                 "byte_guard=engineering_not_token_estimate",
                 actual_model,
                 candidate_count,
                 request_bytes,
                 state_question_bytes,
+                100 * request_bytes / self._context_budget.max_request_bytes,
+                100 * state_question_bytes / self._context_budget.max_state_question_bytes,
                 usage.input_tokens,
                 usage.output_tokens,
             )
@@ -765,31 +772,34 @@ class JevContentEvaluator:
             ):
                 catalog = supplied_profile
                 base["profile"] = {}
-            batches: list[tuple[DecisionRequest, list[_Candidate]]] = []
-            pending: list[_Candidate] = []
+            groups: list[list[_Candidate]] = []
             for index, item in enumerate(items):
+                if time.monotonic() >= deadline:
+                    break
                 candidate = self._prepare_candidate(index, item, base, catalog, deadline)
                 if candidate is None:
                     if time.monotonic() < deadline:
                         results[index] = InputBudgetFailure()
                     continue
-                proposed = self._request(base, [*pending, candidate], deadline)
-                if len(pending) < self._config.max_candidates_per_request and self._fits(proposed):
-                    pending.append(candidate)
-                    continue
-                if pending:
-                    batches.append((self._request(base, pending, deadline), pending))
-                    pending = []
-                if len(batches) >= self._config.max_calls:
-                    break
-                singleton = self._request(base, [candidate], deadline)
-                if self._fits(singleton):
-                    pending = [candidate]
+                # Keep earlier requests open for smaller later candidates.
+                # Never shrink a view based on peers or evaluate it twice.
+                for group in groups:
+                    if len(group) >= self._config.max_candidates_per_request:
+                        continue
+                    if self._fits(self._request(base, [*group, candidate], deadline)):
+                        group.append(candidate)
+                        break
                 else:
-                    logger.warning("Jev full evaluator candidate skipped: input_budget_exhausted")
-                    results[index] = InputBudgetFailure()
-            if pending and len(batches) < self._config.max_calls:
-                batches.append((self._request(base, pending, deadline), pending))
+                    if not self._fits(self._request(base, [candidate], deadline)):
+                        logger.warning(
+                            "Jev full evaluator candidate skipped: input_budget_exhausted"
+                        )
+                        results[index] = InputBudgetFailure()
+                    elif len(groups) < self._config.max_calls:
+                        groups.append([candidate])
+                    # A full call budget is not an input failure. Continue
+                    # scanning: a later candidate may fit an existing request.
+            batches = [(self._request(base, group, deadline), group) for group in groups]
         except (ValueError, TypeError, OverflowError, RecursionError):
             logger.warning("Jev full evaluator failed: invalid_or_unserializable_input")
             return results

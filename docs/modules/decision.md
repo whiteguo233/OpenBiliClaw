@@ -51,8 +51,8 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
 | 完整候选评估 | 已实现，实验性 | purpose=`EVALUATE`，纯文本受控分类；不隐式调用 LLM，详见 discovery |
-| 固定模型自适应预算 | 已实现 | 精确 ID 的双 token 容量 → 双 UTF-8 工程护栏；模型不自动切换，未知容量必须显式登记；完整评估与导演共用 |
-| 完整题组多候选合批 | 已实现，待实测 | 原文片段只传一次，公共规则/相同必需画像共享；配置题数、候选数、单题字节护栏。长内容本地摘录，不增加业务评估轮次 |
+| 固定模型自适应预算 | 已实现 | 精确 ID 的双容量整数 → 双 UTF-8 字节上限，取消固定 25% 额外预留；不是精准 tokenizer，旧显式限制保留；模型不自动切换，完整评估与导演共用 |
+| 完整题组多候选合批 | 已实现；有界真实验收 | 原文只传一次，相同整画像字段共享；默认 64 候选搜索上限、first-fit 空位回填，实际受双容量约束。真实两视频 20 题共一次请求；长文仍整段摘录，不重评 |
 | 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
 | 图形界面设置与服务探测 | 设置已实现，探测未提供 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；Token 不回显，不提供付费探测 |
 | 兼容网关 | 已实现 | 配置页 Base / 完整 URL，不限制官方域名；已知网关元数据白名单、可证明的 2dp 舍入容差 |
@@ -67,6 +67,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `resolve_jev_context(model, overrides=None)` | 返回不可变 `JevContextBudget`；仅解析所选模型，未登记抛 `JevContextError`；不发网络请求 |
 | `JevContextBudget.measure(state, questions)` / `fits_request(request)` | 包含原生 JSON 包装的总字节与最长单题字节；不是 tokenizer；`fingerprint` 用于缓存/运行时身份 |
 | `JevContextBudget.with_byte_guards(...)` | 0=自动，非零只允许更严的人工护栏；不得超过模型护栏；`JevContextLimits` 为精确模型的两项 token 容量 |
+| `JevContextBudget.fingerprint` | `jev-wire-bytes-ceiling-v2` 标识新预算合同，标准 64k/32k 容量映射 64,000/32,000 bytes，不与旧 3/4 字节合同缓存混用 |
 | `DecisionRequest` | `request_id`、`purpose`、`question_schema_version`、JSON `state`、具名 `questions` 和可选 `deadline_monotonic` |
 | `DecisionPurpose` | `FILTER` / `CHOOSE_PAIR` / `AUDIT_DRAFT` / `REPAIR_PAIR`，仅用于归因，不自动实现对应业务流程或阈值 |
 | 导演 `DecisionRequest.state.screen_policy` | 带 brief、证据强度、已选／剩余角色和可用主题摘要；是调用方的软编排合同，不授予 provider 修改准入、计划或数据库的权限 |
@@ -83,7 +84,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `ScriptedDecisionProvider(payloads, *, model="jev-fixture")` | 依次消费离线 fixture，复用真实响应校验器；`requests` 保存请求快照供状态传递断言，不请求网络 |
 
 开发测试接口 `scripts.jev_fake_backend.FakeJevBackend(model=..., mode="ok",
-max_request_bytes=48000, max_state_question_bytes=24000)` 是 context manager，
+max_request_bytes=64000, max_state_question_bytes=32000)` 是 context manager，
 只绑定 `127.0.0.1` 临时端口；`client()` 返回由调用方关闭的 `httpx.AsyncClient`。
 其测试 transport 只允许官方原生 URL + `synthetic-test-key`，然后通过真正的
 `AsyncHTTPTransport` 连接回环服务，禁用环境代理，不提供外网转发或真实密钥入口。

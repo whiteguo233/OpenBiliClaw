@@ -185,6 +185,8 @@ OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
 同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
 另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
 `config-show` 也显示每批候选数、题数和单题字节护栏；后两项 0 表示仅受双容量限制。
+候选数默认上限改为 64，由双预算决定实际批量；旧手动 4 等值保留。自动字节上限不再额外扣 25%，
+标准窗口显示 64,000/32,000 bytes，仍不把字节数冒称为精确 token 计数。命令及凭据边界不变。
 `config-show` 还显示精确模型的已登记 token 容量、容量来源与自动工程字节护栏；评估字段
 为 0 表示 auto，旧显式数值表示额外收紧，未知容量明确显示不可用，不自动挑选替代模型。
 `eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，

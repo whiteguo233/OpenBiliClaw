@@ -79,8 +79,8 @@ def test_config_cannot_enlarge_an_official_models_standard_window(tmp_path: Path
         ("topic_labels", ["中" * 27]),
         ("topic_labels", list(map(str, range(255)))),
         ("franchise_labels", [1]),
-        ("max_state_question_bytes", 24001),
-        ("max_request_bytes", 48001),
+        ("max_state_question_bytes", 32001),
+        ("max_request_bytes", 64001),
         ("max_request_bytes", 255),
         ("max_calls", True),
         ("max_candidates_per_request", 0),
@@ -151,7 +151,7 @@ def test_jev_api_roundtrip_ready_and_no_secret(monkeypatch, tmp_path: Path) -> N
     context = response.json()["discovery"]["jev_provider"]["context_budget"]
     assert context["max_request_tokens"] == 64_000
     assert context["max_state_question_tokens"] == 32_000
-    assert context["max_request_bytes"] == 48_000
+    assert context["max_request_bytes"] == 64_000
     response = client.put(
         "/api/config",
         json={
@@ -197,7 +197,7 @@ def test_jev_api_readiness_requires_exact_model_capacity(monkeypatch, tmp_path, 
     readiness = response.json()["discovery"]["jev_provider"]
     assert readiness["ready"] is registered
     if registered:
-        assert readiness["context_budget"]["max_request_bytes"] == 96_000
+        assert readiness["context_budget"]["max_request_bytes"] == 128_000
         assert readiness["context_budget"]["source"] == "operator_confirmed"
     else:
         assert readiness["context_budget"] is None

@@ -687,7 +687,9 @@ Profile allocation reserves mandatory facts first, then loads whole positive-int
 Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays
 in one batch; overflow reduces batch size first. Oversized mandatory inputs follow
 `InputBudgetFailure → lease-CAS failed_eval parking (no retry) → bounded requeue after context changes`.
-Shared rules and identical mandatory profile facts are sent once, without additional evaluation rounds.
+Shared rules and whole profile fields already selected identically for every candidate are sent once.
+First-fit backfills open batches within both budgets, with a default search ceiling of 64 candidates.
+Automatic byte ceilings no longer reserve an extra 25%; manual limits remain. This is not exact token saturation and adds no evaluation rounds.
 The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
 explicit unknowns and dual input guards. Failures never silently invoke an LLM. Settings can save a local token, with existing environment credentials still supported;
 live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).

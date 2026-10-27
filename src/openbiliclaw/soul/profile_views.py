@@ -1315,17 +1315,27 @@ def select_profile_context(
 def build_shared_evaluation_profiles(
     contexts: dict[str, dict[str, object]],
 ) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
-    """Factor identical mandatory facts once without changing any candidate view.
+    """Factor identical complete fields without changing any candidate view.
 
-    Only exclusions, style and current context may move to the shared profile.
-    Positive selections remain candidate-specific and never leak across peers.
+    Shared + a candidate's specific fields exactly reconstruct its selection.
+    Optional fields move only when present and identical for EVERY candidate;
+    missing or differing interests never become a peer's preferences. Single
+    candidate projections retain their existing layout for budget stability.
     Empty contexts support the evaluator's local budget probes.
     """
     snapshots = {key: _profile_context_copy(value) for key, value in contexts.items()}
     shared: dict[str, object] = {}
     if snapshots:
         first = next(iter(snapshots.values()))
-        for field in ("disliked_topics", "disliked_domains", "style", "context"):
+        mandatory = ("disliked_topics", "disliked_domains", "style", "context")
+        fields = list(mandatory)
+        if len(snapshots) > 1:
+            fields.extend(
+                field
+                for field in first
+                if field not in (*mandatory, "schema_version", "purpose", "view_is_partial")
+            )
+        for field in fields:
             if field in first and all(
                 field in value and value[field] == first[field] for value in snapshots.values()
             ):

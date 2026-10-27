@@ -37,7 +37,7 @@
     let provider = {};
     let writable = false;
     let initial = "";
-    let initialCandidates = 4;
+    let initialCandidates = 64;
     let addressMode = "endpoint";
     const endpoint = () => {
       const value = field("endpoint_url").value.trim().replace(/\/+$/, "");
@@ -116,7 +116,7 @@
         field("custom_capacity").checked = Boolean(limits);
         field("max_request_tokens").value = limits?.max_request_tokens ?? provider.context_budget?.max_request_tokens ?? "";
         field("max_state_question_tokens").value = limits?.max_state_question_tokens ?? provider.context_budget?.max_state_question_tokens ?? "";
-        initialCandidates = evaluation.max_candidates_per_request ?? 4;
+        initialCandidates = evaluation.max_candidates_per_request ?? 64;
         field("max_candidates_per_request").value = initialCandidates;
         field("credential-status").textContent = provider.api_key_configured
           ? "本机已保存 Token。留空保留，重新填写替换；勾选清除后保存才会删除。"

@@ -265,7 +265,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
     url, directory, first_process = real_jev_app
     model = "synthetic-restart-v1"
     with FakeJevBackend(
-        model=model, max_request_bytes=30_000, max_state_question_bytes=15_000
+        model=model, max_request_bytes=40_000, max_state_question_bytes=20_000
     ) as backend:
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as client:
             response = client.put(
@@ -339,7 +339,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
                     status = read.json()["discovery"]["jev_provider"]
                     assert status["model"] == model
                     assert status["endpoint_url"] == backend.url
-                    assert status["context_budget"]["max_state_question_bytes"] == 15_000
+                    assert status["context_budget"]["max_state_question_bytes"] == 20_000
                     response = client.post(
                         "/api/sources/xhs/observed-urls",
                         json={

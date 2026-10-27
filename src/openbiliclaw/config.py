@@ -575,10 +575,12 @@ class JevEvaluationConfig:
     # operator-owned stricter guards; they never redefine model capacity.
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
-    # Initial engineering exposure bound, not a calibrated accuracy claim.
+    # Bounded packing search, not a native question cap or quality calibration.
+    # Dual model budgets choose the actual batch; do not stop at four when a
+    # larger operator-confirmed window can fit more complete candidates.
     # Native Jev has no independent question-count cap; zero leaves that guard
     # to the dual context budgets. A complete candidate currently needs 10 questions.
-    max_candidates_per_request: int = 4
+    max_candidates_per_request: int = 64
     max_questions_per_request: int = 0
     max_question_bytes: int = 0
     max_calls: int = 32

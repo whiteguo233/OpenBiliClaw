@@ -38,8 +38,10 @@ and unknown fields, rejects unknown schemas, and never fetches or invents profil
 ## Consumer surfaces
 
 Jev 完整评估先按候选选择不依赖同行的视图，再由具名
-`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`。
-各 `candidate_profiles.cN` 必须与共享块一起解释；不借用其它候选的正偏好。
+`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`；
+多候选时，每条候选都已选中且完全相同的整字段也可共享一次。
+共享块叠加目标 `candidate_profiles.cN` 精确还原其原始选择，字段缺失/不同则留在本候选，
+不借用其它候选的正偏好。逻辑视图不因合批改变，仅 wire 去重。
 
 | Surface | Trigger cadence | View / serializer | Fields (caps) | Portrait? | LLM? |
 | --- | --- | --- | --- | --- | --- |

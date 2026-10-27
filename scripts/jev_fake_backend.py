@@ -141,8 +141,8 @@ class FakeJevBackend:
         *,
         model: str = "jev-1.13.0",
         mode: str = "ok",
-        max_request_bytes: int = 48_000,
-        max_state_question_bytes: int = 24_000,
+        max_request_bytes: int = 64_000,
+        max_state_question_bytes: int = 32_000,
     ) -> None:
         if mode not in _MODES:
             raise ValueError("unsupported fake backend mode")
