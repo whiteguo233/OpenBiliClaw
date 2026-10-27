@@ -308,7 +308,15 @@ def test_fixed_host_resources_are_packaged_and_have_no_model_code_operation():
 
 
 @pytest.mark.parametrize(
-    "mode", ["background", "interactive", "interactive_stuck", "close_pending"]
+    "mode",
+    [
+        "background",
+        "interactive",
+        "interactive_stuck",
+        "close_pending",
+        "parsed_document",
+        "loading_document",
+    ],
 )
 def test_native_request_response_redirect_guard_protocol(mode):
     import shutil
@@ -327,7 +335,7 @@ def test_native_request_response_redirect_guard_protocol(mode):
             [node, str(fixture), str(host), directory, mode],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=20 if mode in {"parsed_document", "loading_document"} else 10,
         )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {

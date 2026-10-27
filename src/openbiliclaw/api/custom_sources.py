@@ -53,6 +53,11 @@ class TakeoverIn(BaseModel):
     login_origin: str = ""
 
 
+class EgoNetworkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    direct_hosts: list[str] = Field(max_length=64)
+
+
 def _ego_setup_manager(service: Any) -> Any:
     from openbiliclaw.sources.ego_setup import EgoSetupManager
 
@@ -147,6 +152,28 @@ def create_custom_sources_router(
             return dict(status)
         schedule_ego_preparation(manager)
         return ego_setup_status()
+
+    @router.get("/executors/ego/network")
+    async def ego_network() -> dict[str, Any]:
+        from openbiliclaw.sources.ego_setup import EgoSetupError
+
+        try:
+            return dict(_ego_setup_manager(service()).network_settings())
+        except EgoSetupError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @router.put("/executors/ego/network")
+    async def configure_ego_network(payload: EgoNetworkIn) -> dict[str, Any]:
+        from openbiliclaw.sources.ego_setup import EgoSetupError
+
+        try:
+            return dict(
+                await _ego_setup_manager(service()).configure_direct_hosts(payload.direct_hosts)
+            )
+        except ValueError as exc:
+            raise HTTPException(400, "直连规则仅接受精确域名，不接受 URL、IP 或通配符。") from exc
+        except EgoSetupError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     async def install_runtime() -> None:
         from openbiliclaw.sources.browser_install import install_browser_runtime

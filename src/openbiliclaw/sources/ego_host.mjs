@@ -10,9 +10,13 @@ export async function workflowTaskSpace(ego, config) {
     const task=spaces.find(x=>x.id===config.task_id && x.name===config.task_name && x.ownership==='agent' && x.profileId===config.profile);
     if(task)return task;
     // Ego drops empty task spaces on host restart. Recreate only after a
-    // confirmed host-generation change, and only when both old identities are
-    // absent. Renamed, user-owned, moved or reused identities remain a stop.
-    if(!config.recover_missing_task || spaces.some(x=>x.id===config.task_id || x.name===config.task_name))throw Error('ego_session_identity_changed');
+    // confirmed host-generation change. A numeric ID can be recycled to a
+    // different registered app session; the logical name must still be absent.
+    // Unknown, renamed, user-owned or moved identities remain a stop.
+    const conflicts=spaces.filter(x=>x.id===config.task_id || x.name===config.task_name);
+    const recycled=x=>x.id===config.task_id && x.name!==config.task_name && x.ownership==='agent' && x.profileId===config.profile &&
+      (config.current_owned_tasks||[]).some(owner=>owner.task_id===x.id && owner.task_name===x.name && owner.profile===x.profileId);
+    if(!config.recover_missing_task || conflicts.some(x=>!recycled(x)))throw Error('ego_session_identity_changed');
   }
   const profiles=checked(await ego.listProfiles()).profiles;
   if(!profiles.some(p=>p.id===config.profile))throw Error('EGO_PROFILE_NOT_FOUND');
@@ -136,6 +140,7 @@ export async function start(config) {
   };
   const navigate=async url=>{
     delete diagnostic.navigation_error;
+    delete diagnostic.navigation_ready_state;
     if(!await approve({url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
     const previousLoader=(await rpc('Page.getFrameTree')).frameTree.frame.loaderId;
     const result=await rpc('Page.navigate',{url});
@@ -146,12 +151,24 @@ export async function start(config) {
     }
     const end=Date.now()+30000;
     let stableDocument='', stableSince=0;
+    let parsedDocument='', parsedSince=0;
     while(Date.now()<end) {
       if(diagnostic.fatal_error)throw Error(diagnostic.fatal_error);
       const tree=await rpc('Page.getFrameTree');
       const state=await evaluate('()=>({ready:document.readyState,url:location.href})');
       const loader=tree.frameTree.frame.loaderId;
       const committed=result.loaderId ? loader===result.loaderId || loader!==previousLoader : state.url===new URL(url).href;
+      // Analytics/other peripheral resources may keep a parsed page from ever
+      // reaching window.load. Read only after this committed DOM stays stable
+      // for a longer bounded grace; extraction still verifies the saved scope.
+      if(committed && state.url!=='about:blank' && state.ready==='interactive') {
+        const identity=JSON.stringify([loader,state.url]);
+        if(identity!==parsedDocument){parsedDocument=identity;parsedSince=Date.now();}
+        if(Date.now()-parsedSince>=8000) {
+          if(!await approve({url:state.url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
+          diagnostic.navigation_ready_state='interactive';return;
+        }
+      } else {parsedDocument='';parsedSince=0;}
       // A fully loaded guest/interstitial document can immediately redirect.
       // Reset a bounded settling window on each document change, including a
       // replacement loader that committed before our first poll. Every request
@@ -160,7 +177,8 @@ export async function start(config) {
         const identity=JSON.stringify([loader,state.url]);
         if(identity!==stableDocument){stableDocument=identity;stableSince=Date.now();}
         if(Date.now()-stableSince>=1500) {
-          if(!await approve({url:state.url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed'); return;
+          if(!await approve({url:state.url,method:'GET',document:true,redirect:false})) throw Error('origin_not_allowed');
+          diagnostic.navigation_ready_state='complete';return;
         }
       } else {
         stableDocument=''; stableSince=0;

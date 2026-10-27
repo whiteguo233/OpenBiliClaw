@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import errno
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -97,6 +98,29 @@ def _external() -> bool:
     return any(os.environ.get(name) for name in _EXTERNAL_ENV)
 
 
+_DNS_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+
+
+def _direct_hosts(value: Any) -> list[str]:
+    """Validate exact DNS names, never Chromium bypass patterns or proxy URLs."""
+    if not isinstance(value, list) or len(value) > 64:
+        raise ValueError("ego_setup_invalid_direct_hosts")
+    hosts = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            raise ValueError("ego_setup_invalid_direct_hosts")
+        host = raw.strip().lower().removesuffix(".")
+        if len(host) > 253 or not re.fullmatch(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})+", host):
+            raise ValueError("ego_setup_invalid_direct_hosts")
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            hosts.add(host)
+        else:
+            raise ValueError("ego_setup_invalid_direct_hosts")
+    return sorted(hosts)
+
+
 def _idle_stop_seconds() -> float:
     raw = os.environ.get("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "")
     try:
@@ -135,6 +159,116 @@ class EgoSetupManager:
             "Contents/Frameworks/ego Framework.framework/Versions/Current/Helpers/ego-browser"
         )
         self._state_path = self.root / "setup.json"
+
+    def network_settings(self) -> dict[str, Any]:
+        """Read explicit per-host routes without launching or probing the browser."""
+        path = self.root / "network.json"
+        if self.root.is_symlink() or path.is_symlink():
+            raise EgoSetupError("ego_setup_invalid_network_routes")
+        if not path.exists():
+            return {"direct_hosts": []}
+        try:
+            if path.stat().st_size > 32768:
+                raise ValueError
+            value = json.loads(path.read_text())
+            if value.get("version") != 1:
+                raise ValueError
+            return {"direct_hosts": _direct_hosts(value["direct_hosts"])}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise EgoSetupError("ego_setup_invalid_network_routes") from exc
+
+    async def configure_direct_hosts(self, hosts: list[str]) -> dict[str, Any]:
+        """Persist an explicit choice after safely stopping only an idle managed host."""
+        normalized = _direct_hosts(hosts)
+        if _external() or sys.platform != "darwin":
+            raise EgoSetupError("ego_setup_network_routes_unmanaged")
+        if self.root.is_symlink():
+            raise EgoSetupError("ego_setup_invalid_directory")
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
+        import fcntl
+
+        lock_path = self.root / "setup.lock"
+        if lock_path.is_symlink():
+            raise EgoSetupError("ego_setup_invalid_directory")
+        with lock_path.open("a") as lock:
+            lock_path.chmod(0o600)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise EgoSetupError("ego_setup_busy") from exc
+            lease = None
+            try:
+                lease = self.try_exclusive_session_lease()
+                if lease is None:
+                    raise EgoSetupError("ego_setup_sessions_busy")
+                if self._pid():
+                    await self._stop()
+                path = self.root / "network.json"
+                if path.is_symlink():
+                    raise EgoSetupError("ego_setup_invalid_network_routes")
+                with tempfile.NamedTemporaryFile(mode="w", dir=self.root, delete=False) as out:
+                    temporary = Path(out.name)
+                    try:
+                        json.dump({"version": 1, "direct_hosts": normalized}, out)
+                        out.flush()
+                        temporary.replace(path)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+            finally:
+                if lease is not None:
+                    self.release_session_lease(lease)
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        return {"direct_hosts": normalized}
+
+    async def _proxy_arguments(self) -> list[str]:
+        hosts = self.network_settings()["direct_hosts"]
+        if not hosts:
+            return []
+        # A bypass flag alone is ignored with macOS system discovery. Snapshot
+        # the same manual system rules on each cold start, then add exact hosts.
+        # PAC/WPAD cannot be safely flattened; never silently make them direct.
+        raw = await _command("/usr/sbin/scutil", "--proxy", timeout=3)
+        fields = dict(re.findall(r"^\s*([A-Za-z]\w*)\s*:\s*(.*?)\s*$", raw, re.M))
+        if any(
+            fields.get(key, "0") != "0"
+            for key in ("ProxyAutoConfigEnable", "ProxyAutoDiscoveryEnable")
+        ):
+            raise EgoSetupError("ego_setup_proxy_config_unsupported")
+        rules = []
+        for prefix, scheme, transport in (
+            ("HTTP", "http", "http"),
+            ("HTTPS", "https", "http"),
+            ("SOCKS", "socks", "socks5"),
+        ):
+            enabled = fields.get(prefix + "Enable", "0")
+            if enabled == "0":
+                continue
+            host, port = fields.get(prefix + "Proxy", ""), fields.get(prefix + "Port", "")
+            try:
+                if enabled != "1" or not port.isdigit() or not 1 <= int(port) <= 65535:
+                    raise ValueError
+                try:
+                    address = ipaddress.ip_address(host)
+                    host = f"[{address}]" if address.version == 6 else str(address)
+                except ValueError:
+                    if not re.fullmatch(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*", host.lower()):
+                        raise ValueError from None
+                rules.append(f"{scheme}={transport}://{host}:{port}")
+            except ValueError as exc:
+                raise EgoSetupError("ego_setup_proxy_config_unsupported") from exc
+        if not rules:
+            return []  # The system is already direct for every site.
+        exceptions = re.findall(r"^\s*\d+\s*:\s*(.*?)\s*$", raw, re.M)
+        if len(exceptions) > 128 or any(
+            len(rule) > 253 or not re.fullmatch(r"[A-Za-z0-9*._:/\[\]-]+|<local>|<-loopback>", rule)
+            for rule in exceptions
+        ):
+            raise EgoSetupError("ego_setup_proxy_config_unsupported")
+        if fields.get("ExcludeSimpleHostnames") == "1":
+            exceptions.append("<local>")
+        bypass = list(dict.fromkeys([*exceptions, *hosts]))
+        return ["--proxy-server=" + ";".join(rules), "--proxy-bypass-list=" + ";".join(bypass)]
 
     @property
     def session_lock_path(self) -> Path:
@@ -547,6 +681,7 @@ class EgoSetupManager:
             "--disable-component-update",
             "--disable-sync",
         ]
+        args += await self._proxy_arguments()
         port = 0
         if debugging:
             with socket.socket() as listener:

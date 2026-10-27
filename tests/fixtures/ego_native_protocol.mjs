@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import {pathToFileURL} from 'node:url';
 const [hostPath,directory,mode]=process.argv.slice(2);
 const calls=[];
+let documentClock=null;
 let windowState='minimized', restoring=false, restorePolls=0, captureRace=mode==='interactive';
 let repeatedMinimization=mode==='interactive_stuck';
 let focused=false, hidden=true, documentUrl='https://allowed.example/old?board=7&token=private#feed', loader='old', navigation=false, polls=0, redirectMode='', generation=0;
@@ -23,6 +24,7 @@ globalThis.ego={
     return {targetId:'owned-tab'};
   },getBrowserVersion:async()=>({currentVersion:'fixture'}),
   sendCDPMessage:raw=>{const msg=JSON.parse(raw);calls.push(msg);
+    if(documentClock!==null && msg.method==='Runtime.evaluate')documentClock+=1000;
     if(msg.method==='Browser.setWindowBounds') {
       assert.equal(msg.params.windowId,17,'only mutate the owned target window');
       if(msg.params.bounds.windowState==='normal'){restoring=true;restorePolls=0;}
@@ -91,6 +93,20 @@ assert.equal(documentUrl,'https://allowed.example/topics','do not observe the co
 // Redirect may commit before the first navigation poll sees the initial loader.
 await command('navigate',{url:'https://allowed.example/fast-redirect'});
 assert.equal(documentUrl,'https://allowed.example/topics');
+if(['parsed_document','loading_document'].includes(mode)) {
+  const actualNow=Date.now;documentClock=Date.now();Date.now=()=>documentClock;
+  document.readyState=mode==='parsed_document'?'interactive':'loading';
+  if(mode==='parsed_document') {
+    await command('navigate',{url:'https://allowed.example/pending-resource'});
+    assert.equal((await command('diagnostics')).navigation_ready_state,'interactive',
+      'a committed parsed document must not wait forever for peripheral resources');
+  } else {
+    await assert.rejects(command('navigate',{url:'https://allowed.example/pending-parser'}),/ego_navigation_timeout/);
+    assert.equal((await command('diagnostics')).navigation_ready_state,undefined,
+      'do not read an unparsed or stale document');
+  }
+  document.readyState='complete';Date.now=actualNow;documentClock=null;
+}
 const paused=(id,url,extra={})=>ego.onCDPMessage(JSON.stringify({method:'Fetch.requestPaused',sessionId:'owned-session',params:{requestId:id,request:{url,method:'GET'},resourceType:'Document',frameId:'main-frame',...extra}}));
 const waitResponse=async id=>{
   const until=Date.now()+1000;

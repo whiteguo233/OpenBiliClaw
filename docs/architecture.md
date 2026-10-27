@@ -125,8 +125,10 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
         login required → human /web/source-login.html takeover → resume + trial → same draft/workflow
         source settings cards (desktop / popup / mobile) → explicit management API actions
         macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces; no Playwright fallback
+          explicit exact-host route API → private network.json → current manual system proxies + selected direct hosts at cold start
+          committed parsed DOM stable 8s (or complete document stable 1.5s) → original fixed extraction/scope checks; unparsed pages still fail
           preparation complete / last session closed → shared 120s idle grace → lease-protected host stop; CLI exit cleanup
-          managed opening timeout → cleanup → one retry with saved task identity, within the original total budget
+          managed opening timeout → cleanup → restart only an idle managed host → one retry with saved task identity, within the original total budget
 
 Legacy public HTTP recipe authoring (desktop / popup / CLI; init + degraded 可用)
         → POST /api/sources/web/probe → web_probe → exact-origin anonymous SafeWebTransport

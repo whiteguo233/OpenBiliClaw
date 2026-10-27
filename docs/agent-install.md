@@ -924,6 +924,8 @@ system-level package the user must consent to.
 
 ### Dynamic website discovery browser runtime
 
+Managed Ego routing defaults to native system proxy discovery. An explicit `GET/PUT /api/custom-sources/executors/ego/network` preference stores exact direct DNS hosts in private `ego-managed/network.json`; it is retained across upgrades and idle stops. Manual system proxies and their exclusions are read at each cold start; unsupported PAC/WPAD is reported instead of silently routing every site directly. Updating routes requires no live session or setup operation and never changes OS proxy settings. This preference adds no installation dependency or new TOML field.
+
 New dynamic websites use the official Ego Lite host through its native Node/CDP API.
 On macOS, deployment prepares Ego automatically, without waiting for the first chat.
 Local source bootstrap runs preparation with the installed runtime after dependency

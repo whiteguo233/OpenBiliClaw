@@ -524,6 +524,8 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 
 ### 自定义网站来源的浏览器执行
 
+托管 Ego 的域名直连偏好默认空列表；需要时通过 `GET/PUT /api/custom-sources/executors/ego/network` 显式保存到数据库旁 `ego-managed/network.json`。每次冷启动保留当前 macOS 手动代理与原排除项，仅增加精确域名直连；活跃会话阻止变更，PAC/WPAD 不静默降级。该设置无需重启后端，不改变系统代理，也不扩展 Windows/Linux/Docker 的支持范围。
+
 新建普通网页来源使用 Ego Lite。macOS 本机源码安装在依赖完成后自动准备，桌面包首次
 启动和实际 `start` / `serve-api` 在后台补齐未完成环境，无需等首次聊天。
 API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，即使 offline 也不唤醒；

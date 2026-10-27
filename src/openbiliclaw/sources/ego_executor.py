@@ -53,6 +53,32 @@ def _save_session_state(path: Path, state: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _current_task_owners(
+    root: Path, *, task_id: Any, host: str, pid: int, profile: str
+) -> list[dict[str, Any]]:
+    """Identify an ID recycled to another durable app session in this live host."""
+    if not isinstance(task_id, int) or isinstance(task_id, bool):
+        return []
+    owners = []
+    for path in root.glob("*.json"):
+        try:
+            if path.is_symlink() or path.stat().st_size > 16384:
+                continue
+            state = json.loads(path.read_text())
+            if (
+                isinstance(state, dict)
+                and state.get("host") == host
+                and state.get("host_pid") == pid
+                and state.get("profile") == profile
+                and state.get("task_id") == task_id
+                and re.fullmatch(r"OpenBiliClaw-[a-f0-9]{32}", str(state.get("task_name", "")))
+            ):
+                owners.append({key: state[key] for key in ("task_id", "task_name", "profile")})
+        except (OSError, ValueError):
+            continue
+    return owners
+
+
 def _error(code: str, detail: str = "", *, navigation_error: Any = None) -> Exception:
     from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
@@ -202,17 +228,29 @@ class EgoLiteWorkflowSession:
             else _host_pid(self.executor.server_name)
         )
         previous_pid = state.get("host_pid")
+        recovering = bool(
+            self.executor.managed
+            and current_pid
+            and isinstance(previous_pid, int)
+            and current_pid != previous_pid
+        )
         config = {
             "socket": str(directory / "host.sock"),
             "ready": str(directory / "ready.json"),
             "identity": str(directory / "identity.json"),
             "plan": self.plan.to_dict(),
             "interactive": self.interactive,
-            "recover_missing_task": bool(
-                self.executor.managed
-                and current_pid
-                and isinstance(previous_pid, int)
-                and current_pid != previous_pid
+            "recover_missing_task": recovering,
+            "current_owned_tasks": (
+                _current_task_owners(
+                    self.executor.profile_root,
+                    task_id=state["task_id"],
+                    host=self.executor.host_key,
+                    pid=current_pid,
+                    profile=state["profile"],
+                )
+                if recovering and current_pid is not None
+                else []
             ),
             **{key: state[key] for key in ("task_id", "task_name", "profile")},
         }
@@ -680,7 +718,7 @@ class EgoLiteWorkflowExecutor:
         interactive: bool = False,
         observation_only: bool = False,
     ) -> EgoLiteWorkflowSession:
-        """Retry one managed opening timeout after releasing the failed lease."""
+        """Retry a managed opening timeout, reclaiming only an idle failed host."""
         from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
         try:
@@ -696,6 +734,18 @@ class EgoLiteWorkflowExecutor:
                 "ego_protocol_timeout",
             }:
                 raise
+            if sys.platform == "darwin":
+                lease = self._setup.try_exclusive_session_lease()
+                if lease is not None:
+                    try:
+                        logger.info(
+                            "Restarting idle managed Ego after native initialization timeout"
+                        )
+                        await self._setup.stop()
+                    except Exception:
+                        raise exc from None
+                    finally:
+                        self._setup.release_session_lease(lease)
             logger.info("Retrying managed Ego native initialization with the saved task identity")
             return await self._open_session_once(
                 plan,

@@ -15,6 +15,14 @@ cp config.example.toml config.toml
 
 ## 配置文件位置与恢复
 
+托管 Ego 的显式域名直连偏好保存于实际数据库旁 `ego-managed/network.json`，不属于
+`[network].mode/proxy` 的海外后端客户端配置。默认 `direct_hosts=[]`，所有网站沿用
+浏览器系统代理。`GET/PUT /api/custom-sources/executors/ego/network` 可读写精确域名列表；
+它仅影响本应用的托管 Ego，升级／宿主回收后保留，清空列表恢复原生系统路由。
+API 保存只会停止无活跃租约的自有宿主，下次工作自动启动；活跃会话／安装准备中返回
+409，不要求重启后端。手动系统代理在每次冷启动时读取；PAC/WPAD 等无法安全合并的
+配置会报告不支持，不扩大直连范围。详情见[浏览器工作流](browser-workflows.md)。
+
 后台子进程由父入口自动携带内部环境变量 `OPENBILICLAW_RUNTIME_DATA_DIR`，将热重启后的 `load_config()` 固定在父进程已经持有 migration lock 的目录；不需要用户配置。磁盘新保存的 `general.data_dir` 仍只在完整退出并重新启动后生效，`load_config(..., consult_environment=False)` 继续返回磁盘目标值，供回滚与 restart-required 判断使用。模型与 scheduler 设置成功应用后，父进程自动重启读取配置快照的后台服务，避免 API 配置已更新而补池 evaluator 留在旧配置。
 
 源码 / AI 一键安装 / 桌面安装包默认都使用同一个运行目录：macOS / Linux 为 `~/OpenBiliClaw`，Windows 为 `%USERPROFILE%\OpenBiliClaw`。`config.toml` 保存主配置，`config.local.toml` 是可选本机覆盖文件，加载时后者覆盖前者。

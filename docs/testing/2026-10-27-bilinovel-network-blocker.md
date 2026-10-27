@@ -1,5 +1,8 @@
 # 哔哩轻小说持续采集阻断排查（2026-10-27）
 
+后续用户明确选择仅该站直连，修复与最终原生／调度复验见
+[精确域名直连验收](2026-10-27-bilinovel-direct-e2e.md)。下文保留当时默认代理路径的阻断结论。
+
 范围：`discovery-only` 修复，沿用 [dynamic-web 契约](../platform-source-contract.dynamic-web.toml)。
 承接[原生真实验收](2026-10-27-native-real-e2e.md)中持续采集、后期接管未通过的问题。
 

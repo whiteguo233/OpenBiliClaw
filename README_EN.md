@@ -674,9 +674,11 @@ Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop G
 
 Dynamic websites and RSS / Atom / JSON Feed: `automatic deployment setup of Ego (macOS websites) / direct HTTP for feeds → original-message limits + chat draft and trial → actual-budget approval → independent source_id / share / interval → scheduled versioned workflows → ordinary candidate evaluation → recommendation pool`. Login runs on the human takeover page followed by `resume`; all three settings surfaces manage websites as peers of built-in sources. Content stays `source_platform=web`, with `source_name` as its visible label.
 
+Explicit host routing: `GET/PUT executors/ego/network → private network.json → current manual system proxies + exact direct hosts at each cold start`. The default list is empty; live sessions prevent updates, and unsupported PAC/WPAD configurations fail explicitly.
+
 A failed Ego draft trial can follow `fixed DOM href evidence / a structural candidate within the original scope → one retrial → review actual samples for structural repairs → persist only after verification`. Entry, scope, budgets and approval stay unchanged; published collection never rewrites its strategy automatically.
 
-Authoring observation: `explicit empty-value link hints from the user → page-local path / query-presence booleans → redacted authoring evidence`; query values and other parameter names remain hidden. A managed Ego opening timeout follows `cleanup → one retry with the same task identity`, within the original total budget.
+Authoring observation: `explicit empty-value link hints from the user → page-local path / query-presence booleans → redacted authoring evidence`; query values and other parameter names remain hidden. A managed Ego opening timeout follows `cleanup → idle-only managed host restart → one retry with the same task identity`, within the original total budget.
 
 Independent new source: `new source_id → own task-space session → shared Ego profile cookies`; adding to an existing source or explicitly selecting a same-origin session retains reuse, so new sources avoid inheriting stale task spaces by default.
 
