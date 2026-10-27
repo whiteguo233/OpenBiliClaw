@@ -133,11 +133,12 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         form.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
         form.get_by_label("Token", exact=True).fill("synthetic-test-key")
         page.locator("#evalScorer").select_option("jev")
-        # Tighten an official model's standard window through the actual form.
+        # Match the fixture's 12KB ceiling explicitly through the actual form;
+        # do not rely on the removed implicit 25% byte-budget reservation.
         form.locator("summary").click()
         form.get_by_label("手动设置所选模型的上下文上限", exact=True).check()
         form.get_by_label("总请求 token 上限", exact=True).fill("64000")
-        form.get_by_label("state＋单题 token 上限", exact=True).fill("16000")
+        form.get_by_label("state＋单题 token 上限", exact=True).fill("12000")
         form.get_by_label("传输最大尝试次数", exact=True).fill("1")
         with page.expect_response(
             lambda response: (
@@ -160,6 +161,12 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
             read = client.get("/api/config?reveal_keys=true")
             assert "synthetic-test-key" not in read.text
             assert read.json()["discovery"]["eval_scorer"] == "jev"
+            assert (
+                read.json()["discovery"]["jev_provider"]["context_budget"][
+                    "max_state_question_bytes"
+                ]
+                == 12_000
+            )
             saved = load_config(directory / "config.toml", consult_environment=False)
             assert saved.decision.providers.jev.endpoint_url == backend.url
             assert saved.decision.providers.jev.model == "jev-1.14.0"
