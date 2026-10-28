@@ -10,3 +10,7 @@
 `agents.collect_json()`、`run_*_agent()`、persona_judge、evaluator 和 speculation_evaluator 的业务入口与结果类型不变；赞助调用返回后继续使用原 JSON 提取、对齐与评分逻辑。模型不可用时按统一配置回退；源文件工具属于 Core，不进入 Rust 或项目方服务。模型质量、免费额度和相似度阈值校准尚需实际发行验证。
 
 覆盖清单由 [audit_sponsored_coverage.py](../../scripts/audit_sponsored_coverage.py) 生成。新增直接 SDK 调用必须接入统一路由并更新清单，不能只覆盖主服务却遗漏评测路径。详见[全项目设计](../plans/2026-10-27-sponsored-all-tasks.md)。
+
+### 授权真实模型验收（2026-10-28）
+
+配套私有 `tools/live_sdk_probe.py` 使用项目现有提示词 builder 与公开 SDK，经临时签名策略、封装 Key 和 release Rust 子进程访问硅基流动。API Key 只经封装工具 stdin 传递，模型请求全部由 Rust 发出。两款 Qwen 使用相同画像、内容评分、推荐文案及工具用例，关闭思考；stream 验证只代表当前 SDK 的缓冲接口。BGE-M3 验证文本向量及相似度，不声明图片向量。真实结果及质量缺陷见[记录](../testing/2026-10-28-sponsored-granted-models.md)。

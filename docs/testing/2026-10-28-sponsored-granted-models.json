@@ -1,0 +1,315 @@
+{
+  "started_at": "2026-10-28T04:15:28.933889+00:00",
+  "transport": "public SponsoredProvider -> signed IPC2 -> release Rust HttpUpstream -> SiliconFlow",
+  "models": [
+    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3.5-4B",
+    "BAAI/bge-m3"
+  ],
+  "cases": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "connectivity",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 5,
+        "total_tokens": 34
+      },
+      "content": "OBC_RUST_OK",
+      "json_valid": null,
+      "tool_calls": null,
+      "nonempty": true,
+      "marker_ok": true,
+      "model_matches_policy": true,
+      "seconds": 1.058
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_soul_profile",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "usage": {
+        "prompt_tokens": 2574,
+        "completion_tokens": 395,
+        "total_tokens": 2969
+      },
+      "content": "{\n  \"personality_portrait\": \"你对'想明白'这件事有执拗的追求,不是一时兴起,而是像呼吸一样自然。你身上有种不满足于表面的劲头,喜欢把事情拆解到最底层,看清楚它怎么运作。这种好奇心不是浮在表面的,而是像根线一样,一直往深处牵。你不是那种只顾着玩的人,也不是那种死板的书呆子,你有自己的节奏,慢条斯理但专注。你对'对不对劲'的敏感度很高,但不会让人觉得你挑剔,反而有种让人安心的认真劲。\",\n  \"core_traits\": [\"较真\", \"慢热\", \"自我节奏感强\", \"不紧绷\"],\n  \"cognitive_style\": [\"逻辑闭环\", \"细节控\"],\n  \"motivational_drivers\": [\"理解世界运作方式\", \"追求内在清晰度\"],\n  \"current_phase\": \"正在从理论走向实践,对'真刀真枪'的实现有更强的渴望\",\n  \"values\": [\"清晰\", \"深度\", \"专注\"],\n  \"life_stage\": \"可能在学习或工作初期,对专业领域有探索欲但尚未完全投入\",\n  \"deep_needs\": [\"把抽象概念变成具体理解的满足感\", \"不被打扰的深度专注时间\", \"在复杂系统中找到秩序感\"],\n  \"mbti\": {\n    \"type\": \"INTP\",\n    \"confidence\": 0.85,\n    \"dimensions\": {\n      \"EI\": {\"pole\": \"I\", \"strength\": 0.8},\n      \"SN\": {\"pole\": \"N\", \"strength\": 0.7},\n      \"TF\": {\"pole\": \"T\", \"strength\": 0.7},\n      \"JP\": {\"pole\": \"P\", \"strength\": 0.6}\n    }\n  }\n}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "model_matches_policy": true,
+      "seconds": 17.216
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_content_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "usage": {
+        "prompt_tokens": 3896,
+        "completion_tokens": 304,
+        "total_tokens": 4200
+      },
+      "content": "{\n  \"results\": [\n    {\n      \"bvid\": \"OBC_RUST\",\n      \"score\": 0.95,\n      \"reason\": \"讲解Rust内存安全，符合技术兴趣\",\n      \"topic_group\": \"编程语言\",\n      \"style_key\": \"deep_focus\",\n      \"franchise_key\": \"\",\n      \"temporal_class\": \"evergreen\",\n      \"temporal_confidence\": 0.98,\n      \"temporal_reason\": \"核心价值不依赖当前时间\",\n      \"temporal_validity_mode\": \"none\",\n      \"temporal_valid_until\": \"\",\n      \"temporal_scope\": \"none\",\n      \"temporal_evidence\": \"\",\n      \"temporal_state\": \"unknown\"\n    },\n    {\n      \"bvid\": \"OBC_GAMBLE\",\n      \"score\": 0.15,\n      \"reason\": \"涉及博彩，用户明确不喜欢\",\n      \"topic_group\": \"金融投机\",\n      \"style_key\": \"quick_scan\",\n      \"franchise_key\": \"\",\n      \"temporal_class\": \"current\",\n      \"temporal_confidence\": 0.74,\n      \"temporal_reason\": \"讨论依赖近期语境\",\n      \"temporal_validity_mode\": \"freshness_only\",\n      \"temporal_valid_until\": \"\",\n      \"temporal_scope\": \"core\",\n      \"temporal_evidence\": \"近期讨论\",\n      \"temporal_state\": \"unknown\"\n    }\n  ]\n}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "model_matches_policy": true,
+      "seconds": 13.428
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_recommendation_expression",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "usage": {
+        "prompt_tokens": 1049,
+        "completion_tokens": 63,
+        "total_tokens": 1112
+      },
+      "content": "{\n  \"expression\": \"这期视频用编译器实际演示内存安全，把 Rust 的所有权和借用机制讲得明明白白，连我这种刚入门的都觉得有收获，不愧是你。\",\n  \"topic_label\": \"Rust 编译器里的内存安全课\"\n}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "model_matches_policy": true,
+      "seconds": 13.99
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_tool_interface",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "usage": {
+        "prompt_tokens": 188,
+        "completion_tokens": 25,
+        "total_tokens": 213
+      },
+      "content": "",
+      "json_valid": null,
+      "tool_calls": [
+        {
+          "id": "sim-57c5c947",
+          "name": "search",
+          "arguments": {
+            "query": "Rust 所有权教程"
+          },
+          "arguments_raw": ""
+        }
+      ],
+      "nonempty": true,
+      "tool_arguments_ok": true,
+      "model_matches_policy": true,
+      "seconds": 1.501
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "sdk_buffered_stream_interface",
+      "status": "ok",
+      "buffered_stream": true,
+      "first_content_chunk_seconds": 6.773,
+      "terminal_received": true,
+      "content": "Rust 借用的作用是允许在不拥有数据的情况下安全地访问数据，通过编译时的生命周期检查来避免数据竞争和悬空引用。",
+      "seconds": 6.774
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "connectivity",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 5,
+        "total_tokens": 33
+      },
+      "content": "OBC_RUST_OK",
+      "json_valid": null,
+      "tool_calls": null,
+      "nonempty": true,
+      "marker_ok": true,
+      "model_matches_policy": true,
+      "seconds": 42.429
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_soul_profile",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "usage": {
+        "prompt_tokens": 2485,
+        "completion_tokens": 559,
+        "total_tokens": 3044
+      },
+      "content": "{\n  \"personality_portrait\": \"你这人身上最明显的特质就是那股子‘较真’劲儿，不是那种紧绷的焦虑，而是对世界底层逻辑的执拗。遇到不懂的机制，你总想把它拆得明明白白，直到把门道摸透为止。这种对原理的渴望在你身上是常驻的，不是一阵一阵的。你对待技术或知识的态度很纯粹，不为了炫耀，也不为了跟风，纯粹是因为‘想弄懂’这件事本身让你觉得踏实。你身上有一种慢工出细活的节奏感，不容易被外界推着走，你有自己的一套节拍。跟你认真聊一件事，你会很投入，但闲扯并不是你的舒适区。你既不想走捷径，也不喜欢被糊弄，这种对‘对不对劲’的敏感，让你活得挺纯粹。\",\n  \"core_traits\": [\n    \"较真\",\n    \"慢热\",\n    \"沉得住气\",\n    \"信息敏感\",\n    \"自我节奏感强\"\n  ],\n  \"cognitive_style\": [\n    \"深度优先\",\n    \"原理导向\",\n    \"结构化思维\"\n  ],\n  \"motivational_drivers\": [\n    \"对结构/原理的掌控欲\",\n    \"想明白的执拗\",\n    \"拒绝被糊弄\"\n  ],\n  \"current_phase\": \"正处于将抽象知识转化为具体实践的阶段，对底层机制的探索欲达到高峰，渴望通过掌握核心逻辑来获得确定性。\",\n  \"values\": [\n    \"求真\",\n    \"踏实\",\n    \"深度\",\n    \"逻辑自洽\"\n  ],\n  \"life_stage\": \"处于职业或技能深耕期，学历或专业背景支撑了较强的逻辑思维能力，核心心理状态是追求专业壁垒和深度理解，不满足于表面现象。\",\n  \"deep_needs\": [\n    \"在复杂系统中找到清晰底层的秩序感\",\n    \"不被简化、不被糊弄的尊重\",\n    \"通过彻底弄懂一件事获得的踏实感\"\n  ],\n  \"mbti\": {\n    \"type\": \"INTJ\",\n    \"confidence\": 0.85,\n    \"dimensions\": {\n      \"EI\": {\"pole\": \"I\", \"strength\": 0.7},\n      \"SN\": {\"pole\": \"N\", \"strength\": 0.8},\n      \"TF\": {\"pole\": \"T\", \"strength\": 0.9},\n      \"JP\": {\"pole\": \"P\", \"strength\": 0.5}\n    }\n  }\n}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "model_matches_policy": true,
+      "seconds": 61.294
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_content_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "usage": {
+        "prompt_tokens": 3718,
+        "completion_tokens": 332,
+        "total_tokens": 4050
+      },
+      "content": "{\n  \"results\": [\n    {\n      \"bvid\": \"OBC_RUST\",\n      \"score\": 0.92,\n      \"reason\": \"Rust 内存安全核心原理与用户画像高度契合\",\n      \"topic_group\": \"编程语言\",\n      \"style_key\": \"deep_focus\",\n      \"franchise_key\": \"\",\n      \"temporal_class\": \"evergreen\",\n      \"temporal_confidence\": 0.95,\n      \"temporal_reason\": \"内存管理原理不随时间迭代\",\n      \"temporal_validity_mode\": \"none\",\n      \"temporal_valid_until\": \"\",\n      \"temporal_scope\": \"none\",\n      \"temporal_evidence\": \"\",\n      \"temporal_state\": \"unknown\"\n    },\n    {\n      \"bvid\": \"OBC_GAMBLE\",\n      \"score\": 0.0,\n      \"reason\": \"\",\n      \"topic_group\": \"赌博\",\n      \"style_key\": \"mood_release\",\n      \"franchise_key\": \"\",\n      \"temporal_class\": \"current\",\n      \"temporal_confidence\": 0.6,\n      \"temporal_reason\": \"依赖近期热点语境\",\n      \"temporal_validity_mode\": \"freshness_only\",\n      \"temporal_valid_until\": \"\",\n      \"temporal_scope\": \"core\",\n      \"temporal_evidence\": \"近期讨论\",\n      \"temporal_state\": \"unknown\"\n    }\n  ]\n}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "model_matches_policy": true,
+      "seconds": 90.811
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_recommendation_expression",
+      "status": "error",
+      "error_type": "SponsoredUnavailableError",
+      "error_code": "UNAVAILABLE",
+      "error": "sponsored runtime timed out",
+      "seconds": 100.029
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_tool_interface",
+      "status": "error",
+      "error_type": "SponsoredUpstreamError",
+      "error_code": "UPSTREAM_ERROR",
+      "error": "upstream HTTP 503",
+      "seconds": 2.056
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "sdk_buffered_stream_interface",
+      "status": "error",
+      "error_type": "SponsoredUnavailableError",
+      "error_code": "UNAVAILABLE",
+      "error": "sponsored runtime timed out",
+      "seconds": 100.004
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "inline_vision_capability",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "usage": {
+        "prompt_tokens": 102,
+        "completion_tokens": 5,
+        "total_tokens": 107
+      },
+      "content": "{\"color\":\"red\"}",
+      "json_valid": true,
+      "tool_calls": null,
+      "nonempty": true,
+      "red_detected": true,
+      "model_matches_policy": true,
+      "seconds": 35.89
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "text_embedding_1",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite": true,
+      "norm": 1.0,
+      "vector_sha256": "5b61001d4ce7fc38d7c93ac8b537466fccc72e49976cefd02ecf2563a518379a",
+      "seconds": 0.294
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "text_embedding_2",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite": true,
+      "norm": 1.0,
+      "vector_sha256": "dcabaf053612badd1f9486b2408c0329fc1eeb97a7b313adc4f8968426aa3500",
+      "seconds": 0.156
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "text_embedding_3",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite": true,
+      "norm": 1.0,
+      "vector_sha256": "3d95338314efafa422228ebd45a61966c826c2c60745679774d0883f73b028fd",
+      "seconds": 0.188
+    }
+  ],
+  "production_defaults_changed": false,
+  "upstream_token_streaming": false,
+  "core_base_sha": "2538256d2a54290820e46d228808aac3446f9525",
+  "runtime_base_sha": "a48bb1642aded2497e71e1bb0aa6148ab854bb5b",
+  "runtime_binary_sha256": "8ff73dae5ca7f2cc4abbdd3eb6649fb48a80fabeaf21495bd3bfa4de5354a024",
+  "plaintext_key_scan": true,
+  "signed_policy_and_unwrap_check": true,
+  "embedding_similarity": {
+    "related": 0.844749,
+    "unrelated": 0.368871,
+    "ordering_correct": true
+  },
+  "temporary_ledger_keychain_cleanup": true,
+  "finished_at": "2026-10-28T04:26:37.675461+00:00",
+  "temporary_materials_removed": true,
+  "review": {
+    "source_session_title": "调研可用免费模型及新增模型",
+    "scope": "一次小样本真实API验收；不是108处业务全量实测、上下文极限、并发吞吐或长期稳定性测试",
+    "thinking": "explicitly disabled; reasoning_effort empty string maps to enable_thinking=false",
+    "test_output_ceiling": 2048,
+    "request_timeout_seconds": 100,
+    "tool_interface": "Core prompt simulation; not native vendor HTTP function calling",
+    "stream_interface": "buffered SDK adapter; not upstream token SSE",
+    "image_embedding": "BGE-M3 is text-only; image embedding not registered and locally rejected"
+  },
+  "quality_review": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "content_ids_complete": true,
+      "preference_order_correct": true,
+      "scores": {
+        "OBC_RUST": 0.95,
+        "OBC_GAMBLE": 0.15
+      },
+      "temporal_grounding_violations": [
+        {
+          "bvid": "OBC_GAMBLE",
+          "evidence": "近期讨论"
+        }
+      ],
+      "note": "合成输入没有提供发布时间；近期讨论属于没有输入依据的时间证据。"
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "content_ids_complete": true,
+      "preference_order_correct": true,
+      "scores": {
+        "OBC_RUST": 0.92,
+        "OBC_GAMBLE": 0.0
+      },
+      "temporal_grounding_violations": [
+        {
+          "bvid": "OBC_GAMBLE",
+          "evidence": "近期讨论"
+        }
+      ],
+      "note": "合成输入没有提供发布时间；近期讨论属于没有输入依据的时间证据。"
+    }
+  ],
+  "source_file_sha256": {
+    "src/policy.rs": "519b69162cd88ae086dffedcac7f2b338e4f01585657e36a9504cbd4307ef8a2",
+    "src/sdk_operations.rs": "b2cf1c53b83ef06a2e83124fa7c73c2d4c988a284a94cf23ce32c928a4f60549",
+    "src/upstream.rs": "ca898a15697d99647b6757ff5ecadea4997a1713f46a9f7d5ed192d41ef47c66",
+    "src/openbiliclaw/llm/sponsored_provider.py": "b1a51060097fb82f96136ad29e8146f807aad96371e2aa6a79af41f69212c40e",
+    "src/openbiliclaw/llm/sponsored_live_profile.py": "9a4b08c7dede0ddb607f76914aadeea70cabe8721e480ab22c891628d7e94dcb"
+  },
+  "summary": {
+    "cases": 16,
+    "protocol_or_vector_success": 13,
+    "failures": 3
+  }
+}

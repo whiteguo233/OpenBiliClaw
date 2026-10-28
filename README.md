@@ -657,6 +657,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ```text
 项目文本 / JSON / 工具 / 视觉 / 文本与图片向量
+  [isolated test policy: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
   → 固定操作 IPC → 私有 Runtime → SiliconFlow
 ```
 

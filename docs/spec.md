@@ -291,6 +291,7 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ```text
 Core LLMService / Registry / eval / EmbeddingService
+ [isolated signed test profile: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
  -> six fixed SDK operations -> private Runtime -> SiliconFlow chat + embeddings
  -> configured BYOK / Ollama only on an explicitly permitted availability fallback
 ```

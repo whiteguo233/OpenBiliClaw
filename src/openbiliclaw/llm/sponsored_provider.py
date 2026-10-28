@@ -317,18 +317,19 @@ class SponsoredProvider:
         """Return a validated vector in the signed model's fixed embedding space."""
         import math
 
-        from .sponsored_operations import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
-
+        task_id = "llm.embedding_image" if image else "llm.embedding_text"
+        contract = self._resolve_contract(caller="", task_id=task_id, contract_version=3)
         response = await self.execute_task(
-            task_id="llm.embedding_image" if image else "llm.embedding_text",
+            task_id=task_id,
             user_payload={"image" if image else "text": value},
         )
         raw = response.raw or {}
         vector = raw.get("embedding")
         if (
-            response.model != EMBEDDING_MODEL
+            response.model != contract.model
+            or contract.embedding_dimensions <= 0
             or not isinstance(vector, list)
-            or len(vector) != EMBEDDING_DIMENSIONS
+            or len(vector) != contract.embedding_dimensions
             or any(
                 isinstance(x, bool) or not isinstance(x, (float, int)) or not math.isfinite(x)
                 for x in vector

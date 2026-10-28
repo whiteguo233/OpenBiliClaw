@@ -654,6 +654,7 @@ Optional sponsored SDK (off by default, unreleased): signed policy and compiled 
 
 ```text
 Project text / JSON / tools / vision / text and image embeddings
+  [isolated test policy: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
   → fixed-operation IPC → private runtime → SiliconFlow
 ```
 

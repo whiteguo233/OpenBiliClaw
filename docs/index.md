@@ -127,4 +127,5 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 
 
 - [Sponsored 全项目 SDK](plans/2026-10-27-sponsored-all-tasks.md) · [验收](testing/2026-10-27-sponsored-all-tasks.md)
+- [已申请模型经 Rust SDK 的实测](testing/2026-10-28-sponsored-granted-models.md) — Qwen3-8B / Qwen3.5-4B、BGE-M3 的真实签名 release 调用、延迟、失败及质量限制。
 - [评测模块](modules/evaluation.md)

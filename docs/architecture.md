@@ -757,6 +757,7 @@ query inspiration → configured provider chain
 
 ```text
 LLMService / Registry / eval / EmbeddingService -> shared SDK IPC
+ [isolated signed test profile: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
  -> private Runtime -> SiliconFlow chat + embeddings
 ```
 

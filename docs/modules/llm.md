@@ -21,6 +21,7 @@
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | Sponsored 全项目 SDK（未发布） | 🚧 | 新增六类固定操作：文本、JSON、工具、视觉、文本与图片向量；覆盖 LLMService、Registry、裸 provider 评测、Claude 评测旁路与独立 EmbeddingService。保留旧画像合并 v2；共享子进程、严格载荷、显式回退、独立向量空间缓存，获批模型清单与有限预算是发布前置。见[完整覆盖](../plans/2026-10-27-sponsored-all-tasks.md) |
+| 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
 | OpenAI SDK 首次资源加载 | ✅ | Chat Completions / Responses 的惰性资源属性在工作线程解析，避免首次就绪探测同步导入 SDK 时阻塞封面、推荐及其它 HTTP 请求；实际异步请求与流仍运行在原事件循环。 |
@@ -829,3 +830,7 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 `SponsoredProvider.complete_with_tools(messages, tools, ...)` 接受主线原生工具接口的 schema、多轮 assistant.tool_calls 和 tool 结果，复用 Core 现有 prompt 模拟与解析规则，返回统一的 `LLMResponse.tool_calls`；Rust 不接收任意工具执行或额外 HTTP tools 字段。`stream_complete()` / `stream_complete_with_tools()` 接入现有流式接口，当前为缓冲适配：完整上游响应后发送一次 content delta，再发送 terminal，不是上游逐 token SSE。`stream_project_completion()` 仅在输出前且配置允许时回退，发送过内容后失败不会重发用户模型请求。
 
 显式配置探针在 `bypass_sponsored()` 内构建用户 registry/embedding 并执行请求；工厂不会注册赞助 adapter，也不会安装草稿的全局赞助设置，避免目标错误被免费通道健康状态掩盖。
+
+### 已申请模型的独立实测配置
+
+`llm.sponsored_live_profile.granted_test_registry(chat_model)` 只接受 `Qwen/Qwen3-8B` 或 `Qwen/Qwen3.5-4B`，用于配套签名测试包，不改默认注册表。文本向量绑定 `BAAI/bge-m3`、1024维，不注册图片向量任务；仅4B配置注册视觉任务。`SponsoredProvider.embedding()` 根据当前注册表校验响应模型和维度，不再固定假定所有签名包都使用Qwen-VL向量空间；未注册的能力在子进程启动前失败。
