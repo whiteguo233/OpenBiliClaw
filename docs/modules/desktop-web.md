@@ -97,6 +97,8 @@ LLM 实例设置页可选择 `api_route`（API Route），新实例预填 `gpt-5
 
 LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
 
+LLM 实例设置页可选择 `runcrate`（Runcrate），新实例预填 `deepseek-ai/DeepSeek-V4.1-Flash` 与 `https://api.runcrate.ai/v1`；模型发现、探测及保存沿用既有 OpenAI 兼容实例流程。首次运行 `/setup/` 向导也提供该选项与 API Key 入口。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 首屏静态脚本合并 | ✅ | 固定顺序的包内脚本经 `DesktopAssets` 变为一次 defer 请求；最多保留两个内容版本和预压缩 gzip，独立资源入口继续可用 |

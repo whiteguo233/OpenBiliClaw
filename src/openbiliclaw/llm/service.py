@@ -864,6 +864,7 @@ class LLMService:
             "requesty",
             "api_route",
             "cheaperinference",
+            "runcrate",
         }:
             return False
 

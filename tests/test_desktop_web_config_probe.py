@@ -157,3 +157,26 @@ def test_cheaperinference_provider_exposed_across_web_surfaces() -> None:
     assert 'cheaperinference: "gpt-5.4-mini"' in setup_html
     assert 'id="cfgCheaperinferenceKey"' in popup_html
     assert 'setVal("cfgCheaperinferenceKey", cfg.llm?.cheaperinference?.api_key)' in popup_js
+
+
+def test_runcrate_provider_exposed_across_web_surfaces() -> None:
+    desktop_html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
+    desktop_js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(
+        encoding="utf-8"
+    )
+    setup_html = (ROOT / "src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
+    popup_html = (ROOT / "extension/popup/popup.html").read_text(encoding="utf-8")
+    popup_js = (ROOT / "extension/popup/popup.js").read_text(encoding="utf-8")
+
+    for html in (desktop_html, setup_html, popup_html):
+        assert '<option value="runcrate">Runcrate</option>' in html
+    for js in (desktop_js, popup_js):
+        assert 'runcrate: "Runcrate"' in js
+        assert (
+            'runcrate: { model: "deepseek-ai/DeepSeek-V4.1-Flash", '
+            'base_url: "https://api.runcrate.ai/v1" }'
+        ) in js
+    assert 'runcrate: ["https://www.runcrate.ai/dashboard/api-keys", "Runcrate"]' in setup_html
+    assert 'runcrate: "deepseek-ai/DeepSeek-V4.1-Flash"' in setup_html
+    assert 'id="cfgRuncrateKey"' in popup_html
+    assert 'setVal("cfgRuncrateKey", cfg.llm?.runcrate?.api_key)' in popup_js

@@ -12,6 +12,8 @@ Popup 的 LLM 实例、默认链与模块选择支持 `api_route`（API Route）
 
 Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
 
+Popup 的 LLM 实例、默认链与模块选择支持 `runcrate`（Runcrate），新实例预填 `deepseek-ai/DeepSeek-V4.1-Flash` 与 `https://api.runcrate.ai/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
+
 ## 完整候选评估器选项
 
 高级设置的候选评分下拉新增 canonical `jev`：纯文本完整评估、受控主题 / IP，未知

@@ -85,6 +85,8 @@ TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply 
 
 `GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `cheaperinference`（Cheaper Inference），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Cheaper Inference 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `type` 为 `text` 的聊天模型。
 
+`GET /api/config` 和 `PUT /api/config` 的 LLM 配置支持 `runcrate`（Runcrate），API Key 按既有凭据掩码及清除规则处理；`POST /api/config/discover-models` 可用 Runcrate 实例草稿查询其 OpenAI 兼容 `GET /models`，只返回 `output_modalities` 含 `text` 的聊天模型。
+
 ## 本地向量 CPU 回退后的健康检查
 
 | 接口 | 状态 | 契约 |
