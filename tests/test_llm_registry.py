@@ -254,6 +254,21 @@ def test_build_llm_registry_registers_cheaperinference() -> None:
     assert registry.get("cheaperinference")._model == "gpt-5.4-mini"
 
 
+def test_build_llm_registry_registers_runcrate() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="runcrate",
+            runcrate=LLMProviderConfig(api_key="rc_live_test"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "runcrate"
+    assert registry.get("runcrate").base_url == "https://api.runcrate.ai/v1"
+    assert registry.get("runcrate")._model == "deepseek-ai/DeepSeek-V4.1-Flash"
+
+
 def test_build_llm_registry_registers_cheaperinference_instance() -> None:
     config = Config(
         llm=LLMConfig(
@@ -277,6 +292,29 @@ def test_build_llm_registry_registers_cheaperinference_instance() -> None:
     assert registry.get("cheaperinference-main").base_url == "https://api.cheaperinference.com/v1"
 
 
+def test_build_llm_registry_registers_runcrate_instance() -> None:
+    config = Config(
+        llm=LLMConfig(
+            instance_routing=True,
+            instances={
+                "runcrate-main": LLMInstanceConfig(
+                    name="Runcrate",
+                    provider_type="runcrate",
+                    api_key="rc_live_test",
+                    model="deepseek-ai/DeepSeek-V4.1-Flash",
+                )
+            },
+            default_chain=["runcrate-main"],
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "runcrate-main"
+    assert registry.get("runcrate-main").name == "runcrate"
+    assert registry.get("runcrate-main").base_url == "https://api.runcrate.ai/v1"
+
+
 def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
     config = Config(
         llm=LLMConfig(
@@ -288,6 +326,19 @@ def test_build_llm_registry_omits_cheaperinference_without_api_key() -> None:
     registry = build_llm_registry(config)
 
     assert "cheaperinference" not in registry.available_providers
+
+
+def test_build_llm_registry_omits_runcrate_without_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="sk-deepseek", model="deepseek-v4-flash"),
+            runcrate=LLMProviderConfig(model="deepseek-ai/DeepSeek-V4.1-Flash"),
+        )
+    )
+    registry = build_llm_registry(config)
+
+    assert "runcrate" not in registry.available_providers
 
 
 def test_build_llm_registry_omits_requesty_without_api_key() -> None:

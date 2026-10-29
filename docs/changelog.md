@@ -2,6 +2,11 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 新增 Runcrate 内置 Provider（2026-10-29，runcrate-provider）
+
+- `provider_type="runcrate"` 通过 OpenAI 兼容接口接入 Runcrate，默认 `https://api.runcrate.ai/v1`、`deepseek-ai/DeepSeek-V4.1-Flash`，模型名格式为 `<vendor>/<model>`。支持独立实例、调用链、模型发现（只列 `output_modalities` 含 `text` 的聊天模型）和请求探测；适配器不发送 `reasoning_effort`，embedding 仍需独立配置。
+- 接入后端配置与 API、CLI 和安装向导（菜单第 11 项）、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
+
 ## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
 - 修复 Codex OAuth（ChatGPT 订阅）在 `json_mode` 下初始化失败（#334）：Codex `/responses` 只用 `input` 消息校验 `text.format=json_object`，而偏好分析等结构化任务把「严格 JSON」写在 system/instructions，后端因此返回 HTTP 200 + SSE error（`Response input messages must contain the word 'json' ...`），偏好分片整块失败。`CodexChatGPTProvider._build_request_body()` 现在在 input 缺少大小写不敏感 `json` token 时于末尾追加 `Return valid json.` user 指令，与 OpenAI Platform Responses flavor 的既有补偿一致；追加点在尾部，system/instructions 与既有消息的缓存前缀保持字节一致。[真实链路复测](verification/2026-10-29-issue-334-codex-json-e2e.md)：单批 12 条事件 1 次调用 27.1 秒、init 同款 60 条事件 2 个分片 56.7 秒合并出 18 个兴趣；对照组只剥掉该标记即复现 issue 的 `All providers failed` 异常链。

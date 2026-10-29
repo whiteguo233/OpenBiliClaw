@@ -1282,6 +1282,26 @@ def test_build_config_supports_cheaperinference_provider() -> None:
     assert config.llm.cheaperinference.base_url == "https://api.cheaperinference.com/v1"
 
 
+def test_build_config_supports_runcrate_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "runcrate",
+                "runcrate": {
+                    "api_key": "rc_live_test",
+                    "model": "zai-org/GLM-5.3",
+                    "base_url": "https://api.runcrate.ai/v1",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "runcrate"
+    assert config.llm.runcrate.api_key == "rc_live_test"
+    assert config.llm.runcrate.model == "zai-org/GLM-5.3"
+    assert config.llm.runcrate.base_url == "https://api.runcrate.ai/v1"
+
+
 def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
     config = Config(
         llm=LLMConfig(
@@ -1291,6 +1311,18 @@ def test_validate_runtime_config_requires_cheaperinference_api_key() -> None:
     )
 
     with pytest.raises(ConfigError, match="llm.cheaperinference.api_key"):
+        validate_runtime_config(config)
+
+
+def test_validate_runtime_config_requires_runcrate_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="runcrate",
+            runcrate=LLMProviderConfig(model="deepseek-ai/DeepSeek-V4.1-Flash"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.runcrate.api_key"):
         validate_runtime_config(config)
 
 

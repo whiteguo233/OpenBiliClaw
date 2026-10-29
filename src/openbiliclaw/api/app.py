@@ -1163,6 +1163,7 @@ _RESETTABLE_CONFIG_FIELDS = {
     "llm.requesty.api_key": ("llm", "requesty", "api_key"),
     "llm.api_route.api_key": ("llm", "api_route", "api_key"),
     "llm.cheaperinference.api_key": ("llm", "cheaperinference", "api_key"),
+    "llm.runcrate.api_key": ("llm", "runcrate", "api_key"),
     "llm.openai_compatible.api_key": ("llm", "openai_compatible", "api_key"),
     "llm.embedding.api_key": ("llm", "embedding", "api_key"),
 }
@@ -21352,6 +21353,7 @@ def create_app(
                 requesty=_provider_out(_legacy_provider_projection("requesty")),
                 api_route=_provider_out(_legacy_provider_projection("api_route")),
                 cheaperinference=_provider_out(_legacy_provider_projection("cheaperinference")),
+                runcrate=_provider_out(_legacy_provider_projection("runcrate")),
                 embedding=EmbeddingConfigOut(
                     provider=cfg.llm.embedding.provider,
                     model=cfg.llm.embedding.model,
@@ -22375,6 +22377,7 @@ def create_app(
                 "requesty",
                 "api_route",
                 "cheaperinference",
+                "runcrate",
             }:
                 return "", None
             instance_id = normalized_type.replace("_", "-")
@@ -22455,6 +22458,7 @@ def create_app(
             "requesty",
             "api_route",
             "cheaperinference",
+            "runcrate",
         ):
             if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
                 if bool(getattr(cfg.llm, "instance_routing", False)) and not native_payload:
@@ -22670,6 +22674,7 @@ def create_app(
             "requesty",
             "api_route",
             "cheaperinference",
+            "runcrate",
         }:
             return ConfigModelDiscoveryResponse(
                 ok=False,

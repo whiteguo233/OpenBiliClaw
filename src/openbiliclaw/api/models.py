@@ -2385,6 +2385,8 @@ class LLMConfigOut(BaseModel):
     api_route: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     # Cheaper Inference LLM gateway (OpenAI-compatible).
     cheaperinference: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    # Runcrate LLM gateway (OpenAI-compatible).
+    runcrate: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     embedding: EmbeddingConfigOut = Field(default_factory=EmbeddingConfigOut)
     soul: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
     discovery: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)

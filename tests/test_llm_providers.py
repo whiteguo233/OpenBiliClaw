@@ -31,6 +31,7 @@ from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
 from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
 from openbiliclaw.llm.orcarouter_provider import OrcaRouterProvider
 from openbiliclaw.llm.requesty_provider import RequestyProvider
+from openbiliclaw.llm.runcrate_provider import RuncrateProvider
 
 
 def _openai_response(content: str = "ok") -> SimpleNamespace:
@@ -1726,6 +1727,69 @@ async def test_cheaperinference_list_models_keeps_only_text_models(
     monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
 
     assert await provider.list_models() == ["claude-sonnet-5", "gpt-5.4-mini", "untyped-model"]
+
+
+def test_runcrate_provider_defaults() -> None:
+    provider = RuncrateProvider(api_key="rc_live_test")
+
+    assert provider.name == "runcrate"
+    assert provider.base_url == "https://api.runcrate.ai/v1"
+    assert provider._model == "deepseek-ai/DeepSeek-V4.1-Flash"
+    assert provider.supports_embedding is False
+    assert provider._openai_reasoning_effort("deepseek-ai/DeepSeek-V4.1-Flash", "high") is None
+
+
+@pytest.mark.asyncio
+async def test_runcrate_provider_uses_per_call_model_without_reasoning_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RuncrateProvider(api_key="rc_live_test")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("runcrate-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="zai-org/GLM-5.3",
+        reasoning_effort="high",
+    )
+
+    assert response.content == "runcrate-ok"
+    assert captured["model"] == "zai-org/GLM-5.3"
+    assert "reasoning_effort" not in captured
+    assert "extra_body" not in captured
+    assert provider._model == "deepseek-ai/DeepSeek-V4.1-Flash"
+
+
+@pytest.mark.asyncio
+async def test_runcrate_list_models_keeps_only_text_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = RuncrateProvider(api_key="rc_live_test")
+
+    async def fake_catalog() -> SimpleNamespace:
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(id="deepseek-ai/DeepSeek-V4.1-Flash", output_modalities=["text"]),
+                SimpleNamespace(id="zai-org/GLM-5.3", output_modalities=["text"]),
+                SimpleNamespace(id="image-model", output_modalities=["image"]),
+                SimpleNamespace(id="video-model", output_modalities=["video"]),
+                SimpleNamespace(id="embedding-model", output_modalities=["embeddings"]),
+                SimpleNamespace(id="untyped-model"),
+                SimpleNamespace(id="", output_modalities=["text"]),
+            ]
+        )
+
+    monkeypatch.setattr(provider, "_create_model_list", fake_catalog)
+
+    assert await provider.list_models() == [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "untyped-model",
+        "zai-org/GLM-5.3",
+    ]
 
 
 def test_requesty_provider_accepts_regional_base_url() -> None:
