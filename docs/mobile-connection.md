@@ -11,7 +11,7 @@
 | Tailscale · 应用内节点 | 电脑 helper 已 ready，App 内置 Tailscale 登录同一 tailnet | App 自动选择内置 Tailscale；手机浏览器需另外连接系统 Tailscale |
 | 公网 / 自定义地址 | 已有手机可达的 HTTP(S) 地址，推荐 HTTPS | 保留协议、端口、代理路径前缀；相机打开网页，App 导入后端 |
 
-App 操作：进入连接设置 →「扫码连接」→ 对准电脑二维码。识别成功后自动保存并重连，之后重新打开 App 仍保留地址。相机不可用时可以复制电脑链接，用「粘贴连接链接」导入。首次使用内置 Tailscale 仍需登录；后端若开启密码门禁，连接后仍需输入密码。
+App 操作：进入连接设置 → 点击后端 URL 右侧的扫码图标 → 对准电脑二维码，或点击扫码页右下角「选择图片」读取二维码截图。识别成功后自动保存并重连，之后重新打开 App 仍保留地址。相机不可用时仍能选择图片，也可以复制电脑链接，用「粘贴连接链接」导入。图片仅在本机识别，取消或识别失败保留原后端。首次使用内置 Tailscale 仍需登录；后端若开启密码门禁，连接后仍需输入密码。
 
 新安装默认监听 `0.0.0.0:8420`，包含桌面安装包、一键脚本和 AI 安装。该值表示监听网卡，不是可扫码的访问地址。本机浏览器和健康检查使用 `127.0.0.1` 正常，但不能发给手机。已有配置明确设为仅本机时会保留，并在 LAN 二维码处提示改 `[api].host` 后重启。
 
@@ -53,5 +53,7 @@ Docker 中的网卡地址通常属于容器。请在自定义地址输入宿主�
 网络是否允许手机访问仍取决于 Wi-Fi 互访、系统防火墙和 tailnet grants。自动化测试不等于真实跨设备网络或手机相机验收；联调结果见[分支验收记录](verification/2026-10-26-mobile-connection.md)与[真实环境验证](verification/2026-10-27-mobile-connection-live.md)。
 
 按用户要求仅使用模拟器的后续结果见 [2026-10-28 复测记录](verification/2026-10-28-mobile-qr-e2e.md)：逐项区分 LAN / Tailscale 真实请求、原生解码、相机回调、手机网页渲染与公网条件，未完成项目不记为端到端通过。
+
+新增图片入口的 [2026-10-30 模拟器实测](verification/2026-10-30-mobile-qr-image.md) 已完成实际图库选图 → 原生解码 → 保存 → 真实推荐 / ping，局域网和两类既有 Tailscale 地址均通过；同机 VPN 路由、截图识别及公网未验收的范围单列。
 
 官方参考：[Tailscale 地址范围](https://tailscale.com/docs/reference/reserved-ip-addresses)、[mobile_scanner](https://pub.dev/packages/mobile_scanner)。

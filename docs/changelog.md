@@ -4,6 +4,8 @@
 
 ## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
+- 配套 App 扫码页新增右下角「选择图片」入口；[Android 模拟器截图扫码实测](verification/2026-10-30-mobile-qr-image.md) 完成局域网、系统 Tailscale 和既有对端的真实图库选图、原生识别、自动保存及 20 条真实推荐，明确同机 VPN、摄像头实拍和公网未验收范围。
+
 - 增补[仅模拟器的扫码复测](verification/2026-10-28-mobile-qr-e2e.md)：真实 Web 二维码与 LAN / 系统 Tailscale / 对端节点的业务请求逐项核验，保留相机画面裁切、设备未完成及公网地址缺失的验收边界。
 
 - 补充手机连接的[真实环境验证](verification/2026-10-27-mobile-connection-live.md)：实际监听、LAN / Tailscale 请求、真实 DOM 二维码与原生 / WebView 验收入口，并逐项保留真机权限、系统 IPv6 自连和公网未验证边界。
