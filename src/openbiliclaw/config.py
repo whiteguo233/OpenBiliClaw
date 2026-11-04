@@ -2510,6 +2510,7 @@ def _build_config(
         enabled=bool(sponsored_raw.get("enabled", False)),
         runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
         model=str(sponsored_raw.get("model", "Qwen/Qwen3-8B")),
+        embedding_mode=str(sponsored_raw.get("embedding_mode", "cloud")),
         fallback_to_other_free_model=bool(sponsored_raw.get("fallback_to_other_free_model", True)),
         fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", False)),
         notify_on_fallback=bool(sponsored_raw.get("notify_on_fallback", True)),
@@ -5085,6 +5086,26 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     if sponsored is not None:
         from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
 
+        if sponsored.embedding_mode not in {"cloud", "local"}:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.embedding_mode",
+                    message="请选择 cloud（硅基流动）或 local（本地 Ollama）向量模式",
+                    severity="blocking",
+                )
+            )
+        if (
+            sponsored.enabled
+            and sponsored.embedding_mode == "local"
+            and (config.llm.embedding.provider != "ollama")
+        ):
+            issues.append(
+                ConfigIssue(
+                    field="llm.embedding.provider",
+                    message="免费方案的本地向量模式需要配置 Ollama；请重新选择本地向量并保存。",
+                    severity="blocking",
+                )
+            )
         if sponsored.model not in CHAT_MODELS:
             issues.append(
                 ConfigIssue(
@@ -5850,7 +5871,7 @@ def load_config_with_diagnostics(
     # _build_discovery ever runs — the values are ignored, never fail-fast.
     diagnostics.issues.extend(_removed_discovery_key_issues(raw))
     config = _build_config(raw, consult_environment=consult_environment)
-    install_sponsored_settings(config.llm.sponsored)
+    install_sponsored_settings(config.llm.sponsored, data_path=config.data_path)
     diagnostics.issues.extend(_collect_config_issues(config))
     return config, diagnostics
 
@@ -6626,6 +6647,7 @@ def _render_config_toml(
             f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
             f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
             f"model = {_toml_string(config.llm.sponsored.model)}",
+            f"embedding_mode = {_toml_string(config.llm.sponsored.embedding_mode)}",
             "fallback_to_other_free_model = "
             f"{_toml_bool(config.llm.sponsored.fallback_to_other_free_model)}",
             "fallback_to_user_provider = "

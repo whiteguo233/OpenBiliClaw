@@ -42,6 +42,10 @@ class BundleUnavailableError(BundleError):
     """This Core release has no published bundle for the current platform."""
 
 
+class BundleExpiredError(BundleError):
+    """Authentic installed policy has expired; the application must be updated."""
+
+
 def platform_id() -> str:
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     machine = platform.machine().lower()
@@ -133,8 +137,10 @@ def verify_bundle(
         public.verify((directory / "sponsored-policy.sig").read_bytes(), policy_bytes)
         policy = json.loads(policy_bytes)
         expiry = datetime.fromisoformat(policy["expires_at"].replace("Z", "+00:00"))
-        if expiry <= datetime.now(UTC) or policy["policy_version"] != manifest["policy_version"]:
-            raise BundleError("免费模型组件已到期，请更新")
+        if expiry <= datetime.now(UTC):
+            raise BundleExpiredError("免费模型组件已到期，请更新 OpenBiliClaw 安装包/版本")
+        if policy["policy_version"] != manifest["policy_version"]:
+            raise BundleError("免费模型组件策略版本不匹配，请更新")
         expected = {f"{c.task_id}.v{c.contract_version}": c for c in approved_registry()}
         if set(policy["tasks"]) != set(expected):
             raise BundleError("免费模型组件缺少所需任务")
@@ -170,8 +176,7 @@ def _command(directory: Path) -> str:
     )
 
 
-def installed_runtime_command() -> str:
-    """Return only a verified bundle command; explicit local CLI overrides live elsewhere."""
+def _installed_candidates() -> list[Path]:
     bundled = os.environ.get("OPENBILICLAW_SPONSORED_BUNDLE", "").strip()
     try:
         active = (_root() / "active").read_text().strip()
@@ -182,7 +187,12 @@ def installed_runtime_command() -> str:
         candidates.append(_root() / "bundles" / active)
     if bundled:
         candidates.append(Path(bundled))
-    for path in candidates:
+    return candidates
+
+
+def installed_runtime_command() -> str:
+    """Return only a verified bundle command; explicit local CLI overrides live elsewhere."""
+    for path in _installed_candidates():
         try:
             return _command(path)
         except BundleError:
@@ -192,10 +202,21 @@ def installed_runtime_command() -> str:
 
 def bundle_status() -> dict[str, Any]:
     """Safe UI metadata, without local executable paths or credentials."""
-    ready = bool(installed_runtime_command())
+    expired = False
+    for path in _installed_candidates():
+        try:
+            _command(path)
+            return {"available": True, "code": "", "message": "免费模型组件已就绪"}
+        except BundleExpiredError:
+            expired = True
+        except BundleError:
+            continue
     return {
-        "available": ready,
-        "message": "免费模型组件已就绪" if ready else "免费模型组件尚未安装或需要更新",
+        "available": False,
+        "code": "POLICY_INVALID" if expired else "",
+        "message": "免费模型组件已到期，请更新安装包/版本"
+        if expired
+        else "免费模型组件尚未安装或需要更新",
     }
 
 

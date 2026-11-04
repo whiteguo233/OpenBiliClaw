@@ -14,6 +14,31 @@ if TYPE_CHECKING:
     from .embedding import EmbeddingService
 
 
+def select_local_embedding(config: Config) -> None:
+    """Select existing local settings, or install safe Ollama/BGE defaults.
+
+    The desktop's private 11435 endpoint and user-selected local model survive.
+    Other provider credentials must not be sent to the new local endpoint.
+    """
+    from dataclasses import replace
+
+    cfg = config.llm.embedding
+    if cfg.provider != "ollama":
+        config.llm.embedding = replace(
+            cfg,
+            provider="ollama",
+            model="bge-m3",
+            api_key="",
+            base_url="http://127.0.0.1:11434/v1",
+            output_dimensionality=1024,
+            fallback_enabled=False,
+            fallback_provider="",
+            multimodal_enabled=False,
+        )
+    else:
+        config.llm.embedding = replace(cfg, fallback_enabled=False, fallback_provider="")
+
+
 class SponsoredEmbeddingAdapter:
     name = "sponsored"
     _base_url = "https://api.siliconflow.cn/v1"

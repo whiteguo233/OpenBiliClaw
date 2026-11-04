@@ -1778,6 +1778,6 @@ TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历�
 
 ### 免费模型初始化与显示
 
-`openbiliclaw init` 的首次模型引导推荐免费方案，可选 Qwen3-8B 或 Qwen3.5-4B，自动准备已签名组件并保存 `llm.sponsored`；无法取得组件时给出安装原因。选择自有渠道会关闭免费开关但保留免费模型选择。初始化继续执行真实前置检查；`openbiliclaw config-show` 显示免费模型、上下文与BGE-M3。免费模式无需自有Key，图片能力仍可选。
+`openbiliclaw init` 的首次模型引导推荐免费方案，可选 Qwen3-8B 或 Qwen3.5-4B，再选择默认硅基流动BGE-M3或本地Ollama向量，自动准备已签名组件并保存 `llm.sponsored`；无法取得组件时给出安装原因。选择自有渠道会关闭免费开关但保留免费模型选择。初始化继续执行真实前置检查；`openbiliclaw config-show` 显示免费模型、上下文、实际向量来源及当前凭据通知。本地选项保留已有地址/模型，未配置时采用Ollama/bge-m3，并沿用原安装/拉取过程；`setup-embedding` 显式选Ollama会同步设置免费方案的本地向量模式。免费模式无需自有Key，图片能力仍可选。
 
 安装器子命令 `python -m openbiliclaw.runtime.sponsored_bundle` 的 `--archive/--stage/--if-available` 见[Runtime API](runtime.md#免费模型组件安装与更新)。

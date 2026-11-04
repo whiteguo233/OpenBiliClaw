@@ -134,3 +134,4 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 
 - [免费双模型用户流程与发行边界](plans/2026-11-04-sponsored-user-flow.md)
 - [免费模型真实调用与四端验收](testing/2026-11-04-sponsored-user-flow.md)
+- [免费凭据轮换通知与云端/本地向量切换](testing/2026-11-05-sponsored-renewal.md)

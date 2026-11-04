@@ -1070,6 +1070,7 @@
 
     function sponsoredForm() {
       return window.OpenBiliClawSponsoredSettings.mount($("#setupSponsoredSettings"), {
+        useOwn: () => { $("#provider").value = "deepseek"; switchProvider(); $("#apiKey").focus(); },
         prepare: async () => {
           const r = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
           if (!r.ok) throw new Error("组件准备失败，请确认已登录后重试。");
@@ -1099,7 +1100,7 @@
         const sponsored = { ...sponsoredForm().collect(), enabled: true };
         const probe = await fetchWithTimeout("/api/config/probe-service", { method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "sponsored", config: { llm: { sponsored } } }),
+          body: JSON.stringify({ kind: "sponsored", check_embedding: sponsored.embedding_mode !== "local", config: { llm: { sponsored } } }),
         }, 370000);
         const checked = await probe.json();
         if (!probe.ok || !checked.ok) throw new Error(checked.error || "免费模型连接测试失败");
@@ -1112,7 +1113,7 @@
         if (!r.ok) throw new Error(configSaveErrorMessage(r, saved));
         if (saved.apply_state === "queued" || saved.apply_state === "applying") await waitForConfigApply(Number(saved.apply_revision || 0));
         if (saved.restart_required === true) { writeSetupRestartMarker("sponsored"); waitForBackendRestart("sponsored"); return; }
-        $("#doneLlm").textContent = "已连接 · " + checked.model + " + BGE-M3";
+        $("#doneLlm").textContent = "已连接 · " + checked.model + (sponsored.embedding_mode === "local" ? " · 本地向量将在初始化时准备" : " + BGE-M3");
         clearSetupRestartMarker(); setStep(1);
       } catch (error) {
         showTextMsg("#msg0", error.message || "免费模型配置失败", "err");

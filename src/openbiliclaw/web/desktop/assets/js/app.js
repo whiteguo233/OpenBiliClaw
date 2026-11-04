@@ -5707,7 +5707,7 @@ ${cardFeedbackBarHtml()}`;
         if (target) target.innerHTML = activityHtml;
       });
       const mobileCount = $("#mobileMessageCount");
-      if (mobileCount) mobileCount.textContent = String(getRenderableMessages().length);
+      if (mobileCount) mobileCount.textContent = String(getRenderableMessages().length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0));
     }
 
     function renderActivityHistory() {
@@ -6478,7 +6478,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function syncMessageCount() {
-      const count = getRenderableMessages(state.messageListSnapshot && isMessagesDrawerOpen() ? state.messageListSnapshot : state.messages).length;
+      const count = getRenderableMessages(state.messageListSnapshot && isMessagesDrawerOpen() ? state.messageListSnapshot : state.messages).length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
       if (state.runtimeStatus) state.runtimeStatus.unread_count = count;
       const metric = $("#metricUnread");
       if (metric) metric.textContent = String(count);
@@ -6554,7 +6554,7 @@ ${cardFeedbackBarHtml()}`;
       else state.messages = messages;
       syncMessageCount();
       if (!messages.length) {
-        list.innerHTML = `<div class="empty-state">暂无通知。兴趣确认、避雷确认和待通知候选都会出现在这里。</div>`;
+        list.innerHTML = state.runtimeStatus?.sponsored_status?.notices?.length ? "" : `<div class="empty-state">暂无通知。兴趣确认、避雷确认和待通知候选都会出现在这里。</div>`;
         return;
       }
       list.replaceChildren(...messages.map((msg) => {
@@ -9244,6 +9244,7 @@ ${cardFeedbackBarHtml()}`;
       }
       return {
         initialized: merged.initialized !== false,
+        sponsored_status: merged.sponsored_status || {},
         recommendation_count: Number(merged.recommendation_count ?? 0),
         pending_signal_events: Number(merged.pending_signal_events ?? 0),
         last_refresh_at: String(merged.last_refresh_at ?? ""),
@@ -9454,6 +9455,13 @@ ${cardFeedbackBarHtml()}`;
     function applyRuntimeStatus(payload) {
       if (!payload) return;
       state.runtimeStatus = normalizeRuntimeStatus(payload);
+      window.OpenBiliClawSponsoredSettings?.updateStatus($("#sponsoredSettings"), state.runtimeStatus.sponsored_status);
+      const messageList = $("#messageList");
+      if (messageList) {
+        let notice = $("#sponsoredMessageNotice");
+        if (!notice) { notice = document.createElement("div"); notice.id = "sponsoredMessageNotice"; messageList.before(notice); }
+        window.OpenBiliClawSponsoredSettings?.renderNotice(notice, state.runtimeStatus.sponsored_status, () => openSettingsPage("models"));
+      }
       const summary = getPoolStatusSummary(state.runtimeStatus);
       $("#statusLabel").textContent = state.runtimeStatus.initialized === false ? "后端未初始化" : "已连接本地后端";
       $("#metricPool").textContent = String(state.runtimeStatus.pool_available_count);

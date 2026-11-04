@@ -13,6 +13,10 @@ development env bootstrap as a fallback. Tests call the reset helper directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 180.0
 
@@ -26,6 +30,7 @@ class SponsoredRuntimeSettings:
     # installers point at the bundled binary; source builds leave it empty.
     runtime_path: str = ""
     model: str = "Qwen/Qwen3-8B"
+    embedding_mode: str = "cloud"
     fallback_to_other_free_model: bool = True
     fallback_to_user_provider: bool = False
     notify_on_fallback: bool = True
@@ -35,15 +40,25 @@ class SponsoredRuntimeSettings:
     def has_runtime(self) -> bool:
         return bool(self.runtime_path.strip())
 
+    @property
+    def uses_cloud_embedding(self) -> bool:
+        """Whether this plan owns the text-vector route."""
+        return self.enabled and self.embedding_mode == "cloud"
+
 
 _SETTINGS = SponsoredRuntimeSettings()
 
 
-def install_sponsored_settings(settings: SponsoredRuntimeSettings) -> None:
+def install_sponsored_settings(
+    settings: SponsoredRuntimeSettings, *, data_path: Path | None = None
+) -> None:
     """Replace the process-wide settings (called by config loading)."""
 
     global _SETTINGS
     _SETTINGS = settings
+    from openbiliclaw.sponsored_status import configure_status_directory
+
+    configure_status_directory(data_path)
 
 
 def current_sponsored_settings() -> SponsoredRuntimeSettings:

@@ -134,6 +134,10 @@ def error_from_payload(payload: Mapping[str, Any], *, task_id: str = "") -> Spon
 
     code = str(payload.get("code") or SponsoredUpstreamError.code).strip().upper()
     message = str(payload.get("message") or "").strip()
+    from openbiliclaw.sponsored_status import GUIDANCE
+
+    if code in GUIDANCE:
+        message = GUIDANCE[code][1]
     error_type = _ERROR_TYPES.get(code)
     if error_type is None:
         error = SponsoredUpstreamError(message or f"upstream error ({code})", task_id=task_id)

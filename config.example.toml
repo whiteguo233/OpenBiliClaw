@@ -299,6 +299,8 @@ enabled = false
 # 留空自动寻找已验证的安装包。仅本机开发/诊断可写命令；网页不能修改。
 runtime_path = ""
 model = "Qwen/Qwen3-8B" # 另一个选项：Qwen/Qwen3.5-4B
+# cloud（默认）：内置凭据调用硅基流动 BGE-M3；local：独立使用 [llm.embedding] Ollama。
+embedding_mode = "cloud"
 fallback_to_other_free_model = true
 # 仅显式开启才会调用自费服务；关闭时免费组件缺失或额度用尽会报告错误。
 fallback_to_user_provider = false

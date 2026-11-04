@@ -20,6 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
 | 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
 | 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
 | 免费双模型方案（SDK已发布，主程序待发布） | 主要链路实测通过，稳定性未全过 | 8B/4B 可选、Agent 真 SSE、通用操作有界思考、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。后台长批次/切换等待及内容质量限制见[系统验收](../testing/2026-11-04-sponsored-system-acceptance.md)，入口设计见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
@@ -838,7 +839,9 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 
 `shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用 `SponsoredProviderPool`；池内1个前台与2个后台串行Rust子进程共用同一签名策略和安装账本。握手串行、网络请求并行，上层总并发gate继续有效。旧组件启动时若明确报告安装账本短锁竞争，仅握手最多重试两次；其它策略/契约/启动错误仍报错。取消流会回收对应子进程并归还工作位。模型选择更改后旧请求保留原Provider，新请求使用新选择。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
 
-JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和 BGE，禁用免费互备以免误报。
+JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和所选向量来源，禁用免费互备以免误报。`select_local_embedding(config)` 保留已有Ollama端点/模型，否则设置安全本地默认值；`build_embedding_service()` 仅在 `uses_cloud_embedding` 时覆盖为免费BGE。不同来源沿用独立provenance缓存空间。
+
+`SponsoredProvider` 在每次实际完成/流式/向量任务后记录稳定错误码或成功恢复；AUTH_FAILED 与 POLICY_INVALID 提示更新安装包或配置自有Key。旧Rust在hello前输出的稳定 `POLICY_INVALID` 也归一化为授权失效。流取消、网络错误和429不会清除先前撤销证据。见[状态接口与轮换步骤](runtime.md#免费凭据状态与轮换)。
 
 ### 已申请模型的独立实测配置
 

@@ -66,11 +66,13 @@ def build_llm_registry(
             enabled=cfg.enabled,
             runtime_path=cfg.runtime_path,
             model=cfg.model,
+            embedding_mode=cfg.embedding_mode,
             fallback_to_other_free_model=cfg.fallback_to_other_free_model,
             fallback_to_user_provider=cfg.fallback_to_user_provider,
             notify_on_fallback=cfg.notify_on_fallback,
             request_timeout_seconds=cfg.request_timeout_seconds,
-        )
+        ),
+        data_path=config.data_path,
     )
     try:
         registry = _build_user_llm_registry(
@@ -367,7 +369,7 @@ def build_embedding_service(
 
         from .sponsored_router import sponsored_bypassed
 
-        if config.llm.sponsored.enabled and not sponsored_bypassed():
+        if config.llm.sponsored.uses_cloud_embedding and not sponsored_bypassed():
             from .sponsored_embedding import build_sponsored_embedding_service
 
             return build_sponsored_embedding_service(config)

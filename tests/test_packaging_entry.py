@@ -505,13 +505,17 @@ def test_free_embedding_skips_local_download_and_seed(
     assert embedding_progress.snapshot() == progress
 
 
+@pytest.mark.parametrize("free_chat", [False, True])
 def test_ensure_embedding_model_async_reports_global_pull_progress(
     monkeypatch: pytest.MonkeyPatch,
+    free_chat: bool,
 ) -> None:
     from openbiliclaw.config import Config
     from openbiliclaw.runtime import embedding_progress
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
 
     cfg = Config()
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=free_chat, embedding_mode="local")
     cfg.llm.embedding.provider = "ollama"
     cfg.llm.embedding.model = "bge-m3"
     cfg.llm.embedding.base_url = "http://localhost:11434/v1"

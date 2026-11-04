@@ -487,7 +487,7 @@ def _ensure_embedding_model_async() -> None:
 
         cfg = load_config()
         emb = cfg.llm.embedding
-        if cfg.llm.sponsored.enabled:
+        if cfg.llm.sponsored.uses_cloud_embedding:
             return  # Free text vectors use cloud BGE, including with chat fallback.
         if str(emb.provider).strip().lower() != "ollama":
             return
@@ -595,11 +595,24 @@ def _seed_bundled_embedding_model(bundled_resources: Path, config_path: Path) ->
         from openbiliclaw.runtime.ollama_supervisor import start_managed_ollama_at
 
         cfg = load_config()
-        if cfg.llm.sponsored.enabled:
-            return False  # Preserve the optional local seed until free mode is disabled.
+        if cfg.llm.sponsored.uses_cloud_embedding:
+            return False  # Preserve the local seed until local embedding is selected.
         provider = str(cfg.llm.embedding.provider).strip().lower()
         if provider not in ("", "ollama"):
             return False  # user chose a remote embedding provider — respect it
+        if cfg.llm.sponsored.enabled:
+            from urllib.parse import urlsplit
+
+            selected_model = cfg.llm.embedding.model.strip()
+            selected_url = cfg.llm.embedding.base_url.strip()
+            endpoint = urlsplit(selected_url or "http://127.0.0.1:11434/v1")
+            if (
+                selected_model not in {"", "bge-m3", "bge-m3:latest"}
+                or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or endpoint.port not in {11434, _PRIVATE_OLLAMA_PORT}
+                or endpoint.path.rstrip("/") not in {"", "/v1"}
+            ):
+                return False  # Free chat must not overwrite an existing local deployment.
 
         target = effective_embedding_models_dir(
             user_ollama_models=os.environ.get("OLLAMA_MODELS"),

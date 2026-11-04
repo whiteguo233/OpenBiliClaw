@@ -2532,6 +2532,10 @@ def _save_embedding_config(
     config, diagnostics = load_config_with_diagnostics()
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
+    if config.llm.sponsored.enabled and provider == "ollama":
+        from dataclasses import replace
+
+        config.llm.sponsored = replace(config.llm.sponsored, embedding_mode="local")
     if base_url:
         config.llm.embedding.base_url = base_url.strip()
     elif provider == "ollama" and not config.llm.embedding.base_url.strip():
@@ -3246,6 +3250,12 @@ def _interactive_runtime_config_setup() -> None:
             if chosen not in {"1", "2"}:
                 console.print("[yellow]请选择 1 或 2。[/yellow]")
                 continue
+            embedding_choice = typer.prompt(
+                "文本向量 [1=硅基流动 BGE-M3（推荐） / 2=本地 Ollama]", default="1"
+            ).strip()
+            if embedding_choice not in {"1", "2"}:
+                console.print("[yellow]请选择 1 或 2。[/yellow]")
+                continue
             try:
                 if not cfg.llm.sponsored.runtime_path:
                     ensure_runtime()
@@ -3256,12 +3266,33 @@ def _interactive_runtime_config_setup() -> None:
                 cfg.llm.sponsored,
                 enabled=True,
                 model=DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL,
+                embedding_mode="cloud" if embedding_choice == "1" else "local",
                 fallback_to_other_free_model=True,
                 fallback_to_user_provider=False,
             )
+            if embedding_choice == "2":
+                from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+                select_local_embedding(cfg)
+                endpoint = (
+                    cfg.llm.embedding.base_url.rstrip("/").removesuffix("/v1")
+                    or "http://127.0.0.1:11434"
+                )
+                if _is_default_ollama_endpoint(endpoint) and _ollama_install_if_missing():
+                    _ollama_start_serve_background()
+                if not _ollama_has_model(
+                    cfg.llm.embedding.model, host=endpoint
+                ) and not _ollama_pull_model(cfg.llm.embedding.model, host=endpoint):
+                    console.print(
+                        "[yellow]本地向量尚未就绪；请准备 Ollama 模型后再初始化。[/yellow]"
+                    )
             save_config(cfg)
+            embedding_label = (
+                "硅基流动 BGE-M3" if embedding_choice == "1" else f"本地 {cfg.llm.embedding.model}"
+            )
             console.print(
-                f"[green]已启用 {cfg.llm.sponsored.model} + BGE-M3；初始化将验证真实连接。[/green]"
+                f"[green]已选择 {cfg.llm.sponsored.model} + {embedding_label}；"
+                "初始化将验证真实连接。[/green]"
             )
             return
         choice = _resolve_menu_choice(raw)
@@ -18230,7 +18261,16 @@ def config_show() -> None:
         from openbiliclaw.llm.sponsored_profiles import CONTEXT_WINDOWS
 
         window = CONTEXT_WINDOWS.get(cfg.llm.sponsored.model, 0)
-        llm_value = f"免费 · {cfg.llm.sponsored.model} ({window} tokens) + BGE-M3"
+        embedding_label = (
+            "硅基流动 BGE-M3"
+            if cfg.llm.sponsored.uses_cloud_embedding
+            else f"本地 {cfg.llm.embedding.model}"
+        )
+        llm_value = f"免费 · {cfg.llm.sponsored.model} ({window} tokens) + {embedding_label}"
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        for notice in sponsored_status(cfg)["notices"]:
+            console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
     from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
 
     try:

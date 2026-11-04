@@ -292,7 +292,7 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ```text
 Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
-  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
   → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
   → SiliconFlow SSE / embeddings
   → Core schema / evidence validation
@@ -300,6 +300,9 @@ Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
       ├ invalid temporal fields: one narrow LLM correction → source validation
       └ foreign awareness citations: reject → bounded cognition retry
   → normal profile, discovery, recommendation, agent flows
+Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
+Auth failure / signed-policy expiry → durable capability status → settings + message notices
+  → update application / installer OR configure a user-owned API key
 Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
 Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
   → offline self-check → versioned bundle → atomic active pointer

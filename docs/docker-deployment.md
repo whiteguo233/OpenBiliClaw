@@ -28,9 +28,9 @@
 - 源码构建路径(`docker-compose.yml`):`ollama` 服务用 `docker/ollama-bundled.Dockerfile` 本地构建(构建时联网拉一次 bge-m3 烤进镜像;之后运行离线)。
 - 万一烤好的种子缺失/损坏,healthcheck 会**明确报 unhealthy**(不静默降级);设 `OPENBILICLAW_OLLAMA_ALLOW_PULL=1` 可显式允许运行时联网补拉。
 
-后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3" base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`,供自有渠道使用本地向量；选择免费Qwen方案后，聊天与文本向量都走硅基流动，无需填写Key。
+后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3" base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`,供自有渠道使用本地向量；选择免费Qwen方案后，对话走硅基流动；向量默认云端BGE-M3，也可保留本地Ollama sidecar，无需填写共享Key。
 
-仅使用免费云端方案时，可以执行 `docker compose up -d --build --no-deps openbiliclaw-backend`，跳过Ollama sidecar；预构建方式使用 `docker compose -f docker-compose.prebuilt.yml up -d --no-deps openbiliclaw-backend`。已有自有向量配置会保留，关闭免费方案后如需本地向量再启动Ollama。
+仅使用免费云端方案时，可以执行 `docker compose up -d --build --no-deps openbiliclaw-backend`，跳过Ollama sidecar；预构建方式使用 `docker compose -f docker-compose.prebuilt.yml up -d --no-deps openbiliclaw-backend`。已有向量配置会保留；选免费对话＋本地向量时也需要启动Ollama sidecar，不使用 `--no-deps`。
 
 ### 平台支持（v0.3.4+）
 
@@ -566,10 +566,10 @@ Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的
 
 ## 免费模型安装与切换
 
-初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量自动使用 BGE-M3。已有安装在插件、PC或手机配置页开启免费方案即可，切换后保存并等待运行时应用完成。免费方案不填写共享Key，不必安装Rust，也不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件、PC或手机配置页开启免费方案即可，切换后保存并等待运行时应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
 
 源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
 
-本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-04.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
 
-免费方案启用后，文本向量直接使用云端BGE-M3；保留的本地向量设置不会触发桌面权重下载/播种或CLI本地daemon预热。只有用户显式允许回退到已配置的Ollama聊天模型时才预备本地Ollama，已有本地配置保持可恢复。
+默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。

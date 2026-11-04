@@ -465,6 +465,7 @@ class RuntimeStatusResponse(BaseModel):
     """Runtime summary for popup and background status checks."""
 
     initialized: bool
+    sponsored_status: dict[str, Any] = Field(default_factory=dict)
     recommendation_count: int
     pending_signal_events: int
     last_refresh_at: str = ""
@@ -2361,6 +2362,8 @@ class SponsoredConfigOut(BaseModel):
     """Public free-model controls; executable paths and credentials stay local."""
 
     enabled: bool = False
+    embedding_mode: Literal["cloud", "local"] = "cloud"
+    service_status: dict[str, Any] = Field(default_factory=dict)
     model: Literal["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"] = "Qwen/Qwen3-8B"
     fallback_to_other_free_model: bool = True
     fallback_to_user_provider: bool = False
@@ -2973,6 +2976,7 @@ class ConfigServiceProbeIn(BaseModel):
         "llm_fallback",
         "network_proxy",
     ]
+    check_embedding: bool = True
     instance_id: str = ""
     config: dict[str, object] = Field(default_factory=dict)
 
@@ -2981,6 +2985,7 @@ class ConfigServiceProbeResponse(BaseModel):
     """Result of a user-triggered provider connectivity probe."""
 
     ok: bool
+    service_status: dict[str, Any] = Field(default_factory=dict)
     kind: Literal[
         "llm",
         "sponsored",

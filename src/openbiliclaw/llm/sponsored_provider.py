@@ -16,7 +16,7 @@ import re
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw import __version__
@@ -25,8 +25,10 @@ from openbiliclaw.proc import no_window_kwargs
 from .base import LLMResponse, LLMStreamChunk
 from .concurrency import is_interactive_caller
 from .sponsored_errors import (
+    SponsoredAuthError,
     SponsoredContractMismatchError,
     SponsoredError,
+    SponsoredPolicyInvalidError,
     SponsoredProtocolError,
     SponsoredRequestTooLargeError,
     SponsoredStartupBusyError,
@@ -246,7 +248,7 @@ class SponsoredProvider:
             )
         payload_text = self._serialize_payload(user_payload, contract, user_text)
 
-        async with self._request_lock:
+        async with self._observe_task(contract), self._request_lock:
             await self._ensure_started()
             process = self._process
             if process is None or process.stdin is None or process.stdout is None:
@@ -607,7 +609,7 @@ class SponsoredProvider:
         self, contract: SponsoredTaskContract, payload: Mapping[str, Any]
     ) -> AsyncGenerator[LLMStreamChunk, None]:
         payload_text = self._serialize_payload(payload, contract, None)
-        async with self._request_lock:
+        async with self._observe_task(contract), self._request_lock:
             await self._ensure_started()
             process = self._process
             if process is None or process.stdin is None or process.stdout is None:
@@ -864,6 +866,19 @@ class SponsoredProvider:
             )
         return text
 
+    @asynccontextmanager
+    async def _observe_task(self, contract: SponsoredTaskContract) -> AsyncGenerator[None, None]:
+        from openbiliclaw.sponsored_status import record_sponsored_outcome
+
+        capability = "embedding" if contract.operation == "embedding_text" else "chat"
+        try:
+            yield
+        except SponsoredError as exc:
+            record_sponsored_outcome(self._runtime_command, capability=capability, code=exc.code)
+            raise
+        else:
+            record_sponsored_outcome(self._runtime_command, capability=capability)
+
     async def _ensure_started(self) -> None:
         async with self._start_lock:
             if self.runtime_running:
@@ -886,6 +901,10 @@ class SponsoredProvider:
                 self._stderr_task = asyncio.create_task(self._drain_stderr(process.stderr))
             try:
                 await self._handshake(process)
+            except (SponsoredAuthError, SponsoredPolicyInvalidError) as exc:
+                self._record_startup_failure(exc)
+                await self._stop_process()
+                raise
             except (SponsoredUnavailableError, SponsoredContractMismatchError):
                 await self._stop_process()
                 raise
@@ -893,10 +912,25 @@ class SponsoredProvider:
                 await self._stop_process()
                 if b"another runtime owns this installation ledger" in self._stderr_tail:
                     raise SponsoredStartupBusyError("sponsored ledger startup is busy") from exc
+                # Older signed runtimes report an expired policy before IPC hello.
+                # Match their stable code/prefix, never classify generic startup failures as expiry.
+                if re.search(
+                    rb"(?m)^obc-sponsored-runtime: (?:ipc error: )?POLICY_INVALID:",
+                    self._stderr_tail,
+                ):
+                    policy_error = error_from_payload({"code": "POLICY_INVALID"})
+                    self._record_startup_failure(policy_error)
+                    raise policy_error from exc
                 raise SponsoredUnavailableError("sponsored runtime handshake failed") from exc
             except TimeoutError as exc:
                 await self._stop_process()
                 raise SponsoredUnavailableError("sponsored runtime handshake timed out") from exc
+
+    def _record_startup_failure(self, error: SponsoredError) -> None:
+        from openbiliclaw.sponsored_status import record_sponsored_outcome
+
+        for capability in ("chat", "embedding"):
+            record_sponsored_outcome(self._runtime_command, capability=capability, code=error.code)
 
     async def _handshake(self, process: asyncio.subprocess.Process) -> None:
         if process.stdin is None or process.stdout is None:
@@ -913,6 +947,8 @@ class SponsoredProvider:
             read_frame_async(process.stdout),
             self._handshake_timeout,
         )
+        if hello.get("ok") is False and isinstance(hello.get("error"), Mapping):
+            raise error_from_payload(hello["error"])
         if (
             hello.get("type") != "hello"
             or hello.get("protocol") != PROTOCOL_VERSION

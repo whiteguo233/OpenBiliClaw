@@ -55,8 +55,9 @@ def sponsored_app(tmp_path: Path) -> Iterator[tuple[str, Path, Any]]:
     process = None
     with (tmp_path / "server.log").open("w+") as log:
 
-        def restart() -> None:
+        def restart(*, error_code: str = "") -> None:
             nonlocal process
+            env["SPONSORED_MOCK_ERROR_CODE"] = error_code
             if process is not None:
                 process.terminate()
                 try:
@@ -203,7 +204,7 @@ def test_popup_and_mobile_share_saved_model_with_real_backend(
     page.locator("#settingsGear").click()
     root = page.locator("#cfgSponsoredSettings")
     try:
-        root.locator("select").wait_for(state="attached", timeout=10000)
+        root.get_by_label("对话模型", exact=True).wait_for(state="attached", timeout=10000)
     except Exception:
         pytest.fail(f"popup form missing: {errors}; {page.locator('body').inner_text()[-1800:]}")
     root.get_by_label("对话模型", exact=True).select_option("Qwen/Qwen3.5-4B")
@@ -227,3 +228,99 @@ def test_popup_and_mobile_share_saved_model_with_real_backend(
             "/api/config/probe-service", json={"kind": "sponsored", "config": {}}
         ).json()
         assert result["ok"] and result["model"] == "Qwen/Qwen3-8B", result
+
+    _restart(error_code="AUTH_FAILED")
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        assert not client.post("/api/config/probe-service", json={"kind": "sponsored"}).json()["ok"]
+    page.goto(url + "/popup/popup.html")
+    page.locator("#settingsGear").click()
+    notice = page.locator('#cfgSponsoredSettings [data-sponsored="notice"]')
+    notice.get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    assert page.locator("#cfgSponsoredSettings-embedding-mode").input_value() == "cloud"
+    artifacts = ROOT / "output/playwright"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    page.locator("#cfgSponsoredSettings").screenshot(
+        path=str(artifacts / "sponsored-renewal-popup.png")
+    )
+    page.goto(url + "/popup/popup.html")
+    page.locator("#messagesButton").click()
+    page.locator("#sponsoredMessageNotice").get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    assert page.locator("#messageBadge").inner_text() != "0"
+    page.goto(url + "/m/#/recommend")
+    page.get_by_role("button", name="查看消息", exact=True).click()
+    notice = page.locator(".messages-overlay .sponsored-notice")
+    notice.get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    notice.screenshot(path=str(artifacts / "sponsored-renewal-mobile.png"))
+    notice.get_by_role("button", name="配置自己的 Key", exact=True).click()
+    page.wait_for_url("**/web/?settings=models")
+    page.locator('#sponsoredSettings [data-sponsored="notice"]').wait_for()
+    assert not errors, errors
+
+
+def test_revoked_key_notices_survive_restart_and_offer_recovery(
+    sponsored_app: tuple, chromium_page: Any
+) -> None:
+    url, _directory, restart = sponsored_app
+    restart(error_code="AUTH_FAILED")
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        result = client.post("/api/config/probe-service", json={"kind": "sponsored"}).json()
+        assert not result["ok"] and result["service_status"]["notices"][0]["requires_update"]
+    restart(error_code="AUTH_FAILED")
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        assert client.get("/api/runtime-status").json()["sponsored_status"]["notices"]
+    page = chromium_page
+    page.goto(url + "/web/?settings=models")
+    root = page.locator("#sponsoredSettings")
+    notice = root.locator('[data-sponsored="notice"]')
+    notice.get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    assert notice.get_by_role("link", name="查看最新版本").get_attribute("href") == (
+        "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+    )
+    artifacts = ROOT / "output/playwright"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    root.screenshot(path=str(artifacts / "sponsored-renewal-desktop.png"))
+    notice.get_by_role("button", name="配置自己的 Key").click()
+    assert not root.get_by_label("使用免费方案", exact=True).is_checked()
+    # This action edits the draft only; it must not trigger a paid route.
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        assert client.get("/api/config").json()["llm"]["sponsored"]["enabled"]
+    page.goto(url + "/web/")
+    page.locator("#messagesBtn").click()
+    page.locator("#sponsoredMessageNotice").get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    restart()
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        assert client.post("/api/config/probe-service", json={"kind": "sponsored"}).json()["ok"]
+        assert not client.get("/api/config").json()["llm"]["sponsored"]["service_status"]["notices"]
+
+
+def test_setup_selects_local_vectors_before_the_local_model_is_ready(
+    sponsored_app: tuple, chromium_page: Any
+) -> None:
+    url, directory, restart = sponsored_app
+    cfg = load_config(directory / "config.toml", consult_environment=False)
+    cfg.llm.embedding.provider = "ollama"
+    cfg.llm.embedding.model = "existing-local-embedding"
+    cfg.llm.embedding.base_url = "http://127.0.0.1:1/v1"
+    save_config(cfg, directory / "config.toml")
+    restart()
+    page = chromium_page
+    page.goto(url + "/setup/")
+    choice = page.locator("#setupSponsoredSettings-embedding-mode")
+    choice.wait_for()
+    assert choice.input_value() == "cloud"
+    choice.select_option("local")
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
+    ) as saving:
+        page.locator("#saveLlm").click()
+    assert saving.value.status == 202, saving.value.text()
+    page.locator("#doneLlm").filter(has_text="本地向量将在初始化时准备").wait_for(state="attached")
+    wait_applied(url)
+    saved = load_config(directory / "config.toml", consult_environment=False)
+    assert saved.llm.sponsored.embedding_mode == "local"
+    assert saved.llm.embedding.model == "existing-local-embedding"
+    assert saved.llm.embedding.base_url == "http://127.0.0.1:1/v1"
+    restart()
+    page.goto(url + "/web/?settings=models")
+    page.locator("#sponsoredSettings-embedding-mode").wait_for()
+    assert page.locator("#sponsoredSettings-embedding-mode").input_value() == "local"

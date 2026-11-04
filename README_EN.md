@@ -650,14 +650,16 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
-Free model integration (implemented on this branch; SDK bundles published, application release pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings use BGE-M3. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
+Free model integration (implemented on this branch; SDK bundles published, application release pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings default to cloud BGE-M3 with local Ollama available as an independent choice. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
 
 ```text
 Setup / extension / desktop / mobile / CLI → local config → shared sponsored router
   Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
-  Text embeddings → BGE-M3 (1024 dimensions); optional image understanding → 4B
+  Cloud text embeddings → BGE-M3 (1024 dimensions, default); optional image understanding → 4B
   → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
   Results → source-evidence validation → profile / memory; one bounded temporal correction
+  Local vector choice → Ollama (independent cache/endpoint, no sponsored key)
+  Credential / policy failure → durable status → settings + inbox → update app or configure own key
   Installer / updater → Core-pinned public key and catalog → verify → atomic activation
 ```
 

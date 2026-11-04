@@ -1180,7 +1180,7 @@ class RuntimeContext:
         )
         if replace(before, llm=replace(before.llm, sponsored=expected)) != after:
             return False
-        install_sponsored_settings(after.llm.sponsored)
+        install_sponsored_settings(after.llm.sponsored, data_path=after.data_path)
         self.config = new_config
         if self.agent_tool_context is not None:
             self.agent_tool_context.config = new_config

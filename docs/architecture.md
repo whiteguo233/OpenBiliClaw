@@ -760,7 +760,7 @@ query inspiration → configured provider chain
 ```text
 Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
-  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
   → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
   → SiliconFlow SSE / embeddings
   → Core schema / evidence validation
@@ -768,6 +768,9 @@ Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
       ├ invalid temporal fields: one narrow LLM correction → source validation
       └ foreign awareness citations: reject → bounded cognition retry
   → normal profile, discovery, recommendation, agent flows
+Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
+Auth failure / signed-policy expiry → durable capability status → settings + message notices
+  → update application / installer OR configure a user-owned API key
 Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
 Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
   → offline self-check → versioned bundle → atomic active pointer
@@ -775,5 +778,7 @@ Optional image understanding: 4B; image embeddings: unavailable in the free prof
 ```
 
 `llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
+
+`sponsored_status.py` 将真实IPC失败与成功恢复映射为按聊天/向量独立的本地状态；API和后台worker共享通知文件，页面轮询只读状态。向量选择经配置重建进入云端签名任务或本地Ollama，已存在的向量provenance边界防止跨源混用。
 
 `runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；五平台SDK已公开发行，主程序分支仍待发布。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。

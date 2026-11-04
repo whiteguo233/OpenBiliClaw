@@ -11618,6 +11618,9 @@ def create_app(
         payload["bilibili_cookie_staged"] = (
             peek_staged_bilibili_cookie(active_runtime_data_path) is not None
         )
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        payload["sponsored_status"] = await asyncio.to_thread(sponsored_status, ctx.config)
         response = RuntimeStatusResponse(**payload)
         runtime_status_cache = response
         runtime_status_cached_at = time.monotonic()
@@ -22219,8 +22222,15 @@ def create_app(
 
         settings = cfg.llm.sponsored
         model = settings.model if settings.model in CHAT_MODELS else DEFAULT_CHAT_MODEL
+        from openbiliclaw.sponsored_status import sponsored_status
+
         return SponsoredConfigOut(
             enabled=settings.enabled,
+            embedding_mode="local" if settings.embedding_mode == "local" else "cloud",
+            embedding_model=(
+                cfg.llm.embedding.model if settings.embedding_mode == "local" else "BAAI/bge-m3"
+            ),
+            service_status=sponsored_status(cfg),
             model=cast("Literal['Qwen/Qwen3-8B', 'Qwen/Qwen3.5-4B']", model),
             fallback_to_other_free_model=settings.fallback_to_other_free_model,
             fallback_to_user_provider=settings.fallback_to_user_provider,
@@ -22248,6 +22258,7 @@ def create_app(
             }
             if not isinstance(raw, dict) or set(raw) - boolean_fields - {
                 "model",
+                "embedding_mode",
                 "request_timeout_seconds",
             }:
                 raise HTTPException(status_code=400, detail="invalid llm.sponsored fields")
@@ -22255,6 +22266,11 @@ def create_app(
                 raise HTTPException(status_code=400, detail="free-model switches must be boolean")
             if "model" in raw and raw["model"] not in CHAT_MODELS:
                 raise HTTPException(status_code=400, detail="请选择 Qwen3-8B 或 Qwen3.5-4B")
+            if "embedding_mode" in raw and (
+                not isinstance(raw["embedding_mode"], str)
+                or raw["embedding_mode"] not in {"cloud", "local"}
+            ):
+                raise HTTPException(status_code=400, detail="请选择 cloud 或 local 向量模式")
             if "request_timeout_seconds" in raw:
                 timeout = raw["request_timeout_seconds"]
                 if (
@@ -22613,6 +22629,17 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        # The shared form submits this explicit choice on all four surfaces.
+        # Preserve an existing Ollama model/private port; never reuse cloud credentials.
+        sponsored_update = llm_data.get("sponsored", {})
+        if (
+            cfg.llm.sponsored.enabled
+            and isinstance(sponsored_update, dict)
+            and sponsored_update.get("embedding_mode") == "local"
+        ):
+            from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+            select_local_embedding(cfg)
         for module_name in ("soul", "discovery", "recommendation", "evaluation"):
             if module_name in llm_data and isinstance(llm_data[module_name], dict):
                 mod_cfg = getattr(cfg.llm, module_name)
@@ -23150,13 +23177,17 @@ def create_app(
             from openbiliclaw.llm.sponsored_profiles import approved_registry
             from openbiliclaw.llm.sponsored_provider import SponsoredProvider
             from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+            from openbiliclaw.sponsored_status import sponsored_status
 
             settings = cfg.llm.sponsored
             command = settings.runtime_path or installed_runtime_command()
             started = time.monotonic()
             if not command:
                 return ConfigServiceProbeResponse(
-                    ok=False, kind="sponsored", error="请先准备免费模型组件"
+                    ok=False,
+                    kind="sponsored",
+                    error="请先准备免费模型组件；组件到期时请更新安装包/版本",
+                    service_status=sponsored_status(cfg),
                 )
             provider = SponsoredProvider(
                 shlex.split(command),
@@ -23176,22 +23207,45 @@ def create_app(
                     ):
                         if chunk.response is not None:
                             response = chunk.response
-                    vector = await provider.embedding("OpenBiliClaw 文本向量连接测试")
-                if response is None or not response.content.strip() or len(vector) != 1024:
+                    embedding_message = ""
+                    if payload.check_embedding:
+                        if settings.embedding_mode == "local":
+                            with bypass_sponsored():
+                                local_probe = await _probe_embedding_config(cfg)
+                            if not local_probe.ok:
+                                return ConfigServiceProbeResponse(
+                                    ok=False,
+                                    kind="sponsored",
+                                    provider="sponsored",
+                                    model=settings.model,
+                                    error="免费对话可用，但本地向量尚未就绪。"
+                                    "请在初始化页准备/修复 Ollama 向量模型后重试。",
+                                    service_status=sponsored_status(cfg),
+                                )
+                            embedding_message = f"和本地 {local_probe.model} 文本向量均可用"
+                        else:
+                            vector = await provider.embedding("OpenBiliClaw 文本向量连接测试")
+                            if len(vector) != 1024:
+                                raise ValueError("incomplete free embedding probe")
+                            embedding_message = "和 BGE-M3 文本向量均可用"
+                if response is None or not response.content.strip():
                     raise ValueError("incomplete free-model probe")
                 return ConfigServiceProbeResponse(
                     ok=True,
                     kind="sponsored",
                     provider="sponsored",
                     model=response.model,
-                    message="流式对话和 BGE-M3 文本向量均可用",
+                    service_status=sponsored_status(cfg),
+                    message="流式对话"
+                    + (embedding_message or "可用；本地向量将在初始化时准备和验证"),
                     latency_ms=int((time.monotonic() - started) * 1000),
                 )
             except Exception as exc:
                 from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.sponsored_status import GUIDANCE
 
                 error = (
-                    f"免费模型测试失败：{exc.code}"
+                    GUIDANCE.get(exc.code, ("", f"免费模型测试失败：{exc.code}"))[1]
                     if isinstance(exc, SponsoredError)
                     else "免费模型测试失败，请检查组件或稍后重试"
                 )
@@ -23201,6 +23255,7 @@ def create_app(
                     provider="sponsored",
                     model=settings.model,
                     error=error,
+                    service_status=sponsored_status(cfg),
                     latency_ms=int((time.monotonic() - started) * 1000),
                 )
             finally:
