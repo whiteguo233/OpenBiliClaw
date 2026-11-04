@@ -5757,7 +5757,9 @@ def create_app(
         cfg = getattr(ctx, "config", None)
         emb = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb, "provider", "") or "").strip()
-        return bool(provider)
+        return bool(provider) or bool(
+            getattr(getattr(getattr(cfg, "llm", None), "sponsored", None), "enabled", False)
+        )
 
     @app.get("/api/ping")
     async def ping() -> JSONResponse:
@@ -21327,6 +21329,7 @@ def create_app(
             degraded=degraded,
             degraded_reason=degraded_reason,
             llm=LLMConfigOut(
+                sponsored=_sponsored_config_out(cfg),
                 routing_version=2,
                 instances={
                     instance_id: _instance_out(instance)
@@ -22188,10 +22191,65 @@ def create_app(
             return []
         return [str(item).strip() for item in value if str(item).strip()]
 
+    def _sponsored_config_out(cfg: Any) -> Any:
+        from openbiliclaw.api.models import SponsoredConfigOut
+        from openbiliclaw.llm.sponsored_profiles import (
+            CHAT_MODELS,
+            CONTEXT_WINDOWS,
+            DEFAULT_CHAT_MODEL,
+        )
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        settings = cfg.llm.sponsored
+        model = settings.model if settings.model in CHAT_MODELS else DEFAULT_CHAT_MODEL
+        return SponsoredConfigOut(
+            enabled=settings.enabled,
+            model=cast("Literal['Qwen/Qwen3-8B', 'Qwen/Qwen3.5-4B']", model),
+            fallback_to_other_free_model=settings.fallback_to_other_free_model,
+            fallback_to_user_provider=settings.fallback_to_user_provider,
+            notify_on_fallback=settings.notify_on_fallback,
+            request_timeout_seconds=settings.request_timeout_seconds,
+            runtime_available=bool(settings.runtime_path or installed_runtime_command()),
+            context_window=CONTEXT_WINDOWS[model],
+        )
+
     def _apply_llm_update(cfg: Any, llm_data: object) -> None:
         """Apply the LLM subset of a config update to an in-memory config."""
         if not isinstance(llm_data, dict):
             return
+        if "sponsored" in llm_data:
+            from dataclasses import replace
+
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            raw = llm_data["sponsored"]
+            boolean_fields = {
+                "enabled",
+                "fallback_to_other_free_model",
+                "fallback_to_user_provider",
+                "notify_on_fallback",
+            }
+            if not isinstance(raw, dict) or set(raw) - boolean_fields - {
+                "model",
+                "request_timeout_seconds",
+            }:
+                raise HTTPException(status_code=400, detail="invalid llm.sponsored fields")
+            if any(not isinstance(raw[k], bool) for k in boolean_fields & raw.keys()):
+                raise HTTPException(status_code=400, detail="free-model switches must be boolean")
+            if "model" in raw and raw["model"] not in CHAT_MODELS:
+                raise HTTPException(status_code=400, detail="请选择 Qwen3-8B 或 Qwen3.5-4B")
+            if "request_timeout_seconds" in raw:
+                timeout = raw["request_timeout_seconds"]
+                if (
+                    isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float))
+                    or not 10 <= timeout <= 1200
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="free-model timeout must be between 10 and 1200 seconds",
+                    )
+            cfg.llm.sponsored = replace(cfg.llm.sponsored, **raw)
         from openbiliclaw.config import (
             _LLM_PROVIDER_DISPLAY_NAMES,
             LLMInstanceConfig,
@@ -23069,6 +23127,68 @@ def create_app(
             _apply_llm_update(cfg, llm_data)
         from openbiliclaw.llm.sponsored_router import bypass_sponsored
 
+        if payload.kind == "sponsored":
+            import shlex
+
+            from openbiliclaw.llm.sponsored_profiles import approved_registry
+            from openbiliclaw.llm.sponsored_provider import SponsoredProvider
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+            settings = cfg.llm.sponsored
+            command = settings.runtime_path or installed_runtime_command()
+            started = time.monotonic()
+            if not command:
+                return ConfigServiceProbeResponse(
+                    ok=False, kind="sponsored", error="请先准备免费模型组件"
+                )
+            provider = SponsoredProvider(
+                shlex.split(command),
+                registry=approved_registry(),
+                model=settings.model,
+                fallback_to_other_free_model=False,
+                request_timeout=settings.request_timeout_seconds,
+            )
+            try:
+                assert ctx.llm_concurrency_gate is not None
+                async with ctx.llm_concurrency_gate.slot(caller="api.config_probe"):
+                    response = None
+                    async for chunk in provider.stream_complete(
+                        [{"role": "user", "content": "请只回复：连接成功"}],
+                        max_tokens=128,
+                        reasoning_effort="",
+                    ):
+                        if chunk.response is not None:
+                            response = chunk.response
+                    vector = await provider.embedding("OpenBiliClaw 文本向量连接测试")
+                if response is None or not response.content.strip() or len(vector) != 1024:
+                    raise ValueError("incomplete free-model probe")
+                return ConfigServiceProbeResponse(
+                    ok=True,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=response.model,
+                    message="流式对话和 BGE-M3 文本向量均可用",
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            except Exception as exc:
+                from openbiliclaw.llm.sponsored_errors import SponsoredError
+
+                error = (
+                    f"免费模型测试失败：{exc.code}"
+                    if isinstance(exc, SponsoredError)
+                    else "免费模型测试失败，请检查组件或稍后重试"
+                )
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=settings.model,
+                    error=error,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            finally:
+                await provider.aclose()
+
         # Draft-provider probes must validate their selected target, including
         # embedding and default-chain probes, rather than borrow sponsor health.
         with bypass_sponsored():
@@ -23079,6 +23199,22 @@ def create_app(
                 kind=payload.kind,
                 instance_id=payload.instance_id,
             )
+
+    @app.post("/api/config/sponsored/prepare", response_model=None)
+    async def prepare_sponsored_runtime(request: Request) -> dict[str, object] | JSONResponse:
+        """Install only the release pinned by this Core version, without accepting paths."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        try:
+            await asyncio.to_thread(ensure_runtime)
+            return {"ok": True, "message": "免费模型组件已就绪"}
+        except BundleError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception:
+            return {"ok": False, "error": "免费模型组件下载失败，请检查网络后重试"}
 
     @app.post("/api/config/discover-models", response_model=ConfigModelDiscoveryResponse)
     async def discover_config_models(

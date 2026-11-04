@@ -2509,7 +2509,9 @@ def _build_config(
     sponsored = SponsoredRuntimeSettings(
         enabled=bool(sponsored_raw.get("enabled", False)),
         runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
-        fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", True)),
+        model=str(sponsored_raw.get("model", "Qwen/Qwen3-8B")),
+        fallback_to_other_free_model=bool(sponsored_raw.get("fallback_to_other_free_model", True)),
+        fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", False)),
         notify_on_fallback=bool(sponsored_raw.get("notify_on_fallback", True)),
         request_timeout_seconds=_normalize_sponsored_timeout(
             sponsored_raw.get("request_timeout_seconds")
@@ -4875,7 +4877,9 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                     )
                 )
 
-        if not instance.enabled:
+        if not instance.enabled or (
+            llm.sponsored.enabled and not llm.sponsored.fallback_to_user_provider
+        ):
             continue
         if not str(instance.model or "").strip():
             issues.append(
@@ -5078,8 +5082,23 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         )
 
     sponsored = getattr(config.llm, "sponsored", None)
+    if sponsored is not None:
+        from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+        if sponsored.model not in CHAT_MODELS:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.model",
+                    message="请选择 Qwen3-8B 或 Qwen3.5-4B",
+                    severity="blocking",
+                )
+            )
     if sponsored is not None and sponsored.enabled:
         runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
+        if not runtime_path:
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+            runtime_path = installed_runtime_command()
         try:
             command = shlex.split(runtime_path)
         except ValueError:
@@ -5088,10 +5107,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             issues.append(
                 ConfigIssue(
                     field="llm.sponsored.runtime_path",
-                    message=(
-                        "已启用 Sponsored Runtime，但未填写 runtime_path。"
-                        "官方安装包会指向内置 obc-sponsored-runtime；源码部署请保持 enabled=false。"
-                    ),
+                    message=("免费模型组件尚未安装或需要更新，请在模型设置中准备免费组件后重试。"),
                     severity="blocking",
                 )
             )
@@ -6609,6 +6625,9 @@ def _render_config_toml(
             "[llm.sponsored]",
             f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
             f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
+            f"model = {_toml_string(config.llm.sponsored.model)}",
+            "fallback_to_other_free_model = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_other_free_model)}",
             "fallback_to_user_provider = "
             f"{_toml_bool(config.llm.sponsored.fallback_to_user_provider)}",
             f"notify_on_fallback = {_toml_bool(config.llm.sponsored.notify_on_fallback)}",

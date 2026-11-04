@@ -29,6 +29,11 @@ from typing import Any
 from .sponsored_protocol import PROTOCOL_VERSION, read_frame, write_frame
 from .sponsored_tasks import DEFAULT_SPONSORED_REGISTRY
 
+if "--approved" in sys.argv:
+    from .sponsored_profiles import approved_registry
+
+    DEFAULT_SPONSORED_REGISTRY = approved_registry()
+
 MOCK_RUNTIME_VERSION = "mock-0.1.0"
 _DEFAULT_RESPONSE = '{"likes": [], "dislikes": []}'
 
@@ -128,6 +133,7 @@ def main() -> int:
             "runtime": MOCK_RUNTIME_VERSION,
             "core": str(hello.get("core") or ""),
             "policy_version": policy_version,
+            "streaming": "--stream" in sys.argv,
             "contracts": {c.policy_key: c.system_prompt_sha256 for c in DEFAULT_SPONSORED_REGISTRY},
         },
     )
@@ -146,7 +152,7 @@ def main() -> int:
         request_id = str(frame.get("id") or "")
         if message_type == "cancel":
             continue
-        if message_type != "execute":
+        if message_type not in {"execute", "execute_stream"}:
             _respond_error(request_id, "PROTOCOL_ERROR", "unsupported message type")
             continue
 
@@ -170,6 +176,19 @@ def main() -> int:
             continue
 
         content = str(os.environ.get("SPONSORED_MOCK_RESPONSE") or _DEFAULT_RESPONSE)
+        if model == os.environ.get("SPONSORED_MOCK_FAIL_MODEL"):
+            _respond_error(request_id, "UNAVAILABLE", "synthetic model outage")
+            continue
+        if message_type == "execute_stream":
+            for part in (content[: len(content) // 2], content[len(content) // 2 :]):
+                write_frame(sys.stdout.buffer, {"type": "delta", "id": request_id, "content": part})
+                if os.environ.get("SPONSORED_MOCK_STREAM_ERROR_AFTER_DELTA"):
+                    _respond_error(request_id, "UNAVAILABLE", "synthetic stream disconnect")
+                    break
+            else:
+                pass
+            if os.environ.get("SPONSORED_MOCK_STREAM_ERROR_AFTER_DELTA"):
+                continue
         _respond(
             request_id,
             {

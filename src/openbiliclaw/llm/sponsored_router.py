@@ -21,7 +21,7 @@ from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
 from .sponsored_errors import SponsoredError, SponsoredUnavailableError, is_fallback_allowed
 
 _BYPASS: ContextVar[bool] = ContextVar("sponsored_bypass", default=False)
-_PROVIDERS: weakref.WeakKeyDictionary[Any, dict[tuple[str, float], Any]] = (
+_PROVIDERS: weakref.WeakKeyDictionary[Any, dict[tuple[str, float, str, bool], Any]] = (
     weakref.WeakKeyDictionary()
 )
 
@@ -42,6 +42,7 @@ def sponsored_enabled() -> bool:
 
 
 def shared_sponsored_provider() -> SponsoredProvider | None:
+    from .sponsored_profiles import approved_registry
     from .sponsored_provider import SponsoredProvider
 
     settings = current_sponsored_settings()
@@ -53,14 +54,29 @@ def shared_sponsored_provider() -> SponsoredProvider | None:
         else os.environ.get("OPENBILICLAW_SPONSORED_RUNTIME", "")
     )
     if not command.strip():
-        return None
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        command = installed_runtime_command()
+        if not command:
+            return None
     loop = asyncio.get_running_loop()
     cache = _PROVIDERS.setdefault(loop, {})
-    key = (command, settings.request_timeout_seconds)
+    key = (
+        command,
+        settings.request_timeout_seconds,
+        settings.model,
+        settings.fallback_to_other_free_model,
+    )
     if key not in cache:
         try:
             args = shlex.split(command)
-            cache[key] = SponsoredProvider(args, request_timeout=settings.request_timeout_seconds)
+            cache[key] = SponsoredProvider(
+                args,
+                registry=approved_registry(),
+                request_timeout=settings.request_timeout_seconds,
+                model=settings.model,
+                fallback_to_other_free_model=settings.fallback_to_other_free_model,
+            )
         except ValueError:
             return None
     return cast("SponsoredProvider", cache[key])

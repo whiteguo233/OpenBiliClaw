@@ -9,6 +9,7 @@ import {
   fetchAuthStatus,
   fetchConfig,
   updateConfig,
+  requestJson,
 } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
@@ -210,6 +211,7 @@ async function openMobileSettings(opener) {
       <span>保存时自动同步到对应平台</span>
     </label>
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
+    <div id="mobileSponsoredSettings"></div>
     <label class="mobile-settings-field" for="mobile-eval-scorer">候选评估器</label>
     <select id="mobile-eval-scorer" aria-describedby="mobile-eval-scorer-hint">
       <option value="llm">Agent（默认）</option>
@@ -231,6 +233,11 @@ async function openMobileSettings(opener) {
   const evaluator = card.querySelector("#mobile-eval-scorer");
   const jevStatus = card.querySelector("#mobile-jev-status");
   const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
+  const sponsoredForm = window.OpenBiliClawSponsoredSettings.mount(card.querySelector("#mobileSponsoredSettings"), {
+    prepare: () => requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+    probe: sponsored => requestJson("/config/probe-service", { method: "POST", timeoutMs: 370000,
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "sponsored", config: { llm: { sponsored } } }) }),
+  });
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
@@ -262,6 +269,7 @@ async function openMobileSettings(opener) {
     status.textContent = "正在加载设置…";
     try {
       const config = await fetchConfig();
+      sponsoredForm.load(config.llm?.sponsored);
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
       const runtime = globalThis.OpenBiliClawI18n;
@@ -307,6 +315,7 @@ async function openMobileSettings(opener) {
     try {
       const selectedLanguage = languageSelect.value;
       const payload = { ...jevForm.collect(), language: selectedLanguage, saved_sync: { auto_sync_enabled: toggle.checked } };
+      payload.llm = { sponsored: sponsoredForm.collect() };
       if (evaluator.value !== storedEvaluator) payload.discovery = {...(payload.discovery || {}), eval_scorer: evaluator.value};
       await updateConfig(payload);
       await loadConfig();

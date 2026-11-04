@@ -43,11 +43,21 @@ def test_generator_writes_signed_ready_policy(tmp_path: Path) -> None:
     assert policy["policy_version"] == 3
     assert policy["keys"] == []
     assert policy["core"] == {"min": "0.4.0", "max": "0.4.*"}
-    assert set(policy["tasks"]) == {"soul.consolidation.v2"} | {
-        f"llm.{op}.v3"
-        for op in ("structured", "text", "tools", "vision", "embedding_text", "embedding_image")
+    assert set(policy["tasks"]) == {
+        "soul.consolidation.v2",
+        "soul.consolidation.qwen35_4b.v2",
+        "llm.vision.v3",
+        "llm.embedding_text.v3",
+    } | {
+        f"llm.{op}{variant}.v3"
+        for op in ("structured", "text", "tools")
+        for variant in ("", ".qwen35_4b")
     }
-    assert policy["tasks"]["soul.consolidation.v2"]["model"] == "THUDM/GLM-4-9B-0414"
+    tasks = policy["tasks"]
+    assert tasks["soul.consolidation.v2"]["model"] == "Qwen/Qwen3-8B"
+    assert tasks["soul.consolidation.qwen35_4b.v2"]["model"] == "Qwen/Qwen3.5-4B"
+    assert tasks["llm.embedding_text.v3"]["model"] == "BAAI/bge-m3"
+    assert tasks["llm.structured.v3"]["response_format"] == "text"
 
 
 def test_generator_check_ignores_timestamps(tmp_path: Path) -> None:

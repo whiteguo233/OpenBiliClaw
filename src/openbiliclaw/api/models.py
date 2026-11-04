@@ -2357,7 +2357,23 @@ class ModuleLLMConfigOut(BaseModel):
     chain: list[str] = Field(default_factory=list)
 
 
+class SponsoredConfigOut(BaseModel):
+    """Public free-model controls; executable paths and credentials stay local."""
+
+    enabled: bool = False
+    model: Literal["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"] = "Qwen/Qwen3-8B"
+    fallback_to_other_free_model: bool = True
+    fallback_to_user_provider: bool = False
+    notify_on_fallback: bool = True
+    request_timeout_seconds: float = 180.0
+    runtime_available: bool = False
+    embedding_model: str = "BAAI/bge-m3"
+    context_window: int = 131072
+    image_embedding: bool = False
+
+
 class LLMConfigOut(BaseModel):
+    sponsored: SponsoredConfigOut = Field(default_factory=SponsoredConfigOut)
     routing_version: int = 2
     instances: dict[str, LLMInstanceConfigOut] = Field(default_factory=dict)
     default_chain: list[str] = Field(default_factory=list)
@@ -2950,6 +2966,7 @@ class ConfigServiceProbeIn(BaseModel):
 
     kind: Literal[
         "llm",
+        "sponsored",
         "llm_instance",
         "llm_chain",
         "embedding",
@@ -2966,6 +2983,7 @@ class ConfigServiceProbeResponse(BaseModel):
     ok: bool
     kind: Literal[
         "llm",
+        "sponsored",
         "llm_instance",
         "llm_chain",
         "embedding",

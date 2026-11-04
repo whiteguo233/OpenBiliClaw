@@ -19,9 +19,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from openbiliclaw.llm.sponsored_contracts import build_unsigned_policy  # noqa: E402
-from openbiliclaw.llm.sponsored_tasks import (  # noqa: E402
-    DEFAULT_SPONSORED_REGISTRY,
-)
+from openbiliclaw.llm.sponsored_profiles import approved_registry  # noqa: E402
 
 DEFAULT_OUTPUT = PROJECT_ROOT / "dist" / "sponsored-policy.json"
 DEFAULT_POLICY_LIFETIME_DAYS = 90
@@ -77,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     expires_at = args.expires_at or _add_days(generated_at, DEFAULT_POLICY_LIFETIME_DAYS)
 
     policy = build_unsigned_policy(
-        DEFAULT_SPONSORED_REGISTRY,
+        approved_registry(),
         policy_version=args.policy_version,
         generated_at=generated_at,
         expires_at=expires_at,

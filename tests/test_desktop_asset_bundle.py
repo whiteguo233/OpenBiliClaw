@@ -22,6 +22,7 @@ def assets(tmp_path: Path) -> DesktopAssets:
         "/web/assets/css/app.css",
         "/web/assets/css/classic.css",
         "/shared/jev-settings.css",
+        "/shared/sponsored-settings.css",
     )
     for index, url in enumerate((*DESKTOP_SCRIPTS, *styles)):
         relative = url.replace("/web/", "desktop/", 1).removeprefix("/")
@@ -88,6 +89,8 @@ def test_bundle_keeps_dependency_order_and_only_compresses_each_build_once(
         "/web/assets/js/fish-settings.js",
         "/shared/jev-settings.js",
         "/shared/jev-settings.css",
+        "/shared/sponsored-settings.js",
+        "/shared/sponsored-settings.css",
     ],
 )
 def test_every_previously_unversioned_input_invalidates_the_build(

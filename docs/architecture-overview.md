@@ -215,12 +215,20 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 行为驱动。
 
 
-## 可选赞助 SDK（默认关闭，未发布）
+## 免费模型路由与运行组件（正式发行待完成）
 
 ```text
-LLMService / Registry / eval / EmbeddingService -> shared SDK IPC
- [isolated signed test profile: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
- -> private Runtime -> SiliconFlow chat + embeddings
+Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
+  → LLMService / Registry / eval → selected signed 8B or 4B task
+  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → shared private Rust runtime → SiliconFlow SSE / embeddings
+  → Core schema / evidence validation → normal profile, discovery, recommendation, agent flows
+Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
+  → offline self-check → versioned bundle → atomic active pointer
+Optional image understanding: 4B; image embeddings: unavailable in the free profile
 ```
 
-覆盖文本、JSON、工具接口（复用模拟协议）、流式接口（缓冲返回）、视觉、文本和图片向量；模型/预算/出口受签名与编译约束，原业务Prompt继续由Core维护。见[全项目设计](plans/2026-10-27-sponsored-all-tasks.md)。
+`llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
+
+`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；发行目录目前为空，所以不能声称已有可自动下载的正式组件。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。

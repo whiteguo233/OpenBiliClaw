@@ -6,6 +6,7 @@
 
 ## 👤 我是用户
 
+- [v0.3.233 发布记录](testing/2026-10-30-release-v0.3.233.md) — 画像时间溯源、「用工具≠口味」、Codex 订阅修复与存量画像修复命令；扩展源码无变更，商店已提审同版本 `0.3.233` 复审。
 - [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md) — 抖音发现与后台静音、首屏体验、搜索灵感修复；仓库产物和浏览器商店状态分别记录。
 - [技术合作伙伴](partners.md) — 硅基流动（SiliconFlow）为项目提供免费模型额度，「Powered by SiliconFlow」同时出现在 GitHub 项目首页、文档站与 README
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
@@ -14,7 +15,7 @@
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
+- [Gitee v0.3.233 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
@@ -129,3 +130,7 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [Sponsored 全项目 SDK](plans/2026-10-27-sponsored-all-tasks.md) · [验收](testing/2026-10-27-sponsored-all-tasks.md)
 - [已申请模型经 Rust SDK 的实测](testing/2026-10-28-sponsored-granted-models.md) — Qwen3-8B / Qwen3.5-4B、BGE-M3 的真实签名 release 调用、延迟、失败及质量限制。
 - [评测模块](modules/evaluation.md)
+
+
+- [免费双模型用户流程与发行边界](plans/2026-11-04-sponsored-user-flow.md)
+- [免费模型真实调用与四端验收](testing/2026-11-04-sponsored-user-flow.md)

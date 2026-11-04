@@ -2,14 +2,30 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
-## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
+## v0.3.233：画像时间溯源与 ChatGPT 订阅修复（2026-10-30）
+
+- 开发分支新增免费模型完整用户入口（2026-11-04，正式组件未发行）：初始化/插件/PC/手机/CLI选择8B或4B，共用文本BGE-M3；Rust真实SSE、免费互备、付费回退显式开启、128K/256K上下文保护；修正JSON对象约束破坏数组的问题，真实30条文案两模型均完整返回。新增Core固定信任根、签名归档原子安装与Git/Docker/桌面接线，macOS重签保持SDK字节。图片理解为可选，BGE无图片向量；画像/时间事实质量仍有限，正式发行目录仍待接入。[验收](testing/2026-11-04-sponsored-user-flow.md)。
+
+- 修复画像把「账号导入」读成「用户行为」的根因（假时间 + 存量当行为）：B 站三条账号同步路径补齐真实时间——`get_following` 解析 `/x/relation/followings` 的 `mtime`，历史 `view_at`、收藏 `fav_time` 镜像进 canonical `metadata.timestamp`，CLI guided init 采集同样保留；首次同步给事件标 `snapshot`。本机账本实测 89,866 条观看只落在 950 个 `created_at` 秒、2,429 条关注只落在 93 个秒，正是「同一秒关注四十多人」的来源。新增 `soul/event_provenance.py` 在 prompt 边界统一投影：`created_at` 不再进入模型（只认 `metadata.timestamp`），存量关注聚合成一行「导入存量：关注了 N 位创作者（时间区间）」，无时间事件标 `time_quality=ingest`。偏好 / 觉察 / 灵魂画像 / 洞察四条 prompt 同步加规则：不得用库存推断外向、EI 只认用户自己的表达、MBTI 不得当 insight 证据；`ProfileBuilder` 对 MBTI 输出做 pole 校验、type 与维度一致性重算，任一维度 strength < 0.60 时把 confidence 压到 0.55。偏好 / 觉察两条 prompt 的用户消息渲染 golden 随之重新采样，并在测试里注明是显式的契约变更。
+
+- 平台时间审计与来源修复：读取侧统一认交互时间私有键（`INTERACTION_TIME_KEYS`，含 `watched_at` / `interaction_time` / `starred_at` 等），并在 prompt 投影里把它们提升为 canonical `timestamp`；`published_at` / `pubtime` / `created_at` 永不当作行为时间。审计结论：有真实交互时间的是 B 站（历史/收藏/关注）、YouTube Takeout、linux.do / 微博 / 知乎、GitHub；小红书 / 抖音 / TikTok / Instagram / Reddit / V2EX / X 只能拿到内容发布时间，按「时间未知」处理。新增「用工具≠口味」门（`soul/meta_usage.py`）：对话在讲本产品时，运维式候选兴趣直接丢弃，同轮的真实口味保留，settles 不受影响；同一判定接入事件侧偏好分析（对话轮次以 `dialogue` 事件入库，会二次造出「系统配置与测试」）。真实 rebuild 产出的 162 个兴趣里，该过滤拦下 14 个复合运维话题，同时保留「软件测试」。新增 `openbiliclaw profile-repair-provenance`（默认 dry-run）：剥掉 insight 里把 MBTI 当证据的条目、用真实交互时间校验觉察笔记的时序断言（只隔离证实为假的）、归档对话来源的产品运维兴趣与避雷；实测 dry-run 命中 3 条 MBTI 证据、9 个运维兴趣、1 个避雷主题，另有 5 个单词级话题留待人工确认。对话洞察 prompt 的新规则让字节基线同步重采一次，并在测试里注明是有意的契约变更。
+
+- 修复 Codex OAuth（ChatGPT 订阅）在 `json_mode` 下初始化失败（#334）：Codex `/responses` 只用 `input` 消息校验 `text.format=json_object`，而偏好分析等结构化任务把「严格 JSON」写在 system/instructions，后端因此返回 HTTP 200 + SSE error（`Response input messages must contain the word 'json' ...`），偏好分片整块失败。`CodexChatGPTProvider._build_request_body()` 现在在 input 缺少大小写不敏感 `json` token 时于末尾追加 `Return valid json.` user 指令，与 OpenAI Platform Responses flavor 的既有补偿一致；追加点在尾部，system/instructions 与既有消息的缓存前缀保持字节一致。[真实链路复测](verification/2026-10-29-issue-334-codex-json-e2e.md)：单批 12 条事件 1 次调用 27.1 秒、init 同款 60 条事件 2 个分片 56.7 秒合并出 18 个兴趣；对照组只剥掉该标记即复现 issue 的 `All providers failed` 异常链。
 
 - 新增已申请 Qwen3-8B / Qwen3.5-4B 与 BGE-M3 的隔离签名实测配置；向量校验跟随签名契约，BGE 仅文本。配套 Rust 适配 BGE 经典输入并使用启动环境代理，默认配置不变。16 项实测有 3 项失败，另保留时间证据编造的质量问题，见[记录](testing/2026-10-28-sponsored-granted-models.md)。
 
-- Sponsored 范围修正为全项目 SDK：六类操作覆盖业务分析/生成、工具/视觉、向量和评测旁路；纯赞助 registry、独立向量缓存、共享子进程、跨进程事务账本及分任务额度，发布要求获批免费额度模型清单与有限预算。默认仍关闭，未发版。见[设计](plans/2026-10-27-sponsored-all-tasks.md)。 当前主线 Agent 工具接口沿用模拟协议，流式接口缓冲返回；配置可持久化并允许无自有实例安装。
+- Sponsored 范围修正为全项目 SDK：六类操作覆盖业务分析/生成、工具/视觉、向量和评测旁路；纯赞助 registry、独立向量缓存、共享子进程、跨进程事务账本及分任务额度，发布要求获批免费额度模型清单与有限预算。默认仍关闭，未发版。见[设计](plans/2026-10-27-sponsored-all-tasks.md)。 前一阶段 Agent 工具接口沿用模拟协议、流式接口缓冲返回；11月用户流程已接入真实SSE。配置可持久化并允许无自有实例安装。
 - Sponsored 前一阶段完成单画像合并 v2 的密钥、生产信任根与发布加固；本阶段已扩展为全项目 SDK，旧子契约保留兼容。前一阶段见[历史记录](testing/2026-10-27-sponsored-fixed-tasks.md)。
 
 - 与[硅基流动（SiliconFlow）](https://www.siliconflow.cn)达成技术合作：对方为项目提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估，后台任务不再占用用户自己的 API 预算。GitHub Pages 项目首页、文档站与中英文 README 同步展示「Powered by SiliconFlow」合作标识；合作不改变推荐逻辑与本地优先的数据边界，详见[技术合作伙伴](partners.md)。
+
+- README 三处镜像兼容修复：硅基流动合作 logo 先由相对路径改为 Gitee 绝对地址，再改为 GitHub Pages 绝对地址，国内镜像、Gitee 页面与 GitHub 页面均可正常加载；只改文档资源引用，不改变任何产品行为。
+
+- 后端、桌面与扩展统一发布 `0.3.233`，同步版本文件、uv lock、项目首页及中英文 README。扩展源码自 `v0.3.232` 起没有变更，本轮只重建同源归档；随后按维护者要求把同版本 `0.3.233` 提交 Chrome Web Store / Firefox AMO 复审（仅版本号同步，插件脚本不变）；推荐导演保持默认关闭，Jev 中文质量仍待独立实测。核验结果见 [v0.3.233 发布记录](testing/2026-10-30-release-v0.3.233.md)。
+
+- `0.3.233` 商店提交完成：Chrome Web Store 上传 `crxVersion=0.3.233 / uploadState=SUCCEEDED / state=PENDING_REVIEW`（非 staged；上传一次成功，日志没有触发取消在审包的分支），Firefox AMO 返回 `version=0.3.233 / channel=listed / fileStatus=unreviewed`，reviewer 入口 `3038353`；AMO 隐私政策 PATCH 仍返回 HTTP 406，按既有逻辑保留 warning 并继续。两家商店审核通过前都不算已上架。
+
+## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
 - 后端、桌面与扩展统一发布 `0.3.232`，同步版本文件、uv lock、项目首页及中英文 README。Chrome Web Store / Firefox AMO 使用本版本现有发布通道提审；桌面、扩展与 Docker 状态分别核验，结果见 [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md)。推荐导演仍默认关闭，Jev 中文质量待独立实测，本次发版不将实现或结构测试等同于模型质量认证。
 

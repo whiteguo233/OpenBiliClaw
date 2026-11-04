@@ -21,7 +21,6 @@ from openbiliclaw.llm.sponsored_errors import (
     SponsoredQuotaExceededError,
 )
 from openbiliclaw.llm.sponsored_operations import (
-    EMBEDDING_MODEL,
     OPERATIONS,
     validate_operation_input,
 )
@@ -54,6 +53,9 @@ class RecordingSponsored(SponsoredProvider):
     def __init__(self) -> None:
         super().__init__(["unused"])
         self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def _ensure_started(self) -> None:
+        """This seam emulates a legacy buffered transport without a child."""
 
     async def execute_task(
         self, *, task_id: str = "", user_payload: Any, **_kwargs: Any
@@ -187,7 +189,9 @@ async def test_sponsor_only_registry_and_shared_child_with_embedding(tmp_path: P
     cfg.storage.data_dir = str(tmp_path)
     cfg.llm.sponsored = SponsoredRuntimeSettings(
         enabled=True,
-        runtime_path=shlex.join([sys.executable, "-m", "openbiliclaw.llm.sponsored_mock_runtime"]),
+        runtime_path=shlex.join(
+            [sys.executable, "-m", "openbiliclaw.llm.sponsored_mock_runtime", "--approved"]
+        ),
     )
     registry = build_llm_registry(cfg)
     assert "sponsored" in registry.available_providers
@@ -200,7 +204,7 @@ async def test_sponsor_only_registry_and_shared_child_with_embedding(tmp_path: P
         assert embedding is not None
         assert await embedding.embed("兴趣")
         assert shared_sponsored_provider() is child and child._process is process
-        assert EMBEDDING_MODEL in str(embedding.cache_model_namespace)  # type: ignore[attr-defined]
+        assert "BAAI/bge-m3" in str(embedding.cache_model_namespace)  # type: ignore[attr-defined]
     finally:
         await close_shared_provider()
 
@@ -311,7 +315,9 @@ async def test_sponsored_is_the_ready_default_while_user_chain_remains_the_fallb
 
     user = UserProvider()
     cfg = Config()
-    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path="unused")
+    cfg.llm.sponsored = SponsoredRuntimeSettings(
+        enabled=True, runtime_path="unused", fallback_to_user_provider=True
+    )
     registry = build_llm_registry(cfg, provider_overrides={"openai": user})
     assert registry.default_provider == "sponsored"
     assert registry._fallback_order() == ["sponsored", "openai"]

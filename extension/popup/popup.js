@@ -134,6 +134,7 @@ import {
   markDelightSent,
   openPendingConfirmation,
   probeConfigService,
+  prepareSponsoredRuntime,
   startEmbeddingRepair,
   startInit,
   readCachedConfigSnapshot,
@@ -10864,6 +10865,10 @@ function bindSettings() {
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
+    window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings"), {
+      prepare: prepareSponsoredRuntime,
+      probe: sponsored => probeConfigService("sponsored", { llm: { sponsored } }),
+    }).load(cfg.llm?.sponsored);
     ensurePopupSourceDateFields();
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
@@ -11322,6 +11327,7 @@ function bindSettings() {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
+        sponsored: window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings")).collect(),
         routing_version: 2,
         instances: clonePlain(llmDraft.instances),
         default_chain: [...llmDraft.default_chain],

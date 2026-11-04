@@ -606,6 +606,32 @@ def test_developer_id_signing_covers_nested_code_but_not_symlinks_or_data(tmp_pa
     assert "--verify" in calls[-1]
 
 
+@pytest.mark.parametrize("identity", ["-", "Developer ID Application: Test (TEAM)"])
+def test_app_signing_preserves_independently_signed_runtime(tmp_path, monkeypatch, identity):
+    from openbiliclaw.runtime import sponsored_bundle
+
+    app = tmp_path / "OpenBiliClaw.app"
+    directory = app / "Contents/Resources/sponsored"
+    directory.mkdir(parents=True)
+    binary = directory / "obc-sponsored-runtime"
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"signed executable")
+    before = binary.read_bytes()
+    verified = []
+    calls = []
+    monkeypatch.setattr(sponsored_bundle, "verify_bundle", lambda p: verified.append(p))
+    monkeypatch.setattr(build_module.shutil, "which", lambda _name: "/usr/bin/codesign")
+    monkeypatch.setattr(build_module.subprocess, "check_call", lambda cmd: calls.append(cmd))
+    if identity == "-":
+        build_module.repair_macos_ad_hoc_signature(app)
+    else:
+        build_module.sign_macos_app(app, identity)
+    assert verified == [directory, directory]
+    assert binary.read_bytes() == before
+    signed = [cmd for cmd in calls if "--sign" in cmd]
+    assert [Path(cmd[-1]) for cmd in signed] == [app]
+    assert all("--deep" not in cmd for cmd in signed)
+
+
 @pytest.mark.parametrize("status", ["Accepted", "Invalid", "Rejected"])
 def test_notarization_requires_accepted_status_and_saves_diagnostics(tmp_path, monkeypatch, status):
     artifact = tmp_path / "app.zip"

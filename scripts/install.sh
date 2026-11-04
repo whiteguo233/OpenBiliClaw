@@ -521,6 +521,8 @@ PY
     echo "Setup wizard: $setup_url"
     echo "             (open in a browser to configure LLM / embedding and"
     echo "              run prerequisite checks — same guided page as the desktop app)"
+    echo "Free models: choose Qwen3-8B or Qwen3.5-4B + BGE-M3 in the setup wizard."
+    echo "             No shared API key entry; requires a verified runtime release."
     if [ -n "$missing" ]; then
         echo "Missing:     $missing"
     else
@@ -621,11 +623,12 @@ PY
     elif [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
-        echo "  1. Choose your LLM chat provider (default: deepseek):"
+        echo "  1. Open the setup wizard for the recommended free Qwen + BGE-M3 option."
+        echo "     If this build has no verified runtime release, choose your own provider:"
         echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible"
         echo "     (Local Ollama is embedding-only here — not offered as a chat provider.)"
         echo ""
-        echo "  2. Ask which embedding service to use:"
+        echo "  2. Free mode includes text-only BGE-M3. For your own provider, choose embedding:"
         echo "     Default: local Ollama bge-m3 (free/offline/no extra API key)."
         echo "     Alternatives: Gemini embedding, OpenAI text-embedding-3-small,"
         echo "     or a custom OpenAI-compatible embedding endpoint."

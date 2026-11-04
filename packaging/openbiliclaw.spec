@@ -122,6 +122,7 @@ a = Analysis(
     datas=[
         (str(project_root / "config.example.toml"), "."),
         (str(project_root / "LICENSE"), "."),
+        (str(project_root / "src/openbiliclaw/runtime/sponsored_release.json"), "openbiliclaw/runtime"),
         (str(project_root / "THIRD_PARTY_NOTICES.md"), "."),
         # Web UI + first-run setup wizard. app.py serves these via StaticFiles
         # at /web, /m, /setup; without bundling them those routes 404 in the

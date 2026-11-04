@@ -20,7 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| Sponsored 全项目 SDK（未发布） | 🚧 | 新增六类固定操作：文本、JSON、工具、视觉、文本与图片向量；覆盖 LLMService、Registry、裸 provider 评测、Claude 评测旁路与独立 EmbeddingService。保留旧画像合并 v2；共享子进程、严格载荷、显式回退、独立向量空间缓存，获批模型清单与有限预算是发布前置。见[完整覆盖](../plans/2026-10-27-sponsored-all-tasks.md) |
+| 免费双模型方案（发行待完成） | 已实现并做真实调用 | 8B/4B 可选、真实 SSE、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
 | 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
@@ -42,6 +42,7 @@
 | v0.3.182+ 对话洞察锚 prompt | ✅ | `build_dialogue_insight_prompt(..., active_list=None, anchor=None)` 保持模块级静态 system 与确定性 `sort_keys=True` user JSON。`anchor=None` 保留无锚字节形态；非空 `anchor` 只在 user message 追加 `<current_anchor>` 与 kind×relation 输出契约，不把代次数据污染 prompt-cache system 前缀。 |
 | v0.3.182+ 对话结算在线内所有权 | ✅ | API runtime 的 `SocraticDialogue(mode=queued)` 在唯一 `DialogueSettlementQueue` worker 内 await 回复后的完整 `learn_from_dialogue`，普通 chat settles 与锚 relation 在同一 worker 直接 apply；不 detached、不进 task registry，也不为整项套 300 秒队列 timeout，provider 自身有限 timeout 与 total gate 不变。探针对话的 sentiment classifier 也只在 `probe.reply.apply` job 内调用一次；弱正向只把 typed `ExplorationIntent` 交回 dispatcher，真实 exploration 写入在 permit 外沿用既有路径。CLI/OpenClaw 两处 `legacy_direct` 继续既有 detached learning，不进入此所有权域。 |
 | v0.3.164+ OpenAI-compatible JSON-object 合约 | ✅ | `LLMService.complete_structured_task()` 与 `complete_multimodal_structured_task()` 共享最小兼容层：已有大写 `JSON` 仅归一为小写 `json`；完全没有该 token 时只追加 `json`。这满足部分 OpenAI-compatible 端点对 `response_format=json_object` 的字面消息约束，不改变业务规则、画像、阈值、user 内容或 core-memory 排序；非结构化 `complete_with_core_memory()` 完全不改写 prompt。 |
+| v0.3.233+ Codex JSON-object 输入标记（#334） | ✅ | `CodexChatGPTProvider._build_request_body()` 在 `json_mode=True` 且 `input` items 里没有任何大小写不敏感 `json` token 时，于末尾追加一条 `Return valid json.` user 指令。Codex `/responses` 只按 `input`（不含 `instructions`）校验 `text.format=json_object`，缺失时返回 HTTP 200 + SSE error，偏好分析这类「JSON 规则写在 system」的结构化任务因此整块失败。追加点在最尾部，system/instructions 与既有 items 的缓存前缀保持字节一致；已有 JSON 输入和非 `json_mode` 调用不受影响。 |
 | v0.3.185+ 401 终态化与归属可见 | ✅ | `llm.base.LLMAuthError` 携带 `provider_name` / `endpoint`；OpenAI 系（openai / deepseek / ollama / openrouter / openai_compatible）、Claude、Gemini 的 `_map_error()` 在 401 时统一抛出它并记 WARNING（含 base_url + 上游 body 摘要），三家 `_is_retryable()` 一致视其为终态、**零重试**（此前 401 被当作可重试的通用 `LLMProviderError`，每分片白跑 3 次，在 provider 后台留下大量被拒请求）。`describe_llm_failure()` 的鉴权文案改为指名「{provider}（{host}）拒绝了当前 API key」并提示临时 token 过期这一成因；host 经 `urlsplit().hostname` 提取，base_url 内联凭据不外泄。裸子串 `"401"` 判定收紧为 `_LLM_AUTH_STATUS_RE` 限定形式（`HTTP 401` / `Error code: 401` / `"code":401` / `status_code=401`，排除 4010/4011），避免 request id 或 402 余额不足回包里的 `401` 让 auth 桶盖掉 rate-limited 桶 |
 | OpenAI-compatible 非瞬态 4xx 快速失败 | ✅ | OpenAI 系把 400/403/404/405/422 映射为 provider 内部不可重试请求错误，仍保留原 HTTP 状态与响应体供 registry fallback 和用户诊断，但不再对同一个错误请求立即重发三次；`404 model route not found` 因而在一次请求后快速暴露，等待用户改模型名或路由。401 继续使用带 provider/endpoint 的专用鉴权错误，402/429 继续走 backoff；HTTP 5xx、timeout 与传输错误仍保留有界重试。`response_format` 400 的既有 json_schema 兼容重试发生在 flavor 层，不受 provider 传输重试终态化影响。 |
 | 模型缺失提示归属 | ✅ | 未知/远程模型缺失默认提示检查服务端模型、API 地址和权限；仅异常链明确指出 Ollama 模型缺失时提示在服务所在机器拉取，不再默认归因本地 Ollama或断言所有模型缺失均为 HTTP 404 |
@@ -54,6 +55,7 @@
 | v0.3.149+ 关键词合并 prompt 探索 block | ✅ | `build_merged_keywords_prompt()` 支持可选 `explore_domains_block`，只在 runtime 判断 B 站 explore refresh 到期 / 即将到期且有补货空间时追加；system prompt 明确这些 query 是探索性 B 站搜索方向，不应把常规兴趣关键词换皮成 explore。`parse_merged_keywords_with_presence_and_explore_domains()` 在保留平台关键词 decline / omission 语义的同时清洗 `explore_domains` |
 | v0.3.147+ Prompt layer cache | ✅ | `profile_prompt_layers()` 把结构化画像拆为 `profile_core` / `profile_life_context` / `profile_interests` / `profile_style_context` / `profile_recent_context`，从稳定到易变排序；`PromptLayerRenderCache` 按层 digest 复用已渲染 JSON prompt block，供 discovery eval、推荐分类 / 文案 / delight 和统一关键词 planner 共享，画像核心不变时 provider 看到的前缀保持 byte-stable |
 | v0.3.144+ 缓存前缀保护 | ✅ | `LLMService.complete_with_core_memory()` / `complete_structured_task()` / `complete_multimodal_structured_task()` 支持 `inject_core_memory=False`，供候选 eval、推荐分类 / delight、跨平台关键词生成、awareness / insight / speculation / profile build、初始化偏好分析这类已自带完整结构化上下文的路径跳过重复 memory 注入；`build_soul_profile_prompt()` 也保持静态 system，并把 tone / preference / awareness / insight 放在巨大 history 前，稳定 provider prompt-cache 前缀 |
+| 时间与存量契约（2026-10-27） | ✅ | 偏好 / 觉察 prompt 追加静态规则：没有 `metadata.timestamp` 的行时间未知（`time_quality="ingest"`），不得写「同一天 / 连续 / 快速切换」；`metadata.snapshot=true` 是账号导入存量，不能推断频率、活跃度、社交性或外向。灵魂画像 prompt 追加 12b / 12c：EI 只能由用户自己的表达支撑（关注数 / 收藏数 / 平台数量 / 自建工具链都是库存与配置），维度 strength 落在 0.50~0.58 视为证据不足。insight prompt 追加规则 7：MBTI 类型不得当 evidence。四条 system 仍为模块级静态常量，缓存前缀不变 |
 | v0.3.150+ DeepSeek thinking 显式关闭 | ✅ | `DeepSeekProvider.complete(..., reasoning_effort="")` 会向 DeepSeek 请求体写入 `thinking={"type":"disabled"}`。DeepSeek v4 默认开启 thinking，单纯省略字段并不会关闭 reasoning；配置页 LLM 探测和短结构化任务因此能真正避免 thinking 先耗尽输出预算后返回空 `content` |
 | 统一 reasoning effort 默认与映射 | ✅ | 支持原生档位的 provider 默认统一为 `medium`：OpenAI 官方 GPT-5/o-series 分别写入 Chat `reasoning_effort` 或 Responses `reasoning.effort`；Claude 4.6+ 写入 `output_config.effort`；Gemini 3 写入 `thinking_level`，Gemini 2.5 按当前输出上限用 50% thinking budget 近似中档；DeepSeek 将 portable `medium` 按官方规则归一为 native `high`；OpenRouter 用 `reasoning.effort` 跨厂商映射。OrcaRouter 网关把推理参数原样转发给上游路由、非推理模型以 HTTP 400 拒绝，因此**不发送** `reasoning_effort` / `reasoning`（推理模型用自身默认档位）。泛 OpenAI-compatible 无法可靠推断能力：空值不发送，只有新版实例中用户明确填写的非空值才按 OpenAI 字段透传；Ollama 不发送伪参数 |
 | 渠道 caller 默认跟随模型 effort | ✅ | `LLMService` 将 `discovery.*` / `recommendation.*` / `sources.*` / `yt_search.*` / `runtime.bilibili_extension_search.*` 以及三类轻量 eval caller 的未指定 effort 解析为 `None`，即跟随各实例配置的 `reasoning_effort`（可手动设为 `low` / `medium` / `high` 或留空跟随模型）；显式 caller 参数始终优先。这样既避免强制空值导致部分 reasoning-first OpenAI-compatible 模型返回 `code 1210`，也让用户能按模型能力自行选择 effort。Soul / 画像与长场景继续使用 provider 的 `medium`（或用户配置值） |
@@ -169,7 +171,7 @@ Full conversation history remains client-side.
 这些是原有模型调用中的行为指令，不是跨轮硬计数器，不删除模型输出、不新增分类调用；
 一轮/两轮来自 2026-10-13 产品取舍，模型更换后需复验多轮收敛表现。
 
-`OpenAIProvider.complete(..., json_mode=True)` 在 Responses flavor 下确保 `input` 消息包含大小写不敏感的 `json` 标记；缺失时追加 `Return valid json.` user 指令。调用方消息和 `instructions` 缓存前缀不变，已有 JSON 输入和普通文本调用保持原样。连接测试仍表示普通文本连通性，不承诺所有结构化任务成功。
+`OpenAIProvider.complete(..., json_mode=True)` 在 Responses flavor 下、`CodexChatGPTProvider.complete()` 在 Codex 传输下，都会确保 `input` 消息包含大小写不敏感的 `json` 标记；缺失时在末尾追加 `Return valid json.` user 指令。两者都不认 `instructions` 里的标记（后端只校验 input）。调用方消息和 `instructions` 缓存前缀不变，已有 JSON 输入和普通文本调用保持原样。Codex 侧曾缺这一步，导致「JSON 规则写在 system」的结构化任务（偏好分析等）在 HTTP 200 的 SSE 流里被后端拒绝（`Response input messages must contain the word 'json' ...`，#334），现由 `CodexChatGPTProvider._build_request_body()` 补齐。连接测试仍表示普通文本连通性，不承诺所有结构化任务成功。
 
 `OpenAIProvider` 的 Chat Completions / Responses 请求入口先在线程中解析 SDK 的
 `chat.completions` / `responses` 惰性属性，再在调用方事件循环中执行 `create()`。
@@ -824,12 +826,13 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 
 ### 全项目赞助 SDK 接口
 
-`SponsoredProvider.complete(messages, temperature, max_tokens, json_mode, reasoning_effort, caller)` 按固定类型发送完整业务消息；`embedding(value, image=False)` 校验固定空间向量。调用者不能指定模型、URL、Header 或 Key。`sponsored_router.try_sponsored_completion()` 统一可用性回退；`complete_project_task()` 覆盖裸 provider eval；`build_llm_registry()` 允许纯赞助安装，并保留用户链作为回退。`sponsored_embedding.build_sponsored_embedding_service()` 构建隔离 provenance 的向量缓存，禁止在同一缓存空间混入用户模型。新入口需更新覆盖清单及 SDK/私有 Runtime 测试。
+`approved_registry()` 是生产路由与发行策略共用的十项固定契约。`SponsoredProvider(..., model=..., fallback_to_other_free_model=True)` 仅接受获批的8B/4B；选择更改后新调用使用相应签名 task ID。`stream_complete()` 转发 Rust 的真实内容 delta 和 terminal response，`raw.requested_model/free_model_fallback` 保留实际回退信息；流开始后不重试。旧 Runtime 未声明 streaming 时保留兼容的缓冲路径。
 
+`complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
 
-`SponsoredProvider.complete_with_tools(messages, tools, ...)` 接受主线原生工具接口的 schema、多轮 assistant.tool_calls 和 tool 结果，复用 Core 现有 prompt 模拟与解析规则，返回统一的 `LLMResponse.tool_calls`；Rust 不接收任意工具执行或额外 HTTP tools 字段。`stream_complete()` / `stream_complete_with_tools()` 接入现有流式接口，当前为缓冲适配：完整上游响应后发送一次 content delta，再发送 terminal，不是上游逐 token SSE。`stream_project_completion()` 仅在输出前且配置允许时回退，发送过内容后失败不会重发用户模型请求。
+`shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用进程。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
 
-显式配置探针在 `bypass_sponsored()` 内构建用户 registry/embedding 并执行请求；工厂不会注册赞助 adapter，也不会安装草稿的全局赞助设置，避免目标错误被免费通道健康状态掩盖。
+JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和 BGE，禁用免费互备以免误报。
 
 ### 已申请模型的独立实测配置
 

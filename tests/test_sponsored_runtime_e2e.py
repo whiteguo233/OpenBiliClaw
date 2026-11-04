@@ -1,0 +1,229 @@
+"""Actual backend, browser settings, hot reload and restart with a synthetic IPC peer."""
+
+from __future__ import annotations
+
+import mimetypes
+import os
+import shlex
+import socket
+import subprocess
+import sys
+import time
+from dataclasses import fields
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
+
+import httpx
+import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+from openbiliclaw.config import Config, load_config, save_config
+from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
+
+from .test_jev_runtime_e2e import chromium_page as chromium_page
+from .test_sponsored_user_flow import COMMAND
+
+ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def sponsored_app(tmp_path: Path) -> Iterator[tuple[str, Path, Any]]:
+    cfg = Config()
+    cfg.data_dir = str(tmp_path / "data")
+    cfg.llm.instance_routing = True
+    cfg.llm.instances = {}
+    cfg.llm.default_chain = []
+    cfg.llm.embedding.provider = ""
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=shlex.join(COMMAND))
+    cfg.scheduler.auto_update_enabled = False
+    cfg.network.mode = "direct"
+    for field in fields(cfg.sources):
+        source = getattr(cfg.sources, field.name)
+        if hasattr(source, "enabled"):
+            source.enabled = field.name == "xiaohongshu"
+    save_config(cfg, tmp_path / "config.toml")
+    env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "TMPDIR"}}
+    env.update(PYTHONPATH=str(ROOT / "src"), OPENBILICLAW_PROJECT_ROOT=str(tmp_path))
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    process = None
+    with (tmp_path / "server.log").open("w+") as log:
+
+        def restart() -> None:
+            nonlocal process
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "openbiliclaw.api.app:create_app",
+                    "--factory",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--no-access-log",
+                ],
+                cwd=ROOT,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+            with httpx.Client(base_url=url, trust_env=False, timeout=2) as client:
+                deadline = time.monotonic() + 40
+                while time.monotonic() < deadline:
+                    assert process.poll() is None, (tmp_path / "server.log").read_text()[-4000:]
+                    try:
+                        if client.get("/api/config").status_code == 200:
+                            return
+                    except httpx.TransportError:
+                        pass
+                    time.sleep(0.1)
+                pytest.fail("backend startup timed out")
+
+        restart()
+        try:
+            yield url, tmp_path, restart
+        finally:
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+
+def wait_applied(url: str) -> None:
+    with httpx.Client(base_url=url, trust_env=False, timeout=5) as client:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            result = client.get("/api/config/apply-status").json()
+            if result.get("state") in {"idle", "applied"}:
+                return
+            assert result.get("state") != "failed", result
+            time.sleep(0.1)
+        pytest.fail(f"config did not apply: {result}")
+
+
+def test_setup_without_a_key_then_desktop_switch_and_restart(
+    sponsored_app: tuple, chromium_page: Any
+) -> None:
+    url, directory, restart = sponsored_app
+    page = chromium_page
+    page.goto(url + "/setup/")
+    page.locator("#setupSponsoredSettings-model").wait_for()
+    assert page.locator("#provider").input_value() == "sponsored"
+    assert not page.locator("#apiKey").is_visible()
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
+    ) as saving:
+        page.locator("#saveLlm").click()
+    assert saving.value.status in {200, 202}, saving.value.text()
+    page.locator("#doneLlm").filter(has_text="BGE-M3").wait_for(state="attached")
+    wait_applied(url)
+    page.goto(url + "/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    root = page.locator("#sponsoredSettings")
+    root.get_by_label("对话模型", exact=True).select_option("Qwen/Qwen3.5-4B")
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
+    ) as saving:
+        page.get_by_role("button", name="保存配置", exact=True).click()
+    assert saving.value.status == 202, saving.value.text()
+    wait_applied(url)
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        assert client.get("/api/config").json()["llm"]["sponsored"]["model"] == "Qwen/Qwen3.5-4B"
+        result = client.post(
+            "/api/config/probe-service", json={"kind": "sponsored", "config": {}}
+        ).json()
+        assert result["ok"] and result["model"] == "Qwen/Qwen3.5-4B", result
+    config = load_config(directory / "config.toml", consult_environment=False)
+    assert config.llm.instances == {} and config.llm.embedding.provider == ""
+    assert not config.llm.sponsored.fallback_to_user_provider
+    restart()
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        result = client.post(
+            "/api/config/probe-service", json={"kind": "sponsored", "config": {}}
+        ).json()
+        assert result["ok"] and result["model"] == "Qwen/Qwen3.5-4B", result
+
+
+def test_popup_and_mobile_share_saved_model_with_real_backend(
+    sponsored_app: tuple, chromium_page: Any
+) -> None:
+    url, _directory, _restart = sponsored_app
+    page = chromium_page
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.set_viewport_size({"width": 420, "height": 900})
+
+    def assets(route: Any) -> None:
+        name = urlsplit(route.request.url).path.removeprefix("/popup/")
+        file = (
+            ROOT
+            / ("src/openbiliclaw/web" if name.startswith("shared/") else "extension/popup")
+            / name
+        )
+        if not file.is_file():
+            route.fulfill(status=404, body="not found")
+            return
+        route.fulfill(
+            content_type=mimetypes.guess_type(file.name)[0] or "text/plain", body=file.read_bytes()
+        )
+
+    page.route("**/popup/**", assets)
+    port = urlsplit(url).port
+    page.add_init_script(f"""
+    const store={{popup_backend_endpoint:{{scheme:'http',host:'127.0.0.1',port:{port}}}}};
+    window.chrome={{storage:{{local:{{
+      get:(keys,cb)=>{{cb?.(store);return Promise.resolve(store);}},
+      set:(values,cb)=>{{Object.assign(store,values);cb?.();return Promise.resolve();}},
+      remove:(keys,cb)=>{{cb?.();return Promise.resolve();}}
+    }},onChanged:{{addListener(){{}}}}}},runtime:{{
+      id:'sponsored-fixture',getURL:path=>'/popup/'+path,
+      getManifest:()=>({{version:'0.0.0'}}),sendMessage:async()=>({{}}),
+      onMessage:{{addListener(){{}},removeListener(){{}}}}
+    }},tabs:{{create:async()=>({{}})}}}};
+    """)
+    page.goto(url + "/popup/popup.html")
+    page.locator("#settingsGear").click()
+    root = page.locator("#cfgSponsoredSettings")
+    try:
+        root.locator("select").wait_for(state="attached", timeout=10000)
+    except Exception:
+        pytest.fail(f"popup form missing: {errors}; {page.locator('body').inner_text()[-1800:]}")
+    root.get_by_label("对话模型", exact=True).select_option("Qwen/Qwen3.5-4B")
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
+    ) as saving:
+        page.locator("#settingsSave").click()
+    assert saving.value.status == 202, saving.value.text()
+    wait_applied(url)
+    page.goto(url + "/m/#/recommend")
+    page.get_by_role("button", name="打开保存与候选评估设置").click()
+    page.locator(".mobile-settings-status").filter(has_text="设置已加载").wait_for()
+    root = page.locator("#mobileSponsoredSettings")
+    assert root.get_by_label("对话模型", exact=True).input_value() == "Qwen/Qwen3.5-4B"
+    root.get_by_label("对话模型", exact=True).select_option("Qwen/Qwen3-8B")
+    page.get_by_role("button", name="保存设置", exact=True).click()
+    page.locator(".mobile-settings-status").filter(has_text="设置已保存").wait_for()
+    wait_applied(url)
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        result = client.post(
+            "/api/config/probe-service", json={"kind": "sponsored", "config": {}}
+        ).json()
+        assert result["ok"] and result["model"] == "Qwen/Qwen3-8B", result

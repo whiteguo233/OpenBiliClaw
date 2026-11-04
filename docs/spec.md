@@ -287,15 +287,19 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
-可选赞助 SDK（默认关闭、未发布）：`LLMService / Registry / eval / EmbeddingService → 固定操作 IPC → 私有 Runtime → SiliconFlow chat / embeddings`。六类操作保留业务消息，模型、目标和预算受签名策略/编译约束，覆盖见[全项目设计](plans/2026-10-27-sponsored-all-tasks.md)。
+免费模型方案通过共享配置接入全部日常文本任务；图片理解是可选增量能力，BGE-M3 仅生成文本向量。组件发行前仍保留明确的不可用状态，详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
 
 ```text
-Core LLMService / Registry / eval / EmbeddingService
- [isolated signed test profile: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
- -> six fixed SDK operations -> private Runtime -> SiliconFlow chat + embeddings
- -> configured BYOK / Ollama only on an explicitly permitted availability fallback
+Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
+  → LLMService / Registry / eval → selected signed 8B or 4B task
+  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → shared private Rust runtime → SiliconFlow SSE / embeddings
+  → Core schema / evidence validation → normal profile, discovery, recommendation, agent flows
+Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
+  → offline self-check → versioned bundle → atomic active pointer
+Optional image understanding: 4B; image embeddings: unavailable in the free profile
 ```
-
 
 ```text
 packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
@@ -663,6 +667,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │       + frozen admission / worker-only apply / 轻量 ref winner / applied 投影 │ │
 │  │       + confusions FIFO(≤5/队头 fencing/12h 补扫) + 冻结/held 重放 + 深层门控 │ │
 │  │       (off/shadow 默认/enforce · 两接入点: 深层对话候选/soul 重建; 管线 VALUES·CORE 已封死) │ │
+│  │     Event provenance: created_at 永不入 prompt · 无 timestamp = 时间未知 · 存量关注聚合成一行 │ │
 │  │     Autostart: user login item + Ollama preflight/self-heal + Ollama.app runtime 校验 │ │
 │  │     Bili DOM fallback + XHS/Douyin/YouTube/X/Zhihu/Reddit/Linux.do/Bangumi/V2EX/Weibo/GitHub producers: 按平台缺口独立补池 │ │
 │  │     CLI discover --source douyin -> 同一正式 producer -> 统一关键词终态 -> pending eval │ │

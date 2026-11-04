@@ -860,6 +860,11 @@ def repair_macos_ad_hoc_signature(app_bundle: Path) -> None:
     if codesign is None:
         raise RuntimeError("codesign is required to finalize macOS app bundles")
 
+    if (app_bundle / "Contents/Resources/sponsored").exists():
+        # --deep would mutate the already signed SDK and invalidate its manifest.
+        sign_macos_app(app_bundle, "-")
+        return
+
     print("[build] Re-sealing macOS .app with an ad-hoc signature ...")
     subprocess.check_call([codesign, "--force", "--deep", "--sign", "-", str(app_bundle)])
     subprocess.check_call(
@@ -908,7 +913,16 @@ def sign_macos_app(app_bundle: Path, identity: str) -> None:
         b"\xbf\xba\xfe\xca",
     }
     targets: list[Path] = []
+    sponsored_dir = app_bundle / "Contents/Resources/sponsored"
+    if sponsored_dir.exists():
+        from openbiliclaw.runtime.sponsored_bundle import verify_bundle
+
+        verify_bundle(sponsored_dir)
+        subprocess.check_call(["codesign", "--verify", "--strict", str(sponsored_dir / "obc-sponsored-runtime")])
     for path in app_bundle.rglob("*"):
+        if sponsored_dir in path.parents:
+            # Already signed, then covered by the private release manifest. Do not change bytes.
+            continue
         if path.is_symlink():
             continue
         if path.is_dir():
@@ -931,13 +945,13 @@ def sign_macos_app(app_bundle: Path, identity: str) -> None:
                 "--force",
                 "--sign",
                 identity,
-                "--timestamp",
-                "--options",
-                "runtime",
+                *([] if identity == "-" else ["--timestamp", "--options", "runtime"]),
                 str(path),
             ]
         )
     subprocess.check_call(["codesign", "--verify", "--deep", "--strict", str(app_bundle)])
+    if sponsored_dir.exists():
+        verify_bundle(sponsored_dir)
 
 
 def notarize_macos_artifact(
@@ -1165,6 +1179,13 @@ def build(
             raise FileNotFoundError("Signed macOS builds require dist/OpenBiliClaw.app")
 
     packaged_root = find_packaged_root(DIST_DIR)
+    from openbiliclaw.runtime.sponsored_bundle import stage_runtime_bundle
+
+    sponsored_target = (
+        DIST_DIR / "OpenBiliClaw.app/Contents/Resources/sponsored"
+        if platform.system() == "Darwin" else packaged_root / "sponsored"
+    )
+    stage_runtime_bundle(sponsored_target)
     output = DIST_DIR / "OpenBiliClaw"
     if output.exists():
         # Copy config.example.toml into the output directory

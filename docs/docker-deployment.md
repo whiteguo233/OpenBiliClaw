@@ -564,6 +564,10 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
 
-## 可选全项目 Sponsored SDK（未发布）
+## 免费模型安装与切换（正式组件待发行）
 
-源码/AI安装及Docker保持默认关闭，不自动下载私有Runtime或引入Rust依赖。正式bundle需全套任务策略、获批免费/赠送额度模型和有限预算；OS签名、公证与安装更新仍待发行验证。覆盖见[设计](plans/2026-10-27-sponsored-all-tasks.md)。
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量自动使用 BGE-M3。已有安装在插件、PC或手机配置页开启免费方案即可，切换后保存并等待运行时应用完成。免费方案不填写共享Key，不必安装Rust，也不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+
+源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
+
+本分支的正式发行目录仍为空，不能把源码接线完成当作正式包可下载。此时安装器保留设置入口并提示不可用；若已有发行项却验签失败，安装/打包必须失败，不能假装已经准备成功。五个平台的发布、签名和更新验收见[交付边界](plans/2026-11-04-sponsored-user-flow.md)。

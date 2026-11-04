@@ -3725,6 +3725,19 @@ def run(args: argparse.Namespace) -> int:
             emit(BootstrapResult("error", str(exc), {"step": "install"}))
             return 3
         emit(BootstrapResult("ok", "dependencies_installed", {}))
+        # Source installs use the same signed binary as desktop/Docker; no Rust toolchain.
+        sdk_python = project_dir / ".venv" / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        if sdk_python.exists():
+            try:
+                run_streaming(
+                    [str(sdk_python), "-m", "openbiliclaw.runtime.sponsored_bundle", "--if-available"],
+                    cwd=project_dir,
+                )
+            except RuntimeError as exc:
+                emit(BootstrapResult("error", str(exc), {"step": "sponsored_runtime_install"}))
+                return 3
 
     if args.skip_start:
         remaining = detect_missing_secrets(project_dir)

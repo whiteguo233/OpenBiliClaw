@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.232"
+version = "0.3.233"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -64,6 +64,7 @@ dependencies = [
     # Multiline chat input (issue #83): PromptSession with custom key bindings.
     "prompt_toolkit>=3.0",
     "pydantic>=2.0",
+    "cryptography>=41",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
 ]

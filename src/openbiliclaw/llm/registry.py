@@ -65,6 +65,8 @@ def build_llm_registry(
         SponsoredRuntimeSettings(
             enabled=cfg.enabled,
             runtime_path=cfg.runtime_path,
+            model=cfg.model,
+            fallback_to_other_free_model=cfg.fallback_to_other_free_model,
             fallback_to_user_provider=cfg.fallback_to_user_provider,
             notify_on_fallback=cfg.notify_on_fallback,
             request_timeout_seconds=cfg.request_timeout_seconds,
@@ -85,7 +87,9 @@ def build_llm_registry(
 
         user_order = registry._fallback_order()
         registry.register(SponsoredChatAdapter(), default=True)
-        registry.configure_chain(["sponsored", *user_order])
+        registry.configure_chain(
+            ["sponsored", *user_order] if cfg.fallback_to_user_provider else ["sponsored"]
+        )
     return registry
 
 

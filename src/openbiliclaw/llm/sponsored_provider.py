@@ -30,6 +30,7 @@ from .sponsored_errors import (
     SponsoredUnavailableError,
     SponsoredUnsupportedTaskError,
     error_from_payload,
+    is_fallback_allowed,
 )
 from .sponsored_protocol import (
     PROTOCOL_VERSION,
@@ -69,13 +70,22 @@ class SponsoredProvider:
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         handshake_timeout: float = DEFAULT_HANDSHAKE_TIMEOUT_SECONDS,
         env: Mapping[str, str] | None = None,
+        model: str | None = None,
+        fallback_to_other_free_model: bool = True,
     ) -> None:
         if not runtime_command:
             raise ValueError("runtime_command must not be empty")
+        from .sponsored_profiles import CHAT_MODELS
+
+        if model is not None and model not in CHAT_MODELS:
+            raise ValueError("unsupported free chat model")
         if request_timeout <= 0 or handshake_timeout <= 0:
             raise ValueError("timeouts must be positive")
         self._runtime_command = tuple(str(part) for part in runtime_command)
         self._registry = registry
+        self._chat_model = model
+        self._free_fallback = fallback_to_other_free_model
+        self._streaming = False
         self._request_timeout = float(request_timeout)
         self._handshake_timeout = float(handshake_timeout)
         self._extra_env = dict(env) if env is not None else None
@@ -95,6 +105,77 @@ class SponsoredProvider:
         return self._process is not None and self._process.returncode is None
 
     async def execute_task(
+        self,
+        *,
+        caller: str = "",
+        task_id: str = "",
+        contract_version: int | None = None,
+        user_payload: Mapping[str, Any],
+        user_text: str | None = None,
+        system_prompt: str | None = None,
+    ) -> LLMResponse:
+        """Choose only signed model variants; never fall through to a paid provider."""
+        contracts = self._candidate_contracts(caller, task_id, contract_version)
+        for index, contract in enumerate(contracts):
+            try:
+                self._check_context(contract, user_payload)
+                response = await self._execute_task_once(
+                    task_id=contract.task_id,
+                    contract_version=contract.contract_version,
+                    user_payload=user_payload,
+                    user_text=user_text,
+                    system_prompt=system_prompt,
+                )
+                response.raw = dict(response.raw or {})
+                response.raw["requested_model"] = contracts[0].model
+                response.raw["free_model_fallback"] = index > 0
+                return response
+            except SponsoredError as exc:
+                if index + 1 == len(contracts) or not is_fallback_allowed(exc):
+                    raise
+                logger.warning("free model fallback: %s (%s)", contract.model, exc.code)
+        raise SponsoredUnavailableError("no signed free model is available")
+
+    @property
+    def supports_image_input(self) -> bool:
+        return self._registry.get("llm.vision") is not None
+
+    def _candidate_contracts(
+        self, caller: str, task_id: str, version: int | None
+    ) -> list[SponsoredTaskContract]:
+        from .sponsored_profiles import ALTERNATE_CHAT_MODEL, ALTERNATE_TASK_SUFFIX
+
+        contract = self._resolve_contract(caller=caller, task_id=task_id, contract_version=version)
+        alternate = self._registry.get(contract.task_id + ALTERNATE_TASK_SUFFIX)
+        if alternate is None:
+            return [contract]
+        candidates = (
+            [alternate, contract]
+            if self._chat_model == ALTERNATE_CHAT_MODEL
+            else [contract, alternate]
+        )
+        return candidates if self._free_fallback else candidates[:1]
+
+    @staticmethod
+    def _check_context(contract: SponsoredTaskContract, payload: Mapping[str, Any]) -> None:
+        from .sponsored_profiles import CONTEXT_WINDOWS, EMBEDDING_MODEL, context_input_bound
+
+        window = CONTEXT_WINDOWS.get(contract.model)
+        if window is not None:
+            output = int(payload.get("max_tokens", contract.max_output_tokens))
+            bound = context_input_bound(payload, vision=contract.operation == "vision")
+            if bound + output > window:
+                raise SponsoredRequestTooLargeError(
+                    f"{contract.model} context budget exceeded; split the task or shorten history",
+                    task_id=contract.task_id,
+                )
+        elif (
+            contract.model == EMBEDDING_MODEL
+            and len(str(payload.get("text", "")).encode("utf-8")) > 8192
+        ):
+            raise SponsoredRequestTooLargeError("BGE-M3 input exceeds the conservative text budget")
+
+    async def _execute_task_once(
         self,
         *,
         caller: str = "",
@@ -293,14 +374,112 @@ class SponsoredProvider:
         messages: list[dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
-        """Use the project's buffered stream adapter: one content delta and a terminal.
+        """Forward Rust SSE deltas; never retry after emitting any answer text."""
+        await self._ensure_started()
+        if not self._streaming:
+            response = await self.complete(messages, **kwargs)
+            if response.content:
+                yield LLMStreamChunk(delta=response.content)
+            yield LLMStreamChunk(response=response)
+            return
+        if kwargs.get("json_mode") and messages and messages[0].get("role") == "system":
+            from .prompt_contracts import ensure_json_mode_contract
 
-        This provides the stream interface, not an upstream token-level SSE claim.
-        """
-        response = await self.complete(messages, **kwargs)
-        if response.content:
-            yield LLMStreamChunk(delta=response.content)
-        yield LLMStreamChunk(response=response)
+            messages = [dict(m) for m in messages]
+            if isinstance(messages[0].get("content"), str):
+                messages[0]["content"] = ensure_json_mode_contract(messages[0]["content"])
+        vision = any(
+            isinstance(m.get("content"), list)
+            and any(isinstance(p, dict) and p.get("type") == "image_url" for p in m["content"])
+            for m in messages
+        )
+        operation = "vision" if vision else "structured" if kwargs.get("json_mode") else "text"
+        payload = {
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "reasoning_effort": kwargs.get("reasoning_effort"),
+            "caller": kwargs.get("caller", ""),
+        }
+        contracts = self._candidate_contracts("", f"llm.{operation}", None)
+        emitted = False
+        for index, contract in enumerate(contracts):
+            try:
+                self._check_context(contract, payload)
+                async for chunk in self._stream_task_once(contract, payload):
+                    emitted = emitted or bool(chunk.delta) or chunk.response is not None
+                    if chunk.response is not None:
+                        chunk.response.raw = dict(chunk.response.raw or {})
+                        chunk.response.raw.update(
+                            requested_model=contracts[0].model, free_model_fallback=index > 0
+                        )
+                    yield chunk
+                return
+            except SponsoredError as exc:
+                if emitted or index + 1 == len(contracts) or not is_fallback_allowed(exc):
+                    raise
+
+    async def _stream_task_once(
+        self, contract: SponsoredTaskContract, payload: Mapping[str, Any]
+    ) -> AsyncIterator[LLMStreamChunk]:
+        payload_text = self._serialize_payload(payload, contract, None)
+        async with self._request_lock:
+            await self._ensure_started()
+            process = self._process
+            if process is None or process.stdin is None or process.stdout is None:
+                raise SponsoredUnavailableError("runtime pipes are unavailable")
+            request_id = uuid.uuid4().hex
+            try:
+                async with asyncio.timeout(self._request_timeout):
+                    await write_frame_async(
+                        process.stdin,
+                        {
+                            "type": "execute_stream",
+                            "id": request_id,
+                            "task_id": contract.task_id,
+                            "contract_version": contract.contract_version,
+                            "input": json.loads(payload_text),
+                        },
+                    )
+                    while True:
+                        frame = await read_frame_async(process.stdout)
+                        if frame.get("id") != request_id:
+                            raise SponsoredProtocolError("mismatched stream response id")
+                        if frame.get("type") == "delta":
+                            delta = frame.get("content")
+                            if not isinstance(delta, str):
+                                raise SponsoredProtocolError("invalid stream delta")
+                            yield LLMStreamChunk(delta=delta)
+                            continue
+                        if frame.get("type") != "result":
+                            raise SponsoredProtocolError("invalid stream terminal")
+                        if frame.get("ok") is not True:
+                            error = frame.get("error")
+                            if not isinstance(error, Mapping):
+                                raise SponsoredProtocolError("invalid stream error")
+                            raise error_from_payload(error, task_id=contract.task_id)
+                        yield LLMStreamChunk(
+                            response=LLMResponse(
+                                content=str(frame.get("content") or ""),
+                                model=str(frame.get("model") or contract.model),
+                                instance_id="sponsored",
+                                provider="sponsored",
+                                usage=_coerce_usage(frame.get("usage")),
+                                raw=frame,
+                            )
+                        )
+                        return
+            except TimeoutError as exc:
+                await self._stop_process()
+                raise SponsoredUnavailableError("sponsored stream timed out") from exc
+            except (asyncio.CancelledError, GeneratorExit):
+                self._abort_process_sync(process)
+                raise
+            except (SponsoredError, OSError) as exc:
+                await self._stop_process()
+                if isinstance(exc, SponsoredError):
+                    raise
+                raise SponsoredUnavailableError("sponsored stream transport failed") from exc
 
     async def stream_complete_with_tools(
         self,
@@ -407,7 +586,10 @@ class SponsoredProvider:
                 return text
             except (TypeError, ValueError, KeyError) as exc:
                 raise SponsoredContractMismatchError("invalid fixed SDK operation input") from exc
-        if contract.task_id != "soul.consolidation" or contract.contract_version != 2:
+        if (
+            contract.task_id not in {"soul.consolidation", "soul.consolidation.qwen35_4b"}
+            or contract.contract_version != 2
+        ):
             raise SponsoredUnsupportedTaskError(
                 "unsupported fixed task/version", task_id=contract.task_id
             )
@@ -496,6 +678,7 @@ class SponsoredProvider:
                 "runtime handshake was rejected (protocol/policy mismatch)"
             )
         contracts = hello.get("contracts")
+        self._streaming = hello.get("streaming") is True
         if not isinstance(contracts, Mapping) or any(
             contracts.get(contract.policy_key) != contract.system_prompt_sha256
             for contract in self._registry

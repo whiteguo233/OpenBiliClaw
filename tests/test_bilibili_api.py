@@ -798,8 +798,11 @@ async def test_get_following_parses_users() -> None:
                     "code": 0,
                     "data": {
                         "list": [
-                            {"mid": 1, "uname": "alice", "sign": "doc lover"},
-                            {"mid": 2, "uname": "bob", "sign": "tech"},
+                            {"mid": 1, "uname": "alice", "sign": "doc lover", "mtime": 1584271945},
+                            {"mid": 2, "uname": "bob", "sign": "tech", "mtime": 1746098997},
+                            # Upstream occasionally omits mtime; it must not be
+                            # invented (0 = unknown, never the fetch moment).
+                            {"mid": 3, "uname": "carol", "sign": ""},
                         ]
                     },
                 }
@@ -810,8 +813,9 @@ async def test_get_following_parses_users() -> None:
     users = await client.get_following(page=1, page_size=2)
 
     assert users == [
-        FollowingUser(mid=1, uname="alice", sign="doc lover"),
-        FollowingUser(mid=2, uname="bob", sign="tech"),
+        FollowingUser(mid=1, uname="alice", sign="doc lover", mtime=1584271945),
+        FollowingUser(mid=2, uname="bob", sign="tech", mtime=1746098997),
+        FollowingUser(mid=3, uname="carol", sign="", mtime=0),
     ]
 
 

@@ -1,5 +1,18 @@
 # 桌面 Web（Desktop Web UI）
 
+## 免费模型设置（正式组件待发行）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
+| 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与BGE1024维；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
+| 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
+
+公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留真实原因。
+
+共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready`。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
+
+
 ## 首屏静态脚本交付（2026-10-23）
 
 ```text
@@ -8,7 +21,7 @@
 共享源码/原资源入口 → 移动端/插件；无需 Node 构建，无安装或配置变化
 ```
 
-源码 `index.html` 保留独立脚本标签，真实 API 响应将 12 个脚本按原顺序合并成一次 defer 请求；主题恢复等内联代码保持原位。模块 `api/desktop_assets.py` 只读取固定包内资源，按全部脚本、样式和 HTML 输入生成内容版本，并缓存最近两个构建及 gzip 表示。输入不变时复用构建；不改变 JavaScript 的解析、初始化和业务请求内容。静态文件仍公开，推荐等业务接口继续受密码门禁保护。
+源码 `index.html` 保留独立脚本标签，真实 API 响应将 13 个脚本按原顺序合并成一次 defer 请求；主题恢复等内联代码保持原位。模块 `api/desktop_assets.py` 只读取固定包内资源，按全部脚本、样式和 HTML 输入生成内容版本，并缓存最近两个构建及 gzip 表示。输入不变时复用构建；不改变 JavaScript 的解析、初始化和业务请求内容。静态文件仍公开，推荐等业务接口继续受密码门禁保护。
 
 | 公开入口 | 行为 |
 | --- | --- |

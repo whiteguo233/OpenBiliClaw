@@ -38,7 +38,7 @@
 >
 > 📱 想要原生 App？Flutter 移动端客户端（Android / iOS / Web / 桌面）在独立仓库 [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile)：推荐、对话、画像、收藏 / 稍后再看 / 30 天历史一应俱全，连接同一本地后端。
 
-> 🇨🇳 **国内源**：[Gitee v0.3.232 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
+> 🇨🇳 **国内源**：[Gitee v0.3.233 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 ## 10 秒看懂 OpenBiliClaw
 
@@ -67,7 +67,7 @@
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
 1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载 zip 手动安装（最新功能先到，商店版可能滞后几天）。
-2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.232，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
+2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.233，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
 
    ```text
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
@@ -134,7 +134,7 @@ query inspiration → configured provider chain
 
 ### 🔒 100% 本地，100% 你的
 
-核心行为、推荐和对话数据留在你硬盘上的 SQLite，配置、画像、凭据与缓存也只保存在本机文件中。LLM 默认用你自己的 API Key，也可实验性复用本机 Codex CLI 的 ChatGPT OAuth 凭据。没有 OpenBiliClaw 运营的云端账号，没有任何人能看到你的画像。这个 Agent 怎么长，完全你说了算——反馈推荐、对话调教、换 LLM、迁移或改数据库，随你。
+核心行为、推荐和对话数据留在你硬盘上的 SQLite，配置、画像、凭据与缓存也保存在本机文件中。LLM 可选免费方案、自有 API Key，或实验性复用本机 Codex CLI 的 ChatGPT OAuth 凭据；调用云端模型时，任务所需的文本和画像上下文会发送给所选模型服务商。没有 OpenBiliClaw 运营的云端账号。这个 Agent 怎么长，完全你说了算——反馈推荐、对话调教、换 LLM、迁移或改数据库，随你。
 
 > 💡 **和其他推荐工具的对比**
 >
@@ -254,12 +254,12 @@ query inspiration → configured provider chain
 
 ## 最近更新
 
-📌 最新版本：**v0.3.232（2026-10-26）**
+📌 最新版本：**v0.3.233（2026-10-30）**
 
-- **抖音发现恢复稳定**：修复跨进程在线判断、热词搜索与轮换，后台任务先静音再加载，失败保留结果并退避。
-- **首屏与封面更快**：减少启动阻塞和重复请求，修复扫码登录、配置保存提示及聊天与插件布局。
-- **搜索灵感更可靠**：新增可选的 Keenable 免费匿名搜索，并修复 Bing 跳转和单后端失败兜底。
-- **模型选择更完整**：可选 Jev 完整评估，MiniMax 文本预设更新为 M3.1 Flash。
+- **画像更贴近真实行为**：B 站历史 / 收藏 / 关注补齐真实交互时间，账号导入的存量不再被当成你的行为，也不再拿库存推断性格。
+- **兴趣更干净**：新增「用工具≠口味」过滤，对话里讲本产品的运维话题不再变成兴趣；实测拦下 14 个复合运维话题，并保留「软件测试」。
+- **ChatGPT 订阅恢复可用**：修复 Codex `json_mode` 初始化失败，画像与偏好分析的结构化调用不再整块失败。
+- **可修复存量画像**：新增 `openbiliclaw profile-repair-provenance`（默认 dry-run），清理把 MBTI 当证据的条目和被证伪的时序断言。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -327,7 +327,7 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 
 到 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合发布页下载对应系统的安装包。这个聚合页会同步展示：
 
-> 🇨🇳 **国内源**：[Gitee v0.3.232 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
+> 🇨🇳 **国内源**：[Gitee v0.3.233 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 - 当前后端源码 tag：`backend-v*`
 - 当前插件 release：`extension-v*`，并附 `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`（Firefox 临时调试）；启用 AMO signing 时还会附 `openbiliclaw-extension-v*-firefox.xpi`（Firefox 正式安装）
@@ -647,21 +647,23 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 - 🚀 **图形化引导初始化** — 安装包 `/setup/`、桌面 Web 和插件都能点一下完成初始化，不碰命令行
 - 📦 **跨机器迁移** — 桌面配置页一键导出 / 导入可移植配置、SQLite、画像、Cookie 与图片缓存；导入先校验暂存，可查询 / 取消，重启后带回滚副本应用。`.obcbackup` 含明文敏感信息，但不含源机 API 登录密码 / 会话签名密钥或扩展设备 key
 - 🔬 **自动化评测优化** — 5 个模块各带 LLM-as-judge 自优化循环，prompt 质量随轮次自动提升
-- 🔒 **完全私有** — SQLite、配置、画像与缓存都留在本机，LLM 用你自己的 Key，每个实例只为你一个人构建
+- 🔒 **完全私有** — SQLite、配置、画像与缓存都留在本机，可选免费模型或自有 Key，每个实例只为你一个人构建
 - 🔌 **本地 embedding** — 可选 Ollama + bge-m3，CPU 即可，无需额外 API Key
 - 🔧 **完全可控** — 同类型 LLM 可配置多个独立渠道，拖拽全局 / 模块故障切换链；也可直接编辑画像、写自定义 Skill
 
 ## 🏛️ 架构概览
 
-可选赞助 SDK（默认关闭、未发布）：模型、出口和预算由签名策略/编译约束控制。[覆盖与边界](docs/plans/2026-10-27-sponsored-all-tasks.md)。
+免费模型方案（本分支已接入，正式组件尚待发行）：初始化、插件、PC 与手机设置共用模型选择；8B 为推荐默认，4B 可随时切换，文本向量固定 BGE-M3。[实现与验收边界](docs/plans/2026-11-04-sponsored-user-flow.md)。
 
 ```text
-项目文本 / JSON / 工具 / 视觉 / 文本与图片向量
-  [isolated test policy: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
-  → 固定操作 IPC → 私有 Runtime → SiliconFlow
+初始化 / 插件 / PC / 手机 / CLI → 本机配置 → 共享 Sponsored 路由
+  文本 / JSON / 工具 → Qwen3-8B（128K）⇄ Qwen3.5-4B（256K）
+  文本向量 → BGE-M3（1024维）；可选图片理解 → 4B
+  → 签名任务 IPC → 私有 Rust Runtime → SiliconFlow
+  安装器 / 更新器 → Core 固定公钥与发行目录 → 验签 → 原子切换组件
 ```
 
-工具接口复用现有模拟协议；流式接口当前采用缓冲返回。
+文本/JSON 接口转发真实增量流；工具沿用项目模拟协议。默认只在两个免费模型间回退，使用自有渠道须明确开启。BGE-M3 不提供图片向量。
 
 扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。
 

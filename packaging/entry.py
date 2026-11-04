@@ -1169,11 +1169,22 @@ def main() -> None:
     # Make a bundled ollama (if this build shipped one) discoverable before any
     # config is read, so the existing supervisor finds it via shutil.which.
     has_bundled_ollama = _inject_bundled_ollama_on_path(bundled_resources)
+    if (bundled_resources / "sponsored").is_dir():
+        os.environ["OPENBILICLAW_SPONSORED_BUNDLE"] = str(bundled_resources / "sponsored")
 
     # Seed a default config.toml if the user hasn't created one yet. On a fresh
     # packaged install with a bundled ollama, default embedding to it so local
     # semantic features work out of the box.
     seeded = _seed_default_config(project_root, bundled_resources)
+    if seeded:
+        from dataclasses import replace
+        from openbiliclaw.config import load_config_with_diagnostics, save_config
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        if installed_runtime_command():
+            initial_config, _ = load_config_with_diagnostics()
+            initial_config.llm.sponsored = replace(initial_config.llm.sponsored, enabled=True)
+            save_config(initial_config)
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")

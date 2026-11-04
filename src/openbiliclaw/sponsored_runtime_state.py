@@ -25,7 +25,9 @@ class SponsoredRuntimeSettings:
     # Executable path or command line for obc-sponsored-runtime. Official
     # installers point at the bundled binary; source builds leave it empty.
     runtime_path: str = ""
-    fallback_to_user_provider: bool = True
+    model: str = "Qwen/Qwen3-8B"
+    fallback_to_other_free_model: bool = True
+    fallback_to_user_provider: bool = False
     notify_on_fallback: bool = True
     request_timeout_seconds: float = DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
 

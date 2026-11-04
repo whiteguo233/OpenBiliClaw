@@ -291,16 +291,17 @@ cache_high_watermark = 0.9
 # 淘汰停止水位（占用 / 预算 的比例，0..1，需 <= cache_high_watermark）
 cache_low_watermark = 0.7
 
-# 可选 Sponsored SDK 覆盖项目文本/JSON/工具/视觉/向量；正式 bundle 待验，源码部署默认关闭。
-# 官方安装包把 runtime_path 指向包内的 obc-sponsored-runtime；该进程持有
-# SiliconFlow Sponsored Key，并按签名 policy 限制任务/模型/额度，只回退不中转。
-# 长度帧 IPC 2 / SDK contract3：覆盖全项目六类操作，保留旧合并v2；需配套 Runtime/签名 Policy。
+# 硅基流动免费方案：初始化与设置页可选；需要匹配的已签名 Rust 运行组件。
+# 共享 Key 仅由私有 Rust 组件持有。普通用户无需填写 Key 或可执行文件路径。
+# 默认覆盖文本、JSON、工具调用及 BGE-M3 文本向量；图片理解是独立可选增强。
 [llm.sponsored]
 enabled = false
-# 可执行文件路径或命令行（支持带参数）。为空 = Sponsored 不可用，完全走 BYOK/Ollama。
+# 留空自动寻找已验证的安装包。仅本机开发/诊断可写命令；网页不能修改。
 runtime_path = ""
-# Sponsored 不可用时是否回退到用户自己的 provider（BYOK/Ollama）。
-fallback_to_user_provider = true
+model = "Qwen/Qwen3-8B" # 另一个选项：Qwen/Qwen3.5-4B
+fallback_to_other_free_model = true
+# 仅显式开启才会调用自费服务；关闭时免费组件缺失或额度用尽会报告错误。
+fallback_to_user_provider = false
 # 回退时是否在日志/UI 提示用户，避免误以为免费额度仍可用。
 notify_on_fallback = true
 # 单次 Sponsored 请求超时（秒），范围 1..3600。

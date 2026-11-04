@@ -1722,35 +1722,29 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 
 ### `[llm.sponsored]`
 
-可选配套的 **Sponsored Runtime**（`obc-sponsored-runtime`，私有组件，正式安装集成待验收）。开源源码部署保持 `enabled=false`，完全走 BYOK / Ollama；官方安装包把 `runtime_path` 指向包内二进制，运行时持有 SiliconFlow Sponsored Key，并按签名 policy 限制 task / schema / model / token 与 per-install 配额。
+免费方案由配套私有 Rust 组件执行。新用户在初始化推荐项中选择后启用；原有用户配置不自动改写。无需用户填写共享 Key 或安装 Rust。浏览器只能设置下表的用户字段，不能指定可执行文件、URL、Key 或额外模型。
 
-当前长度帧为 IPC 2；六类 SDK 操作使用 contract3，保留 soul.consolidation.v2，Core 与 Runtime 必须一起升级。原 v1 消息入口已关闭；默认开关与回退配置不变。
-
-核心边界：Sponsored 只接受定义的 SDK 操作，不暴露任意 HTTP 转发；Prompt、画像、推荐数据**直连 SiliconFlow**，不经过 OpenBiliClaw 项目方服务器；Runtime 无端口、无遥测、默认不记录 Prompt/响应。
-
-| 键 | 类型 | 默认值 | 说明 |
-|----|------|--------|------|
-| `enabled` | bool | `false` | 是否启用 Sponsored Runtime。源码部署不要开启；开启但没有 `runtime_path` 会报 blocking 配置问题 |
-| `runtime_path` | string | `""` | 官方包内 `obc-sponsored-runtime` 的路径或命令行（支持带参数）。空 = Sponsored 不可用 |
-| `fallback_to_user_provider` | bool | `true` | Runtime 缺失/崩溃/配额/限流/Key 失效时，是否回退到用户已有 provider（BYOK / Ollama）。契约不一致（prompt hash / schema）不会静默回退，而是本地告警并失败 |
-| `notify_on_fallback` | bool | `true` | 回退时是否提示用户，避免误以为免费额度仍可用 |
-| `request_timeout_seconds` | float | `180.0` | 单次 Sponsored 请求超时（秒），范围 1..3600；非法值回退默认 |
-
-配置样例：
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 免费方案开关；启用后允许无自有模型 Key，必须有可验证组件。 |
+| `model` | `Qwen/Qwen3-8B` | 仅8B或 `Qwen/Qwen3.5-4B`；文本任务随选择切换。 |
+| `fallback_to_other_free_model` | `true` | 可用性失败时尝试另一个获批免费模型；已输出内容的流不重放。 |
+| `fallback_to_user_provider` | `false` | 高级选项，显式允许回退已有自有渠道。 |
+| `notify_on_fallback` | `true` | 保留回退诊断提示。 |
+| `request_timeout_seconds` | `180.0` | 请求超时；Web API 接受10..1200秒，TOML兼容1..3600秒。 |
+| `runtime_path` | `""` | 仅本机高级覆盖；空时自动定位已验签的安装/内置组件，Web不可修改。 |
 
 ```toml
 [llm.sponsored]
 enabled = true
-runtime_path = "/opt/openbiliclaw/sponsored/obc-sponsored-runtime --policy /opt/openbiliclaw/sponsored/sponsored-policy.json --signature /opt/openbiliclaw/sponsored/sponsored-policy.sig"
-fallback_to_user_provider = true
-notify_on_fallback = true
+model = "Qwen/Qwen3-8B"
+fallback_to_other_free_model = true
+fallback_to_user_provider = false
 request_timeout_seconds = 180.0
 ```
 
-实现说明：`load_config_with_diagnostics()` 会把该段安装为进程级设置，统一 `sponsored_router` 在 LLMService、Registry、评测或向量首次需要时懒加载共享 Runtime 子进程；开发环境仍可用 `OPENBILICLAW_SPONSORED_ENABLED` / `OPENBILICLAW_SPONSORED_RUNTIME` 作为兜底。
+文本向量固定 `BAAI/bge-m3`/1024维，覆盖原 embedding 选择但保留其配置；关闭免费方案后恢复自有配置。图片理解可选并由4B承担；BGE-M3不支持图片向量，即使原 `multimodal_enabled` 开启也不会伪装成支持。
 
-### Sponsored 全项目范围（未发布）
+`load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。
 
-`llm.sponsored.enabled` 启用后覆盖全部业务 LLM 操作，并优先构建赞助 embedding；关闭后恢复原用户配置。没有新增用户侧 Key 或 Rust 依赖。`fallback_to_user_provider=false` 时可用性失败也不发用户模型请求；true 只允许约定的可用性回退，契约错误不回退。向量不跨空间回退，图片向量仍受 `llm.embedding.multimodal_enabled` 控制。所有新增操作的模型权限、是否属于赠送额度与质量需发行验收，见[全项目设计](../plans/2026-10-27-sponsored-all-tasks.md)。
-
-赞助设置随普通配置保存完整写回 TOML，调整其它设置不会丢失该段。启用后允许 routing_version=2 且无自有实例/空默认链的纯赞助安装；已有模块链中的无效引用仍按原规则报告。runtime_path 的诊断按可执行命令首项检查，支持引号路径和参数。
+`runtime/sponsored_release.json` 固定公钥、归档摘要与平台目录；目录尚未配置正式产物时，安装入口明确提示版本不可用。组件验签及原子更新详见[Runtime](runtime.md#免费模型组件安装与更新)。

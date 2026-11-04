@@ -364,6 +364,8 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - Phase 2 cognition prompt 边界由 `CognitionEventViewV1` + `CognitionProfileViewV1` 提供 provider-independent 的确定性投影，并按 stable soul / preference → volatile cognition → current batch 排序。生产配置逐 task 选择视图：只有真实 SenseTime gate 通过的 `soul.awareness_confusions` 默认 compact-v1；Preference、Insight 与 plain `soul.awareness` 均保持 legacy，不能由一个聚合开关整体切换。
 - Phase 3 继续保持 legacy/compact 选择不变，只收紧 analyzer 送入 builder 的请求集合：Preference 自动预算路径从每个剩余 offset 按独立 chunk 的真实 prompt shape 二分找最大前缀，偏斜的大事件仍交给既有单条 compact recovery。Insight 的 Phase 3 固定 `latest-20 ∪ latest-20 judged/validated` 视图现保留为异常回退/历史 control；生产视图最多 40 条，按 latest-8、judged-8、当前 awareness/profile 相关性 16、重要性/多样性 8 四路选择并加权补位。同状态近重复只竞争 prompt 槽，不同确认状态分别保留，随后仍与完整 durable hypothesis ledger 合并并保存。因此 token 优化边界位于 `CognitionCycle/PreferenceAnalyzer → prompts.py` 之间，不改变 MemoryManager 的持久层、system/output contract、max-token ceiling 或 provider 路由。
 - 认知画像流水线（`soul/ledger.py` + `soul/dialogue_anchor.py` + `soul/confusion.py` + `soul/posture_gate.py`）：兴趣层的事件驱动写入已经收敛为一条 `ProfileUpdatePipeline → INTEREST` 路径，行为、对话与 feedback 都是管线信号，其中 feedback 带优先级阈值；旧反馈批默认退役，仅 `unified_interest_line=false` 回退时恢复。其上叠加统一审计与一致性纪律。**单锚**由 queue admission 冻结成带 kind/ref/generation 的 persisted/reserved/failed/absent snapshot；worker 只做 exact validation，绝不把受理时的 generation 0 升级成执行时出现的未来锚。**对象结算**在 `SoulEngine` 中拆成公开 `submit_*` 与 worker-only `_apply_*`；11 个 declared kind 的生产入口已全部接入一个 in-memory queue/actual worker，锚 relation 和普通 chat settles 在当前 learn worker task 内直接 apply，不递归排队或 inline dispatch。guard 校验 actual worker Task + lifecycle nonce，不存在 child 临时授权；request task、active child 与跨 job detached child 均不能进入 protected façade 或冒充队外 producer。`card_settlements` 只保存 immutable winner、result、stable event identity 与 `applied`，数据库级文件锁、5 分钟 lease、claim token、三段 CAS、discussion attempt token 与恢复 scanner 已删除。apply 顺序固定为 event → object → derived → rebuild marker → applied → projection → exact-generation anchor release；前四类 effect 可幂等重放，`applied=1` 后的显式 retry 只补 ledger observer / projection / anchor publication。结算与 revise-derived 台账使用稳定 hash effect key，首次 audit 写失败不阻断业务，恢复后补写不重复。列表/单 turn GET 只 submit `card.reconcile`，由 worker 补 publication 或修复无活锚 orphan discussion。队列 job 不落盘；重启后由 action retry/GET reconcile 重新 admission，不增加 scanner/job table。疑惑锚对象段仍先入 `confusions.replay_queue`（FIFO 5、精确队头、四类解锚清空台账），12h cycle 只枚举并提交专属 attribution replay。疑惑 topic 冻结、held 重放与代理证据折价不变。**态势门控**继续只覆盖深层对话候选与 soul 整份重建；VALUES/CORE 管线层已退役，三模式仍为 off/shadow/enforce。
+- 事件时间溯源（`event_provenance.py`）：cognition prompt 边界统一投影事件——`events.created_at` 是写入时刻，永不进入模型；只有 `metadata.timestamp`（历史 `view_at` / 收藏 `fav_time` / 关注 `mtime`）算发生时间，缺失的行标 `time_quality=ingest`（时间未知）。`metadata.snapshot` / `import_source` 标记的账号存量关注合并成一行「导入存量：关注了 N 位创作者（时间区间）」，创作者名单保留在 `metadata.creators`；单条新增关注仍按真实行为处理。该投影由偏好 / 觉察 / 觉察+疑惑三个 builder 共用，输入行不被修改。
+  - 平台时间契约（2026-10-27 审计）：读取侧 `event_format.parse_event_timestamp` 认 `timestamp` 以及所有交互时间私有键（`INTERACTION_TIME_KEYS`：`view_at` / `fav_time` / `mtime` / `watched_at` / `interaction_time` / `starred_at` / `liked_at` …），**永不**把 `published_at` / `pubtime` / `created_at`（内容发布时间）当行为时间。有真实交互时间的来源：B 站历史 `view_at`、B 站收藏 `fav_time`、B 站关注 `mtime`、YouTube Takeout `watched_at`、linux.do / 微博 / 知乎 `interaction_time`、GitHub `starred_at`；只有内容发布时间、拿不到「用户何时点的」的来源：小红书、抖音、TikTok、Instagram、Reddit、V2EX、X 点赞/书签——这些行一律按「时间未知」处理，不猜、不用发布时间顶替。
 - 分类词表（`taxonomy.py`）：偏好层一级分类收敛到固定 `CATEGORY_VOCAB`，`PreferenceAnalyzer` 在写入前用精确命中 / embedding 最近邻 /「其他」兜底解析，避免自由文本分类污染长期画像。
 - 分类迁移与画像整理：`CategoryMigrator` 通过 `profile-consolidate --migrate-categories` 把存量自由分类迁到固定词表；`ProfileConsolidator` 的 12h 整理流程按 `(name, category)` 处理同名异义主题，支持 LLM 用 `{name, category}` 精确引用成员。
 - 用户画像覆盖层（`overrides.py`）：用户手动编辑存独立 `profile_overrides.json`，在读收口 `get_profile()` 与镜像收口 `sync_profile_files()` 叠加到 AI 画像之上（有效画像 = AI ⊕ 覆盖），画像重建不覆盖用户编辑；删 / 拉黑经有效 dislikes 影响 discovery / recommendation / delight 硬过滤（Phase 1 后端；编辑 UI 见 Phase 2/3）
@@ -753,12 +755,20 @@ query inspiration → configured provider chain
 ```
 
 
-## 可选赞助 SDK（默认关闭，未发布）
+## 免费模型路由与运行组件（正式发行待完成）
 
 ```text
-LLMService / Registry / eval / EmbeddingService -> shared SDK IPC
- [isolated signed test profile: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
- -> private Runtime -> SiliconFlow chat + embeddings
+Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
+  → LLMService / Registry / eval → selected signed 8B or 4B task
+  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → shared private Rust runtime → SiliconFlow SSE / embeddings
+  → Core schema / evidence validation → normal profile, discovery, recommendation, agent flows
+Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
+  → offline self-check → versioned bundle → atomic active pointer
+Optional image understanding: 4B; image embeddings: unavailable in the free profile
 ```
 
-覆盖文本、JSON、工具接口（复用模拟协议）、流式接口（缓冲返回）、视觉、文本和图片向量；模型/预算/出口受签名与编译约束，原业务Prompt继续由Core维护。见[全项目设计](plans/2026-10-27-sponsored-all-tasks.md)。
+`llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
+
+`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；发行目录目前为空，所以不能声称已有可自动下载的正式组件。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。

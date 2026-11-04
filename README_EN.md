@@ -35,7 +35,7 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.232 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 ## OpenBiliClaw in 10 Seconds
 
@@ -64,7 +64,7 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.232. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
@@ -113,7 +113,7 @@ This is the core differentiator: the system **guesses domains you might enjoy bu
 
 ### 🔒 100% local, 100% yours
 
-Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. LLM calls use your own API key by default, with an experimental option to reuse local Codex CLI ChatGPT OAuth credentials. There is no OpenBiliClaw-operated cloud account, and no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
+Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. Choose the free model option, your own API key, or experimental reuse of local Codex CLI ChatGPT OAuth credentials. Cloud model calls send the text and profile context needed for the task to your selected model provider. There is no OpenBiliClaw-operated cloud account. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
 
 > 💡 **How it compares**
 >
@@ -233,12 +233,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.232 (2026-10-26)**
+📌 Latest: **v0.3.233 (2026-10-30)**
 
-- **Reliable Douyin discovery**: fixes shared extension presence, native hot-word search and rotation; task pages are muted before loading, and failures retain results with backoff.
-- **Faster first screens and covers**: reduces startup blocking and duplicate requests; fixes QR login, configuration-save status, and chat and extension layouts.
-- **More reliable search inspiration**: adds optional free anonymous Keenable search and fixes Bing redirects and single-backend failure handling.
-- **More model options**: adds optional full Jev evaluation and updates MiniMax text presets to M3.1 Flash.
+- **More trustworthy portraits**: Bilibili history, favorites and follows carry real interaction times; imported backlog is no longer read as your behaviour, and library volume can no longer infer personality.
+- **Cleaner interests**: a new "using tools ≠ taste" gate keeps ops-style topics from becoming interests (14 compound topics filtered in a real rebuild, while "software testing" stayed).
+- **ChatGPT subscriptions work again**: fixes the Codex `json_mode` initialization failure that failed structured profiling calls wholesale.
+- **Repair existing portraits**: the new `openbiliclaw profile-repair-provenance` command (dry-run by default) removes MBTI-as-evidence items and falsified timeline claims.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -322,7 +322,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.232 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
@@ -644,21 +644,23 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🚀 **Guided Init in the UI** — the packaged `/setup/` wizard, Desktop Web, and the extension can all initialize with one click; no terminal required
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
 - 🔬 **Self-Optimizing Eval Loops** — five modules each carry an LLM-as-judge loop that improves prompt quality over rounds
-- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls use your own key, and each instance is built for exactly one person
+- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls can use free models or your own key, and each instance is built for exactly one person
 - 🔌 **Local Embedding** — optional Ollama + bge-m3, automatic acceleration with CPU fallback, no extra API key
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
 
-Optional sponsored SDK (off by default, unreleased): signed policy and compiled rules constrain models, destinations and budgets. [Coverage and limits](docs/plans/2026-10-27-sponsored-all-tasks.md).
+Free model integration (implemented on this branch; production bundles pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings use BGE-M3. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
 
 ```text
-Project text / JSON / tools / vision / text and image embeddings
-  [isolated test policy: Qwen3-8B / Qwen3.5-4B + text-only BGE-M3]
-  → fixed-operation IPC → private runtime → SiliconFlow
+Setup / extension / desktop / mobile / CLI → local config → shared sponsored router
+  Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
+  Text embeddings → BGE-M3 (1024 dimensions); optional image understanding → 4B
+  → signed task IPC → private Rust runtime → SiliconFlow
+  Installer / updater → Core-pinned public key and catalog → verify → atomic activation
 ```
 
-Tool interfaces reuse existing prompt simulation; stream interfaces currently buffer the response.
+Text/JSON calls forward real streaming deltas; tools use the project's existing simulation protocol. Automatic fallback stays within the two free models unless the user explicitly enables their own provider. BGE-M3 has no image embeddings.
 
 Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).
 

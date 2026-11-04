@@ -11041,6 +11041,10 @@ ${cardFeedbackBarHtml()}`;
       }
 
       const llm = config.llm || {};
+      window.OpenBiliClawSponsoredSettings.mount($("#sponsoredSettings"), {
+        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+        probe: sponsored => probeConfigService("sponsored", { llm: { sponsored } }),
+      }).load(llm.sponsored);
       setInput("llmConcurrency", llm.concurrency ?? 3);
       setInput("llmTimeout", llm.timeout);
       state.llmDraft = normalizeLlmDraft(llm);
@@ -12419,6 +12423,7 @@ ${cardFeedbackBarHtml()}`;
       else if (bilibiliDateMode === "custom") bilibiliDateWeight = getFloatInput("biliDateWeight", 0.5);
       const llmDraft = state.llmDraft || normalizeLlmDraft(state.config?.llm || {});
       const llm = {
+        sponsored: window.OpenBiliClawSponsoredSettings.mount($("#sponsoredSettings")).collect(),
         routing_version: 2,
         instances: clonePlain(llmDraft.instances),
         default_chain: [...llmDraft.default_chain],
@@ -13035,7 +13040,7 @@ ${cardFeedbackBarHtml()}`;
         method: "POST",
         // Backend allows a bounded 120s probe so cold local Ollama models can
         // finish their startup retry window. The browser must outlive it.
-        timeoutMs: 125000,
+        timeoutMs: kind === "sponsored" ? 370000 : 125000,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind, instance_id: String(instanceId || ""), config })
       });

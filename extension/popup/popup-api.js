@@ -1254,7 +1254,7 @@ export async function probeConfigService(kind, config, instanceId = "") {
     // Keep the popup alive beyond the backend's bounded 120s LLM cold-start
     // probe window; otherwise the browser aborts a request the backend still
     // legitimately owns.
-    timeoutMs: 125_000,
+    timeoutMs: kind === "sponsored" ? 370_000 : 125_000,
     headers: {
       "Content-Type": "application/json",
     },
@@ -1264,6 +1264,10 @@ export async function probeConfigService(kind, config, instanceId = "") {
       ...(instanceId ? { instance_id: instanceId } : {}),
     }),
   });
+}
+
+export async function prepareSponsoredRuntime() {
+  return requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125_000 });
 }
 
 export async function discoverConfigModels(config, instanceId) {

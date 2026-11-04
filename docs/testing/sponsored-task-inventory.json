@@ -42,6 +42,20 @@
     "route": "LLMService -> sponsored SDK"
   },
   {
+    "file": "src/openbiliclaw/api/app.py",
+    "function": "probe_config_service",
+    "call": "provider.embedding",
+    "family": "probe",
+    "route": "selected free-model/BGE check (no fallback)"
+  },
+  {
+    "file": "src/openbiliclaw/api/app.py",
+    "function": "probe_config_service",
+    "call": "provider.stream_complete",
+    "family": "probe",
+    "route": "selected free-model/BGE check (no fallback)"
+  },
+  {
     "file": "src/openbiliclaw/discovery/engine.py",
     "function": "_embed_related_interest_vectors",
     "call": "embedding_service.embed",

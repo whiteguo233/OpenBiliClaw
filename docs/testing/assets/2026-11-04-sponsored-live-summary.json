@@ -1,0 +1,307 @@
+{
+  "started_at": "2026-11-04T10:50:16.464621+00:00",
+  "finished_at": "2026-11-04T10:54:23.251311+00:00",
+  "transport": "public SponsoredProvider -> signed IPC2 -> release Rust HttpUpstream -> SiliconFlow",
+  "models": [
+    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3.5-4B",
+    "BAAI/bge-m3"
+  ],
+  "upstream_token_streaming": true,
+  "profile": "siliconflow-free-v1",
+  "public_release": false,
+  "embedding_similarity": {
+    "related": 0.7530527336095962,
+    "unrelated": 0.3653720225321109,
+    "ordering_correct": true
+  },
+  "temporary_materials_removed": true,
+  "cases": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "stream_connectivity",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.614,
+      "delta_count": 5,
+      "usage": {
+        "prompt_tokens": 20,
+        "completion_tokens": 5,
+        "total_tokens": 25
+      },
+      "full_stream_matches_terminal": true,
+      "seconds": 0.873
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_profile",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.67,
+      "delta_count": 389,
+      "usage": {
+        "prompt_tokens": 2818,
+        "completion_tokens": 389,
+        "total_tokens": 3207
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "seconds": 12.732
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_candidate_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.826,
+      "delta_count": 303,
+      "usage": {
+        "prompt_tokens": 3901,
+        "completion_tokens": 303,
+        "total_tokens": 4204
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "seconds": 11.298
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_30_recommendation_expressions",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "model_matches_selection": true,
+      "first_content_seconds": 1.006,
+      "delta_count": 1726,
+      "usage": {
+        "prompt_tokens": 2291,
+        "completion_tokens": 1801,
+        "total_tokens": 4092
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "result_count": 30,
+      "all_30_ids_present": true,
+      "seconds": 59.917
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_tool_call",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "tool_calls": [
+        {
+          "id": "sim-09d19ca7",
+          "name": "search",
+          "arguments": {
+            "query": "Rust 的所有权入门内容"
+          },
+          "arguments_raw": ""
+        }
+      ],
+      "tool_ok": true,
+      "usage": {
+        "prompt_tokens": 177,
+        "completion_tokens": 25,
+        "total_tokens": 202
+      },
+      "seconds": 2.052
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "stream_connectivity",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.448,
+      "delta_count": 5,
+      "usage": {
+        "prompt_tokens": 20,
+        "completion_tokens": 5,
+        "total_tokens": 25
+      },
+      "full_stream_matches_terminal": true,
+      "seconds": 0.685
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_profile",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.489,
+      "delta_count": 522,
+      "usage": {
+        "prompt_tokens": 2718,
+        "completion_tokens": 522,
+        "total_tokens": 3240
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "seconds": 20.585
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_candidate_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.595,
+      "delta_count": 340,
+      "usage": {
+        "prompt_tokens": 3723,
+        "completion_tokens": 340,
+        "total_tokens": 4063
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "seconds": 13.885
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_30_recommendation_expressions",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.409,
+      "delta_count": 1671,
+      "usage": {
+        "prompt_tokens": 2435,
+        "completion_tokens": 1671,
+        "total_tokens": 4106
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "result_count": 30,
+      "all_30_ids_present": true,
+      "seconds": 44.475
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_tool_call",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "tool_calls": [
+        {
+          "id": "sim-f6babde9",
+          "name": "search",
+          "arguments": {
+            "query": "Rust 所有权 入门"
+          },
+          "arguments_raw": ""
+        }
+      ],
+      "tool_ok": true,
+      "usage": {
+        "prompt_tokens": 177,
+        "completion_tokens": 25,
+        "total_tokens": 202
+      },
+      "seconds": 2.781
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "embedding_rust",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite_nonzero": true,
+      "seconds": 0.288
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "embedding_related",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite_nonzero": true,
+      "seconds": 0.221
+    },
+    {
+      "model": "BAAI/bge-m3",
+      "case": "embedding_unrelated",
+      "status": "ok",
+      "dimensions": 1024,
+      "finite_nonzero": true,
+      "seconds": 0.251
+    }
+  ],
+  "quality_notes": [
+    "Sparse/default candidate wire has separate acceptance; this live batch uses the legacy production builder.",
+    "Profiles over-infer personality and life stage from two Rust titles.",
+    "4B invents temporal_evidence 近期讨论; 8B also assigns unsupported recency.",
+    "30/30 rows is structural completeness, not a claim of factual accuracy."
+  ],
+  "sparse_candidate_evaluation": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "case": "project_sparse_candidate_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3-8B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.954,
+      "delta_count": 185,
+      "usage": {
+        "prompt_tokens": 3981,
+        "completion_tokens": 185,
+        "total_tokens": 4166
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "core_normalized": [
+        {
+          "id": "OBC_RUST",
+          "score": 0.95,
+          "temporal_evidence": "",
+          "temporal_class": "evergreen",
+          "temporal_validity_mode": "none"
+        },
+        {
+          "id": "OBC_GAMBLE",
+          "score": 0.15,
+          "temporal_evidence": "",
+          "temporal_class": "unknown",
+          "temporal_validity_mode": "none"
+        }
+      ],
+      "all_ids_bound": true,
+      "all_scores_accepted": true,
+      "seconds": 7.104
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "project_sparse_candidate_evaluation",
+      "status": "ok",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "model_matches_selection": true,
+      "first_content_seconds": 0.749,
+      "delta_count": 320,
+      "usage": {
+        "prompt_tokens": 3785,
+        "completion_tokens": 320,
+        "total_tokens": 4105
+      },
+      "full_stream_matches_terminal": true,
+      "json_valid": true,
+      "core_normalized": [
+        {
+          "id": "OBC_RUST",
+          "score": 0.85,
+          "temporal_evidence": "",
+          "temporal_class": "evergreen",
+          "temporal_validity_mode": "none"
+        },
+        {
+          "id": "OBC_GAMBLE",
+          "score": 0.0,
+          "temporal_evidence": "",
+          "temporal_class": "unknown",
+          "temporal_validity_mode": "none"
+        }
+      ],
+      "all_ids_bound": true,
+      "all_scores_accepted": true,
+      "seconds": 11.967
+    }
+  ]
+}

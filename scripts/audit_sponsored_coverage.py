@@ -59,7 +59,13 @@ def inventory(root: Path = ROOT) -> list[dict[str, str]]:
                 leaf = self.aliases.get(fn, fn.rsplit(".", 1)[-1])
                 family = ""
                 route = "LLMService -> sponsored SDK"
-                if "complete_multimodal" in leaf:
+                if (
+                    "/api/" in self.rel
+                    and self.scope == "probe_config_service"
+                    and leaf in {"stream_complete", "embedding"}
+                ):
+                    family, route = "probe", "selected free-model/BGE check (no fallback)"
+                elif "complete_multimodal" in leaf:
                     family = "vision"
                 elif "complete_socratic" in leaf or "complete_with_core_memory" in leaf:
                     family = "text"

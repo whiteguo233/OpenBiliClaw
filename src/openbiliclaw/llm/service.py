@@ -906,13 +906,13 @@ class LLMService:
                 ):
                     record_diagnostics_alert(
                         category="llm",
-                        code="sponsored_contract_mismatch",
-                        message=f"Sponsored contract mismatch for {caller}: {exc.code}",
+                        code=f"sponsored_{exc.code.lower()}",
+                        message=f"Sponsored task failed for {caller}: {exc.code}",
                         source="sponsored",
                         severity="error",
                     )
                     raise LLMProviderExecutionError(
-                        f"Sponsored contract mismatch for {caller}: {exc.code}"
+                        f"Sponsored task failed for {caller}: {exc.code}"
                     ) from exc
                 logger.warning(
                     "Sponsored task %s unavailable (%s); falling back to configured provider",
@@ -998,7 +998,9 @@ class LLMService:
         """Best-effort check for OpenAI-compatible vision-capable routes."""
         from .sponsored_router import sponsored_enabled
 
-        if self.sponsored_provider is not None or sponsored_enabled():
+        if self.sponsored_provider is not None:
+            return bool(getattr(self.sponsored_provider, "supports_image_input", False))
+        if sponsored_enabled():
             return True
         routed_chain = self._resolve_module_chain(caller)
         bucket = self._route_bucket_for_caller(caller)
