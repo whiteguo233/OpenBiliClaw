@@ -190,6 +190,7 @@ async def run_model(out: Path, model: str, *, rebuild_only: bool = False) -> Non
                 source_event_ids=[1, 2],
             )
         assert all(set(n.source_event_ids).issubset({1, 2}) for n in notes)
+        assert all(n.date == "2026-11-04" for n in notes)
         return {"notes": [asdict(n) for n in notes], "confusions": confusions}
 
     async def chat_and_embedding():

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 from uuid import uuid4
 
@@ -125,6 +127,7 @@ class AwarenessAnalyzer:
             raise AwarenessGenerationError(str(exc)) from exc
         payload = self._parse_response(response.content)
         self._check_sponsored_citations(response, payload, evidence_ids)
+        self._ground_sponsored_dates(response, payload, events, evidence_ids)
         return [self._build_note(item, evidence_ids) for item in payload if isinstance(item, dict)]
 
     @staticmethod
@@ -182,6 +185,7 @@ class AwarenessAnalyzer:
             raise AwarenessGenerationError(str(exc)) from exc
         notes_payload, confusions_payload = self._parse_with_confusions(response.content)
         self._check_sponsored_citations(response, notes_payload, evidence_ids)
+        self._ground_sponsored_dates(response, notes_payload, events, evidence_ids)
         notes = [
             self._build_note(item, evidence_ids) for item in notes_payload if isinstance(item, dict)
         ]
@@ -199,7 +203,56 @@ class AwarenessAnalyzer:
                 + json.dumps(evidence_ids)
                 + "。已有画像/觉察中的编号不是本次事件，不能引用。"
                 "不确定由哪条支持时不要编造编号；没有新的可靠观察时notes可为空。"
+                "date只使用引用事件的真实发生日期，无法确定时留空，不能复制示例日期。"
+                "同一天发生两次不等于连续两天，不能用事件数量充当天数。"
             )
+
+    @staticmethod
+    def _ground_sponsored_dates(
+        response: LLMResponse,
+        rows: list[object],
+        events: list[dict[str, object]],
+        evidence_ids: list[int],
+    ) -> None:
+        """Use the latest cited source day (UTC), never an invented/ingest date."""
+        if response.provider != "sponsored":
+            return
+        from openbiliclaw.sources.event_format import parse_event_timestamp
+
+        from .event_provenance import apply_event_provenance, event_metadata
+
+        dates: dict[int, str] = {}
+        for event in apply_event_provenance(events):
+            event_ids = _coerce_event_ids([event.get("id")])
+            metadata = event_metadata(event)
+            timestamp = parse_event_timestamp(metadata)
+            if event_ids and timestamp is not None and metadata.get("time_quality") != "ingest":
+                dates[event_ids[0]] = timestamp.date().isoformat()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cited = _coerce_event_ids(row.get("source_event_ids")) or evidence_ids
+            # Unknown time in any referenced event makes the represented time
+            # uncertain. An unrelated newer event cannot date an older note.
+            row["date"] = (
+                max(dates[event_id] for event_id in cited)
+                if cited and all(event_id in dates for event_id in cited)
+                else ""
+            )
+            days = sorted({date.fromisoformat(dates[i]).toordinal() for i in cited if i in dates})
+            longest = streak = 0
+            previous: int | None = None
+            for day in days:
+                streak = streak + 1 if previous is not None and day == previous + 1 else 1
+                longest = max(longest, streak)
+                previous = day
+            text = " ".join(
+                str(row.get(key, "")) for key in ("observation", "trend", "emotion_guess")
+            )
+            if any(count > longest for count in _claimed_consecutive_days(text)):
+                raise AwarenessGenerationError(
+                    "awareness day-count exceeds cited source chronology"
+                )
 
     @staticmethod
     def _check_sponsored_citations(
@@ -389,6 +442,26 @@ class AwarenessAnalyzer:
     @staticmethod
     def _normalize_text(value: str) -> str:
         return "".join(value.split())
+
+
+def _claimed_consecutive_days(text: str) -> list[int]:
+    """Read explicit Chinese/decimal day counts; not a general prose verifier."""
+    digits = {char: value for value, char in enumerate("零一二三四五六七八九")}
+    digits["两"] = 2
+    counts: list[int] = []
+    for match in re.finditer(
+        r"连续\s*(\d+|[一二两三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九])\s*天",
+        text,
+    ):
+        raw = match.group(1)
+        if raw.isdecimal():
+            counts.append(int(raw))
+        elif "十" in raw:
+            tens, _, ones = raw.partition("十")
+            counts.append(digits.get(tens, 1) * 10 + digits.get(ones, 0))
+        else:
+            counts.append(digits[raw])
+    return counts
 
 
 def _coerce_event_ids(value: object) -> list[int]:

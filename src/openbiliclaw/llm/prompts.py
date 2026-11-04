@@ -971,7 +971,7 @@ _AWARENESS_SYSTEM_PROMPT = """
 <output_schema>
 [
   {
-    "date": "2026-03-08",
+    "date": "",
     "observation": "最近连续浏览高信息密度内容。",
     "trend": "更偏向深度解释而非轻量消遣。",
     "emotion_guess": "可能处于主动吸收和整理信息的阶段。"
@@ -1108,7 +1108,7 @@ _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT = """
 {
   "notes": [
     {
-      "date": "2026-03-08",
+      "date": "",
       "observation": "最近连续浏览高信息密度内容。",
       "trend": "更偏向深度解释而非轻量消遣。",
       "emotion_guess": "可能处于主动吸收和整理信息的阶段。",
