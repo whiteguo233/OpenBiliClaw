@@ -1,6 +1,6 @@
 {
   "core_base_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
-  "code_state": "working tree reliability fixes dated 2026-11-05",
+  "code_state": "application fixes edb43faeaa4f8f0aeecfd5803d9a44875a3227e8; subsequent isolated acceptance clock correction",
   "published_sdk_runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
   "new_sdk_runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
   "fixture": "12 synthetic history rows; 30 candidate IDs cycling 12 content descriptions; no user credentials or personal account history",
@@ -1723,5 +1723,378 @@
     }
   ],
   "quality_conclusion": "Not an all-quality pass: portrait inference remains too strong; an earlier 4B stress judgement violated a known-distinct pair and was rejected by Core. No invalid merge was applied.",
-  "release_state": "Private SDK PR5 merged; 4 platform builds complete, Intel Mac notarization Accepted; Mac ARM runner unavailable after two attempts, third retry pending. New SDK not publicly released yet."
+  "release_state": "Private SDK PR5 merged; 4 platform builds complete, Intel Mac notarization Accepted; Mac ARM runner unavailable after two attempts, third retry pending. New SDK not publicly released yet.",
+  "final_8b_http": {
+    "model": "Qwen/Qwen3-8B",
+    "complete": true,
+    "cases": [
+      {
+        "name": "real_server_startup_and_user_surfaces",
+        "status": "pass",
+        "result": {
+          "/api/health": {
+            "status": 200,
+            "bytes": 136
+          },
+          "/api/profile-summary": {
+            "status": 200,
+            "bytes": 11691
+          },
+          "/web/": {
+            "status": 200,
+            "bytes": 185062
+          },
+          "/m/": {
+            "status": 200,
+            "bytes": 1665
+          }
+        },
+        "seconds": 15.109,
+        "calls": []
+      },
+      {
+        "name": "real_sse_two_turn_chat_and_durable_history",
+        "status": "pass",
+        "result": {
+          "turns": [
+            {
+              "first_content_seconds": 1.03,
+              "elapsed_seconds": 2.657,
+              "reply": "Rust 借用允许在不拥有数据所有权的情况下访问数据，保障内存安全。借用分为可变借用和不可变借用，分别用于修改和只读访问数据。  \n记住代号：蓝色番茄731。",
+              "event_counts": {
+                "delta": 48,
+                "done": 1,
+                "final": 1
+              },
+              "persisted": true
+            },
+            {
+              "first_content_seconds": 36.981,
+              "elapsed_seconds": 37.258,
+              "reply": "蓝色番茄731",
+              "event_counts": {
+                "delta": 5,
+                "done": 1,
+                "final": 1
+              },
+              "persisted": true
+            }
+          ]
+        },
+        "seconds": 39.947,
+        "calls": [
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 5108,
+            "completion_tokens": 50,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1780,
+            "completion_tokens": 1328,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1556,
+            "completion_tokens": 1632,
+            "success": 1
+          },
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 5249,
+            "completion_tokens": 5,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "awareness_and_insight_cognition_cycle",
+        "status": "fail",
+        "error": "AssertionError: CognitionCycleResult(ran=False, throttled=True, awareness_generated=0, insight_generated=0, total_awareness_after=0, total_insight_after=0, errors=[])",
+        "seconds": 0.003,
+        "calls": []
+      },
+      {
+        "name": "post_chat_learning_queue_drained",
+        "status": "pass",
+        "result": {
+          "drained": true,
+          "dialogue_events": 5
+        },
+        "seconds": 99.423,
+        "calls": [
+          {
+            "caller": "soul.dialogue_insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 2750,
+            "completion_tokens": 597,
+            "success": 1
+          },
+          {
+            "caller": "discovery.keyword_planner",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3573,
+            "completion_tokens": 1310,
+            "success": 1
+          },
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3231,
+            "completion_tokens": 1357,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1556,
+            "completion_tokens": 1200,
+            "success": 1
+          },
+          {
+            "caller": "soul.dialogue_insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 2688,
+            "completion_tokens": 316,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "save_apply_live_probe_Qwen3.5-4B",
+        "status": "pass",
+        "result": {
+          "ok": true,
+          "kind": "sponsored",
+          "instance_id": "",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "message": "流式对话和 BGE-M3 文本向量均可用",
+          "error": "",
+          "latency_ms": 751,
+          "apply_seconds": 0.068
+        },
+        "seconds": 0.843,
+        "calls": []
+      },
+      {
+        "name": "save_apply_live_probe_Qwen3-8B",
+        "status": "pass",
+        "result": {
+          "ok": true,
+          "kind": "sponsored",
+          "instance_id": "",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "message": "流式对话和 BGE-M3 文本向量均可用",
+          "error": "",
+          "latency_ms": 881,
+          "apply_seconds": 0.04
+        },
+        "seconds": 0.943,
+        "calls": [
+          {
+            "caller": "discovery.evaluate_batch",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 7458,
+            "completion_tokens": 1041,
+            "success": 1
+          }
+        ]
+      }
+    ],
+    "background_observations": [
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class is invalid or non-neutral unknown; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class is invalid or non-neutral unknown; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class is invalid or non-neutral unknown; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.discovery.temporal",
+        "message": "Temporal evaluation none mode has active fields; using unknown",
+        "failure": false
+      }
+    ]
+  },
+  "final_8b_cognition_retest": {
+    "model": "Qwen/Qwen3-8B",
+    "complete": true,
+    "cases": [
+      {
+        "name": "awareness_and_insight_cognition_cycle_reused_fixture_clock",
+        "status": "pass",
+        "result": {
+          "fixture_now": "2026-11-06T02:28:49.213091",
+          "result": {
+            "ran": true,
+            "throttled": false,
+            "awareness_generated": 0,
+            "insight_generated": 0,
+            "total_awareness_after": 4,
+            "total_insight_after": 7,
+            "errors": []
+          }
+        },
+        "seconds": 58.122,
+        "calls": [
+          {
+            "caller": "soul.awareness_confusions",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 6027,
+            "completion_tokens": 1318,
+            "success": 1
+          }
+        ]
+      }
+    ],
+    "background_observations": [
+      {
+        "logger": "openbiliclaw.soul.awareness_analyzer",
+        "message": "awareness note cited 5 event id(s) outside the analysed batch ([13, 14, 17, 18, 19]...); falling back to approximate batch attribution",
+        "failure": false
+      },
+      {
+        "logger": "openbiliclaw.soul.awareness_analyzer",
+        "message": "awareness note cited 6 event id(s) outside the analysed batch ([13, 14, 17, 18, 19]...); falling back to approximate batch attribution",
+        "failure": false
+      }
+    ]
+  }
 }

@@ -28,6 +28,7 @@ from openbiliclaw.config import load_config
 from openbiliclaw.llm.service import _background_admission_bypass
 from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
 from openbiliclaw.llm.sponsored_router import close_shared_provider
+from openbiliclaw.soul.cognition_cycle import _parse_iso
 
 
 async def run_http(root: Path, port: int, keep_seconds: int) -> None:
@@ -137,9 +138,17 @@ async def run_http(root: Path, port: int, keep_seconds: int) -> None:
                 with _background_admission_bypass():
                     # Advance only the isolated fixture's throttle clock; the
                     # model, prompts, ledger writes and embeddings remain real.
-                    result = await run.ctx.soul_engine._cognition_cycle.run_if_due(
-                        now=datetime.now() + timedelta(hours=13)
-                    )
+                    cycle = run.ctx.soul_engine._cognition_cycle
+                    state = cycle._load_state()
+                    clocks = [
+                        datetime.now(),
+                        *[
+                            parsed
+                            for key in ("last_awareness_at", "last_insight_at")
+                            if (parsed := _parse_iso(state.get(key))) is not None
+                        ],
+                    ]
+                    result = await cycle.run_if_due(now=max(clocks) + timedelta(hours=13))
                 assert not result.errors, result.errors
                 assert result.ran and result.total_awareness_after > 0, result
                 return asdict(result)
