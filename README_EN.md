@@ -650,7 +650,7 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
-Free model integration (implemented on this branch; production bundles pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings use BGE-M3. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
+Free model integration (implemented on this branch; SDK bundles published, application release pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings use BGE-M3. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
 
 ```text
 Setup / extension / desktop / mobile / CLI → local config → shared sponsored router

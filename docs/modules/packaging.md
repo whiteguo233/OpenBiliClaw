@@ -5,6 +5,7 @@
 | Feature | Status | Contract |
 | --- | --- | --- |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
+| Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
 | Local experimental builds | Retained outside hosted CI | Without either signing option, retain ad-hoc signing and the existing installation helper/first-launch guidance. Partial signing configuration is an error. |
@@ -23,6 +24,8 @@
 Both must be supplied on macOS. Bundle version metadata uses numeric `X.Y.Z`; architecture, commit and variant labels remain in the artifact filenames. These are build settings, not `config.toml` fields or application CLI commands. Configure a local profile with `xcrun notarytool store-credentials openbiliclaw-notary --keychain "$HOME/Library/Keychains/login.keychain-db"`; use your **paid team's Team ID**, Apple ID and an app-specific password, stored in the macOS Keychain. Xcode login and an Apple Development certificate alone are insufficient. Without `--keychain`, Apple uses the data protection keychain, which was observed to become unreadable shortly after a successful save on the local build host. For automation, explicitly pass the same file keychain to both store and every subsequent operation; CI now uses its temporary signing keychain. Verify with `notarytool history --keychain-profile PROFILE --keychain PATH` in a new process before announcing success.
 
 All resource mutations (Ollama, Tailnet, model seed, compatibility links) must finish before `sign_macos_app`. Never alter the app after signing/stapling. Signing enumerates real files without following symbolic links; data and model files are sealed as resources, not signed as executable code. No blanket Hardened Runtime exceptions are enabled.
+
+Free-runtime packaging uses `openbiliclaw.runtime.sponsored_bundle.stage_runtime_bundle(destination)` and `verify_bundle(directory)`; the target is `Contents/Resources/sponsored` on Mac and `sponsored` under the Windows packaged root.
 
 Public helpers in `packaging/build.py`: `validate_macos_signing`, `sign_macos_app`, `notarize_macos_artifact`, `notarize_macos_app`, `staple_macos_artifact`; `make_macos_dmg(..., notarized=True)` selects the signed installation instructions after successful app notarization.
 
@@ -54,3 +57,7 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 ## 免费模型组件
 
 打包时通过 `runtime.sponsored_bundle.stage_runtime_bundle` 纳入固定发行目录中的已验签组件。macOS主应用签名跳过组件可执行文件，保留其独立manifest中的字节摘要，并在主应用签名后再次验签；本机ad-hoc打包也采用逐层签名。新配置仅在组件可验证时启用免费方案，已有用户配置保留。详细发行与质量边界见[用户流程验收](../testing/2026-11-04-sponsored-user-flow.md)。
+
+`Sponsored runtime installation`工作流在五种原生runner下载Core固定归档、验签、执行离线自检、激活并验证损坏更新保留旧组件；Linux x86_64/arm64另用实际Dockerfile构建并在容器执行自检。`scripts/sponsored_install_smoke.py`使用隔离数据目录，不调用模型API。
+
+组件下载读取已保存的network策略，因此构建入口也能使用用户选择的系统或自定义代理，无需先启动API服务。

@@ -20,7 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 免费双模型方案（发行待完成） | 已实现并做真实调用 | 8B/4B 可选、真实 SSE、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
+| 免费双模型方案（SDK已发布，主程序待发布） | 已实现并做真实调用 | 8B/4B 可选、真实 SSE、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
 | 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |

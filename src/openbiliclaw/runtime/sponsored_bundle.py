@@ -282,7 +282,8 @@ def ensure_runtime() -> str:
     """Acquire the Core-pinned release. Never download a URL supplied by a browser."""
     import httpx
 
-    from openbiliclaw.network import outbound_httpx_kwargs
+    from openbiliclaw.config import load_config
+    from openbiliclaw.network import httpx_kwargs_for
 
     catalog = _catalog()
     release = catalog.get("releases", {}).get(platform_id())
@@ -303,9 +304,16 @@ def ensure_runtime() -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise BundleError("invalid pinned archive digest")
     url = str(release.get("url", ""))
+    # Bootstrap and packaging call this before API/CLI network initialization.
+    # Resolve the saved policy here instead of inheriting the pre-init direct sentinel.
+    network = load_config().network
     with tempfile.TemporaryDirectory(prefix="download-", dir=root) as scratch:
         archive = Path(scratch) / "bundle.tar.gz"
-        with httpx.Client(timeout=60, follow_redirects=False, **outbound_httpx_kwargs()) as client:
+        with httpx.Client(
+            timeout=60,
+            follow_redirects=False,
+            **httpx_kwargs_for(network.mode, network.proxy),
+        ) as client:
             for _ in range(6):
                 if urlparse(url).scheme != "https" or urlparse(url).username is not None:
                     raise BundleError("runtime downloads require HTTPS")

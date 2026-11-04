@@ -36,7 +36,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| 免费模型组件安装/升级 | 已实现，正式发行待验 | Core固定信任根、验签后自检、版本目录原子激活，Git/Docker/桌面共用；失败保留原组件。 |
+| 免费模型组件安装/升级 | 已实现，SDK组件已发布 | Core固定信任根、验签后自检、版本目录原子激活，Git/Docker/桌面共用；失败保留原组件。 |
 | 抖音 partial 失败与共享冷却 | ✅ | 有有效视频也保留 failed / timeout，不能清掉退避。`produce_if_due()` 在关键词领取前读取同一 `dy_tasks` 冷却，进程重启和 `min_interval_minutes=0` 都不会消耗新关键词后才发现暂停。 |
 | 抖音正式入口热词轮换 | ✅ | `build_douyin_discovery_producer()` 每轮仍安全重建 direct/plugin client，但新 client 会读取既有 hot 任务选择记录，6 小时轮换不再仅依赖单个 transport 对象。 |
 
@@ -825,7 +825,9 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 `python -m openbiliclaw.runtime.sponsored_bundle --if-available` 只允许“没有发行包”的状态返回成功，签名或内容损坏仍失败；`--archive <path>` 安装本机归档；`--stage <directory>` 验证后复制。数据位于项目数据根下 `.sponsored/`，不纳入git。源码更新在新依赖就绪后、重启前协调组件；旧目录保留，失败不改活动指针。Docker在构建时放到 `/opt/openbiliclaw-sponsored`，桌面放入资源目录；两者使用 `OPENBILICLAW_SPONSORED_BUNDLE` 定位。
 
-macOS应用重签必须跳过已由发行策略覆盖的SDK字节；Developer ID和本地ad-hoc路径都再次验签。正式五平台产物、OS签名与在线更新仍需发行验收，空目录不代表已经安装。信任根和流程见[实现决策](../plans/2026-11-04-sponsored-user-flow.md)。
+macOS应用重签必须跳过已由发行策略覆盖的SDK字节；Developer ID和本地ad-hoc路径都再次验签。五平台SDK产物已发布并进入Core固定目录；Mac完成签名公证，Windows采用独立manifest验签。在线下载/更新与容器按专门CI验收，应用整包另行验证。信任根和流程见[实现决策](../plans/2026-11-04-sponsored-user-flow.md)。
 
 Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel和PyInstaller资源清单都包含发行目录，普通安装不需Rust工具链。
 免费模型组件安装在执行原生离线自检时沿用后端的Windows隐藏控制台规则，设置页准备组件不会弹出终端窗口。
+
+组件下载在调用入口独立读取已保存的network策略（system/direct/custom），避免源码bootstrap和打包尚未初始化API/CLI网络全局状态时误用直连。此过程不改变业务请求的全局网络策略。

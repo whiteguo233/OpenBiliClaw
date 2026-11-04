@@ -35,8 +35,10 @@ Core中的 `runtime/sponsored_release.json` 是独立信任根；不信任下载
 
 ## 当前交付边界
 
-本分支已具备完整代码、四端真实后端浏览器测试、Rust真实API流式测试和签名安装测试。它尚未完成正式发行，Core目录保持空，绝不填虚构的安装URL或把临时测试密钥当成正式信任根。
+本分支已具备完整代码、四端真实后端浏览器测试、Rust真实API流式测试和签名安装测试。五平台SDK组件已[发布](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-04.1)，Core目录包含固定下载URL、独立长期公钥和文件摘要；主程序改动仍通过[PR336](https://github.com/whiteguo233/OpenBiliClaw/pull/336)交付，不能把SDK发布等同于已向现有用户发布新版应用。
 
-正式发行还需要：固定已审阅的公私仓提交、长期策略签名公钥与私有seed、有限发布预算、私有仓 `sponsored-release` 环境中的模型Key/签名凭据、五平台产物，以及Mac签名公证和Windows签名。私有 `export_catalog.py` 在独立公钥下验证产物，生成可审查的Core目录；随后将真实公共下载URL和摘要接入Core，再做新装/升级验收。缺这些材料时，新用户能看到入口，但不能完成免费组件下载；不能据此宣称用户已经开箱可用。
+本次已配置私有仓main-only手动发布环境、长期Ed25519密钥和有限预算，固定已审阅的公私仓SHA。当前私有仓套餐不支持required reviewer，不能声称有人工审批强制门禁。Mac两架构完成Developer ID签名和Apple Accepted公证；Windows当前采用显式manifest-only模式，由Core独立验签，不宣称Authenticode签名。策略有效90天，具体到期时间、公证ID和摘要见[发行审计](../testing/assets/2026-11-04-sponsored-release-audit.json)。
+
+单安装公平使用上限为20,000次/天、20M tokens/天、300M tokens/月、300 RPM；这是客户端有限预算，不是供应商账户获批额度。轮换凭据、续期或变更Core契约后，需要重新生成并验证组件和固定目录。在线原生安装、损坏升级保护和双架构Docker由专门CI执行；应用整包另走安装器构建验收。
 
 [测试与质量记录](../testing/2026-11-04-sponsored-user-flow.md)区分连接成功、格式完整和事实质量。两模型仍可能过度推断画像或补造时间依据，免费接入不改变这项质量边界。

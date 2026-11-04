@@ -176,3 +176,45 @@ def test_matching_installed_release_does_not_download_again(
     monkeypatch.setattr(bundle, "_root", lambda: tmp_path / "state")
     monkeypatch.setenv("OPENBILICLAW_SPONSORED_BUNDLE", str(directory))
     assert bundle.ensure_runtime() == bundle.installed_runtime_command()
+
+
+@pytest.mark.parametrize("mode", ["system", "direct", "custom"])
+def test_standalone_download_honors_saved_network_policy_before_app_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    import httpx
+
+    from openbiliclaw.config import Config
+
+    cfg = Config()
+    cfg.network.mode = mode
+    cfg.network.proxy = "http://127.0.0.1:17897" if mode == "custom" else ""
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+    monkeypatch.setattr(bundle, "installed_runtime_command", lambda: "")
+    monkeypatch.setattr(bundle, "_root", lambda: tmp_path / "state")
+    monkeypatch.setattr(
+        bundle,
+        "_catalog",
+        lambda: {
+            "releases": {
+                bundle.platform_id(): {
+                    "sha256": "0" * 64,
+                    "url": "https://example.invalid/runtime.tar.gz",
+                }
+            },
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    class ClientReachedError(Exception):
+        pass
+
+    def client(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise ClientReachedError
+
+    monkeypatch.setattr(httpx, "Client", client)
+    with pytest.raises(ClientReachedError):
+        bundle.ensure_runtime()
+    assert captured["trust_env"] is (mode == "system")
+    assert captured.get("proxy") == (cfg.network.proxy if mode == "custom" else None)

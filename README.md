@@ -653,7 +653,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
-免费模型方案（本分支已接入，正式组件尚待发行）：初始化、插件、PC 与手机设置共用模型选择；8B 为推荐默认，4B 可随时切换，文本向量固定 BGE-M3。[实现与验收边界](docs/plans/2026-11-04-sponsored-user-flow.md)。
+免费模型方案（本分支已接入，SDK组件已发布，主程序待发布）：初始化、插件、PC 与手机设置共用模型选择；8B 为推荐默认，4B 可随时切换，文本向量固定 BGE-M3。[实现与验收边界](docs/plans/2026-11-04-sponsored-user-flow.md)。
 
 ```text
 初始化 / 插件 / PC / 手机 / CLI → 本机配置 → 共享 Sponsored 路由
