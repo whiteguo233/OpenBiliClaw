@@ -35,6 +35,10 @@ class SponsoredUnavailableError(SponsoredError):
     code = "UNAVAILABLE"
 
 
+class SponsoredStartupBusyError(SponsoredUnavailableError):
+    """A legacy runtime exited before handshake because its ledger was locked."""
+
+
 class SponsoredUnsupportedTaskError(SponsoredError):
     """The task/version is not present in the signed policy."""
 

@@ -891,12 +891,15 @@ class LLMService:
         provider = self._resolve_sponsored_provider()
         if contract is not None and provider is not None:
             try:
-                response = await provider.execute_task(
-                    caller=caller,
-                    contract_version=contract_version,
-                    user_payload=payload,
-                    user_text=user_text,
-                )
+                async with self._provider_slot(
+                    caller=caller, bypass_background=_BACKGROUND_ADMISSION_BYPASS.get()
+                ):
+                    response = await provider.execute_task(
+                        caller=caller,
+                        contract_version=contract_version,
+                        user_payload=payload,
+                        user_text=user_text,
+                    )
             except SponsoredError as exc:
                 from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
 

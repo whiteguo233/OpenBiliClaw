@@ -172,6 +172,16 @@ async def test_free_agent_literal_json_answer_is_delivered_after_classification(
     assert not chunks[-1].response.tool_calls
 
 
+@pytest.mark.parametrize("body", ['{"queries":["Rust 借用"]}', '[{"id":"a","text":"文案"}]'])
+async def test_structured_free_replies_normalize_only_complete_json_fences(body: str) -> None:
+    content = f"```json\n{body}\n```"
+    async with provider(env={"SPONSORED_MOCK_RESPONSE": content}) as sdk:
+        response = await sdk.complete(MESSAGES, json_mode=True)
+        assert response.content == body
+        literal = await sdk.complete(MESSAGES, json_mode=False)
+        assert literal.content == content
+
+
 async def test_free_fallback_recalculates_implicit_thinking_for_its_model() -> None:
     captured = []
 

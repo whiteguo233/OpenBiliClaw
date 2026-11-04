@@ -111,7 +111,12 @@ class RuntimeObservations(logging.Handler):
         message = record.getMessage()
         failed = record.levelno >= logging.ERROR or any(
             marker in message.lower()
-            for marker in ("timed out", "llm call failed", "evaluation worker failed")
+            for marker in (
+                "timed out",
+                "llm call failed",
+                "evaluation worker failed",
+                "generation failed",
+            )
         )
         self.records.append({"logger": record.name, "message": message, "failure": failed})
 
@@ -193,7 +198,7 @@ class Run:
         return result
 
 
-async def run_model(root: Path, model: str) -> None:
+async def run_model(root: Path, model: str, candidate_count: int = 12) -> None:
     root.mkdir(parents=True, exist_ok=False)
     os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(root)
     cfg = Config(data_dir=str(root / "data"))
@@ -365,13 +370,17 @@ async def run_model(root: Path, model: str) -> None:
                     source_strategy="search",
                     score_threshold=0.6,
                 )
-                for i, (title, description, tag) in enumerate(CANDIDATES)
+                for i, (title, description, tag) in enumerate(
+                    [CANDIDATES[i % len(CANDIDATES)] for i in range(candidate_count)]
+                )
             ]
             scores = await ctx.discovery_engine.evaluate_content_batch(candidates, profile)
             assert len(scores) == len(candidates), (len(scores), len(candidates))
             assert all(math.isfinite(x.relevance_score) for x in candidates)
-            relevant = sum(c.relevance_score for c in candidates[:8]) / 8
-            unrelated = sum(c.relevance_score for c in candidates[-2:]) / 2
+            relevant_rows = [c for i, c in enumerate(candidates) if i % len(CANDIDATES) < 8]
+            unrelated_rows = [c for i, c in enumerate(candidates) if i % len(CANDIDATES) >= 10]
+            relevant = sum(c.relevance_score for c in relevant_rows) / len(relevant_rows)
+            unrelated = sum(c.relevance_score for c in unrelated_rows) / len(unrelated_rows)
             assert relevant > unrelated, (relevant, unrelated)
             await ctx.discovery_engine.normalize_evaluated_results(candidates)
             admitted = ctx.discovery_engine.cache_evaluated_results(candidates)
@@ -464,10 +473,33 @@ async def run_model(root: Path, model: str) -> None:
         await run.case("explicit_dialogue_learning", dialogue_learning)
 
         async def consolidation() -> dict[str, Any]:
+            from openbiliclaw.soul.consolidator import _Cluster
+
+            consolidator = ctx.soul_engine._profile_consolidator
+            # The learned fixture can have no duplicate clusters. A no-op dry
+            # run must not be reported as proof of a real fixed-task API call.
+            clusters = [
+                _Cluster(cluster_id=f"live-{i}", scope="likes", members=[name, name + "实践"])
+                for i, name in enumerate(
+                    ["Rust所有权", "Python异步编程", "SQLite索引优化", "盆栽番茄养护"]
+                )
+            ]
             with _background_admission_bypass():
-                report = await ctx.soul_engine._profile_consolidator.run(dry_run=True)
+                report = await consolidator.run(dry_run=True)
+                operations = await consolidator._judge(clusters)
             assert not report.errors, report.errors
-            return asdict(report)
+            problems = {
+                cluster.cluster_id: consolidator._validate_cluster_ops(
+                    cluster, operations.get(cluster.cluster_id, [])
+                )
+                for cluster in clusters
+            }
+            assert not any(problems.values()), problems
+            return {
+                **asdict(report),
+                "live_judge_clusters": len(clusters),
+                "operations": operations,
+            }
 
         await run.case("profile_consolidation_and_embedding_recall", consolidation)
 
@@ -506,10 +538,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--model", choices=CHAT_MODELS, required=True)
+    parser.add_argument("--candidate-count", type=int, choices=(12, 30), default=12)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     try:
-        asyncio.run(run_model(args.root.resolve(), args.model))
+        asyncio.run(run_model(args.root.resolve(), args.model, args.candidate_count))
     except Exception:
         traceback.print_exc()
         raise

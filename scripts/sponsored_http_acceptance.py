@@ -169,6 +169,7 @@ async def run_http(root: Path, port: int, keep_seconds: int) -> None:
             for selected in (alternate, model):
 
                 async def switch(selected: str = selected) -> dict[str, Any]:
+                    apply_start = time.monotonic()
                     response = await client.put(
                         "/api/config",
                         json={"llm": {"sponsored": {"enabled": True, "model": selected}}},
@@ -185,11 +186,13 @@ async def run_http(root: Path, port: int, keep_seconds: int) -> None:
                         await asyncio.sleep(0.1)
                     assert status.get("state") in {"idle", "applied"}, status
                     assert run.ctx.config.llm.sponsored.model == selected
+                    apply_seconds = round(time.monotonic() - apply_start, 3)
                     probe = await client.post(
                         "/api/config/probe-service", json={"kind": "sponsored"}
                     )
                     probe.raise_for_status()
                     result = probe.json()
+                    result["apply_seconds"] = apply_seconds
                     assert result["ok"] and result["model"] == selected, result
                     assert load_config(consult_environment=False).llm.sponsored.model == selected
                     return result

@@ -537,7 +537,7 @@ class ProfileConsolidator:
         ]
         report.clusters_sent = len(clusters)
         if clusters and self._llm_service is not None:
-            report.llm_batches = _batch_count(len(clusters), _JUDGE_CLUSTER_BATCH)
+            report.llm_batches = _batch_count(len(clusters), self._judge_batch_size())
 
         # ── Stage 2: LLM judgement ─────────────────────────────────────────
         valid_ops: list[dict[str, object]] = []
@@ -1045,6 +1045,15 @@ class ProfileConsolidator:
 
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
+    @staticmethod
+    def _judge_batch_size() -> int:
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        # Nov 5 live SDK: 16 clusters took 78s/125s on 8B/4B. Keep individual
+        # free requests away from the 180s deadline without dropping clusters;
+        # this provisional size needs remeasurement after a provider swap.
+        return min(_JUDGE_CLUSTER_BATCH, 8) if sponsored_enabled() else _JUDGE_CLUSTER_BATCH
+
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.
 
@@ -1055,10 +1064,8 @@ class ProfileConsolidator:
         if self._llm_service is None:
             return {}
         ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
-        batches = [
-            clusters[i : i + _JUDGE_CLUSTER_BATCH]
-            for i in range(0, len(clusters), _JUDGE_CLUSTER_BATCH)
-        ]
+        batch_size = self._judge_batch_size()
+        batches = [clusters[i : i + batch_size] for i in range(0, len(clusters), batch_size)]
         last_error: Exception | None = None
         succeeded = 0
         for batch in batches:
@@ -1227,13 +1234,27 @@ class ProfileConsolidator:
         for op in ops:
             kind = str(op.get("op", ""))
             if kind == "keep":
-                ref = op.get("member", op.get("name", ""))
-                consumed = consume(ref)
-                if consumed is None:
-                    return f"keep references unknown member: {ref!r}"
-                key, _name = consumed
-                covered.append(key)
-                op["_member_keys"] = [key]
+                # Real free-model replies sometimes group several keeps in
+                # `members`. This still means preserve each original item;
+                # validate every reference with the same coverage rules.
+                refs = (
+                    op["members"]
+                    if "member" not in op
+                    and "name" not in op
+                    and isinstance(op.get("members"), list)
+                    else [op.get("member", op.get("name", ""))]
+                )
+                if not refs:
+                    return "keep has no members"
+                kept_keys = []
+                for ref in refs:
+                    consumed = consume(ref)
+                    if consumed is None:
+                        return f"keep references unknown member: {ref!r}"
+                    key, _name = consumed
+                    covered.append(key)
+                    kept_keys.append(key)
+                op["_member_keys"] = kept_keys
             elif kind == "merge":
                 raw_members = op.get("members", [])
                 member_refs = raw_members if isinstance(raw_members, list) else []

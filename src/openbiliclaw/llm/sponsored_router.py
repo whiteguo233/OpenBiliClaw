@@ -1,4 +1,4 @@
-"""One runtime child per event loop, shared by service, raw registry and embedding."""
+"""Bounded runtime workers shared by service, raw registry and embedding."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ _BYPASS: ContextVar[bool] = ContextVar("sponsored_bypass", default=False)
 _PROVIDERS: weakref.WeakKeyDictionary[Any, dict[tuple[str, float, str, bool], Any]] = (
     weakref.WeakKeyDictionary()
 )
+_STARTUP_LOCKS: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionary()
 
 
 @contextmanager
@@ -42,8 +43,8 @@ def sponsored_enabled() -> bool:
 
 
 def shared_sponsored_provider() -> SponsoredProvider | None:
+    from .sponsored_pool import SponsoredProviderPool
     from .sponsored_profiles import approved_registry
-    from .sponsored_provider import SponsoredProvider
 
     settings = current_sponsored_settings()
     if not sponsored_enabled():
@@ -70,8 +71,9 @@ def shared_sponsored_provider() -> SponsoredProvider | None:
     if key not in cache:
         try:
             args = shlex.split(command)
-            cache[key] = SponsoredProvider(
+            cache[key] = SponsoredProviderPool(
                 args,
+                startup_lock=_STARTUP_LOCKS.setdefault(loop, asyncio.Lock()),
                 registry=approved_registry(),
                 request_timeout=settings.request_timeout_seconds,
                 model=settings.model,
@@ -166,9 +168,14 @@ async def stream_project_completion(
                 stream = provider.stream_complete_with_tools(messages, tools, **sdk_kwargs)
             else:
                 stream = provider.stream_complete(messages, **sdk_kwargs)
-            async for chunk in stream:
-                emitted = emitted or bool(chunk.delta) or chunk.response is not None
-                yield chunk
+            try:
+                async for chunk in stream:
+                    emitted = emitted or bool(chunk.delta) or chunk.response is not None
+                    yield chunk
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
             return
         except SponsoredError as exc:
             if emitted or not is_fallback_allowed(exc) or not settings.fallback_to_user_provider:

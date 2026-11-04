@@ -33,6 +33,59 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.mark.parametrize("separate_worker", [False, True])
+async def test_free_model_switch_applies_while_learning_is_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separate_worker: bool
+) -> None:
+    import sys
+
+    from openbiliclaw.sponsored_runtime_state import (
+        SponsoredRuntimeSettings,
+        current_sponsored_settings,
+        install_sponsored_settings,
+    )
+
+    previous = current_sponsored_settings()
+    if separate_worker:
+        monkeypatch.setenv("OPENBILICLAW_FULL_WORKER", "1")
+    else:
+        monkeypatch.delenv("OPENBILICLAW_FULL_WORKER", raising=False)
+    app = _app(monkeypatch, tmp_path)
+    ctx = app.state.runtime_context
+    ctx.config.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=sys.executable)
+    save_config(ctx.config, tmp_path / "config.toml")
+    install_sponsored_settings(ctx.config.llm.sponsored)
+    preserved = (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
+    finish = asyncio.Event()
+    work = ctx.task_registry.track("active_background_learning", finish.wait())
+    drain = AsyncMock(side_effect=AssertionError("model choice must not drain learning"))
+    monkeypatch.setattr(app.state.feedback_batch_scheduler, "pause_and_drain", drain)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
+        ) as client:
+            response = await client.put(
+                "/api/config", json={"llm": {"sponsored": {"model": "Qwen/Qwen3.5-4B"}}}
+            )
+            assert response.status_code == 202, response.text
+            for _ in range(100):
+                status = (await client.get("/api/config/apply-status")).json()
+                if status["state"] in {"applied", "failed"}:
+                    break
+                await asyncio.sleep(0.01)
+            assert status["state"] == "applied", status
+        drain.assert_not_called()
+        assert not work.done()
+        assert preserved == (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
+        assert ctx.config.llm.sponsored.model == "Qwen/Qwen3.5-4B"
+        assert current_sponsored_settings().model == "Qwen/Qwen3.5-4B"
+        assert app.state.backend_config_generation == int(separate_worker)
+    finally:
+        finish.set()
+        await work
+        install_sponsored_settings(previous)
+
+
 def _app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, twitter: bool = False) -> Any:
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     config = Config(
@@ -265,6 +318,28 @@ def test_future_agent_fields_are_not_implicitly_safe_to_apply() -> None:
     candidate.agent = FutureAgentConfig(learning_backend="new", loop_max_steps=63)
     assert not ctx.try_apply_agent_config(candidate)
     assert ctx.config is config
+
+
+def test_user_provider_fallback_change_requires_registry_rebuild() -> None:
+    from dataclasses import replace
+
+    from openbiliclaw.sponsored_runtime_state import (
+        SponsoredRuntimeSettings,
+        current_sponsored_settings,
+        install_sponsored_settings,
+    )
+
+    previous = current_sponsored_settings()
+    config = Config()
+    config.llm.sponsored = SponsoredRuntimeSettings(enabled=True)
+    ctx = _small_runtime(object(), config)
+    candidate = copy.deepcopy(config)
+    candidate.llm.sponsored = replace(candidate.llm.sponsored, fallback_to_user_provider=True)
+    try:
+        assert not ctx.try_apply_sponsored_config(candidate)
+        assert ctx.config is config
+    finally:
+        install_sponsored_settings(previous)
 
 
 @pytest.mark.parametrize("mode", ["direct", "pending", "failed-active"])

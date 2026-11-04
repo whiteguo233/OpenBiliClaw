@@ -289,7 +289,8 @@ def test_build_soul_profile_prompt_avoids_report_tone() -> None:
     )
 
     assert "朋友" in messages[0]["content"]
-    assert "3 到 6 条" in messages[0]["content"]
+    # Sparse evidence must not force three invented personality traits.
+    assert "0 到 6 条" in messages[0]["content"]
 
 
 def test_search_prompt_includes_pool_distribution_hints() -> None:

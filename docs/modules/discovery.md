@@ -741,6 +741,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费模型评估分批 | 已实现 | evaluate_content_batch在免费LLM路由下每次最多8条；全部条目、ID、顺序和校验保留，Jev不受影响 |
 | 抖音发现共享冷却 | ✅ | 已领取且最终 failed 的 search / hot / feed 从 `dy_tasks` 推导持久冷却；producer 在关键词 claim 前检查，client 在 hot-word / 取数和 direct fallback 前检查，队列暂停新的 pending discovery claim。有效 partial 保留，失败不被候选数量清除。 |
 | 抖音热词跨轮次轮换 | ✅ | 客户端从 `dy_tasks.payload_json.hot_items` 读取最近 6 小时已入队选择；正式 producer 每轮重建 transport 和进程重启均不会丢失轮换记录。沿用新词优先、全部最近使用时仍补足数量的原策略。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
@@ -1741,3 +1742,5 @@ V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍�
 - 单后端配置同样获得既有的错误 cooldown、`provider_failures` / `provider_successes` 计数和 `last_search_provider` 归因；此前裸 provider 会让 `grounding_source` 退化成 `"none"`，并在每次 probe 重打同一个失败端点。
 - 单后端时 `pages_per_probe` 固定为 1，单次请求条数与装配前一致；多后端仍按配置的每 probe 页数叠加。
 - 失败语义不变：链上有可用结果就返回，全部失败时把最后一个真实错误抛给调用方，不吞异常。
+
+2026-11-05：`evaluate_content_batch(contents, profile, batch_size=...)` 在免费LLM启用时将单请求批量上限限制为8，仍评估整个输入；共享并发gate及原缺项重试、持久化claim语义保持不变。实际30条与完整后台重测见本轮验收。

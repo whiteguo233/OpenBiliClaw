@@ -1148,6 +1148,23 @@ async def test_evaluate_content_batch_limits_llm_batch_concurrency_to_two_by_def
     assert llm_service.max_active_calls == 2
 
 
+async def test_free_evaluation_splits_long_batch_without_losing_or_reordering_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("openbiliclaw.llm.sponsored_router.sponsored_enabled", lambda: True)
+    service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=service)
+    contents = [
+        DiscoveredContent(bvid=f"BV_FREE_{i}", title=f"候选 {i}", source_strategy="search")
+        for i in range(30)
+    ]
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=30)
+    batches = [_batch_prompt_items(text) for text in service.user_inputs]
+    assert max(map(len, batches)) <= 8
+    assert sum(map(len, batches)) == len(contents)
+    assert scores == [0.8] * len(contents)
+
+
 @pytest.mark.asyncio
 async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_llm() -> None:
     llm_service = FakeLLMService(

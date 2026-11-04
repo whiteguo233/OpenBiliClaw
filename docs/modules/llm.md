@@ -20,6 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
 | 免费双模型方案（SDK已发布，主程序待发布） | 主要链路实测通过，稳定性未全过 | 8B/4B 可选、Agent 真 SSE、通用操作有界思考、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。后台长批次/切换等待及内容质量限制见[系统验收](../testing/2026-11-04-sponsored-system-acceptance.md)，入口设计见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
 | 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
@@ -817,7 +818,7 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
     保持既有 prompt golden 不变。`zh-Hant` 额外带「只用繁體字」字符约束（真实 provider 实测：
     只说 Traditional Chinese 时首轮仍可能回简体）；配置保存/应用提示同样按新语言返回。
 
-### 旧画像合并子契约 API（兼容保留、未发布）
+### 固定画像合并子契约 API（兼容保留）
 
 `execute_task(caller="soul.consolidation", user_payload={"likes_clusters": [...], "dislikes_clusters": [...]})` 是保留的 contract2 入口；完整 SDK 见下节；user_text/system_prompt 仅作本地旧 Prompt 漂移检查。未知类型或嵌套额外字段失败；Runtime 对同一结构独立复核，不信任 Python 的校验结果。模型、目标和温度不能通过请求覆盖。
 
@@ -830,12 +831,22 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 
 `complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`stream_complete_with_tools()` 同样走 Rust SSE，普通 Agent 回复增量显示；可能属于工具调用的 JSON/数组/代码围栏先缓冲，终帧解析为工具请求后交给 Core，普通 JSON 答案则补发正文。流已开始后不回放，主动关闭或取消时回收子进程并释放请求锁。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
 
-免费模型的通用 SDK 操作有明确隐式思考预算：8B 的 `llm.structured` 在输出额度至少2048时默认 `low`（Rust 映射为最多1024思考 tokens）；更短的请求、4B 以及普通文本/工具回复默认关闭思考，避免隐式思考占满短回答额度或触发 SDK 最小预算限制。调用方显式传入空字符串、high/max等仍原样保留；免费互备按实际签名模型重新选择默认值。真实完整建像曾在未指定思考时超时。早期固定结构的 `soul.consolidation` 契约没有这个参数，仍保持原签名和行为；不能据此宣称其长任务超时也已解决。全系统实测及尚存限制见[业务验收](../testing/2026-11-04-sponsored-system-acceptance.md)。
+免费模型的通用 SDK 操作有明确隐式思考预算：8B 的 `llm.structured` 在输出额度至少2048时默认 `low`（Rust 映射为最多1024思考 tokens）；更短的请求、4B 以及普通文本/工具回复默认关闭思考，避免隐式思考占满短回答额度或触发 SDK 最小预算限制。调用方显式传入空字符串、high/max等仍原样保留；免费互备按实际签名模型重新选择默认值。真实完整建像曾在未指定思考时超时。固定结构的 `soul.consolidation` 请求也进入总并发gate；已发行11月4日SDK仍沿用旧思考默认值，私有PR5给该路径补齐同样的预算，需新组件发行后才生效。全系统实测及尚存限制见[业务验收](../testing/2026-11-04-sponsored-system-acceptance.md)。
 
-`shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用进程。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
+`shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用 `SponsoredProviderPool`；池内1个前台与2个后台串行Rust子进程共用同一签名策略和安装账本。握手串行、网络请求并行，上层总并发gate继续有效。旧组件启动时若明确报告安装账本短锁竞争，仅握手最多重试两次；其它策略/契约/启动错误仍报错。取消流会回收对应子进程并归还工作位。模型选择更改后旧请求保留原Provider，新请求使用新选择。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
 
 JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和 BGE，禁用免费互备以免误报。
 
 ### 已申请模型的独立实测配置
 
 `llm.sponsored_live_profile.granted_test_registry(chat_model)` 只接受 `Qwen/Qwen3-8B` 或 `Qwen/Qwen3.5-4B`，用于配套签名测试包，不改默认注册表。文本向量绑定 `BAAI/bge-m3`、1024维，不注册图片向量任务；仅4B配置注册视觉任务。`SponsoredProvider.embedding()` 根据当前注册表校验响应模型和维度，不再固定假定所有签名包都使用Qwen-VL向量空间；未注册的能力在子进程启动前失败。
+
+### 2026-11-05 可靠性边界
+
+工具结果后继续携带原始用户任务，提醒完成尚缺的工具步骤；工具执行及写入授权仍由Core控制。画像提示将职业、年龄和经历限制为明确自述，示例不再示范心理和生活经历断言；推荐单条与批量提示禁止补写内容细节、用户经历或串用候选。提示约束不能保证语言模型无事实错误，必须结合真实业务输出验收。
+
+交互流式请求在任何原始delta或终帧之前遇到上游/可用性错误时，同一所选模型最多重试一次；已输出内容（包括尚未交给工具执行器的JSON）后不重放，配额/契约错误不走该重试。无显式思考且输入不超过32KiB的交互请求设置30秒首个非空delta时限，重试仍受各次完整请求时限约束；长输入和显式思考保留正常时限。这是11月4–5日实测后的暂定值，不是供应商SLA；模型变更后需要重新测量。
+
+明确以 `tool_call` / `tool_calls` 开头但JSON语法损坏的完整回复，在工具尚未执行、未向用户输出正文时最多请求一次格式纠正；再经原有严格JSON解析、工具白名单和Core参数/授权校验。纠正失败明确报协议错误，不能把坏JSON当作成功答案；不从损坏内容猜测或直接执行工具。普通JSON答案和已显示的回复不进入此纠正，成功时usage合计两次调用。
+
+结构化 `complete(json_mode=True)` 允许根对象或数组；若返回值整体是Markdown JSON围栏且围栏内可严格解析为对象/数组，则移除外层围栏后交给业务校验。不改正文数据、不提取夹在自然语言中的JSON、不修补不完整JSON，普通文本请求保留代码围栏原文。真实4B搜索查询复测定位了此格式差异，防止正确查询因围栏触发本地兜底。

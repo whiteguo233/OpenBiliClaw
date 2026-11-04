@@ -3,7 +3,7 @@
 The open-source core constructs ``LLMService`` in many places (API runtime,
 CLI, soul engine, OpenClaw bootstrap). Passing a new field through every
 constructor would be invasive for a setting that is process-wide by nature:
-the official build has one configuration and one runtime child.
+the official build has one configuration and a bounded pool of runtime children.
 
 ``load_config_with_diagnostics`` installs the ``[llm.sponsored]`` table here;
 ``LLMService`` reads it lazily on the first sponsored task and still honors the

@@ -70,6 +70,14 @@ _LIVE_AGENT_CONFIG_FIELDS = frozenset(
         "task_max_steps",
     }
 )
+_LIVE_SPONSORED_CONFIG_FIELDS = frozenset(
+    {
+        "model",
+        "fallback_to_other_free_model",
+        "notify_on_fallback",
+        "request_timeout_seconds",
+    }
+)
 
 
 class _BackgroundTaskHost(Protocol):
@@ -1148,6 +1156,35 @@ class RuntimeContext:
             payload.get("worker_pid"),
             payload.get("worker_mode"),
         )
+
+    def try_apply_sponsored_config(self, new_config: Config) -> bool:
+        """Publish free-model routing choices without draining mutation owners.
+
+        In-flight requests retain their immutable provider/model snapshot. Every
+        later request resolves the new selection; embedding space stays BGE-M3.
+        Enabling/disabling the runtime or changing any other setting rebuilds.
+        """
+        from openbiliclaw.config import Config
+        from openbiliclaw.sponsored_runtime_state import install_sponsored_settings
+
+        current = self.config
+        if self.degraded or not isinstance(current, Config) or not isinstance(new_config, Config):
+            return False
+        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
+        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        if not before.llm.sponsored.enabled or not after.llm.sponsored.enabled:
+            return False
+        expected = replace(
+            before.llm.sponsored,
+            **{name: getattr(after.llm.sponsored, name) for name in _LIVE_SPONSORED_CONFIG_FIELDS},
+        )
+        if replace(before, llm=replace(before.llm, sponsored=expected)) != after:
+            return False
+        install_sponsored_settings(after.llm.sponsored)
+        self.config = new_config
+        if self.agent_tool_context is not None:
+            self.agent_tool_context.config = new_config
+        return True
 
     def try_apply_agent_config(self, new_config: Config) -> bool:
         """Publish only known chat knobs, preserving active owners and loops.

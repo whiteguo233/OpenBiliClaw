@@ -656,7 +656,7 @@ Free model integration (implemented on this branch; SDK bundles published, appli
 Setup / extension / desktop / mobile / CLI → local config → shared sponsored router
   Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
   Text embeddings → BGE-M3 (1024 dimensions); optional image understanding → 4B
-  → signed task IPC → private Rust runtime → SiliconFlow
+  → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
   Installer / updater → Core-pinned public key and catalog → verify → atomic activation
 ```
 

@@ -399,6 +399,11 @@ _MAINTENANCE_CALLERS: set[str] = {
 }
 
 
+def is_interactive_caller(caller: str) -> bool:
+    """Use the same foreground classification for admission and IPC routing."""
+    return caller.strip() in _INTERACTIVE_CALLERS
+
+
 class LLMConcurrencyGate:
     """One true total provider bound plus a reserved background bound."""
 
@@ -456,7 +461,7 @@ class LLMConcurrencyGate:
 
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()
-        if tag in _INTERACTIVE_CALLERS:
+        if is_interactive_caller(tag):
             return LLMTrafficClass.INTERACTIVE
         if tag in _EXPRESSION_CALLERS:
             return LLMTrafficClass.REFILL_EXPRESSION

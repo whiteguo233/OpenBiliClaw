@@ -1,10 +1,11 @@
 # 后端 API
 
-## 免费模型设置（正式组件待发行）
+## 免费模型设置（SDK已发行，应用集成见PR336）
 
 | 已实现能力 | 行为 |
 | --- | --- |
 | 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
+| 免费模型即时切换 | PUT /api/config仅变更已启用免费方案的模型/免费互备/通知/超时选择时，无需排空后台学习；新请求生效。独立worker部署由现有supervisor重启后台进程以同步配置，持久化任务按原恢复规则继续。 |
 | 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与BGE1024维；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
 | 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
 
@@ -604,4 +605,6 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 | --- | --- | --- |
 | 显式草稿服务探针 | 已实现 | Chat 实例/默认链与 embedding 均绕过赞助替代，验证用户指定目标 |
 
-业务 LLM/向量请求在选择免费方案后通过统一 Sponsored SDK（正式组件待发行）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的模型、工具模拟与真实流式边界见[用户流程](../plans/2026-11-04-sponsored-user-flow.md)。
+业务 LLM/向量请求在选择免费方案后通过统一 Sponsored SDK（组件已发行）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的模型、工具模拟与真实流式边界见[用户流程](../plans/2026-11-04-sponsored-user-flow.md)。
+
+`RuntimeContext.try_apply_sponsored_config(new_config) -> bool` 在API配置修订锁内严格比较完整配置，只接受已启用方案的路由字段变更；切换自有provider回退开关、启用状态、runtime路径、其它配置或凭据更新仍走原安全交接。与原配置持久化、修订合并和失败回滚共用事务。

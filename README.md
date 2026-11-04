@@ -659,7 +659,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 初始化 / 插件 / PC / 手机 / CLI → 本机配置 → 共享 Sponsored 路由
   文本 / JSON / 工具 → Qwen3-8B（128K）⇄ Qwen3.5-4B（256K）
   文本向量 → BGE-M3（1024维）；可选图片理解 → 4B
-  → 签名任务 IPC → 私有 Rust Runtime → SiliconFlow
+  → 签名任务 IPC → Rust 进程池（1前台＋2后台，共用额度账本）→ SiliconFlow
   安装器 / 更新器 → Core 固定公钥与发行目录 → 验签 → 原子切换组件
 ```
 

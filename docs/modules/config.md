@@ -1748,3 +1748,7 @@ request_timeout_seconds = 180.0
 `load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。
 
 `runtime/sponsored_release.json` 固定公钥、归档摘要与平台目录；目录尚未配置正式产物时，安装入口明确提示版本不可用。组件验签及原子更新详见[Runtime](runtime.md#免费模型组件安装与更新)。
+
+### 免费模型路由即时应用（2026-11-05）
+
+无新增字段。方案已启用时，仅修改 `llm.sponsored.model`、免费互备开关、`notify_on_fallback`或`request_timeout_seconds`可即时应用，无需等待学习任务排空。配置API仍发布applied修订状态；API进程内旧请求持有原模型，新请求读取新选择；独立worker模式会递增配置generation，由现有supervisor重启后台进程并按原持久化规则恢复任务。切换自有provider回退开关（需要重建registry链）、方案启用状态、runtime_path或其它配置继续走完整运行时交接。

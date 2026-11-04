@@ -571,6 +571,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
+    allow_sponsored_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -3653,6 +3654,15 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
+        if item.allow_sponsored_live_apply and not item.restart_required:
+            async with config_runtime_reload_lock:
+                if ctx.try_apply_sponsored_config(item.config):
+                    if ctx.full_worker_expected():
+                        # Separate workers own startup config snapshots. Let
+                        # the existing supervisor reload them after the apply
+                        # queue settles; durable jobs recover on restart.
+                        app.state.backend_config_generation += 1
+                    return tr("api.config.saved_applied", path=item.saved_path)
         # Chat knobs have no dependency on profile/feedback owners. Keep the
         # same queue, lock and last-good transaction, but don't drain unrelated
         # work when the complete candidate differs only in known chat fields.
@@ -3768,6 +3778,10 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
+                            config_apply_pending.allow_sponsored_live_apply = (
+                                config_apply_pending.allow_sponsored_live_apply
+                                and item.allow_sponsored_live_apply
+                            )
                             _set_config_apply_status(
                                 "queued",
                                 (
@@ -3868,6 +3882,9 @@ def create_app(
             # requirement even when the newest revision is a small agent edit.
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
+            )
+            item.allow_sponsored_live_apply = (
+                item.allow_sponsored_live_apply and config_apply_pending.allow_sponsored_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -25267,6 +25284,9 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
+                allow_sponsored_live_apply=(
+                    not pending_credential_writes and "tailnet" not in update
+                ),
             )
 
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，
