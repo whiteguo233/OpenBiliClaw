@@ -246,10 +246,22 @@ def test_popup_and_mobile_share_saved_model_with_real_backend(
     page.locator("#messagesButton").click()
     page.locator("#sponsoredMessageNotice").get_by_text("免费方案凭据不可用", exact=True).wait_for()
     assert page.locator("#messageBadge").inner_text() != "0"
-    page.goto(url + "/m/#/recommend")
+    page.goto(url + "/m/#/chat")
     page.get_by_role("button", name="查看消息", exact=True).click()
     notice = page.locator(".messages-overlay .sponsored-notice")
     notice.get_by_text("免费方案凭据不可用", exact=True).wait_for()
+    page.evaluate("""async () => {
+      const { patchState } = await import('/m/js/state.js');
+      patchState({runtimeStatus: await (await fetch('/api/runtime-status')).json()});
+    }""")
+    notice.get_by_role("button", name="配置自己的 Key", exact=True).focus()
+    page.evaluate("""async () => {
+      const { state, patchState } = await import('/m/js/state.js');
+      patchState({runtimeStatus: {...state.runtimeStatus, recommendation_count: 7}});
+    }""")
+    assert notice.get_by_role("button", name="配置自己的 Key", exact=True).evaluate(
+        "button => document.activeElement === button"
+    )
     notice.screenshot(path=str(artifacts / "sponsored-renewal-mobile.png"))
     notice.get_by_role("button", name="配置自己的 Key", exact=True).click()
     page.wait_for_url("**/web/?settings=models")

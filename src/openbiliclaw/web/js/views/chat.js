@@ -2326,9 +2326,11 @@ export function initChatView(root) {
     loaded = true;
     subscribe((nextState, changed) => {
       if (!("runtimeStatus" in changed)) return;
-      sponsoredStatus = nextState.runtimeStatus?.sponsored_status || {};
+      const nextStatus = nextState.runtimeStatus?.sponsored_status || {};
+      const noticesChanged = JSON.stringify(nextStatus.notices || []) !== JSON.stringify(sponsoredStatus.notices || []);
+      sponsoredStatus = nextStatus;
       updateBadgeCount();
-      if (overlayOpen) renderOverlay();
+      if (overlayOpen && noticesChanged) renderOverlay();
     });
     loadNotifications();
     void refreshSkills().then(render);

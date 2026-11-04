@@ -20,6 +20,7 @@
 | 扩展 | typecheck；1,858个Node测试通过；Chrome/Firefox构建及各22项静态资产检查通过。 |
 | 静态检查 | Ruff、MyPy（386文件）、配置示例/脚本语法、i18n目录漂移检查通过。 |
 | CLI显示 | 隔离配置分别运行 `config-show`，实际显示云端/本地向量来源与凭据失效指引。 |
+| 真实本地向量 | 本机既有Ollama/bge-m3返回有效非零1024维向量，8.508秒；同一隔离配置已通过合成IPC触发聊天AUTH_FAILED，向量成功后聊天通知仍保留。0次生产云端模型API调用，无新增模型下载。 |
 | 当前Mac原生SDK安装 | 从固定发行目录真实下载、原生离线自检/激活、重复安装、桌面资源暂存验签、损坏更新保留原组件全部通过；0次模型API调用。 |
 
 完整CI与五平台原生/双架构Docker矩阵由[PR336](https://github.com/whiteguo233/OpenBiliClaw/pull/336)记录当前提交结果。新增浏览器场景已纳入CI的Web验收任务。本机全套首次运行在发现“关闭免费方案后仍覆盖自有向量”的边界后主动终止并修复，未计为全量通过。
@@ -31,7 +32,7 @@
 隔离数据中，使用测试IPC进程模拟AUTH_FAILED；配置草稿没有真实Key。截图：[桌面](assets/sponsored-renewal/desktop.png)、[插件](assets/sponsored-renewal/popup.png)、[手机消息](assets/sponsored-renewal/mobile.png)。
 
 1. 初始化选择免费模型，确认默认云端BGE；改为本地并保存，确认原有Ollama模型/端点保留，未就绪时可进入原向量修复步骤。
-2. 用合成IPC peer的 `SPONSORED_MOCK_ERROR_CODE=AUTH_FAILED` 运行隔离后端并测试连接。打开设置和消息中心，检查更新链接、徽标及自有Key操作；重启后通知仍存在。
+2. 用合成IPC peer的 `SPONSORED_MOCK_ERROR_CODE=AUTH_FAILED` 运行隔离后端并测试连接。打开设置和消息中心，检查更新链接、徽标及自有Key操作；重启后通知仍存在。相同通知的状态轮询保持手机通知按钮焦点，不重复重建消息面板。
 3. 去掉测试故障，分别完成聊天/向量请求，确认只清除恢复的能力；模拟429确认不提示凭据过期。
 4. 关闭免费方案并填写自有embedding，保存后确认使用该选择。本地模式在免费Key失败时仍能走独立Ollama向量。
 
