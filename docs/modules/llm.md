@@ -20,7 +20,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 免费双模型方案（SDK已发布，主程序待发布） | 已实现并做真实调用 | 8B/4B 可选、真实 SSE、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
+| 免费双模型方案（SDK已发布，主程序待发布） | 主要链路实测通过，稳定性未全过 | 8B/4B 可选、Agent 真 SSE、通用操作有界思考、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。后台长批次/切换等待及内容质量限制见[系统验收](../testing/2026-11-04-sponsored-system-acceptance.md)，入口设计见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
 | 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
@@ -828,7 +828,9 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 
 `approved_registry()` 是生产路由与发行策略共用的十项固定契约。`SponsoredProvider(..., model=..., fallback_to_other_free_model=True)` 仅接受获批的8B/4B；选择更改后新调用使用相应签名 task ID。`stream_complete()` 转发 Rust 的真实内容 delta 和 terminal response，`raw.requested_model/free_model_fallback` 保留实际回退信息；流开始后不重试。旧 Runtime 未声明 streaming 时保留兼容的缓冲路径。
 
-`complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
+`complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`stream_complete_with_tools()` 同样走 Rust SSE，普通 Agent 回复增量显示；可能属于工具调用的 JSON/数组/代码围栏先缓冲，终帧解析为工具请求后交给 Core，普通 JSON 答案则补发正文。流已开始后不回放，主动关闭或取消时回收子进程并释放请求锁。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
+
+免费模型的通用 SDK 操作有明确隐式思考预算：8B 的 `llm.structured` 在输出额度至少2048时默认 `low`（Rust 映射为最多1024思考 tokens）；更短的请求、4B 以及普通文本/工具回复默认关闭思考，避免隐式思考占满短回答额度或触发 SDK 最小预算限制。调用方显式传入空字符串、high/max等仍原样保留；免费互备按实际签名模型重新选择默认值。真实完整建像曾在未指定思考时超时。早期固定结构的 `soul.consolidation` 契约没有这个参数，仍保持原签名和行为；不能据此宣称其长任务超时也已解决。全系统实测及尚存限制见[业务验收](../testing/2026-11-04-sponsored-system-acceptance.md)。
 
 `shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用进程。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
 

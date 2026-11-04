@@ -4,6 +4,8 @@
 
 ## v0.3.233：画像时间溯源与 ChatGPT 订阅修复（2026-10-30）
 
+- 免费方案业务验收补齐隐式思考预算与 Agent 真流式：4B 完整建像曾触发180秒超时，通用结构化操作默认改为关闭思考；8B 通用结构化操作在输出额度足够时保留1024-token思考预算，短请求关闭隐式思考，显式调用选项及旧归并契约不变。Agent 普通回复改为转发 Rust SSE 内容分片，工具 JSON 保留到终帧后解析；关闭流会回收旧子进程，后续请求可重新启动。新增隔离数据的真实业务与 HTTP/SSE 验收脚本；主要链路可执行，但后台评估超时、排队和内容质量仍未全过，详见[全系统业务验收](testing/2026-11-04-sponsored-system-acceptance.md)。
+
 - 开发分支新增免费模型完整用户入口（2026-11-04，SDK已发行，主程序待发布）：初始化/插件/PC/手机/CLI选择8B或4B，共用文本BGE-M3；Rust真实SSE、免费互备、付费回退显式开启、128K/256K上下文保护；修正JSON对象约束破坏数组的问题，真实30条文案两模型均完整返回。新增Core固定信任根、签名归档原子安装与Git/Docker/桌面接线，macOS重签保持SDK字节。图片理解为可选，BGE无图片向量；画像/时间事实质量仍有限，已接入五平台真实发行目录、长期独立公钥与90天策略；Mac两架构签名公证，Windows使用manifest校验。原生安装及双架构Docker由专门CI验证。[验收](testing/2026-11-04-sponsored-user-flow.md)。 后续回归补齐三语言词条、旧初始化配置回填、Windows组件自检无控制台行为，以及源码安装/打包读取保存的网络策略。生产组件通过真实配置API保存、切换、流式与BGE调用及重启恢复。桌面冻结包验收另修复随包SDK路径被误判为临时环境配置、阻止开机启动注册的问题；只豁免可由当前安装重新发现的内置路径。全量CI另识别并修复既有库存配额测试的同分跨秒排序不稳定，仅调整测试数据，保留所有断言。Intel Mac整包启动验收发现cryptography源码构建动态OpenSSL冲突，Mac构建改为静态链接并在PyInstaller前检查，仍保留真实冻结启动验收。免费方案启动时跳过旧的Ollama向量下载/播种，避免不必要的1.1GB权重；仅显式允许本地聊天回退时预备Ollama。
 
 - 修复画像把「账号导入」读成「用户行为」的根因（假时间 + 存量当行为）：B 站三条账号同步路径补齐真实时间——`get_following` 解析 `/x/relation/followings` 的 `mtime`，历史 `view_at`、收藏 `fav_time` 镜像进 canonical `metadata.timestamp`，CLI guided init 采集同样保留；首次同步给事件标 `snapshot`。本机账本实测 89,866 条观看只落在 950 个 `created_at` 秒、2,429 条关注只落在 93 个秒，正是「同一秒关注四十多人」的来源。新增 `soul/event_provenance.py` 在 prompt 边界统一投影：`created_at` 不再进入模型（只认 `metadata.timestamp`），存量关注聚合成一行「导入存量：关注了 N 位创作者（时间区间）」，无时间事件标 `time_quality=ingest`。偏好 / 觉察 / 灵魂画像 / 洞察四条 prompt 同步加规则：不得用库存推断外向、EI 只认用户自己的表达、MBTI 不得当 insight 证据；`ProfileBuilder` 对 MBTI 输出做 pole 校验、type 与维度一致性重算，任一维度 strength < 0.60 时把 confidence 压到 0.55。偏好 / 觉察两条 prompt 的用户消息渲染 golden 随之重新采样，并在测试里注明是显式的契约变更。

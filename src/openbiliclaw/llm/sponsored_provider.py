@@ -14,7 +14,7 @@ import logging
 import os
 import shlex
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -118,11 +118,12 @@ class SponsoredProvider:
         contracts = self._candidate_contracts(caller, task_id, contract_version)
         for index, contract in enumerate(contracts):
             try:
-                self._check_context(contract, user_payload)
+                payload = self._bounded_operation_payload(contract, user_payload)
+                self._check_context(contract, payload)
                 response = await self._execute_task_once(
                     task_id=contract.task_id,
                     contract_version=contract.contract_version,
-                    user_payload=user_payload,
+                    user_payload=payload,
                     user_text=user_text,
                     system_prompt=system_prompt,
                 )
@@ -155,6 +156,40 @@ class SponsoredProvider:
             else [contract, alternate]
         )
         return candidates if self._free_fallback else candidates[:1]
+
+    @staticmethod
+    def _bounded_operation_payload(
+        contract: SponsoredTaskContract, payload: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Keep implicit free-model thinking inside the normal task deadline.
+
+        Live full-profile calls exceeded 180s with the upstream's unspecified
+        thinking default. 8B structured tasks retain a 1024-token reasoning
+        budget when the output allowance leaves room for an answer; shorter
+        requests, 4B and conversational/tool replies default to no thinking.
+        Explicit caller choices, including high/max and disabled, stay intact.
+        Resolve after choosing the contract so free fallback uses its own model.
+        """
+        from .sponsored_profiles import CHAT_MODELS, DEFAULT_CHAT_MODEL
+
+        if (
+            contract.model not in CHAT_MODELS
+            or contract.operation not in {"structured", "text", "tools", "vision"}
+            or payload.get("reasoning_effort") is not None
+        ):
+            return payload
+        max_tokens = payload.get("max_tokens", 0)
+        effort = (
+            "low"
+            if (
+                contract.model == DEFAULT_CHAT_MODEL
+                and contract.operation == "structured"
+                and isinstance(max_tokens, int)
+                and max_tokens >= 2048
+            )
+            else ""
+        )
+        return {**payload, "reasoning_effort": effort}
 
     @staticmethod
     def _check_context(contract: SponsoredTaskContract, payload: Mapping[str, Any]) -> None:
@@ -248,6 +283,7 @@ class SponsoredProvider:
                 ) from exc
             except asyncio.CancelledError:
                 self._abort_process_sync(process)
+                await self._stop_process()
                 raise
 
             if response.get("id") != request_id:
@@ -328,9 +364,31 @@ class SponsoredProvider:
         The upstream sponsor model need not support native HTTP tool fields.
         Tool schemas and results remain prompt data; only Core executes tools.
         """
+        from .service import _parse_simulated_tool_calls
+
+        canonical, names = self._tool_messages(messages, tools)
+        response = await self.execute_task(
+            task_id="llm.tools",
+            user_payload={
+                "messages": canonical,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
+                "caller": caller,
+            },
+        )
+        calls = _parse_simulated_tool_calls(response.content, names) if tools else None
+        if calls:
+            response.tool_calls = calls
+            response.content = ""
+        return response
+
+    @staticmethod
+    def _tool_messages(
+        messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, str]], list[str]]:
         from .service import (
             _flatten_agent_messages,
-            _parse_simulated_tool_calls,
             _render_simulated_tool_block,
             _tool_schema_name,
         )
@@ -348,26 +406,11 @@ class SponsoredProvider:
                 "如果不需要调用工具，正常回复用户即可（不要输出 JSON）。\n"
                 "</tool_call_format>"
             )
-        canonical = [
+        return [
             {"role": "system", "content": system.strip()},
             *history,
             {"role": "user", "content": user},
-        ]
-        response = await self.execute_task(
-            task_id="llm.tools",
-            user_payload={
-                "messages": canonical,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "reasoning_effort": reasoning_effort,
-                "caller": caller,
-            },
-        )
-        calls = _parse_simulated_tool_calls(response.content, names) if tools else None
-        if calls:
-            response.tool_calls = calls
-            response.content = ""
-        return response
+        ], names
 
     async def stream_complete(
         self,
@@ -401,19 +444,34 @@ class SponsoredProvider:
             "reasoning_effort": kwargs.get("reasoning_effort"),
             "caller": kwargs.get("caller", ""),
         }
+        stream = self._stream_operation(operation, payload)
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()
+
+    async def _stream_operation(
+        self, operation: str, payload: Mapping[str, Any]
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         contracts = self._candidate_contracts("", f"llm.{operation}", None)
         emitted = False
         for index, contract in enumerate(contracts):
             try:
-                self._check_context(contract, payload)
-                async for chunk in self._stream_task_once(contract, payload):
-                    emitted = emitted or bool(chunk.delta) or chunk.response is not None
-                    if chunk.response is not None:
-                        chunk.response.raw = dict(chunk.response.raw or {})
-                        chunk.response.raw.update(
-                            requested_model=contracts[0].model, free_model_fallback=index > 0
-                        )
-                    yield chunk
+                bounded = self._bounded_operation_payload(contract, payload)
+                self._check_context(contract, bounded)
+                stream = self._stream_task_once(contract, bounded)
+                try:
+                    async for chunk in stream:
+                        emitted = emitted or bool(chunk.delta) or chunk.response is not None
+                        if chunk.response is not None:
+                            chunk.response.raw = dict(chunk.response.raw or {})
+                            chunk.response.raw.update(
+                                requested_model=contracts[0].model, free_model_fallback=index > 0
+                            )
+                        yield chunk
+                finally:
+                    await stream.aclose()
                 return
             except SponsoredError as exc:
                 if emitted or index + 1 == len(contracts) or not is_fallback_allowed(exc):
@@ -421,7 +479,7 @@ class SponsoredProvider:
 
     async def _stream_task_once(
         self, contract: SponsoredTaskContract, payload: Mapping[str, Any]
-    ) -> AsyncIterator[LLMStreamChunk]:
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         payload_text = self._serialize_payload(payload, contract, None)
         async with self._request_lock:
             await self._ensure_started()
@@ -474,6 +532,7 @@ class SponsoredProvider:
                 raise SponsoredUnavailableError("sponsored stream timed out") from exc
             except (asyncio.CancelledError, GeneratorExit):
                 self._abort_process_sync(process)
+                await self._stop_process()
                 raise
             except (SponsoredError, OSError) as exc:
                 await self._stop_process()
@@ -487,10 +546,59 @@ class SponsoredProvider:
         tools: list[dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
-        response = await self.complete_with_tools(messages, tools, **kwargs)
-        if response.content:
-            yield LLMStreamChunk(delta=response.content)
-        yield LLMStreamChunk(response=response)
+        """Stream ordinary agent text while buffering possible tool-call JSON.
+
+        JSON/object/array/code-fence content is held until the terminal parser
+        distinguishes a tool request from a literal answer. Core still owns
+        tool execution, and the shared transport never replays a started stream.
+        """
+        from .service import _parse_simulated_tool_calls
+
+        await self._ensure_started()
+        if not self._streaming:
+            response = await self.complete_with_tools(messages, tools, **kwargs)
+            if response.content:
+                yield LLMStreamChunk(delta=response.content)
+            yield LLMStreamChunk(response=response)
+            return
+        canonical, names = self._tool_messages(messages, tools)
+        payload = {
+            "messages": canonical,
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "reasoning_effort": kwargs.get("reasoning_effort"),
+            "caller": kwargs.get("caller", ""),
+        }
+        pending = ""
+        holding = False
+        stream = self._stream_operation("tools", payload)
+        try:
+            async for chunk in stream:
+                if chunk.delta:
+                    if holding:
+                        pending += chunk.delta
+                    else:
+                        delimiter = min(
+                            (i for i, char in enumerate(chunk.delta) if char in "{[`"),
+                            default=len(chunk.delta),
+                        )
+                        visible = chunk.delta[:delimiter]
+                        if visible:
+                            yield LLMStreamChunk(delta=visible)
+                        if delimiter < len(chunk.delta):
+                            holding = True
+                            pending = chunk.delta[delimiter:]
+                if chunk.response is not None:
+                    response = chunk.response
+                    calls = _parse_simulated_tool_calls(response.content, names) if tools else None
+                    if calls:
+                        response.tool_calls = calls
+                        response.content = ""
+                    elif pending:
+                        yield LLMStreamChunk(delta=pending)
+                    yield LLMStreamChunk(response=response)
+        finally:
+            await stream.aclose()
 
     async def embedding(self, value: str, *, image: bool = False) -> list[float]:
         """Return a validated vector in the signed model's fixed embedding space."""

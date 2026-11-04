@@ -10,8 +10,9 @@ from typing import Any
 import pytest
 
 from openbiliclaw.config import Config, _collect_config_issues
-from openbiliclaw.llm.base import LLMProvider, LLMResponse
+from openbiliclaw.llm.base import LLMProvider, LLMRegistry, LLMResponse
 from openbiliclaw.llm.registry import build_llm_registry
+from openbiliclaw.llm.service import LLMService
 from openbiliclaw.llm.sponsored_errors import (
     SponsoredRequestTooLargeError,
     SponsoredUnavailableError,
@@ -66,6 +67,38 @@ def test_approved_profile_is_text_embedding_only_and_has_both_signed_models() ->
     )
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"), [(DEFAULT_CHAT_MODEL, "low"), (ALTERNATE_CHAT_MODEL, "")]
+)
+async def test_free_structured_business_calls_bound_implicit_thinking(
+    model: str, expected: str
+) -> None:
+    """Production callers omit effort; upstream defaults can exhaust the timeout."""
+    captured = []
+
+    class Capture(SponsoredProvider):
+        async def _execute_task_once(self, **kwargs: Any) -> LLMResponse:
+            captured.append(kwargs["user_payload"])
+            return LLMResponse(content='{"interests": []}', provider="sponsored", model=model)
+
+    sdk = Capture(["unused"], registry=approved_registry(), model=model)
+    service = LLMService(registry=LLMRegistry(), memory=None, sponsored_provider=sdk)
+    await service.complete_structured_task(
+        system_instruction="Return json preferences.",
+        user_input="收藏了 Rust 所有权教程。",
+        caller="soul.preference",
+        max_tokens=16384,
+    )
+    assert captured[0]["reasoning_effort"] == expected
+    await service.complete_structured_task(
+        system_instruction="Return json preferences.",
+        user_input="明确要求深入思考。",
+        caller="soul.preference",
+        reasoning_effort="high",
+    )
+    assert captured[1]["reasoning_effort"] == "high"
+
+
 @pytest.mark.parametrize("model", CHAT_MODELS)
 async def test_selected_model_streams_multiple_deltas_and_reports_actual_model(model: str) -> None:
     async with provider(model, env={"SPONSORED_MOCK_RESPONSE": "流式文本正常"}) as sdk:
@@ -77,6 +110,106 @@ async def test_selected_model_streams_multiple_deltas_and_reports_actual_model(m
         assert response.raw["requested_model"] == model
         assert not response.raw["free_model_fallback"]
         assert len(await sdk.embedding("历史记录去重")) == 1024
+
+
+@pytest.mark.parametrize(("max_tokens", "expected"), [(64, ""), (1024, ""), (2048, "low")])
+async def test_implicit_thinking_preserves_a_small_final_answer_budget(
+    max_tokens: int, expected: str
+) -> None:
+    captured = []
+
+    class Capture(SponsoredProvider):
+        async def _execute_task_once(self, **kwargs: Any) -> LLMResponse:
+            captured.append(kwargs["user_payload"])
+            return LLMResponse(content="{}", model=DEFAULT_CHAT_MODEL)
+
+    sdk = Capture(["unused"], registry=approved_registry(), model=DEFAULT_CHAT_MODEL)
+    await sdk.complete(MESSAGES, json_mode=True, max_tokens=max_tokens)
+    assert captured[0]["reasoning_effort"] == expected
+    assert captured[0]["max_tokens"] == max_tokens
+
+
+async def test_free_agent_reply_streams_real_ipc_deltas_before_terminal() -> None:
+    async with provider(env={"SPONSORED_MOCK_RESPONSE": "你的兴趣是编程和园艺。"}) as sdk:
+        service = LLMService(registry=LLMRegistry(), memory=None, sponsored_provider=sdk)
+        chunks = [
+            chunk
+            async for chunk in service.stream_complete_with_native_tools(
+                messages=MESSAGES, tools=[], caller="agent.chat"
+            )
+        ]
+    assert len([chunk for chunk in chunks if chunk.delta]) == 2
+    assert "".join(chunk.delta for chunk in chunks) == "你的兴趣是编程和园艺。"
+    assert chunks[-1].response is not None
+
+
+async def test_free_agent_stream_keeps_tool_json_out_of_visible_text() -> None:
+    content = '{"tool_call":{"name":"get_profile","arguments":{}}}'
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_profile",
+                "description": "Read the user profile",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    async with provider(env={"SPONSORED_MOCK_RESPONSE": content}) as sdk:
+        chunks = [chunk async for chunk in sdk.stream_complete_with_tools(MESSAGES, tools)]
+    assert not any(chunk.delta for chunk in chunks)
+    response = chunks[-1].response
+    assert response is not None and response.content == "" and response.tool_calls
+    assert response.tool_calls[0]["name"] == "get_profile"
+
+
+async def test_free_agent_literal_json_answer_is_delivered_after_classification() -> None:
+    content = '{"answer":"这只是用户要的 JSON 答案"}'
+    async with provider(env={"SPONSORED_MOCK_RESPONSE": content}) as sdk:
+        chunks = [chunk async for chunk in sdk.stream_complete_with_tools(MESSAGES, [])]
+    assert "".join(chunk.delta for chunk in chunks) == content
+    assert chunks[-1].response is not None
+    assert not chunks[-1].response.tool_calls
+
+
+async def test_free_fallback_recalculates_implicit_thinking_for_its_model() -> None:
+    captured = []
+
+    class Fallback(SponsoredProvider):
+        async def _execute_task_once(self, **kwargs: Any) -> LLMResponse:
+            captured.append(kwargs["user_payload"]["reasoning_effort"])
+            if len(captured) == 1:
+                raise SponsoredUnavailableError("transient upstream failure")
+            return LLMResponse(content="{}", model=ALTERNATE_CHAT_MODEL)
+
+    sdk = Fallback(["unused"], registry=approved_registry(), model=DEFAULT_CHAT_MODEL)
+    await sdk.complete(MESSAGES, json_mode=True)
+    assert captured == ["low", ""]
+
+
+async def test_closing_free_agent_stream_releases_the_runtime_request() -> None:
+    async with provider(env={"SPONSORED_MOCK_RESPONSE": "部分回复后关闭"}) as sdk:
+        stream = sdk.stream_complete_with_tools(MESSAGES, [])
+        assert (await anext(stream)).delta
+        await stream.aclose()
+        assert not sdk.runtime_running
+        response = await sdk.complete(MESSAGES, reasoning_effort="")
+        assert response.content == "部分回复后关闭"
+
+
+async def test_free_agent_stream_disconnect_does_not_replay_after_visible_text() -> None:
+    async with provider(
+        env={
+            "SPONSORED_MOCK_RESPONSE": "编程和园艺是你的兴趣。",
+            "SPONSORED_MOCK_STREAM_ERROR_AFTER_DELTA": "1",
+        }
+    ) as sdk:
+        chunks = []
+        with pytest.raises(SponsoredUnavailableError):
+            async for chunk in sdk.stream_complete_with_tools(MESSAGES, []):
+                chunks.append(chunk)
+        assert len(chunks) == 1 and chunks[0].delta
+        assert not sdk.runtime_running
 
 
 @pytest.mark.parametrize("stream", [False, True])
