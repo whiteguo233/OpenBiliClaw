@@ -127,6 +127,13 @@
   },
   {
     "file": "src/openbiliclaw/discovery/engine.py",
+    "function": "_repair_sponsored_temporal_results",
+    "call": "complete",
+    "family": "structured",
+    "route": "LLMService -> sponsored SDK"
+  },
+  {
+    "file": "src/openbiliclaw/discovery/engine.py",
     "function": "_warm",
     "call": "embed_image",
     "family": "embedding_image",

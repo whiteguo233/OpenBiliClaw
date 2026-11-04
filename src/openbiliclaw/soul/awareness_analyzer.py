@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Protocol
@@ -107,6 +108,10 @@ class AwarenessAnalyzer:
             soul_profile=soul_profile,
             input_view=self.plain_prompt_view,
         )
+        evidence_ids = (
+            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
+        )
+        self._add_sponsored_citation_boundary(messages, evidence_ids)
         try:
             complete_structured = self.registry.complete_structured_task
             response = await complete_structured(
@@ -119,9 +124,7 @@ class AwarenessAnalyzer:
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc
         payload = self._parse_response(response.content)
-        evidence_ids = (
-            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
-        )
+        self._check_sponsored_citations(response, payload, evidence_ids)
         return [self._build_note(item, evidence_ids) for item in payload if isinstance(item, dict)]
 
     @staticmethod
@@ -162,6 +165,10 @@ class AwarenessAnalyzer:
             existing_confusions=existing_confusions,
             input_view=self.confusions_prompt_view,
         )
+        evidence_ids = (
+            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
+        )
+        self._add_sponsored_citation_boundary(messages, evidence_ids)
         try:
             complete_structured = self.registry.complete_structured_task
             response = await complete_structured(
@@ -174,13 +181,41 @@ class AwarenessAnalyzer:
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc
         notes_payload, confusions_payload = self._parse_with_confusions(response.content)
-        evidence_ids = (
-            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
-        )
+        self._check_sponsored_citations(response, notes_payload, evidence_ids)
         notes = [
             self._build_note(item, evidence_ids) for item in notes_payload if isinstance(item, dict)
         ]
         return notes, confusions_payload
+
+    @staticmethod
+    def _add_sponsored_citation_boundary(
+        messages: list[dict[str, str]], evidence_ids: list[int]
+    ) -> None:
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        if sponsored_enabled():
+            messages[0]["content"] += (
+                "\n本次source_event_ids只允许引用这些事件编号："
+                + json.dumps(evidence_ids)
+                + "。已有画像/觉察中的编号不是本次事件，不能引用。"
+                "不确定由哪条支持时不要编造编号；没有新的可靠观察时notes可为空。"
+            )
+
+    @staticmethod
+    def _check_sponsored_citations(
+        response: LLMResponse, rows: list[object], evidence_ids: list[int]
+    ) -> None:
+        if response.provider != "sponsored":
+            return
+        allowed = set(evidence_ids)
+        for row in rows:
+            if isinstance(row, dict) and any(
+                event_id not in allowed
+                for event_id in _coerce_event_ids(row.get("source_event_ids"))
+            ):
+                # Raise before producing any notes. Cognition already retries
+                # AwarenessGenerationError and preserves its watermark on failure.
+                raise AwarenessGenerationError("awareness citation outside the analysed batch")
 
     def _parse_with_confusions(
         self,

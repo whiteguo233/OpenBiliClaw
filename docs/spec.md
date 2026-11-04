@@ -295,7 +295,11 @@ Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
   → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
   → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
   → SiliconFlow SSE / embeddings
-  → Core schema / evidence validation → normal profile, discovery, recommendation, agent flows
+  → Core schema / evidence validation
+      ├ passive portrait: source-backed information preferences
+      ├ invalid temporal fields: one narrow LLM correction → source validation
+      └ foreign awareness citations: reject → bounded cognition retry
+  → normal profile, discovery, recommendation, agent flows
 Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
 Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
   → offline self-check → versioned bundle → atomic active pointer

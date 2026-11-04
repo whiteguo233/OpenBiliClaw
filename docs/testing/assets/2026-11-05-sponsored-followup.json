@@ -1,0 +1,1902 @@
+{
+  "scope": "Synthetic production SDK evidence-boundary regression; free and paid fallback disabled",
+  "models": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明、按步骤展开的内容、对不同方案的比较。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明",
+                "按步骤展开的内容",
+                "对不同方案的比较"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 8.767,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 208,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.75,
+              0.65,
+              0.35,
+              0.68,
+              0.58,
+              0.72
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.96,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.75,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.92,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 45.554,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4381,
+              "completion_tokens": 1003,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 750,
+              "completion_tokens": 139,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏了两个关于编程语言底层机制（Rust 借用机制）和高级应用模式（Python 异步编程）的技术视频。",
+                "trend": "兴趣点集中在具体的技术实现细节和代码逻辑上，偏好结构化、有步骤解析的内容。",
+                "emotion_guess": "对当前所学技术主题保持较高的专注度和求知欲。",
+                "note_id": "e74a16d5169f",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 3.997,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1228,
+              "completion_tokens": 141,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.376,
+                "seconds": 0.497,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.498,
+                "seconds": 0.52,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.279,
+                "seconds": 0.366,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.635,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 7.788,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 165,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.68,
+              0.65,
+              0.72
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.82,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 35.061,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 827,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "收藏了两条关于编程语言机制的视频，均包含具体示例讲解",
+                "trend": "持续关注需要深度理解的技术内容",
+                "emotion_guess": "可能处于主动学习或知识整理阶段",
+                "note_id": "8c87134a2971",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 29.04,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 726,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.571,
+                "seconds": 0.724,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.511,
+                "seconds": 0.541,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.505,
+                "seconds": 0.607,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 2.092,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "retained_previous_8b_failure": {
+    "name": "six_temporal_semantics_and_no_cross_item_date",
+    "status": "fail",
+    "error": "AssertionError: [{'bvid': 'BVfollow0', 'title': 'Rust 借用与所有权原理', 'temporal_class': 'evergreen', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow1', 'title': '光合作用基本原理', 'temporal_class': 'evergreen', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow2', 'title': '比赛报名入口', 'temporal_class': 'unknown', 'temporal_confidence': 0.0, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': False}, {'bvid': 'BVfollow3', 'title': '阿波罗13号历史纪录片', 'temporal_class': 'historical', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'freshness_only', 'temporal_valid_until': '', 'temporal_scope': 'hook', 'temporal_state': 'unknown', 'temporal_evidence': '回顾1970年阿波罗13号任务全过程和当时的救援。', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow4', 'title': '限时免费领取Rust教程', 'temporal_class': 'evergreen', 'temporal_confidence': 0.8, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow5', 'title': 'Python 3.12 版本指南', 'temporal_class': 'versioned', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'freshness_only', 'temporal_valid_until': '', 'temporal_scope': 'core', 'temporal_state': 'unknown', 'temporal_evidence': 'Python 3.12 版本指南', 'temporal_evidence_complete': True}]",
+    "seconds": 79.962,
+    "calls": [
+      {
+        "caller": "discovery.evaluate_batch",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "prompt_tokens": 4541,
+        "completion_tokens": 870,
+        "success": 1
+      },
+      {
+        "caller": "discovery.temporal_repair",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "prompt_tokens": 943,
+        "completion_tokens": 396,
+        "success": 1
+      }
+    ]
+  },
+  "verification": {
+    "focused_pytest": "874 passed, 1 skipped, 184 warnings in 90.37s",
+    "mypy": "385 source files passed",
+    "ruff": "passed",
+    "call_inventory": 111,
+    "config_show": "passed on isolated free configuration",
+    "rebuild_evidence_regression": "215 passed; included in final 874",
+    "final_authored_prompt_regression": "159 passed after final narrow self-description prompt change"
+  },
+  "prior_fixed_snapshot": {
+    "sha": "97ab360b7f10b00031cac56a13a60bffcdf72ca5",
+    "ci_run": 41878995795,
+    "ci_result": "success",
+    "installation_run": 41878995881,
+    "installation_result": "success"
+  },
+  "sdk_release": {
+    "release_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1",
+    "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+    "core_contract_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+    "workflow_run": 41871053646,
+    "artifacts": [
+      {
+        "archive": "obc-sponsored-runtime-linux-arm64.tar.gz",
+        "sha256": "3cf4a50b7f124b8dbd344c54d3c5bd4cb1947625c4190b6f59f08b948442f0fa",
+        "platform": "linux-arm64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      },
+      {
+        "archive": "obc-sponsored-runtime-linux-x86_64.tar.gz",
+        "sha256": "226ee8d0c8cb751db965a7bd4872d25827de254c21efaeec497bc1b901b54dd1",
+        "platform": "linux-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      },
+      {
+        "archive": "obc-sponsored-runtime-macos-arm64.tar.gz",
+        "sha256": "b11b54db364b2bffc05a85fd7a20eb3e78ab53e9f568adb98b3001a1a57b0899",
+        "platform": "macos-arm64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "macos-notarized",
+        "notarization_id": "0b408eaa-fc99-438c-852d-332f69484933"
+      },
+      {
+        "archive": "obc-sponsored-runtime-macos-x86_64.tar.gz",
+        "sha256": "8636b117264788a62961b0bac197df45be470405aab9ec90a3e10faf07bb5123",
+        "platform": "macos-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "macos-notarized",
+        "notarization_id": "2bcc80bc-1578-475e-bef0-11e079109843"
+      },
+      {
+        "archive": "obc-sponsored-runtime-windows-x86_64.tar.gz",
+        "sha256": "f23c9c5945862b9ec726de6b853b01bdbbaa25ab0ab747250505323222592694",
+        "platform": "windows-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      }
+    ]
+  },
+  "limits": [
+    "Small synthetic sample, not a capacity benchmark or SLA",
+    "Information-style choices still model judgments; life-story/personality assertions are excluded from passive free profiles",
+    "Tutorial category labels still differ between models; incomplete or foreign evidence must not authorize expiry",
+    "Image understanding and image embeddings are outside base acceptance",
+    "Main application release is separate from SDK release"
+  ],
+  "repeated_quality_script_run": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、结合具体例子的说明、按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "讲清原理的解释",
+                "结合具体例子的说明",
+                "按步骤展开的内容"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 5.832,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 209,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.85,
+              0.82,
+              0.3,
+              0.7,
+              0.4,
+              0.75
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.6,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.99,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "current",
+                "temporal_confidence": 0.8,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取Rust教程",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 44.03,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4382,
+              "completion_tokens": 1063,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 728,
+              "completion_tokens": 100,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "用户最近收藏了关于编程语言底层机制（Rust借用机制）和高级特性（Python异步编程）的教程视频。",
+                "trend": "持续偏好寻求“讲清原理”和“按步骤展开”的深度内容，与当前画像中的认知风格一致。",
+                "emotion_guess": "处于主动学习和探索技术原理的阶段。",
+                "note_id": "19faa79ebf10",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 9.424,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1230,
+              "completion_tokens": 141,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.416,
+                "seconds": 0.552,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.357,
+                "seconds": 0.463,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.344,
+                "seconds": 0.453,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.67,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation deadline is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 6.604,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 166,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.65,
+              0.68,
+              0.82
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 39.125,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 857,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏两个技术类视频，内容均涉及编程语言的具体机制与示例",
+                "trend": "对需要具体案例支撑的技术解释类内容保持持续关注",
+                "emotion_guess": "可能处于主动吸收和整理信息的阶段",
+                "note_id": "8f26cab3adf3",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 19.996,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 584,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.503,
+                "seconds": 0.598,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.485,
+                "seconds": 0.573,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.436,
+                "seconds": 0.479,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.851,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "final_full_quality_before_authored_prompt_fix": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、结合具体例子的说明、按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "讲清原理的解释",
+                "结合具体例子的说明",
+                "按步骤展开的内容"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 3.39,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 120,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.88,
+              0.85,
+              0.25,
+              0.72,
+              0.65,
+              0.82
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.96,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "current",
+                "temporal_confidence": 0.8,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取Rust教程",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.94,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 40.908,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4382,
+              "completion_tokens": 1106,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 792,
+              "completion_tokens": 301,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "用户收藏了两条技术原理类视频，主题分别涉及 Rust 借用机制与 Python 异步编程。",
+                "trend": "近期关注点聚焦于编程语言底层机制或高级特性的原理性讲解。",
+                "emotion_guess": "可能处于主动学习或对比不同语言特性的阶段。",
+                "note_id": "42ca7f070658",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 5.438,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1230,
+              "completion_tokens": 130,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.354,
+                "seconds": 0.448,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.332,
+                "seconds": 0.417,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.309,
+                "seconds": 0.383,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.448,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "你这人挺坦诚，直接把自己定位成中学数学老师，还特意澄清不是程序员，看来对自我身份挺有数，喜欢直给不绕弯子。",
+              "core_traits": [
+                "坦诚",
+                "自我意识强"
+              ],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 10.647,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2700,
+              "completion_tokens": 237,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: declared type 'INFJ' disagrees with dimension poles 'INTJ'; using the dimensions",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: dimensions EI, JP, SN, TF sit below 0.60 strength; capping confidence at 0.55 (declared 'INTJ')",
+          "failure": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 7.612,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 166,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.38,
+              0.63,
+              0.74
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.67,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.82,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 42.459,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 831,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏两个技术类视频",
+                "trend": "对编程相关深度内容保持持续关注",
+                "emotion_guess": "可能处于主动学习或知识整理阶段",
+                "note_id": "53f8f479be0f",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 22.103,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 535,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.519,
+                "seconds": 0.622,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.429,
+                "seconds": 0.518,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.332,
+                "seconds": 0.591,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.897,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "fail",
+          "error": "AssertionError: 暂无明确自述",
+          "seconds": 28.785,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2761,
+              "completion_tokens": 763,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: declared type '暂无明确结论' disagrees with dimension poles 'INTP'; using the dimensions",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: dimensions EI, JP, SN, TF sit below 0.60 strength; capping confidence at 0.55 (declared 'INTP')",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "authored_evidence_after_narrow_prompt": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "你是一名中学数学老师，并特意澄清自己并非程序员。关于你的性格、价值观、深层需求、认知风格及MBTI类型，目前没有明确信息。",
+              "core_traits": [],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 5.203,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 300,
+              "completion_tokens": 137,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "您是一名中学数学老师，已确认职业身份。目前未提及具体活动或阶段。性格、价值观、深层需求、动机及认知风格未明确说明。",
+              "core_traits": [],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 5.01,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 303,
+              "completion_tokens": 125,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    }
+  ]
+}

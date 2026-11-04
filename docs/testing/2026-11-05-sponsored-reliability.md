@@ -15,7 +15,7 @@
 | 工具链提前结束或输出坏JSON | 工具结果后继续携带原请求；明确的坏工具JSON只纠正一次，再做原校验 | 4B两步工具链连续3次通过，7.776/7.327/8.198秒；解析失败重试与失败终止均先复现后修复 |
 | 合并模型把多个保留项写成一条keep | 兼容 `keep.members`，逐项检验存在性、无重复、全覆盖 | 真实8B格式已复现；未知/重复/空成员及已确认不合并约束的回归仍通过 |
 
-交互流在任何原始输出之前发生瞬时上游错误时最多重试一次。无显式思考且输入≤32KiB的交互请求有30秒首个非空delta时限；长输入保留正常超时。已输出后的中断明确失败，不回放工具，不将半截回答记作完成。这些超时/批次值是本轮小样本后的暂定值，模型切换或服务变化后应重新测量。
+本报告初轮实现中，交互流在任何原始输出之前发生瞬时上游错误时最多重试一次。其≤32KiB限制与逐尝试首段计时已由[后续修复](2026-11-05-sponsored-followup.md)替换成覆盖重试的统一首段预算。已输出后的中断明确失败，不回放工具，不将半截回答记作完成。这些超时/批次值是本轮小样本后的暂定值，模型切换或服务变化后应重新测量。
 
 ## 基础流程覆盖与质量边界
 
@@ -34,3 +34,10 @@
 Ruff与MyPy（385文件）通过；最终定向回归580 passed、1 skipped。 隔离验收时钟修正后另跑认知周期回归27 passed，脚本Ruff与编译检查通过。全量旧进程跑出12457 passed、70 skipped、10 failed，其中8项是测试启动后模块继续编辑导致的延迟导入版本不一致（`SponsoredStartupBusyError`的旧模块缓存），不能作为最终快照验证；这些测试已在新的定向进程全部通过。另2项桌面Web失败与此前在干净main复现的基线问题相同（库存预期30实际27、平台Tab配置快照重试）。提交后的完整CI以固定checkout另行验证，不能宣称该轮全量全绿。关键错误均有先失败后通过的回归：IPC隔离、配置即时应用/独立worker同步、关闭流释放工作位、固定任务总gate、启动短锁竞争、流前重试、工具JSON纠正、结构化围栏、免费评估/归并拆批。
 
 私有[PR5](https://github.com/whiteguo233/OpenBiliClaw-sponsored-runtime/pull/5)已合入，Rust提交 `1d46c5ba`，三OS CI通过。新SDK[构建](https://github.com/whiteguo233/OpenBiliClaw-sponsored-runtime/actions/runs/41871053646)的Linux双架构、Windows和Mac Intel完成；Mac Intel已Developer ID签名并获Apple Accepted。Mac ARM两次因GitHub未分配到runner而取消，第三次重试仍待结果。当前尚未公开发布新版SDK，公共目录仍指向11月4日版本；新长归并实测使用独立验签的CI二进制，不能说所有用户已经拿到该预算修复。主应用仍在PR336，未合入或发版。
+
+
+## 后续核验（2026-11-05）
+
+以上保留初轮结果。固定提交 `97ab360b` 的[全量CI](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/41878995795)已全部通过，[五平台原生安装与双架构Docker](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/41878995881)也通过，解决了前文混合本地进程无法证明最终快照的问题。
+
+Mac ARM第四次构建取得runner并完成，两种Mac组件均获Apple Accepted；新版[五平台SDK](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)已公开发布并接入目录。画像内容边界、历史先后、觉察批外引用、日期纠错和跨重试首段时限的后续修复，见[补测记录](2026-11-05-sponsored-followup.md)。主程序是否已合并/发布以PR336和正式应用发行记录为准。

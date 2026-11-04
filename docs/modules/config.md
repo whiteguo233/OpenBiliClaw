@@ -1751,4 +1751,6 @@ request_timeout_seconds = 180.0
 
 ### 免费模型路由即时应用（2026-11-05）
 
+无显式思考的交互流在输出首段前最多等待 `min(request_timeout_seconds, 30)` 秒，同一逻辑请求的重试/退避/免费互备共用此预算；有输出后按正常请求时限执行。画像与后台评估不受此交互专用首段限制，超时仍会明确报错。
+
 无新增字段。方案已启用时，仅修改 `llm.sponsored.model`、免费互备开关、`notify_on_fallback`或`request_timeout_seconds`可即时应用，无需等待学习任务排空。配置API仍发布applied修订状态；API进程内旧请求持有原模型，新请求读取新选择；独立worker模式会递增配置generation，由现有supervisor重启后台进程并按原持久化规则恢复任务。切换自有provider回退开关（需要重建registry链）、方案启用状态、runtime_path或其它配置继续走完整运行时交接。

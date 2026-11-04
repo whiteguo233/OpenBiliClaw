@@ -58,6 +58,7 @@ from openbiliclaw.discovery.style_keys import normalize_style_key
 from openbiliclaw.discovery.temporal import (
     TEMPORAL_POLICY_VERSION,
     TemporalEvaluation,
+    canonicalize_deadline_state,
     evaluate_temporal_eligibility,
     ground_temporal_evaluation,
     is_complete_temporal_evidence_marker,
@@ -489,6 +490,17 @@ def _apply_temporal_evaluation(
     content.temporal_evidence_complete = temporal.evidence_complete
     # Legacy storage adapters still consume this runtime overwrite marker.
     content.temporal_evaluated = temporal.evidence_complete and temporal.temporal_class != "unknown"
+
+
+def _needs_sponsored_temporal_repair(
+    content: DiscoveredContent, source: Mapping[str, object]
+) -> bool:
+    from openbiliclaw.discovery.temporal import has_explicit_deadline_hint
+
+    return not content.temporal_evidence_complete or (
+        content.temporal_validity_mode in {"none", "freshness_only"}
+        and has_explicit_deadline_hint(_temporal_evidence_text_from_prompt_item(source))
+    )
 
 
 def _decode_eval_cache_entry(
@@ -2450,7 +2462,11 @@ class ContentDiscoveryEngine:
             topic_group = checked_topic_group
             franchise_key = checked_franchise
             style_key = normalize_style_key(payload.get("style_key", ""))
-            temporal = parse_temporal_evaluation(payload)
+            temporal = parse_temporal_evaluation(
+                canonicalize_deadline_state(payload)
+                if getattr(response, "provider", "") == "sponsored"
+                else payload
+            )
         except Exception:
             logger.exception("Failed to evaluate discovered content: %s", content.bvid)
             return 0.0
@@ -2466,6 +2482,12 @@ class ContentDiscoveryEngine:
             evaluated_at=evaluated_at,
             evidence_text=_temporal_evidence_text_from_prompt_item(content_summary),
         )
+        if getattr(response, "provider", "") == "sponsored" and _needs_sponsored_temporal_repair(
+            content, content_summary
+        ):
+            await self._repair_sponsored_temporal_results(
+                [(0, content, content_summary)], evaluated_at=evaluated_at
+            )
         if recall.complete:
             self._set_eval_cache_entry(
                 cache_key,
@@ -3842,6 +3864,8 @@ class ContentDiscoveryEngine:
                 return [None] * len(batch)
 
         results: list[float | None] = []
+        temporal_repairs: list[tuple[int, DiscoveredContent, dict[str, object]]] = []
+        pending_cache: list[tuple[str, DiscoveredContent]] = []
         for i, content in enumerate(batch):
             if canonical_batch is not None:
                 local_id = canonical_batch.local_ids[i]
@@ -3866,6 +3890,8 @@ class ContentDiscoveryEngine:
             if not isinstance(raw_item, dict):
                 results.append(None)
                 continue
+            if getattr(response, "provider", "") == "sponsored":
+                raw_item = canonicalize_deadline_state(raw_item)
             score = self._apply_evaluator_result(
                 content,
                 raw_item,
@@ -3878,6 +3904,11 @@ class ContentDiscoveryEngine:
                 results.append(None)
                 continue
 
+            if getattr(
+                response, "provider", ""
+            ) == "sponsored" and _needs_sponsored_temporal_repair(content, content_items[i]):
+                temporal_repairs.append((i, content, content_items[i]))
+
             cache_key = self._batch_eval_cache_key(
                 content,
                 profile_digest=profile_digest,
@@ -3886,13 +3917,90 @@ class ContentDiscoveryEngine:
                 source_context=source_context,
             )
             if normal_cache_enabled and i in recall.complete_indices:
-                self._set_eval_cache_entry(
-                    cache_key,
-                    _eval_cache_entry_for_content(content),
-                )
+                pending_cache.append((cache_key, content))
             results.append(score)
 
+        if temporal_repairs:
+            await self._repair_sponsored_temporal_results(
+                temporal_repairs, evaluated_at=evaluated_at
+            )
+        for cache_key, content in pending_cache:
+            self._set_eval_cache_entry(cache_key, _eval_cache_entry_for_content(content))
         return results
+
+    async def _repair_sponsored_temporal_results(
+        self,
+        pending: list[tuple[int, DiscoveredContent, dict[str, object]]],
+        *,
+        evaluated_at: str,
+    ) -> None:
+        """Try one narrow correction; never modify relevance or relax grounding."""
+        from openbiliclaw.llm.prompts import build_temporal_repair_prompt
+        from openbiliclaw.llm.task_options import call_accepts_keyword
+
+        items = [
+            {
+                "id": str(index),
+                **{
+                    key: source[key]
+                    for key in (
+                        "title",
+                        "description",
+                        "body_text",
+                    )
+                    if key in source
+                },
+            }
+            for index, _content, source in pending
+        ]
+        messages = build_temporal_repair_prompt(items)
+        assert self._llm_service is not None
+        complete = self._llm_service.complete_structured_task
+        kwargs: dict[str, Any] = {
+            "system_instruction": messages[0]["content"],
+            "user_input": messages[1]["content"],
+            "max_tokens": 4096,
+            "temperature": 0.0,
+            "caller": "discovery.temporal_repair",
+            **without_core_memory_kwargs(complete),
+        }
+        if call_accepts_keyword(complete, "reasoning_effort"):
+            kwargs["reasoning_effort"] = ""
+        try:
+            call = complete(**kwargs)
+            response = (
+                await self._concurrency.run_llm(call)
+                if self._concurrency is not None
+                else await call
+            )
+            rows = extract_llm_json_list(
+                str(getattr(response, "content", "")),
+                wrapper_keys=("results",),
+                allow_singleton=True,
+                item_predicate=lambda item: "id" in item,
+            )
+        except Exception:
+            logger.warning(
+                "Temporal correction unavailable; retaining unverified metadata", exc_info=True
+            )
+            return
+        if rows is None:
+            return
+        counts = Counter(str(row.get("id", "")) for row in rows)
+        by_id = {str(row.get("id", "")): row for row in rows if counts[str(row.get("id", ""))] == 1}
+        for index, content, source in pending:
+            corrected = by_id.get(str(index))
+            if corrected is None:
+                continue
+            evidence_text = _temporal_evidence_text_from_prompt_item(source)
+            temporal = ground_temporal_evaluation(
+                parse_temporal_evaluation(canonicalize_deadline_state(corrected)),
+                content_text=evidence_text,
+            )
+            if temporal.evidence_complete:
+                _apply_temporal_evaluation(
+                    content, temporal, evaluated_at=evaluated_at, evidence_text=evidence_text
+                )
 
     @classmethod
     def _apply_evaluator_result(

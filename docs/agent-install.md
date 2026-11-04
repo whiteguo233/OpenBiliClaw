@@ -969,6 +969,6 @@ Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的
 
 源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
 
-本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-04.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
 
 免费方案启用后，文本向量直接使用云端BGE-M3；保留的本地向量设置不会触发桌面权重下载/播种或CLI本地daemon预热。只有用户显式允许回退到已配置的Ollama聊天模型时才预备本地Ollama，已有本地配置保持可恢复。

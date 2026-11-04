@@ -657,6 +657,7 @@ Setup / extension / desktop / mobile / CLI → local config → shared sponsored
   Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
   Text embeddings → BGE-M3 (1024 dimensions); optional image understanding → 4B
   → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
+  Results → source-evidence validation → profile / memory; one bounded temporal correction
   Installer / updater → Core-pinned public key and catalog → verify → atomic activation
 ```
 

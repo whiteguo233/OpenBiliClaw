@@ -823,6 +823,8 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 ### 免费模型组件安装与更新
 
+当前目录固定 `sponsored-runtime-2026-11-05.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。新组件含长归并思考预算与额度账本短锁竞争修复，Core信任公钥不变。正式应用是否已发布须与SDK组件分开判断；详见[补测及发行证据](../testing/2026-11-05-sponsored-followup.md)。
+
 公开入口：`verify_bundle(directory)` 在执行前检查 Core 固定 Ed25519 公钥、manifest/策略签名、文件hash、平台、兼容版本和任务契约；`install_archive(archive)` 拒绝路径穿越/链接/重复/超大成员，离线 `--check-policy` 成功后原子更新 `.sponsored/active`；`installed_runtime_command()` 只返回已验证组件；`ensure_runtime()` 从固定发行目录获取组件，已匹配manifest不重复下载；`stage_runtime_bundle(destination)` 供Docker与桌面打包使用。
 
 `python -m openbiliclaw.runtime.sponsored_bundle --if-available` 只允许“没有发行包”的状态返回成功，签名或内容损坏仍失败；`--archive <path>` 安装本机归档；`--stage <directory>` 验证后复制。数据位于项目数据根下 `.sponsored/`，不纳入git。源码更新在新依赖就绪后、重启前协调组件；旧目录保留，失败不改活动指针。Docker在构建时放到 `/opt/openbiliclaw-sponsored`，桌面放入资源目录；两者使用 `OPENBILICLAW_SPONSORED_BUNDLE` 定位。

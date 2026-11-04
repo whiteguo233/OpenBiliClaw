@@ -225,6 +225,34 @@ async def test_short_interactive_stream_bounds_silence_before_first_delta(
         await sdk.aclose()
 
 
+async def test_first_delta_deadline_is_not_reset_by_a_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "openbiliclaw.llm.sponsored_provider.INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS", 0.04
+    )
+
+    class SlowRetry(SponsoredProvider):
+        async def _ensure_started(self) -> None:
+            self._streaming = True
+
+        async def _stream_task_once(self, contract: Any, payload: Any) -> Any:
+            await asyncio.sleep(0.025)
+            if not getattr(self, "retried", False):
+                self.retried = True
+                raise SponsoredUpstreamError("transient silence")
+            yield LLMStreamChunk(delta="late")
+
+    sdk = SlowRetry(["unused"], registry=approved_registry(), fallback_to_other_free_model=False)
+    start = asyncio.get_running_loop().time()
+    with pytest.raises(SponsoredUnavailableError, match="first.*timed out"):
+        async for _ in sdk.stream_complete(
+            [{"role": "user", "content": "hi"}], caller="agent.chat"
+        ):
+            pass
+    assert asyncio.get_running_loop().time() - start < 0.15
+
+
 async def test_pool_retries_only_a_known_legacy_ledger_startup_collision(
     tmp_path: Any,
 ) -> None:

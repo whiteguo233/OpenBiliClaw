@@ -542,6 +542,34 @@ class SponsoredProvider:
     async def _stream_operation(
         self, operation: str, payload: Mapping[str, Any]
     ) -> AsyncGenerator[LLMStreamChunk, None]:
+        # One first-output budget for the logical request, including backoff
+        # and same/free-model retries. A per-attempt timer can double the wait.
+        deadline = None
+        if is_interactive_caller(str(payload.get("caller") or "")) and payload.get(
+            "reasoning_effort"
+        ) in {None, ""}:
+            deadline = asyncio.get_running_loop().time() + min(
+                self._request_timeout, INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS
+            )
+        stream = self._stream_operation_attempts(operation, payload)
+        try:
+            while True:
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        chunk = await anext(stream)
+                except StopAsyncIteration:
+                    return
+                if chunk.delta.strip() or chunk.response is not None:
+                    deadline = None
+                yield chunk
+        except TimeoutError as exc:
+            raise SponsoredUnavailableError("sponsored first output timed out") from exc
+        finally:
+            await stream.aclose()
+
+    async def _stream_operation_attempts(
+        self, operation: str, payload: Mapping[str, Any]
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         contracts = self._candidate_contracts("", f"llm.{operation}", None)
         emitted = False
         attempts = 2 if is_interactive_caller(str(payload.get("caller") or "")) else 1
@@ -585,15 +613,6 @@ class SponsoredProvider:
             if process is None or process.stdin is None or process.stdout is None:
                 raise SponsoredUnavailableError("runtime pipes are unavailable")
             request_id = uuid.uuid4().hex
-            first_delta_deadline = None
-            if (
-                is_interactive_caller(str(payload.get("caller") or ""))
-                and payload.get("reasoning_effort") in {None, ""}
-                and len(payload_text.encode("utf-8")) <= 32768
-            ):
-                first_delta_deadline = (
-                    asyncio.get_running_loop().time() + INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS
-                )
             try:
                 async with asyncio.timeout(self._request_timeout):
                     await write_frame_async(
@@ -607,16 +626,13 @@ class SponsoredProvider:
                         },
                     )
                     while True:
-                        async with asyncio.timeout_at(first_delta_deadline):
-                            frame = await read_frame_async(process.stdout)
+                        frame = await read_frame_async(process.stdout)
                         if frame.get("id") != request_id:
                             raise SponsoredProtocolError("mismatched stream response id")
                         if frame.get("type") == "delta":
                             delta = frame.get("content")
                             if not isinstance(delta, str):
                                 raise SponsoredProtocolError("invalid stream delta")
-                            if delta:
-                                first_delta_deadline = None
                             yield LLMStreamChunk(delta=delta)
                             continue
                         if frame.get("type") != "result":
