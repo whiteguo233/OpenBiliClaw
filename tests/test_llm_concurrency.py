@@ -513,6 +513,18 @@ async def test_agent_loop_callers_are_not_parked_by_empty_inventory(caller: str)
     assert gate.status_payload()["llm_background_active"] == 0
 
 
+async def test_temporal_repair_can_finish_evaluation_before_empty_pool_is_refilled() -> None:
+    """A correction needed for admission cannot wait for that admission itself."""
+    from openbiliclaw.llm.service import LLMService
+
+    gate = LLMConcurrencyGate(1)
+    gate.update_inventory(available=0, target=20)
+    async with asyncio.timeout(0.2):
+        await _acquire_once(gate, "discovery.temporal_repair")
+    assert gate.classify("discovery.temporal_repair") is LLMTrafficClass.REFILL_EVALUATION
+    assert LLMService._route_bucket_for_caller("discovery.temporal_repair") == "evaluation"
+
+
 def test_director_speculative_planning_remains_maintenance() -> None:
     gate = LLMConcurrencyGate(4)
     assert gate.classify("recommendation.director.preplan") is LLMTrafficClass.MAINTENANCE

@@ -324,6 +324,7 @@ class LLMService:
     _PRIORITY_MAP: ClassVar[dict[str, int]] = {
         "recommendation.write_expression": 1,
         "discovery.evaluate_batch": 1,
+        "discovery.temporal_repair": 1,
         "soul": 2,
         "xhs": 2,
     }
@@ -331,6 +332,7 @@ class LLMService:
     _ROUTE_BUCKET_PREFIXES: ClassVar[tuple[tuple[str, str], ...]] = (
         ("recommendation.evaluate_batch", "evaluation"),
         ("discovery.evaluate", "evaluation"),
+        ("discovery.temporal_repair", "evaluation"),
         ("discovery.eval", "evaluation"),
         ("eval", "evaluation"),
         ("discovery.keyword", "discovery"),

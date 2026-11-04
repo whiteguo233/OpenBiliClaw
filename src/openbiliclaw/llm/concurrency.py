@@ -369,6 +369,7 @@ _EXPRESSION_CALLERS = {
 _EVALUATION_CALLERS = {
     "discovery.evaluate_batch",
     "discovery.evaluate_single",
+    "discovery.temporal_repair",
     "recommendation.evaluate_batch",
 }
 _SUPPLY_PREFIXES = (

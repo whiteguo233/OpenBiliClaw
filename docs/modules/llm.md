@@ -157,7 +157,7 @@ Full conversation history remains client-side.
 
 ## 公开 API
 
-`build_soul_profile_prompt(..., passive_grounding=False, authored_grounding=False)` 可为免费被动历史切换到有来源编号的信息偏好提取，或在存在用户原文/明确确认时只整理这些个人证据；调用方负责校验来源与闭集标签。两种窄任务均关闭隐式思考。`build_temporal_repair_prompt(items)` 只接受本次候选的局部ID和内容，不包含画像、相关性评分或评估时钟；由 `discovery.temporal_repair` 通过同一 LLMService/gate 调用。两接口均不改变模型路由或允许付费回退。
+`build_soul_profile_prompt(..., passive_grounding=False, authored_grounding=False)` 可为免费被动历史切换到有来源编号的信息偏好提取，或在存在用户原文/明确确认时只整理这些个人证据；调用方负责校验来源与闭集标签。两种窄任务均关闭隐式思考。`build_temporal_repair_prompt(items)` 只接受本次候选的局部ID和内容，不包含画像、相关性评分或评估时钟；由 `discovery.temporal_repair` 通过同一 LLMService/gate 调用，归入 `evaluation` 路由及补池评估队列，与原评估同优先级；空池时不能把它停在维护队列，否则评估和入池会互相等待。两接口均不改变模型路由或允许付费回退。
 
 `describe_llm_failure(exc)` 的模型缺失说明不默认指向本机 Ollama；仅同一异常包含 Ollama 和模型缺失信号时追加服务所在机器的拉取建议。固定安全文案不回显原始异常、API Key 或地址凭据；API、桌面/移动 Web、插件与 CLI 消费同一错误边界。签名与错误分类未变。
 

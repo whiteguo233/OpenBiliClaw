@@ -833,7 +833,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ## 公开 API
 
-免费模式的单条/批量评估增加最多一次 `discovery.temporal_repair` 调用，公开签名不变。只重评失败或漏掉明确截止时刻的条目，合并成一个窄任务；响应按局部ID唯一匹配，不接收评分修改。纠错输入不带发布时间/评估时钟，避免把“已经过期的入口”误判成“历史资料”；最终是否过期仍由代码计算。`canonicalize_deadline_state(payload)` 只清除 explicit_deadline 的冗余模型状态，日期、证据、分类、范围和置信度仍须通过原校验。`has_explicit_deadline_hint(text)` 仅决定是否值得重评，绝不据关键词直接淘汰内容。纠错失败不阻断正常评分，不放宽 hard-expire 门槛。
+免费模式的单条/批量评估增加最多一次 `discovery.temporal_repair` 调用，公开签名不变。只重评失败或漏掉明确截止时刻的条目，合并成一个窄任务，复用补池评估准入而非空池时暂停的维护队列；响应按局部ID唯一匹配，不接收评分修改。纠错输入不带发布时间/评估时钟，避免把“已经过期的入口”误判成“历史资料”；最终是否过期仍由代码计算。`canonicalize_deadline_state(payload)` 只清除 explicit_deadline 的冗余模型状态，日期、证据、分类、范围和置信度仍须通过原校验。`has_explicit_deadline_hint(text)` 仅决定是否值得重评，绝不据关键词直接淘汰内容。纠错失败不阻断正常评分，不放宽 hard-expire 门槛。
 
 `JevContentEvaluator(provider, model=..., config=..., context_budget=...)` 接受模型绑定的共享
 预算；`evaluate(profile_summary=..., content_items=...)` 支持命名 on-demand catalog，
