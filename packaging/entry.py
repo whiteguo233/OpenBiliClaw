@@ -487,6 +487,8 @@ def _ensure_embedding_model_async() -> None:
 
         cfg = load_config()
         emb = cfg.llm.embedding
+        if cfg.llm.sponsored.enabled:
+            return  # Free text vectors use cloud BGE, including with chat fallback.
         if str(emb.provider).strip().lower() != "ollama":
             return
         model = str(emb.model).strip() or "bge-m3"
@@ -593,6 +595,8 @@ def _seed_bundled_embedding_model(bundled_resources: Path, config_path: Path) ->
         from openbiliclaw.runtime.ollama_supervisor import start_managed_ollama_at
 
         cfg = load_config()
+        if cfg.llm.sponsored.enabled:
+            return False  # Preserve the optional local seed until free mode is disabled.
         provider = str(cfg.llm.embedding.provider).strip().lower()
         if provider not in ("", "ollama"):
             return False  # user chose a remote embedding provider — respect it

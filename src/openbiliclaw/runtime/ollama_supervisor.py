@@ -97,6 +97,10 @@ def _embedding_wants_ollama(config: Config) -> bool:
 
 def ollama_required(config: Config) -> bool:
     """Return whether chat or embedding routing may call Ollama."""
+    if config.llm.sponsored.enabled:
+        # Sponsored embeddings always use cloud BGE. A saved local chat model
+        # is reachable only when the user explicitly allows their own fallback.
+        return config.llm.sponsored.fallback_to_user_provider and _ollama_is_chat_capable(config)
     return _ollama_is_chat_capable(config) or _embedding_wants_ollama(config)
 
 

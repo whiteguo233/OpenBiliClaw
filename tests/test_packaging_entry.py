@@ -476,6 +476,35 @@ def test_close_splash_noop_without_pyi_splash() -> None:
     entry._close_splash()  # must not raise
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+def test_free_embedding_skips_local_download_and_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fallback: bool
+) -> None:
+    from openbiliclaw.config import Config
+    from openbiliclaw.runtime import embedding_progress, embedding_seed
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
+
+    cfg = Config()
+    cfg.llm.embedding.provider = "ollama"
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, fallback_to_user_provider=fallback)
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+
+    def unexpected_local_work(*args, **kwargs):
+        pytest.fail("cloud BGE must not download or seed local embedding weights")
+
+    monkeypatch.setattr(entry.threading, "Thread", unexpected_local_work)
+    monkeypatch.setattr(embedding_seed, "seed_embedding_model", unexpected_local_work)
+    (tmp_path / "bge-m3-seed").mkdir()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("# preserved local settings\n")
+    progress = embedding_progress.snapshot()
+
+    entry._ensure_embedding_model_async()
+    assert entry._seed_bundled_embedding_model(tmp_path, config_path) is False
+    assert config_path.read_text() == "# preserved local settings\n"
+    assert embedding_progress.snapshot() == progress
+
+
 def test_ensure_embedding_model_async_reports_global_pull_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
