@@ -26,6 +26,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from openbiliclaw import __version__
+from openbiliclaw.proc import no_window_kwargs
 
 PROFILE = "siliconflow-free-v1"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -256,6 +257,7 @@ def install_archive(archive: Path, *, catalog: dict[str, Any] | None = None) -> 
                 capture_output=True,
                 timeout=15,
                 check=False,
+                **no_window_kwargs(),
             )
             if check.returncode:
                 raise BundleError("免费模型组件离线自检失败，已保留原组件")

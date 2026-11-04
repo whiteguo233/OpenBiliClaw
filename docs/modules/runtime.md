@@ -828,3 +828,4 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 macOS应用重签必须跳过已由发行策略覆盖的SDK字节；Developer ID和本地ad-hoc路径都再次验签。正式五平台产物、OS签名与在线更新仍需发行验收，空目录不代表已经安装。信任根和流程见[实现决策](../plans/2026-11-04-sponsored-user-flow.md)。
 
 Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel和PyInstaller资源清单都包含发行目录，普通安装不需Rust工具链。
+免费模型组件安装在执行原生离线自检时沿用后端的Windows隐藏控制台规则，设置页准备组件不会弹出终端窗口。

@@ -51,3 +51,6 @@ Automated checks cover nested-code ordering, symlink/data exclusion, incomplete 
 Official references: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 Runner reference: [GitHub hosted runner images](https://github.com/actions/runner-images). Intel uses the supported `macos-15-intel` label instead of retired `macos-13`; arm64 uses `macos-15` to avoid the announced macOS 14 retirement.
+## 免费模型组件
+
+打包时通过 `runtime.sponsored_bundle.stage_runtime_bundle` 纳入固定发行目录中的已验签组件。macOS主应用签名跳过组件可执行文件，保留其独立manifest中的字节摘要，并在主应用签名后再次验签；本机ad-hoc打包也采用逐层签名。新配置仅在组件可验证时启用免费方案，已有用户配置保留。详细发行与质量边界见[用户流程验收](../testing/2026-11-04-sponsored-user-flow.md)。

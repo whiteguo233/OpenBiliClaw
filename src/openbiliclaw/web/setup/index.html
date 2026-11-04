@@ -2149,7 +2149,7 @@
             void applySetupLocale(currentConfig.language);
           }
           const llm = currentConfig?.llm || {};
-          sponsoredForm().load({ ...llm.sponsored, enabled: true });
+          sponsoredForm().load(llm.sponsored ? { ...llm.sponsored, enabled: true } : {});
           configLoaded = true;
           backendDegraded = currentConfig?.degraded === true;
           savedLlmInstances = { ...(llm.instances || {}) };
@@ -2201,8 +2201,10 @@
             if (String(cfg.api_key || "").trim()) savedKeyProviders.add(provider);
           }
           const primaryInstance = savedLlmInstances[savedLlmDefaultChain[0]];
-          const prov = llm.sponsored?.enabled || savedKeyProviders.size === 0
-            ? "sponsored" : String(primaryInstance?.provider_type || llm.default_provider || "");
+          const savedProvider = String(primaryInstance?.provider_type || llm.default_provider || "");
+          const preferFree = llm.sponsored && savedKeyProviders.size === 0
+            && (!savedProvider || savedProvider === "deepseek");
+          const prov = llm.sponsored?.enabled || preferFree ? "sponsored" : savedProvider;
           const optionExists = Array.from($("#provider").options).some((option) => option.value === prov);
           if (prov && optionExists) {
             $("#provider").value = prov;
