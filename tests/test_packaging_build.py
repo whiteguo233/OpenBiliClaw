@@ -25,6 +25,38 @@ def _load_build_module():
 build_module = _load_build_module()
 
 
+@pytest.mark.parametrize("library", ["libssl.3.dylib", "libcrypto.3.dylib"])
+def test_macos_packaging_rejects_dynamic_crypto_dependency(monkeypatch, library: str) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: f"_rust.abi3.so:\n\t/usr/local/opt/openssl@3/lib/{library}\n",
+    )
+    with pytest.raises(RuntimeError, match="OPENSSL_STATIC=1"):
+        build_module.validate_macos_crypto_linkage()
+
+
+def test_macos_packaging_accepts_static_crypto_binding(monkeypatch) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: "_rust.abi3.so:\n\t/usr/lib/libSystem.B.dylib\n",
+    )
+    build_module.validate_macos_crypto_linkage()
+
+
+def test_non_macos_packaging_does_not_require_otool(monkeypatch) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Windows")
+
+    def unexpected_command(*args, **kwargs):
+        pytest.fail("non-macOS packaging must not run otool")
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", unexpected_command)
+    build_module.validate_macos_crypto_linkage()
+
+
 def test_make_archive_name_includes_platform_and_version() -> None:
     assert build_module.make_archive_name("v0.1.1", "macos") == "OpenBiliClaw-macos-v0.1.1.zip"
 

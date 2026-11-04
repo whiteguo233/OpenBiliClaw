@@ -35,6 +35,21 @@ MACOS_INSTALLER_COMMAND_NAME = "安装并启动 Install OpenBiliClaw.command"
 MACOS_INSTALLER_COMMAND_SOURCE = PROJECT_ROOT / "packaging" / "install_macos.command"
 
 
+def validate_macos_crypto_linkage() -> None:
+    """Reject a crypto binding that would collide with Python's bundled OpenSSL."""
+    if platform.system() != "Darwin":
+        return
+    binding = importlib.util.find_spec("cryptography.hazmat.bindings._rust")
+    if binding is None or not binding.origin:
+        raise RuntimeError("Install cryptography before building the macOS application")
+    dependencies = subprocess.check_output(["otool", "-L", binding.origin], text=True)
+    if any("libssl." in line or "libcrypto." in line for line in dependencies.splitlines()[1:]):
+        raise RuntimeError(
+            "macOS packaging requires statically linked cryptography: rebuild it with "
+            "OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography"
+        )
+
+
 def ensure_pyinstaller() -> None:
     """Ensure PyInstaller is installed."""
     try:
@@ -1128,6 +1143,7 @@ def build(
 ) -> None:
     """Run PyInstaller, optionally signing and notarizing macOS artifacts."""
     validate_macos_signing(macos_signing_identity, macos_notary_profile, macos_notary_keychain)
+    validate_macos_crypto_linkage()
     ensure_pyinstaller()
     version_label = archive_version or read_project_version()
     bundle_version = (

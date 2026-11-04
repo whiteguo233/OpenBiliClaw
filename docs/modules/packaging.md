@@ -5,6 +5,7 @@
 | Feature | Status | Contract |
 | --- | --- | --- |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
+| macOS crypto linkage | Implemented | `validate_macos_crypto_linkage()` rejects dynamically linked OpenSSL before PyInstaller; Mac CI installs with `OPENSSL_STATIC=1` and without wheel cache, avoiding a Homebrew/Python libssl collision. |
 | Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. Frozen startup reconstructs its packaged SDK path, so it does not block login-item registration as a temporary external setting. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
@@ -63,3 +64,5 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 组件下载读取已保存的network策略，因此构建入口也能使用用户选择的系统或自定义代理，无需先启动API服务。
 
 冻结入口每次启动会重新发现随包的SDK。自启动守卫仅豁免与当前可执行文件旁的 `sponsored`（Mac为 `Contents/Resources/sponsored`）一致且存在的路径；源码启动、外部SDK路径和用户provider环境变量仍按外部配置处理。Windows整包验收覆盖配置开启、旧注册项迁移和关闭清理。
+
+Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runner对cryptography 50.0.2进行了源码编译，动态链接Homebrew OpenSSL；PyInstaller同时收集Python自己的旧libssl，导致已公证应用启动时报 `_SSL_get0_group_name` 缺失。两条Mac构建工作流现在以 `OPENSSL_STATIC=1` 安装依赖并禁用wheel缓存，构建入口在PyInstaller之前用otool拒绝动态libssl/libcrypto。已有环境需先执行 `OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography`；该配置只作用于构建，不改变用户配置或SDK签名。依据：[cryptography静态构建说明](https://cryptography.io/en/latest/installation/#building-cryptography-on-macos)。
