@@ -25,6 +25,8 @@
 
 完整CI与五平台原生/双架构Docker矩阵由[PR336](https://github.com/whiteguo233/OpenBiliClaw/pull/336)记录当前提交结果。新增浏览器场景已纳入CI的Web验收任务。本机全套首次运行在发现“关闭免费方案后仍覆盖自有向量”的边界后主动终止并修复，未计为全量通过。
 
+首轮完整CI（`da9e101a`）为12,376 passed、158 skipped、1 failed；唯一失败是既有运行状态响应的完整相等断言遗漏新增 `sponsored_status`，其余86个字段一致。补齐明确的空通知和固定更新链接期望，保留完整相等检查，单项回归再次验证。`be9f8f90` 的安装矩阵7/7通过，详见[对应运行](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/41912316308)。
+
 这轮验证的是凭据生命周期、路由和用户操作流程，不能当作重新测得的模型质量结果；此前真实8B/4B日常业务验证见[补测记录](2026-11-05-sponsored-followup.md)。
 
 ## 页面证据与复验步骤
