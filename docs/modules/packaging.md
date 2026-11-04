@@ -5,7 +5,7 @@
 | Feature | Status | Contract |
 | --- | --- | --- |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
-| Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. |
+| Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. Frozen startup reconstructs its packaged SDK path, so it does not block login-item registration as a temporary external setting. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
 | Local experimental builds | Retained outside hosted CI | Without either signing option, retain ad-hoc signing and the existing installation helper/first-launch guidance. Partial signing configuration is an error. |
@@ -61,3 +61,5 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 `Sponsored runtime installation`工作流在五种原生runner下载Core固定归档、验签、执行离线自检、激活并验证损坏更新保留旧组件；Linux x86_64/arm64另用实际Dockerfile构建并在容器执行自检。`scripts/sponsored_install_smoke.py`使用隔离数据目录，不调用模型API。
 
 组件下载读取已保存的network策略，因此构建入口也能使用用户选择的系统或自定义代理，无需先启动API服务。
+
+冻结入口每次启动会重新发现随包的SDK。自启动守卫仅豁免与当前可执行文件旁的 `sponsored`（Mac为 `Contents/Resources/sponsored`）一致且存在的路径；源码启动、外部SDK路径和用户provider环境变量仍按外部配置处理。Windows整包验收覆盖配置开启、旧注册项迁移和关闭清理。

@@ -42,6 +42,40 @@ def test_active_env_managed_inputs_ignores_empty_or_project_root_env(
     assert active_env_managed_inputs(cfg) == []
 
 
+@pytest.mark.parametrize("macos", [False, True])
+def test_autostart_accepts_rediscoverable_packaged_sponsored_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
+) -> None:
+    from openbiliclaw.runtime.autostart.guards import active_env_managed_inputs
+
+    root = tmp_path / "OpenBiliClaw.app" / "Contents" if macos else tmp_path
+    executable = root / "MacOS" / "OpenBiliClaw" if macos else root / "OpenBiliClaw.exe"
+    bundle = root / "Resources" / "sponsored" if macos else root / "sponsored"
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setenv("OPENBILICLAW_SPONSORED_BUNDLE", str(bundle))
+    monkeypatch.setenv("OPENBILICLAW_API_HOST", "127.0.0.1")
+
+    assert active_env_managed_inputs(Config()) == ["OPENBILICLAW_API_HOST"]
+
+
+@pytest.mark.parametrize("case", ["source", "external", "missing"])
+def test_autostart_rejects_nonrediscoverable_sponsored_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from openbiliclaw.runtime.autostart.guards import active_env_managed_inputs
+
+    bundle = tmp_path / ("custom-sdk" if case == "external" else "sponsored")
+    if case != "missing":
+        bundle.mkdir()
+    monkeypatch.setattr(sys, "frozen", case != "source", raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "OpenBiliClaw.exe"))
+    monkeypatch.setenv("OPENBILICLAW_SPONSORED_BUNDLE", str(bundle))
+
+    assert active_env_managed_inputs(Config()) == ["OPENBILICLAW_SPONSORED_BUNDLE"]
+
+
 def test_autostart_shadowed_detects_config_local_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
