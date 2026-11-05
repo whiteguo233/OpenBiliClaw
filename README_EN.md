@@ -417,7 +417,10 @@ Good if you already have Docker installed; ships with an Ollama embedding sideca
 mkdir -p ~/openbiliclaw && cd ~/openbiliclaw
 curl -fsSLO https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
-# then open http://127.0.0.1:8420/setup/ to finish initialization
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker restart openbiliclaw-backend
+# sign in at http://127.0.0.1:8420/web/, then open /setup/
+# see the Docker guide below for extension pairing and container initialization
 ```
 
 Or paste this into an AI coding agent for the terminal wizard + auto-init path:

@@ -3823,7 +3823,17 @@ def run(args: argparse.Namespace) -> int:
                     "waiting_for_extension_cookie",
                     {
                         "timeout_seconds": 300,
-                        "hint": "Install the browser extension and log in to bilibili.com.",
+                        "hint": (
+                            "Docker: in another terminal, run docker exec -it "
+                            "openbiliclaw-backend openbiliclaw set-password, then "
+                            "openbiliclaw ext-key generate and ext-key enable inside "
+                            "the container. Restart the backend, pair the extension "
+                            "with its device key, and log in to bilibili.com. "
+                            "See docs/docker-deployment.md for commands and preserving "
+                            "the runtime auth config before rerunning bootstrap."
+                            if mode == "docker"
+                            else "Install the browser extension and log in to bilibili.com."
+                        ),
                     },
                 )
             )

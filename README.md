@@ -418,7 +418,10 @@ Windows 原生（PowerShell，不需要 Docker / WSL2）：
 mkdir -p ~/openbiliclaw && cd ~/openbiliclaw
 curl -fsSLO https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
-# 然后打开 http://127.0.0.1:8420/setup/ 完成初始化
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker restart openbiliclaw-backend
+# 先打开 http://127.0.0.1:8420/web/ 登录，再进入 /setup/
+# 扩展设备密钥配对及容器初始化见下方 Docker 部署指南
 ```
 
 也可以把下面这句粘给 AI 编程助手，走终端向导 + 自动 init：
