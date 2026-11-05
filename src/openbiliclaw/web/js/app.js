@@ -534,7 +534,7 @@ async function initClientLocale() {
   // Await init: the MutationObserver is attached inside it, and the shell
   // renders tab labels immediately afterwards. Starting it in the background
   // leaves those first nodes untranslated until something re-renders them.
-  await runtime.init({ locale, basePath: "/i18n/ui/" }).catch((error) => {
+  await runtime.init({ locale, basePath: new URL("../i18n/ui/", location.href).pathname }).catch((error) => {
     console.warn("界面语言初始化失败", error);
   });
 }

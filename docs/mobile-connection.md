@@ -41,9 +41,13 @@ Docker 中的网卡地址通常属于容器。请在自定义地址输入宿主�
 
 代理路径：`https://obc.example.com/prefix/m/` → App 保存 `https://obc.example.com/prefix`，业务请求走 `/prefix/api/...`。URL 查询和 fragment 不会保存为后端路径。系统 Tailscale 与局域网使用 App 直接连接，应用内节点才选择内嵌连接。
 
+手机网页同样保留部署前缀：`/prefix/m/` 的 API、共享脚本、语言目录、封面和 WebSocket 都解析到同一后端的 `/prefix/...`。反向代理需转发 HTTP 和 WebSocket，并在到达后端时去掉部署前缀；不要求额外的配置字段。普通根路径入口继续使用 `/api`、`/shared` 和 `/i18n/ui`。
+
 地址发现不读取模型，不注册节点，不返回 Auth Key、密码或登录会话。二维码在本机生成，不提交给第三方服务；QR v5 / v10 支持最多 271 UTF-8 字节，超长地址显示复制入口。扫码只导入连接参数，保持已有鉴权流程。
 
 ## 验证
+
+最新[完整扫码真实环境复测（2026-11-05）](verification/2026-11-05-mobile-qr-full-e2e.md)记录独立 Web / 插件截图的 Android 图库与手机网页矩阵、真实监听和代理前缀、相机生命周期修复，以及公网 / 物理网络等未完成范围。
 
 - `tests/test_mobile_connection_info.py`：有效监听参数、系统 / 应用内节点隔离、inactive 状态、LAN 排除 Tailnet、QR v5 / v10 与 Python 编码器逐格比对。
 - `tests/js/mobile-network-qr.test.mjs`：保存的回环地址覆盖 LAN 的原始复现、无地址时不绘码、HTTPS / IPv6 / 代理路径、三种网络与监听边界。

@@ -291,8 +291,10 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
-  → phone camera → /m/ Mobile Web
-  → native App scanner → saved backend + direct / embedded Tailscale transport
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
 ```
 
 ```text
@@ -588,6 +590,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 手机版二维码：桌面/插件 -> 同 scheme /api/qr-info -> /m      │   │
+│  │ App 相机/截图本机识别；手机网页保留代理前缀访问 API/资源/WS  │   │
 │  │ 跳过 /api/health readiness / embedding probe                 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │

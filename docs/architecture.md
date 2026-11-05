@@ -6,8 +6,10 @@
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
-  → phone camera → /m/ Mobile Web
-  → native App scanner → saved backend + direct / embedded Tailscale transport
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
 ```
 
 OpenBiliClaw 采用分层架构设计，从上到下依次为：

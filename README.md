@@ -657,8 +657,10 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
-  → phone camera → /m/ Mobile Web
-  → native App scanner → saved backend + direct / embedded Tailscale transport
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
 ```
 
 扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。

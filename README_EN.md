@@ -656,8 +656,10 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
-  → phone camera → /m/ Mobile Web
-  → native App scanner → saved backend + direct / embedded Tailscale transport
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
 ```
 
 Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).

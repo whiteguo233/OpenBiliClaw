@@ -7,6 +7,7 @@
 | `GET /api/qr-info` | 保留 `lan_ip`，新增 `api_host`、`api_port` 和 `tailscale_addresses: [{host, port, source}]`；`source` 为 `system` 或 `embedded`。 |
 | 独立网络 | LAN 探测排除 Tailscale 的 IPv4 / IPv6 地址；系统网卡枚举与 fresh LAN 探测在线程中并行，不运行模型探针。 |
 | 实际监听信息 | CLI / 桌面包将本次有效 host / port 写入 app state；扫码使用启动覆盖后的端口，应用内 helper 使用 ready 事件的端口。 |
+| `GET /m/` 手机入口 | 经反代去除部署前缀后仍使用原入口；手机页面从当前 `/m/` 位置解析 API、共享脚本、语言目录、封面与 WebSocket 地址，保留二维码中的协议、端口和路径前缀。无新增接口或配置。 |
 
 端点继续公开、降级模式可用，响应 `Cache-Control: no-store`；应用内节点仅在功能开启且状态为 `ready` 时公布。只返回地址，不返回入网凭据、登录 URL 或会话。新旧前端 / 后端兼容；详见[连接协议](../mobile-connection.md)。
 
