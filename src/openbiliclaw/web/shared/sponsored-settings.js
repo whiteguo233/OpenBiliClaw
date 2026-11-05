@@ -41,10 +41,13 @@
   function mount(root, actions = {}) {
     if (mounted.has(root)) return mounted.get(root);
     root.classList.add("sponsored-settings");
+    root.dataset.providerId = "siliconflow_free";
     root.innerHTML = `
-      <h3>免费模型 · 硅基流动</h3>
+      <p class="sponsored-provider-badge">内置 Provider</p>
+      <h3>硅基流动免费方案</h3>
       <div data-sponsored="notice" hidden></div>
       <label class="sponsored-toggle"><input data-sponsored="enabled" type="checkbox">使用免费方案</label>
+      <p class="sponsored-hint" data-sponsored="routing-hint"></p>
       <div data-sponsored="options">
         <label data-sponsored="model-label">对话模型</label><select data-sponsored="model">
           <option value="Qwen/Qwen3-8B">Qwen3-8B（默认 · 128K 上下文）</option>
@@ -84,6 +87,9 @@
     });
     function sync() {
       field("options").hidden = !field("enabled").checked;
+      field("routing-hint").textContent = field("enabled").checked
+        ? "保存后，日常文本任务使用此 Provider。自有服务仅在你开启自费回退时调用。"
+        : "此 Provider 始终保留，可随时启用。自有模型服务在下方配置。";
       field("prepare").hidden = ready;
       field("prepare").disabled = busy || !supported || !actions.prepare;
       field("probe").disabled = busy || !supported || !actions.probe || !ready;
@@ -123,6 +129,15 @@
       load(value = {}) {
         supported = typeof value.enabled === "boolean";
         ready = value.runtime_available === true;
+        const models = Array.isArray(value.models) ? value.models.filter(item =>
+          ["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"].includes(item.id) && Number.isFinite(item.context_window)
+        ) : [];
+        if (models.length) field("model").replaceChildren(...models.map(item => {
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.textContent = `${item.id.split("/").pop()} · ${item.context_window / 1024}K`;
+          return option;
+        }));
         field("enabled").checked = value.enabled === true;
         field("model").value = value.model === "Qwen/Qwen3.5-4B" ? value.model : "Qwen/Qwen3-8B";
         field("embedding-mode").value = value.embedding_mode === "local" ? "local" : "cloud";

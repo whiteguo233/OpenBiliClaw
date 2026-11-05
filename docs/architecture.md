@@ -768,7 +768,7 @@ query inspiration → configured provider chain
 ## 免费模型路由与运行组件（正式发行待完成）
 
 ```text
-Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
+Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
   → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
   → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
@@ -776,7 +776,7 @@ Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
   → Core schema / evidence validation
       ├ passive portrait: source-backed information preferences
       ├ invalid temporal fields: one narrow LLM correction → source validation
-      └ foreign awareness citations: reject → bounded cognition retry
+      └ awareness batch vs lookback → reject foreign citations → one corrective retry
   → normal profile, discovery, recommendation, agent flows
 Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
 Auth failure / signed-policy expiry → durable capability status → settings + message notices
@@ -786,7 +786,10 @@ Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
 Silent transient chat failure → persisted retry count (max 2) → durable worker
 Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
 Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
-  → offline self-check → versioned bundle → atomic active pointer
+  → required pinned SDK staging → offline self-check → versioned bundle / atomic activation
+  → prefer current Core pin over stale active SDK after application update
+Agent exact memory lookup → JSON Pointer → bounded original value (no bulk-context guessing)
+Free director → ordered refs → deterministic pairing → unchanged horizon validation
 Optional image understanding: 4B; image embeddings: unavailable in the free profile
 ```
 

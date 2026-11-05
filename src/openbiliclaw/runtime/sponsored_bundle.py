@@ -187,6 +187,27 @@ def _installed_candidates() -> list[Path]:
         candidates.append(_root() / "bundles" / active)
     if bundled:
         candidates.append(Path(bundled))
+    # An application upgrade can carry a new credential generation while the
+    # user's active pointer still names an older, validly signed release. Prefer
+    # the Core-pinned manifest already on disk before considering that fallback;
+    # replacing an app must work offline and must not keep using its retired Key.
+    try:
+        pinned = _catalog().get("releases", {}).get(platform_id(), {}).get("manifest_sha256")
+    except BundleError:
+        pinned = None
+    if isinstance(pinned, str) and pinned:
+        expected_digest = pinned
+
+        def matches_pin(path: Path) -> bool:
+            try:
+                return (
+                    hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest()
+                    == expected_digest
+                )
+            except OSError:
+                return False
+
+        candidates.sort(key=lambda path: not matches_pin(path))
     return candidates
 
 
@@ -360,16 +381,29 @@ def ensure_runtime() -> str:
 
 
 def stage_runtime_bundle(destination: Path) -> bool:
-    """Stage the same verified release in a native desktop package or Docker image."""
+    """Require and stage the exact Core-pinned release; never ship an incomplete package."""
     catalog = _catalog()
-    if not catalog.get("releases") and not installed_runtime_command():
-        return False
+    release = catalog.get("releases", {}).get(platform_id())
+    if not release:
+        raise BundleUnavailableError("此平台缺少正式免费模型组件，已停止打包")
+    pinned = release.get("manifest_sha256", "")
+    if not isinstance(pinned, str) or not re.fullmatch(r"[0-9a-f]{64}", pinned):
+        raise BundleError("missing pinned runtime manifest digest")
     command = ensure_runtime()
     source = Path(shlex.split(command)[0]).parent
+    verify_bundle(source)
+    if hashlib.sha256((source / "manifest.json").read_bytes()).hexdigest() != pinned:
+        raise BundleError("runtime does not match the Core-pinned manifest")
     if destination.exists():
         raise BundleError("refusing to overwrite a staged runtime bundle")
-    shutil.copytree(source, destination)
-    verify_bundle(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="sponsored-stage-", dir=destination.parent) as scratch:
+        staged = Path(scratch) / "bundle"
+        shutil.copytree(source, staged)
+        verify_bundle(staged)
+        if hashlib.sha256((staged / "manifest.json").read_bytes()).hexdigest() != pinned:
+            raise BundleError("staged runtime does not match the Core-pinned manifest")
+        staged.rename(destination)
     return True
 
 

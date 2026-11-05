@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -157,6 +158,58 @@ def test_optional_install_only_allows_absent_release(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(bundle, "ensure_runtime", invalid)
     with pytest.raises(SystemExit, match="1"):
         bundle.main()
+
+
+def test_package_staging_requires_a_pinned_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bundle, "_catalog", lambda: {"releases": {}})
+    monkeypatch.setattr(bundle, "installed_runtime_command", lambda: "")
+    with pytest.raises(bundle.BundleUnavailableError):
+        bundle.stage_runtime_bundle(tmp_path / "package")
+    assert not (tmp_path / "package").exists()
+
+
+def test_package_cannot_substitute_an_unpinned_local_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "local"
+    catalog, _ = signed_bundle(directory)
+    catalog["releases"] = {bundle.platform_id(): {"manifest_sha256": "0" * 64}}
+    monkeypatch.setattr(bundle, "_catalog", lambda: catalog)
+    monkeypatch.setattr(bundle, "ensure_runtime", lambda: str(directory / "obc-sponsored-runtime"))
+    with pytest.raises(bundle.BundleError, match="pinned"):
+        bundle.stage_runtime_bundle(tmp_path / "package")
+    assert not (tmp_path / "package").exists()
+
+
+def test_packaged_pinned_update_wins_over_older_active_user_bundle_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing the app must replace its credential generation without a download."""
+    directory = tmp_path / "packaged"
+    catalog, key = signed_bundle(directory)
+    old = tmp_path / "state/bundles" / ("a" * 64)
+    shutil.copytree(directory, old)
+    manifest = json.loads((old / "manifest.json").read_bytes())
+    manifest["build"] = "previous-release"
+    raw = json.dumps(manifest).encode()
+    (old / "manifest.json").write_bytes(raw)
+    (old / "manifest.sig").write_bytes(key.sign(raw))
+    (tmp_path / "state/active").write_text("a" * 64)
+    catalog["releases"] = {
+        bundle.platform_id(): {
+            "manifest_sha256": hashlib.sha256(
+                (directory / "manifest.json").read_bytes()
+            ).hexdigest(),
+            "url": "https://invalid.example/must-not-download",
+        }
+    }
+    monkeypatch.setattr(bundle, "_catalog", lambda: catalog)
+    monkeypatch.setattr(bundle, "_root", lambda: tmp_path / "state")
+    monkeypatch.setenv("OPENBILICLAW_SPONSORED_BUNDLE", str(directory))
+    assert str(directory) in bundle.installed_runtime_command()
+    assert str(directory) in bundle.ensure_runtime()
 
 
 def test_matching_installed_release_does_not_download_again(

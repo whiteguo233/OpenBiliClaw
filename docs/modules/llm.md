@@ -1,5 +1,14 @@
 # LLM 多模型支持
 
+## 免费结构化输出约束（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 觉察示例来源 | 示例source_event_ids为空，避免小模型复制并不存在的示例编号；实际允许的来源在user输入中提供。 |
+
+公开API与调用约定：觉察prompt builder的公开签名不变。免费觉察的当前批次/回看/纠错输入由Soul调用者组织；推荐导演仅对免费路线请求扁平的有序引用列表。二者继续经过正常用量记录和输出验证。
+
+
 > 运行时并发由单一 `LLMConcurrencyGate` 管理：所有 provider 请求受总 gate（默认 3）约束，后台还受 `max(1, total-1)`（默认 2）约束。后台 admission 依据 canonical durable inventory 把工作分为 `refill.expression > refill.evaluation > refill.supply > maintenance`；有 refill waiter 时保证下一批新准入至少两个 refill 槽并可借满三个，库存为零时 park 新 maintenance（**park 有 5 分钟上限** `MAINTENANCE_STARVATION_GRACE_SECONDS`：库存持续为零且补货始终不来时——所有 source 关闭、凭据失效或网络不通——到点强制放行并打 WARNING 指出补货可能失败。画像流水线归 `soul.*` = maintenance，无上限的 park 会让日常浏览静默停止更新画像，而 maintenance 本身不可能把池子补上；库存恢复非 EMPTY 时该豁免立即撤销并为下次重新武装）。对话、`api.sentiment`、用户主动发起的 `api.config_probe` 与「聊一聊」agent loop 两条车道（`agent.chat` 交互对话、`agent.task` 用户显式发起的后台任务）是交互流量——后台任务不是 daemon maintenance，不会被空库存的 refill 保留位 park；未知 caller 只告警一次并按 maintenance 处理。旧 `bypass_semaphore=True` 只绕过后台 gate，`PrioritySemaphore` 仍从 `llm.service` 兼容导出。
 
 热重载不会替换 gate 对象，而是原地 `reconfigure()`：升容立即按优先级唤醒等待者；降容不撤销已进入 provider 的工作，并在 active 降到新容量以下前停止新准入。配置探测使用 `api.config_probe` 交互分类，只经过 total gate：即使 canonical inventory 为空，用户仍能测试并修复阻塞初始化的模型配置，但探测不会绕过总 provider 并发上限。

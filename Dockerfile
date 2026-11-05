@@ -38,7 +38,7 @@ COPY src ./src
 RUN pip install --no-deps .
 
 # Native multi-arch build resolves only the matching Core-pinned signed SDK.
-RUN python -m openbiliclaw.runtime.sponsored_bundle --stage /opt/openbiliclaw-sponsored --if-available
+RUN python -m openbiliclaw.runtime.sponsored_bundle --stage /opt/openbiliclaw-sponsored
 ENV OPENBILICLAW_SPONSORED_BUNDLE=/opt/openbiliclaw-sponsored
 
 EXPOSE 8420

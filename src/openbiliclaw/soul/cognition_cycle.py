@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from openbiliclaw.soul.awareness_analyzer import AwarenessGenerationError
+from openbiliclaw.soul.awareness_analyzer import AwarenessGenerationError, AwarenessGroundingError
 from openbiliclaw.soul.confusion import ConfusionManager
 from openbiliclaw.soul.ledger import ProfileLedger
 
@@ -506,8 +506,13 @@ class CognitionCycle:
                 max_tokens=self._cognition_max_tokens,
                 source_event_ids=source_event_ids,
             )
-        except AwarenessGenerationError:
+        except AwarenessGenerationError as exc:
             await asyncio.sleep(_AWARENESS_RETRY_BACKOFF_SECONDS)
+            correction = (
+                {"validation_feedback": exc.code}
+                if isinstance(exc, AwarenessGroundingError)
+                else {}
+            )
             return await self._awareness_analyzer.analyze_with_confusions(
                 events=events,
                 preference=preference,
@@ -515,6 +520,7 @@ class CognitionCycle:
                 existing_confusions=existing_confusions,
                 max_tokens=self._cognition_max_tokens,
                 source_event_ids=source_event_ids,
+                **correction,
             )
 
     def _awareness_lookback(self, watermark: int) -> list[dict[str, Any]]:

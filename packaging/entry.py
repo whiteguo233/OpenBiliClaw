@@ -64,6 +64,32 @@ def _macos_app_bundle_root(exe_dir: Path) -> Path:
     return exe_dir.parent.parent
 
 
+def _verify_packaged_sponsored_runtime(resources: Path) -> None:
+    """Fail the frozen installer smoke if its signed native runtime cannot run."""
+    from openbiliclaw.proc import no_window_kwargs
+    from openbiliclaw.runtime.sponsored_bundle import verify_bundle
+
+    bundle = resources / "sponsored"
+    if not bundle.is_dir():
+        raise RuntimeError("Packaged sponsored runtime is missing")
+    verify_bundle(bundle)
+    binary = bundle / ("obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime")
+    # Offline policy validation: exercise the actual bundled executable after
+    # signing/installation without making model calls or disclosing credentials.
+    result = subprocess.run(
+        [
+            str(binary), "--policy", str(bundle / "sponsored-policy.json"),
+            "--signature", str(bundle / "sponsored-policy.sig"), "--check-policy",
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+        **no_window_kwargs(),
+    )
+    if result.returncode:
+        raise RuntimeError("Packaged sponsored runtime failed native policy validation")
+
+
 def _user_data_root_for(
     os_name: str, platform: str, home: Path, environ: Mapping[str, str]
 ) -> Path:
@@ -1260,6 +1286,10 @@ def main() -> None:
     # port. Lets CI / a local check smoke-test the packaged build even
     # when a real serve-api already owns the port.
     if os.environ.get("OPENBILICLAW_SELFTEST"):
+        if getattr(sys, "frozen", False):
+            _verify_packaged_sponsored_runtime(bundled_resources)
+            if seeded and (runtime_config is None or not runtime_config.llm.sponsored.enabled):
+                raise RuntimeError("Fresh packaged config did not enable its built-in provider")
         create_app()
         _close_splash()
         print("[OpenBiliClaw] selftest OK — 依赖与后端装配正常")

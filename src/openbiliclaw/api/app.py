@@ -607,6 +607,10 @@ async def _run_init_heartbeat(
 _EMBEDDING_READY_TTL_SECONDS = 30.0
 _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+# The Nov 5 simultaneous-workload acceptance returned a valid local vector at
+# 20.493s; local model cold loading also takes 10–30s. User-triggered probes get
+# a bounded 45s budget, independently of the short background health poll.
+_LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS = 45.0
 _EmbeddingProbeOutcome = Literal["ready", "failed", "timed_out"]
 _LAN_IP_TTL_SECONDS = 30.0
 _AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
@@ -22331,7 +22335,7 @@ def create_app(
         return [str(item).strip() for item in value if str(item).strip()]
 
     def _sponsored_config_out(cfg: Any) -> Any:
-        from openbiliclaw.api.models import SponsoredConfigOut
+        from openbiliclaw.api.models import SponsoredConfigOut, SponsoredModelOut
         from openbiliclaw.llm.sponsored_profiles import (
             CHAT_MODELS,
             CONTEXT_WINDOWS,
@@ -22344,6 +22348,10 @@ def create_app(
         from openbiliclaw.sponsored_status import sponsored_status
 
         return SponsoredConfigOut(
+            models=[
+                SponsoredModelOut(id=item, context_window=CONTEXT_WINDOWS[item])
+                for item in CHAT_MODELS
+            ],
             enabled=settings.enabled,
             embedding_mode="local" if settings.embedding_mode == "local" else "cloud",
             embedding_model=(
@@ -23139,6 +23147,11 @@ def create_app(
         emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb_cfg, "provider", "") or "").strip().lower()
         model = str(getattr(emb_cfg, "model", "") or "").strip()
+        timeout_s = (
+            _LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS
+            if provider == "ollama"
+            else _EMBEDDING_PROBE_TIMEOUT_SECONDS
+        )
         if not provider:
             return ConfigServiceProbeResponse(
                 ok=False,
@@ -23164,7 +23177,7 @@ def create_app(
                 # building it successfully is the best signal we have.
                 ok = True
             else:
-                ok = bool(await asyncio.wait_for(probe(), timeout=15.0))
+                ok = bool(await asyncio.wait_for(probe(), timeout=timeout_s))
             return ConfigServiceProbeResponse(
                 ok=ok,
                 kind="embedding",
@@ -23172,6 +23185,22 @@ def create_app(
                 model=model,
                 message="Embedding provider is available." if ok else "",
                 error="" if ok else "Embedding provider returned no vector.",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        except TimeoutError:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="embedding",
+                provider=provider,
+                model=model,
+                error=(
+                    f"本地向量服务在 {timeout_s:g} 秒内未完成，可能正在加载模型或处理其他任务。"
+                    "请稍后重试，或切换硅基流动 BGE-M3。"
+                    if provider == "ollama"
+                    else f"向量服务连接测试超过 {timeout_s:g} 秒，请稍后重试。"
+                ),
+                error_code="EMBEDDING_BUSY",
+                retryable=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
         except Exception as exc:
@@ -23337,8 +23366,10 @@ def create_app(
                                     kind="sponsored",
                                     provider="sponsored",
                                     model=settings.model,
-                                    error="免费对话可用，但本地向量尚未就绪。"
-                                    "请在初始化页准备/修复 Ollama 向量模型后重试。",
+                                    error="免费对话可用；" + local_probe.error,
+                                    error_code=local_probe.error_code,
+                                    retryable=local_probe.retryable,
+                                    latency_ms=int((time.monotonic() - started) * 1000),
                                     service_status=sponsored_status(cfg),
                                 )
                             embedding_message = f"和本地 {local_probe.model} 文本向量均可用"

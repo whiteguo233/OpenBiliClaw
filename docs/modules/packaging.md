@@ -1,5 +1,15 @@
 # Desktop packaging
 
+## 免费组件构建门禁（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 自动纳入Rust组件 | PyInstaller完成后必须stage当前平台的固定签名SDK；缺失、摘要不符或验证失败直接终止。Docker也移除可选跳过。 |
+| 真实冻结自检 | Mac签名后和Windows安装后，`OPENBILICLAW_SELFTEST=1` 校验随包组件并运行原生 `--check-policy`；全新配置必须自动启用免费Provider。 |
+
+公开API与调用约定：构建接口仍为 `packaging/build.py`，无需另装Rust或人工复制SDK。`_verify_packaged_sponsored_runtime(resources)` 是冻结入口内部自检；不请求上游模型、不输出凭据。打包及签名后的文件保持SDK manifest字节一致。手动 `build-installers.yml` 只生成Actions附件，正式发布仍走独立release流程。
+
+
 ## Phone access defaults (2026-10-26)
 
 | Feature | Status | Contract |

@@ -554,6 +554,11 @@ def test_ensure_embedding_model_async_reports_global_pull_progress(
     assert snap["total"] == 568 * 1024 * 1024
 
 
+def test_frozen_selftest_rejects_missing_free_runtime(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="sponsored"):
+        entry._verify_packaged_sponsored_runtime(tmp_path)
+
+
 def test_main_source_selftest_does_not_migrate_ignored_project_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

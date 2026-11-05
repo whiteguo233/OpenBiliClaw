@@ -52,6 +52,15 @@ _AWARENESS_WRAPPED_ARRAY_KEYS = (
 # defaults in `_build_note`.
 _NOTE_SHAPE_KEYS = frozenset({"date", "observation", "trend", "emotion_guess"})
 
+_SPONSORED_CITATION_INSTRUCTIONS = (
+    "\nsource_event_ids只允许引用user消息current_evidence_ids列出的本轮recent_events。"
+    "read_only_lookback与已有画像/觉察仅供历史上下文，不能作为本轮证据编号。"
+    "不确定由哪条支持时不要编造编号；没有新的可靠观察时notes可为空。"
+    "date只使用引用事件的真实发生日期，无法确定时留空，不能复制示例日期。"
+    "同一天发生两次不等于连续两天，不能用事件数量充当天数。"
+    "若有validation_feedback，上一轮已被校验拒绝，请依据原始事件重新生成完整结果。"
+)
+
 
 class SupportsCoreMemoryTask(Protocol):
     async def complete_structured_task(
@@ -69,6 +78,19 @@ class SupportsCoreMemoryTask(Protocol):
 
 class AwarenessGenerationError(Exception):
     """Raised when awareness generation fails or returns invalid data."""
+
+
+class AwarenessGroundingError(AwarenessGenerationError):
+    """A known evidence error that the existing single retry can correct."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(
+            {
+                "source_event_ids": "awareness citation outside the analysed batch",
+                "consecutive_days": "awareness day-count exceeds cited source chronology",
+            }[code]
+        )
 
 
 @dataclass
@@ -97,23 +119,21 @@ class AwarenessAnalyzer:
         """Generate awareness notes.
 
         ``source_event_ids`` (Phase 0 evidence chain) is the id subset of
-        events consumed this round; when provided, it is attached to every
-        produced note as approximate provenance (the LLM does not attribute
-        observations to specific events, so the whole batch rides along).
-        When ``None`` (non-cursor callers), ids are derived from any ``id``
-        fields on ``events`` — the awareness prompt itself is unchanged
-        either way, so the ``analyze()`` render path stays byte-identical.
+        events consumed this round. Explicit valid citations are preserved;
+        absent citations use the batch as approximate provenance. When ``None``,
+        ids are derived from ``events``. Free-mode prompts separate this batch
+        from read-only historical context and reject out-of-batch citations.
         """
+        evidence_ids = (
+            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
+        )
         messages = build_awareness_prompt(
-            events=events,
+            events=self._prompt_events(events, evidence_ids),
             preference_summary=preference,
             soul_profile=soul_profile,
             input_view=self.plain_prompt_view,
         )
-        evidence_ids = (
-            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
-        )
-        self._add_sponsored_citation_boundary(messages, evidence_ids)
+        self._add_sponsored_citation_boundary(messages, evidence_ids, events)
         try:
             complete_structured = self.registry.complete_structured_task
             response = await complete_structured(
@@ -152,6 +172,7 @@ class AwarenessAnalyzer:
         existing_confusions: list[dict[str, object]] | None = None,
         max_tokens: int = DEFAULT_STRUCTURED_MAX_TOKENS,
         source_event_ids: list[int] | None = None,
+        validation_feedback: str = "",
     ) -> tuple[list[AwarenessNote], list[dict[str, object]]]:
         """Generate awareness notes AND confusion candidates (Phase 2).
 
@@ -161,17 +182,17 @@ class AwarenessAnalyzer:
         ``analyze()`` (same ``_build_note`` + evidence attribution), and
         confusion candidates are whitelist-validated dicts (bad rows dropped).
         """
+        evidence_ids = (
+            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
+        )
         messages = build_awareness_with_confusions_prompt(
-            events=events,
+            events=self._prompt_events(events, evidence_ids),
             preference_summary=preference,
             soul_profile=soul_profile,
             existing_confusions=existing_confusions,
             input_view=self.confusions_prompt_view,
         )
-        evidence_ids = (
-            list(source_event_ids) if source_event_ids is not None else self._event_ids_from(events)
-        )
-        self._add_sponsored_citation_boundary(messages, evidence_ids)
+        self._add_sponsored_citation_boundary(messages, evidence_ids, events, validation_feedback)
         try:
             complete_structured = self.registry.complete_structured_task
             response = await complete_structured(
@@ -192,20 +213,53 @@ class AwarenessAnalyzer:
         return notes, confusions_payload
 
     @staticmethod
+    def _prompt_events(
+        events: list[dict[str, object]], evidence_ids: list[int]
+    ) -> list[dict[str, object]]:
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        if not sponsored_enabled():
+            return events
+        allowed = set(evidence_ids)
+        return [event for event in events if set(_coerce_event_ids([event.get("id")])) & allowed]
+
+    @staticmethod
     def _add_sponsored_citation_boundary(
-        messages: list[dict[str, str]], evidence_ids: list[int]
+        messages: list[dict[str, str]],
+        evidence_ids: list[int],
+        events: list[dict[str, object]],
+        validation_feedback: str = "",
     ) -> None:
         from openbiliclaw.llm.sponsored_router import sponsored_enabled
 
         if sponsored_enabled():
-            messages[0]["content"] += (
-                "\n本次source_event_ids只允许引用这些事件编号："
-                + json.dumps(evidence_ids)
-                + "。已有画像/觉察中的编号不是本次事件，不能引用。"
-                "不确定由哪条支持时不要编造编号；没有新的可靠观察时notes可为空。"
-                "date只使用引用事件的真实发生日期，无法确定时留空，不能复制示例日期。"
-                "同一天发生两次不等于连续两天，不能用事件数量充当天数。"
+            from openbiliclaw.soul.event_provenance import prepare_cognition_events
+            from openbiliclaw.sources.event_format import render_retraction_marked_events
+
+            allowed = set(evidence_ids)
+            historical = [
+                event for event in events if not set(_coerce_event_ids([event.get("id")])) & allowed
+            ]
+            # Keep history's dates/content for trends, but never offer its IDs
+            # in the list from which this batch's provenance is selected.
+            lookback = [
+                {key: value for key, value in event.items() if key != "id"}
+                for event in prepare_cognition_events(render_retraction_marked_events(historical))
+            ]
+            messages[0]["content"] += _SPONSORED_CITATION_INSTRUCTIONS
+            messages[1]["content"] += (
+                "\n<read_only_lookback>\n"
+                + json.dumps(lookback, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n</read_only_lookback>\n<current_evidence_ids>\n"
+                + json.dumps(evidence_ids, ensure_ascii=False, indent=2)
+                + "\n</current_evidence_ids>"
             )
+            if validation_feedback in {"source_event_ids", "consecutive_days"}:
+                messages[1]["content"] += (
+                    "\n<validation_feedback>\n"
+                    + json.dumps({"invalid_field": validation_feedback}, sort_keys=True)
+                    + "\n</validation_feedback>"
+                )
 
     @staticmethod
     def _ground_sponsored_dates(
@@ -250,9 +304,7 @@ class AwarenessAnalyzer:
                 str(row.get(key, "")) for key in ("observation", "trend", "emotion_guess")
             )
             if any(count > longest for count in _claimed_consecutive_days(text)):
-                raise AwarenessGenerationError(
-                    "awareness day-count exceeds cited source chronology"
-                )
+                raise AwarenessGroundingError("consecutive_days")
 
     @staticmethod
     def _check_sponsored_citations(
@@ -268,7 +320,7 @@ class AwarenessAnalyzer:
             ):
                 # Raise before producing any notes. Cognition already retries
                 # AwarenessGenerationError and preserves its watermark on failure.
-                raise AwarenessGenerationError("awareness citation outside the analysed batch")
+                raise AwarenessGroundingError("source_event_ids")
 
     def _parse_with_confusions(
         self,

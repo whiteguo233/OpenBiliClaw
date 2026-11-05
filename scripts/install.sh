@@ -487,6 +487,8 @@ PY
     echo "================================================================"
     echo "Status:      $status"
     echo "Checkout:    $INSTALL_DIR"
+    echo "Free AI:     Built-in SiliconFlow provider is available in setup/settings."
+    echo "             Choose Qwen3-8B or Qwen3.5-4B; prepare the verified component if prompted."
     if [ -n "$REUSE_FROM" ]; then
         echo "Reused from: $REUSE_FROM"
         case "$missing" in

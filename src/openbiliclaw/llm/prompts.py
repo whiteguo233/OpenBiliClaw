@@ -1112,7 +1112,7 @@ _AWARENESS_WITH_CONFUSIONS_SYSTEM_PROMPT = """
       "observation": "最近连续浏览高信息密度内容。",
       "trend": "更偏向深度解释而非轻量消遣。",
       "emotion_guess": "可能处于主动吸收和整理信息的阶段。",
-      "source_event_ids": [12, 15, 17]
+      "source_event_ids": []
     }
   ],
   "confusions": [

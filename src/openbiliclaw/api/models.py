@@ -2358,9 +2358,20 @@ class ModuleLLMConfigOut(BaseModel):
     chain: list[str] = Field(default_factory=list)
 
 
+class SponsoredModelOut(BaseModel):
+    """One signed selectable model in the built-in provider catalog."""
+
+    id: str
+    context_window: int
+
+
 class SponsoredConfigOut(BaseModel):
     """Public free-model controls; executable paths and credentials stay local."""
 
+    provider_id: Literal["siliconflow_free"] = "siliconflow_free"
+    display_name: str = "硅基流动免费方案"
+    builtin: Literal[True] = True
+    models: list[SponsoredModelOut] = Field(default_factory=list)
     enabled: bool = False
     embedding_mode: Literal["cloud", "local"] = "cloud"
     service_status: dict[str, Any] = Field(default_factory=dict)
@@ -3000,6 +3011,8 @@ class ConfigServiceProbeResponse(BaseModel):
     model: str = ""
     message: str = ""
     error: str = ""
+    error_code: str = ""
+    retryable: bool = False
     latency_ms: int = 0
 
 

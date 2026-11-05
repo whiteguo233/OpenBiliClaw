@@ -1,5 +1,15 @@
 # 聊天 Agent Loop（聊一聊）
 
+## 长记忆精确读取（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 原值查询 | `read_memory` 对原始记忆层支持JSON Pointer，直接返回指定字段，避免把整层交给模型检索。 |
+| 有界且只读 | 保留读权限；拒绝无效转义、越界索引、缺失路径、过深路径和超长结果，不截断精确值后伪装成功。 |
+
+公开API与调用约定：`read_memory({layer,json_pointer,max_chars?})` 返回 `{layer,json_pointer,value}`。路径最长512字符/32层，数组索引从0开始，`~1`表示斜线、`~0`表示波浪号；不能与笔记key/keyword混用。笔记key传入斜线路径时明确提示改用json_pointer。工具保证取到的原值，模型最终措辞仍需单独验收。
+
+
 ## 概述
 
 `src/openbiliclaw/agent/` 承载「聊一聊」对话的多跳 agent 运行时（设计共识：

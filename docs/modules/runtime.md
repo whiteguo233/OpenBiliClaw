@@ -1,5 +1,15 @@
 # Runtime Module
 
+## 免费组件随包强制集成（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 固定发行必须齐全 | `stage_runtime_bundle(destination)` 缺失平台发行或摘要、目录与固定manifest不符、验签失败均抛错；先在临时目录验证，再落到新目标。 |
+| 新安装包优先 | 本地已有多个有效SDK时，先选择与当前Core固定摘要一致的组件，防止旧active指针遮住新包凭据。 |
+
+公开API与调用约定：`stage_runtime_bundle` 成功返回 `True`，不能用 `False` 表示漏包后继续构建。`installed_runtime_command()` 保持签名验证；旧组件仅作为不匹配当前pin时的可用候选。Docker和桌面构建强制成功，源码安装的显式 `--if-available` 兼容选项保留。
+
+
 ## 封面显示副本缓存（2026-10-23）
 
 `image_cache.render_cover_for_display(data, content_type)` 在线程中生成 640px JPEG 显示副本，并按原始字节 SHA-256 与媒体类型存入线程安全 LRU；最多 128 项、16 MiB，只持有显示副本、不保留大尺寸原图。字节变化自动失效，超限淘汰最旧项，进程退出即释放。小图及解码失败继续返回原始字节，不改变原图磁盘缓存、CDN 抓取/SSRF 校验或预取策略。API 与独立 image_service 复用同一实现。

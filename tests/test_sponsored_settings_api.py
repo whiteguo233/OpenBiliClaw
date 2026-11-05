@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,26 @@ def configured() -> Any:
     cfg = _configured()
     cfg.llm.sponsored = SponsoredRuntimeSettings(runtime_path=shlex.join(COMMAND))
     return cfg
+
+
+def test_free_provider_is_builtin_even_when_disabled_or_not_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cfg = configured()
+    cfg.llm.sponsored = SponsoredRuntimeSettings()
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.sponsored_bundle.installed_runtime_command", lambda: ""
+    )
+    client = _client(monkeypatch, tmp_path, cfg)
+    free = client.get("/api/config").json()["llm"]["sponsored"]
+    assert free["builtin"] and free["provider_id"] == "siliconflow_free"
+    assert free["display_name"] == "硅基流动免费方案"
+    assert not free["enabled"] and not free["runtime_available"]
+    assert [(m["id"], m["context_window"]) for m in free["models"]] == [
+        ("Qwen/Qwen3-8B", 131072),
+        ("Qwen/Qwen3.5-4B", 262144),
+    ]
+    assert "api_key" not in free and "runtime_path" not in free
 
 
 def test_free_selection_roundtrips_without_mutating_user_credentials(
@@ -98,3 +119,38 @@ def test_draft_probe_checks_exact_selected_model_and_bge_without_saving(
     assert "BGE-M3" in result.json()["message"]
     assert admissions == ["api.config_probe"]
     assert (tmp_path / "config.toml").read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["embedding", "sponsored"])
+def test_local_probe_allows_cold_loading_and_preserves_retryable_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str
+) -> None:
+    from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+    class BusyEmbedding:
+        async def probe(self) -> bool:
+            raise TimeoutError
+
+    cfg = configured()
+    select_local_embedding(cfg)
+    client = _client(monkeypatch, tmp_path, cfg)
+    monkeypatch.setattr(
+        "openbiliclaw.llm.registry.build_embedding_service", lambda *_a: BusyEmbedding()
+    )
+    budgets = []
+    original_wait = asyncio.wait_for
+
+    async def tracked_wait(coro: Any, timeout: float | None) -> Any:
+        if getattr(coro, "__qualname__", "").endswith("BusyEmbedding.probe"):
+            budgets.append(timeout)
+        return await original_wait(coro, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", tracked_wait)
+    result = client.post(
+        "/api/config/probe-service",
+        json={"kind": kind, "config": {"llm": {"sponsored": {"embedding_mode": "local"}}}},
+    ).json()
+    assert not result["ok"]
+    assert result["error_code"] == "EMBEDDING_BUSY" and result["retryable"]
+    assert "加载" in result["error"] and "修复 Ollama" not in result["error"]
+    assert budgets and 30 <= budgets[0] <= 60
