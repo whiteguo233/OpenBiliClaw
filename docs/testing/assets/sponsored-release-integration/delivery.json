@@ -1,0 +1,160 @@
+{
+  "source_commit": "439f87d7725a4733efebf9c22c2c5915ca543e79",
+  "workflows": [
+    {
+      "headSha": "439f87d7725a4733efebf9c22c2c5915ca543e79",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Windows HKCU autostart E2E",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952/job/127412910013",
+          "startedAt": "2026-11-05T17:29:05Z",
+          "completedAt": "2026-11-05T17:30:44Z"
+        },
+        {
+          "name": "test",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952/job/127412910289",
+          "startedAt": "2026-11-05T17:29:05Z",
+          "completedAt": "2026-11-05T17:51:37Z"
+        },
+        {
+          "name": "Smoke-build Firefox extension",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952/job/127412910303",
+          "startedAt": "2026-11-05T17:29:05Z",
+          "completedAt": "2026-11-05T17:29:22Z"
+        },
+        {
+          "name": "Web guided-init E2E",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952/job/127425708246",
+          "startedAt": "2026-11-05T17:51:40Z",
+          "completedAt": "2026-11-05T17:55:05Z"
+        }
+      ]
+    },
+    {
+      "headSha": "439f87d7725a4733efebf9c22c2c5915ca543e79",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Docker SDK (ubuntu-22.04)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412909489",
+          "startedAt": "2026-11-05T17:29:06Z",
+          "completedAt": "2026-11-05T17:30:00Z"
+        },
+        {
+          "name": "Native SDK (ubuntu-22.04-arm)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412909878",
+          "startedAt": "2026-11-05T17:29:08Z",
+          "completedAt": "2026-11-05T17:29:43Z"
+        },
+        {
+          "name": "Native SDK (macos-15-intel)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412909980",
+          "startedAt": "2026-11-05T17:29:06Z",
+          "completedAt": "2026-11-05T17:33:00Z"
+        },
+        {
+          "name": "Native SDK (ubuntu-22.04)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412909985",
+          "startedAt": "2026-11-05T17:29:06Z",
+          "completedAt": "2026-11-05T17:29:46Z"
+        },
+        {
+          "name": "Native SDK (macos-15)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412909994",
+          "startedAt": "2026-11-05T17:29:14Z",
+          "completedAt": "2026-11-05T17:29:48Z"
+        },
+        {
+          "name": "Docker SDK (ubuntu-22.04-arm)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412910005",
+          "startedAt": "2026-11-05T17:29:08Z",
+          "completedAt": "2026-11-05T17:29:57Z"
+        },
+        {
+          "name": "Native SDK (windows-latest)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968/job/127412910449",
+          "startedAt": "2026-11-05T17:29:06Z",
+          "completedAt": "2026-11-05T17:30:54Z"
+        }
+      ]
+    },
+    {
+      "headSha": "439f87d7725a4733efebf9c22c2c5915ca543e79",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Windows installer (.exe)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711/job/127413191589",
+          "startedAt": "2026-11-05T17:29:35Z",
+          "completedAt": "2026-11-05T17:36:09Z"
+        },
+        {
+          "name": "macOS installer (.dmg, x64)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711/job/127413191935",
+          "startedAt": "2026-11-05T17:30:07Z",
+          "completedAt": "2026-11-05T17:46:23Z"
+        },
+        {
+          "name": "macOS installer (.dmg, arm64)",
+          "conclusion": "success",
+          "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711/job/127413192167",
+          "startedAt": "2026-11-05T17:30:36Z",
+          "completedAt": "2026-11-05T17:39:59Z"
+        }
+      ]
+    }
+  ],
+  "python_suite": {
+    "passed": 12434,
+    "skipped": 161,
+    "seconds": 1244.87
+  },
+  "installer_artifacts": [
+    {
+      "digest": "sha256:7fc25002fdae8b5f1223a3974c889b80e0c8b5a0c6d43a81b09c4b390929f3ab",
+      "expired": false,
+      "id": 13438841016,
+      "name": "openbiliclaw-windows-installer",
+      "size_in_bytes": 81985378
+    },
+    {
+      "digest": "sha256:b536ea178847b551c57c1929c0e107c94ddec577131cd672d47d352f1633e499",
+      "expired": false,
+      "id": 13438208403,
+      "name": "openbiliclaw-macos-installer-x64",
+      "size_in_bytes": 497142169
+    },
+    {
+      "digest": "sha256:0f46953f1670145e43e4199ab8fe19db2dc8cdd461865d1d5fdd5a42a317d6ca",
+      "expired": false,
+      "id": 13437893060,
+      "name": "openbiliclaw-macos-installer-arm64",
+      "size_in_bytes": 491435686
+    }
+  ],
+  "local_frozen_verification": {
+    "artifact_id": 13438208403,
+    "archive_sha256_matches_github": true,
+    "codesign_verify_deep_strict": "passed",
+    "gatekeeper": "accepted / Notarized Developer ID",
+    "real_requests": "frozen-live.json"
+  },
+  "published_application_release": false
+}

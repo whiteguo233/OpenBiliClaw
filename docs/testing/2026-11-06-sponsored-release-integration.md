@@ -41,7 +41,23 @@
 - Python专项297通过、2跳过；浏览器自动化70/70，插件构建及测试1859/1859，网页JS150/150；Ruff、MyPy（386文件）、i18n（2983条文案）、shell语法通过。
 - 本机全量pytest运行10分05秒，2879通过、2跳过、无失败后主动中止，完整门禁改由下述CI承担；不把中止记录当成全量通过。
 
-完整CI与三平台实际安装包构建结果将在本记录补充。手动构建只生成Actions附件，不创建GitHub Release。
+## 完整CI与实际安装包
+
+以下全部针对产品提交 `439f87d7725a4733efebf9c22c2c5915ca543e79`，已完成且通过；后续验收留档提交只更新文档和证据。完整工作流、任务结论和安装包摘要见 [delivery.json](assets/sponsored-release-integration/delivery.json)。
+
+| 门禁 | 结果与证据 |
+| --- | --- |
+| 完整Python回归与静态检查 | **12,434通过、161按环境条件跳过**，耗时20分44秒；Ruff、MyPy通过。[CI](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046952) 的浏览器初始化、Windows开机启动和Firefox构建任务也全部通过。 |
+| 五平台原生SDK | Linux x64/arm64、Mac Intel/arm64、Windows均完成真实下载、验签、激活、随包stage及损坏更新拒绝。[安装CI](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968) |
+| 双架构Docker | Linux x64/arm64实际构建后端镜像，并在容器内验证随包Rust组件。[安装CI](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075046968) |
+| Windows实际安装包 | 构建EXE，实际安装后启动、自检和开机启动生命周期均通过。[安装包构建](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711) |
+| Mac Intel/arm64实际安装包 | 两种架构均完成签名、公证及签名后冻结启动自检；自检真实执行随包Rust策略检查。[安装包构建](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42075123711) |
+
+本机另下载该工作流的Mac Intel附件（ID `13438208403`），校验归档SHA-256与GitHub记录一致。提取出的实际应用通过 `codesign --verify --deep --strict`；Gatekeeper返回 `accepted / Notarized Developer ID`。
+
+使用这个冻结应用的 `--openbiliclaw-worker openbiliclaw.recommendation_server` 入口，在全新隔离配置目录启动真实后端，沿用包内Rust组件。新配置默认启用内置Provider，HTTP保存后热切换两个模型，分别完成真实流式对话＋云端BGE-M3组合探测：8B **3.617秒**，4B **0.843秒**。关闭其它免费模型及自有Provider回退，两个响应均确认请求的模型。原始结果见 [frozen-live.json](assets/sponsored-release-integration/frozen-live.json)。测试进程已退出；该补验覆盖冻结后端/API，不将其表述为本机完整桌面或个人账号导入验收。
+
+手动构建仅生成Actions附件，没有创建GitHub Release或合入main。
 
 ## 复验
 
