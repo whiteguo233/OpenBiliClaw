@@ -125,6 +125,14 @@ paused('private','http://127.0.0.1/private');
 paused('redirect','https://allowed.example/',{responseStatusCode:302,responseHeaders:[{name:'Location',value:'http://127.0.0.1/private'}]});
 paused('response','https://allowed.example/',{responseStatusCode:200,responseHeaders:[]});
 paused('iframe','https://ads.example/',{frameId:'child-frame'});
+if(mode==='close_pending') {
+  // Establish the pending authorization before the resource-budget failure.
+  paused('late-close','https://allowed.example/late-close');
+  const deadline=Date.now()+1000;
+  while(!authorizations.some(x=>x.url.endsWith('/late-close')) && Date.now()<deadline)
+    await new Promise(r=>setTimeout(r,5));
+  assert(authorizations.some(x=>x.url.endsWith('/late-close')));
+}
 paused('oversize','https://allowed.example/',{responseStatusCode:200,responseHeaders:[{name:'Content-Length',value:'5000000'}]});
 const until=Date.now()+3000;
 while(calls.filter(c=>['Fetch.continueRequest','Fetch.continueResponse','Fetch.failRequest'].includes(c.method)).length<9 && Date.now()<until)await new Promise(r=>setTimeout(r,5));
@@ -135,15 +143,12 @@ assert.equal(action('redirect'),'Fetch.failRequest');
 assert.equal(action('response'),'Fetch.continueResponse');
 assert.equal(action('oversize'),'Fetch.failRequest');
 assert.equal(action('iframe'),'Fetch.failRequest');
-const diagnostics=await command('diagnostics');assert.equal(diagnostics.unsupported_embedded_pages,1);assert(!diagnostics.blocked_navigation_origins.includes('https://ads.example'));assert.equal(diagnostics.fatal_error,'resource_budget_exceeded');
+const diagnostics=await command('diagnostics');
+assert.equal(diagnostics.unsupported_embedded_pages,config.interactive?0:1);
+assert.deepEqual(diagnostics.blocked_frame_origins,config.interactive?['https://ads.example']:[]);
+assert(!diagnostics.blocked_navigation_origins.includes('https://ads.example'));
+assert.equal(diagnostics.fatal_error,'resource_budget_exceeded');
 assert(authorizations.some(x=>x.url==='http://127.0.0.1/private' && x.redirect));
-if(mode==='close_pending') {
-  paused('late-close','https://allowed.example/late-close');
-  const deadline=Date.now()+1000;
-  while(!authorizations.some(x=>x.url.endsWith('/late-close')) && Date.now()<deadline)
-    await new Promise(r=>setTimeout(r,5));
-  assert(authorizations.some(x=>x.url.endsWith('/late-close')));
-}
 client.write(JSON.stringify({id:999,operation:'close'})+'\n');
 await running;
 if(mode==='close_pending') {

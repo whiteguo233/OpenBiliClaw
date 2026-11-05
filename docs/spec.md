@@ -357,9 +357,11 @@ V2EX identity ladder: PAT verified > browser observed > config/accepted
 Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial → budget approval → source_id (independent share/cadence)
                      Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → structural scope review → persist verified plan only
                      User link hints → page-local boolean query checks → redacted authoring evidence
+                     Same-container repeated rows → bounded common structure → recurring selectors with original filters
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
                      Independent new source → own task-space session; shared Ego profile cookies, explicit reuse preserved
                      login required → human takeover → resume/trial → same draft/workflow
+                     Interactive owned iframe → document/login guard before resume → shared request/byte budget; popups/workers blocked
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
                      Explicit host routing → private network.json → system manual proxy rules + exact direct hosts on cold start
@@ -711,9 +713,11 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ Dynamic Web: 原话预算 + chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
 │  │   Ego 草稿失败 -> href 证据／原范围结构候选 -> 一次重试 -> 结构修正审核实际样例 -> 验证后保存 │ │
 │  │   用户链接模板 -> 页面内路径／参数布尔证据 -> 查询值仍脱敏               │ │
+│  │   同容器重复行 -> 有界共享结构证据 -> 避免固定单条内容编号，保留过滤条件 │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
 │  │   独立新来源 -> 独立 task space 会话；profile Cookie 共享、显式会话可复用 │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
+│  │   自有交互 iframe -> 恢复前守卫 -> 共享请求/流量预算；弹窗/worker 拒绝 │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
 │  │   显式域名路由 → 私有 network.json → 系统手动代理 + 精确域名直连 │ │
 │  │   准备完成 / 末个会话关闭 → 120 秒保温 → 租约保护回收；CLI 退出清理 │ │

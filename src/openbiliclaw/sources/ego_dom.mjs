@@ -27,6 +27,32 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
     const result=parts.join(' > ');
     return result.length<=300?result:'';
   };
+  const repeatedPath = e => {
+    // Evidence for a repeated list, not an automatic selector rewrite. A topic
+    // ID may be a class on an ancestor rather than the row's own HTML id.
+    const suffix=[];
+    for(let current=e,depth=0;current?.parentElement && depth<5;
+        current=current.parentElement,depth++) {
+      const parent=current.parentElement;
+      if(parent===document.body)break;
+      const peers=[...parent.children].filter(p=>p.tagName===current.tagName);
+      if(peers.length>=2 && peers.length<=500) {
+        const shared=[...current.classList].filter(c=>/^[a-zA-Z_][\w-]{0,50}$/.test(c)
+          && peers.every(p=>[...p.classList].includes(c))).slice(0,3);
+        const part=current.tagName.toLowerCase()+shared.map(c=>'.'+CSS.escape(c)).join('');
+        const prefix=path(parent), candidate=[prefix,part,...suffix].join(' > ');
+        if(prefix && candidate.length<=300) {
+          let matches=[];
+          try {matches=[...document.querySelectorAll(candidate)].filter(visible);}catch{}
+          const roots=matches.map(m=>{for(let i=0;m && i<depth;i++)m=m.parentElement;return m;});
+          if(matches.length<=500 && matches.includes(e) && new Set(roots).size>=2
+              && roots.every(r=>peers.includes(r)))return {selector:candidate,count:matches.length};
+        }
+      }
+      suffix.unshift(classSelector(current));
+    }
+    return {selector:'',count:0};
+  };
   const safeUrl = s => {try {const u=new URL(s,location.href);u.username='';u.password='';
     u.search='';u.hash='';return u.href;}catch{return '';}};
   // Page identity is compared before redaction; no query, fragment or userinfo
@@ -87,6 +113,7 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
   const remaining=[...document.querySelectorAll(tags)].filter(visible).slice(0,100);
   const chosen=[...new Set([...controls,...structured,...content,...remaining])].slice(0,100);
   const rows=chosen.map(e=>{
+    const repeated=samples.includes(e)?repeatedPath(e):{selector:'',count:0};
     const ancestors=[];
     for(let a=e.parentElement;a && a!==document.body && ancestors.length<3;a=a.parentElement)
       ancestors.push(selector(a));
@@ -101,6 +128,7 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       .slice(0,80).filter(f=>fieldTags.includes(f.tagName) && visible(f) && text(f)).slice(0,8)
       .map(f=>({selector:path(f,e)||selector(f),class_selector:classSelector(f),text:text(f)})):[];
     return {tag:e.tagName.toLowerCase(),selector:selector(e),class_selector:classSelector(e),path_selector:path(e),
+      repeated_path_selector:repeated.selector,repeated_match_count:repeated.count,
       text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',
       href_attribute_prefix:e.tagName==='A'?hrefPrefix(e):'',type:e.getAttribute('type')||'',
       href_query_checks:e.tagName==='A'?hrefQueryChecks(e):[],

@@ -244,6 +244,14 @@ Use path_selector, parent_path_selector, ancestor_selectors and child_links to
 choose the observed content container and its relative link selector. Only use
 class_selector as actual tag/class evidence, including on elements whose primary
 selector is a unique ID. Prefer reusable observed classes over per-item IDs.
+Sampled rows can supply repeated_path_selector and repeated_match_count: an
+observed same-container cohort with shared classes across at least two rows.
+Prefer this repeated structure for recurring discovery, retaining the user's
+link filters and exclusions. It is evidence, not permission to include every row.
+Do not freeze a particular article/topic identifier into item_selector, even
+when that identifier appears inside an ancestor class instead of an HTML id.
+Compare all sampled row paths for varying item identities; the collection budget
+limits the item count, so a unique current-item selector must not stand in for it.
 Sampled rows may include child_fields: bounded descendant text with selectors
 relative to that row and reusable class evidence. Use these to distinguish the
 actual article title from summary, author and date. Prefer the observed title

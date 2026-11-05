@@ -32,18 +32,24 @@ export async function start(config) {
   if (!ego || typeof ego.sendCDPMessage !== 'function') throw Error('ego_native_unavailable');
   let serial = 0, session, target, mainFrame, socket, closing = false;
   const pending = new Map(), guards = new Map(), sockets = new Set(), responseBytes = new Map();
+  const ownedSessions = new Map();
+  const forgetSession = sid => {
+    for(const [child,parent] of ownedSessions)if(parent===sid)forgetSession(child);
+    ownedSessions.delete(sid);
+  };
   const diagnostic = {blocked_requests: 0, blocked_resource_origins: [],
-    blocked_navigation_origins: [], resource_failures: [], unsupported_embedded_pages: 0, login_wall: false};
+    blocked_navigation_origins: [], blocked_frame_origins: [], resource_failures: [],
+    unsupported_embedded_pages: 0, login_wall: false};
   let requests = 0, bytes = 0;
   let finish; const finished=new Promise(resolve=>{finish=resolve;});
   const send = value => { if(socket && !socket.destroyed) socket.write(JSON.stringify(value)+'\n'); };
   const native = value => { if(value?.error_code) throw Error(value.error_code); return value; };
   const origin = url => { try { const u=new URL(url); return ['http:','https:'].includes(u.protocol) ? u.origin : ''; } catch{return '';} };
-  const noteBlock = (url, document, code) => {
+  const noteBlock = (url, document, code, embedded=false) => {
     diagnostic.blocked_requests++; diagnostic.last_block_code=code;
-    const key=document?'blocked_navigation_origins':'blocked_resource_origins';
+    const key=embedded?'blocked_frame_origins':document?'blocked_navigation_origins':'blocked_resource_origins';
     const value=origin(url); if(value && !diagnostic[key].includes(value) && diagnostic[key].length<16) diagnostic[key].push(value);
-    if(document && config.plan.auth.login_origins.includes(value)) diagnostic.login_wall=true;
+    if(document && !embedded && config.plan.auth.login_origins.includes(value)) diagnostic.login_wall=true;
   };
   const rpc = (method, params={}, sid=session, allowClosing=false) => new Promise((resolve,reject)=>{
     if(closing && !allowClosing){reject(Error('ego_session_closed'));return;}
@@ -63,8 +69,12 @@ export async function start(config) {
     const {requestId,request,resourceType,frameId,responseStatusCode,responseHeaders}=params;
     let url=request.url, allowed=false;
     const document=resourceType==='Document';
+    const embedded=document && (sid!==session || (mainFrame && frameId!==mainFrame));
     try {
-      if(document && mainFrame && frameId!==mainFrame) {
+      if(diagnostic.fatal_error) {
+        await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid);return;
+      }
+      if(embedded && !config.interactive) {
         diagnostic.unsupported_embedded_pages++;
         await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid);return;
       }
@@ -82,14 +92,14 @@ export async function start(config) {
       if(location) url=new URL(location,url).href;
       if(!responseStatusCode) requests++;
       const length=Number((responseHeaders||[]).find(x=>x.name.toLowerCase()==='content-length')?.value||0);
-      allowed=requests<=250 && length<=4*1024*1024 && (!document || !mainFrame || frameId===mainFrame);
+      allowed=requests<=250 && length<=4*1024*1024;
       if(!allowed && (requests>250 || length>4*1024*1024)) diagnostic.fatal_error='resource_budget_exceeded';
       if(allowed) allowed=await approve({url,method:request.method,document,redirect:!!location});
       if(!allowed) {
-        noteBlock(url,document,'origin_or_network_blocked');
+        noteBlock(url,document,'origin_or_network_blocked',embedded);
         await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid); return;
       }
-      if(document && responseStatusCode>=200 && responseStatusCode<300) {
+      if(document && !embedded && responseStatusCode>=200 && responseStatusCode<300) {
         // A successful replacement document supersedes an earlier guest/error
         // page; keep script/resource errors and all access-block diagnostics.
         diagnostic.resource_failures=diagnostic.resource_failures.filter(x=>x.resource_type!=='Document');
@@ -101,6 +111,36 @@ export async function start(config) {
       await rpc(responseStatusCode?'Fetch.continueResponse':'Fetch.continueRequest',{requestId},sid);
     } catch {
       try { await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid); } catch {}
+    }
+  };
+  const guardPage = async sid => {
+    await rpc('Page.enable',{},sid); await rpc('Network.enable',{},sid);
+    await rpc('Network.setBypassServiceWorker',{bypass:true},sid);
+    await rpc('Network.setCacheDisabled',{cacheDisabled:true},sid);
+    await rpc('Network.setBlockedURLs',{urls:['ws://*','wss://*','file://*','ftp://*']},sid);
+    await rpc('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true},sid);
+    await rpc('Page.addScriptToEvaluateOnNewDocument',{source:"Object.defineProperty(globalThis,'WebSocket',{value:class{constructor(){throw Error('WebSocket disabled');}},configurable:false});"},sid);
+    await rpc('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'},{urlPattern:'*',requestStage:'Response'}]},sid);
+  };
+  const attachChild = async event => {
+    const {sessionId:sid,targetInfo:info}=event.params;
+    // Only descendants auto-attached by an already owned page belong to us.
+    // A new page/popup or worker is never granted the frame permission.
+    if(!ownedSessions.has(event.sessionId) || info.targetId===target)return;
+    if(!config.interactive || info.type!=='iframe' || !event.params.waitingForDebugger || ownedSessions.size>=9) {
+      if(info.type==='iframe')diagnostic.unsupported_embedded_pages++;
+      await rpc('Target.closeTarget',{targetId:info.targetId},null);return;
+    }
+    ownedSessions.set(sid,event.sessionId);
+    try {
+      // Install the same per-request policy before allowing child scripts to run.
+      // Frame documents keep document/login authority, never CDN authority.
+      await guardPage(sid);
+      if(closing || !ownedSessions.has(sid))return;
+      await rpc('Runtime.runIfWaitingForDebugger',{},sid);
+    } catch {
+      forgetSession(sid);diagnostic.unsupported_embedded_pages++;
+      await rpc('Target.closeTarget',{targetId:info.targetId},null).catch(()=>{});
     }
   };
   ego.onSendCDPMessageError=(_message,code)=>{
@@ -115,15 +155,20 @@ export async function start(config) {
           ? 'ego_window_minimized' : 'ego_protocol_error'));
         else p.resolve(event.result); return; }
       if(closing)return;
-      if(event.method==='Fetch.requestPaused') void guard(event.params,event.sessionId);
-      if(event.method==='Target.attachedToTarget' && event.params.targetInfo.targetId!==target) {
-        // Never resume a new worker, popup or OOPIF outside this one owned page.
-        void rpc('Target.closeTarget',{targetId:event.params.targetInfo.targetId},null).catch(()=>{});
+      if(event.method==='Target.attachedToTarget') {void attachChild(event).catch(()=>{});return;}
+      if(event.method==='Target.detachedFromTarget') {
+        if(ownedSessions.has(event.sessionId))forgetSession(event.params.sessionId);
+        return;
       }
+      if(!ownedSessions.has(event.sessionId))return;
+      if(event.method==='Fetch.requestPaused') void guard(event.params,event.sessionId);
       if(event.method==='Page.javascriptDialogOpening') void rpc('Page.handleJavaScriptDialog',{accept:false}).catch(()=>{});
       if(event.method==='Network.dataReceived') { bytes+=event.params.dataLength||0;
-        const id=event.params.requestId;responseBytes.set(id,(responseBytes.get(id)||0)+(event.params.dataLength||0));
-        if(bytes>16*1024*1024 || responseBytes.get(id)>4*1024*1024) {diagnostic.fatal_error='resource_budget_exceeded';void rpc('Page.stopLoading').catch(()=>{});} }
+        const id=event.sessionId+':'+event.params.requestId;responseBytes.set(id,(responseBytes.get(id)||0)+(event.params.dataLength||0));
+        if(bytes>16*1024*1024 || responseBytes.get(id)>4*1024*1024) {
+          diagnostic.fatal_error='resource_budget_exceeded';
+          for(const sid of ownedSessions.keys())void rpc('Page.stopLoading',{},sid).catch(()=>{});
+        } }
     } catch {}
   };
   const evaluate=async (fn,arg=null)=>{
@@ -266,6 +311,7 @@ export async function start(config) {
     ego.useTaskSpace(task.id);
     const tab=native(await ego.createTab('about:blank'));target=tab.targetId;
     session=(await rpc('Target.attachToTarget',{targetId:target,flatten:true},null)).sessionId;
+    ownedSessions.set(session,null);
     // Background discovery must never put a page on screen. Interactive login
     // keeps its window because the user has to see and drive it.
     if(!config.interactive) {
@@ -274,15 +320,10 @@ export async function start(config) {
         await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
       } catch {}
     } else await restoreInteractiveWindow();
-    await rpc('Page.enable'); await rpc('Network.enable');
-    await rpc('Network.setBypassServiceWorker',{bypass:true});await rpc('Network.setCacheDisabled',{cacheDisabled:true});
-    await rpc('Network.setBlockedURLs',{urls:['ws://*','wss://*','file://*','ftp://*']});
-    await rpc('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
+    await guardPage(session);
     await rpc('Page.setDownloadBehavior',{behavior:'deny'});
     await rpc('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
     mainFrame=(await rpc('Page.getFrameTree')).frameTree.frame.id;
-    await rpc('Page.addScriptToEvaluateOnNewDocument',{source:"Object.defineProperty(globalThis,'WebSocket',{value:class{constructor(){throw Error('WebSocket disabled');}},configurable:false});"});
-    await rpc('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'},{urlPattern:'*',requestStage:'Response'}]});
     fs.writeFileSync(config.ready,JSON.stringify({task_id:task.id,task_name:config.task_name,version:native(await ego.getBrowserVersion()).currentVersion}),{mode:0o600});
   }catch(e){fs.writeFileSync(config.ready,JSON.stringify({task_id:task?.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_host_failed'}),{mode:0o600});await close();}
   await finished;

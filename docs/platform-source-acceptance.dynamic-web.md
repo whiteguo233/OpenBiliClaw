@@ -1,5 +1,7 @@
 # 动态 Web Discover 来源验收
 
+2026-11-06 后续[验证与重复采集修复](testing/2026-11-06-verification-recovery.md)：真实 Ego 在受控人工会话中完成 V2EX 自身验证；进一步修复单条帖子祖先 class 被固化的问题。原生 App 相同普通请求重新建源、最终版本三次自然调度各 3 条、真实评估入池与推荐接口均通过，NGA／HN／少数派真实兼容试跑通过。哔哩轻小说保留用户指定直连，当前 TLS 重置仍未解决；下文早期记录不替代最新结果。
+
 2026-11-06 [剩余站点修复](testing/2026-11-06-remaining-sites-fixes.md)：BBC 与 Planet Python 的真实聊天、审批、三轮调度和评估已通过；已知平台 Ego 接入及网站验证接管缺陷已修复。V2EX 实际网站验证与哔哩轻小说当前直连仍阻断，不沿用历史成功代替本轮证据。
 
 用户选择仅哔哩轻小说直连后的[本轮修复与真实复验](testing/2026-10-27-bilinovel-direct-e2e.md)
@@ -99,7 +101,7 @@ Playwright 验收替代。现已在真实官方宿主完成首次设置、哔哩
 | macOS / Windows 桌面安装态 | required | NOT_RUN | 本机 macOS 源码及真实 Chromium 验证不证明打包安装态；本轮没有完成两系统桌面安装验收 |
 | 安装态浏览器扩展 | required | PASS（本机 unpacked） | 当前分支构建、独立 Chromium profile 安装，真实连接 18485 完整服务，正确显示网站、2 份、5 分钟及 3 条运行历史；`output/playwright/dynamic-sources-live/extension-source-history.png`。没有发布到扩展商店，不代表其他浏览器安装态 |
 | Ego Lite 原生执行器（2026-10-22 更新） | required | PASS（macOS Intel 公开网站） | 真实聊天审批→Ego 首轮 10 发现/10 入队→真实 Luna 评估/文案→9 入池；自然第二轮 10 发现/0 入队。托管新 profile 首次设置与关闭后自动启动通过，重启前后均取同一组 10 URL。详见单列 Ego 记录；外站账号、Windows/Linux、完整冻结包不据此宣称通过 |
-| iframe / 弹窗依赖的登录 | 当前未支持 | NOT_RUN（成功路径） | 第一版只支持顶层页面，嵌入页/额外页面被阻止；fixture 的拒绝行为验证不能推导为嵌入式验证码、弹窗 SSO 可用 |
+| iframe / 弹窗依赖的登录 | required（受控 iframe）；弹窗排除 | PASS（V2EX 自身验证）；NOT_RUN（真实账号 SSO） | 2026-11-06 人工会话内自有 iframe 在原授权和共享预算下可用，V2EX 实际验证后可采集；跨进程子会话边界另由原生协议单测覆盖。后台 iframe、弹窗和 worker 仍拒绝，不代表任意验证码或跨站账号登录成功 |
 | 账号画像导入、增量兴趣事件、站内发布/收藏 | N/A | PASS（排除验证） | `tests/test_custom_source_contract.py` 执行生产路径，验证无账号 bootstrap/信号导入、无扩展任务/Cookie 同步、原生保存不支持及无虚构指标；17 个契约排除项均有节点依据 |
 | 来源注册审计 | required | PASS（注册） | 31 PASS / 17 N/A / 11 MANUAL / 0 MISSING；`required_missing=0`、`registration_check_passed=true`、`fully_verified=false`，本轮 `/tmp/dynamic-source-live-audit.json` |
 

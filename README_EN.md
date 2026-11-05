@@ -676,6 +676,8 @@ Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop G
 
 Dynamic websites and RSS / Atom / JSON Feed: `automatic deployment setup of Ego (macOS websites) / anonymous HTTP for feeds → original-message limits + chat draft and trial → actual-budget approval → independent source_id / share / interval → scheduled versioned workflows → ordinary candidate evaluation → recommendation pool`. Login runs on the human takeover page followed by `resume`; all three settings surfaces manage websites as peers of built-in sources. Content stays `source_platform=web`, with `source_name` as its visible label.
 
+Human takeover: `owned iframe → content/login origin guards before resume → shared request and byte budget`; popups and workers remain blocked. Authoring receives common structure from repeated rows in the same container to avoid pinning one item ID, while retaining original filters, trials and approval.
+
 Explicit host routing: `GET/PUT executors/ego/network → private network.json → current manual system proxies + exact direct hosts at each cold start`. The default list is empty; live sessions prevent updates, and unsupported PAC/WPAD configurations fail explicitly.
 
 A failed Ego draft trial can follow `fixed DOM href evidence / a structural candidate within the original scope → one retrial → review actual samples for structural repairs → persist only after verification`. Entry, scope, budgets and approval stay unchanged; published collection never rewrites its strategy automatically.

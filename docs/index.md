@@ -4,7 +4,8 @@
 
 ## 👤 我是用户
 
-- [多站 Discovery 阻断修复验收](testing/2026-11-06-remaining-sites-fixes.md) — BBC、Planet Python 真实接入与原生网站验证接管；保留 V2EX / 哔哩轻小说站外阻断
+- [V2EX 验证与重复采集修复验收](testing/2026-11-06-verification-recovery.md) — 真实 Ego 验证恢复、原生聊天建源与重复列表选择器；哔哩轻小说直连阻断继续单独记录
+- [多站 Discovery 阻断修复验收](testing/2026-11-06-remaining-sites-fixes.md) — 上轮 BBC、Planet Python 真实接入与原生网站验证接管记录
 
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
 - [Instagram main 集成交付](testing/2026-10-06-instagram-delivery.md) — README / 首页、最新主线整合、测试与保留的真实验收限制
