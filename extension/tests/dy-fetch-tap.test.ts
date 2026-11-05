@@ -129,7 +129,7 @@ test("extractDouyinSelfSecUid accepts only the authoritative logged-in response"
   assert.equal(extractDouyinSelfSecUid(null), "");
 });
 
-test("fetchDouyinSelfSecUid uses the MAIN-world credentialed profile endpoint", async () => {
+test("fetchDouyinSelfSecUid supplies web parameters to the credentialed profile endpoint", async () => {
   const calls: Array<{ url: string; credentials?: RequestCredentials }> = [];
   const target = {
     location: { origin: "https://www.douyin.com" },
@@ -138,16 +138,21 @@ test("fetchDouyinSelfSecUid uses the MAIN-world credentialed profile endpoint", 
         url: typeof input === "string" ? input : input.toString(),
         credentials: init?.credentials,
       });
-      return new Response(
-        JSON.stringify({ status_code: 0, user: { sec_uid: "MS4wProfileUser" } }),
-      );
+      const query = new URL(String(input)).searchParams;
+      const webRequest = query.get("device_platform") === "webapp"
+        && query.get("aid") === "6383"
+        && query.get("channel") === "channel_pc_web"
+        && query.get("cookie_enabled") === "true";
+      return Response.json(webRequest
+        ? { status_code: 0, user: { sec_uid: "MS4wProfileUser" } }
+        : { status_code: 8 });
     },
   } as unknown as Window;
 
   assert.equal(await fetchDouyinSelfSecUid(target), "MS4wProfileUser");
   assert.deepEqual(calls, [
     {
-      url: "https://www.douyin.com/aweme/v1/web/user/profile/self/",
+      url: "https://www.douyin.com/aweme/v1/web/user/profile/self/?device_platform=webapp&aid=6383&channel=channel_pc_web&cookie_enabled=true",
       credentials: "include",
     },
   ]);
@@ -164,7 +169,21 @@ test("classifyDouyinResponseUrl maps the four bootstrap endpoints to scopes", ()
     classifyDouyinResponseUrl(
       "https://www.douyin.com/aweme/v1/web/aweme/favorite/?count=18&sec_user_id=abc",
     ),
+    "dy_like",
+  );
+  assert.equal(
+    classifyDouyinResponseUrl(
+      "https://www.douyin.com/aweme/v1/web/aweme/listcollection/?cursor=0",
+    ),
     "dy_collect",
+  );
+  assert.equal(
+    classifyDouyinResponseUrl("/aweme/v1/web/aweme/collection/?cursor=0"),
+    "dy_collect",
+  );
+  assert.equal(
+    classifyDouyinResponseUrl("/aweme/v1/web/user/following/list/?offset=0"),
+    "dy_follow",
   );
   assert.equal(
     classifyDouyinResponseUrl(
@@ -440,7 +459,7 @@ test("installFetchTap wraps target.fetch and posts captured items via callback",
   );
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.scope, "dy_collect");
+  assert.equal(calls[0]!.scope, "dy_like");
   assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "555");
 });
 
@@ -1097,7 +1116,7 @@ test("installApiHarvester evicts expired requestIds and suppresses their late re
   assert.equal((result.items as { aweme_id: string }[])[0]!.aweme_id, "fresh-feed");
 });
 
-test("installApiHarvester paginates favorite and like scopes through the postMessage bridge", async () => {
+test("installApiHarvester paginates collection and like scopes through the postMessage bridge", async () => {
   const fetchCalls: { url: string; credentials?: RequestCredentials }[] = [];
   const favoritePages = new Map<number, unknown>([
     [
@@ -1125,11 +1144,11 @@ test("installApiHarvester paginates favorite and like scopes through the postMes
     const url = typeof input === "string" ? input : input.toString();
     fetchCalls.push({ url, credentials: init?.credentials });
     const parsed = new URL(url, "https://www.douyin.com");
-    if (parsed.pathname.includes("/aweme/v1/web/aweme/favorite/")) {
-      const cursor = Number(parsed.searchParams.get("max_cursor") ?? 0);
+    if (parsed.pathname.includes("/aweme/v1/web/aweme/listcollection/")) {
+      const cursor = Number(parsed.searchParams.get("cursor") ?? 0);
       return new Response(JSON.stringify(favoritePages.get(cursor) ?? { aweme_list: [] }));
     }
-    if (parsed.pathname.includes("/aweme/v1/web/aweme/like/")) {
+    if (parsed.pathname.includes("/aweme/v1/web/aweme/favorite/")) {
       return new Response(
         JSON.stringify({
           has_more: false,
@@ -1200,10 +1219,118 @@ test("installApiHarvester paginates favorite and like scopes through the postMes
     [["dy_like", "like-1", "点赞 1"]],
   );
   assert.equal(fetchCalls.every((call) => call.credentials === "include"), true);
-  assert.equal(fetchCalls[0]!.url.includes("/aweme/v1/web/aweme/favorite/"), true);
+  assert.equal(fetchCalls[0]!.url.includes("/aweme/v1/web/aweme/listcollection/"), true);
   assert.equal(fetchCalls[0]!.url.includes("sec_user_id=MS4wTestUser"), true);
-  assert.equal(fetchCalls[1]!.url.includes("max_cursor=123"), true);
-  assert.equal(fetchCalls[2]!.url.includes("/aweme/v1/web/aweme/like/"), true);
+  assert.equal(fetchCalls[1]!.url.includes("cursor=123"), true);
+  assert.equal(fetchCalls[2]!.url.includes("/aweme/v1/web/aweme/favorite/"), true);
+});
+
+test("collection pages use POST with matching numeric body and URL cursors", async () => {
+  const requests: Array<{ url: URL; init?: RequestInit }> = [];
+  const target = {
+    fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input), "https://www.douyin.com");
+      requests.push({ url, init });
+      const first = requests.length === 1;
+      return Response.json({
+        status_code: 0,
+        has_more: first,
+        cursor: first ? "00042" : 0,
+        // The collection cursor takes priority over the legacy field.
+        max_cursor: 999,
+        aweme_list: [{ aweme_id: first ? "collection-1" : "collection-2" }],
+      });
+    },
+  } as unknown as Window;
+
+  const result = await harvestScopeViaApi(target, "dy_collect", "MS4wSelf", 10, 0);
+  assert.equal(result.error, undefined);
+  assert.equal(result.pages_fetched, 2);
+  assert.deepEqual(result.items.map(item => item.aweme_id), ["collection-1", "collection-2"]);
+  assert.deepEqual(requests.map(({ url }) => url.searchParams.get("cursor")), ["0", "42"]);
+  for (const [index, { url, init }] of requests.entries()) {
+    assert.equal(url.pathname, "/aweme/v1/web/aweme/listcollection/");
+    assert.equal(url.searchParams.has("max_cursor"), false);
+    assert.equal(init?.method, "POST");
+    assert.equal(init?.credentials, "include");
+    assert.equal(new Headers(init?.headers).get("Content-Type"), "application/json");
+    assert.deepEqual(JSON.parse(String(init?.body)), { cursor: index === 0 ? 0 : 42, count: 18 });
+  }
+});
+
+test("like pages use favorite GET and advance max_cursor", async () => {
+  const requests: URL[] = [];
+  const target = {
+    fetch: async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input), "https://www.douyin.com");
+      requests.push(url);
+      assert.equal(init?.method ?? "GET", "GET");
+      assert.equal(init?.body, undefined);
+      assert.equal(init?.credentials, "include");
+      return Response.json({
+        status_code: 0,
+        has_more: requests.length === 1,
+        max_cursor: 123,
+        aweme_list: [{ aweme_id: `like-${requests.length}` }],
+      });
+    },
+  } as unknown as Window;
+
+  const result = await harvestScopeViaApi(target, "dy_like", "MS4wSelf", 10, 0);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.items.map(item => item.scope), ["dy_like", "dy_like"]);
+  assert.deepEqual(requests.map(url => url.pathname), [
+    "/aweme/v1/web/aweme/favorite/", "/aweme/v1/web/aweme/favorite/",
+  ]);
+  assert.deepEqual(requests.map(url => url.searchParams.get("max_cursor")), ["0", "123"]);
+});
+
+test("account APIs distinguish malformed item lists from affirmative empty", async () => {
+  for (const scope of ["dy_post", "dy_like", "dy_collect", "dy_follow"] as const) {
+    for (const payload of [
+      { status_code: 0, has_more: false },
+      { status_code: 0, has_more: false, aweme_list: "invalid", followings: {} },
+    ]) {
+      const target = { fetch: async () => Response.json(payload) } as unknown as Window;
+      const result = await harvestScopeViaApi(target, scope, "MS4wSelf", 10, 0);
+      assert.equal(result.error, "api_items_invalid", scope);
+      assert.deepEqual(result.items, []);
+    }
+    const target = {
+      fetch: async () => Response.json({ status_code: 0, has_more: false, aweme_list: [], followings: [] }),
+    } as unknown as Window;
+    const result = await harvestScopeViaApi(target, scope, "MS4wSelf", 10, 0);
+    assert.equal(result.error, undefined, scope);
+    assert.deepEqual(result.items, []);
+  }
+});
+
+test("collection JSON cursors cannot lose numeric precision", async () => {
+  let calls = 0;
+  const target = {
+    fetch: async (): Promise<Response> => {
+      calls += 1;
+      return Response.json({ status_code: 0, has_more: true, cursor: "9007199254740993", aweme_list: [] });
+    },
+  } as unknown as Window;
+  const result = await harvestScopeViaApi(target, "dy_collect", "MS4wSelf", 10, 0);
+  assert.equal(calls, 1);
+  assert.equal(result.error, "pagination_cursor_invalid");
+});
+
+test("account harvesting still respects the requested item limit", async () => {
+  let calls = 0;
+  const target = {
+    fetch: async (): Promise<Response> => {
+      calls += 1;
+      return Response.json({ status_code: 0, has_more: true, cursor: 123,
+        aweme_list: [{ aweme_id: "cap-1" }, { aweme_id: "cap-2" }] });
+    },
+  } as unknown as Window;
+  const result = await harvestScopeViaApi(target, "dy_collect", "MS4wSelf", 1, 0);
+  assert.equal(calls, 1);
+  assert.equal(result.error, undefined);
+  assert.equal(result.items.length, 1);
 });
 
 test("harvestScopeViaApi accepts normalized follow cursor aliases", async () => {
@@ -1247,6 +1374,14 @@ test("harvestScopeViaApi accepts normalized follow cursor aliases", async () => 
     assert.equal(result.error, undefined);
     assert.equal(result.pages_fetched, 2);
     assert.equal(fetchCalls[1]!.includes(`max_time=${cursorCase.expected}`), true);
+    for (const request of fetchCalls) {
+      const url = new URL(request, "https://www.douyin.com");
+      assert.equal(url.pathname, "/aweme/v1/web/user/following/list/");
+      assert.equal(url.searchParams.get("offset"), "0");
+      assert.equal(url.searchParams.get("min_time"), "0");
+      assert.equal(url.searchParams.get("with_fstatus"), "1");
+      assert.equal(url.searchParams.get("source_type"), "1");
+    }
   }
 });
 

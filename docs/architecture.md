@@ -23,6 +23,10 @@ runtime-stream clients → API PresenceTracker (connect/disconnect; 20s heartbea
                       → atomic data/runtime/extension_presence.json (60s active lease)
                       → full/discovery worker presence gate → browser task queues
 
+Douyin account bootstrap → MAIN profile/self + web parameters → self-scoped paginated API
+                        → API rows only (including valid partial) → reject reported DOM/zero-API rows → staged task result → profile events
+                        → affirmative empty stays empty; unknown page cards never become account signals
+
 Douyin confirmed discovery failures → dy_tasks-derived retry_at (15/30m exponential; cap 6h)
                                    → producer pre-keyword-claim / client / pending-task gates
 Douyin native search stream → original Response returned immediately to page

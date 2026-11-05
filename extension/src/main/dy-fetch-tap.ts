@@ -3,8 +3,8 @@
  *
  * Pattern: install a wrapper around `window.fetch` (and
  * `XMLHttpRequest.prototype.send`) that **observes** the response
- * bodies of `/aweme/v1/web/aweme/{post,favorite,like}/` and
- * `/aweme/v1/web/user/follow/list/` calls and posts captured items
+ * bodies of `/aweme/v1/web/aweme/{post,favorite,listcollection}/` and
+ * `/aweme/v1/web/user/following/list/` calls and posts captured items
  * back to the content script via `window.postMessage`. Douyin's own
  * `webmssdk.js` has already signed the outgoing call before our
  * wrapper sees it, so we never compute X-Bogus / msToken / `_signature`
@@ -74,7 +74,8 @@ export function classifyDouyinResponseUrl(url: string): DouyinScope | null {
   // disturb the path-based decision.
   const path = url.split("?", 1)[0] ?? "";
   if (path.includes("/aweme/v1/web/aweme/post/")) return "dy_post";
-  if (path.includes("/aweme/v1/web/aweme/favorite/")) return "dy_collect";
+  if (path.includes("/aweme/v1/web/aweme/favorite/")) return "dy_like";
+  if (path.includes("/aweme/v1/web/aweme/listcollection/")) return "dy_collect";
   if (path.includes("/aweme/v1/web/aweme/collection/")) return "dy_collect";
   if (path.includes("/aweme/v1/web/aweme/like/")) return "dy_like";
   if (path.includes("/aweme/v1/web/user/follow/list/")) return "dy_follow";
@@ -151,7 +152,7 @@ function pickAuthor(awemeAuthor: unknown): { nickname: string; sec_uid: string }
 }
 
 /**
- * Parse a `/aweme/v1/web/aweme/{post,favorite,like}/` response into
+ * Parse a `/aweme/v1/web/aweme/{post,favorite,listcollection}/` response into
  * normalized items. Tolerates missing `aweme_list`, wrong types,
  * and individual-row malformations (drops the bad row, keeps the rest).
  *
@@ -205,7 +206,7 @@ export function parseAwemeListResponse(
 }
 
 /**
- * Parse a `/aweme/v1/web/user/follow/list/` response into normalized
+ * Parse a `/aweme/v1/web/user/following/list/` response into normalized
  * items. Accepts both `followings` and `follow_list` as the array key
  * since f2 references show the variant has shifted historically.
  */
@@ -833,11 +834,11 @@ function replayInstallStatusPing(
 // already wrapped by webmssdk.js (waitForDouyinSdk above), so calls
 // to window.fetch get X-Bogus / a_bogus / msToken auto-signed.
 //
-// Endpoints + cursor key per F2 (Apache-2.0 reference):
+// Account endpoints confirmed by the 2026-11-04 field report:
 //   dy_post:    /aweme/v1/web/aweme/post/      max_cursor / has_more
-//   dy_collect: /aweme/v1/web/aweme/favorite/  max_cursor / has_more
-//   dy_like:    /aweme/v1/web/aweme/like/      max_cursor / has_more
-//   dy_follow:  /aweme/v1/web/user/follow/list/  max_time / has_more
+//   dy_collect: /aweme/v1/web/aweme/listcollection/  POST cursor / has_more
+//   dy_like:    /aweme/v1/web/aweme/favorite/  max_cursor / has_more
+//   dy_follow:  /aweme/v1/web/user/following/list/  max_time / has_more
 //
 // Isolated-world content script invokes this via postMessage:
 //   request:  { type: "OPENBILICLAW_DOUYIN_API_REQUEST",
@@ -858,9 +859,9 @@ const FEED_API_RESPONSE_TYPE = "OPENBILICLAW_DOUYIN_FEED_API_RESPONSE";
 
 const SCOPE_ENDPOINT: Record<DouyinScope, string> = {
   dy_post: "/aweme/v1/web/aweme/post/",
-  dy_collect: "/aweme/v1/web/aweme/favorite/",
-  dy_like: "/aweme/v1/web/aweme/like/",
-  dy_follow: "/aweme/v1/web/user/follow/list/",
+  dy_collect: "/aweme/v1/web/aweme/listcollection/",
+  dy_like: "/aweme/v1/web/aweme/favorite/",
+  dy_follow: "/aweme/v1/web/user/following/list/",
 };
 
 function buildScopeApiUrl(
@@ -886,6 +887,9 @@ function buildScopeApiUrl(
     params.set("min_time", "0");
     params.set("with_fstatus", "1");
     params.set("source_type", "1");
+    params.set("offset", "0");
+  } else if (scope === "dy_collect") {
+    params.set("cursor", cursor);
   } else {
     params.set("max_cursor", String(cursor));
     params.set("min_cursor", "0");
@@ -953,9 +957,8 @@ function scopeCursorFields(scope: DouyinScope): readonly string[] {
   // source_type=1 follow responses traditionally advance via min_time.
   // Some page builds instead expose the same continuation as max_time or
   // cursor, so accept those aliases without weakening validation.
-  return scope === "dy_follow"
-    ? ["min_time", "max_time", "cursor"]
-    : ["max_cursor", "cursor"];
+  if (scope === "dy_follow") return ["min_time", "max_time", "cursor"];
+  return scope === "dy_collect" ? ["cursor", "max_cursor"] : ["max_cursor", "cursor"];
 }
 
 function pickNextScopeCursor(
@@ -973,7 +976,11 @@ function pickNextScopeCursor(
     if (!Object.prototype.hasOwnProperty.call(root, field)) continue;
     present = true;
     const candidate = normalizeScopeCursor(root[field]);
-    if (candidate === null) continue;
+    // Collection cursors must also survive the API's numeric JSON body.
+    if (
+      candidate === null
+      || (scope === "dy_collect" && !Number.isSafeInteger(Number(candidate)))
+    ) continue;
     valid = true;
     if (candidate === currentCursor) {
       repeatedCurrent = true;
@@ -1012,7 +1019,13 @@ export async function harvestScopeViaApi(
     const url = buildScopeApiUrl(scope, secUid, cursor);
     let json: unknown;
     try {
-      const resp = await w.fetch(url, { credentials: "include" });
+      const init: RequestInit = { credentials: "include" };
+      if (scope === "dy_collect") {
+        init.method = "POST";
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify({ cursor: Number(cursor), count: 18 });
+      }
+      const resp = await w.fetch(url, init);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       json = (await resp.json()) as unknown;
     } catch (err) {
@@ -1029,6 +1042,13 @@ export async function harvestScopeViaApi(
     const statusError = scopeApiStatusError(root);
     if (statusError) {
       error = statusError;
+      break;
+    }
+    const validList = scope === "dy_follow"
+      ? Array.isArray(root.followings) || Array.isArray(root.follow_list)
+      : Array.isArray(root.aweme_list);
+    if (!validList) {
+      error = "api_items_invalid";
       break;
     }
     const batch =
@@ -1101,7 +1121,13 @@ export function extractDouyinSelfSecUid(payload: unknown): string {
  */
 export async function fetchDouyinSelfSecUid(target: Window): Promise<string> {
   const w = target as unknown as { fetch: FetchLike };
-  const url = `${target.location.origin}/aweme/v1/web/user/profile/self/`;
+  const query = new URLSearchParams({
+    device_platform: "webapp",
+    aid: "6383",
+    channel: "channel_pc_web",
+    cookie_enabled: "true",
+  });
+  const url = `${target.location.origin}/aweme/v1/web/user/profile/self/?${query}`;
   const resp = await w.fetch(url, { credentials: "include" });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return extractDouyinSelfSecUid((await resp.json()) as unknown);

@@ -16,6 +16,43 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+
+@pytest.mark.parametrize("status", ["partial", "ok", "degraded"])
+@pytest.mark.parametrize(
+    "debug",
+    [
+        {"dom_items_harvested": 14, "api_items_harvested": 0},
+        {"dom_items_harvested": 1, "api_items_harvested": 18},
+        {"dom_items_harvested": 0, "api_items_harvested": 0},
+    ],
+)
+def test_dy_bootstrap_rejects_reported_untrusted_rows(
+    dy_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    status: str,
+    debug: dict[str, int],
+) -> None:
+    """An old extension must not turn recommendation DOM into account history."""
+    client, db, memory = dy_task_client
+    task_id = _enqueue_dy_bootstrap_task(db)
+    response = client.post(
+        "/api/sources/dy/task-result",
+        json={
+            "task_id": task_id,
+            "status": status,
+            "videos": [{"scope": "dy_like", "aweme_id": "untrusted", "title": "demo"}],
+            "debug": debug,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json().get("rejected") == "untrusted_bootstrap_source"
+    assert memory.events == []
+    assert memory._source_bootstrap_state.get("dy_seen_video_keys", []) == []
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+    task = DyTaskQueue(db).get(task_id)
+    assert task is not None and task["status"] == "failed"
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -332,6 +369,8 @@ class TestDyTaskResult:
                 "scope_counts": {"dy_collect": 1},
                 "debug": {
                     "scope_statuses": {"dy_collect": "degraded"},
+                    "dom_items_harvested": 0,
+                    "api_items_harvested": 1,
                     "degraded_reasons": ["dy_collect:no_sec_uid"],
                 },
             },

@@ -1,0 +1,198 @@
+{
+  "observed_at": "2026-11-05T12:16:54.309171+00:00",
+  "endpoint": "http://127.0.0.1:18420",
+  "backend_version": "0.3.230",
+  "backend_source_snapshot": "a0cae9322bd55f37ee957cdd365878cf1e433a28",
+  "extension": {
+    "version": "0.3.233",
+    "id": "hkgfbeinkeidmnkhdgociclhaclfmbam",
+    "hashes": {
+      "dist/main/dy-fetch-tap.js": "bb140c11e8756d5783c538393e49664df0b0172d8acf3581f0262226bfd62ae9",
+      "dist/content/douyin.js": "1cc4ba1337eb771ca6025c08c428a650c4e3612623366fc537d7f20447132b1e"
+    }
+  },
+  "production_scope": "Current account -> live backend durable events -> original configured full worker -> profile",
+  "verdict": "BLOCKED_UPSTREAM_403_AND_MODEL_429",
+  "before": {
+    "at": "2026-11-05T12:07:11.184080+00:00",
+    "counts": {
+      "events": 109008,
+      "dy_tasks": 130,
+      "llm_usage": 926,
+      "profile_update_ledger": 10722
+    },
+    "max_ids": {
+      "events": 109857,
+      "llm_usage": 29630,
+      "profile_update_ledger": 10742
+    },
+    "pipeline_cursors": {
+      "content_feedback": 109827,
+      "profile_events": 109857
+    },
+    "total_signals_ingested": 226
+  },
+  "after": {
+    "tasks": [
+      {
+        "id": "fed7f6e0-de22-4474-8921-d03e886e53e4",
+        "status": "completed",
+        "created_at": "2026-11-05 12:09:05",
+        "completed_at": "2026-11-05 12:09:44",
+        "counts": {
+          "dy_post": 0,
+          "dy_collect": 0,
+          "dy_like": 0,
+          "dy_follow": 7
+        },
+        "scope_statuses": {
+          "dy_post": "degraded",
+          "dy_collect": "degraded",
+          "dy_like": "degraded",
+          "dy_follow": "ok"
+        },
+        "reasons": [
+          "dy_post:HTTP 403",
+          "dy_collect:HTTP 403",
+          "dy_like:HTTP 403"
+        ],
+        "api_error": ""
+      }
+    ],
+    "new_events": 8,
+    "new_event_types": {
+      "follow": 7,
+      "snapshot": 1
+    },
+    "usage": [],
+    "ledger": [],
+    "pipeline_cursors": {
+      "content_feedback": 109827,
+      "profile_events": 109865
+    },
+    "total_signals_ingested": 233,
+    "runtime": {
+      "worker_running": true,
+      "worker_heartbeat_age_seconds": 6.86675500869751,
+      "pending_signal_events": 0,
+      "llm_total_active": 0,
+      "llm_total_waiting": 0
+    }
+  },
+  "checks": {
+    "source_follow_ids_equal_callback": true,
+    "source_follow_ids_equal_task": true,
+    "source_follow_ids_equal_stored_events": true,
+    "requested_user_matches_self": true,
+    "core_profile_unchanged": {
+      "preference.json": true,
+      "awareness.json": true,
+      "insight.json": true,
+      "soul.json": true,
+      "soul_profile.json": true,
+      "soul_profile.md": true
+    },
+    "config_unchanged": true,
+    "source_task_event_count": 7,
+    "all_dom_counts_zero": true,
+    "last_callback_status": "degraded"
+  },
+  "task_requests": [
+    {
+      "at": "2026-11-05T12:09:10.013Z",
+      "path": "/aweme/v1/web/user/profile/self/",
+      "method": "GET",
+      "http": 200,
+      "status": 0,
+      "rows": null
+    },
+    {
+      "at": "2026-11-05T12:09:10.164Z",
+      "path": "/aweme/v1/web/aweme/post/",
+      "method": "GET",
+      "http": 403,
+      "status": null,
+      "rows": null
+    },
+    {
+      "at": "2026-11-05T12:09:15.502Z",
+      "path": "/aweme/v1/web/aweme/listcollection/",
+      "method": "POST",
+      "http": 403,
+      "status": null,
+      "rows": null
+    },
+    {
+      "at": "2026-11-05T12:09:19.921Z",
+      "path": "/aweme/v1/web/aweme/favorite/",
+      "method": "GET",
+      "http": 403,
+      "status": null,
+      "rows": null
+    },
+    {
+      "at": "2026-11-05T12:09:28.179Z",
+      "path": "/aweme/v1/web/user/following/list/",
+      "method": "GET",
+      "http": 200,
+      "status": 0,
+      "rows": 7
+    }
+  ],
+  "callback_statuses": [
+    "partial",
+    "partial",
+    "partial",
+    "partial",
+    "degraded"
+  ],
+  "model_evidence": {
+    "original_config_models": {
+      "openai_compatible": "deepseek-v4-flash",
+      "openai-compatible": "glm-5.2"
+    },
+    "http_429_count_in_processing_attempt": 3,
+    "worker_log_excerpt": [
+      "INFO:httpx:HTTP Request: POST <configured-provider-url> \"HTTP/1.1 429 Too Many Requests\"",
+      "WARNING:openbiliclaw.llm.base:Provider openai_compatible marked rate-limited; cooldown=60s (attempt=1)",
+      "INFO:httpx:HTTP Request: POST <configured-provider-url> \"HTTP/1.1 429 Too Many Requests\"",
+      "WARNING:openbiliclaw.llm.base:Provider openai-compatible marked rate-limited; cooldown=600s (attempt=9)",
+      "WARNING:openbiliclaw.llm.base:Provider openai-compatible failed; no fallback provider left to try.",
+      "WARNING:openbiliclaw.soul.preference_analyzer:preference chunk rate-limited; retrying in 65s (1/2)",
+      "INFO:httpx:HTTP Request: POST <configured-provider-url> \"HTTP/1.1 429 Too Many Requests\"",
+      "WARNING:openbiliclaw.llm.base:Provider openai_compatible marked rate-limited; cooldown=120s (attempt=2)",
+      "WARNING:openbiliclaw.llm.base:Provider openai-compatible is cooling down after rate limit.",
+      "WARNING:openbiliclaw.soul.preference_analyzer:preference chunk rate-limited; retrying in 65s (2/2)",
+      "WARNING:openbiliclaw.llm.base:Provider openai_compatible is cooling down after rate limit.",
+      "WARNING:openbiliclaw.llm.base:Provider openai-compatible is cooling down after rate limit.",
+      "WARNING:openbiliclaw.soul.preference_analyzer:preference chunk 1/1 failed after 131.4s: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.base.LLMRateLimitError: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.base.LLMFallbackError: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.service.LLMProviderExecutionError: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.soul.preference_analyzer.PreferenceAnalysisError: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit.",
+      "WARNING:openbiliclaw.llm.base:Provider openai_compatible is cooling down after rate limit.",
+      "WARNING:openbiliclaw.llm.base:Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.base.LLMRateLimitError: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.base.LLMFallbackError: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit.",
+      "openbiliclaw.llm.service.LLMProviderExecutionError: All providers failed (openai_compatible, openai-compatible). Last error: Provider openai-compatible is cooling down after rate limit."
+    ],
+    "usage_rows_added": 0,
+    "profile_ledger_rows_added": 0
+  },
+  "limits": [
+    "Chrome for Testing with repair extension attached to existing production backend; store extension not replaced",
+    "No source responses or model outputs mocked",
+    "No production fault injection or fake events",
+    "No model routing, API keys, concurrency, cooldown, timestamps, cursors or deduplication state changed",
+    "Manual database/profile backup retained outside repository; legitimate imported events retained",
+    "CAPTCHA interaction did not yield verified success; no further collector retries"
+  ],
+  "cleanup": {
+    "test_browser_closed": true,
+    "temporary_profile_removed": true,
+    "production_health": "ok",
+    "production_worker_running": true,
+    "backup_retained": true,
+    "source_events_retained": true
+  }
+}

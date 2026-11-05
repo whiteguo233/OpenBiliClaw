@@ -3,12 +3,10 @@
  *
  * Injected into douyin.com pages (isolated world). Listens for
  * DY_SCOPE_EXECUTE messages from the dispatcher, drives the per-scope
- * scrape — installs the MAIN-world fetch-tap (if not already), waits
- * for it to capture aweme JSON, programmatically scrolls to trigger
- * Douyin's virtual-list pagination, accumulates items into a
- * BootstrapItemSink, and posts DY_SCOPE_RESULT back when the scope is
- * exhausted (cap hit / round budget gone / consecutive stagnant
- * rounds).
+ * import — installs the MAIN-world fetch-tap (if not already), resolves
+ * the current account via profile/self, paginates its scope API and posts
+ * DY_SCOPE_RESULT back. Account imports never infer user actions from
+ * page recommendations or DOM cards; discovery keeps its own collectors.
  *
  * The MAIN-world fetch-tap is loaded separately via the
  * content_scripts MAIN-world entry in manifest.json
@@ -247,14 +245,6 @@ function reinjectFetchTap(): void {
 // this file (isValidScopeExecuteMessage) stay synchronously
 // importable for unit tests. esbuild inlines the dynamic import at
 // build time, so production runtime sees no extra latency.
-async function loadTaskExecutorHelpers(): Promise<{
-  BootstrapItemSink: typeof import("./dy/task-executor.js").BootstrapItemSink;
-  dyShouldContinueScroll: typeof import("./dy/task-executor.js").dyShouldContinueScroll;
-  ingestMainWorldFetchMessage: typeof import("./dy/task-executor.js").ingestMainWorldFetchMessage;
-}> {
-  return await import("./dy/task-executor.js");
-}
-
 async function loadDomExtractor(): Promise<{
   extractDouyinItemsFromDocument: typeof import("./dy/dom-extractor.js").extractDouyinItemsFromDocument;
   extractDouyinSearchItemsFromDocument: typeof import("./dy/dom-extractor.js").extractDouyinSearchItemsFromDocument;
@@ -1403,107 +1393,6 @@ function fireRealClick(el: HTMLElement): void {
   );
 }
 
-/**
- * Scroll the scope's list to its last rendered card. Works for both
- * document-level scrollers and inner overflow:auto containers, since
- * Element.scrollIntoView walks up the ancestor chain and scrolls
- * whichever ancestor is the actual scroller. block:"end" puts the
- * card at the bottom of the viewport, ensuring the trailing sentinel
- * (the IntersectionObserver target Douyin uses to load more) becomes
- * visible.
- *
- * Returns true when a card was found and scrolled (so the caller can
- * decide between this strategy and the window.scrollBy fallback,
- * though we currently run both for max coverage).
- */
-function scrollScopeListToEnd(scope: DouyinScope): boolean {
-  const selector =
-    scope === "dy_follow"
-      ? 'a[href*="/user/MS4w"]'
-      : 'a[href*="/video/"]';
-  const anchors = document.querySelectorAll<HTMLElement>(selector);
-  if (anchors.length === 0) return false;
-  const last = anchors[anchors.length - 1];
-  if (!last) return false;
-  try {
-    last.scrollIntoView({ block: "end", inline: "nearest", behavior: "auto" });
-  } catch {
-    // older browsers may not accept the options object — fall through
-    return false;
-  }
-  return true;
-}
-
-/**
- * Detect Douyin's "no more content" indicator on the current tab.
- * Returns the matched phrase when found (so the caller can log it),
- * or "" when the list still has more to load.
- *
- * Strategy: walk every text-bearing element under document.body and
- * check the trimmed visible text. Limit to short text nodes
- * (< 30 chars) so we don't false-match a long description that
- * happens to contain "没有".
- */
-const END_OF_FEED_PHRASES: readonly string[] = [
-  "暂时没有更多",
-  "没有更多了",
-  "没有更多内容",
-  "已加载全部",
-  "已经到底",
-  "到底啦",
-  "已经到底啦",
-  "no more",
-  "the end",
-];
-
-/**
- * Tight visibility check — Douyin renders the "暂时没有更多了" sentinel
- * up-front and toggles its visibility, so plain textContent matching
- * triggers even when the list is far from exhausted. Require all of:
- *   - offsetParent != null (not display:none under any ancestor)
- *   - getComputedStyle visibility != hidden, opacity > 0
- *   - layout box has area
- *   - rect is at or below the upper half of the viewport (bottom
- *     sentinels live near the visible list bottom; hidden duplicates
- *     are usually at top:0 / negative offsets)
- */
-function isTextNodeRenderedVisible(el: HTMLElement): boolean {
-  if (!el.offsetParent && el !== document.body) return false;
-  if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
-  const style = window.getComputedStyle(el);
-  if (style.visibility === "hidden" || style.display === "none") return false;
-  if (parseFloat(style.opacity) === 0) return false;
-  const rect = el.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return false;
-  // Filter out top-of-viewport phantoms — real end-of-feed sentinels
-  // sit at the bottom of the rendered list.
-  if (rect.bottom < window.innerHeight * 0.4) return false;
-  return true;
-}
-
-function detectEndOfFeed(): string {
-  const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      'div, span, p, [class*="loading"], [class*="end"], [class*="finish"]',
-    ),
-  );
-  for (const el of candidates) {
-    const text = (el.textContent ?? "").trim();
-    if (!text || text.length > 30) continue;
-    let matched = "";
-    for (const phrase of END_OF_FEED_PHRASES) {
-      if (text.includes(phrase)) {
-        matched = phrase;
-        break;
-      }
-    }
-    if (!matched) continue;
-    if (!isTextNodeRenderedVisible(el)) continue;
-    return text;
-  }
-  return "";
-}
-
 export function classifyDouyinScopeCompletion(input: {
   itemCount: number;
   secUid: string;
@@ -1522,218 +1411,81 @@ export function classifyDouyinScopeCompletion(input: {
   return { status: input.itemCount > 0 ? "ok" : "empty" };
 }
 
-async function runScope(msg: ScopeExecuteMessage): Promise<ScopeResultPayload> {
-  const { BootstrapItemSink, dyShouldContinueScroll, ingestMainWorldFetchMessage } =
-    await loadTaskExecutorHelpers();
-  const { extractDouyinItemsFromDocument } = await loadDomExtractor();
-  const sink = new BootstrapItemSink({ maxItemsPerScope: msg.max_items_per_scope });
-  const allItems: DouyinBootstrapItem[] = [];
-  // Per-scope counter: how many OPENBILICLAW_DOUYIN_AWEME_PAGE messages
-  // the MAIN-world fetch-tap pushed into this scope's listener window.
-  // Distinguished from items count: a message can carry items the sink
-  // dedups away or items for the wrong scope, so a non-zero
-  // aweme_messages_received with zero items is its own signature.
-  let awemeMessagesReceived = 0;
-  // DOM-extractor counter — separate from XHR/fetch tap. The DOM path
-  // is the primary source for 喜欢/收藏/作品 because Douyin's React
-  // Router often re-renders without firing a fresh /aweme/ XHR.
-  let domItemsHarvested = 0;
-  // API-harvest counters — primary source post-2026-05-08 since UI
-  // scrolling failed to trigger Douyin's lazy-load (verified via
-  // scroll_round telemetry — DOM stuck at 12-13 cards).
-  let apiItemsHarvested = 0;
-  let apiPagesFetched = 0;
-  let apiError = "";
-  let identityError = "";
-
-  const onMessage = (event: MessageEvent): void => {
-    if (!isSameWindowSameOriginDouyinMessage(event, window)) return;
-    const data = event?.data as { type?: unknown } | null;
-    if (data && typeof data === "object" && data.type === "OPENBILICLAW_DOUYIN_AWEME_PAGE") {
-      awemeMessagesReceived += 1;
-    }
-    const newOnes = ingestMainWorldFetchMessage(event, sink);
-    for (const item of newOnes) {
-      if (item.scope === msg.scope) allItems.push(item);
-    }
+/**
+ * Import account records only from the self-identified account API.
+ * Page observations cannot establish likes, saves, follows or ownership;
+ * even a degraded import must never promote recommendation cards to events.
+ */
+export async function runScope(
+  msg: ScopeExecuteMessage,
+  collectors: {
+    navigate: typeof clickToScope;
+    prepare: () => Promise<void>;
+    identity: typeof resolveDouyinBootstrapSecUid;
+    api: typeof harvestScopeViaApiBridge;
+  } = {
+    navigate: clickToScope,
+    prepare: async () => {
+      reinjectFetchTap();
+      await sleep(POST_INSTALL_SETTLE_MS);
+    },
+    identity: resolveDouyinBootstrapSecUid,
+    api: harvestScopeViaApiBridge,
+  },
+): Promise<ScopeResultPayload> {
+  const result: ScopeResultPayload = {
+    task_id: msg.task_id,
+    scope: msg.scope,
+    items: [],
+    scope_count: 0,
+    status: "failed",
   };
-  window.addEventListener("message", onMessage);
-
-  // Snapshot the DOM at the current state and merge into the sink.
-  // The sink dedups by scope:id, so calling this multiple times during
-  // scroll is safe and cumulative.
-  const harvestDomSnapshot = (): void => {
-    const dom = extractDouyinItemsFromDocument(
-      document,
-      msg.scope,
-      location.origin,
-      msg.max_items_per_scope,
-    );
-    if (dom.length === 0) return;
-    const newOnes = sink.ingest(dom);
-    for (const item of newOnes) {
-      if (item.scope === msg.scope) allItems.push(item);
-    }
-    domItemsHarvested += newOnes.length;
+  const debug: NonNullable<ScopeResultPayload["debug"]> = {
+    fetch_tap_install_status: _lastFetchTapInstallStatus,
+    aweme_messages_received: 0,
+    install_messages_received: _installMessagesReceived,
+    dom_items_harvested: 0,
+    api_items_harvested: 0,
+    api_pages_fetched: 0,
+    api_error: "",
+    inject_status: msg.debug_inject_status,
   };
-
-  let clickReport: ClickToScopeReport = {
-    page_url: location.href,
-    profile_link_found: false,
-    sub_tab_found: false,
-  };
-  let endOfFeedPhrase = "";
+  result.debug = debug;
   try {
-    // Navigate via UI clicks (more natural to Douyin risk control
-    // than chrome.tabs.update URL jumps). clickToScope handles both
-    // the homepage→profile transition and the sub-tab switch.
-    clickReport = await clickToScope(msg.scope);
+    Object.assign(debug, await collectors.navigate(msg.scope));
+    await collectors.prepare();
+    debug.fetch_tap_install_status = _lastFetchTapInstallStatus;
+    debug.install_messages_received = _installMessagesReceived;
 
-    // Re-inject MAIN-world fetch-tap after the click-driven SPA route.
-    // Douyin's React app sometimes re-sets window.fetch on URL change,
-    // which would silently bypass our wrap. Reinjecting guarantees
-    // the latest live fetch is wrapped.
-    reinjectFetchTap();
-
-    // The MAIN-world fetch-tap auto-installs after waitForDouyinSdk
-    // resolves. Give it a beat to settle so any pageload-time
-    // /aweme/.../<scope>/ that fires AFTER our install gets captured.
-    await sleep(POST_INSTALL_SETTLE_MS);
-
-    // Initial DOM harvest before scrolling — captures whatever
-    // Douyin's React Router rendered on landing. Also kicks the
-    // page-bundle to fire its first /aweme/.../<scope>/ XHR which
-    // gives our XHR tap a sec_uid to broadcast.
-    harvestDomSnapshot();
-
-    // API-driven harvest — primary path. RENDER_DATA and passive
-    // sec_user_id values are diagnostic candidates only; the final identity
-    // must come from the authoritative profile/self MAIN-world fetch (or its
-    // same-tab confirmed cache), preserving live cookie/signing context.
-    const identity = await resolveDouyinBootstrapSecUid();
-    identityError = identity.error ?? "";
+    const identity = await collectors.identity();
+    debug.sec_uid = identity.secUid;
+    debug.sec_uid_source = identity.source;
+    debug.identity_error = identity.error ?? "";
     if (identity.secUid) {
-      const apiResult = await harvestScopeViaApiBridge(
-        msg.scope,
-        identity.secUid,
-        msg.max_items_per_scope,
-      );
-      apiPagesFetched = apiResult.pages;
-      apiError = apiResult.error ?? "";
-      if (apiResult.items.length > 0) {
-        const newOnes = sink.ingest(apiResult.items);
-        apiItemsHarvested += newOnes.length;
-        for (const item of newOnes) {
-          if (item.scope === msg.scope) allItems.push(item);
-        }
+      let apiResult: Awaited<ReturnType<typeof harvestScopeViaApiBridge>>;
+      try {
+        apiResult = await collectors.api(msg.scope, identity.secUid, msg.max_items_per_scope);
+      } catch (err) {
+        apiResult = { items: [], pages: 0, error: err instanceof Error ? err.message : String(err) };
       }
+      debug.api_pages_fetched = apiResult.pages;
+      debug.api_error = apiResult.error ?? (apiResult.pages > 0 ? "" : "api_response_unobserved");
+      // A late failure retains only valid rows from completed API pages.
+      // A zero-page result has no account evidence, even if it carries rows.
+      result.items = apiResult.pages > 0 ? apiResult.items : [];
+      result.scope_count = result.items.length;
+      debug.api_items_harvested = result.items.length;
     }
-
-    let stagnantRounds = 0;
-    for (let round = 0; round < msg.max_scroll_rounds; round += 1) {
-      const beforeCount = sink.scopeCounts()[msg.scope];
-
-      // Trigger Douyin's virtual-list pagination. Two strategies in
-      // sequence:
-      // 1. scrollIntoView the LAST scope-anchor card with block:"end".
-      //    This works for arbitrary internal scroll containers
-      //    (Douyin's user-tab list lives in [role="tabpanel"] or
-      //    similar with overflow:auto, NOT document scroll), and is
-      //    what triggers the IntersectionObserver-driven lazy load.
-      // 2. window.scrollBy as fallback for cases where the document
-      //    IS the scroller (e.g. some compact layouts, or follow tab).
-      scrollScopeListToEnd(msg.scope);
-      window.scrollBy({ top: window.innerHeight * 2, behavior: "auto" });
-      await sleep(SCROLL_DELAY_MS);
-
-      // Harvest from DOM after each scroll — newly virtualized cards
-      // are now in the DOM whether or not Douyin re-fired an XHR.
-      harvestDomSnapshot();
-
-      const afterCount = sink.scopeCounts()[msg.scope];
-      endOfFeedPhrase = detectEndOfFeed();
-      stagnantRounds = afterCount > beforeCount ? 0 : stagnantRounds + 1;
-
-      if (endOfFeedPhrase) break; // page tells us we're done
-      if (
-        !dyShouldContinueScroll({
-          currentCount: afterCount,
-          maxItemsPerScope: msg.max_items_per_scope,
-          round: round + 1,
-          maxScrollRounds: msg.max_scroll_rounds,
-          stagnantRounds,
-          maxStagnantScrollRounds: msg.max_stagnant_scroll_rounds,
-        })
-      ) {
-        break;
-      }
-    }
-
-    // Final DOM harvest pass after the scroll loop ends — picks up
-    // anything Douyin rendered in the very last scroll batch that
-    // we'd otherwise miss because the loop broke before re-scanning.
-    harvestDomSnapshot();
-
-    const completion = classifyDouyinScopeCompletion({
-      itemCount: allItems.length,
-      secUid: _detectedSecUid,
-      apiError,
-      identityError,
-    });
-    return {
-      task_id: msg.task_id,
-      scope: msg.scope,
-      items: allItems,
-      scope_count: sink.scopeCounts()[msg.scope],
-      status: completion.status,
-      error: completion.error,
-      debug: {
-        fetch_tap_install_status: _lastFetchTapInstallStatus,
-        aweme_messages_received: awemeMessagesReceived,
-        install_messages_received: _installMessagesReceived,
-        dom_items_harvested: domItemsHarvested,
-        api_items_harvested: apiItemsHarvested,
-        api_pages_fetched: apiPagesFetched,
-        api_error: apiError,
-        sec_uid: _detectedSecUid,
-        sec_uid_source: _detectedSecUidSource,
-        identity_error: identityError,
-        end_of_feed: endOfFeedPhrase,
-        inject_status: msg.debug_inject_status,
-        page_url: clickReport.page_url,
-        profile_link_found: clickReport.profile_link_found,
-        sub_tab_found: clickReport.sub_tab_found,
-      },
-    };
+    Object.assign(result, classifyDouyinScopeCompletion({
+      itemCount: result.items.length,
+      secUid: identity.secUid,
+      apiError: debug.api_error ?? "",
+      identityError: identity.error,
+    }));
   } catch (err) {
-    return {
-      task_id: msg.task_id,
-      scope: msg.scope,
-      items: allItems,
-      scope_count: sink.scopeCounts()[msg.scope],
-      status: "failed",
-      error: String(err),
-      debug: {
-        fetch_tap_install_status: _lastFetchTapInstallStatus,
-        aweme_messages_received: awemeMessagesReceived,
-        install_messages_received: _installMessagesReceived,
-        dom_items_harvested: domItemsHarvested,
-        api_items_harvested: apiItemsHarvested,
-        api_pages_fetched: apiPagesFetched,
-        api_error: apiError,
-        sec_uid: _detectedSecUid,
-        sec_uid_source: _detectedSecUidSource,
-        identity_error: identityError,
-        end_of_feed: endOfFeedPhrase,
-        inject_status: msg.debug_inject_status,
-        page_url: clickReport.page_url,
-        profile_link_found: clickReport.profile_link_found,
-        sub_tab_found: clickReport.sub_tab_found,
-      },
-    };
-  } finally {
-    window.removeEventListener("message", onMessage);
+    result.error = String(err);
   }
+  return result;
 }
 
 // Adaptive search-scroll loop budget: up to 10 rounds, stop after 2
