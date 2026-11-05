@@ -5443,8 +5443,14 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # at save/load time is the only user-visible diagnosis. Runs before the
     # default-provider early return so a broken default provider does not
     # hide fallback problems.
+    # Free-only routing never invokes the saved legacy user providers. Keep
+    # validating their schema, but require credentials/endpoints only when
+    # they are an active route (including an explicitly enabled fallback).
+    user_provider_required = not (
+        config.llm.sponsored.enabled and not config.llm.sponsored.fallback_to_user_provider
+    )
     fallback_name = str(config.llm.fallback_provider or "").strip().lower()
-    if fallback_name:
+    if fallback_name and user_provider_required:
         default_name = str(config.llm.default_provider or "").strip().lower()
         if fallback_name not in _SUPPORTED_CHAT_PROVIDERS:
             supported = ", ".join(sorted(_SUPPORTED_CHAT_PROVIDERS))
@@ -5617,7 +5623,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             has_codex_credentials = codex_credentials_exist()
         except Exception:
             has_codex_credentials = False
-        if not has_codex_credentials:
+        if not has_codex_credentials and user_provider_required:
             issues.append(
                 ConfigIssue(
                     field="llm.openai.codex_oauth",
@@ -5629,7 +5635,8 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     has_env_fallback = provider_name == "gemini" and bool(_gemini_api_key_from_env())
     provider_uses_codex_oauth = provider_name == "openai" and openai_auth_mode == "codex_oauth"
     if (
-        required_field
+        user_provider_required
+        and required_field
         and not provider_config.api_key.strip()
         and not has_env_fallback
         and not provider_uses_codex_oauth
@@ -5647,7 +5654,11 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # would just be ``openai`` with extra steps. Surface this so the user
     # knows to fill ``[llm.openai_compatible].base_url`` (Groq:
     # https://api.groq.com/openai/v1, vLLM: http://your-vllm:8000/v1, ...).
-    if provider_name == "openai_compatible" and not config.llm.openai_compatible.base_url.strip():
+    if (
+        user_provider_required
+        and provider_name == "openai_compatible"
+        and not config.llm.openai_compatible.base_url.strip()
+    ):
         issues.append(
             ConfigIssue(
                 field="llm.openai_compatible.base_url",
@@ -5658,7 +5669,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
-    if provider_name == "ollama" and not config.llm.ollama.model.strip():
+    if user_provider_required and provider_name == "ollama" and not config.llm.ollama.model.strip():
         issues.append(
             ConfigIssue(
                 field="llm.ollama.model",

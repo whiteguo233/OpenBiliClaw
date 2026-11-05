@@ -1726,7 +1726,7 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled` | `false` | 免费方案开关；启用后允许无自有模型 Key，必须有可验证组件。 |
+| `enabled` | `false` | 免费方案开关；启用后允许无自有模型 Key（兼容 legacy 与 v2 路由），必须有可验证组件。 |
 | `embedding_mode` | `cloud` | `cloud` 使用硅基流动BGE-M3；`local` 使用 `[llm.embedding]` 的Ollama。保存本地选择时保留已有本地模型/地址，否则设置 `bge-m3` 和默认本机地址；禁用隐式向量回退。 |
 | `model` | `Qwen/Qwen3-8B` | 仅8B或 `Qwen/Qwen3.5-4B`；文本任务随选择切换。 |
 | `fallback_to_other_free_model` | `true` | 可用性失败时尝试另一个获批免费模型；已输出内容的流不重放。 |
@@ -1747,7 +1747,7 @@ request_timeout_seconds = 180.0
 
 默认云端文本向量固定 `BAAI/bge-m3`/1024维，暂时覆盖但保留 `[llm.embedding]`。选择本地模式后使用该表的Ollama模型和地址，默认 `bge-m3`；已用桌面私有11435端口或Docker `ollama:11434` 时继续保留。切换向量模式走常规运行时重建和既有provenance隔离，不走仅聊天模型切换的快速路径。关闭免费方案后使用当前 `[llm.embedding]` 配置。图片理解可选并由4B承担；BGE-M3不支持图片向量，即使原 `multimodal_enabled` 开启也不会伪装成支持。
 
-`load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。
+`load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。 `validate_runtime_config()` 在免费独占路由下不要求未参与调用的自有渠道凭据、端点或本地聊天模型；保存重载后的 legacy / v2 配置与云端 / 本地向量均遵循此规则。显式开启 `fallback_to_user_provider` 后仍校验自有渠道，免费组件、向量与非模型运行时校验继续生效。
 
 `runtime/sponsored_release.json` 固定公钥、归档摘要与平台目录；目录尚未配置正式产物时，安装入口明确提示版本不可用。组件验签及原子更新详见[Runtime](runtime.md#免费模型组件安装与更新)。
 

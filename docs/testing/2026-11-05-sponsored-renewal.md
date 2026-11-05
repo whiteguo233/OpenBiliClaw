@@ -29,6 +29,8 @@
 
 这轮验证的是凭据生命周期、路由和用户操作流程，不能当作重新测得的模型质量结果；此前真实8B/4B日常业务验证见[补测记录](2026-11-05-sponsored-followup.md)。
 
+后续已完成[真实端到端验收](2026-11-05-sponsored-real-e2e.md)：正式 SDK 的云端/本地四组合、真实浏览器、实际上游凭据拒绝、签名策略到期及重启恢复；原始模型超时和工具遗漏仍列为失败，未用复测覆盖。
+
 ## 页面证据与复验步骤
 
 隔离数据中，使用测试IPC进程模拟AUTH_FAILED；配置草稿没有真实Key。截图：[桌面](assets/sponsored-renewal/desktop.png)、[插件](assets/sponsored-renewal/popup.png)、[手机消息](assets/sponsored-renewal/mobile.png)。

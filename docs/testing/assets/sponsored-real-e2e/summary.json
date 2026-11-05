@@ -1,0 +1,1030 @@
+{
+  "runs": {
+    "cloud-4b/acceptance.json": {
+      "complete": true,
+      "passed": 13,
+      "total": 14,
+      "cases": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 8.025
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 0.647
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 108.874
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.044
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 0.817
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 7.977
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.558
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "pass",
+          "seconds": 64.664
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "pass",
+          "seconds": 37.737
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "pass",
+          "seconds": 176.641
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "fail",
+          "seconds": 2.415,
+          "error": "AssertionError: The model did not execute both explicitly requested tools"
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "pass",
+          "seconds": 50.399
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "pass",
+          "seconds": 39.989
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.135
+        }
+      ],
+      "background_failures": 0
+    },
+    "cloud-4b/http-acceptance.json": {
+      "complete": true,
+      "passed": 6,
+      "total": 6,
+      "cases": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "seconds": 15.126
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "seconds": 5.432
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "seconds": 12.342
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "seconds": 0.001
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "pass",
+          "seconds": 0.823
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "pass",
+          "seconds": 4.679
+        }
+      ],
+      "background_failures": 0
+    },
+    "cloud-4b/retry-acceptance.json": {
+      "complete": true,
+      "passed": 3,
+      "total": 3,
+      "cases": [
+        {
+          "name": "repeat_two_required_tools_1",
+          "status": "pass",
+          "seconds": 49.316
+        },
+        {
+          "name": "repeat_two_required_tools_2",
+          "status": "pass",
+          "seconds": 6.695
+        },
+        {
+          "name": "repeat_two_required_tools_3",
+          "status": "pass",
+          "seconds": 12.468
+        }
+      ],
+      "background_failures": 0
+    },
+    "cloud-8b/acceptance.json": {
+      "complete": true,
+      "passed": 11,
+      "total": 14,
+      "cases": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 2.745
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 0.55
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 100.89
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.042
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 0.787
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 34.105
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.526
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "fail",
+          "seconds": 183.321,
+          "error": "SponsoredUnavailableError: sponsored runtime timed out"
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "fail",
+          "seconds": 0.011,
+          "error": "AssertionError: (0, 0)"
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "fail",
+          "seconds": 0.0,
+          "error": "AssertionError: recommendation prerequisite failed"
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "pass",
+          "seconds": 4.261
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "pass",
+          "seconds": 78.78
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "pass",
+          "seconds": 44.177
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.097
+        }
+      ],
+      "background_failures": 0
+    },
+    "cloud-8b/http-acceptance.json": {
+      "complete": true,
+      "passed": 6,
+      "total": 6,
+      "cases": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "seconds": 15.119
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "seconds": 19.591
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "seconds": 221.694
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "seconds": 0.001
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "pass",
+          "seconds": 0.867
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "pass",
+          "seconds": 0.881
+        }
+      ],
+      "background_failures": 0
+    },
+    "cloud-8b/retry-acceptance.json": {
+      "complete": true,
+      "passed": 1,
+      "total": 1,
+      "cases": [
+        {
+          "name": "repeat_30_candidates_with_default_free_fallback",
+          "status": "pass",
+          "seconds": 163.569
+        }
+      ],
+      "background_failures": 0
+    },
+    "local-4b/acceptance.json": {
+      "complete": true,
+      "passed": 14,
+      "total": 14,
+      "cases": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 1.142
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 1.746
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 49.102
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.042
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 3.025
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 3.882
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.566
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "pass",
+          "seconds": 97.741
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "pass",
+          "seconds": 22.209
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "pass",
+          "seconds": 124.155
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "pass",
+          "seconds": 13.417
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "pass",
+          "seconds": 108.01
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "pass",
+          "seconds": 12.093
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.098
+        }
+      ],
+      "background_failures": 0
+    },
+    "local-4b/http-acceptance.json": {
+      "complete": true,
+      "passed": 6,
+      "total": 6,
+      "cases": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "seconds": 3.406
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "seconds": 8.371
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "seconds": 17.319
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "seconds": 0.0
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "pass",
+          "seconds": 5.923
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "pass",
+          "seconds": 3.198
+        }
+      ],
+      "background_failures": 0
+    },
+    "local-8b/acceptance.json": {
+      "complete": true,
+      "passed": 14,
+      "total": 14,
+      "cases": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 1.112
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 4.027
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 59.17
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.04
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 3.261
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 36.78
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.653
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "pass",
+          "seconds": 80.286
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "pass",
+          "seconds": 62.311
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "pass",
+          "seconds": 167.583
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "pass",
+          "seconds": 3.263
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "pass",
+          "seconds": 96.282
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "pass",
+          "seconds": 95.3
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.11
+        }
+      ],
+      "background_failures": 0
+    },
+    "local-8b/http-acceptance.json": {
+      "complete": true,
+      "passed": 6,
+      "total": 6,
+      "cases": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "seconds": 1.935
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "seconds": 40.99
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "seconds": 87.557
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "seconds": 14.156
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "pass",
+          "seconds": 5.84
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "pass",
+          "seconds": 3.11
+        }
+      ],
+      "background_failures": 0
+    },
+    "quality/Qwen3-8B/acceptance.json": {
+      "complete": true,
+      "passed": 5,
+      "total": 5,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "seconds": 6.306
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "seconds": 39.032
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "seconds": 20.841
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "seconds": 1.715
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "seconds": 4.379
+        }
+      ],
+      "background_failures": 0
+    },
+    "quality/Qwen3.5-4B/acceptance.json": {
+      "complete": true,
+      "passed": 5,
+      "total": 5,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "seconds": 5.785
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "seconds": 57.272
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "seconds": 5.877
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "seconds": 1.899
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "seconds": 4.22
+        }
+      ],
+      "background_failures": 0
+    }
+  },
+  "passed": 90,
+  "total": 94,
+  "usage": [
+    {
+      "run": "cloud-8b",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "calls": 35,
+          "input_tokens": 116948,
+          "output_tokens": 32560,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "cloud-4b",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "calls": 41,
+          "input_tokens": 151750,
+          "output_tokens": 17439,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "local-8b",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "calls": 30,
+          "input_tokens": 83616,
+          "output_tokens": 30356,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "local-4b",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "calls": 32,
+          "input_tokens": 96062,
+          "output_tokens": 12302,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "quality/Qwen3-8B",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "calls": 8,
+          "input_tokens": 7515,
+          "output_tokens": 1922,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "quality/Qwen3.5-4B",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "calls": 8,
+          "input_tokens": 7357,
+          "output_tokens": 1813,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "run": "browser",
+      "rows": [
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "calls": 82,
+          "input_tokens": 275274,
+          "output_tokens": 65397,
+          "failed": 0
+        },
+        {
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "calls": 8,
+          "input_tokens": 23903,
+          "output_tokens": 2966,
+          "failed": 0
+        }
+      ]
+    }
+  ],
+  "baseline_commit": "1af032f17a3232a0e2a61861b333bf654a579e30",
+  "runtime_tag": "sponsored-runtime-2026-11-05.1",
+  "scope": "Real production providers and isolated synthetic business fixtures; additional public-source/browser lifecycle tests recorded separately.",
+  "lifecycle": {
+    "auth_rejection": {
+      "ok": false,
+      "service_status": {
+        "notices": [
+          {
+            "id": "sponsored-auth_failed",
+            "code": "AUTH_FAILED",
+            "title": "免费方案凭据不可用",
+            "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+            "requires_update": true,
+            "capabilities": [
+              "chat"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "kind": "sponsored",
+      "instance_id": "",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3-8B",
+      "message": "",
+      "error": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+      "latency_ms": 253
+    },
+    "local_embedding_after_rejection": {
+      "notice_survived_process_restart": true,
+      "local_vector_probe": {
+        "ok": true,
+        "service_status": {},
+        "kind": "embedding",
+        "instance_id": "",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "message": "Embedding provider is available.",
+        "error": "",
+        "latency_ms": 6166
+      },
+      "notice_after_embedding_success": {
+        "notices": [
+          {
+            "id": "sponsored-auth_failed",
+            "code": "AUTH_FAILED",
+            "title": "免费方案凭据不可用",
+            "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+            "requires_update": true,
+            "capabilities": [
+              "chat"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      }
+    },
+    "expired_policy": {
+      "custom_signed_policy_checked_on_first_request": true,
+      "probe": {
+        "ok": false,
+        "service_status": {
+          "notices": [
+            {
+              "id": "sponsored-policy_invalid",
+              "code": "POLICY_INVALID",
+              "title": "免费组件需要更新",
+              "message": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+              "requires_update": true,
+              "capabilities": [
+                "chat",
+                "embedding"
+              ]
+            }
+          ],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "message": "",
+        "error": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+        "latency_ms": 49
+      },
+      "status": {
+        "notices": [
+          {
+            "id": "sponsored-policy_invalid",
+            "code": "POLICY_INVALID",
+            "title": "免费组件需要更新",
+            "message": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+            "requires_update": true,
+            "capabilities": [
+              "chat",
+              "embedding"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      }
+    },
+    "recovery": {
+      "probe": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "latency_ms": 768
+      },
+      "status": {
+        "notices": [],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "portrait_and_interests_preserved": true,
+      "cross_model_conversation_preserved": true
+    },
+    "cli": [
+      {
+        "run": "cloud-8b",
+        "command": "config-show",
+        "exit_code": 0
+      },
+      {
+        "run": "cloud-8b",
+        "command": "profile",
+        "exit_code": 0
+      },
+      {
+        "run": "cloud-4b",
+        "command": "config-show",
+        "exit_code": 0
+      },
+      {
+        "run": "cloud-4b",
+        "command": "profile",
+        "exit_code": 0
+      },
+      {
+        "run": "local-8b",
+        "command": "config-show",
+        "exit_code": 0
+      },
+      {
+        "run": "local-8b",
+        "command": "profile",
+        "exit_code": 0
+      },
+      {
+        "run": "local-4b",
+        "command": "config-show",
+        "exit_code": 0
+      },
+      {
+        "run": "local-4b",
+        "command": "profile",
+        "exit_code": 0
+      }
+    ]
+  },
+  "public_initialization": {
+    "initialized": true,
+    "running": false,
+    "stages": [
+      {
+        "n": 1,
+        "label": "拉取数据",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 2,
+        "label": "分析偏好",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 3,
+        "label": "生成并保存完整画像",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 4,
+        "label": "生成首轮可用推荐",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      }
+    ],
+    "partial_success": false
+  },
+  "personal_source_auth": {
+    "location": "canonical_install_directory",
+    "cookie_present": true,
+    "authenticated": false,
+    "error_type": "BilibiliAuthExpiredError",
+    "api_code": -101
+  },
+  "sse_turns": {
+    "cloud-8b": [
+      {
+        "first_content_seconds": 1.228,
+        "elapsed_seconds": 3.498,
+        "event_counts": {
+          "delta": 54,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      },
+      {
+        "first_content_seconds": 15.858,
+        "elapsed_seconds": 16.049,
+        "event_counts": {
+          "delta": 5,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      }
+    ],
+    "cloud-4b": [
+      {
+        "first_content_seconds": 1.385,
+        "elapsed_seconds": 4.338,
+        "event_counts": {
+          "delta": 76,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      },
+      {
+        "first_content_seconds": 0.826,
+        "elapsed_seconds": 1.045,
+        "event_counts": {
+          "delta": 5,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      }
+    ],
+    "local-8b": [
+      {
+        "first_content_seconds": 1.036,
+        "elapsed_seconds": 2.497,
+        "event_counts": {
+          "delta": 44,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      },
+      {
+        "first_content_seconds": 38.253,
+        "elapsed_seconds": 38.444,
+        "event_counts": {
+          "delta": 5,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      }
+    ],
+    "local-4b": [
+      {
+        "first_content_seconds": 0.706,
+        "elapsed_seconds": 3.589,
+        "event_counts": {
+          "delta": 53,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      },
+      {
+        "first_content_seconds": 4.542,
+        "elapsed_seconds": 4.737,
+        "event_counts": {
+          "delta": 5,
+          "done": 1,
+          "final": 1
+        },
+        "persisted": true
+      }
+    ]
+  },
+  "browser_chat_calls": [
+    {
+      "timestamp": "2026-11-05 03:55:54",
+      "caller": "agent.chat",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3.5-4B",
+      "prompt_tokens": 4986,
+      "completion_tokens": 51
+    },
+    {
+      "timestamp": "2026-11-05 03:58:57",
+      "caller": "agent.chat",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3-8B",
+      "prompt_tokens": 5292,
+      "completion_tokens": 5
+    },
+    {
+      "timestamp": "2026-11-05 04:05:10",
+      "caller": "agent.chat",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3-8B",
+      "prompt_tokens": 5361,
+      "completion_tokens": 5
+    }
+  ],
+  "regression": {
+    "full_suite_before_test_harness_fixes": {
+      "passed": 12544,
+      "skipped": 70,
+      "failed": 4,
+      "seconds": 3583.35
+    },
+    "resolved_failures": [
+      "runtime reread assertion expected stale 30 instead of 27",
+      "platform test server did not serve required shared settings assets",
+      "Jev dropdown assertion preceded asynchronous config hydration",
+      "explicit-port unit test depended on port 18424 being free"
+    ],
+    "targeted_after_fixes": {
+      "runtime_recovery_jev_and_transport": 22,
+      "platform_browser": 3
+    },
+    "config_suite": 384,
+    "ruff": "passed",
+    "mypy_source_files": 386,
+    "extension_build": "passed",
+    "full_suite_repeated_after_test_only_fixes": false
+  }
+}

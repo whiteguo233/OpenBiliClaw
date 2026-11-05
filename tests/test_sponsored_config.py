@@ -11,7 +11,12 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from openbiliclaw.config import _build_config, load_config_with_diagnostics
+from openbiliclaw.config import (
+    ConfigError,
+    _build_config,
+    load_config_with_diagnostics,
+    validate_runtime_config,
+)
 from openbiliclaw.llm.base import LLMResponse
 from openbiliclaw.llm.service import LLMService
 from openbiliclaw.llm.sponsored_provider import (
@@ -131,6 +136,76 @@ def test_sponsor_only_instance_config_accepts_no_user_keys_and_a_command_with_ar
     config.llm.soul.inherit = False
     config.llm.soul.chain = ["missing"]
     assert any(issue.field == "llm.routes.soul.chain" for issue in _collect_config_issues(config))
+
+
+@pytest.mark.parametrize("instance_routing", [False, True])
+@pytest.mark.parametrize("embedding_mode", ["cloud", "local"])
+def test_free_only_saved_config_passes_cli_runtime_validation(
+    tmp_path: Path, instance_routing: bool, embedding_mode: str
+) -> None:
+    from openbiliclaw.config import _render_config_toml
+    from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+    raw: dict[str, Any] = {
+        "sponsored": {
+            "enabled": True,
+            "runtime_path": shlex.join([sys.executable, "-m", "unused.module"]),
+            "fallback_to_user_provider": False,
+            "embedding_mode": embedding_mode,
+        },
+    }
+    if instance_routing:
+        raw.update(routing_version=2, instances={}, default_chain=[])
+    config = _build_config({"llm": raw}, consult_environment=False)
+    if embedding_mode == "local":
+        select_local_embedding(config)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        _render_config_toml(
+            config, consult_local=False, consult_environment=False, include_api_auth=False
+        ),
+        encoding="utf-8",
+    )
+    loaded, _ = load_config_with_diagnostics(config_path, consult_environment=False)
+    validate_runtime_config(loaded)
+
+
+@pytest.mark.parametrize("enabled,fallback", [(False, False), (True, True)])
+def test_cli_still_requires_user_key_when_user_provider_is_active(
+    enabled: bool, fallback: bool
+) -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "sponsored": {
+                    "enabled": enabled,
+                    "runtime_path": shlex.join([sys.executable, "-m", "unused.module"]),
+                    "fallback_to_user_provider": fallback,
+                }
+            }
+        },
+        consult_environment=False,
+    )
+    with pytest.raises(ConfigError, match="deepseek.api_key"):
+        validate_runtime_config(config)
+
+
+def test_free_only_cli_keeps_non_provider_validation() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "sponsored": {
+                    "enabled": True,
+                    "runtime_path": shlex.join([sys.executable, "-m", "unused.module"]),
+                    "fallback_to_user_provider": False,
+                }
+            },
+        },
+        consult_environment=False,
+    )
+    config.scheduler.eval_min_batch_size = 0
+    with pytest.raises(ConfigError, match="scheduler.eval_min_batch_size"):
+        validate_runtime_config(config)
 
 
 @pytest.mark.parametrize("instance_routing", [False, True])

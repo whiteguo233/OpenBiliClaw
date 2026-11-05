@@ -32,6 +32,7 @@ from openbiliclaw.config import Config, save_config
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.discovery.strategies.search import SearchStrategy
 from openbiliclaw.llm.service import _background_admission_bypass
+from openbiliclaw.llm.sponsored_embedding import select_local_embedding
 from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
 from openbiliclaw.llm.sponsored_router import close_shared_provider
 from openbiliclaw.runtime.sponsored_bundle import ensure_runtime, verify_bundle
@@ -198,17 +199,22 @@ class Run:
         return result
 
 
-async def run_model(root: Path, model: str, candidate_count: int = 12) -> None:
+async def run_model(
+    root: Path, model: str, candidate_count: int = 12, embedding_mode: str = "cloud"
+) -> None:
     root.mkdir(parents=True, exist_ok=False)
     os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(root)
     cfg = Config(data_dir=str(root / "data"))
     cfg.llm.sponsored = SponsoredRuntimeSettings(
         enabled=True,
         model=model,
+        embedding_mode=embedding_mode,
         fallback_to_other_free_model=False,
         fallback_to_user_provider=False,
         request_timeout_seconds=180,
     )
+    if embedding_mode == "local":
+        select_local_embedding(cfg)
     cfg.scheduler.auto_update_enabled = False
     save_config(cfg, root / "config.toml")
     run = Run(root, model)
@@ -241,6 +247,7 @@ async def run_model(root: Path, model: str, candidate_count: int = 12) -> None:
             conf.raise_for_status()
             sponsored = conf.json()["llm"]["sponsored"]
             assert sponsored["enabled"] and sponsored["model"] == model
+            assert sponsored["embedding_mode"] == embedding_mode
             assert not sponsored["fallback_to_user_provider"]
             assert not sponsored["fallback_to_other_free_model"]
             return {"health": response.json(), "sponsored": sponsored}
@@ -321,6 +328,7 @@ async def run_model(root: Path, model: str, candidate_count: int = 12) -> None:
             assert related > unrelated
             return {
                 "model": embedding.embedding_model,
+                "embedding_mode": embedding_mode,
                 "dimensions": 1024,
                 "cache_hit": True,
                 "related_cosine": related,
@@ -539,10 +547,13 @@ def main() -> None:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--model", choices=CHAT_MODELS, required=True)
     parser.add_argument("--candidate-count", type=int, choices=(12, 30), default=12)
+    parser.add_argument("--embedding-mode", choices=("cloud", "local"), default="cloud")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     try:
-        asyncio.run(run_model(args.root.resolve(), args.model, args.candidate_count))
+        asyncio.run(
+            run_model(args.root.resolve(), args.model, args.candidate_count, args.embedding_mode)
+        )
     except Exception:
         traceback.print_exc()
         raise

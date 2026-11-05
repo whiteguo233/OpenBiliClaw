@@ -117,6 +117,8 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
     real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page
 ) -> None:
     """The actual config transaction changes the running evaluator, not just TOML."""
+    from playwright.sync_api import expect
+
     url, directory, _ = real_jev_app
     page = chromium_page
     with FakeJevBackend(model="jev-1.14.0", max_state_question_bytes=12_000) as backend:
@@ -234,8 +236,10 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.reload()
         page.get_by_role("button", name="设置", exact=True).click()
         page.get_by_role("tab", name="高级功能").click()
-        assert page.locator("#evalScorer").input_value() == "jev"
-        assert form.get_by_label("Token", exact=True).input_value() == ""
+        # Reload hydrates settings asynchronously; wait for the persisted value
+        # instead of reading the initial HTML default before /api/config returns.
+        expect(page.locator("#evalScorer")).to_have_value("jev")
+        expect(form.get_by_label("Token", exact=True)).to_have_value("")
         artifacts = ROOT / "output/playwright"
         artifacts.mkdir(parents=True, exist_ok=True)
         form.screenshot(path=str(artifacts / "jev-runtime-settings.png"))
