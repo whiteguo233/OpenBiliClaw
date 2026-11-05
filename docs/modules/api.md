@@ -1,5 +1,13 @@
 # 后端 API
 
+## 抖音账号导入来源校验（2026-11-06）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | `bootstrap_profile` 回报非零 `debug.dom_items_harvested`，或携带视频却明确回报 `api_items_harvested=0` 时，在 staging / 事件入库前拒绝，任务记 failed，返回 HTTP 200 `{ok:true,rejected:"untrusted_bootstrap_source"}`。 |
+
+旧客户端可能在身份识别失败后，把同一批推荐卡片重复当作作品、收藏和喜欢。新扩展只返回本人 API 记录；后端额外阻止明确承认 DOM 回退或零 API 的结果。混合 DOM/API 包无法逐项辨别来源，整包拒绝；无 provenance 字段的历史协议保持兼容，因此该检查不等于验证任意客户端主张。既有终态重试仍 ignored，已冻结 final 的崩溃恢复仍使用原 canonical payload，后续回调不能推翻它。有效 API partial 和真实空列表保留原协议。
+
 ## 抖音发现冷却与失败回传（issue #332）
 
 | 行为 | 状态 | 说明 |

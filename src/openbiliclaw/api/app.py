@@ -18877,7 +18877,7 @@ def create_app(
 
         ``ok`` and ``degraded`` are terminal, while ``partial`` keeps the
         task pending and ``failed`` marks it failed. ``degraded`` means the
-        extension preserved valid DOM/API items but could not prove the
+        extension preserved valid API items but could not prove the
         bootstrap was complete. The result schema uses ``videos`` instead of
         ``notes`` and propagation goes through ``dy_bootstrap_videos_to_events``.
         No self-author filtering yet
@@ -18919,6 +18919,17 @@ def create_app(
 
         canonical_result = parse_task_result(task.get("result_json"))
         staged_status = staged_terminal_status(canonical_result)
+
+        # Older installed extensions may report recommendation DOM as private
+        # account likes/collections when identity or API requests fail. Reject
+        # that explicit negative provenance before staging or event ingress.
+        # Recovery must still honor a previously frozen final payload.
+        if task_type == "bootstrap_profile" and not staged_status and debug:
+            dom_count = debug.get("dom_items_harvested")
+            api_count = debug.get("api_items_harvested")
+            if dom_count not in (None, 0, "0") or (videos and api_count in (0, "0")):
+                legacy_queue.fail(task_id, error="untrusted_bootstrap_source", debug=debug)
+                return {"ok": True, "rejected": "untrusted_bootstrap_source"}
 
         if (
             staged_status

@@ -655,6 +655,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。
 
+抖音账号导入：`携带网页端参数的 profile/self → 本人账号 API 分页 → 有效 API 结果 → 后端拒绝已知 DOM 回退 → 任务回传 / 画像`；空列表保持为空，失败只保留有效 API partial，页面推荐卡片不进入个人记录。默认每类最多 300 条，成功不表示全量历史。
+
 抖音发现节流：`已领取任务失败 → dy_tasks 持久冷却 → producer 关键词领取前 / client / pending 领取门控`；原生搜索流立即交还网页，仅在有界副本上逐帧采集。有效 partial 与失败同时保留；共用发现客户端与任务队列的路径不能通过重启或 direct fallback 绕过冷却。
 
 抖音热词轮换：`dy_tasks 最近 6 小时的已入队选择 → 每轮新建的 plugin client → 优先未选热词`，避免正式入口因客户端重建而重复选择同一榜单前两词。

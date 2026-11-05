@@ -1,0 +1,170 @@
+{
+  "date": "2026-11-05",
+  "scope": "Douyin current account -> installed extension task -> API callback -> durable events; no model worker",
+  "base_commit": "f4af7744995fe053df6cb771738a88d58c419b4a",
+  "extension_version": "0.3.233",
+  "browser": "Chrome for Testing",
+  "extension_id": "hkgfbeinkeidmnkhdgociclhaclfmbam",
+  "positive": {
+    "task_id": "2e2d713a-bba6-479b-99b2-472ecacb774e",
+    "status": "completed",
+    "completed_at": "2026-11-05 07:41:12",
+    "final_callback_status": "ok",
+    "scopes": {
+      "dy_post": {
+        "count": 23,
+        "pages": 2,
+        "status": "ok",
+        "http": [
+          200,
+          200
+        ],
+        "business_status": [
+          0,
+          0
+        ],
+        "source_ids_equal_result": true,
+        "all_requests_for_confirmed_self": true,
+        "dom_count": 0,
+        "api_count": 23,
+        "methods": [
+          "GET",
+          "GET"
+        ],
+        "has_more": [
+          1,
+          0
+        ],
+        "cursor_advanced": true,
+        "authors_match_self": true
+      },
+      "dy_collect": {
+        "count": 4,
+        "pages": 1,
+        "status": "ok",
+        "http": [
+          200
+        ],
+        "business_status": [
+          0
+        ],
+        "source_ids_equal_result": true,
+        "all_requests_for_confirmed_self": true,
+        "dom_count": 0,
+        "api_count": 4,
+        "methods": [
+          "POST"
+        ],
+        "has_more": [
+          0
+        ],
+        "body_url_cursor_equal": true
+      },
+      "dy_like": {
+        "count": 7,
+        "pages": 1,
+        "status": "ok",
+        "http": [
+          200
+        ],
+        "business_status": [
+          0
+        ],
+        "source_ids_equal_result": true,
+        "all_requests_for_confirmed_self": true,
+        "dom_count": 0,
+        "api_count": 7,
+        "methods": [
+          "GET"
+        ],
+        "has_more": [
+          0
+        ]
+      },
+      "dy_follow": {
+        "count": 8,
+        "pages": 1,
+        "status": "ok",
+        "http": [
+          200
+        ],
+        "business_status": [
+          0
+        ],
+        "source_ids_equal_result": true,
+        "all_requests_for_confirmed_self": true,
+        "dom_count": 0,
+        "api_count": 8,
+        "methods": [
+          "GET"
+        ],
+        "has_more": [
+          false
+        ]
+      }
+    },
+    "event_count": 42,
+    "event_types": {
+      "view": 23,
+      "favorite": 4,
+      "like": 7,
+      "follow": 8
+    },
+    "seen_items": 29,
+    "profile_update_ledger": 0,
+    "events_source": {
+      "douyin": 42
+    },
+    "callback_count": 5,
+    "callback_statuses": [
+      "partial",
+      "partial",
+      "partial",
+      "partial",
+      "ok"
+    ],
+    "account_task_only": true,
+    "model_worker_started": false,
+    "stored_event_scope_ids_equal_result": true
+  },
+  "injected_late_page_failure": {
+    "task_id": "c4fa1a08-41a4-41ca-93a1-2ad1a964f20e",
+    "status": "completed",
+    "final_callback_status": "degraded",
+    "scope_statuses": {
+      "dy_post": "degraded"
+    },
+    "count": 18,
+    "pages": 1,
+    "api_error": "Failed to fetch",
+    "dom_count": 0,
+    "retained_ids_equal_real_first_page": true,
+    "injected_failures": 1,
+    "events_after": 42,
+    "duplicate_events_added": 0,
+    "seen_items_after": 29,
+    "profile_update_ledger_after": 0,
+    "completed_at": "2026-11-05 07:43:06"
+  },
+  "browser_final": {
+    "hashes": {
+      "dist/main/dy-fetch-tap.js": "bb140c11e8756d5783c538393e49664df0b0172d8acf3581f0262226bfd62ae9",
+      "dist/content/douyin.js": "1cc4ba1337eb771ca6025c08c428a650c4e3612623366fc537d7f20447132b1e"
+    },
+    "activeTask": false,
+    "tabs": 1
+  },
+  "limitations": [
+    "Chrome only; EGO/Firefox live execution not tested",
+    "Collection, likes and following each had one real page; multipage verification for these scopes remains deterministic regression coverage",
+    "No naturally empty account scope available",
+    "No model/profile-generation or recommendation pipeline execution",
+    "No production installation, merge or release"
+  ],
+  "cleanup": {
+    "test_browser_closed": true,
+    "temporary_profiles_credentials_databases_logs_removed": true,
+    "temporary_backend_stopped": true,
+    "production_health_http": 200
+  }
+}

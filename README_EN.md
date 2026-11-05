@@ -652,6 +652,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).
 
+Douyin account import: `profile/self with web parameters → current-account API pages → valid API rows → backend rejection of reported DOM fallback → task results / profile`. Empty stays empty; failures retain valid API partial rows only. Page recommendation cards never become account records. The default remains 300 per scope; success does not imply full history.
+
 Douyin discovery backoff: `claimed task failure → durable dy_tasks cooldown → producer before keyword claim / client / pending-claim gates`. Native search streams reach the page immediately while a bounded clone is parsed frame by frame. Valid partial items retain the failure; paths sharing the discovery client and task queue respect the cooldown across restarts and direct fallback.
 
 Douyin hot-word rotation: `enqueued choices from dy_tasks over the last 6h → each newly created plugin client → prefer unselected board words`, preserving rotation when the runtime recreates its transport each round.

@@ -1,0 +1,112 @@
+{
+  "scope": "Production task records, real Codex requests; standalone diagnostic process, no production configuration/profile mutation or worker reroute",
+  "connectivity_probe": {
+    "ok": true,
+    "model": "gpt-6.1-sol",
+    "seconds": 3.11,
+    "total_tokens": 31
+  },
+  "runs": [
+    {
+      "at": "2026-11-05T12:37:00.578190+00:00",
+      "task_id": "fed7f6e0-de22-4474-8921-d03e886e53e4",
+      "event_count": 7,
+      "model": "gpt-6.1-sol",
+      "production_write": false,
+      "calls": [
+        {
+          "ok": false,
+          "error_type": "LLMResponseError",
+          "seconds": 1.22
+        }
+      ],
+      "ok": false,
+      "error_type": "PreferenceAnalysisError",
+      "json_contract_error": true,
+      "rate_limit_error": false,
+      "seconds": 1.22,
+      "production_hashes_unchanged": true,
+      "code_variant": "deployed_0.3.230"
+    },
+    {
+      "at": "2026-11-05T12:37:11.349234+00:00",
+      "task_id": "fed7f6e0-de22-4474-8921-d03e886e53e4",
+      "event_count": 7,
+      "model": "gpt-6.1-sol",
+      "production_write": false,
+      "calls": [
+        {
+          "ok": true,
+          "model": "gpt-6.1-sol",
+          "usage": {
+            "prompt_tokens": 2237,
+            "completion_tokens": 233,
+            "total_tokens": 2470
+          },
+          "seconds": 9.13
+        }
+      ],
+      "ok": true,
+      "result_fields": [
+        "_init_cognition_context",
+        "archived_interests",
+        "cognitive_style",
+        "context",
+        "disliked_topics",
+        "exploration_openness",
+        "favorite_up_users",
+        "interests",
+        "source_platform_mix",
+        "speculative_interests",
+        "style"
+      ],
+      "interest_count": 72,
+      "seconds": 9.14,
+      "production_hashes_unchanged": true,
+      "code_variant": "worktree_0.3.233"
+    },
+    {
+      "at": "2026-11-05T12:37:56.742707+00:00",
+      "transport_override": true,
+      "task_id": "fed7f6e0-de22-4474-8921-d03e886e53e4",
+      "event_count": 7,
+      "model": "gpt-6.1-sol",
+      "production_write": false,
+      "calls": [
+        {
+          "ok": true,
+          "model": "gpt-6.1-sol",
+          "usage": {
+            "prompt_tokens": 5082,
+            "completion_tokens": 321,
+            "total_tokens": 5403
+          },
+          "seconds": 11.59
+        }
+      ],
+      "ok": true,
+      "result_fields": [
+        "_init_cognition_context",
+        "archived_interests",
+        "cognitive_style",
+        "context",
+        "disliked_topics",
+        "exploration_openness",
+        "favorite_up_users",
+        "interests",
+        "source_platform_mix",
+        "speculative_interests",
+        "style"
+      ],
+      "interest_count": 72,
+      "seconds": 11.6,
+      "production_hashes_unchanged": true,
+      "code_variant": "deployed_pipeline_fixed_transport_only"
+    }
+  ],
+  "remaining_gates": [
+    "Install compatible transport in production service",
+    "Production worker profile persistence",
+    "Douyin posts/collection/likes HTTP 403"
+  ]
+}
