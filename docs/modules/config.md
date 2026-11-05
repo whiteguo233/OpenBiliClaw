@@ -461,7 +461,7 @@ base_url = "https://api.deepseek.com"
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `name` | string | 实例 ID | 设置页显示名称，可重复 |
-| `provider_type` | string | `""` | 适配器类型：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `orcarouter` / `requesty` / `api_route` / `cheaperinference` / `openai_compatible` |
+| `provider_type` | string | `""` | 适配器类型：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `orcarouter` / `requesty` / `api_route` / `cheaperinference` / `runcrate` / `openai_compatible` |
 | `enabled` | bool | `true` | 是否允许注册和引用；停用实例不能留在任何链里 |
 | `api_key` | string | `""` | 此实例自己的凭据；API 默认只回显掩码 |
 | `model` | string | `""` | 此实例固定使用的聊天模型 |
@@ -597,6 +597,18 @@ Cheaper Inference 是 OpenAI 兼容的多模型网关，一个 Key 即可调用�
 | `base_url` | `"https://api.cheaperinference.com/v1"` | OpenAI 兼容接口，可覆盖 |
 
 Cheaper Inference 适配器不发送 `reasoning_effort`，且不提供 embedding；需要向量化时单独配置 `[llm.embedding]`。「获取模型」只列出 `GET /v1/models` 中 `type` 为 `text` 的聊天模型，图像 / 视频模型不会出现。
+
+#### Runcrate（`provider_type = "runcrate"`）
+
+Runcrate 是 OpenAI 兼容的推理服务，一个 Key 即可调用多家开源模型，模型名格式为 `<vendor>/<model>`（如 `deepseek-ai/DeepSeek-V4.1-Flash` / `zai-org/GLM-5.3`）。可在桌面设置页、首次运行向导、浏览器扩展或 CLI 选择 Runcrate，创建独立实例并将实例 ID 加入 `default_chain`。API Key 在 https://www.runcrate.ai/dashboard/api-keys 创建（`rc_live_` 开头）。工作区所有者使用注册满 30 天的 GitHub 账号登录时，DeepSeek V4.1 Flash、GLM 5.3 Flash、GLM 5.3、Qwen3.8 Flash 与 gpt-oss 120B 在会话与每周额度内免费。
+
+| 键 | 默认值 | 说明 |
+|----|--------|------|
+| `api_key` | `""` | Runcrate API Key；加入调用链时必填 |
+| `model` | `"deepseek-ai/DeepSeek-V4.1-Flash"` | 模型 ID，可在设置页获取模型或手填 |
+| `base_url` | `"https://api.runcrate.ai/v1"` | OpenAI 兼容接口，可覆盖 |
+
+Runcrate 适配器不发送 `reasoning_effort`，且不提供 embedding；需要向量化时单独配置 `[llm.embedding]`。「获取模型」只列出 `GET /v1/models` 中 `output_modalities` 含 `text` 的聊天模型，图像 / 视频 / 音频 / embedding 模型不会出现。
 
 #### OpenAI-compatible（`provider_type = "openai_compatible"`）
 

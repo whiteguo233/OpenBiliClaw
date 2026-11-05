@@ -2,6 +2,11 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 新增 Runcrate 内置 Provider（2026-10-29，runcrate-provider）
+
+- `provider_type="runcrate"` 通过 OpenAI 兼容接口接入 Runcrate，默认 `https://api.runcrate.ai/v1`、`deepseek-ai/DeepSeek-V4.1-Flash`，模型名格式为 `<vendor>/<model>`。支持独立实例、调用链、模型发现（只列 `output_modalities` 含 `text` 的聊天模型）和请求探测；适配器不发送 `reasoning_effort`，embedding 仍需独立配置。
+- 接入后端配置与 API、CLI 和安装向导（菜单第 11 项）、桌面与扩展设置、首次设置向导；补充配置样例、文档和回归测试。只有用户显式配置时才会调用。
+
 ## v0.3.233：画像时间溯源与 ChatGPT 订阅修复（2026-10-30）
 
 - 修复画像把「账号导入」读成「用户行为」的根因（假时间 + 存量当行为）：B 站三条账号同步路径补齐真实时间——`get_following` 解析 `/x/relation/followings` 的 `mtime`，历史 `view_at`、收藏 `fav_time` 镜像进 canonical `metadata.timestamp`，CLI guided init 采集同样保留；首次同步给事件标 `snapshot`。本机账本实测 89,866 条观看只落在 950 个 `created_at` 秒、2,429 条关注只落在 93 个秒，正是「同一秒关注四十多人」的来源。新增 `soul/event_provenance.py` 在 prompt 边界统一投影：`created_at` 不再进入模型（只认 `metadata.timestamp`），存量关注聚合成一行「导入存量：关注了 N 位创作者（时间区间）」，无时间事件标 `time_quality=ingest`。偏好 / 觉察 / 灵魂画像 / 洞察四条 prompt 同步加规则：不得用库存推断外向、EI 只认用户自己的表达、MBTI 不得当 insight 证据；`ProfileBuilder` 对 MBTI 输出做 pole 校验、type 与维度一致性重算，任一维度 strength < 0.60 时把 confidence 压到 0.55。偏好 / 觉察两条 prompt 的用户消息渲染 golden 随之重新采样，并在测试里注明是显式的契约变更。

@@ -10279,6 +10279,7 @@ ${cardFeedbackBarHtml()}`;
       requesty: "Requesty",
     api_route: "API Route",
       cheaperinference: "Cheaper Inference",
+      runcrate: "Runcrate",
       ollama: "Ollama",
       openai_compatible: "OpenAI-compatible"
     };
@@ -10292,6 +10293,7 @@ ${cardFeedbackBarHtml()}`;
       requesty: { model: "openai/gpt-4o-mini", base_url: "https://router.requesty.ai/v1" },
     api_route: { model: "gpt-5.5", base_url: "https://global.api-route.com/v1" },
       cheaperinference: { model: "gpt-5.4-mini", base_url: "https://api.cheaperinference.com/v1" },
+      runcrate: { model: "deepseek-ai/DeepSeek-V4.1-Flash", base_url: "https://api.runcrate.ai/v1" },
       ollama: { model: "qwen2.5:7b", base_url: "http://127.0.0.1:11434/v1" },
       openai_compatible: { model: "", base_url: "" }
     };
@@ -10303,6 +10305,7 @@ ${cardFeedbackBarHtml()}`;
       "requesty",
       "api_route",
       "cheaperinference",
+      "runcrate",
       "ollama",
       "openai_compatible"
     ]);

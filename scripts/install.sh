@@ -624,7 +624,7 @@ PY
         echo "Next steps (credentials are missing):"
         echo ""
         echo "  1. Choose your LLM chat provider (default: deepseek):"
-        echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible"
+        echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | runcrate | openai_compatible"
         echo "     (Local Ollama is embedding-only here — not offered as a chat provider.)"
         echo ""
         echo "  2. Ask which embedding service to use:"
@@ -649,6 +649,7 @@ PY
                 echo "         Requesty:   https://app.requesty.ai/api-keys"
                 echo "         API Route:  https://global.api-route.com/"
                 echo "         Cheaper Inference: https://cheaperinference.com/signup"
+                echo "         Runcrate: https://www.runcrate.ai/dashboard/api-keys"
                 ;;
         esac
         case "$missing" in

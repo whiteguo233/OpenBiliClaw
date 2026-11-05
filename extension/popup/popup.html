@@ -6791,6 +6791,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
@@ -6816,6 +6817,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
@@ -6991,6 +6993,21 @@
             <input id="cfgCheaperinferenceBaseUrl" type="text" placeholder="https://api.cheaperinference.com/v1">
           </div>
         </div>
+        <!-- Runcrate -->
+        <div class="settings-provider-fields" data-provider="runcrate">
+          <div class="settings-field">
+            <label for="cfgRuncrateKey">Runcrate API Key</label>
+            <input id="cfgRuncrateKey" type="password" autocomplete="off" placeholder="rc_live_...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgRuncrateModel">Model</label>
+            <input id="cfgRuncrateModel" type="text" placeholder="deepseek-ai/DeepSeek-V4.1-Flash">
+          </div>
+          <div class="settings-field">
+            <label for="cfgRuncrateBaseUrl">Base URL</label>
+            <input id="cfgRuncrateBaseUrl" type="text" placeholder="https://api.runcrate.ai/v1">
+          </div>
+        </div>
         <!-- OpenAI Compatible -->
         <div class="settings-provider-fields" data-provider="openai_compatible">
           <p class="settings-hint">
@@ -7081,6 +7098,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7102,6 +7120,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7123,6 +7142,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -7144,6 +7164,7 @@
             <option value="requesty">Requesty</option>
             <option value="api_route">API Route</option>
             <option value="cheaperinference">Cheaper Inference</option>
+            <option value="runcrate">Runcrate</option>
             <option value="openai_compatible">OpenAI 协议兼容</option>
           </select>
         </div>
@@ -8648,6 +8669,7 @@
                 <option value="requesty">Requesty</option>
                 <option value="api_route">API Route</option>
                 <option value="cheaperinference">Cheaper Inference</option>
+                <option value="runcrate">Runcrate</option>
                 <option value="ollama">Ollama</option>
                 <option value="openai_compatible">OpenAI-compatible</option>
               </select>

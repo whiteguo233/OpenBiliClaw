@@ -28,6 +28,7 @@ from .registry import (
     summarize_registry,
 )
 from .requesty_provider import RequestyProvider
+from .runcrate_provider import RuncrateProvider
 from .service import (
     LLMProviderExecutionError,
     LLMResponseContentError,
@@ -39,6 +40,7 @@ from .service import (
 __all__ = [
     "ApiRouteProvider",
     "CheaperInferenceProvider",
+    "RuncrateProvider",
     "ClaudeProvider",
     "DeepSeekProvider",
     "GeminiProvider",

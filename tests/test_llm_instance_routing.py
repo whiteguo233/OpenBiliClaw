@@ -753,6 +753,25 @@ def test_supports_image_input_recognizes_cheaperinference_vision_route() -> None
     assert service.supports_image_input("discovery.evaluate_batch") is True
 
 
+def test_supports_image_input_recognizes_runcrate_vision_route() -> None:
+    class RuncrateRegistry:
+        default_provider = "runcrate-main"
+
+        def provider_type(self, name: str | None = None) -> str:  # noqa: ARG002
+            return "runcrate"
+
+        def get(self, name: str) -> object:  # noqa: ARG002
+            return _ModelStub("Qwen/Qwen3-VL-235B-A22B-Instruct")
+
+    service = LLMService(
+        registry=RuncrateRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        module_overrides=module_overrides_from_config(_native_config()),
+    )
+
+    assert service.supports_image_input("discovery.evaluate_batch") is True
+
+
 class _ModelStub:
     def __init__(self, model: str) -> None:
         self._model = model
