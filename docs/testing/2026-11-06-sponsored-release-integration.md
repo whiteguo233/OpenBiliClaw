@@ -65,6 +65,8 @@
 
 合并后的后端专项覆盖抖音入库、免费方案配置、探测、初始化、SDK打包、冻结入口与配置事务：188通过、2跳过（79.70秒）。插件完整1881项测试通过，TypeScript、Ruff、MyPy（386文件）与国际化目录（2983条）通过。提交后继续执行PR完整CI作为合入门禁；上文安装包和模型实测仍明确标记其原始产品提交，不冒充此次合并版本的安装包。
 
+首轮合并CI `42089317863` 在Ruff阶段报两处 `SIM102`；本机旧版本未报告。两处均为没有后继else的末尾分支，将嵌套条件合并为逻辑等价的合取条件；保留数值拒绝与生命周期归档规则，重新执行对应回归及完整门禁，不跳过检查。
+
 ## 复验
 
 在新隔离目录先运行 `scripts/sponsored_system_acceptance.py` 生成合成基线，再运行 `scripts/sponsored_release_acceptance.py --root <基线目录>`；重复试验必须创建新副本或使用新的报告名，不能覆盖失败证据。规划可用 `scripts/sponsored_extended_acceptance.py --root <基线目录> --report-name director.json --only director_two_screens_with_default_planning_budget`。实际安装检查用 `scripts/sponsored_install_smoke.py`。

@@ -125,14 +125,13 @@ def validate_task_input(value: Any, schema: dict[str, Any] | None = None) -> Non
             raise ValueError("invalid task text length")
         if schema.get("minLength") and not value.strip():
             raise ValueError("empty task field")
-    elif kind == "number":
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or not schema["minimum"] <= value <= schema["maximum"]
-        ):
-            raise ValueError("invalid task number")
+    elif kind == "number" and (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not schema["minimum"] <= value <= schema["maximum"]
+    ):
+        raise ValueError("invalid task number")
 
 
 # The sponsored contract intentionally reuses the legacy consolidation system
