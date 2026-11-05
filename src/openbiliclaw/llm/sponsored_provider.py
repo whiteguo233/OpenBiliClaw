@@ -35,7 +35,7 @@ from .sponsored_errors import (
     SponsoredUnavailableError,
     SponsoredUnsupportedTaskError,
     error_from_payload,
-    is_fallback_allowed,
+    is_free_model_fallback_allowed,
 )
 from .sponsored_protocol import (
     PROTOCOL_VERSION,
@@ -53,8 +53,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180.0
 DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 10.0
 # Provisional bound from Nov 4-5 live acceptance: short free-model chat waited
-# 27-85s for its first delta. Retry a silent short request after 30s, at most
-# once; remeasure after a model/provider swap. Long input/thinking is excluded.
+# 27-85s for its first delta. Share 30s between signed model candidates so a
+# silent primary cannot starve fallback. Explicit thinking is excluded.
+# This is a provisional latency tradeoff; remeasure after a provider swap.
 INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS = 30.0
 _STDERR_TAIL_BYTES = 4096
 
@@ -141,7 +142,7 @@ class SponsoredProvider:
                 response.raw["free_model_fallback"] = index > 0
                 return response
             except SponsoredError as exc:
-                if index + 1 == len(contracts) or not is_fallback_allowed(exc):
+                if index + 1 == len(contracts) or not is_free_model_fallback_allowed(exc):
                     raise
                 logger.warning("free model fallback: %s (%s)", contract.model, exc.code)
         raise SponsoredUnavailableError("no signed free model is available")
@@ -553,7 +554,7 @@ class SponsoredProvider:
             deadline = asyncio.get_running_loop().time() + min(
                 self._request_timeout, INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS
             )
-        stream = self._stream_operation_attempts(operation, payload)
+        stream = self._stream_operation_attempts(operation, payload, first_deadline=deadline)
         try:
             while True:
                 try:
@@ -570,20 +571,41 @@ class SponsoredProvider:
             await stream.aclose()
 
     async def _stream_operation_attempts(
-        self, operation: str, payload: Mapping[str, Any]
+        self,
+        operation: str,
+        payload: Mapping[str, Any],
+        *,
+        first_deadline: float | None = None,
     ) -> AsyncGenerator[LLMStreamChunk, None]:
         contracts = self._candidate_contracts("", f"llm.{operation}", None)
         emitted = False
         attempts = 2 if is_interactive_caller(str(payload.get("caller") or "")) else 1
         for index, contract in enumerate(contracts):
+            # Same-model retries share this slice. Reserve an equal portion
+            # for each remaining candidate, within the original total budget.
+            model_deadline = None
+            if first_deadline is not None:
+                now = asyncio.get_running_loop().time()
+                model_deadline = now + (first_deadline - now) / (len(contracts) - index)
             for attempt in range(attempts):
                 try:
                     bounded = self._bounded_operation_payload(contract, payload)
                     self._check_context(contract, bounded)
                     stream = self._stream_task_once(contract, bounded)
                     try:
-                        async for chunk in stream:
+                        while True:
+                            try:
+                                async with asyncio.timeout_at(model_deadline):
+                                    chunk = await anext(stream)
+                            except StopAsyncIteration:
+                                break
+                            except TimeoutError as exc:
+                                raise SponsoredUnavailableError(
+                                    "sponsored first output timed out", task_id=contract.task_id
+                                ) from exc
                             emitted = emitted or bool(chunk.delta) or chunk.response is not None
+                            if chunk.delta.strip() or chunk.response is not None:
+                                model_deadline = None
                             if chunk.response is not None:
                                 chunk.response.raw = dict(chunk.response.raw or {})
                                 chunk.response.raw.update(
@@ -595,14 +617,24 @@ class SponsoredProvider:
                         await stream.aclose()
                     return
                 except SponsoredError as exc:
-                    if emitted or not is_fallback_allowed(exc):
+                    if emitted or not is_free_model_fallback_allowed(exc):
                         raise
-                    if attempt + 1 < attempts and exc.code in {"UPSTREAM_ERROR", "UNAVAILABLE"}:
+                    remaining = (
+                        model_deadline - asyncio.get_running_loop().time()
+                        if model_deadline is not None
+                        else self._request_timeout
+                    )
+                    if (
+                        attempt + 1 < attempts
+                        and exc.code in {"UPSTREAM_ERROR", "UNAVAILABLE", "RATE_LIMITED"}
+                        and remaining > 0
+                    ):
                         logger.warning("Retrying free stream before any output: %s", exc.code)
-                        await asyncio.sleep(0.25)
+                        await asyncio.sleep(min(0.25, remaining))
                         continue
                     if index + 1 == len(contracts):
                         raise
+                    logger.warning("free stream fallback: %s (%s)", contract.model, exc.code)
                     break
 
     async def _stream_task_once(

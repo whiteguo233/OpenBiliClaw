@@ -150,3 +150,18 @@ def is_fallback_allowed(error: BaseException) -> bool:
     """Whether this failure may be retried on the user's own provider."""
 
     return isinstance(error, SponsoredError) and error.fallback_allowed
+
+
+def is_free_model_fallback_allowed(error: SponsoredError) -> bool:
+    """A shared credential/policy/ledger failure cannot heal on another model.
+
+    Keep this separate from explicit BYOK fallback: the user's own credential
+    may still work when the shared sponsored credential has expired.
+    """
+    return is_fallback_allowed(error) and error.code not in {
+        "AUTH_FAILED",
+        "BALANCE_LOW",
+        "QUOTA_EXCEEDED",
+        "LEDGER_TAMPERED",
+        "POLICY_INVALID",
+    }

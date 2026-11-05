@@ -849,3 +849,12 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 轮换顺序：在私有发布环境替换上游Key → 编译并签名五平台Rust组件与有限期策略 → 发布组件 → 更新Core固定目录与摘要 → 发布对应OpenBiliClaw版本/安装包或容器镜像 → 再撤销旧Key。用户更新后需重启后端；源码更新代码及组件，Docker更新镜像，桌面更新安装包。不要让旧Core用“准备组件”重复下载同一固定版本来承诺恢复Key。
 
 通知是对真实调用失败或本地签名策略到期的检测，没有远端Key轮换推送。旧应用必须先升级到包含本功能的版本，才能在以后的轮换中显示新通知。实际AUTH_FAILED可能是撤销、过期或权限变更，UI不编造唯一原因；配额耗尽提示等待额度恢复或使用自有Key，更新包不保证解除限额。测试不撤销真实生产Key。
+
+### 免费请求持久恢复补充（2026-11-05）
+
+| 已实现能力 | 边界 |
+| --- | --- |
+| 对话故障恢复 | API处理器用 `TerminalChatReplyError` 终止持久故障；仅尚未输出/调用工具的临时免费故障进入原有1–30秒指数退避队列，最多两次追加重试。 |
+| 重启与重复连接 | pending消息的重试次数、首段/工具执行边界保存在agent_events；重启恢复不会回放已开始的工具。已完成消息直接读取结果。 |
+
+公开API仍为 `DurableChatReplyScheduler.schedule/start/close` 与 `DialogueExecutionCoordinator.lease`；调度器本体接口未变，免费错误分类和终止决定在API处理器完成。HTTP订阅断开后执行继续；服务重启后仅尚未开始的pending轮次自动恢复。真实Rust与云端故障验收见[报告](../testing/2026-11-05-sponsored-resilience.md)。

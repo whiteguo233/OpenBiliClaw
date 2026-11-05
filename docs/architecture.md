@@ -772,6 +772,9 @@ Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache,
 Auth failure / signed-policy expiry → durable capability status → settings + message notices
   → update application / installer OR configure a user-owned API key
 Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+  → shared 30s first-output budget; no replay after output
+Silent transient chat failure → persisted retry count (max 2) → durable worker
+Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
 Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
   → offline self-check → versioned bundle → atomic active pointer
 Optional image understanding: 4B; image embeddings: unavailable in the free profile

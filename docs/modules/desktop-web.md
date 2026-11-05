@@ -8,6 +8,7 @@
 | 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
 | 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。手机只在通知变化时重建消息面板，保留用户焦点。限流/网络错误不会冒充过期。 |
 | 向量模式独立选择 | 默认硅基流动BGE-M3，也可选本地Ollama；本地配置、缓存与服务健康独立于免费凭据。 |
+| 聊天暂时故障 | 免费服务首段失败时显示后台重试提示，读取持久消息最终状态；手机保留 `agentRetrying` 并轮询，不在本地把pending误标failed。 |
 | 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
 
 公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留稳定错误码对应的安全说明。`llm.sponsored.embedding_mode` 仅接受 `cloud/local`；`service_status` 与 `GET /api/runtime-status` 的 `sponsored_status` 返回当前 `notices`。每条含 `code/title/message/requires_update/capabilities`，不包含密钥、原始上游错误或路径。初始化选择本地时使用 `check_embedding=false` 仅验证免费对话，保存后由现有初始化前置检查/修复验证本地向量；普通测试按钮默认同时验证两者。

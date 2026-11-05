@@ -64,7 +64,7 @@ async def run_http(args: argparse.Namespace) -> None:
     cfg.llm.sponsored = SponsoredRuntimeSettings(
         enabled=True,
         model=model,
-        fallback_to_other_free_model=False,
+        fallback_to_other_free_model=args.free_fallback,
         fallback_to_user_provider=False,
     )
     save_config(cfg, root / "config.toml")
@@ -72,7 +72,7 @@ async def run_http(args: argparse.Namespace) -> None:
     app = create_app()
     app.add_middleware(LabelRequests)
     trace = Trace()
-    run = Run(root, model, command, trace)
+    run = Run(root, model, command, trace, free_fallback=args.free_fallback)
     run.service = app.state.runtime_context.llm_service
     trace.start()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
@@ -235,6 +235,7 @@ def main() -> None:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--model", choices=("Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"), required=True)
     parser.add_argument("--bundle", type=Path, required=True)
+    parser.add_argument("--free-fallback", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(run_http(args))

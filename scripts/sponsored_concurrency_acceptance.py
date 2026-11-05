@@ -113,15 +113,18 @@ def peak_overlap(frames: list[dict[str, Any]]) -> int:
 
 
 class Run:
-    def __init__(self, root: Path, model: str, command: str, trace: Trace) -> None:
+    def __init__(
+        self, root: Path, model: str, command: str, trace: Trace, *, free_fallback: bool = False
+    ) -> None:
         self.root, self.model, self.trace = root, model, trace
+        self.free_fallback = free_fallback
         self.report: dict[str, Any] = {"model": model, "stages": [], "requests": []}
         install_sponsored_settings(
             SponsoredRuntimeSettings(
                 enabled=True,
                 runtime_path=command,
                 model=model,
-                fallback_to_other_free_model=False,
+                fallback_to_other_free_model=free_fallback,
                 fallback_to_user_provider=False,
             ),
             data_path=root / "data",
@@ -229,7 +232,8 @@ class Run:
                         assert "".join(deltas) == response.content, (
                             "Stream/terminal content mismatch"
                         )
-                    assert response.provider == "sponsored" and response.model == self.model
+                    assert response.provider == "sponsored"
+                    assert response.model in (CHAT_MODELS if self.free_fallback else [self.model])
                     assert marker in response.content, "Request identity missing or crossed"
                     if structured:
                         result = json.loads(response.content)
@@ -302,7 +306,7 @@ async def main_async(args: argparse.Namespace) -> None:
     bundle = Path(parts[0]).parent
     verify_bundle(bundle)
     trace = Trace()
-    run = Run(root, args.model, command, trace)
+    run = Run(root, args.model, command, trace, free_fallback=args.free_fallback)
     run.report.update(
         runtime_manifest_sha256=hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest(),
         concurrency=run.service.concurrency,
@@ -348,6 +352,7 @@ def main() -> None:
     parser.add_argument("--model", choices=CHAT_MODELS, required=True)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--ledger", type=Path)
+    parser.add_argument("--free-fallback", action="store_true")
     parser.add_argument("--scenario", choices=("all", "process-worker"), default="all")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)

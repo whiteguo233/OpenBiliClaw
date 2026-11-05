@@ -14,6 +14,7 @@ import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openbiliclaw.agent.loop import AgentEvent
@@ -23,8 +24,6 @@ from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 class FakeAgentDialogue:
@@ -122,6 +121,81 @@ def _app(tmp_path: Path, dialogue: FakeAgentDialogue) -> Any:
     )
     app.state.runtime_context.agent_loop = object()
     return app
+
+
+@pytest.mark.parametrize("recover", [True, False])
+async def test_silent_sponsored_failure_retries_durably_with_a_bound(
+    tmp_path: Path, recover: bool
+) -> None:
+    from openbiliclaw.api.app import ChatTurnIn
+    from openbiliclaw.llm.sponsored_errors import SponsoredUnavailableError
+
+    class FlakyDialogue(FakeAgentDialogue):
+        async def stream_agent_reply(self, *args: Any, **kwargs: Any) -> Any:
+            self._script = (
+                [AgentEvent(type="final", step=1, text="已恢复")]
+                if recover and self.agent_calls
+                else [SponsoredUnavailableError("sponsored first output timed out")]
+            )
+            async for event in super().stream_agent_reply(*args, **kwargs):
+                yield event
+
+    dialogue = FlakyDialogue([])
+    app = _app(tmp_path, dialogue)
+    endpoints = {
+        route.path: route.endpoint
+        for route in app.routes
+        if "POST" in getattr(route, "methods", ())
+    }
+    scheduler = app.state.chat_reply_scheduler
+    scheduler.retry_base_seconds = 0.01
+    payload = ChatTurnIn(turn_id="silent", message="你好", streaming=True)
+    try:
+        await endpoints["/api/chat/turns"](payload)
+        response = await endpoints["/api/chat/agent/stream"](payload)
+        frames = [frame async for frame in response.body_iterator]
+        assert '"retrying": true' in "".join(frames)
+        await scheduler.wait_idle(timeout=2)
+        row = app.state.runtime_context.database.get_chat_turn("silent")
+        assert row["status"] == ("completed" if recover else "failed")
+        assert len(dialogue.agent_calls) == (2 if recover else 3)
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.parametrize("case", ["auth", "partial", "tool", "restart"])
+async def test_durable_free_failure_never_replays_started_work(tmp_path: Path, case: str) -> None:
+    from openbiliclaw.api.app import ChatTurnIn
+    from openbiliclaw.llm.sponsored_errors import SponsoredAuthError, SponsoredUnavailableError
+
+    script: list[AgentEvent | Exception] = []
+    if case == "partial":
+        script.append(AgentEvent(type="delta", step=1, text="已经输出"))
+    if case == "tool":
+        script.append(AgentEvent(type="tool_call", step=1, tool_name="set_preference"))
+    script.append(SponsoredAuthError("expired") if case == "auth" else SponsoredUnavailableError())
+    dialogue = FakeAgentDialogue(script)
+    app = _app(tmp_path, dialogue)
+    scheduler = app.state.chat_reply_scheduler
+    scheduler.retry_base_seconds = 0.01
+    endpoints = {
+        route.path: route.endpoint
+        for route in app.routes
+        if "POST" in getattr(route, "methods", ())
+    }
+    try:
+        await endpoints["/api/chat/turns"](ChatTurnIn(turn_id=case, message="你好", streaming=True))
+        if case == "restart":
+            app.state.runtime_context.database.store_chat_turn_agent_events(
+                case, events=[{"type": "tool_call", "tool_name": "set_preference"}]
+            )
+        scheduler.schedule(case)
+        await scheduler.wait_idle(timeout=0.4)
+        row = app.state.runtime_context.database.get_chat_turn(case)
+        assert row["status"] == "failed"
+        assert len(dialogue.agent_calls) == (0 if case == "restart" else 1)
+    finally:
+        await scheduler.close()
 
 
 def test_agent_stream_multi_hop_events_and_turn_persisted(tmp_path: Path) -> None:

@@ -1049,6 +1049,7 @@ export async function streamAgentChatTurn({
     if (name === "error") {
       const error = new Error(String(data?.error || "对话失败了，请稍后重试。"));
       error.agentStreamError = true;
+      error.agentRetrying = data?.retrying === true;
       onEvent?.(name, data);
       throw error;
     }

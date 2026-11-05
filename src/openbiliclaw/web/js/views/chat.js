@@ -1617,6 +1617,17 @@ async function driveAgentStream(turnId, message, sourceTurn = null) {
       await driveLegacyStream(turnId, message);
       return;
     }
+    if (error?.agentRetrying) {
+      streamingTurnIds.delete(turnId);
+      agentRunsByTurnId.delete(turnId);
+      if (sessionId === activeSessionId) {
+        pendingTurnId = turnId;
+        setDialogueStatus(String(error.message), "info");
+        render();
+        pollForResponse();
+      }
+      return;
+    }
     const messageText = error?.agentStreamError
       ? String(error.message || "对话失败了，请稍后重试。")
       : "连接中断了，可以重试。";

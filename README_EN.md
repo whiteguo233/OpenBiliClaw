@@ -657,6 +657,7 @@ Setup / extension / desktop / mobile / CLI → local config → shared sponsored
   Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
   Cloud text embeddings → BGE-M3 (1024 dimensions, default); optional image understanding → 4B
   → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
+  Silent transient failure → bounded retry / free fallback → durable queue; started work is not replayed
   Results → source-evidence validation → profile / memory; one bounded temporal correction
   Local vector choice → Ollama (independent cache/endpoint, no sponsored key)
   Credential / policy failure → durable status → settings + inbox → update app or configure own key

@@ -6,6 +6,7 @@
 | --- | --- |
 | 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
 | 免费模型即时切换 | PUT /api/config仅变更已启用免费方案的模型/免费互备/通知/超时选择时，无需排空后台学习；新请求生效。独立worker部署由现有supervisor重启后台进程以同步配置，持久化任务按原恢复规则继续。 |
+| 免费聊天故障恢复 | 流未输出且未执行工具时，暂时性免费服务故障保留pending，最多追加两次持久重试；共享凭据/策略失败直接failed；已经开始的回复不从头重跑。 |
 | 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
 | 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。限流/网络错误不会冒充过期。 |
 | 无活动免费方案 | `sponsored_status.notices` 为空，仍返回固定的应用更新链接；响应契约回归保留完整字段相等校验。 |
@@ -611,3 +612,9 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 业务 LLM/向量请求在选择免费方案后通过统一 Sponsored SDK（组件已发行）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的模型、工具模拟与真实流式边界见[用户流程](../plans/2026-11-04-sponsored-user-flow.md)。
 
 `RuntimeContext.try_apply_sponsored_config(new_config) -> bool` 在API配置修订锁内严格比较完整配置，只接受已启用方案的路由字段变更；切换自有provider回退开关、启用状态、runtime路径、其它配置或凭据更新仍走原安全交接。与原配置持久化、修订合并和失败回滚共用事务。
+
+### 免费聊天恢复的 SSE 与持久状态契约
+
+`POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
+
+四端范围：插件与手机API保留 `agentRetrying` 标记，页面继续轮询而不将消息本地标为failed；桌面已有历史刷新读取权威状态并显示后台重试提示；CLI复用SDK传输重试，不创建HTTP持久消息。[验收与限制](../testing/2026-11-05-sponsored-resilience.md)。

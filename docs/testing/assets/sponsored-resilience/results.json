@@ -1,0 +1,2298 @@
+{
+  "qwen8b": {
+    "model": "Qwen/Qwen3-8B",
+    "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+    "real_upstream": true,
+    "fault_scope": "isolated encrypted CONNECT sockets or owned Rust child",
+    "requests": [
+      {
+        "name": "warm",
+        "fault": "",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.393,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 0,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "socket-before",
+        "fault": "drop_before",
+        "kind": "stream",
+        "first_delta_seconds": 0.738,
+        "actual_model": "Qwen/Qwen3-8B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 1.578,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 26,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "silent-primary",
+        "fault": "silence",
+        "kind": "stream",
+        "first_delta_seconds": 16.317,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "free_fallback": true,
+        "status": "pass",
+        "seconds": 17.779,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 38,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "child-crash",
+        "fault": "crash",
+        "kind": "stream",
+        "first_delta_seconds": 1.642,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "free_fallback": true,
+        "status": "pass",
+        "seconds": 2.789,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 31,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "socket-after",
+        "fault": "drop_after",
+        "kind": "stream",
+        "first_delta_seconds": 0.325,
+        "status": "pass_expected_interruption",
+        "error_type": "SponsoredUpstreamError",
+        "error_code": "UPSTREAM_ERROR",
+        "seconds": 0.327,
+        "ipc_attempts": 1,
+        "injected": true,
+        "delta_chunks": 1,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "recovered-chat",
+        "fault": "",
+        "kind": "stream",
+        "first_delta_seconds": 0.454,
+        "actual_model": "Qwen/Qwen3-8B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 1.817,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 29,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "recovered-embedding",
+        "fault": "",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.233,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 0,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "embedding-drop",
+        "fault": "drop_before",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.571,
+        "ipc_attempts": 1,
+        "injected": true,
+        "delta_chunks": 0,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "final-chat",
+        "fault": "",
+        "kind": "stream",
+        "first_delta_seconds": 0.32,
+        "actual_model": "Qwen/Qwen3-8B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 1.274,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 30,
+        "new_tls_connections": 1
+      }
+    ],
+    "frames": [
+      {
+        "id": "a81ba076c37644348064bb8fd1fa03a9",
+        "job": "warm",
+        "pid": 21600,
+        "task": "llm.embedding_text",
+        "sent": 0.153475,
+        "first_delta": null,
+        "finished": 0.392438,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "6096275900f341db9336d787e3119cfe",
+        "job": "socket-before",
+        "pid": 21600,
+        "task": "llm.text",
+        "sent": 0.394535,
+        "first_delta": null,
+        "finished": 0.497297,
+        "delta_count": 0,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "5485f94fdc37473db8bcca5fccaa48eb",
+        "job": "socket-before",
+        "pid": 21603,
+        "task": "llm.text",
+        "sent": 0.785989,
+        "first_delta": 1.131993,
+        "finished": 1.971527,
+        "delta_count": 26,
+        "ok": true
+      },
+      {
+        "id": "db85632cff6f40fa9bd1933039d6a617",
+        "job": "silent-primary",
+        "pid": 21603,
+        "task": "llm.text",
+        "sent": 1.972821,
+        "first_delta": null,
+        "finished": 19.751669,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "a7288bcaa5d844a88fc2eca028adb73c",
+        "job": "silent-primary",
+        "pid": 21625,
+        "task": "llm.text.qwen35_4b",
+        "sent": 17.017432,
+        "first_delta": 18.28903,
+        "finished": 19.751493,
+        "delta_count": 38,
+        "ok": true
+      },
+      {
+        "id": "b11d800f52024c94a7f6f91a4aea1eb5",
+        "job": "child-crash",
+        "pid": 21625,
+        "task": "llm.text",
+        "sent": 19.752847,
+        "first_delta": null,
+        "finished": 22.541432,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "432e1252444947f9888418e623460c80",
+        "job": "child-crash",
+        "pid": 21628,
+        "task": "llm.text.qwen35_4b",
+        "sent": 19.896827,
+        "first_delta": 21.394548,
+        "finished": 22.54128,
+        "delta_count": 31,
+        "ok": true
+      },
+      {
+        "id": "b4ea3de460dd4d3188267997d66ee83b",
+        "job": "socket-after",
+        "pid": 21628,
+        "task": "llm.text",
+        "sent": 22.542688,
+        "first_delta": 22.867828,
+        "finished": 22.868401,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "8013ce36671d4ce488ff6fab65ab62dc",
+        "job": "recovered-chat",
+        "pid": 21630,
+        "task": "llm.text",
+        "sent": 22.917395,
+        "first_delta": 23.324081,
+        "finished": 24.687124,
+        "delta_count": 29,
+        "ok": true
+      },
+      {
+        "id": "845ad146e1024f95b65026e7c06e5d38",
+        "job": "recovered-embedding",
+        "pid": 21630,
+        "task": "llm.embedding_text",
+        "sent": 24.68858,
+        "first_delta": null,
+        "finished": 24.921358,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "8f335b6296b04cd7a66c49cfac39cdd9",
+        "job": "embedding-drop",
+        "pid": 21630,
+        "task": "llm.embedding_text",
+        "sent": 24.922578,
+        "first_delta": null,
+        "finished": 25.492764,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "da4dee8f7f934a7e8231ac3c803ef0df",
+        "job": "final-chat",
+        "pid": 21630,
+        "task": "llm.text",
+        "sent": 25.494038,
+        "first_delta": 25.813356,
+        "finished": 26.767671,
+        "delta_count": 30,
+        "ok": true
+      }
+    ],
+    "connections": 13,
+    "encrypted_bytes": 192654
+  },
+  "qwen4b": {
+    "model": "Qwen/Qwen3.5-4B",
+    "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+    "real_upstream": true,
+    "fault_scope": "isolated encrypted CONNECT sockets or owned Rust child",
+    "requests": [
+      {
+        "name": "warm",
+        "fault": "",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.297,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 0,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "socket-before",
+        "fault": "drop_before",
+        "kind": "stream",
+        "first_delta_seconds": 12.388,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 13.428,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 37,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "silent-primary",
+        "fault": "silence",
+        "kind": "stream",
+        "first_delta_seconds": 15.378,
+        "actual_model": "Qwen/Qwen3-8B",
+        "free_fallback": true,
+        "status": "pass",
+        "seconds": 17.027,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 35,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "child-crash",
+        "fault": "crash",
+        "kind": "stream",
+        "first_delta_seconds": 0.463,
+        "actual_model": "Qwen/Qwen3-8B",
+        "free_fallback": true,
+        "status": "pass",
+        "seconds": 2.004,
+        "ipc_attempts": 2,
+        "injected": true,
+        "delta_chunks": 50,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "socket-after",
+        "fault": "drop_after",
+        "kind": "stream",
+        "first_delta_seconds": 1.379,
+        "status": "pass_expected_interruption",
+        "error_type": "SponsoredUpstreamError",
+        "error_code": "UPSTREAM_ERROR",
+        "seconds": 1.381,
+        "ipc_attempts": 1,
+        "injected": true,
+        "delta_chunks": 1,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "recovered-chat",
+        "fault": "",
+        "kind": "stream",
+        "first_delta_seconds": 13.661,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 15.059,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 37,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "recovered-embedding",
+        "fault": "",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.198,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 0,
+        "new_tls_connections": 1
+      },
+      {
+        "name": "embedding-drop",
+        "fault": "drop_before",
+        "kind": "embedding",
+        "dimensions": 1024,
+        "status": "pass",
+        "seconds": 0.558,
+        "ipc_attempts": 1,
+        "injected": true,
+        "delta_chunks": 0,
+        "new_tls_connections": 2
+      },
+      {
+        "name": "final-chat",
+        "fault": "",
+        "kind": "stream",
+        "first_delta_seconds": 13.241,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "free_fallback": false,
+        "status": "pass",
+        "seconds": 14.54,
+        "ipc_attempts": 1,
+        "injected": false,
+        "delta_chunks": 33,
+        "new_tls_connections": 1
+      }
+    ],
+    "frames": [
+      {
+        "id": "614d649c59ab4251bd0a23376efeb9e1",
+        "job": "warm",
+        "pid": 21619,
+        "task": "llm.embedding_text",
+        "sent": 0.1208,
+        "first_delta": null,
+        "finished": 0.296689,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "a0ff8921752743aebc392284d3bc4fc0",
+        "job": "socket-before",
+        "pid": 21619,
+        "task": "llm.text.qwen35_4b",
+        "sent": 0.298255,
+        "first_delta": null,
+        "finished": 0.399129,
+        "delta_count": 0,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "3c450847d6154acabc17f5b6d9edc24d",
+        "job": "socket-before",
+        "pid": 21622,
+        "task": "llm.text.qwen35_4b",
+        "sent": 0.692155,
+        "first_delta": 12.685353,
+        "finished": 13.725773,
+        "delta_count": 37,
+        "ok": true
+      },
+      {
+        "id": "5290499fe5e5453f80dc316213d5f838",
+        "job": "silent-primary",
+        "pid": 21622,
+        "task": "llm.text.qwen35_4b",
+        "sent": 13.727227,
+        "first_delta": null,
+        "finished": 30.753705,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "0089e86c39df46139193647884f541de",
+        "job": "silent-primary",
+        "pid": 21653,
+        "task": "llm.text",
+        "sent": 28.776262,
+        "first_delta": 29.104956,
+        "finished": 30.75357,
+        "delta_count": 35,
+        "ok": true
+      },
+      {
+        "id": "6347905d5ccd4578b4fc699c7cd4658b",
+        "job": "child-crash",
+        "pid": 21653,
+        "task": "llm.text.qwen35_4b",
+        "sent": 30.76008,
+        "first_delta": null,
+        "finished": 32.76365,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "842a80610a114100bd289452dc6a4b33",
+        "job": "child-crash",
+        "pid": 21655,
+        "task": "llm.text",
+        "sent": 30.899023,
+        "first_delta": 31.223034,
+        "finished": 32.76349,
+        "delta_count": 50,
+        "ok": true
+      },
+      {
+        "id": "4397e7888a9f4f82a8fa2e38139f55d4",
+        "job": "socket-after",
+        "pid": 21655,
+        "task": "llm.text.qwen35_4b",
+        "sent": 32.764661,
+        "first_delta": 34.143398,
+        "finished": 34.143934,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "4b3fd0807116480f8674d28145805918",
+        "job": "recovered-chat",
+        "pid": 21658,
+        "task": "llm.text.qwen35_4b",
+        "sent": 34.182919,
+        "first_delta": 47.807107,
+        "finished": 49.204811,
+        "delta_count": 37,
+        "ok": true
+      },
+      {
+        "id": "6ee3ea3adff04e768a26d45d1140e098",
+        "job": "recovered-embedding",
+        "pid": 21658,
+        "task": "llm.embedding_text",
+        "sent": 49.206151,
+        "first_delta": null,
+        "finished": 49.403401,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "6ae4a6ce56924c778754e9dba32fc254",
+        "job": "embedding-drop",
+        "pid": 21658,
+        "task": "llm.embedding_text",
+        "sent": 49.40485,
+        "first_delta": null,
+        "finished": 49.962502,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "da651e24fe1f4ad5948591876e2f3f5e",
+        "job": "final-chat",
+        "pid": 21658,
+        "task": "llm.text.qwen35_4b",
+        "sent": 49.964046,
+        "first_delta": 63.204942,
+        "finished": 64.503303,
+        "delta_count": 33,
+        "ok": true
+      }
+    ],
+    "connections": 13,
+    "encrypted_bytes": 210753
+  },
+  "http-burst8b": {
+    "model": "Qwen/Qwen3-8B",
+    "stages": [],
+    "requests": [
+      {
+        "name": "http-chat-0",
+        "kind": "http_chat",
+        "submitted": 0.156231,
+        "turn_id": "concurrency-1793865241233783000-0",
+        "marker": "HTTP-鲸鱼-0-3957",
+        "first_content": 1.674834,
+        "status": "pass",
+        "durable_reply_matches": true,
+        "event_counts": {
+          "done": 1,
+          "delta": 44,
+          "final": 1
+        },
+        "finished": 3.137083,
+        "elapsed_seconds": 2.981,
+        "first_content_seconds": 1.519,
+        "durable_status": "completed",
+        "durable_error": "",
+        "durable_observed_seconds": 22.505
+      },
+      {
+        "name": "http-chat-1",
+        "kind": "http_chat",
+        "submitted": 0.157077,
+        "turn_id": "concurrency-1793865241234601000-1",
+        "marker": "HTTP-鲸鱼-1-3957",
+        "first_content": 3.993181,
+        "status": "pass",
+        "durable_reply_matches": true,
+        "event_counts": {
+          "done": 1,
+          "delta": 38,
+          "final": 1
+        },
+        "finished": 5.712093,
+        "elapsed_seconds": 5.555,
+        "first_content_seconds": 3.836,
+        "durable_status": "completed",
+        "durable_error": "",
+        "durable_observed_seconds": 22.508
+      },
+      {
+        "name": "http-eval-1",
+        "kind": "evaluation",
+        "marker": "CC-29869180e839",
+        "submitted": 0.143999,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 212,
+          "completion_tokens": 570,
+          "total_tokens": 782
+        },
+        "finished": 19.19672,
+        "elapsed_seconds": 19.053,
+        "queue_seconds": 0.187
+      },
+      {
+        "name": "http-embedding-0",
+        "kind": "embedding",
+        "marker": "CC-07c07007eb97",
+        "submitted": 0.157381,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 19.49394,
+        "elapsed_seconds": 19.337,
+        "queue_seconds": 19.041
+      },
+      {
+        "name": "http-embedding-1",
+        "kind": "embedding",
+        "marker": "CC-e4a7e1e2eedb",
+        "submitted": 0.157448,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 19.654058,
+        "elapsed_seconds": 19.497,
+        "queue_seconds": 19.337
+      },
+      {
+        "name": "http-eval-0",
+        "kind": "evaluation",
+        "marker": "CC-01d58b4ad542",
+        "submitted": 0.122514,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 207,
+          "completion_tokens": 661,
+          "total_tokens": 868
+        },
+        "finished": 22.656021,
+        "elapsed_seconds": 22.534,
+        "queue_seconds": 0.136
+      }
+    ],
+    "frames": [
+      {
+        "id": "6ee826038f214b8fae4afbc1e814bc9e",
+        "job": "http-eval-0",
+        "pid": 21802,
+        "task": "llm.structured",
+        "sent": 0.258275,
+        "first_delta": null,
+        "finished": 22.655292,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "ca4689cb573244d5a2d4a042180256e4",
+        "job": "http-eval-1",
+        "pid": 21805,
+        "task": "llm.structured",
+        "sent": 0.331171,
+        "first_delta": null,
+        "finished": 19.195252,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "4c86162a4a1d48fc91e66a9412d7e452",
+        "job": "http-chat-0",
+        "pid": 21807,
+        "task": "llm.tools",
+        "sent": 0.403137,
+        "first_delta": 1.671542,
+        "finished": 3.109481,
+        "delta_count": 44,
+        "ok": true
+      },
+      {
+        "id": "fd1ac261e62841c0a94472d52cd6c9b7",
+        "job": "http-chat-1",
+        "pid": 21807,
+        "task": "llm.tools",
+        "sent": 3.128011,
+        "first_delta": 3.990822,
+        "finished": 5.69239,
+        "delta_count": 38,
+        "ok": true
+      },
+      {
+        "id": "089a1fcdbd7440c49f1d7be44ee996a2",
+        "job": "http-embedding-0",
+        "pid": 21805,
+        "task": "llm.embedding_text",
+        "sent": 19.198319,
+        "first_delta": null,
+        "finished": 19.493171,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "22a8a2f4114545d5a852be8b7c0c4d17",
+        "job": "http-embedding-1",
+        "pid": 21805,
+        "task": "llm.embedding_text",
+        "sent": 19.494873,
+        "first_delta": null,
+        "finished": 19.653537,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "caf65808386846f8b2e2345c04972cd8",
+        "job": "",
+        "pid": 21805,
+        "task": "llm.structured",
+        "sent": 19.654918,
+        "first_delta": null,
+        "finished": 33.893051,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "1edd10a4bfb542ae93a04a2d57f27c7e",
+        "job": "",
+        "pid": 21802,
+        "task": "llm.structured",
+        "sent": 33.912276,
+        "first_delta": null,
+        "finished": 42.993636,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "http_summary": {
+      "passed": 6,
+      "total": 6,
+      "seconds": 22.777,
+      "pings": [
+        {
+          "ok": true,
+          "seconds": 0.0639
+        },
+        {
+          "ok": true,
+          "seconds": 0.006
+        },
+        {
+          "ok": true,
+          "seconds": 0.0036
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0036
+        },
+        {
+          "ok": true,
+          "seconds": 0.0041
+        },
+        {
+          "ok": true,
+          "seconds": 0.0051
+        },
+        {
+          "ok": true,
+          "seconds": 0.0044
+        },
+        {
+          "ok": true,
+          "seconds": 0.0051
+        },
+        {
+          "ok": true,
+          "seconds": 0.0051
+        },
+        {
+          "ok": true,
+          "seconds": 0.0044
+        },
+        {
+          "ok": true,
+          "seconds": 0.0039
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0038
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        },
+        {
+          "ok": true,
+          "seconds": 0.0041
+        },
+        {
+          "ok": true,
+          "seconds": 0.0042
+        },
+        {
+          "ok": true,
+          "seconds": 0.0038
+        },
+        {
+          "ok": true,
+          "seconds": 0.0044
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0042
+        },
+        {
+          "ok": true,
+          "seconds": 0.0042
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0033
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0038
+        },
+        {
+          "ok": true,
+          "seconds": 0.0045
+        },
+        {
+          "ok": true,
+          "seconds": 0.0041
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0036
+        },
+        {
+          "ok": true,
+          "seconds": 0.0042
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0039
+        },
+        {
+          "ok": true,
+          "seconds": 0.0042
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        }
+      ],
+      "gate": {
+        "llm_total_concurrency": 3,
+        "llm_background_concurrency": 2,
+        "llm_total_active": 1,
+        "llm_total_waiting": 0,
+        "llm_background_active": 0,
+        "llm_background_waiting": 0,
+        "llm_refill_active": 0,
+        "llm_refill_waiting": 0,
+        "llm_maintenance_active": 0,
+        "llm_maintenance_waiting": 0,
+        "llm_refill_priority_active": true,
+        "inventory_priority_state": "empty"
+      }
+    },
+    "peak_ipc_inflight": 3
+  },
+  "http-burst4b": {
+    "model": "Qwen/Qwen3.5-4B",
+    "stages": [],
+    "requests": [
+      {
+        "name": "http-eval-0",
+        "kind": "evaluation",
+        "marker": "CC-01d58b4ad542",
+        "submitted": 0.120951,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 204,
+          "completion_tokens": 229,
+          "total_tokens": 433
+        },
+        "finished": 9.460797,
+        "elapsed_seconds": 9.34,
+        "queue_seconds": 0.149
+      },
+      {
+        "name": "http-embedding-0",
+        "kind": "embedding",
+        "marker": "CC-07c07007eb97",
+        "submitted": 0.154802,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 9.652545,
+        "elapsed_seconds": 9.498,
+        "queue_seconds": 9.307
+      },
+      {
+        "name": "http-embedding-1",
+        "kind": "embedding",
+        "marker": "CC-e4a7e1e2eedb",
+        "submitted": 0.154866,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 9.820178,
+        "elapsed_seconds": 9.665,
+        "queue_seconds": 9.499
+      },
+      {
+        "name": "http-eval-1",
+        "kind": "evaluation",
+        "marker": "CC-29869180e839",
+        "submitted": 0.140698,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 209,
+          "completion_tokens": 283,
+          "total_tokens": 492
+        },
+        "finished": 11.85524,
+        "elapsed_seconds": 11.715,
+        "queue_seconds": 0.209
+      },
+      {
+        "name": "http-chat-0",
+        "kind": "http_chat",
+        "submitted": 0.153575,
+        "turn_id": "concurrency-1793865314136904000-0",
+        "marker": "HTTP-鲸鱼-0-3957",
+        "first_content": 10.932265,
+        "status": "pass",
+        "durable_reply_matches": true,
+        "event_counts": {
+          "final": 1,
+          "done": 1,
+          "delta": 38
+        },
+        "finished": 12.424001,
+        "elapsed_seconds": 12.27,
+        "first_content_seconds": 10.779,
+        "durable_status": "completed",
+        "durable_error": "",
+        "durable_observed_seconds": 13.401
+      },
+      {
+        "name": "http-chat-1",
+        "kind": "http_chat",
+        "submitted": 0.15448,
+        "turn_id": "concurrency-1793865314137722000-1",
+        "marker": "HTTP-鲸鱼-1-3957",
+        "first_content": 12.925193,
+        "status": "pass",
+        "durable_reply_matches": true,
+        "event_counts": {
+          "final": 1,
+          "done": 1,
+          "delta": 25
+        },
+        "finished": 13.550087,
+        "elapsed_seconds": 13.396,
+        "first_content_seconds": 12.771,
+        "durable_status": "completed",
+        "durable_error": "",
+        "durable_observed_seconds": 13.404
+      }
+    ],
+    "frames": [
+      {
+        "id": "4178e68c327649ae9f45a513d44ca6d6",
+        "job": "http-eval-0",
+        "pid": 21838,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 0.269715,
+        "first_delta": null,
+        "finished": 9.459664,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "13c1bebd8bd0453ebb2b8be80ef8bb60",
+        "job": "http-eval-1",
+        "pid": 21845,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 0.349335,
+        "first_delta": null,
+        "finished": 11.854446,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "a4b905b095ba4ae5aa006672b15d29f7",
+        "job": "http-chat-0",
+        "pid": 21847,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 0.419776,
+        "first_delta": 10.930923,
+        "finished": 12.390908,
+        "delta_count": 38,
+        "ok": true
+      },
+      {
+        "id": "60d627c82fb44c31bbc0a751b4e3460d",
+        "job": "http-embedding-0",
+        "pid": 21838,
+        "task": "llm.embedding_text",
+        "sent": 9.461448,
+        "first_delta": null,
+        "finished": 9.652077,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "9aad7ffcf1124c148750afecd9e5eda5",
+        "job": "http-embedding-1",
+        "pid": 21838,
+        "task": "llm.embedding_text",
+        "sent": 9.653499,
+        "first_delta": null,
+        "finished": 9.819548,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "07d65ed36d8143688ada5f5756a06d0f",
+        "job": "http-chat-1",
+        "pid": 21847,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 12.405868,
+        "first_delta": 12.923997,
+        "finished": 13.541107,
+        "delta_count": 25,
+        "ok": true
+      },
+      {
+        "id": "ff9caddc56a9468c924ddcceb9153356",
+        "job": "",
+        "pid": 21838,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 12.416042,
+        "first_delta": null,
+        "finished": 14.604076,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "019efe2b54ab4dec80d1b2ffc39600ee",
+        "job": "",
+        "pid": 21845,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 14.618555,
+        "first_delta": null,
+        "finished": 15.594746,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "http_summary": {
+      "passed": 6,
+      "total": 6,
+      "seconds": 13.683,
+      "pings": [
+        {
+          "ok": true,
+          "seconds": 0.0645
+        },
+        {
+          "ok": true,
+          "seconds": 0.0048
+        },
+        {
+          "ok": true,
+          "seconds": 0.0044
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        },
+        {
+          "ok": true,
+          "seconds": 0.0045
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0032
+        },
+        {
+          "ok": true,
+          "seconds": 0.0036
+        },
+        {
+          "ok": true,
+          "seconds": 0.0035
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        },
+        {
+          "ok": true,
+          "seconds": 0.0068
+        },
+        {
+          "ok": true,
+          "seconds": 0.0025
+        },
+        {
+          "ok": true,
+          "seconds": 0.003
+        },
+        {
+          "ok": true,
+          "seconds": 0.0033
+        },
+        {
+          "ok": true,
+          "seconds": 0.0038
+        },
+        {
+          "ok": true,
+          "seconds": 0.0031
+        },
+        {
+          "ok": true,
+          "seconds": 0.003
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        },
+        {
+          "ok": true,
+          "seconds": 0.0043
+        },
+        {
+          "ok": true,
+          "seconds": 0.0028
+        },
+        {
+          "ok": true,
+          "seconds": 0.0046
+        },
+        {
+          "ok": true,
+          "seconds": 0.0032
+        },
+        {
+          "ok": true,
+          "seconds": 0.0036
+        },
+        {
+          "ok": true,
+          "seconds": 0.0037
+        },
+        {
+          "ok": true,
+          "seconds": 0.0034
+        }
+      ],
+      "gate": {
+        "llm_total_concurrency": 3,
+        "llm_background_concurrency": 2,
+        "llm_total_active": 1,
+        "llm_total_waiting": 0,
+        "llm_background_active": 0,
+        "llm_background_waiting": 0,
+        "llm_refill_active": 0,
+        "llm_refill_waiting": 0,
+        "llm_maintenance_active": 0,
+        "llm_maintenance_waiting": 0,
+        "llm_refill_priority_active": true,
+        "inventory_priority_state": "empty"
+      }
+    },
+    "peak_ipc_inflight": 3
+  },
+  "mixed-fault8b": {
+    "model": "Qwen/Qwen3-8B",
+    "stages": [
+      {
+        "name": "fault-mixed",
+        "submitted": 6,
+        "passed": 6,
+        "elapsed_seconds": 23.092,
+        "peak_ipc_inflight": 3,
+        "worker_pids": [
+          23315,
+          23318,
+          23320,
+          23322
+        ],
+        "max_queue_seconds": 18.123,
+        "checks": {
+          "expected_peak_observed": true,
+          "each_child_serial": true,
+          "worker_identity_observed": true
+        }
+      }
+    ],
+    "requests": [
+      {
+        "name": "fault-mixed-2",
+        "kind": "chat",
+        "marker": "CC-0a7e94f4bbb9",
+        "submitted": 0.061863,
+        "first_content": 1.105269,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 62,
+          "completion_tokens": 73,
+          "total_tokens": 135
+        },
+        "finished": 3.437492,
+        "elapsed_seconds": 3.376,
+        "queue_seconds": 0.251,
+        "first_content_seconds": 1.043
+      },
+      {
+        "name": "fault-mixed-4",
+        "kind": "chat",
+        "marker": "CC-0258c57046d7",
+        "submitted": 0.062028,
+        "first_content": 3.946351,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 64,
+          "completion_tokens": 56,
+          "total_tokens": 120
+        },
+        "finished": 5.54833,
+        "elapsed_seconds": 5.486,
+        "queue_seconds": 3.376,
+        "first_content_seconds": 3.884
+      },
+      {
+        "name": "fault-mixed-0",
+        "kind": "evaluation",
+        "marker": "CC-96f64aea5458",
+        "submitted": 0.05742,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 202,
+          "completion_tokens": 519,
+          "total_tokens": 721
+        },
+        "finished": 18.017585,
+        "elapsed_seconds": 17.96,
+        "queue_seconds": 0.122
+      },
+      {
+        "name": "fault-mixed-3",
+        "kind": "embedding",
+        "marker": "CC-1f6134cf0184",
+        "submitted": 0.061974,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 18.183839,
+        "elapsed_seconds": 18.122,
+        "queue_seconds": 17.956
+      },
+      {
+        "name": "fault-mixed-5",
+        "kind": "embedding",
+        "marker": "CC-33a1707b8106",
+        "submitted": 0.062107,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 18.371835,
+        "elapsed_seconds": 18.31,
+        "queue_seconds": 18.123
+      },
+      {
+        "name": "fault-mixed-1",
+        "kind": "evaluation",
+        "marker": "CC-f3f0e2c9d340",
+        "submitted": 0.061351,
+        "status": "pass",
+        "model": "Qwen/Qwen3-8B",
+        "usage": {
+          "prompt_tokens": 207,
+          "completion_tokens": 679,
+          "total_tokens": 886
+        },
+        "finished": 23.147921,
+        "elapsed_seconds": 23.087,
+        "queue_seconds": 0.191
+      }
+    ],
+    "frames": [
+      {
+        "id": "9800cc9e4a91463b9d732c984ab59741",
+        "job": "fault-mixed-0",
+        "pid": 23315,
+        "task": "llm.structured",
+        "sent": 0.179614,
+        "first_delta": null,
+        "finished": 18.017044,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "fc4462921ab7407296fdf2ad5f67265b",
+        "job": "fault-mixed-1",
+        "pid": 23318,
+        "task": "llm.structured",
+        "sent": 0.252583,
+        "first_delta": null,
+        "finished": 23.14747,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "cf82e3eb2c8147f6af31ba4ad33c582e",
+        "job": "fault-mixed-2",
+        "pid": 23320,
+        "task": "llm.text",
+        "sent": 0.312643,
+        "first_delta": null,
+        "finished": 0.466022,
+        "delta_count": 0,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "6de2f60a4c4b40e4bd2f139399962b5d",
+        "job": "fault-mixed-2",
+        "pid": 23322,
+        "task": "llm.text",
+        "sent": 0.756368,
+        "first_delta": 1.105225,
+        "finished": 3.437056,
+        "delta_count": 73,
+        "ok": true
+      },
+      {
+        "id": "2f4f38a17e8f47b08e4e4976a2800533",
+        "job": "fault-mixed-4",
+        "pid": 23322,
+        "task": "llm.text",
+        "sent": 3.438394,
+        "first_delta": 3.946329,
+        "finished": 5.548041,
+        "delta_count": 56,
+        "ok": true
+      },
+      {
+        "id": "7531512dffc54e389189efd70a7e54f5",
+        "job": "fault-mixed-3",
+        "pid": 23315,
+        "task": "llm.embedding_text",
+        "sent": 18.018466,
+        "first_delta": null,
+        "finished": 18.183324,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "2a37cd9271054b1fb59308a07d57e72e",
+        "job": "fault-mixed-5",
+        "pid": 23315,
+        "task": "llm.embedding_text",
+        "sent": 18.184723,
+        "first_delta": null,
+        "finished": 18.371395,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "injected_network_faults": 1,
+    "encrypted_connections": 9
+  },
+  "mixed-fault4b": {
+    "model": "Qwen/Qwen3.5-4B",
+    "stages": [
+      {
+        "name": "fault-mixed",
+        "submitted": 6,
+        "passed": 6,
+        "elapsed_seconds": 10.733,
+        "peak_ipc_inflight": 3,
+        "worker_pids": [
+          23416,
+          23420,
+          23422,
+          23427
+        ],
+        "max_queue_seconds": 10.563,
+        "checks": {
+          "expected_peak_observed": true,
+          "each_child_serial": true,
+          "worker_identity_observed": true
+        }
+      }
+    ],
+    "requests": [
+      {
+        "name": "fault-mixed-2",
+        "kind": "chat",
+        "marker": "CC-0a7e94f4bbb9",
+        "submitted": 0.077327,
+        "first_content": 3.617116,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 60,
+          "completion_tokens": 68,
+          "total_tokens": 128
+        },
+        "finished": 6.096898,
+        "elapsed_seconds": 6.02,
+        "queue_seconds": 0.286,
+        "first_content_seconds": 3.54
+      },
+      {
+        "name": "fault-mixed-4",
+        "kind": "chat",
+        "marker": "CC-0258c57046d7",
+        "submitted": 0.077512,
+        "first_content": 6.38496,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 62,
+          "completion_tokens": 67,
+          "total_tokens": 129
+        },
+        "finished": 8.590429,
+        "elapsed_seconds": 8.513,
+        "queue_seconds": 6.02,
+        "first_content_seconds": 6.307
+      },
+      {
+        "name": "fault-mixed-0",
+        "kind": "evaluation",
+        "marker": "CC-96f64aea5458",
+        "submitted": 0.072721,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 199,
+          "completion_tokens": 227,
+          "total_tokens": 426
+        },
+        "finished": 10.586243,
+        "elapsed_seconds": 10.514,
+        "queue_seconds": 0.153
+      },
+      {
+        "name": "fault-mixed-1",
+        "kind": "evaluation",
+        "marker": "CC-f3f0e2c9d340",
+        "submitted": 0.076807,
+        "status": "pass",
+        "model": "Qwen/Qwen3.5-4B",
+        "usage": {
+          "prompt_tokens": 204,
+          "completion_tokens": 277,
+          "total_tokens": 481
+        },
+        "finished": 10.639807,
+        "elapsed_seconds": 10.563,
+        "queue_seconds": 0.22
+      },
+      {
+        "name": "fault-mixed-3",
+        "kind": "embedding",
+        "marker": "CC-1f6134cf0184",
+        "submitted": 0.077454,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 10.740271,
+        "elapsed_seconds": 10.663,
+        "queue_seconds": 10.51
+      },
+      {
+        "name": "fault-mixed-5",
+        "kind": "embedding",
+        "marker": "CC-33a1707b8106",
+        "submitted": 0.077604,
+        "dimensions": 1024,
+        "status": "pass",
+        "finished": 10.804611,
+        "elapsed_seconds": 10.727,
+        "queue_seconds": 10.563
+      }
+    ],
+    "frames": [
+      {
+        "id": "98da92b313ca44379827700e800bf50b",
+        "job": "fault-mixed-0",
+        "pid": 23416,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 0.226098,
+        "first_delta": null,
+        "finished": 10.58565,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "69df01010d05467591041c600d810947",
+        "job": "fault-mixed-1",
+        "pid": 23420,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 0.296317,
+        "first_delta": null,
+        "finished": 10.639457,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "b72fa9308c424cdabb1d382f709955cd",
+        "job": "fault-mixed-2",
+        "pid": 23422,
+        "task": "llm.text.qwen35_4b",
+        "sent": 0.362942,
+        "first_delta": null,
+        "finished": 0.514309,
+        "delta_count": 0,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "d734da62287f4ddf8017887d358716a7",
+        "job": "fault-mixed-2",
+        "pid": 23427,
+        "task": "llm.text.qwen35_4b",
+        "sent": 0.809327,
+        "first_delta": 3.617069,
+        "finished": 6.096435,
+        "delta_count": 68,
+        "ok": true
+      },
+      {
+        "id": "c8e48290274546de93ff3a07132d7173",
+        "job": "fault-mixed-4",
+        "pid": 23427,
+        "task": "llm.text.qwen35_4b",
+        "sent": 6.097811,
+        "first_delta": 6.384937,
+        "finished": 8.590116,
+        "delta_count": 67,
+        "ok": true
+      },
+      {
+        "id": "f267669318804dbc9a3f62a55238736b",
+        "job": "fault-mixed-3",
+        "pid": 23416,
+        "task": "llm.embedding_text",
+        "sent": 10.58713,
+        "first_delta": null,
+        "finished": 10.739729,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "dc626b275f664d0db2afe890203e77b1",
+        "job": "fault-mixed-5",
+        "pid": 23420,
+        "task": "llm.embedding_text",
+        "sent": 10.640557,
+        "first_delta": null,
+        "finished": 10.804075,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "injected_network_faults": 1,
+    "encrypted_connections": 9
+  },
+  "http-fault8b": {
+    "model": "Qwen/Qwen3-8B",
+    "requests": [
+      {
+        "name": "durable",
+        "durable_status": "completed",
+        "events": [
+          "error"
+        ],
+        "retry_events": 1,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 31.654,
+        "attempts": 4
+      },
+      {
+        "name": "disconnect",
+        "durable_status": "completed",
+        "events": [
+          "delta"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.785,
+        "attempts": 1
+      },
+      {
+        "name": "partial",
+        "durable_status": "failed",
+        "events": [
+          "delta",
+          "error"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.051,
+        "attempts": 1
+      },
+      {
+        "name": "restart_pending",
+        "status": "pass",
+        "durable_status": "completed",
+        "seconds": 2.566
+      }
+    ],
+    "frames": [
+      {
+        "id": "2879dfda5ea2489dabccfbedfa1ef6a9",
+        "job": "",
+        "pid": 21841,
+        "task": "llm.tools",
+        "sent": 3.454424,
+        "first_delta": null,
+        "finished": null,
+        "delta_count": 0
+      },
+      {
+        "id": "fa91cef0ae9d452088df9547adf5428c",
+        "job": "",
+        "pid": 21851,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 18.503902,
+        "first_delta": null,
+        "finished": null,
+        "delta_count": 0
+      },
+      {
+        "id": "3b2bfd2ad32a4b7d9d6d09a5bf4d2248",
+        "job": "",
+        "pid": 22315,
+        "task": "llm.tools",
+        "sent": 33.58887,
+        "first_delta": 34.572218,
+        "finished": 34.724868,
+        "delta_count": 5,
+        "ok": true
+      },
+      {
+        "id": "447d9b174f894746aee8cbb8435c8c87",
+        "job": "",
+        "pid": 22366,
+        "task": "llm.structured",
+        "sent": 34.839644,
+        "first_delta": null,
+        "finished": 48.012153,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "1ee02cbbfb8e45cda9da0ef1ac4b38e1",
+        "job": "",
+        "pid": 22315,
+        "task": "llm.tools",
+        "sent": 34.958523,
+        "first_delta": 35.867502,
+        "finished": 36.521576,
+        "delta_count": 20,
+        "ok": true
+      },
+      {
+        "id": "1c83152679d344c3964458ae338eb07c",
+        "job": "",
+        "pid": 22315,
+        "task": "llm.tools",
+        "sent": 36.718963,
+        "first_delta": 37.6914,
+        "finished": 37.693331,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "d475086d2e954300b58aa864d3065825",
+        "job": "",
+        "pid": 22666,
+        "task": "llm.structured",
+        "sent": 48.099021,
+        "first_delta": null,
+        "finished": 61.815544,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "1181e01637b54d3b8c33aecd46b38ab5",
+        "job": "",
+        "pid": 22794,
+        "task": "llm.tools",
+        "sent": 62.24,
+        "first_delta": 63.518295,
+        "finished": 64.722004,
+        "delta_count": 26,
+        "ok": true
+      },
+      {
+        "id": "7bfb38ea494f474b8165670eb2aad9dd",
+        "job": "",
+        "pid": 22802,
+        "task": "llm.structured",
+        "sent": 64.784679,
+        "first_delta": null,
+        "finished": 79.856679,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "connections": 10,
+    "encrypted_bytes": 172438,
+    "real_upstream": true
+  },
+  "http-fault4b": {
+    "model": "Qwen/Qwen3.5-4B",
+    "requests": [
+      {
+        "name": "durable",
+        "durable_status": "completed",
+        "events": [
+          "error"
+        ],
+        "retry_events": 1,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 31.792,
+        "attempts": 4
+      },
+      {
+        "name": "disconnect",
+        "durable_status": "completed",
+        "events": [
+          "delta"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.254,
+        "attempts": 1
+      },
+      {
+        "name": "partial",
+        "durable_status": "failed",
+        "events": [
+          "delta",
+          "error"
+        ],
+        "retry_events": 0,
+        "status": "fail",
+        "error_type": "AssertionError",
+        "error": "",
+        "seconds": 15.998,
+        "attempts": 3
+      },
+      {
+        "name": "restart_pending",
+        "status": "pass",
+        "durable_status": "completed",
+        "seconds": 1.804
+      }
+    ],
+    "frames": [
+      {
+        "id": "4cba40e1077c4f999a7ebf150431a6bc",
+        "job": "",
+        "pid": 22799,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 3.479735,
+        "first_delta": null,
+        "finished": null,
+        "delta_count": 0
+      },
+      {
+        "id": "a3a23116284042a1a3c9be5c8bf99839",
+        "job": "",
+        "pid": 22846,
+        "task": "llm.tools",
+        "sent": 18.524326,
+        "first_delta": null,
+        "finished": null,
+        "delta_count": 0
+      },
+      {
+        "id": "f65c71ec6cf1476ca5af87d66e71bb76",
+        "job": "",
+        "pid": 22878,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 33.548798,
+        "first_delta": 34.273495,
+        "finished": 34.953091,
+        "delta_count": 24,
+        "ok": true
+      },
+      {
+        "id": "3a8853f5f0894419a0b7a23f22d2aac5",
+        "job": "",
+        "pid": 22880,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 35.014831,
+        "first_delta": null,
+        "finished": 36.559193,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "4c75bd2d6a2b46ab909994b8d0a758c9",
+        "job": "",
+        "pid": 22878,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 35.108117,
+        "first_delta": 35.798792,
+        "finished": 36.24843,
+        "delta_count": 13,
+        "ok": true
+      },
+      {
+        "id": "f57b7218f06a4ac693c4b4a8f012bd22",
+        "job": "",
+        "pid": 22878,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 36.356709,
+        "first_delta": null,
+        "finished": null,
+        "delta_count": 0
+      },
+      {
+        "id": "cbd4b7958c92462b98e23cfcc96a4dbc",
+        "job": "",
+        "pid": 22882,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 36.616026,
+        "first_delta": null,
+        "finished": 37.772258,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "535ca5acc795448e968debefc570b63c",
+        "job": "",
+        "pid": 22887,
+        "task": "llm.tools",
+        "sent": 51.398915,
+        "first_delta": 52.311495,
+        "finished": 52.313944,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "51ff84c95cff4783b2d803a53fd04427",
+        "job": "",
+        "pid": 22889,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 52.841118,
+        "first_delta": 53.665681,
+        "finished": 54.378772,
+        "delta_count": 20,
+        "ok": true
+      },
+      {
+        "id": "1a6757aff752404fb519f5ddb2ff4844",
+        "job": "",
+        "pid": 22891,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 54.438168,
+        "first_delta": null,
+        "finished": 55.491311,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "connections": 10,
+    "encrypted_bytes": 193139,
+    "real_upstream": true
+  },
+  "http-fault4b-v2": {
+    "model": "Qwen/Qwen3.5-4B",
+    "requests": [
+      {
+        "name": "durable",
+        "durable_status": "completed",
+        "events": [
+          "error"
+        ],
+        "retry_events": 1,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 32.525,
+        "attempts": 4,
+        "chat_attempts": 3
+      },
+      {
+        "name": "disconnect",
+        "durable_status": "completed",
+        "events": [
+          "delta"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.781,
+        "attempts": 2,
+        "chat_attempts": 1
+      },
+      {
+        "name": "partial",
+        "durable_status": "failed",
+        "events": [
+          "delta",
+          "delta",
+          "error"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 0.766,
+        "attempts": 1,
+        "chat_attempts": 1
+      },
+      {
+        "name": "restart_pending",
+        "status": "pass",
+        "durable_status": "completed",
+        "seconds": 1.547
+      }
+    ],
+    "frames": [
+      {
+        "id": "79cf564ab3be4de794e2732a39956ae1",
+        "job": "durable",
+        "pid": 23048,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 2.896347,
+        "first_delta": null,
+        "finished": 35.250375,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "5516c90340964251a20b73c1465ea16a",
+        "job": "durable",
+        "pid": 23070,
+        "task": "llm.tools",
+        "sent": 17.93739,
+        "first_delta": null,
+        "finished": 35.250378,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "082352e786b940b597543151a55ed4b2",
+        "job": "durable",
+        "pid": 23095,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 32.965323,
+        "first_delta": 33.704116,
+        "finished": 35.150512,
+        "delta_count": 38,
+        "ok": true
+      },
+      {
+        "id": "8a4a51e306f24401920c1e6ad405c45a",
+        "job": "durable",
+        "pid": 23097,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 35.20643,
+        "first_delta": null,
+        "finished": 36.250983,
+        "delta_count": 0,
+        "interrupted": true,
+        "ok": true
+      },
+      {
+        "id": "a2b568bbf5804c4f9131cd4cf47fdbda",
+        "job": "disconnect",
+        "pid": 23095,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 35.282211,
+        "first_delta": 35.995537,
+        "finished": 36.779939,
+        "delta_count": 20,
+        "ok": true
+      },
+      {
+        "id": "557eaed87a84460eb4aed3b0450eaf36",
+        "job": "disconnect",
+        "pid": 23099,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 36.833632,
+        "first_delta": null,
+        "finished": 38.917001,
+        "delta_count": 0,
+        "interrupted": true,
+        "ok": true
+      },
+      {
+        "id": "5f929b8f901b40d1b29d4b4f4df67f30",
+        "job": "partial",
+        "pid": 23095,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 37.063397,
+        "first_delta": 37.777596,
+        "finished": 37.779272,
+        "delta_count": 2,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "5e4b1b3c52c2487c8f49742f7073baf7",
+        "job": "partial",
+        "pid": 23101,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 39.279587,
+        "first_delta": 39.908777,
+        "finished": 40.568552,
+        "delta_count": 21,
+        "ok": true
+      },
+      {
+        "id": "53c61ed4136149828227702165e6bcb6",
+        "job": "partial",
+        "pid": 23104,
+        "task": "llm.structured.qwen35_4b",
+        "sent": 40.626032,
+        "first_delta": null,
+        "finished": 41.800749,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "connections": 10,
+    "encrypted_bytes": 180699,
+    "real_upstream": true
+  },
+  "auth": [
+    {
+      "policy": "valid",
+      "error_type": "SponsoredAuthError",
+      "code": "AUTH_FAILED",
+      "execute_frames": [
+        "llm.text"
+      ]
+    },
+    {
+      "policy": "expired",
+      "error_type": "SponsoredPolicyInvalidError",
+      "code": "POLICY_INVALID",
+      "execute_frames": []
+    }
+  ],
+  "notes": [
+    "All model responses are real SiliconFlow responses; encrypted CONNECT relay never decrypts or records credentials.",
+    "Initial http-fault4b partial case was falsely failed by a total-IPC-count assertion. A natural pre-output fallback and concurrent learning request legitimately increased attempts. Durable state was failed, with no replay after output. Original result retained; v2 tracks chat attempts at fault injection.",
+    "http-fault8b initial total attempts includes follow-up learning; raw frames distinguish task IDs.",
+    "AUTH_FAILED uses a separate signed production-mode binary with a synthetic invalid key. No production key was revoked. POLICY_INVALID is local signed-policy rejection.",
+    "Full pytest is running against the fixed code snapshot; not yet a passing full-suite claim."
+  ],
+  "http-fault8b-v2": {
+    "model": "Qwen/Qwen3-8B",
+    "requests": [
+      {
+        "name": "durable",
+        "durable_status": "completed",
+        "events": [
+          "error"
+        ],
+        "retry_events": 1,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 32.061,
+        "attempts": 4,
+        "chat_attempts": 3
+      },
+      {
+        "name": "disconnect",
+        "durable_status": "completed",
+        "events": [
+          "delta"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.651,
+        "attempts": 1,
+        "chat_attempts": 1
+      },
+      {
+        "name": "partial",
+        "durable_status": "failed",
+        "events": [
+          "delta",
+          "error"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 0.898,
+        "attempts": 1,
+        "chat_attempts": 1
+      },
+      {
+        "name": "restart_pending",
+        "status": "pass",
+        "durable_status": "completed",
+        "seconds": 1.788
+      }
+    ],
+    "frames": [
+      {
+        "id": "50fdf830e1a64127aba2c53c3dff48e2",
+        "job": "durable",
+        "pid": 23816,
+        "task": "llm.tools",
+        "sent": 3.766254,
+        "first_delta": null,
+        "finished": 35.604774,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "8eaddcedbbd74fb7b9ccb9dc025e45fe",
+        "job": "durable",
+        "pid": 23843,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 18.816553,
+        "first_delta": null,
+        "finished": 35.604777,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "a2cb9386d8a14d17925830b383323de7",
+        "job": "durable",
+        "pid": 23847,
+        "task": "llm.tools",
+        "sent": 33.836673,
+        "first_delta": 34.88708,
+        "finished": 35.403013,
+        "delta_count": 20,
+        "ok": true
+      },
+      {
+        "id": "94acd683de5848fc8e9c2104df41138d",
+        "job": "durable",
+        "pid": 23849,
+        "task": "llm.structured",
+        "sent": 35.455104,
+        "first_delta": null,
+        "finished": 51.412239,
+        "delta_count": 0,
+        "interrupted": true,
+        "ok": true
+      },
+      {
+        "id": "a730ca32c4b94672ab24f6ef52233c04",
+        "job": "disconnect",
+        "pid": 23847,
+        "task": "llm.tools",
+        "sent": 35.633558,
+        "first_delta": 36.478987,
+        "finished": 37.106815,
+        "delta_count": 18,
+        "ok": true
+      },
+      {
+        "id": "543dab5724c34fa5a06c51b935aba810",
+        "job": "partial",
+        "pid": 23847,
+        "task": "llm.tools",
+        "sent": 37.281864,
+        "first_delta": 38.137472,
+        "finished": 38.138774,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "9b4f6bea163344a993397914097213db",
+        "job": "partial",
+        "pid": 23859,
+        "task": "llm.structured",
+        "sent": 51.466643,
+        "first_delta": null,
+        "finished": 64.824028,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "19cf8444bad14b4aa705a14bc94acd4d",
+        "job": "partial",
+        "pid": 23891,
+        "task": "llm.tools",
+        "sent": 65.156537,
+        "first_delta": 66.097913,
+        "finished": 66.801037,
+        "delta_count": 18,
+        "ok": true
+      },
+      {
+        "id": "123db82bba784eb994fd4570903ec777",
+        "job": "partial",
+        "pid": 23893,
+        "task": "llm.structured",
+        "sent": 66.857597,
+        "first_delta": null,
+        "finished": 75.828258,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "connections": 10,
+    "encrypted_bytes": 174105,
+    "real_upstream": true
+  }
+}

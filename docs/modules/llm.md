@@ -23,6 +23,7 @@
 | 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
 | 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
 | 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
+| 免费服务故障恢复 | 已实现 | 交互首段30秒预算分给候选模型；瞬时错误同模型最多重试一次，已有输出不重放；共享凭据/策略/额度失败不做免费互备 |
 | 免费工作池真实并发验收 | 支持有界并发，稳定性有限 | 单池1前台＋2后台/向量，真实峰值3；两应用进程共用账本达6。6/12项提交会排队，首段超时与长向量等待保留，见[并发实测](../testing/2026-11-05-sponsored-concurrency.md)。 |
 | 免费双模型方案（SDK已发布，主程序待发布） | 主要链路实测通过，稳定性未全过 | 8B/4B 可选、Agent 真 SSE、通用操作有界思考、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。后台长批次/切换等待及内容质量限制见[系统验收](../testing/2026-11-04-sponsored-system-acceptance.md)，入口设计见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
 | 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
@@ -831,6 +832,10 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 
 
 ### 全项目赞助 SDK 接口
+
+2026-11-05 补测：`_stream_operation` 保留整次交互首段30秒上限，并按剩余候选数分配等待时间（默认两候选首个约15秒）；同模型重试共用这份预算，超时后及时释放进程、给另一个模型机会。只有未发出任何内容时，`UPSTREAM_ERROR/UNAVAILABLE/RATE_LIMITED` 最多重试一次，退避0.25秒且不延长截止时间。显式思考请求仍采用请求级时限。该阈值是小样本延迟取舍，不保证服务SLA。
+
+`is_free_model_fallback_allowed(error)` 区分免费互备和显式自有渠道回退：共享Key失效、策略过期、额度/余额耗尽、账本异常不能通过换免费模型恢复；原有 `is_fallback_allowed` 仍供显式BYOK策略使用。非流式网络错误与429/5xx由Rust最多3次处理；BGE真实断线恢复发生在同一个IPC请求中。详见[故障注入与恢复验收](../testing/2026-11-05-sponsored-resilience.md)。
 
 `approved_registry()` 是生产路由与发行策略共用的十项固定契约。`SponsoredProvider(..., model=..., fallback_to_other_free_model=True)` 仅接受获批的8B/4B；选择更改后新调用使用相应签名 task ID。`stream_complete()` 转发 Rust 的真实内容 delta 和 terminal response，`raw.requested_model/free_model_fallback` 保留实际回退信息；流开始后不重试。旧 Runtime 未声明 streaming 时保留兼容的缓冲路径。
 

@@ -6107,6 +6107,11 @@ async function popupDriveAgentStream(turn, { onUpdate, onDone } = {}) {
     void refreshChatSessions();
   } catch (error) {
     popupStreamingTurnIds.delete(turn.turn_id);
+    if (error?.agentRetrying) {
+      popupAgentRuns.delete(turn.turn_id);
+      onUpdate?.({ ...turn, status: "pending" });
+      throw error; // Let the existing poll loop observe durable recovery.
+    }
     if (error?.agentStreamError) {
       const failed = { ...turn, status: "failed", error: String(error.message || "对话失败了") };
       activeChatPolls.delete(turn.turn_id);

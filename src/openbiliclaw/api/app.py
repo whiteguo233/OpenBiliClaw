@@ -5366,6 +5366,38 @@ def create_app(
         stored_payload["agent_events"] = [dict(event) for event in events]
         return True
 
+    def _agent_turn_started(turn_id: str) -> bool:
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        return any(
+            isinstance(event, dict) and event.get("type") != "sponsored_retry" for event in events
+        )
+
+    def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
+        """Persist a bounded recovery count; never replay output or tool work."""
+        from openbiliclaw.llm.sponsored_errors import SponsoredError
+
+        if not isinstance(exc, SponsoredError) or _agent_turn_started(turn_id):
+            return False
+        if exc.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+            return False
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        # At most two durable retries after the original attempt. Each SDK
+        # attempt already includes bounded free-model fallback; do not keep a
+        # permanently unavailable service at the head of the dialogue lane.
+        if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
+            return False
+        return _append_chat_turn_agent_event(turn_id, {"type": "sponsored_retry", "code": exc.code})
+
+    def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
+        # Persist the first delta boundary without storing token fragments.
+        # A restart can then distinguish untouched work from partial output.
+        if event.type != "delta":
+            _append_chat_turn_agent_event(turn_id, event.to_dict())
+        elif not _agent_turn_started(turn_id):
+            _append_chat_turn_agent_event(turn_id, {"type": "execution_started"})
+
     # --- Multi-session chat helpers (「聊一聊」 M5) ---
 
     def _chat_session_db_method(name: str) -> Any:
@@ -12621,6 +12653,11 @@ def create_app(
                                     },
                                 )
                             return
+                    if turn_id and _agent_turn_started(turn_id):
+                        raise TerminalChatReplyError(
+                            "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                            code="interrupted_agent_turn",
+                        )
                     agent_loop = getattr(ctx, "agent_loop", None)
                     stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
                     if agent_loop is None or not callable(stream_fn):
@@ -12651,8 +12688,8 @@ def create_app(
                         data = event.to_dict()
                         # Persist semantic events incrementally for recovery;
                         # token deltas are live-only, replay uses final/thinking.
-                        if turn_id and event.type != "delta":
-                            _append_chat_turn_agent_event(turn_id, data)
+                        if turn_id:
+                            _checkpoint_agent_event(turn_id, event)
                         if event.type == "final":
                             final_reply = event.text
                         yield sse(event.type, data)
@@ -12681,7 +12718,21 @@ def create_app(
                 return
             except Exception as exc:
                 logger.exception("Agent chat stream failed")
-                error_message = safe_llm_failure_message(exc)
+                error_message = (
+                    exc.safe_message
+                    if isinstance(exc, TerminalChatReplyError)
+                    else safe_llm_failure_message(exc)
+                )
+                if turn_id and _retry_silent_sponsored_turn(turn_id, exc):
+                    chat_reply_scheduler.schedule(turn_id)
+                    yield sse(
+                        "error",
+                        {
+                            "error": error_message + " 正在后台重试，可稍后查看本条回复。",
+                            "retrying": True,
+                        },
+                    )
+                    return
                 if turn_id:
                     _fail_chat_turn_row(turn_id, error=error_message)
                 yield sse("error", {"error": error_message})
@@ -13374,6 +13425,11 @@ def create_app(
         stream_fn = getattr(dialogue_owner, "stream_agent_reply", None)
         if agent_loop is None or not callable(stream_fn):
             return None
+        if _agent_turn_started(turn.turn_id):
+            raise TerminalChatReplyError(
+                "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                code="interrupted_agent_turn",
+            )
         skill_catalog = _resolve_skill_catalog()
         skill_name = str(turn.payload.get("agent_skill") or "").strip()
         skill_definition = skill_catalog.get(skill_name) if skill_name else None
@@ -13406,7 +13462,7 @@ def create_app(
             # live-render only and never persisted into agent_events.
             if event.type != "delta":
                 events.append(event.to_dict())
-                _append_chat_turn_agent_event(turn.turn_id, event.to_dict())
+            _checkpoint_agent_event(turn.turn_id, event)
             if event.type == "final":
                 reply = event.text
         if not reply.strip():
@@ -14263,7 +14319,16 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
+                from openbiliclaw.llm.sponsored_errors import SponsoredError
 
+                if isinstance(exc, TerminalChatReplyError):
+                    raise
+                if isinstance(exc, SponsoredError) and not _retry_silent_sponsored_turn(
+                    turn_id, exc
+                ):
+                    raise TerminalChatReplyError(
+                        safe_llm_failure_message(exc), code=exc.code
+                    ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
                         safe_llm_failure_message(exc),
