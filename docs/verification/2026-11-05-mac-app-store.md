@@ -13,6 +13,7 @@ Intel x86_64 macOS、Xcode 26.5、Python 3.12.12、原生 Ollama 0.40.14 官方�
 | 项目 | 结果 |
 |---|---|
 | App / helper 权限 | 主 App 只有 sandbox + network client/server；可执行 helper 只有 sandbox + inherit；deep strict 验签通过 |
+| 已确认依赖的许可证保留 | 归档内两项 GPL/LGPL 原文的 SHA-256 与实际安装包一致，记录实际版本和来源；不是完整许可审核或对应源码提供 |
 | 冻结后端四进程 | API + full/discovery/recommendation/image workers 真实运行 |
 | `/api/ping`、`/api/qr-info` | 200；监听 `0.0.0.0`，LAN 地址是实际接口 IP |
 | `/web/`、`/m/` | 200 |
@@ -32,6 +33,8 @@ Intel x86_64 macOS、Xcode 26.5、Python 3.12.12、原生 Ollama 0.40.14 官方�
 | 正常退出 | 原生 App 定时执行 Quit，已记录的 8 个后代进程全部退出；随后进程表确认无本轮 App 后台遗留 |
 
 原始本机证据：`/tmp/obc-mas-e2e-full/report.json`、`runtime.log`、`/tmp/obc-mas-e2e-current/report.json`、`/tmp/obc-mas-native-ready-test/report.json`，以及双启动 `/tmp/obc-mas-restart-canonical/report.json`。公开报告不包含模型凭据、节点私钥或登录授权 URL。
+
+最终 Intel QA 归档位于 Xcode Archives 的 `2026-11-05/OpenBiliClawBackend-1.0.0-1-QA.xcarchive`；复制后重新 deep strict 验签与真实 HTTP / 宿主异常退出检查通过。它使用 Developer ID 签名，保留 `QA` 标识，不能直接用于商店上传。
 
 ## 发现并修复的问题
 

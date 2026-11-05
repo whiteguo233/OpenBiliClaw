@@ -7,11 +7,13 @@ reuse the Developer ID DMG's updater, user profile, or LaunchAgent registration.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import importlib.util
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +23,50 @@ HERE = Path(__file__).resolve().parent
 OUTPUT = ROOT / "dist" / "mac-app-store"
 BUNDLE_ID = "com.openbiliclaw.backend"
 APP_NAME = "OpenBiliClaw Backend"
+
+
+def preserve_dependency_licenses(backend: Path) -> None:
+    """Keep identified Python copyleft license texts and provenance with QA builds.
+
+    This records the actual build environment; it is not a complete dependency
+    license review, a source offer, or an assertion of store compatibility.
+    """
+    destination = backend / "Contents/Resources/ThirdPartyLicenses"
+    records = []
+    for name in ("bilibili-api-python", "browser-cookie3"):
+        package = importlib.metadata.distribution(name)
+        texts = [
+            path
+            for path in package.files or []
+            if ".dist-info/" in str(path)
+            and path.name.upper() in ("LICENSE", "LICENSE.TXT", "LICENSE.MD", "COPYING")
+        ]
+        if not texts:
+            raise ValueError(f"Missing installed license text for {name}")
+        folder = destination / name
+        folder.mkdir(parents=True, exist_ok=True)
+        for index, path in enumerate(texts):
+            shutil.copyfile(package.locate_file(path), folder / f"LICENSE-{index + 1}.txt")
+        records.append(
+            {
+                "name": name,
+                "version": package.version,
+                "declared_license": package.metadata.get("License"),
+                "project_urls": package.metadata.get_all("Project-URL") or [],
+                "homepage": package.metadata.get("Home-page"),
+            }
+        )
+    (destination / "manifest.json").write_text(
+        json.dumps(
+            {
+                "scope": "identified Python copyleft dependencies; review pending",
+                "packages": records,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def desktop_builder():
@@ -167,6 +213,7 @@ def main() -> None:
         args.local,
         args.provisioning_profile,
     )
+    preserve_dependency_licenses(backend)
     subprocess.run(cmd, cwd=ROOT, env=env, check=True)
     app = args.archive_path / "Products/Applications" / f"{APP_NAME}.app"
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)

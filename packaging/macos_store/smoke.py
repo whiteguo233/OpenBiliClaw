@@ -72,6 +72,12 @@ def main():
     parser.add_argument("--crash-host", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    licenses = args.app.resolve() / "Contents/Resources/ThirdPartyLicenses"
+    records = json.loads((licenses / "manifest.json").read_text())["packages"]
+    assert {item["name"] for item in records} == {"bilibili-api-python", "browser-cookie3"}
+    for item in records:
+        assert item["version"]
+        assert list((licenses / item["name"]).glob("LICENSE-*.txt"))
     profile = "smoke-" + str(time.time_ns())
     executable = args.app.resolve() / "Contents/MacOS/OpenBiliClaw Backend"
     proc = subprocess.Popen(
@@ -106,7 +112,12 @@ def main():
 
     reader = threading.Thread(target=collect, daemon=True)
     reader.start()
-    report = {"profile": profile, "host_pid": proc.pid, "requests": {}}
+    report = {
+        "profile": profile,
+        "host_pid": proc.pid,
+        "identified_license_records": len(records),
+        "requests": {},
+    }
     owned = set()
     ownership_lock = threading.Lock()
     monitor_done = threading.Event()
