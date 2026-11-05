@@ -654,6 +654,10 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 ## 🏛️ 架构概览
 
 ```text
+Mac App Store candidate: Xcode sandbox host → frozen backend/workers → container data
+  ├─ explicit login toggle → SMAppService
+  └─ App Store updates; shared Web / extension / mobile API
+
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
@@ -913,3 +917,5 @@ OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站
 [![LINUX DO](https://img.shields.io/badge/LINUX_DO-友情链接-4D6BFE?style=flat-square&logo=discourse&logoColor=white)](https://linux.do/)
 
 </details>
+
+Mac App Store 后端版已提供独立沙盒构建入口，尚未上架。构建、能力边界和提审步骤见 [商店版说明](docs/mac-app-store.md)。

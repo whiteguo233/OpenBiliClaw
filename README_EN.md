@@ -653,6 +653,10 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 ## 🏛️ Architecture Overview
 
 ```text
+Mac App Store candidate: Xcode sandbox host → frozen backend/workers → container data
+  ├─ explicit login toggle → SMAppService
+  └─ App Store updates; shared Web / extension / mobile API
+
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
@@ -902,3 +906,5 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 [![LINUX DO](https://img.shields.io/badge/LINUX_DO-Friend%20Links-4D6BFE?style=flat-square&logo=discourse&logoColor=white)](https://linux.do/)
 
 </details>
+
+A separate sandboxed Mac App Store backend build is available as a candidate; it is not published. See [build, limitations and submission](docs/mac-app-store.md).

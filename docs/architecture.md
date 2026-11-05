@@ -763,3 +763,18 @@ query inspiration → configured provider chain
                   ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
+
+## Mac App Store 分发与进程边界
+
+```text
+Xcode macOS host [App Sandbox + network client/server]
+  ├─ explicit user action → SMAppService.mainApp
+  └─ lifetime pipe → frozen Python backend [sandbox + inherit]
+       ├─ full / discovery / recommendation / image workers
+       ├─ bundled Ollama → container models
+       └─ bundled userspace Tailnet → container node state
+     HTTP API → existing Web / extension / mobile consumers
+App Store → complete app update; source/DMG/Docker channels stay separate
+```
+
+`runtime.distribution` identifies the immutable store marker and constrains profiles to app support inside the container. The host owns the backend lifetime; Python keeps existing worker/native-service ownership and graceful cleanup. Store builds never reconcile legacy LaunchAgents or migrate external profiles. [Build, limits, validation and submission](mac-app-store.md).

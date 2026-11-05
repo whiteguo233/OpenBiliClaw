@@ -594,3 +594,11 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 - `PUT /api/config` 的 `language` 接受规范 id 与已知别名（`zh`、`zh-TW`、`en-US`…），
   落盘前规范化；未知值返回 `400 unsupported_language` 并列出支持值。
 - `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
+
+## Mac App Store distribution status
+
+| Implemented feature | Status |
+|---|---|
+| Store-aware update/autostart status | Candidate |
+
+Existing `/api/update-status` reports `backend.install_mode=mac_app_store`, `reason=app_store_managed`, no installer tag and auto-update false; `/api/update/apply` refuses with 409. `/api/autostart-status` explains that login startup is controlled in the native Mac App window (`managed_by_store_app`). API schemas, phone QR routes and authentication are unchanged. See [Mac App Store channel](../mac-app-store.md).

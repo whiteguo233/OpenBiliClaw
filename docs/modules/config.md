@@ -1718,3 +1718,7 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 
 热词选择沿用既有 6 小时复用 TTL，现在从已入队 hot payload 恢复，客户端重建 / 进程重启
 也不会清空。它与失败冷却的 6 小时上限是两项独立规则，没有新增配置项或更改成功间隔。
+
+## Mac App Store distribution
+
+No new TOML fields. Store builds keep configuration/data/models/logs in their App Sandbox container and do not automatically import the source/DMG profile. `[autostart].enabled` is not a store login-item instruction: the native window offers explicit SMAppService control. `[scheduler].auto_update_enabled` cannot enable source updates in store builds. Fresh store profiles use a private loopback Ollama port and container-local model storage; model download remains an explicit setup action. See [store build and limits](../mac-app-store.md).

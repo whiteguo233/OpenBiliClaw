@@ -811,3 +811,11 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 已实现：正式 `RuntimeContext` 的启动与配置热重载将 TikTok 加入 `SourceIncrementalSync.source_enabled`，修复配置已启用但实际调度永远跳过的遗漏。`build_runtime_context()` / `RuntimeContext.rebuild_from_config()` 的公开签名不变；来源映射集合与 `SOURCE_ORDER` 用实际 builder 回归校验。全局和逐源 incremental 开关仍默认关闭，未到期不入队，完成推进 cadence，关闭取消 pending 周期任务。
 
 共享 `enqueue_tiktok_bootstrap()` 改为喜欢、收藏、关注三个默认 scope；历史缺失不影响默认任务完整成功。新增正式 runtime→SQLite→终态对账测试，模拟时钟覆盖下一周期；该测试不代表浏览器非空账号 E2E。
+
+## Mac App Store runtime boundary
+
+| Implemented feature | Status |
+|---|---|
+| Store distribution isolation | Candidate: frozen bundle marker, container-only profile, App Store updater boundary, native host lifetime pipe. |
+
+Public API: `runtime.distribution.is_mac_app_store()`, `store_profile_root(home, environ)`, `prepare_store_python()`, `start_store_parent_watchdog(request_shutdown)`. The lifetime watcher installs a SIGTERM/SIGINT handler before Uvicorn so its signal replay cannot bypass child cleanup; EOF requests graceful shutdown. Store autostart returns `managed_by_store_app` and never touches LaunchAgents. `AutoUpdateService` check/apply/status return `app_store_managed`, `install_mode=mac_app_store`, auto-update false, and never poll GitHub or apply source tags. Its background update loop stays off even if an imported config enables it. Native SMAppService is only called on an explicit window checkbox action. [Distribution details](../mac-app-store.md).

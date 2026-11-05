@@ -60,3 +60,11 @@ Automated checks cover nested-code ordering, symlink/data exclusion, incomplete 
 Official references: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 Runner reference: [GitHub hosted runner images](https://github.com/actions/runner-images). Intel uses the supported `macos-15-intel` label instead of retired `macos-13`; arm64 uses `macos-15` to avoid the announced macOS 14 retirement.
+
+## Mac App Store channel (2026-11-05)
+
+| Implemented feature | Status | Boundary |
+|---|---|---|
+| Separate sandboxed native host + frozen helpers | Candidate | `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item, App Store managed updates. Not submitted. |
+
+Public build interface: `python packaging/macos_store/build.py --ollama-bin PATH --team TEAM --signing-identity ID [--local] [--version 1.0.0] [--build-number 1]`. Xcode creates `.xcarchive`; `--local` explicitly permits non-store QA signing. `archive_command()` rejects a Developer ID identity for store builds. `embed.py` relocates native tools and signs helper executables with exactly sandbox + inherit before Xcode seals the host. DMG/Windows builds remain in `packaging/build.py`. Full behavior, limitations and account handoff: [Mac App Store](../mac-app-store.md).

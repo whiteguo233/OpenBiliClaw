@@ -566,3 +566,7 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+
+## 与 Mac App Store 版的边界
+
+新增的沙盒商店构建仅适用于 macOS 本机 App，不改变 Docker 镜像、端口映射、数据卷或拉镜像更新流程。两者继续共享后端与手机连接 API；商店版使用独立容器数据和 App Store 更新。见 [商店版说明](mac-app-store.md)。

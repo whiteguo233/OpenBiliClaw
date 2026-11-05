@@ -1,0 +1,62 @@
+name: Build Mac App Store candidate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packaging/macos_store/**'
+      - 'packaging/entry.py'
+      - 'src/openbiliclaw/runtime/distribution.py'
+      - '.github/workflows/build-mac-app-store.yml'
+
+# QA only. This workflow has no publishing or Apple account credentials.
+permissions:
+  contents: read
+
+jobs:
+  sandbox-arm64:
+    name: Apple Silicon sandbox archive and real HTTP
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
+      - name: Install build and QA dependencies
+        run: python -m pip install -e '.[dev,packaging]'
+      - name: Prefetch pinned Tailnet dependencies
+        run: python scripts/generate_tailnet_notices.py --prefetch
+      - name: Download pinned official Ollama runtime
+        run: |
+          curl --fail --location --retry 3 https://github.com/ollama/ollama/releases/download/v0.40.14/Ollama-darwin.zip -o "$RUNNER_TEMP/Ollama.zip"
+          echo "9047386fb6811f54fc98b12ce4fea42a6ee5ce9e1bbc0c8196499f347054bcb5  $RUNNER_TEMP/Ollama.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/Ollama.zip" "$RUNNER_TEMP/ollama"
+      - name: Archive sandboxed QA app with Xcode
+        run: |
+          python packaging/macos_store/build.py \
+            --ollama-bin "$RUNNER_TEMP/ollama/Ollama.app/Contents/Resources/ollama" \
+            --local --signing-identity - --team ''
+      - name: Test real sandbox startup, HTTP and cleanup
+        run: |
+          python packaging/macos_store/smoke.py \
+            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app' \
+            --output "$RUNNER_TEMP/store-smoke"
+      - name: Package the archive with signatures and symlinks intact
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/mac-app-store/OpenBiliClawStore.xcarchive \
+            "$RUNNER_TEMP/mac-app-store-arm64-QA.xcarchive.zip"
+      - name: Save archive and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-app-store-arm64-QA-not-for-upload
+          path: |
+            ${{ runner.temp }}/mac-app-store-arm64-QA.xcarchive.zip
+            ${{ runner.temp }}/store-smoke
+          if-no-files-found: warn
