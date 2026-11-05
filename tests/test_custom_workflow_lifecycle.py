@@ -1177,3 +1177,43 @@ async def test_provider_failure_preserves_failed_authoring_draft(service):
     assert "模型" in result["detail"] and "重试" in result["detail"]
     assert service.store.get_draft(pending["draft_id"])["status"] == "failed"
     session.close.assert_awaited_once()
+
+
+async def test_actual_verification_page_offers_takeover_without_requesting_another_url(service):
+    pending = draft(
+        service,
+        executor="ego",
+        entry_url="https://www.v2ex.com/?tab=hot",
+        origin="https://www.v2ex.com",
+        workflow=None,
+        status="draft",
+        trial_success=False,
+    )
+    service._executor_factory = lambda name: object()
+    service.observe_session = AsyncMock(
+        return_value=(
+            SimpleNamespace(close=AsyncMock()),
+            {
+                "title": "请稍候…",
+                "login_wall": False,
+                "resource_failures": [
+                    {"origin": "https://www.v2ex.com", "status": 403, "resource_type": "Document"}
+                ],
+                "elements": [
+                    {"tag": "h2", "text": "正在进行安全验证"},
+                    {"tag": "a", "text": "Cloudflare"},
+                ],
+            },
+        )
+    )
+    service._json_task = AsyncMock(return_value={"needs_details": "请提供可访问的网址"})
+    result = await service.author_browser(pending)
+    assert result["status"] == "needs_login"
+    assert not result[
+        "requires_login"
+    ]  # A website challenge does not prove account login required.
+    assert "验证" in result["detail"]
+    assert result["takeover_url"].endswith(pending["draft_id"])
+    assert not result["trial_success"]
+    service._json_task.assert_not_called()
+    assert service.sources.list_sources() == []

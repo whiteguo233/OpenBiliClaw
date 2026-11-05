@@ -223,6 +223,8 @@ SOURCE_FAMILY_RULES = (
         family=PLATFORM_WEB,
         platform_aliases=frozenset({"web"}),
         source_prefixes=("web-", "web_"),
+        # HTTP workflows consume [network]; native Ego keeps its host routing.
+        routed_by_network_mode=True,
     ),
 )
 

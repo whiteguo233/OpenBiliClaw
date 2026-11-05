@@ -30,8 +30,8 @@ entrypoints = [
 route_aliases = []
 fallback_owner = "none"
 requires_overseas_network = false
-routed_by_network_mode = false
-network_policy = "Backend-only HTTP with trust_env disabled; a user-triggered authoring probe derives one exact normalized origin from the submitted URL, and every probe or recipe request/redirect must remain in its explicit origin set, re-resolve to public IPs, omit credentials, and obey bounded timeout/body/redirect/deadline budgets. Probe output is a preview draft only and cannot persist or schedule a source."
+routed_by_network_mode = true
+network_policy = "Backend-only HTTP with trust_env disabled internally and an explicit per-hop direct/system/custom route; proxied requests use bounded DoH and validated numeric-IP tunnels, without changing robots rules; a user-triggered authoring probe derives one exact normalized origin from the submitted URL, and every probe or recipe request/redirect must remain in its explicit origin set, re-resolve to public IPs, omit credentials, and obey bounded timeout/body/redirect/deadline budgets. Probe output is a preview draft only and cannot persist or schedule a source."
 
 [transport.capability_routes]
 discover = "backend:web-http:anonymous:recipe-origin-allowlist"

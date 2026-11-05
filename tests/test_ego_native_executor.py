@@ -461,3 +461,44 @@ async def test_close_disconnects_socket_even_when_native_close_times_out(plan, t
     await session.close()
     writer.close.assert_called_once()
     assert not lock.locked()
+
+
+@pytest.mark.parametrize("document_status", [403, 503])
+async def test_verification_page_pauses_scheduled_ego_without_collecting(
+    plan, tmp_path, document_status
+):
+    session = EgoLiteWorkflowSession(
+        EgoLiteWorkflowExecutor(tmp_path), plan, interactive=False, lock=asyncio.Lock()
+    )
+    session.snapshot = AsyncMock(
+        return_value={
+            "title": "Just a moment...",
+            "login_wall": False,
+            "elements": [{"tag": "h2", "text": "Verify you are human"}],
+            "resource_failures": [{"resource_type": "Document", "status": document_status}],
+        }
+    )
+    session.command = AsyncMock(side_effect=AssertionError("must not collect verification text"))
+    result = await session.execute(WorkflowParameters())
+    assert result.status == "login_required" and not result.scope_complete and not result.items
+    session.command.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["title", "status", "body", "resource"])
+def test_article_or_generic_denial_is_not_a_verification_wall(change):
+    from openbiliclaw.sources.browser_workflow import browser_verification_required
+
+    observation = {
+        "title": "请稍候…",
+        "elements": [{"tag": "h2", "text": "正在进行安全验证"}],
+        "resource_failures": [{"resource_type": "Document", "status": 403}],
+    }
+    if change == "title":
+        observation["title"] = "How security verification works"
+    if change == "status":
+        observation["resource_failures"][0]["status"] = 200
+    if change == "body":
+        observation["elements"] = [{"tag": "h2", "text": "Access denied"}]
+    if change == "resource":
+        observation["resource_failures"][0]["resource_type"] = "Image"
+    assert not browser_verification_required(observation)

@@ -333,3 +333,42 @@ def compile_browser_workflow(payload: Mapping[str, Any]) -> BrowserWorkflowPlan:
         budgets,
         _optional_origins(payload.get("resource_origins", [])),
     )
+
+
+def browser_verification_required(observation: Mapping[str, Any]) -> bool:
+    """Recognize an affirmative blocked verification page, never ordinary article text."""
+    failures = observation.get("resource_failures", [])
+    if not isinstance(failures, list) or not any(
+        isinstance(row, Mapping)
+        and row.get("resource_type") == "Document"
+        and row.get("status") in {403, 503}
+        for row in failures[:100]
+    ):
+        return False
+    title = str(observation.get("title", ""))[:200].casefold().strip().rstrip(".…! ")
+    if title not in {
+        "请稍候",
+        "请稍等",
+        "just a moment",
+        "checking your browser",
+        "attention required! | cloudflare",
+    }:
+        return False
+    elements = observation.get("elements", [])
+    if not isinstance(elements, list):
+        return False
+    markers = (
+        "正在进行安全验证",
+        "验证您不是自动程序",
+        "verify you are human",
+        "verify that you are human",
+        "verify you are a human",
+        "checking your browser",
+        "performing security verification",
+    )
+    return any(
+        isinstance(row, Mapping)
+        and row.get("tag") in {"h1", "h2", "p"}
+        and any(marker in str(row.get("text", ""))[:500].casefold() for marker in markers)
+        for row in elements[:100]
+    )

@@ -15,6 +15,8 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 
 | 能力 | 行为 |
 | --- | --- |
+| 已有平台的独立网页源 | V2EX 等已注册平台可走 Ego 创建独立 `custom_` 来源；试跑、审批和同源限制保留，不借用专用适配器凭据 |
+| 网站安全验证 | 明确的 403/503 Document + 验证页标题和可见验证文字进入人工接管；不让模型误询新网址，不将验证文字当候选 |
 | 流程编译 | `version=1`；只接受导航、搜索、等待、链接和最终采集；拒绝代码、秘密字段、临时 snapshot ref 和越界预算 |
 | 动态参数 | `query`、`date_from`、`date_to` 每轮替换；URL 参数进行编码 |
 | 标准提取 | 标题、URL、作者、发布时间、摘要；浏览器网页条目明确标为 `article`；支持下一页、循环检测、条数和页数限制 |
@@ -48,6 +50,9 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
 
 ## 公共接口
+
+- `browser_verification_required(observation)` 识别有界、明确的验证页证据，普通正文、普通 403 或图片失败不触发。草稿返回 `needs_login` 和原生兼容的 `takeover_url`，验证页本身不强制声明需要账号登录；Ego 正式执行返回 `login_required` 暂停，并保留原范围。
+- `CustomSourceStore.upsert_source(..., allow_dedicated_browser=False)` 的内部开关仅由成功试跑的 Ego 激活路径开启；普通来源写入默认仍拒绝专用平台域。
 
 - Ego snapshot 的 `elements[].child_fields` 是抽样内容行内的有界文字证据，包含 `selector`、`class_selector` 和 `text`，最多检查每行前 80 个文本元素并返回 8 个；不读取输入值、不增加 URL 权限、仍最多 100 个顶层观察元素。过长路径使用真实 class/tag 选择器，编制及试跑仍需验证匹配范围。既有已发布计划不自动更改，字段修正通过原来源更新、真实试跑和审批发布。
 - 固定原生宿主的 `interactive` 模式同时决定被动资源加载策略。后台 `Fetch.requestPaused` 对 Image／Media／Font 保留原请求域名授权观察后终止下载，不将此优化误报为资源超限；Document／Script／Stylesheet／XHR／Fetch 与所有实际传输仍走原规则。没有新增配置或模型可控开关；交互登录继续加载图片等资源并执行原预算。

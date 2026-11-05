@@ -19,6 +19,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from openbiliclaw.sources.platforms import infer_source_platform_from_url
 from openbiliclaw.sources.web_public import (
+    WEB_MAX_FEED_CONTENT_ORIGINS,
     HTMLListingPlan,
     WebParseError,
     validate_html_listing_plan,
@@ -220,9 +221,12 @@ def build_web_recipe(
         if (
             isinstance(raw_content_origins, (str, bytes))
             or not isinstance(raw_content_origins, Sequence)
-            or not 1 <= len(raw_content_origins) <= 8
+            or not 1 <= len(raw_content_origins) <= WEB_MAX_FEED_CONTENT_ORIGINS
         ):
-            raise WebRecipeValidationError("content_origins must contain 1..8 exact public origins")
+            raise WebRecipeValidationError(
+                f"content_origins must contain 1..{WEB_MAX_FEED_CONTENT_ORIGINS} "
+                "exact public origins"
+            )
         content_origins = []
         for raw_origin in raw_content_origins:
             # References may point to built-in platforms; they are never

@@ -22,7 +22,7 @@ workflow；不把这些网站当成旧版 Web 总份额下的子权重。
 
 Feed 可以直接提交订阅地址，也可从网页中已观察到的 alternate 或明确订阅链接发现。
 订阅托管域与文章域分开：`allowed_origins` 仅授权实际订阅请求；`content_origins`
-记录最多 8 个已观察到的公共文章 origin，只允许接收 Feed 内的正文和链接，不自动请求
+记录最多 128 个已观察到的公共文章 origin，只允许接收 Feed 内的正文和链接，不自动请求
 文章页、图片或附件。确认卡展示这两种范围。运行时出现新文章域会保留已授权候选并报告
 `degraded`，不提交完整检查点。通过聊一聊指定原来源与流程重新准备、试跑并批准后，
 以新版本替换该流程并保留 seen/运行历史，不新增重复调度；仅指定来源仍表示追加流程。
@@ -30,12 +30,12 @@ Feed 可以直接提交订阅地址，也可从网页中已观察到的 alternat
 从清理后的实际正文生成短标题；只读取有界当前 Feed，不保证补齐历史或所有分页。
 格式依据：[RSS 2.0](https://www.rssboard.org/rss-specification) 允许 item 仅有 description，
 [JSON Feed 1.1](https://www.jsonfeed.org/version/1.1/) 的 title 与 next_url 均为可选字段。
-专用平台域仅在明确解析并成功试跑 Feed 后可建为自定义订阅；平台 HTML 仍用原生适配器，
-不会继承平台凭据。旧匿名 recipe 的默认专用域拒绝规则保留。
+已有专用平台也可独立建立 Ego 网页来源，成功试跑后仍须审批启用，使用独立份额与 `web` 内容身份；
+不会调用或继承内置适配器的账号凭据。显式 Feed 同样支持这些域名。旧匿名 recipe 的默认专用域拒绝规则保留。
 
-聚合 Feed 若同时涉及超过 8 个文章 origin，当前不能完整接入；重新确认同一大范围
-不会提高上限。应使用站点提供的较窄订阅或分别添加原博客 Feed，不能把部分样例
-可读当作整源试跑成功。Planet Python 的真实范围阻断见[多站验收记录](../testing/2026-11-06-multisite-real-e2e.md)。
+聚合 Feed 的文章引用上限为 128，实际请求域仍最多 8 个。超过文章引用上限或正式运行出现新域
+仍报告范围变化，不能把部分样例可读当作整源试跑成功。此前 Planet Python 的 8 域限制已修复；
+批准后的域名集合仍冻结，新增域需重新试跑和审批，不自动扩大。
 
 动态工具为 `prepare_discovery_source`（建立持久草稿并试跑）和
 `trial_discovery_source`（继续试跑），两者是 `soft_write`；
@@ -121,7 +121,7 @@ macOS 在部署阶段自动准备 Ego：本机源码安装在依赖完成后、`
 | Typed recipe 与图形编辑器 | ✅ | 后端只接受固定字段和 `feed/sitemap/listing`，拒绝客户端写入 ID、状态、游标、验证器和其它未知字段；桌面 Web 与插件设置页提供同一安全字段集的创建、启停和删除界面 |
 | 旧聊天审批兼容 | ✅ | 既有 `create_source` 审批仍可执行；新聊天网站 / Feed 统一走动态来源 prepare → activate，避免落入旧 Web 聚合份额。已有平台关键词订阅继续使用 create_source |
 | 粘贴 URL 自动探测 | ✅ | 桌面 Web、插件与 `probe-web` CLI 只读识别直接 Feed/Sitemap、HTML alternate Feed、同源 `/sitemap.xml` 和保守的重复静态列表；展示样例后由用户采用并再次显式保存，不自动创建或启用 recipe |
-| 匿名安全传输 | ✅ | 精确 origin allowlist、逐请求/逐跳公共 DNS 校验、socket DNS pin、robots fail-closed、无环境代理和无 Cookie |
+| 匿名安全传输 | ✅ | 精确 origin allowlist、逐请求/逐跳公共 DNS 校验、socket DNS pin、robots fail-closed、遵循网络模式且无 Cookie |
 | 后台调度 | ✅ | `WebDiscoveryProducer` 原子领取到期 recipe，按 recipe cadence、权重和有界请求预算补充统一候选池 |
 | 状态与去重账本 | ✅ | 每个 recipe 独立保存 lease、健康、HTTP validators、sitemap cursor 和 seen provenance；候选身份仍按 canonical URL 全局去重 |
 | CLI 正式补池 | ✅ | `openbiliclaw discover --source web` 复用真实 adapter、producer 与 candidate pipeline，提交到期 recipe 的候选、seen 与完整 checkpoint |
@@ -361,13 +361,18 @@ CAPTCHA 或“需要启用 JavaScript/cookie”的页面分别记为 `login_requ
 `SafeWebTransport` 的默认生产路径遵守以下约束：
 
 - 只发匿名 `GET`；请求只带内容协商、项目 User-Agent 和已提交的条件请求 validator。
-  `httpx` 使用 `trust_env=false`，不会继承环境代理；cookie jar 在每次请求前后清空，也不发送
+  按 `[network].mode` 选择直连、系统代理或自定义代理；底层 `httpx` 仍为 `trust_env=false`，
+  仅使用每跳显式冻结的路由，系统模式保留代理排除项。cookie jar 在每次请求前后清空，也不发送
   Authorization、页面 Referer 或 URL userinfo。
 - URL 只允许 `http` / `https` 与标准端口，origin 必须精确命中 recipe allowlist。每个 redirect
   hop 都重新校验 URL、origin、DNS、robots 和响应上限；越界 redirect 直接拒绝。
 - 每次请求前解析 DNS，全部地址都必须是公网地址。生产 transport 随后把这些已验证的 literal
   address pin 给 socket backend，同时保留原 hostname 作为 HTTP Host 和 TLS SNI，关闭“策略
   校验一个地址、实际连接另一个地址”的 DNS rebinding / TOCTOU 窗口。
+- 代理路径复用 `runtime.image_network` 的有界公共 DNS 解析与固定 IP 隧道：通过同一代理向
+  `https://1.1.1.1/dns-query` 查询公开域名，CONNECT / SOCKS5 只发送已校验数字 IP；
+  Host、TLS SNI 与证书校验保留原网站。DoH 失败不回落未校验远程 DNS，代理凭据只用于隧道。
+  直连仍用本机 DNS。HTTP 80 与 HTTPS 443 均保留原请求、robots 和字节预算。
 - 内容请求前读取同 origin 的 `/robots.txt`。404/410 表示没有声明限制；401/403 表示拒绝；
   网络错误、5xx、异常 MIME、redirect loop 或无法安全读取都返回 `robots_unavailable` 并
   fail closed。明确的 Disallow 返回 `robots_denied`。规则采用 longest-match、Allow 同长度优先
@@ -465,7 +470,8 @@ Web status 的 `state="no_auth"` / `logged_in=true` 是旧客户端的“无需�
 | `web_recipe_payload_from_existing(existing, changes)` | 合并可编辑顶层字段，拒绝身份与状态写入；合并结果仍必须再经 `build_web_recipe()` |
 | `HTMLListingPlan` / `validate_html_listing_plan(plan)` | 表达并静态校验受限 listing selector DSL，不发网络请求 |
 | `canonicalize_web_url(url, *, allowed_origins=None)` / `web_content_id(url)` | 产生 Web canonical URL 与跨 recipe 稳定内容 ID；可选强制 exact-origin allowlist |
-| `SafeWebTransport(...).fetch(url, *, expected=..., ...)` | 执行匿名有界读取，返回 `WebFetchArtifact`；安全失败统一为不含 body 的 `WebFetchError` |
+| `SafeWebTransport(...).fetch(url, *, expected=..., ...)` | 按现有网络模式执行匿名有界读取并固定公共 IP，返回 `WebFetchArtifact`；安全失败统一为不含 body 的 `WebFetchError` |
+| `parse_web_feed_page(..., content_origins=..., observe_content_origins=False)` | 最多观察 128 个公共文章 origin；与请求权限独立，正式运行不自动扩域 |
 | `parse_web_feed(...)` / `parse_sitemap(...)` / `parse_html_listing(...)` / `parse_html_detail(...)` | 对已取得的有界 bytes 做确定性解析；解析或 schema 边界失败为 `WebParseError` |
 | `infer_html_listing_plan(...)` | 从已取得的 HTML 保守推断一个可由正式 listing parser 重放的 selector plan；导航 chrome 与不可靠单链接结构返回 `None` |
 | `probe_public_web_url(url, ...)` | 在 exact-origin 安全传输和共享 deadline 内生成有界、compiler-ready 的 recipe 草稿；只读且不持久化，区分 robots 拒绝与 robots.txt 读取失败 |

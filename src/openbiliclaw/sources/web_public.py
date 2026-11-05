@@ -30,6 +30,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Literal, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.request import getproxies, proxy_bypass
 from xml.etree import ElementTree
 
 import httpcore
@@ -47,6 +48,8 @@ WEB_ABSOLUTE_MAX_BYTES = 5_000_000
 WEB_MAX_URL_LENGTH = 8_192
 WEB_MAX_REDIRECTS = 3
 WEB_MAX_FEED_ENTRIES = 1_000
+# Article references never authorize requests; aggregators need a separate bound.
+WEB_MAX_FEED_CONTENT_ORIGINS = 128
 WEB_MAX_SITEMAP_ENTRIES = 50_000
 WEB_MAX_HTML_NODES = 25_000
 WEB_MAX_HTML_DEPTH = 256
@@ -319,11 +322,15 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
     def __init__(self, backend: httpcore.AsyncNetworkBackend | None = None) -> None:
         self._backend = backend or httpcore.AnyIOBackend()
         self._pins: dict[tuple[str, int], tuple[str, ...]] = {}
+        self._proxies: dict[tuple[str, int], str | None] = {}
 
-    def pin(self, host: str, port: int, addresses: Sequence[str]) -> None:
+    def pin(
+        self, host: str, port: int, addresses: Sequence[str], *, proxy: str | None = None
+    ) -> None:
         """Replace one origin's connection candidates after validation."""
 
         self._pins[(host.casefold(), int(port))] = tuple(dict.fromkeys(addresses))
+        self._proxies[(host.casefold(), int(port))] = proxy
 
     async def connect_tcp(
         self,
@@ -336,6 +343,14 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         addresses = self._pins.get((host.casefold(), int(port)), ())
         if not addresses:
             raise OSError("Web origin has no validated DNS pin")
+        proxy = self._proxies.get((host.casefold(), int(port)))
+        if proxy:
+            # Reuse the public-IP CONNECT/SOCKS dialer, retaining Host/TLS SNI.
+            from openbiliclaw.runtime.image_network import PinnedImageBackend
+
+            return await PinnedImageBackend(host, addresses, proxy, port=port).connect_tcp(
+                host, port, timeout, local_address, socket_options
+            )
         last_error: BaseException | None = None
         for address in addresses:
             try:
@@ -801,6 +816,19 @@ def _validate_response_content_type(
     )
 
 
+def _web_proxy_for_origin(origin: _Origin) -> str | None:
+    """Freeze the existing application routing policy before resolving each hop."""
+    from openbiliclaw.network import outbound_httpx_kwargs
+
+    policy = outbound_httpx_kwargs()
+    if policy.get("proxy"):
+        return str(policy["proxy"])
+    if policy.get("trust_env") and not proxy_bypass(origin.host):
+        proxies = getproxies()
+        return proxies.get(origin.scheme) or proxies.get("all")
+    return None
+
+
 class SafeWebTransport:
     """Anonymous bounded HTTP transport for an exact set of public origins."""
 
@@ -1096,13 +1124,19 @@ class SafeWebTransport:
         raise WebFetchError("robots_unavailable", "robots.txt could not be resolved")
 
     async def _validate_dns(self, origin: _Origin) -> None:
+        proxy = _web_proxy_for_origin(origin) if self._pinned_backend is not None else None
         try:
-            addresses = tuple(
-                dict.fromkeys(
-                    str(address) for address in await self._resolver(origin.host, origin.port)
+            if proxy:
+                from openbiliclaw.runtime.image_network import resolve_public_addresses
+
+                addresses = await resolve_public_addresses(origin.host, proxy=proxy)
+            else:
+                addresses = tuple(
+                    dict.fromkeys(
+                        str(address) for address in await self._resolver(origin.host, origin.port)
+                    )
                 )
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError, httpx.HTTPError) as exc:
             raise WebFetchError("dns_error", "Web source hostname could not be resolved") from exc
         if not addresses:
             raise WebFetchError("dns_error", "Web source hostname could not be resolved")
@@ -1114,7 +1148,10 @@ class SafeWebTransport:
                 "Web source resolved to a non-public network address",
             )
         if self._pinned_backend is not None:
-            self._pinned_backend.pin(origin.host, origin.port, addresses)
+            if proxy:
+                self._pinned_backend.pin(origin.host, origin.port, addresses, proxy=proxy)
+            else:
+                self._pinned_backend.pin(origin.host, origin.port, addresses)
 
     async def _bounded_request(
         self,
@@ -1408,7 +1445,7 @@ class _FeedReferenceScope:
         parts = urlsplit(url)
         origin = f"{parts.scheme}://{parts.netloc}"
         if origin not in self.origins:
-            if self.observe and len(self.origins) < 8:
+            if self.observe and len(self.origins) < WEB_MAX_FEED_CONTENT_ORIGINS:
                 self.origins.append(origin)
             else:
                 if origin not in self.unapproved and len(self.unapproved) < 8:
@@ -1562,14 +1599,17 @@ def parse_web_feed_page(
 ) -> WebFeedPage:
     """Parse one bounded feed; observed article origins never authorize HTTP requests.
 
-    The authoring probe may observe at most eight reference origins. Scheduled
+    The authoring probe may observe at most 128 reference origins. Scheduled
     runs use the saved exact set and report newly encountered origins, including
     entries beyond the requested candidate limit, without enlarging that set.
     """
     canonicalize_web_url(base_url, allowed_origins=allowed_origins)
     references = list(dict.fromkeys(content_origins or allowed_origins))
-    if not references or len(references) > 8:
-        raise WebParseError("invalid_recipe", "Feed content scope must contain 1..8 origins")
+    if not references or len(references) > WEB_MAX_FEED_CONTENT_ORIGINS:
+        raise WebParseError(
+            "invalid_recipe",
+            f"Feed content scope must contain 1..{WEB_MAX_FEED_CONTENT_ORIGINS} origins",
+        )
     _allowed_origin_set(references)
     scope = _FeedReferenceScope(references, observe=observe_content_origins)
     bounded_limit = min(WEB_MAX_FEED_ENTRIES, max(1, int(limit)))

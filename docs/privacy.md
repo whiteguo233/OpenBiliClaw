@@ -94,6 +94,8 @@ JavaScript 执行能力。
 
 海外封面缓存未命中且项目网络策略实际选用代理时，后端通过同一代理向 Cloudflare 的固定 `https://1.1.1.1/dns-query` 查询公开 CDN 域名的 A/AAAA 地址，再校验为公网 IP 并固定连接，防止重绑定访问内网。Cloudflare 可见 CDN 域名、查询时间与代理出口地址；不会收到 Instagram 账号、Cookie、封面 URL 的路径/签名参数或画像。DNS 查询不跟随重定向，失败不绕过安全检查。国内 CDN 和 `network.mode=direct` 使用本机 DNS，不走此 DoH 服务；缓存命中不触发查询。这是封面安全传输依赖，不是统计或遥测。
 
+公开 Web / RSS / Atom / JSON Feed 来源在配置实际选择代理时也复用该 DNS 服务：仅查询已批准请求域的公开域名，Cloudflare 可见域名、查询时间及代理出口，不收到订阅路径、文章内容、Cookie 或画像。直连和系统代理排除项使用本机 DNS。文章链接范围本身不触发这些查询或文章抓取。
+
 插件会使用浏览器的本地扩展存储保存设置、连接状态、缓存配置和 UI 状态。OpenBiliClaw 后端会在用户本机或自托管环境中保存配置文件、SQLite 数据库、日志和画像文件。
 
 Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task / claim、任务 tab、deadline、分页进度、已归一化内容与待确认的 exact-result outbox，以便浏览器或扩展重启后恢复。后端确认或明确终态拒绝后清理；离线待重试时会继续保留，卸载扩展会清除这些扩展数据。此状态不含 Instagram Cookie、请求头、CSRF、原始 JSON/HTML 或挑战页正文；旧 `storage.session` 状态只迁移一次。

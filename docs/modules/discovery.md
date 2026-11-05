@@ -1,5 +1,7 @@
 # 内容发现引擎
 
+公开 Web 的 `SourceFamilyRule.routed_by_network_mode=True` 表示 HTTP 发现消费 `[network]`；`requires_overseas_network=False` 保留，因为来源可能位于任何地区。Ego 仍使用宿主的网络设置，不能把后端模式当作它的出口开关。
+
 2026-10-03：普通手动“换一批”也接入 Instagram 正式 producer → `drain_pending(..., flush=True)` → 有界推荐表达，与初始化/后台任务共用锁、预算与准入。callback 已拥有的 post-admission copy 不再重复执行；评估或文案失败映射为明确失败态，不把仅触发任务当作供给成功。
 
 显式 Instagram 初始化使用同一正式 producer 和候选管线完成首轮供给。`DiscoveryCandidatePipeline.drain_pending(..., flush=True)` 只跳过后台小批量 coalescing 等待，并保留调用者数量上限、引擎 hard cap、锁、claim token、评分与池准入规则；默认 `flush=False` 的后台行为不变。初始化持有 refresh 锁，待完整画像落盘后才发现、即时评估一批并同步生成推荐文案；没有可浏览条目仍返回首池未就绪，不以 queued/waiting 冒充成功。
@@ -673,6 +675,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 公开 Web 网络策略声明 | ✅ | `SourceFamilyRule.routed_by_network_mode=True` 与实际 HTTP 传输保持一致；来源地域不固定，`requires_overseas_network=False`。Ego 仍由宿主控制出口。 |
 | 动态流程采集预算 | ✅ | 正式执行复用试采的受限计划；后台修复携带持久化 `scope_limits`，模型重编制不能提高用户明确上限。 |
 | 动态来源身份贯通 | ✅ | `DiscoveredContent` 与候选写入携带 `source_id/source_name`；共享 pipeline 按实例做配额，按 canonical URL 去重，保留跨来源 provenance。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
@@ -758,6 +761,8 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+`sources.platforms.SourceFamilyRule` 的 `routed_by_network_mode` 表示后端 HTTP 是否消费统一网络模式；`requires_overseas_network` 单独声明地域要求。公开 Web 前者为 true、后者为 false，不能据此将所有动态站点标为海外，也不能改变 Ego 宿主的网络设置。
 
 ### 动态网站候选
 

@@ -14,11 +14,11 @@ from urllib.parse import urljoin, urlsplit
 from openbiliclaw.llm.json_utils import extract_llm_json_object
 from openbiliclaw.sources.browser_workflow import (
     WorkflowParameters,
+    browser_verification_required,
     compile_browser_workflow,
     workflow_url,
 )
 from openbiliclaw.sources.custom_sources import CustomSourceStore
-from openbiliclaw.sources.platforms import infer_source_platform_from_url
 from openbiliclaw.sources.protocol import SourceFetchResult, SourceRecipe
 from openbiliclaw.sources.web_adapter import WebSourceAdapter
 from openbiliclaw.sources.web_probe import probe_public_web_url
@@ -711,15 +711,6 @@ class WorkflowService:
                 if executor == "http":
                     draft.update(status="failed", detail=str(exc)[:400])
                     return self.store.save_draft(draft, draft_id=draft["draft_id"])
-        if infer_source_platform_from_url(url):
-            draft.update(
-                status="needs_details",
-                detail=(
-                    "该平台请使用现有平台来源，"
-                    "或提供可直接读取的公开 RSS、Atom、JSON Feed 订阅地址。"
-                ),
-            )
-            return self.store.save_draft(draft, draft_id=draft["draft_id"])
         draft["executor"] = "ego" if executor == "auto" else executor
         self.store.save_draft(draft, draft_id=draft["draft_id"])
         return await self.author_browser(draft)
@@ -779,15 +770,6 @@ class WorkflowService:
         self, draft: dict[str, Any], *, background: bool = False
     ) -> dict[str, Any]:
         """Compile from an actual observation; no runtime model-generated scripts."""
-        if infer_source_platform_from_url(str(draft["entry_url"])):
-            draft.update(
-                status="needs_details",
-                trial_success=False,
-                detail=(
-                    "该平台仅支持显式公开订阅地址，请使用现有平台来源或提供 RSS、Atom、JSON Feed。"
-                ),
-            )
-            return self.store.save_draft(draft, draft_id=draft["draft_id"])
         session = None
         try:
             if not background and draft["executor"] == "ego" and self._executor_factory is None:
@@ -810,11 +792,20 @@ class WorkflowService:
             session = None
             # A blocked login redirect deliberately leaves an empty observation;
             # earlier optional resource failures must not suppress user takeover.
-            if observation.get("login_wall") or observation.get("blocked_navigation_origins"):
+            challenge = browser_verification_required(observation)
+            if (
+                challenge
+                or observation.get("login_wall")
+                or observation.get("blocked_navigation_origins")
+            ):
                 draft.update(
                     status="needs_login",
-                    requires_login=True,
-                    detail="请在网站窗口完成登录或验证后继续。",
+                    requires_login=bool(draft.get("requires_login")) if challenge else True,
+                    detail=(
+                        "网站要求人工安全验证，请打开网站窗口完成验证后继续试跑。"
+                        if challenge
+                        else "请在网站窗口完成登录或验证后继续。"
+                    ),
                     takeover_url=f"/web/source-login.html?draft_id={draft['draft_id']}",
                 )
                 return self.store.save_draft(draft, draft_id=draft["draft_id"])
@@ -1197,6 +1188,7 @@ class WorkflowService:
                 session_id=draft["session_id"],
                 commit=False,
                 allow_dedicated_feed=workflow_presentation(draft)["kind"] == "feed",
+                allow_dedicated_browser=draft["executor"] == "ego",
             )
         assert source is not None
         self.store.publish(draft_id, source["source_id"])

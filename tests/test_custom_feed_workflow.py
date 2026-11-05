@@ -365,10 +365,8 @@ async def test_explicit_github_atom_uses_only_anonymous_feed_path(database, monk
     assert result.status == "ok" and len(result.items) == 1
 
 
-@pytest.mark.parametrize("executor", ["auto", "http", "ego"])
-async def test_dedicated_platform_html_never_falls_back_to_browser_including_trial(
-    database, monkeypatch, executor
-):
+@pytest.mark.parametrize("executor", ["http"])
+async def test_explicit_http_platform_html_does_not_become_a_feed(database, monkeypatch, executor):
     def handler(_request):
         return httpx.Response(
             200,
@@ -419,7 +417,7 @@ def test_feed_scope_observation_is_bounded_and_never_includes_private_references
             "url": f"https://site{i}.example.com/post",
             "content_text": TEXT,
         }
-        for i in range(12)
+        for i in range(140)
     ]
     rows += [{"title": "Private", "url": "https://intranet.local/secret", "content_text": TEXT}]
     result = parse_web_feed_page(
@@ -429,7 +427,7 @@ def test_feed_scope_observation_is_bounded_and_never_includes_private_references
         allowed_origins=["https://feeds.example.com"],
         observe_content_origins=True,
     )
-    assert len(result.content_origins) == 8 and len(result.items) == 7
+    assert len(result.content_origins) == 128 and len(result.items) == 20
     assert result.unapproved_content_origins
     assert (
         "https://intranet.local" not in result.content_origins + result.unapproved_content_origins
@@ -468,3 +466,106 @@ async def test_explicit_feed_item_limit_caps_trial_and_scheduled_discovery(datab
     outcome = await producer.produce_if_due(limit=20)
     assert outcome["discovered"] == outcome["enqueued"] == 2
     assert database.conn.execute("SELECT COUNT(*) FROM discovery_candidates").fetchone()[0] == 2
+
+
+async def test_aggregator_feed_trials_and_schedules_more_than_eight_reference_origins(
+    database, monkeypatch
+):
+    rows = [
+        {"title": f"Post {i}", "url": f"https://blog{i}.example.com/post", "content_text": TEXT}
+        for i in range(24)
+    ]
+    body = json.dumps({"version": "https://jsonfeed.org/version/1.1", "items": rows}).encode()
+    requests = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(200, content=body, headers={"content-type": "application/feed+json"})
+
+    service = _service(database, monkeypatch, handler)
+    draft = await service.prepare(
+        url=FEED_URL,
+        intent="Follow this aggregator",
+        executor="http",
+        request_limits={"max_items": 3},
+    )
+    assert draft["trial_success"] and draft["status"] == "ready", draft["detail"]
+    recipe = draft["workflow"]["config"]
+    assert len(recipe["content_origins"]) == 25
+    assert recipe["allowed_origins"] == ["https://feeds.example.com"]
+    source = service.activate(draft["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    result = await service.fetch(workflow)
+    assert result.status == "ok" and result.scope_complete and len(result.items) == 3
+    assert set(requests) == {FEED_URL}  # Article domains never become network authority.
+
+
+@pytest.mark.parametrize("executor", ["auto", "ego"])
+async def test_known_platform_can_be_an_independent_ego_workflow(database, monkeypatch, executor):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowItem, BrowserWorkflowResult
+
+    url = "https://www.v2ex.com/?tab=hot"
+    plan = {
+        "version": 1,
+        "entry_url": url,
+        "allowed_origins": ["https://www.v2ex.com"],
+        "steps": [{"action": "collect", "item_selector": ".cell", "link_selector": "a.topic"}],
+    }
+    service = _service(
+        database,
+        monkeypatch,
+        lambda _: httpx.Response(
+            200, text="<html><title>V2EX</title></html>", headers={"Content-Type": "text/html"}
+        ),
+    )
+    browser = SimpleNamespace(
+        run=AsyncMock(
+            return_value=BrowserWorkflowResult(
+                "ok", (BrowserWorkflowItem("A real topic", "https://www.v2ex.com/t/123"),)
+            )
+        )
+    )
+    service._executor_factory = lambda name: browser
+    service.observe_session = AsyncMock(
+        return_value=(
+            SimpleNamespace(close=AsyncMock()),
+            {"elements": [{"tag": "a", "text": "A real topic"}]},
+        )
+    )
+    service._json_task = AsyncMock(return_value={"plan": plan})
+    draft = await service.prepare(
+        url=url, intent="Read hot topics", executor=executor, separate_source=True
+    )
+    assert draft["trial_success"] and draft["executor"] == "ego", draft["detail"]
+    assert service.sources.list_sources() == []  # Trial never enables a source.
+    source = service.activate(draft["draft_id"])
+    assert source["source_id"].startswith("custom_") and source["enabled"]
+    assert source["session_id"] == draft["session_id"]
+    updated = service.sources.update_source(source["source_id"], target_share=2)
+    assert updated["target_share"] == 2
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    result = await service.fetch(workflow)
+    assert result.status == "ok" and result.items[0].source_platform == "web"
+    assert result.items[0].content_url == "https://www.v2ex.com/t/123"
+    pipeline = DiscoveryCandidatePipeline(database, SimpleNamespace())
+    producer = CustomWorkflowProducer(
+        database,
+        source["source_id"],
+        pipeline,
+        candidate_evaluation_owned_by_coordinator=True,
+        service=service,
+    )
+    outcome = await producer.produce_if_due(limit=3)
+    assert outcome["enqueued"] == 1
+    candidate = database.conn.execute("SELECT * FROM discovery_candidates").fetchone()
+    assert candidate["source_id"] == source["source_id"]
+    assert candidate["source_platform"] == "web"
+    assert candidate["candidate_key"].startswith("web:")
+    browser.run.return_value = BrowserWorkflowResult("failed", error_code="network_error")
+    failed = await service.prepare(
+        url=url, intent="Another topic list", executor="ego", separate_source=True
+    )
+    assert not failed["trial_success"]
+    with pytest.raises(ValueError, match="successful trial required"):
+        service.activate(failed["draft_id"])
+    assert len(service.sources.list_sources()) == 1

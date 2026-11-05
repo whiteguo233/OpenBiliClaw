@@ -92,6 +92,7 @@ class CustomSourceStore:
         session_id: str = "",
         commit: bool = True,
         allow_dedicated_feed: bool = False,
+        allow_dedicated_browser: bool = False,
     ) -> dict[str, Any]:
         """Create or replace one explicitly identified source, even on the same origin."""
         source_id = source_id or f"custom_{uuid.uuid4().hex}"
@@ -118,7 +119,9 @@ class CustomSourceStore:
         if not isinstance(session_id, str) or len(session_id) > 200:
             raise ValueError("Invalid session reference")
         url = _normalize_public_url(
-            entry_url, field="entry_url", allow_dedicated=allow_dedicated_feed
+            entry_url,
+            field="entry_url",
+            allow_dedicated=allow_dedicated_feed or allow_dedicated_browser,
         )
         parsed = urlsplit(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"

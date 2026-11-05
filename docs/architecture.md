@@ -122,7 +122,7 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
           independent new source → own task-space session; same Ego profile cookies, explicit reuse preserved
         → CustomWorkflowProducer → HTTP feed or native Ego Lite executor → ordinary pending_eval → evaluated pool
         → source_id/source_name attribution; source_platform remains web
-        login required → human /web/source-login.html takeover → resume + trial → same draft/workflow
+        login / affirmative security verification → human /web/source-login.html takeover → resume + trial → same draft/workflow
         source settings cards (desktop / popup / mobile) → explicit management API actions
         macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces; no Playwright fallback
           explicit exact-host route API → private network.json → current manual system proxies + selected direct hosts at cold start
@@ -136,6 +136,8 @@ Legacy public HTTP recipe authoring (desktop / popup / CLI; init + degraded 可�
         → 「采用」只回填表单 → 用户显式 POST /api/sources（mobile 无 authoring surface）
 explicit saved Web recipe → typed compiler → source_recipes
                     → quota/cadence → token-fenced Web producer
+                    → [network] direct/system/custom → local DNS or bounded proxied DoH
+                    → shared numeric-IP tunnel (runtime.image_network; HTTP 80 / HTTPS 443)
                     → exact origin + robots fail-closed + public DNS/socket pin
                     → deterministic feed/sitemap/listing parser → pending_eval
                     → web_source_state validators/cursor/health + recipe-scoped seen ledger

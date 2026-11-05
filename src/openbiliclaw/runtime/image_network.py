@@ -160,9 +160,14 @@ async def _read_exact(
 
 
 async def _open_http_tunnel(
-    stream: httpcore.AsyncNetworkStream, proxy: httpx.Proxy, address: str, timeout: float | None
+    stream: httpcore.AsyncNetworkStream,
+    proxy: httpx.Proxy,
+    address: str,
+    timeout: float | None,
+    *,
+    port: int = 443,
 ) -> None:
-    target = f"[{address}]:443" if ":" in address else f"{address}:443"
+    target = f"[{address}]:{port}" if ":" in address else f"{address}:{port}"
     headers = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
     if proxy.raw_auth is not None:
         auth = base64.b64encode(b":".join(proxy.raw_auth)).decode("ascii")
@@ -185,7 +190,12 @@ async def _open_http_tunnel(
 
 
 async def _open_socks_tunnel(
-    stream: httpcore.AsyncNetworkStream, proxy: httpx.Proxy, address: str, timeout: float | None
+    stream: httpcore.AsyncNetworkStream,
+    proxy: httpx.Proxy,
+    address: str,
+    timeout: float | None,
+    *,
+    port: int = 443,
 ) -> None:
     # RFC 1928/1929: send an IP literal, never ATYP=DOMAIN (remote DNS).
     auth = proxy.raw_auth
@@ -205,7 +215,8 @@ async def _open_socks_tunnel(
             raise httpcore.ProxyError("Image SOCKS authentication failed")
     ip = ipaddress.ip_address(address)
     await stream.write(
-        bytes([5, 1, 0, 1 if ip.version == 4 else 4]) + ip.packed + b"\x01\xbb", timeout=timeout
+        bytes([5, 1, 0, 1 if ip.version == 4 else 4]) + ip.packed + port.to_bytes(2, "big"),
+        timeout=timeout,
     )
     reply = await _read_exact(stream, 4, timeout)
     if reply[:3] != b"\x05\x00\x00":
@@ -224,7 +235,12 @@ async def _open_socks_tunnel(
 class PinnedImageBackend(httpcore.AsyncNetworkBackend):
     """Connect only to validated IPs, keeping TLS hostname handling in HTTPCore."""
 
-    def __init__(self, host: str, addresses: tuple[str, ...], proxy: str | None) -> None:
+    def __init__(
+        self, host: str, addresses: tuple[str, ...], proxy: str | None, *, port: int = 443
+    ) -> None:
+        if port not in {80, 443}:
+            raise UnsafeImageAddressError("Unsupported public destination port")
+        self.port = port
         self.host = host
         self.addresses = addresses
         self.proxy = httpx.Proxy(proxy) if proxy else None
@@ -240,7 +256,7 @@ class PinnedImageBackend(httpcore.AsyncNetworkBackend):
     ) -> httpcore.AsyncNetworkStream:
         if (
             host != self.host
-            or port != 443
+            or port != self.port
             or not self.addresses
             or not all(is_public_address(address) for address in self.addresses)
         ):
@@ -261,7 +277,7 @@ class PinnedImageBackend(httpcore.AsyncNetworkBackend):
                                 )
                             )
                             if proxy
-                            else 443,
+                            else port,
                             timeout=timeout,
                             local_address=local_address,
                             socket_options=socket_options,
@@ -274,9 +290,9 @@ class PinnedImageBackend(httpcore.AsyncNetworkBackend):
                                     timeout=timeout,
                                 )
                             if proxy.url.scheme in {"http", "https"}:
-                                await _open_http_tunnel(stream, proxy, address, timeout)
+                                await _open_http_tunnel(stream, proxy, address, timeout, port=port)
                             elif proxy.url.scheme in {"socks5", "socks5h"}:
-                                await _open_socks_tunnel(stream, proxy, address, timeout)
+                                await _open_socks_tunnel(stream, proxy, address, timeout, port=port)
                             else:
                                 raise httpcore.ProxyError("Unsupported image proxy protocol")
                         return stream

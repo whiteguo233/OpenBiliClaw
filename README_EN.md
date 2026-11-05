@@ -648,6 +648,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
+Public feed routing: `[network] direct/system/custom → local DNS or proxied DoH → pinned public IP / original Host and TLS identity → robots → feed`. Up to 128 article-reference origins grant no extra requests.
+
 TikTok covers: `image proxy → DoH public-address validation → pinned IP / original TLS identity → cache`, following the configured network route.
 
 TikTok: `formal discovery / inspiration → shared request pacing and durable cooldown → signed Web API → candidate pool`; only auto mode allows yt-dlp fallback. See the [acceptance record](docs/platform-source-acceptance.tiktok.md).
@@ -672,7 +674,7 @@ Publication date preference: `[sources.<name>].recommendation_date_*` per source
 
 Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop Go tsnet helper → 127.0.0.1:<effective server port> → FastAPI`; enrollment follows `local settings UI → PUT /api/config (write-only credential) → private one-shot staging → stdin → helper`. The port normally comes from `[api].port` and follows startup / packaged `OPENBILICLAW_PORT` overrides. This path is default-off, needs no system Tailscale on the computer, exposes no Funnel/Serve, and migrates neither node identity nor staged credentials.
 
-Dynamic websites and RSS / Atom / JSON Feed: `automatic deployment setup of Ego (macOS websites) / direct HTTP for feeds → original-message limits + chat draft and trial → actual-budget approval → independent source_id / share / interval → scheduled versioned workflows → ordinary candidate evaluation → recommendation pool`. Login runs on the human takeover page followed by `resume`; all three settings surfaces manage websites as peers of built-in sources. Content stays `source_platform=web`, with `source_name` as its visible label.
+Dynamic websites and RSS / Atom / JSON Feed: `automatic deployment setup of Ego (macOS websites) / anonymous HTTP for feeds → original-message limits + chat draft and trial → actual-budget approval → independent source_id / share / interval → scheduled versioned workflows → ordinary candidate evaluation → recommendation pool`. Login runs on the human takeover page followed by `resume`; all three settings surfaces manage websites as peers of built-in sources. Content stays `source_platform=web`, with `source_name` as its visible label.
 
 Explicit host routing: `GET/PUT executors/ego/network → private network.json → current manual system proxies + exact direct hosts at each cold start`. The default list is empty; live sessions prevent updates, and unsupported PAC/WPAD configurations fail explicitly.
 

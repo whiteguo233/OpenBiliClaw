@@ -651,6 +651,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
+公开订阅网络：`[network] direct/system/custom → 本机 DNS 或代理 DoH → 公共 IP 固定 / Host 与 TLS 身份 → robots → Feed`；文章引用最多 128 域，不授权额外网络请求。
+
 TikTok 封面：`图片代理 → DoH 公网地址校验 → 固定 IP / 保留 TLS 身份 → 缓存`，沿配置的网络路由执行。
 
 TikTok：`正式发现 / 灵感探索 → 共用请求间隔与持久限流状态 → 签名 Web API → 候选池`；仅 auto 模式允许 yt-dlp 回退。
@@ -675,7 +677,7 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 远程 Android / iOS App：`App（内嵌 tsnet）→ 用户 tailnet → 电脑端 Go tsnet helper → 127.0.0.1:<有效 server port> → FastAPI`；入网控制流为 `本机设置页 → PUT /api/config（凭据只写）→ 私有单次暂存 → stdin → helper`。有效端口通常为 `[api].port`，也跟随启动参数 / 桌面 `OPENBILICLAW_PORT` 覆盖；入口默认关闭，电脑无需系统 Tailscale，无 Funnel/Serve，节点身份和暂存凭据都不进入迁移包。
 
-动态网站与 RSS / Atom / JSON Feed：`部署自动准备 Ego（macOS 网页）/ Feed 直接 HTTP → 用户原话上限 + 聊一聊草稿与试跑 → 实际预算审批启用 → 独立 source_id / 份额 / 间隔 → 版本化 workflow 定期发现 → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
+动态网站与 RSS / Atom / JSON Feed：`部署自动准备 Ego（macOS 网页）/ Feed 匿名 HTTP → 用户原话上限 + 聊一聊草稿与试跑 → 实际预算审批启用 → 独立 source_id / 份额 / 间隔 → 版本化 workflow 定期发现 → 普通候选评估 → 推荐池`；需要登录时由用户在接管页登录并 `resume`，三端设置按网站平级管理。推荐保留 `source_platform=web`，用 `source_name` 显示网站名称。
 
 原生开页初始化超时：`释放失败会话 → 无其他租约时重启托管宿主 → 原身份重试一次`，沿用总预算。
 

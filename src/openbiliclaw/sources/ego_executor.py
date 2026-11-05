@@ -32,6 +32,7 @@ from openbiliclaw.sources.browser_workflow import (
     BrowserWorkflowResult,
     BrowserWorkflowValidationError,
     WorkflowParameters,
+    browser_verification_required,
     compile_browser_workflow,
     workflow_origin,
     workflow_url,
@@ -427,7 +428,7 @@ class EgoLiteWorkflowSession:
 
     async def login_required(self) -> bool:
         observation = await self.snapshot()
-        if observation.get("login_wall"):
+        if observation.get("login_wall") or browser_verification_required(observation):
             return True
         auth = self.plan.auth
         if auth.login_selector:
@@ -446,7 +447,7 @@ class EgoLiteWorkflowSession:
             if await self.login_required():
                 return BrowserWorkflowResult(
                     "login_required",
-                    detail="Website login needs user attention",
+                    detail="Website login or security verification needs user attention",
                     error_code="login_required",
                     scope_complete=False,
                 )

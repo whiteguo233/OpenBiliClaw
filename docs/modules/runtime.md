@@ -41,6 +41,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
 | 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
+| 公开 HTTP 来源代理 | ✅ | Feed / 旧公开 recipe 遵循 `[network]`，复用公共 DNS 与数字 IP 隧道；robots 和 origin 限制保持，文章引用不产生额外请求。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
@@ -147,6 +148,8 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+`runtime.image_network.PinnedImageBackend(host, addresses, proxy, *, port=443)` 的隧道底座供封面和公开 Web 来源共用；只接受 80/443，端口及数字 IP 同时冻结。封面入口仍只使用 HTTPS 443，原白名单不变。
 
 ### 动态来源与运行模式
 

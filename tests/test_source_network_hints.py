@@ -91,10 +91,11 @@ def test_overseas_hints_distinguish_backend_and_browser_transports() -> None:
     instead of being told that changing the backend setting will fix it.
     """
     routed = {rule.family for rule in SOURCE_FAMILY_RULES if rule.routed_by_network_mode}
-    assert routed == {"bangumi", "github", "youtube", "tiktok", "twitter", "reddit"}
+    assert routed == {"bangumi", "github", "youtube", "tiktok", "twitter", "reddit", "web"}
     assert OVERSEAS_EGRESS_PLATFORMS - routed == {"instagram"}
 
-    for family in routed:
+    assert "web" not in OVERSEAS_EGRESS_PLATFORMS
+    for family in routed & OVERSEAS_EGRESS_PLATFORMS:
         hint = overseas_network_hint(family, network_mode="direct")
         assert "改成「跟随系统代理」或「自定义代理」" in hint, family
 

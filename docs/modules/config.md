@@ -716,7 +716,7 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 ### `[network]` (v0.3.164+，v0.3.165 路由模式补强，v0.3.166 国内网关豁免)
 
-海外网络路由。仅作用于**海外客户端**：OpenAI / Claude / Gemini / OpenRouter / openai_compatible 的 chat + embedding SDK、YouTube（yt-dlp、scrapetube、InnerTube / 页面 fallback）、X 的服务端 `twitter-cli`、Reddit 的 `rdt-cli` / OpenCLI 命令后端、Bangumi（`api.bgm.tv` 与封面 CDN `lain.bgm.tv` 均为海外 Cloudflare，实测 2026-07-18 国内网络直连超时、走代理正常）、GitHub 内容来源（`api.github.com`）与自动更新、封面图片代理的境外 CDN（`i.ytimg.com` / `ggpht.com`；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=true` 在 `custom` 模式下拿不到代理、国内直连超时致 YouTube 封面全裂）、Codex OAuth 令牌刷新、discovery 灵感搜索的海外后端（Exa `api.exa.ai` / You.com `api.ydc-index.io` / Serply `api.serply.io` 的直连 HTTP 客户端与 mcporter 子进程；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=false` 在 custom 模式下拿不到代理，实测 api.exa.ai 国内直连超时；Bing RSS 属国内可达服务保持恒直连）。X / Reddit 回落到浏览器扩展任务时，请求由浏览器发出并沿用浏览器自己的网络设置；GitHub 始终由后端 client 发出，不使用浏览器 Cookie 或插件代理；微博的项目自有 `httpx` client 固定 `trust_env=false` 国内直连，也不读取本段。**注意**：`openai_compatible` / `openai` 若指向的是国内网关或本机地址，则按下方「国内网关豁免」强制直连，不受本节代理影响。
+海外网络路由。也供动态订阅／公开 HTTP Web recipe 使用（逐跳显式代理、DoH 与公共 IP 固定，无 Cookie）；其他既有**海外客户端**：OpenAI / Claude / Gemini / OpenRouter / openai_compatible 的 chat + embedding SDK、YouTube（yt-dlp、scrapetube、InnerTube / 页面 fallback）、X 的服务端 `twitter-cli`、Reddit 的 `rdt-cli` / OpenCLI 命令后端、Bangumi（`api.bgm.tv` 与封面 CDN `lain.bgm.tv` 均为海外 Cloudflare，实测 2026-07-18 国内网络直连超时、走代理正常）、GitHub 内容来源（`api.github.com`）与自动更新、封面图片代理的境外 CDN（`i.ytimg.com` / `ggpht.com`；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=true` 在 `custom` 模式下拿不到代理、国内直连超时致 YouTube 封面全裂）、Codex OAuth 令牌刷新、discovery 灵感搜索的海外后端（Exa `api.exa.ai` / You.com `api.ydc-index.io` / Serply `api.serply.io` 的直连 HTTP 客户端与 mcporter 子进程；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=false` 在 custom 模式下拿不到代理，实测 api.exa.ai 国内直连超时；Bing RSS 属国内可达服务保持恒直连）。X / Reddit 回落到浏览器扩展任务时，请求由浏览器发出并沿用浏览器自己的网络设置；GitHub 始终由后端 client 发出，不使用浏览器 Cookie 或插件代理；微博的项目自有 `httpx` client 固定 `trust_env=false` 国内直连，也不读取本段。**注意**：`openai_compatible` / `openai` 若指向的是国内网关或本机地址，则按下方「国内网关豁免」强制直连，不受本节代理影响。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1128,8 +1128,9 @@ item/page/detail 预算及 listing selector 属于 `/api/sources` recipe，不�
 | `lease_seconds` | int | `300` | `30..3600` | recipe 初始 runtime lease；producer 会按有界请求预算续租，过期 worker 不能提交结果 |
 
 `GET /api/config` / `PUT /api/config` 与 TOML loader 使用同一字段和边界。创建 recipe 是实际
-opt-in：`enabled=true` 本身不会自动探测任何 URL。公开 HTTP transport 固定 `trust_env=false`，
-因此 `[network].mode` 和 `[sources.browser]` 都不改变 Web recipe 的出口或 auth 边界。完整 recipe、
+opt-in：`enabled=true` 本身不会自动探测任何 URL。公开 HTTP transport 按 `[network].mode`
+选择直连、系统或自定义代理，内部显式冻结每跳代理并保持 `trust_env=false`。代理路径通过
+有界 DoH 解析并固定公共 IP；`[sources.browser]` 不改变它的出口，任何模式均不继承账号凭据。完整 recipe、
 robots fail-closed、socket DNS pin 与状态语义见 [通用 Web 来源文档](web.md)。
 
 ### `[scheduler]`
