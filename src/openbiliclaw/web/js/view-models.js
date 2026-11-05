@@ -71,7 +71,7 @@ export function normalizeCoverUrl(value) {
 export function getCoverImageAttrs(value) {
   const src = normalizeCoverUrl(value);
   if (!src) return null;
-  return { src: `/api/image-proxy?url=${encodeURIComponent(src)}` };
+  return { src: `../api/image-proxy?url=${encodeURIComponent(src)}` };
 }
 
 export function getRecommendationCoverPreloadUrls(items, { start = 0, limit = 12 } = {}) {

@@ -158,4 +158,17 @@
 
 ## 交付状态
 
-当前 verdict：`incremental only`。采集代码与真实隔离账号链路此前已验证；**正式后端兼容修复、旧扩展负面来源拦截和正式画像持久化恢复现已完成**。完整正式采集链路仍等待常用 Chrome 加载修复版，并重新验证抖音验证码 / 403。不能把画像恢复成功描述成所有四类采集已经恢复。未提交、未合并、未发布商店版本。
+当前 verdict：`incremental only`。采集代码与真实隔离账号链路此前已验证；**正式后端兼容修复、旧扩展负面来源拦截和正式画像持久化恢复现已完成**。完整正式采集链路仍等待常用 Chrome 加载修复版，并重新验证抖音验证码 / 403。不能把画像恢复成功描述成所有四类采集已经恢复。验收时尚未提交/合并；随后按用户要求进入 main 合入流程，见下节。未发布商店版本。
+
+## 合入与清理记录（2026-11-06）
+
+用户明确要求 commit / merge main / push / 清理。修复提交为 `8611199f`；在同一 worktree 合入 `origin/main` 的 `c9ebb052`，API 文档冲突保留双方新增章节，代码自动合并后重新验证。上文真实请求与部署验收属于各自记录的代码快照，不因 Git 合入改变已有边界。
+
+- 合并后 Ruff 与 MyPy（366 源码文件）通过；扩展完整测试 1879/1879 通过，typecheck、Chrome / Firefox 构建与各 22 项资源清单通过，两个 ZIP 完整性检查通过。首轮扩展回归因 worktree 缺少 tsc 而失败，连接既有开发依赖后重跑全套成功。
+- Python 全量合并回归命令为 `PYTHONPATH=.tmp/merge-test-deps:src python -m pytest -n 6 --dist loadfile -q --disable-warnings`，完成于 918.91 秒：12265 passed / 70 skipped / 5 failed。对 5 项失败用相同源码串行复跑，CLI 30 秒超时、聊天按钮 1 秒超时及 50 轮补货 2 秒超时三项通过（共 3 passed / 2 failed，95.50 秒）；没有修改断言或放宽超时。
+- 剩余两项在未合入本修复的 main `c9ebb052` 上对照复跑，同样 2 failed（52.01 秒）：`tests/test_desktop_web_issue_98_e2e.py::test_recommendations_and_runtime_recover_without_leaving_init_gate` 期望 30、实际 27；`tests/test_desktop_web_platform_recommendations_e2e.py::test_enabled_zero_stock_platform_survives_config_snapshot_retry` 缺少配置快照重试后的平台 Tab。这两份测试及相关 web 源码相对 main 均无差异，记录为已有基线失败，不把本轮描述成全量通过。
+- 清理前正式服务复核：health、runtime-status、profile-summary 均 HTTP 200，worker_running=true。并行全量测试期间的一次 runtime-status 20 秒超时保留为过程记录，随后独立复核 9.90 秒成功。
+- 修复版运行目录固定保留在本机 `~/Library/Application Support/OpenBiliClaw-AppReview/manual-builds/douyin-account-fix-20261106/extension`；另存 Firefox 解压产物及两份 ZIP。它们包含最新 main 的手机扫码界面改动，区别于前面真实账号测试时的归档，不伪称商店已更新。
+- 完成 Git 推送后清除本次 worktree 注册、临时测试依赖和本地修复分支；原 worktree 路径仅保留指向上述固定目录的兼容符号链接，避免已加载的 extension 路径失效。正式部署快照、配置和数据库备份保留；验收脚本与日志归档到本机原私有备份目录，不进入 Git。主工作区原有 outputs / promo / tmp 与其它 worktree 不在清理范围。
+
+本次代码交付不包含扩展商店发布，也不把仍需处理的旧扩展加载、验证码 / 403 标为已通过。

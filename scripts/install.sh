@@ -518,6 +518,8 @@ PY
         esac
     fi
     echo "Health URL:  $health_url"
+    echo "Phone:       Web / extension → 手机版 → LAN / Tailscale / public QR"
+    echo "             Phone camera opens Web; App Scan to connect imports the backend."
     echo "Setup wizard: $setup_url"
     echo "             (open in a browser to configure LLM / embedding and"
     echo "              run prerequisite checks — same guided page as the desktop app)"

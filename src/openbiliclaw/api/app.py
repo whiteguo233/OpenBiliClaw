@@ -751,6 +751,10 @@ _RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 _BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_TAILSCALE_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
 # Cover-image fetch/whitelist constants live in openbiliclaw.runtime.image_cache
 # (shared by the proxy route and the prefetch sweep). Only the disk-cache age cap
 # is referenced directly from here, by the startup cleanup call.
@@ -1075,6 +1079,21 @@ def _is_rfc1918_ipv4(addr: ipaddress.IPv4Address) -> bool:
     return any(addr in network for network in _RFC1918_NETWORKS)
 
 
+def _is_tailscale_ip(ip: str) -> bool:
+    """Recognize Tailscale's documented IPv4 and IPv6 address ranges."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr.version == net.version and addr in net for net in _TAILSCALE_NETWORKS)
+
+
+def _detect_system_tailscale_ips() -> list[str]:
+    """Find system VPN addresses without enrolling or changing Tailscale."""
+    candidates = _interface_ipv4_candidates() + _interface_ipv6_candidates()
+    return list(dict.fromkeys(ip for ip in candidates if _is_tailscale_ip(ip)))
+
+
 def _usable_lan_candidate(ip: str) -> tuple[bool, bool]:
     try:
         addr = ipaddress.ip_address(ip)
@@ -1088,6 +1107,7 @@ def _usable_lan_candidate(ip: str) -> tuple[bool, bool]:
         or addr.is_multicast
         or addr.is_unspecified
         or addr in _BENCHMARK_NETWORK
+        or _is_tailscale_ip(ip)
     ):
         return (False, False)
     return (True, _is_rfc1918_ipv4(addr))
@@ -1105,6 +1125,7 @@ def _usable_ipv6_lan_candidate(ip: str) -> tuple[bool, bool]:
         or addr.is_multicast
         or addr.is_unspecified
         or addr.ipv4_mapped is not None
+        or _is_tailscale_ip(ip)
         or not (addr.is_private or addr.is_global)
     ):
         return (False, False)
@@ -5786,7 +5807,7 @@ def create_app(
 
     @app.get("/api/qr-info")
     async def qr_info() -> JSONResponse:
-        """Lightweight endpoint for mobile QR code: LAN IP only.
+        """Fresh phone connection addresses, without any provider probe.
 
         Unlike ``/api/health``, this skips the embedding readiness probe
         so the QR drawer never blocks on a cold Ollama model load, and it
@@ -5794,7 +5815,40 @@ def create_app(
         (see ``_fresh_lan_ip``) so a scanned code is never a network change
         behind.
         """
-        return JSONResponse({"lan_ip": await _fresh_lan_ip()})
+        from openbiliclaw.runtime.tailnet_supervisor import read_tailnet_status
+
+        lan_ip, system_ips = await asyncio.gather(
+            _fresh_lan_ip(), asyncio.to_thread(_detect_system_tailscale_ips)
+        )
+        cfg = ctx.config if ctx.config is not None else config
+        api_host = str(getattr(app.state, "api_listen_host", cfg.api.host))
+        api_port = int(getattr(app.state, "api_listen_port", cfg.api.port))
+        addresses = [{"host": ip, "port": api_port, "source": "system"} for ip in system_ips]
+        if cfg.tailnet.enabled:
+            status = await asyncio.to_thread(read_tailnet_status, cfg) or {}
+            port = status.get("port")
+            ips = status.get("ips")
+            if (
+                status.get("event") == "ready"
+                and isinstance(port, int)
+                and not isinstance(port, bool)
+                and 1 <= port <= 65535
+                and isinstance(ips, list)
+            ):
+                addresses.extend(
+                    {"host": ip, "port": port, "source": "embedded"}
+                    for ip in ips
+                    if isinstance(ip, str) and _is_tailscale_ip(ip)
+                )
+        return JSONResponse(
+            {
+                "lan_ip": lan_ip,
+                "api_host": api_host,
+                "api_port": api_port,
+                "tailscale_addresses": addresses,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get(
         "/api/project-stats",

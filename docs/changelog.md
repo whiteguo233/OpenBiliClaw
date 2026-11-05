@@ -14,6 +14,16 @@
 
 - 修复 Codex OAuth（ChatGPT 订阅）在 `json_mode` 下初始化失败（#334）：Codex `/responses` 只用 `input` 消息校验 `text.format=json_object`，而偏好分析等结构化任务把「严格 JSON」写在 system/instructions，后端因此返回 HTTP 200 + SSE error（`Response input messages must contain the word 'json' ...`），偏好分片整块失败。`CodexChatGPTProvider._build_request_body()` 现在在 input 缺少大小写不敏感 `json` token 时于末尾追加 `Return valid json.` user 指令，与 OpenAI Platform Responses flavor 的既有补偿一致；追加点在尾部，system/instructions 与既有消息的缓存前缀保持字节一致。[真实链路复测](verification/2026-10-29-issue-334-codex-json-e2e.md)：单批 12 条事件 1 次调用 27.1 秒、init 同款 60 条事件 2 个分片 56.7 秒合并出 18 个兴趣；对照组只剥掉该标记即复现 issue 的 `All providers failed` 异常链。
 
+- 未发布的手机扫码改动：真实复测修复 `/m/` 丢失反代前缀的问题，API、共享资源、语言目录、封面与 WebSocket 从当前手机入口解析；配套 App 仅恢复切后台前实际运行的相机，避免失败后重复请求。合入时同时保留当前主线的发布文档与手机扫码入口，跨目录插件测试补全真实页面 URL 夹具，原认证 / 重试断言保留；本轮不发布安装包。见 [2026-11-05 复测记录](verification/2026-11-05-mobile-qr-full-e2e.md)。
+
+- 配套 App 扫码页新增右下角「选择图片」入口；[Android 模拟器截图扫码实测](verification/2026-10-30-mobile-qr-image.md) 完成局域网、系统 Tailscale 和既有对端的真实图库选图、原生识别、自动保存及 20 条真实推荐，明确同机 VPN、摄像头实拍和公网未验收范围。
+
+- 增补[仅模拟器的扫码复测](verification/2026-10-28-mobile-qr-e2e.md)：真实 Web 二维码与 LAN / 系统 Tailscale / 对端节点的业务请求逐项核验，保留相机画面裁切、设备未完成及公网地址缺失的验收边界。
+
+- 补充手机连接的[真实环境验证](verification/2026-10-27-mobile-connection-live.md)：实际监听、LAN / Tailscale 请求、真实 DOM 二维码与原生 / WebView 验收入口，并逐项保留真机权限、系统 IPv6 自连和公网未验证边界。
+
+- 手机扫码连接：桌面 Web / 插件可选择局域网、系统 Tailscale、应用内 Tailnet、公网或自定义地址；回环地址不再覆盖 LAN 探测，无可用地址时禁用二维码和复制。`/api/qr-info` 兼容新增实际监听参数与 Tailnet 地址，桌面包异常回退统一默认 `0.0.0.0`。配套原生 App 增加扫码保存 / 重连，应用内节点通过 URL 参数选择内嵌连接；二维码容量扩展到 271 字节。使用与未发布的双仓库联动边界见[手机扫码连接](mobile-connection.md)。
+
 - 与[硅基流动（SiliconFlow）](https://www.siliconflow.cn)达成技术合作：对方为项目提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估，后台任务不再占用用户自己的 API 预算。GitHub Pages 项目首页、文档站与中英文 README 同步展示「Powered by SiliconFlow」合作标识；合作不改变推荐逻辑与本地优先的数据边界，详见[技术合作伙伴](partners.md)。
 
 - README 三处镜像兼容修复：硅基流动合作 logo 先由相对路径改为 Gitee 绝对地址，再改为 GitHub Pages 绝对地址，国内镜像、Gitee 页面与 GitHub 页面均可正常加载；只改文档资源引用，不改变任何产品行为。

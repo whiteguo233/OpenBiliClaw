@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 import desktopCore from "../../src/openbiliclaw/web/desktop/assets/js/chat-agent-core.js";
 await import("../../src/openbiliclaw/web/shared/agent-chat.js");
-globalThis.location = { protocol: "http:", host: "test.local" };
+globalThis.location = new URL("http://test.local/m/");
 const mobile = await import("../../src/openbiliclaw/web/js/api.js");
 const popup = await import("../../extension/popup/popup-api.js");
 const desktopSource = readFileSync(new URL("../../src/openbiliclaw/web/desktop/assets/js/app.js", import.meta.url), "utf8");

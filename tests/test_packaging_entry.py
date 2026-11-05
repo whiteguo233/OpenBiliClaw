@@ -669,13 +669,14 @@ def test_main_recovers_apply_journal_before_seeding_or_creating_targets(
     assert not (migration_root / "apply-journal.json").exists()
 
 
+@pytest.mark.parametrize("host_line", ['host = "0.0.0.0"\n', ""])
 def test_main_uses_configured_api_host_when_env_host_unset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_line: str
 ) -> None:
     project_root = tmp_path / "userdata"
     project_root.mkdir()
     (project_root / "config.toml").write_text(
-        '[api]\nhost = "0.0.0.0"\nport = 19090\n',
+        f"[api]\n{host_line}port = 19090\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
