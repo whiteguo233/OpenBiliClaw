@@ -2294,5 +2294,162 @@
     "connections": 10,
     "encrypted_bytes": 174105,
     "real_upstream": true
+  },
+  "http-merged8b": {
+    "model": "Qwen/Qwen3-8B",
+    "requests": [
+      {
+        "name": "durable",
+        "durable_status": "completed",
+        "events": [
+          "error"
+        ],
+        "retry_events": 1,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 32.283,
+        "attempts": 4,
+        "chat_attempts": 3
+      },
+      {
+        "name": "disconnect",
+        "durable_status": "completed",
+        "events": [
+          "delta"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.643,
+        "attempts": 1,
+        "chat_attempts": 1
+      },
+      {
+        "name": "partial",
+        "durable_status": "failed",
+        "events": [
+          "delta",
+          "error"
+        ],
+        "retry_events": 0,
+        "status": "pass",
+        "replay_without_execution": true,
+        "seconds": 1.018,
+        "attempts": 1,
+        "chat_attempts": 1
+      },
+      {
+        "name": "restart_pending",
+        "status": "pass",
+        "durable_status": "completed",
+        "seconds": 1.84
+      }
+    ],
+    "frames": [
+      {
+        "id": "241d612a08d54c5cb0290f5b6493e308",
+        "job": "durable",
+        "pid": 25810,
+        "task": "llm.tools",
+        "sent": 3.663698,
+        "first_delta": null,
+        "finished": 35.767304,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "6809d72775804b968c005fdb3b83d636",
+        "job": "durable",
+        "pid": 25919,
+        "task": "llm.tools.qwen35_4b",
+        "sent": 18.74345,
+        "first_delta": null,
+        "finished": 35.767308,
+        "delta_count": 0,
+        "interrupted": true
+      },
+      {
+        "id": "681f55eda9a44af4893bc2de3a3672b0",
+        "job": "durable",
+        "pid": 25997,
+        "task": "llm.tools",
+        "sent": 33.73922,
+        "first_delta": 34.750444,
+        "finished": 35.600346,
+        "delta_count": 21,
+        "ok": true
+      },
+      {
+        "id": "be442133053f4c6cb6960007793cf1a8",
+        "job": "durable",
+        "pid": 26003,
+        "task": "llm.structured",
+        "sent": 35.65683,
+        "first_delta": null,
+        "finished": 51.032474,
+        "delta_count": 0,
+        "interrupted": true,
+        "ok": true
+      },
+      {
+        "id": "9a801addda60411aa78fa546092af952",
+        "job": "disconnect",
+        "pid": 25997,
+        "task": "llm.tools",
+        "sent": 35.803142,
+        "first_delta": 36.63328,
+        "finished": 37.318778,
+        "delta_count": 17,
+        "ok": true
+      },
+      {
+        "id": "7ae14fe250ad48828ed8df686d9c6dfe",
+        "job": "partial",
+        "pid": 25997,
+        "task": "llm.tools",
+        "sent": 37.439097,
+        "first_delta": 38.405983,
+        "finished": 38.40746,
+        "delta_count": 1,
+        "ok": false,
+        "error_code": "UPSTREAM_ERROR"
+      },
+      {
+        "id": "10ff7baeaee54bbc9fa63f3736a5dc45",
+        "job": "partial",
+        "pid": 26029,
+        "task": "llm.structured",
+        "sent": 51.086159,
+        "first_delta": null,
+        "finished": 60.976069,
+        "delta_count": 0,
+        "ok": true
+      },
+      {
+        "id": "08d2e3252f914a39b3c3b7d1918f3a21",
+        "job": "partial",
+        "pid": 26045,
+        "task": "llm.tools",
+        "sent": 61.360009,
+        "first_delta": 62.239023,
+        "finished": 63.093892,
+        "delta_count": 22,
+        "ok": true
+      },
+      {
+        "id": "3178c2b85d294fd887d2600a1b15fd6f",
+        "job": "partial",
+        "pid": 26047,
+        "task": "llm.structured",
+        "sent": 63.149088,
+        "first_delta": null,
+        "finished": 75.618661,
+        "delta_count": 0,
+        "ok": true
+      }
+    ],
+    "connections": 10,
+    "encrypted_bytes": 175442,
+    "real_upstream": true
   }
 }

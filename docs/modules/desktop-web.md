@@ -15,6 +15,15 @@
 
 共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
 
+## 手机扫码连接（2026-10-26）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 三种网络 | 「手机版」可选择局域网、系统 / 应用内 Tailscale、公网或自定义地址。 |
+| 可访问地址 | 已保存的回环地址不再覆盖局域网探测；仅监听本机时隐藏 LAN / 系统 Tailscale 二维码；没有地址时禁用复制。 |
+| 统一链接 | 相机扫码打开 `/m/`，新版原生 App「扫码连接」解析同一链接并保存后端；仅应用内节点带 `obc_connection=tailscale`。 |
+
+公开前端接口：`/shared/mobile-connection.js` 的 `OBCMobileConnection.connectionChoices()` 生成地址选项，`createPanel()` 管理选择、输入、加载与复制状态；插件随包复制同一源码。每次打开重新请求 `GET /api/qr-info`，失败或空响应不复用旧 Wi-Fi 地址。二维码本机编码，短链接用 QR v5，长链接用 v10（最多 271 UTF-8 字节），不调用第三方二维码服务。配置字段不变。使用与协议见[手机扫码连接](../mobile-connection.md)。
 
 ## 首屏静态脚本交付（2026-10-23）
 

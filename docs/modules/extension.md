@@ -14,6 +14,14 @@
 
 共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
 
+## 手机扫码入口（2026-10-26）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 局域网 / Tailscale / 公网 | 顶部「手机版」在每次打开时读取轻量 `GET /api/qr-info`，可切换网络；公网地址可从当前 HTTPS endpoint 保留或在浮层输入。 |
+| 浏览器与原生 App | 同一 HTTP(S) 二维码可打开 Mobile Web，也可由新版 App「扫码连接」导入；应用内节点携带连接方式，系统节点保留直接连接。 |
+
+公开 helper `OBCMobileConnection.connectionChoices()` / `createPanel()` 来自 `web/shared/mobile-connection.js`，构建时复制到插件 `popup/shared/`，由 popup 和 side panel 共用。无新插件权限或远程脚本。获取 Tailscale 地址用于手机扫码，不改变插件自身远程 HTTP endpoint 的权限限制。无可用地址时不画回环二维码，复制 / 打开按钮禁用。详见[手机扫码连接](../mobile-connection.md)。
 
 ## 小鱼设置请求（2026-10-23）
 

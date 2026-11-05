@@ -632,7 +632,7 @@ test("a timed-out extension mutation clears per-item busy state", async () => {
 
 test("mobile saved and config requests abort and remain retryable after a hung fetch", async () => {
   const oldLocation = (globalThis as any).location;
-  (globalThis as any).location = { protocol: "http:", host: "127.0.0.1:8420" };
+  (globalThis as any).location = new URL("http://127.0.0.1:8420/m/");
   const api = await import(`../../src/openbiliclaw/web/js/api.js?review-timeout=${Date.now()}`);
   const never = installAbortAwareNeverFetch();
   try {
@@ -720,7 +720,7 @@ test("all three saved runtimes recover and deduplicate persisted nonterminal tas
 
 test("saved sync eligibility distinguishes content limits from rolling upgrades across all surfaces", async () => {
   const oldLocation = (globalThis as any).location;
-  (globalThis as any).location = { protocol: "http:", host: "127.0.0.1:8420" };
+  (globalThis as any).location = new URL("http://127.0.0.1:8420/m/");
   const popup = await import("../popup/popup-saved-sync.js");
   const mobile = await import("../../src/openbiliclaw/web/js/views/saved.js");
   (globalThis as any).location = oldLocation;
@@ -761,7 +761,7 @@ test("saved sync eligibility distinguishes content limits from rolling upgrades 
 
 test("popup desktop and mobile expose the same truthful saved-state matrix", async () => {
   const oldLocation = (globalThis as any).location;
-  (globalThis as any).location = { protocol: "http:", host: "127.0.0.1:8420" };
+  (globalThis as any).location = new URL("http://127.0.0.1:8420/m/");
   const popup = await import("../popup/popup-saved-sync.js");
   const mobile = await import("../../src/openbiliclaw/web/js/views/saved.js");
   (globalThis as any).location = oldLocation;

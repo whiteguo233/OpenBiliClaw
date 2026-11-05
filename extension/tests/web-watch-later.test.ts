@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 test("mobile web exposes watch-later API and tab entry", async () => {
-  globalThis.location = { protocol: "http:", host: "127.0.0.1:8420" };
+  globalThis.location = new URL("http://127.0.0.1:8420/m/");
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options });

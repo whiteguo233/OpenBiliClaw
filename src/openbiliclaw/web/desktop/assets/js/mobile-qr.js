@@ -1,18 +1,17 @@
-// Mobile-web QR generator for the desktop web UI.
-// Ported from extension/popup/popup-qr.js (keep the two in sync) — a
-// dependency-free version-5 byte-mode QR encoder that renders to inline SVG.
-// Exposed as window.OBCMobileQr because the desktop web has no module build.
+// Local QR encoder; keep in sync with extension/popup/popup-qr.js.
 (() => {
-  const QR_VERSION = 5;
-  const QR_SIZE = 21 + (QR_VERSION - 1) * 4;
-  const QR_DATA_CODEWORDS = 108;
-  const QR_ECC_CODEWORDS = 26;
+  // QR L profiles match qrcode.base.rs_blocks / util.pattern_position.
+  const QR_PROFILES = [
+    { version: 5, data: 108, ecc: 26, blocks: [108], alignment: [6, 30] },
+    { version: 10, data: 274, ecc: 18, blocks: [68, 68, 69, 69], alignment: [6, 28, 50] },
+  ];
   const QR_EC_LEVEL_L = 1;
   const QR_MASK_PATTERN = 0;
   const QR_PAD_BYTES = [0xec, 0x11];
 
   const GF_EXP = new Array(512).fill(0);
   const GF_LOG = new Array(256).fill(0);
+
   {
     let x = 1;
     for (let i = 0; i < 255; i += 1) {
@@ -45,9 +44,21 @@
     );
   }
 
+  function getMobileQrViewState(endpoint = {}) {
+    const url = buildMobileWebUrl(endpoint);
+    const loopback = isLoopbackMobileHost(endpoint.host);
+    return {
+      url,
+      tone: loopback ? "warning" : "info",
+      hint: loopback
+        ? "当前后端地址是本机地址，手机通常打不开。把插件设置里的后端地址改成电脑局域网 IP，并用 --host 0.0.0.0 启动后再扫。"
+        : "手机和这台电脑连在同一个局域网时，可以直接扫码打开移动端 Web。",
+    };
+  }
+
   function createQrSvgMarkup(text, { moduleSize = 5, quietZone = 4 } = {}) {
     const matrix = createQrMatrix(String(text || ""));
-    const totalModules = QR_SIZE + quietZone * 2;
+    const totalModules = matrix.length + quietZone * 2;
     const pixelSize = totalModules * moduleSize;
     const path = matrixToPath(matrix, quietZone);
     return [
@@ -59,43 +70,48 @@
   }
 
   function createQrMatrix(text) {
-    const data = encodeDataCodewords(text);
-    const ecc = reedSolomonRemainder(data, QR_ECC_CODEWORDS);
-    const codewords = data.concat(ecc);
-    const modules = Array.from({ length: QR_SIZE }, () => new Array(QR_SIZE).fill(false));
-    const reserved = Array.from({ length: QR_SIZE }, () => new Array(QR_SIZE).fill(false));
-
-    drawFunctionPatterns(modules, reserved);
+    const bytes = Array.from(new TextEncoder().encode(text));
+    const profile = QR_PROFILES.find((item) => bytes.length * 8 + 4 + (item.version < 10 ? 8 : 16) <= item.data * 8);
+    if (!profile) throw new Error("mobile web URL is too long for QR code");
+    const data = encodeDataCodewords(bytes, profile);
+    const blocks = [];
+    const parity = [];
+    let offset = 0;
+    for (const count of profile.blocks) {
+      const block = data.slice(offset, offset + count);
+      offset += count;
+      blocks.push(block);
+      parity.push(reedSolomonRemainder(block, profile.ecc));
+    }
+    const codewords = [];
+    for (let i = 0; i < Math.max(...profile.blocks); i += 1) {
+      for (const block of blocks) if (i < block.length) codewords.push(block[i]);
+    }
+    for (let i = 0; i < profile.ecc; i += 1) for (const block of parity) codewords.push(block[i]);
+    const size = profile.version * 4 + 17;
+    const modules = Array.from({ length: size }, () => new Array(size).fill(false));
+    const reserved = Array.from({ length: size }, () => new Array(size).fill(false));
+    drawFunctionPatterns(modules, reserved, profile);
     drawCodewords(modules, reserved, codewords);
     drawFormatBits(modules, reserved);
     return modules;
   }
 
-  function encodeDataCodewords(text) {
-    const bytes = Array.from(new TextEncoder().encode(text));
-    const maxBytes = Math.floor((QR_DATA_CODEWORDS * 8 - 4 - 8) / 8);
-    if (bytes.length > maxBytes) {
-      throw new Error(`mobile web URL is too long for QR code: ${bytes.length} bytes`);
-    }
-
+  function encodeDataCodewords(bytes, profile) {
     const bits = [];
     appendBits(bits, 0b0100, 4);
-    appendBits(bits, bytes.length, 8);
+    appendBits(bits, bytes.length, profile.version < 10 ? 8 : 16);
     for (const byte of bytes) appendBits(bits, byte, 8);
-
-    const capacityBits = QR_DATA_CODEWORDS * 8;
+    const capacityBits = profile.data * 8;
     appendBits(bits, 0, Math.min(4, capacityBits - bits.length));
     while (bits.length % 8 !== 0) bits.push(0);
-
     const data = [];
     for (let i = 0; i < bits.length; i += 8) {
       let value = 0;
       for (let j = 0; j < 8; j += 1) value = (value << 1) | bits[i + j];
       data.push(value);
     }
-    for (let i = 0; data.length < QR_DATA_CODEWORDS; i += 1) {
-      data.push(QR_PAD_BYTES[i % QR_PAD_BYTES.length]);
-    }
+    for (let i = 0; data.length < profile.data; i += 1) data.push(QR_PAD_BYTES[i % QR_PAD_BYTES.length]);
     return data;
   }
 
@@ -105,22 +121,42 @@
     }
   }
 
-  function drawFunctionPatterns(modules, reserved) {
+  function drawFunctionPatterns(modules, reserved, profile) {
+    const QR_SIZE = modules.length;
     drawFinder(modules, reserved, 0, 0);
     drawFinder(modules, reserved, QR_SIZE - 7, 0);
     drawFinder(modules, reserved, 0, QR_SIZE - 7);
-    drawAlignment(modules, reserved, QR_SIZE - 7, QR_SIZE - 7);
+    const positions = profile.alignment;
+    for (let row = 0; row < positions.length; row += 1) {
+      for (let col = 0; col < positions.length; col += 1) {
+        if ((row === 0 && (col === 0 || col === positions.length - 1))
+            || (row === positions.length - 1 && col === 0)) continue;
+        drawAlignment(modules, reserved, positions[col], positions[row]);
+      }
+    }
+    if (profile.version >= 7) {
+      let remainder = profile.version;
+      for (let i = 0; i < 12; i += 1) remainder = (remainder << 1) ^ ((remainder >>> 11) * 0x1f25);
+      const bits = (profile.version << 12) | remainder;
+      for (let i = 0; i < 18; i += 1) {
+        const a = QR_SIZE - 11 + i % 3;
+        const b = Math.floor(i / 3);
+        setFunctionModule(modules, reserved, a, b, getBit(bits, i));
+        setFunctionModule(modules, reserved, b, a, getBit(bits, i));
+      }
+    }
 
     for (let i = 0; i < QR_SIZE; i += 1) {
       if (!reserved[6][i]) setFunctionModule(modules, reserved, i, 6, i % 2 === 0);
       if (!reserved[i][6]) setFunctionModule(modules, reserved, 6, i, i % 2 === 0);
     }
 
-    setFunctionModule(modules, reserved, 8, QR_VERSION * 4 + 9, true);
+    setFunctionModule(modules, reserved, 8, QR_SIZE - 8, true);
     drawFormatBits(modules, reserved);
   }
 
   function drawFinder(modules, reserved, left, top) {
+    const QR_SIZE = modules.length;
     for (let dy = -1; dy <= 7; dy += 1) {
       for (let dx = -1; dx <= 7; dx += 1) {
         const x = left + dx;
@@ -144,6 +180,7 @@
   }
 
   function drawCodewords(modules, reserved, codewords) {
+    const QR_SIZE = modules.length;
     const bits = [];
     for (const codeword of codewords) appendBits(bits, codeword, 8);
 
@@ -170,6 +207,7 @@
   }
 
   function drawFormatBits(modules, reserved) {
+    const QR_SIZE = modules.length;
     const bits = getFormatBits(QR_EC_LEVEL_L, QR_MASK_PATTERN);
     for (let i = 0; i <= 5; i += 1) setFunctionModule(modules, reserved, 8, i, getBit(bits, i));
     setFunctionModule(modules, reserved, 8, 7, getBit(bits, 6));
@@ -241,5 +279,5 @@
     return commands.join("");
   }
 
-  window.OBCMobileQr = { buildMobileWebUrl, isLoopbackMobileHost, createQrSvgMarkup };
+  window.OBCMobileQr = { buildMobileWebUrl, isLoopbackMobileHost, getMobileQrViewState, createQrSvgMarkup };
 })();

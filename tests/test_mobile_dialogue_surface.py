@@ -14,7 +14,7 @@ PROFILE_JS = Path("src/openbiliclaw/web/js/views/profile.js")
 def test_mobile_loads_shared_dialogue_renderer_before_the_module_app() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    shared = html.index('<script src="/shared/dialogue-confirmation.js"></script>')
+    shared = html.index('<script src="../shared/dialogue-confirmation.js"></script>')
     module = html.index('<script type="module" src="js/app.js"></script>')
     assert shared < module
 

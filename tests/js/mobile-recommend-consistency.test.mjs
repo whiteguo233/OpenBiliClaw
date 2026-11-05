@@ -13,7 +13,7 @@ function fn(source, name) {
 }
 
 test("request deadline covers a stalled response body", async () => {
-  globalThis.location = { protocol: "http:", host: "test.invalid" };
+  globalThis.location = new URL("http://test.invalid/m/");
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, { signal }) => ({
     ok: true,

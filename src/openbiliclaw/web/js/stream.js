@@ -4,8 +4,9 @@
  */
 
 function buildWsUrl() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/api/runtime-stream`;
+  const url = new URL("../api/runtime-stream", location.href);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  return url.href;
 }
 
 export function createStreamClient({

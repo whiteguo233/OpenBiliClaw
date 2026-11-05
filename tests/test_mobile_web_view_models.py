@@ -120,7 +120,9 @@ class TestMobileWebViewModels:
             );
             assert.deepEqual(
               getCoverImageAttrs("https://i1.hdslb.com/bfs/archive/demo.jpg"),
-              { src: "/api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fdemo.jpg" },
+              {
+                src: "../api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fdemo.jpg",
+              },
             );
             assert.equal(getCoverImageAttrs("not-a-url"), null);
         """)
@@ -655,9 +657,9 @@ class TestMobileWebViewModels:
             ], { limit: 3 });
 
             assert.deepEqual(urls, [
-              "/api/image-proxy?url=https%3A%2F%2Fi0.hdslb.com%2Fbfs%2Farchive%2Fa.jpg",
-              "/api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fb.jpg",
-              "/api/image-proxy?url=https%3A%2F%2Fsns-webpic-qc.xhscdn.com%2Fc.jpg",
+              "../api/image-proxy?url=https%3A%2F%2Fi0.hdslb.com%2Fbfs%2Farchive%2Fa.jpg",
+              "../api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fb.jpg",
+              "../api/image-proxy?url=https%3A%2F%2Fsns-webpic-qc.xhscdn.com%2Fc.jpg",
             ]);
 
             assert.deepEqual(
@@ -1509,7 +1511,7 @@ class TestMobileWebViewModels:
         _assert_js(
             dedent("""
             import assert from "node:assert/strict";
-            globalThis.location = { protocol: "http:", host: "127.0.0.1:8420" };
+            globalThis.location = new URL("http://127.0.0.1:8420/m/");
             const {
               getSavedSyncViewModel,
               normalizeSavedListItem,

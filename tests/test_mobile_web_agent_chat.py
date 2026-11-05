@@ -15,7 +15,7 @@ def test_mobile_loads_shared_agent_chat_helper_before_the_module_app() -> None:
     html = INDEX_HTML.read_text(encoding="utf-8")
 
     assert SHARED_AGENT_CHAT.exists()
-    shared = html.index('<script src="/shared/agent-chat.js"></script>')
+    shared = html.index('<script src="../shared/agent-chat.js"></script>')
     module = html.index('<script type="module" src="js/app.js"></script>')
     assert shared < module
 

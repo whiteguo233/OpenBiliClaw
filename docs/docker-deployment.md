@@ -1,5 +1,9 @@
 # Docker 部署指南
 
+## 手机扫码连接（2026-10-26）
+
+桌面 Web / 插件「手机版」支持局域网、Tailscale、公网地址。Docker 用户应选手机可达的**宿主机地址与发布端口**，容器内部网卡 IP 无法保证被手机访问：可在「公网 / 自定义访问地址」输入 `http://<宿主机 LAN IP>:<发布端口>`，或现有 HTTPS 域名。浏览器扫码打开 `/m/`，新版 Android / iOS App「扫码连接」导入同一链接。镜像仍不内置 Tailnet helper；容器内也不保证能探测宿主机系统 Tailscale 地址，需要填写宿主机的 Tailscale URL 后生成二维码。扫码不改变 Docker 端口映射、代理或密码门禁。详见[手机扫码连接](mobile-connection.md)。
+
 > 向量 GPU → CPU 自动回退仅适用于后端进程可见的 loopback Ollama 端点。Compose 默认通过 `http://ollama:11434` 访问独立容器，不自动更改其执行模式；该容器仍按部署的 GPU/CPU 配置运行。
 
 [← 返回 README](../README.md)

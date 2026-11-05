@@ -3,11 +3,12 @@
  * Mirrors extension popup-api.js but without Chrome-specific code.
  */
 
-// Derived from the page origin, so every request stays same-origin and the
+// Resolve beside the mobile entry so reverse-proxy prefixes survive scanning.
+// Every request stays same-origin and the
 // HttpOnly session cookie (and WebSocket handshake) is carried automatically
 // when the password gate is enabled. See
 // docs/plans/2026-05-30-web-password-auth-design.md §4.3.
-const BASE_URL = `${location.protocol}//${location.host}/api`;
+const BASE_URL = new URL("../api", location.href).href;
 const DEFAULT_READ_TIMEOUT_MS = 12_000;
 const QUICK_READ_TIMEOUT_MS = 5_000;
 const CONFIG_WRITE_TIMEOUT_MS = 60_000;
