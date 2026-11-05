@@ -36,6 +36,14 @@ _real_reconcile_packaged_autostart = entry._reconcile_packaged_autostart
 def _prevent_real_login_item_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Entry-point tests must never mutate the developer's real login items."""
     monkeypatch.setattr(entry, "_reconcile_packaged_autostart", lambda _config: None)
+    # main() publishes its image-service endpoint for the running backend;
+    # source-entry tests return and must not leak it into later test modules.
+    if "OPENBILICLAW_IMAGE_SERVICE_URL" in os.environ:
+        monkeypatch.setenv(
+            "OPENBILICLAW_IMAGE_SERVICE_URL", os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"]
+        )
+    else:
+        monkeypatch.setenv("OPENBILICLAW_IMAGE_SERVICE_URL", "")
 
 
 def test_reconcile_packaged_autostart_uses_shared_runtime_reconcile(

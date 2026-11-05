@@ -288,6 +288,8 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+Mac App Store candidate: Xcode sandbox host → inherited frozen backend + workers
+  → container profile; explicit SMAppService login; App Store updates
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘

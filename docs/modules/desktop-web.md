@@ -234,3 +234,7 @@ tab 栏改为按内容宽度排布并允许横向滚动。完整契约见 [多�
 首次设置 `/setup/` 的语言菜单在桌面和手机均可见，先选语言再填模型。语言写请求串行，
 保存失败可见且可重试，配置预填不能覆盖用户刚选的语言。共享 i18n 运行时也监听动态提示属性，
 并保证快速切换以最新选择为准；翻译目录下载失败后可重新请求。接口仍为 `PUT /api/config {language}`。
+
+## Store backend updates
+
+Implemented: the existing `renderUpdateStatus()` handles `install_mode=mac_app_store` with a Mac App Store update message and disabled source-update actions. No download link to a GitHub installer appears. Mobile Web has no update-management panel; its QR/API connection contract is unchanged.

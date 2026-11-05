@@ -1060,3 +1060,7 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新
 `language` 再切一次。`bg` / 通知里的用户可见文案随 `/i18n/ui` 目录一起覆盖。完整契约见
 [多语言模块](i18n.md)。
+
+## Mac App Store backend status
+
+Implemented: `renderBackendUpdateStatus()` disables source-update controls for `mac_app_store` and tells the user to update through Mac App Store; `app_store_managed` is localized. Existing QR targets and extension installation channels remain unchanged. Manual validation: connect to the sandboxed backend, open settings, verify the App Store hint and absence of a source apply/installer download action.

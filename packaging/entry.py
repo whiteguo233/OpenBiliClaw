@@ -48,6 +48,7 @@ from openbiliclaw.proc import (
     backend_config_generation,
 )
 from openbiliclaw.recommendation_runtime import ensure_recommendation_transport_env
+from openbiliclaw.runtime.distribution import is_mac_app_store, store_profile_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -84,6 +85,8 @@ def _user_data_root() -> Path:
     Kept independent of the (upgrade-overwritten, uninstall-removed) install
     directory. See :func:`_user_data_root_for` for the per-OS mapping.
     """
+    if is_mac_app_store():
+        return store_profile_root(Path.home(), os.environ)
     return _user_data_root_for(os.name, sys.platform, Path.home(), os.environ)
 
 
@@ -217,6 +220,8 @@ def _resolve_runtime_paths() -> tuple[Path, Path]:
     exe_dir = Path(sys.executable).resolve().parent
     if _is_macos_app_bundle(exe_dir):
         bundled_resources = exe_dir.parent / "Resources"
+        if is_mac_app_store():
+            return _user_data_root(), bundled_resources
         return (Path(override) if override else _user_data_root()), bundled_resources
 
     # onedir layout (Windows): the install dir is overwritten on upgrade and may
@@ -364,7 +369,7 @@ def _inject_bundled_ollama_on_path(bundled_resources: Path) -> bool:
     ollama = _bundled_ollama_path(bundled_resources)
     if ollama is None:
         return False
-    if os.name != "nt":
+    if os.name != "nt" and not is_mac_app_store():
         with suppress(Exception):
             os.chmod(ollama, 0o755)  # zip/copy roundtrips can drop the +x bit
     bin_dir = str(ollama.parent)
@@ -638,6 +643,10 @@ def _redirect_output_to_logfile(project_root: Path) -> Path | None:
     ``logs/desktop.log`` so nothing crashes and the tray's "view logs" entry has
     live output to show. No-op when not frozen (dev keeps its console).
     """
+    if is_mac_app_store() and os.environ.get("OPENBILICLAW_STORE_QA_STDIO") == "1":
+        sys.stdout = os.fdopen(os.dup(1), "w", buffering=1, encoding="utf-8", errors="replace")
+        sys.stderr = sys.stdout
+        return None
     if not getattr(sys, "frozen", False):
         return None
     log_dir = project_root / "logs"
@@ -686,7 +695,7 @@ def _notify_starting() -> None:
     notification instead so the launch isn't silent. Best-effort and fire-and-
     forget; never blocks or raises.
     """
-    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
+    if is_mac_app_store() or not getattr(sys, "frozen", False) or sys.platform != "darwin":
         return
     with suppress(Exception):
         subprocess.Popen(  # noqa: S603
@@ -835,7 +844,7 @@ def _should_use_tray() -> bool:
     uvicorn in the background and the tray in the foreground. Other platforms
     (and dev runs) keep the simple foreground server.
     """
-    if not getattr(sys, "frozen", False):
+    if is_mac_app_store() or not getattr(sys, "frozen", False):
         return False
     if os.name != "nt" and sys.platform != "darwin":
         return False
@@ -1153,13 +1162,14 @@ def main() -> None:
     # New packaged builds share the same data root as one-line / AI installs.
     # If a previous packaged build used the old OS-specific app-data root, copy
     # its data into the unified root before seeding any defaults.
-    _copy_legacy_packaged_user_data(_legacy_packaged_user_data_root(), project_root)
+    if not is_mac_app_store():
+        _copy_legacy_packaged_user_data(_legacy_packaged_user_data_root(), project_root)
     # Very old Windows onedir builds: relocate any user data left in the install
     # dir into the per-user root, BEFORE we create fresh data/ (a whole-dir move
     # must not land inside a freshly-made empty dir). Source launches also use
     # the repository root as ``bundled_resources``; never treat its ignored
     # config/data as legacy packaged data when a selftest overrides the profile.
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) and not is_mac_app_store():
         _migrate_legacy_install_dir_data(bundled_resources, project_root)
 
     # Ensure data & log directories exist
@@ -1177,10 +1187,22 @@ def main() -> None:
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")
+        if is_mac_app_store():
+            from openbiliclaw.runtime.ollama_supervisor import pick_free_port
+
+            _set_embedding_field(
+                project_root / "config.toml", "base_url", f"http://127.0.0.1:{pick_free_port()}/v1"
+            )
     repair_result = _repair_unloadable_config(project_root, bundled_resources)
     if repair_result.regenerated_default and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")
+        if is_mac_app_store():
+            from openbiliclaw.runtime.ollama_supervisor import pick_free_port
+
+            _set_embedding_field(
+                project_root / "config.toml", "base_url", f"http://127.0.0.1:{pick_free_port()}/v1"
+            )
 
     # The packaged app bypasses `openbiliclaw start`, so set up the same
     # structured, rotated, UTF-8 `openbiliclaw.log` the CLI gets — otherwise the
@@ -1308,7 +1330,26 @@ def main() -> None:
     # with-embedding variant: seed the baked bge-m3 and bring up a private
     # Ollama for it BEFORE any other Ollama start. On success the default
     # preflight + online pull are superseded (embedding is already ready).
-    if not _seed_bundled_embedding_model(bundled_resources, project_root / "config.toml"):
+    if is_mac_app_store() and has_bundled_ollama and runtime_config is not None:
+        # Store builds own a private daemon with container-local model storage.
+        # Model downloads remain an explicit action in the existing setup UI.
+        from urllib.parse import urlparse
+
+        from openbiliclaw.runtime.distribution import store_ollama_endpoint
+        from openbiliclaw.runtime.ollama_supervisor import (
+            is_loopback,
+            ollama_required,
+            start_managed_ollama_at,
+            stop_managed_ollama,
+        )
+
+        endpoint = store_ollama_endpoint(runtime_config)
+        if ollama_required(runtime_config) and is_loopback(endpoint):
+            parsed = urlparse(endpoint)
+            # Also cover startup failures before the server's finally block.
+            atexit.register(stop_managed_ollama)
+            start_managed_ollama_at(str(project_root / "data" / "ollama-models"), parsed.netloc)
+    elif not _seed_bundled_embedding_model(bundled_resources, project_root / "config.toml"):
         # Packaged entry bypasses ``openbiliclaw start``, so run the same loopback
         # Ollama preflight here to bring up the (bundled) daemon when needed.
         _packaged_ollama_preflight()
@@ -1328,13 +1369,14 @@ def main() -> None:
     # the wizard instead of relying on /web's onboarding gate alone. When bound
     # to all interfaces, loopback is the address a local browser can hit.
     browser_host = "127.0.0.1" if host == "0.0.0.0" else host  # noqa: S104
-    threading.Thread(
-        target=_open_landing_page_when_ready,
-        args=(f"http://{browser_host}:{port}",),
-        kwargs={"seeded": seeded, "repaired": repair_result.repaired},
-        name="obc-open-landing",
-        daemon=True,
-    ).start()
+    if not is_mac_app_store():
+        threading.Thread(
+            target=_open_landing_page_when_ready,
+            args=(f"http://{browser_host}:{port}",),
+            kwargs={"seeded": seeded, "repaired": repair_result.repaired},
+            name="obc-open-landing",
+            daemon=True,
+        ).start()
 
     # Start the server.  The desktop package now defaults to the four-process
     # backend layout: full worker + discovery worker + recommendation server +
@@ -1365,6 +1407,16 @@ def main() -> None:
     )
 
     listener_sockets = create_wildcard_listener_sockets(host, port)
+    store_runtime_file = None
+    if is_mac_app_store():
+        from openbiliclaw.runtime.distribution import start_store_parent_watchdog
+
+        store_runtime_file = project_root / "store-runtime.json"
+        store_runtime_file.write_text(
+            json.dumps({"pid": os.getpid(), "host": host, "port": port}), encoding="utf-8"
+        )
+        store_runtime_file.chmod(0o600)
+        start_store_parent_watchdog(lambda: setattr(server, "should_exit", True))
     tailnet_supervisor = _start_packaged_tailnet(runtime_config, host, port)
 
     children: list[ManagedChild] = []
@@ -1434,11 +1486,20 @@ def main() -> None:
         child_supervisor.stop()
         if tailnet_supervisor is not None:
             tailnet_supervisor.stop()
+        if store_runtime_file is not None:
+            from openbiliclaw.runtime.ollama_supervisor import stop_managed_ollama
+
+            stop_managed_ollama()
+            store_runtime_file.unlink(missing_ok=True)
         close_listener_sockets(listener_sockets)
         migration_guard.release()
 
 
 if __name__ == "__main__":
+    if is_mac_app_store():
+        from openbiliclaw.runtime.distribution import prepare_store_python
+
+        prepare_store_python()
     # Installer coordination: hold the AppMutex for the whole process lifetime
     # (parent and --openbiliclaw-worker children alike — both are the packaged
     # exe whose files Setup/Uninstall overwrite/delete). Never closed; Windows

@@ -963,3 +963,7 @@ as configured, not calibrated: only the user's real calibration record can justi
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+
+## Mac App Store 发行通道
+
+商店版通过独立原生宿主和 App Sandbox 容器运行，不使用本指南的脚本/AI 安装、pip 更新或 LaunchAgent。现有 AI 安装输出与默认 `0.0.0.0` 监听保持不变；新增商店通道的构建与数据迁移边界见 [Mac App Store](mac-app-store.md)。尚未上架，不要引导用户搜索一个已发布的商店版本。

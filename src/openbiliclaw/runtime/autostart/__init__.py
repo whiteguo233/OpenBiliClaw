@@ -6,6 +6,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from openbiliclaw import docker_runtime
+from openbiliclaw.runtime.distribution import is_mac_app_store
 
 from .base import AutostartManager, AutostartStatus
 
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
 
 
 def _unsupported_reason() -> str:
+    if is_mac_app_store():
+        return "managed_by_store_app"
     if docker_runtime.is_running_in_container():
         return "unsupported_docker_runtime"
     return "unsupported_platform"
@@ -21,7 +24,7 @@ def _unsupported_reason() -> str:
 
 def get_manager() -> AutostartManager | None:
     """Return the current platform manager, or ``None`` when unsupported."""
-    if docker_runtime.is_running_in_container():
+    if is_mac_app_store() or docker_runtime.is_running_in_container():
         return None
 
     try:

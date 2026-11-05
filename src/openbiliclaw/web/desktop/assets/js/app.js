@@ -12896,6 +12896,7 @@ ${cardFeedbackBarHtml()}`;
       const isGitInstall = mode === "git";
       const isFrozenInstall = mode === "frozen";
       const isDockerInstall = mode === "docker";
+      const isStoreInstall = mode === "mac_app_store";
       const isDesktopInstallerUpdate = String(backend.latest_tag || "").startsWith("desktop-v");
       const unsupportedInstall = !isGitInstall;
       const toggle = $("#autoUpdate");
@@ -12904,7 +12905,10 @@ ${cardFeedbackBarHtml()}`;
       // frozen / docker check-reminders run unconditionally on the backend side.
       if (toggle) toggle.disabled = unsupportedInstall;
       if (interval) interval.disabled = unsupportedInstall;
-      if (isFrozenInstall || isDesktopInstallerUpdate) {
+      if (isStoreInstall) {
+        line.dataset.tone = "";
+        line.textContent = "此版本通过 Mac App Store 更新。请在 App Store 中检查更新。";
+      } else if (isFrozenInstall || isDesktopInstallerUpdate) {
         const { text, tone } = describeFrozenUpdateStatus(backend);
         line.dataset.tone = tone;
         line.textContent = text;
