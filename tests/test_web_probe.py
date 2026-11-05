@@ -467,6 +467,31 @@ async def test_probe_rejects_cross_origin_redirect_without_following_it() -> Non
 
 
 @pytest.mark.asyncio
+async def test_probe_reports_unavailable_robots_without_leaking_transport_error() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        raise httpx.ConnectError("private proxy TOKEN=top-secret", request=request)
+
+    result = await probe_public_web_url(
+        "https://news.example.com/feed.xml",
+        transport_factory=partial(
+            SafeWebTransport,
+            transport=httpx.MockTransport(handler),
+            resolver=_public_resolver,
+        ),
+    )
+
+    assert result.status == "no_match"
+    assert result.candidates == ()
+    assert requests == ["https://news.example.com/robots.txt"]
+    assert "robots.txt" in result.detail
+    assert "top-secret" not in result.detail
+    assert "private proxy" not in result.detail
+
+
+@pytest.mark.asyncio
 async def test_probe_no_match_error_is_sanitized() -> None:
     secret_body = "TOKEN=top-secret internal=10.0.0.8"
 

@@ -38,7 +38,9 @@ _STEPS = (
 _OPTIONS = (
     {"设为默认浏览器", "Set as default browser"},
     {"添加到程序坞", "Add to Dock"},
-    {"分享崩溃报告", "Share crash reports"},
+    # Official 0.6.2.7's final page uses the third label below. Both observed
+    # variants must be switched off before finishing; unknown options still stop.
+    {"分享崩溃报告", "Share crash reports", "加入用户体验计划"},
 )
 
 # Read only setup controls. In particular, never inspect import profile names,

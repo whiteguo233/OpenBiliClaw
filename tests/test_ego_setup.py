@@ -127,10 +127,11 @@ def test_known_onboarding_controls_skip_optional_collection(heading, buttons, ex
     assert onboarding_action(snapshot(heading, buttons))["button"] == expected
 
 
-def test_finish_requires_exact_three_options_unchecked_before_click():
+@pytest.mark.parametrize("telemetry_label", ["分享崩溃报告", "加入用户体验计划"])
+def test_finish_requires_exact_three_options_unchecked_before_click(telemetry_label):
     boxes = [
         {"label": label, "checked": True}
-        for label in ["设为默认浏览器", "添加到程序坞", "分享崩溃报告"]
+        for label in ["设为默认浏览器", "添加到程序坞", telemetry_label]
     ]
     state = snapshot("一切就绪", ["打开 ego(lite)"], boxes)
     for box in boxes:

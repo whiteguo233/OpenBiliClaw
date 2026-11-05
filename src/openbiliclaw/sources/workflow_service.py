@@ -244,6 +244,12 @@ Use path_selector, parent_path_selector, ancestor_selectors and child_links to
 choose the observed content container and its relative link selector. Only use
 class_selector as actual tag/class evidence, including on elements whose primary
 selector is a unique ID. Prefer reusable observed classes over per-item IDs.
+Sampled rows may include child_fields: bounded descendant text with selectors
+relative to that row and reusable class evidence. Use these to distinguish the
+actual article title from summary, author and date. Prefer the observed title
+field over a card-wide link or wrapper whose text combines several fields;
+never put an entire card's mixed text into the title when a separate title is
+observed. Select summary and author separately, leaving absent fields empty.
 User exclusions are mandatory: inspect the observed rows AND their child links
 for the classes/structure distinguishing unwanted samples. A row-level exclusion
 alone does not exclude a highlighted child link. Check the proposed selector

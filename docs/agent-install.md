@@ -969,7 +969,9 @@ openbiliclaw sources prepare-ego  # explicit preparation / retry
 The manager uses the [official Ego Lite distribution](https://lite.ego.app/download),
 checks the app signature and identity, and drives only the known onboarding page through
 a temporary loopback CDP endpoint. It skips browser-data import and disables the default
-browser, Dock and crash-report options. It restarts the owned host without that debugging
+browser, Dock and crash-report options (including the observed 0.6.2.7 Chinese replacement,
+“加入用户体验计划”). All three known options must be unchecked before finishing; unknown
+or duplicate options still stop preparation. It restarts the owned host without that debugging
 port before native discovery. It does not sign in to websites or import the user's daily
 browser profile. Unknown setup screens or trust failures stop preparation with an error.
 

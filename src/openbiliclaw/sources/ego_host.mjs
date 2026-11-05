@@ -68,6 +68,15 @@ export async function start(config) {
         diagnostic.unsupported_embedded_pages++;
         await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid);return;
       }
+      if(!config.interactive && ['Image','Media','Font'].includes(resourceType)) {
+        // Discovery reads DOM text and links; passive assets can exhaust the
+        // transfer budget without contributing content. Preserve observed CDN
+        // authorization so a later interactive login can render its full page.
+        if(!responseStatusCode && !await approve({url,method:request.method,document:false,redirect:false})) {
+          noteBlock(url,false,'origin_or_network_blocked');
+        }
+        await rpc('Fetch.failRequest',{requestId,errorReason:'BlockedByClient'},sid);return;
+      }
       const isRedirect=responseStatusCode>=300 && responseStatusCode<400;
       const location=isRedirect ? (responseHeaders||[]).find(x=>x.name.toLowerCase()==='location')?.value : '';
       if(location) url=new URL(location,url).href;

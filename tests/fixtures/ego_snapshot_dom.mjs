@@ -98,4 +98,24 @@ const long=vm.runInNewContext('('+SNAPSHOT_JS+')()',
 assert(long.elements.some(x=>x.selector==='#topic_39'),'observe topics after a long header');
 assert(long.elements.some(x=>x.selector==='#topic_0'));
 assert(long.elements.length<=100,'retain the observation bound');
+
+// Card links may wrap title, summary and byline. A long page header must not
+// crowd the small field evidence out of the authoring observation as well.
+const title=element('P',['card-title']),summary=element('P',['card-summary']);
+title.innerText='Actual article title';summary.innerText='A separate real summary';
+const metadata=Array.from({length:12},(_,i)=>{const e=element('SPAN',['metadata']);e.innerText='Metadata '+i;return e;});
+const secret=element('INPUT');secret.innerText='do-not-publish-input';
+for(const e of [title,summary,secret,...metadata])e.parentElement=rows[0];
+rows[0].querySelectorAll=s=>s==='a[href]'?rows[0].children:[title,summary,secret,...metadata];
+const cards=vm.runInNewContext('('+SNAPSHOT_JS+')()',
+  {document,URL,location:{href:'https://forum.example/'},CSS:{escape:x=>x},getComputedStyle:()=>({visibility:'visible'})});
+const card=cards.elements.find(e=>e.selector==='#row_0');
+assert.equal(card.child_fields[0].selector,'p.card-title');
+assert.equal(card.child_fields[0].class_selector,'p.card-title');
+assert.equal(card.child_fields[0].text,'Actual article title');
+assert.equal(card.child_fields[1].text,'A separate real summary');
+assert.equal(card.child_fields.length,8,'per-card metadata remains bounded');
+assert(!JSON.stringify(cards).includes('do-not-publish-input'),'never read credential controls as metadata');
+assert(cards.elements.length<=100,'field evidence must not displace sampled rows');
+assert(cards.elements.filter(e=>e.child_fields.length).length<=16);
 console.log('snapshot classes preserved');

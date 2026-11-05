@@ -94,6 +94,12 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       selector:path(a,e),class_selector:classSelector(a),href:safeUrl(a.href),
       href_attribute_prefix:hrefPrefix(a),href_query_checks:hrefQueryChecks(a),text:text(a).slice(0,120)
     })).filter(a=>a.selector);
+    // A card-wide link mixes title, summary and byline. Keep bounded field
+    // evidence beside sampled rows even when headers fill the flat list.
+    const fieldTags=['H1','H2','H3','H4','H5','H6','P','SPAN','TIME'];
+    const childFields=samples.includes(e)?[...e.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,time')]
+      .slice(0,80).filter(f=>fieldTags.includes(f.tagName) && visible(f) && text(f)).slice(0,8)
+      .map(f=>({selector:path(f,e)||selector(f),class_selector:classSelector(f),text:text(f)})):[];
     return {tag:e.tagName.toLowerCase(),selector:selector(e),class_selector:classSelector(e),path_selector:path(e),
       text:text(e),href:e.tagName==='A'?safeUrl(e.href):'',
       href_attribute_prefix:e.tagName==='A'?hrefPrefix(e):'',type:e.getAttribute('type')||'',
@@ -104,7 +110,7 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
       ancestor_selectors:ancestors,
       previous_sibling_selector:selector(e.previousElementSibling),
       next_sibling_selector:selector(e.nextElementSibling),
-      child_selectors:[...e.children].slice(0,6).map(selector),child_links:childLinks};
+      child_selectors:[...e.children].slice(0,6).map(selector),child_links:childLinks,child_fields:childFields};
   });
   return {url:safeUrl(location.href),url_matches_entry:matchesEntry(),
     entry_url_comparison:compareEntry(),requested_link_patterns:patterns,

@@ -33,6 +33,10 @@ Feed 可以直接提交订阅地址，也可从网页中已观察到的 alternat
 专用平台域仅在明确解析并成功试跑 Feed 后可建为自定义订阅；平台 HTML 仍用原生适配器，
 不会继承平台凭据。旧匿名 recipe 的默认专用域拒绝规则保留。
 
+聚合 Feed 若同时涉及超过 8 个文章 origin，当前不能完整接入；重新确认同一大范围
+不会提高上限。应使用站点提供的较窄订阅或分别添加原博客 Feed，不能把部分样例
+可读当作整源试跑成功。Planet Python 的真实范围阻断见[多站验收记录](../testing/2026-11-06-multisite-real-e2e.md)。
+
 动态工具为 `prepare_discovery_source`（建立持久草稿并试跑）和
 `trial_discovery_source`（继续试跑），两者是 `soft_write`；
 `activate_discovery_source`（启用）与 `manage_discovery_source`（修改来源配置）为
@@ -214,6 +218,7 @@ probe 固定按以下顺序收集最多 4 个方案、每个最多 3 条内容�
 exact-origin、逐跳公共 DNS、socket pin、MIME、响应体和 parser 上限。跨 origin redirect 不会被
 自动加入权限，Cookie、Authorization、环境代理、LLM、JavaScript 与浏览器登录态都不参与。
 错误只返回稳定、截断的安全说明，不回传上游 body、解析地址或其它诊断秘密。
+读取 robots.txt 失败时明确报告该前置检查不可用，与站点明确禁止访问分开；仍不继续抓取订阅或绕过 robots 策略。
 API 进程最多同时执行 2 个 probe；容量已满时立即返回 429 `web_probe_busy` 与
 `Retry-After: 1`，不建立无界等待队列。其它安全取数失败收敛为 200 + `no_match`；只有输入契约
 错误返回 422。桌面 Web 与 Popup 都用 65 秒客户端 deadline，覆盖后端配置允许的最高 60 秒
@@ -463,7 +468,7 @@ Web status 的 `state="no_auth"` / `logged_in=true` 是旧客户端的“无需�
 | `SafeWebTransport(...).fetch(url, *, expected=..., ...)` | 执行匿名有界读取，返回 `WebFetchArtifact`；安全失败统一为不含 body 的 `WebFetchError` |
 | `parse_web_feed(...)` / `parse_sitemap(...)` / `parse_html_listing(...)` / `parse_html_detail(...)` | 对已取得的有界 bytes 做确定性解析；解析或 schema 边界失败为 `WebParseError` |
 | `infer_html_listing_plan(...)` | 从已取得的 HTML 保守推断一个可由正式 listing parser 重放的 selector plan；导航 chrome 与不可靠单链接结构返回 `None` |
-| `probe_public_web_url(url, ...)` | 在 exact-origin 安全传输和共享 deadline 内生成有界、compiler-ready 的 recipe 草稿；只读且不持久化 |
+| `probe_public_web_url(url, ...)` | 在 exact-origin 安全传输和共享 deadline 内生成有界、compiler-ready 的 recipe 草稿；只读且不持久化，区分 robots 拒绝与 robots.txt 读取失败 |
 | `WebSourceAdapter.fetch_result(recipe, profile, limit=20, *, state=None)` | 执行一条 formal recipe，返回含 status、scope completeness、validator/cursor 候选值与 items 的 `SourceFetchResult` |
 | `WebDiscoveryProducer.produce_if_due(*, limit=None, force=False)` | 后台 claim / lease / seen / candidate handoff 入口；`force` 只绕过 cadence，不绕过 recipe 开关、权限或 lease fencing |
 | `web_source_status(database, *, enabled)` | 读本地 Web 账本的 runtime 摘要，不出网；对外 HTTP status 仍以 `/api/sources/status` 的能力矩阵与 `discovery_state` 为准 |

@@ -321,6 +321,9 @@ def _safe_page_title(
 def _fetch_failure_detail(exc: WebFetchError) -> str:
     messages = {
         "robots_denied": "The site's robots policy does not allow this public probe.",
+        "robots_unavailable": (
+            "The site's robots.txt could not be read, so the public probe could not proceed."
+        ),
         "rate_limited": "The site rate-limited this public probe; try again later.",
         "access_denied": "The site denied anonymous access to this URL.",
         "timeout": "The public URL probe timed out.",
