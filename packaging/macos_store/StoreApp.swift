@@ -68,7 +68,7 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if !arguments.contains("--headless") { showWindow() }
             if arguments.contains("--qa-ui-state"), argument("--qa-profile") != nil {
-                Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+                Timer.scheduledTimer(withTimeInterval: 6, repeats: true) { [weak self] _ in
                     guard let self = self, let view = self.window.contentView else { return }
                     view.layoutSubtreeIfNeeded()
                     let buttons: [NSButton] = [self.openButton, self.serviceButton, self.loginButton]
@@ -224,8 +224,14 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let bytes = try? Data(contentsOf: path),
               let state = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
               state["pid"] as? Int32 == child.processIdentifier,
-              let port = state["port"] as? Int, (1...65535).contains(port),
-              let url = URL(string: "http://127.0.0.1:\(port)") else { return }
+              let port = state["port"] as? Int, (1...65535).contains(port) else { return }
+        let host = state["host"] as? String ?? "0.0.0.0"
+        var address = URLComponents()
+        address.scheme = "http"
+        let localHost = host == "0.0.0.0" ? "127.0.0.1" : (host == "::" ? "::1" : host)
+        address.host = localHost.contains(":") && !localHost.hasPrefix("[") ? "[\(localHost)]" : localHost
+        address.port = port
+        guard let url = address.url else { return }
         var request = URLRequest(url: url.appendingPathComponent("api/ping"))
         request.timeoutInterval = 2
         URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in

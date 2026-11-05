@@ -1335,15 +1335,15 @@ def main() -> None:
         # Model downloads remain an explicit action in the existing setup UI.
         from urllib.parse import urlparse
 
+        from openbiliclaw.runtime.distribution import store_ollama_endpoint
         from openbiliclaw.runtime.ollama_supervisor import (
-            effective_ollama_endpoint,
             is_loopback,
             ollama_required,
             start_managed_ollama_at,
             stop_managed_ollama,
         )
 
-        endpoint = effective_ollama_endpoint(runtime_config)
+        endpoint = store_ollama_endpoint(runtime_config)
         if ollama_required(runtime_config) and is_loopback(endpoint):
             parsed = urlparse(endpoint)
             # Also cover startup failures before the server's finally block.

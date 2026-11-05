@@ -140,3 +140,32 @@ def test_store_static_mime_types_do_not_read_system_configuration(monkeypatch):
     assert mimetypes.guess_type("index.html")[0] == "text/html"
     assert mimetypes.guess_type("app.js")[0] in ("text/javascript", "application/javascript")
     assert mimetypes.guess_type("icon.svg")[0] == "image/svg+xml"
+
+
+def test_store_keeps_private_embedding_daemon_when_ollama_chat_is_configured():
+    from openbiliclaw.config import Config
+    from openbiliclaw.runtime.distribution import store_ollama_endpoint
+
+    config = Config()
+    config.llm.embedding.provider = "ollama"
+    config.llm.embedding.base_url = "http://127.0.0.1:18599/v1/"
+    config.llm.ollama.base_url = "http://127.0.0.1:11434/v1"
+    config.llm.ollama.model = "qwen2.5:0.5b"
+    config.llm.default_provider = "ollama"
+    from openbiliclaw.runtime.ollama_supervisor import effective_ollama_endpoint
+
+    assert effective_ollama_endpoint(config) == "http://127.0.0.1:11434"
+    assert store_ollama_endpoint(config) == "http://127.0.0.1:18599"
+
+
+def test_store_remote_embedding_preserves_chat_daemon_selection():
+    from openbiliclaw.config import Config
+    from openbiliclaw.runtime.distribution import store_ollama_endpoint
+
+    config = Config()
+    config.llm.embedding.provider = "ollama"
+    config.llm.embedding.base_url = "https://models.example.com/v1"
+    config.llm.ollama.base_url = "http://127.0.0.1:11434/v1"
+    config.llm.ollama.model = "qwen2.5:0.5b"
+    config.llm.default_provider = "ollama"
+    assert store_ollama_endpoint(config) == "http://127.0.0.1:11434"

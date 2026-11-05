@@ -97,7 +97,9 @@ def main():
         with transcript.open("w") as log:
             for line in proc.stdout:
                 if line.startswith("OBC_QA_UI_STATE="):
-                    (args.output / "ui-state.json").write_text(line.split("=", 1)[1])
+                    pending = args.output / "ui-state.json.tmp"
+                    pending.write_text(line.split("=", 1)[1])
+                    pending.replace(args.output / "ui-state.json")
                 else:
                     log.write(line)
                     log.flush()
@@ -223,6 +225,14 @@ def main():
                     flush=True,
                 )
             remember_children()
+
+        # Warm machines can finish the HTTP probes before AppKit's six-second
+        # layout timer fires. Preserve that evidence before killing the host.
+        def native_ready():
+            path = args.output / "ui-state.json"
+            return path.is_file() and json.loads(path.read_text())["controls"][0]["enabled"]
+
+        wait_for(native_ready, timeout=30)
         if args.crash_host:
             proc.kill()
         print("waiting for native host quit and owned service cleanup", flush=True)

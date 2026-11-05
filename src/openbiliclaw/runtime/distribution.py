@@ -10,6 +10,28 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from openbiliclaw.config import Config
+
+
+def store_ollama_endpoint(config: Config) -> str:
+    """Keep the store's private embedding daemon independent of chat routing.
+
+    The shared supervisor prefers the legacy chat endpoint when Ollama chat is
+    enabled. Store profiles have their own embedding port, which must still be
+    started after a chat-provider change and subsequent application restart.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    from openbiliclaw.runtime.ollama_supervisor import effective_ollama_endpoint, is_loopback
+
+    embedding = config.llm.embedding
+    base = embedding.base_url.strip()
+    if embedding.provider.strip().lower() == "ollama" and base and is_loopback(base):
+        parsed = urlsplit(base)
+        path = parsed.path.rstrip("/").removesuffix("/v1")
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
+    return effective_ollama_endpoint(config)
+
 
 def is_mac_app_store() -> bool:
     """Identify the immutable store payload, including re-executed workers."""

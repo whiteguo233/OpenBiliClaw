@@ -6,6 +6,8 @@
 
 - 新增独立的 [Mac App Store 后端候选构建](mac-app-store.md)：Xcode 原生宿主、继承沙盒的冻结后端与内置服务、容器数据、显式登录启动和商店更新边界；保留原 DMG。真实签名沙盒请求发现并修复 Uvicorn 信号重放绕过子进程清理的问题。尚未提交 Apple 审核。
 
+- Mac App Store 候选续验：修复配置独立 Ollama 对话模型后重启丢失内置 embedding 服务、原生就绪探测忽略 IPv6 绑定的问题；双启动真实请求验证通过，arm64 CI 增加同一路径，并在退出测试前等待实际原生按钮启用。记录实际 GPL/LGPL 依赖的商店分发许可待核对项，不将 QA 包作为已可提交的发行包。
+
 - 修复画像把「账号导入」读成「用户行为」的根因（假时间 + 存量当行为）：B 站三条账号同步路径补齐真实时间——`get_following` 解析 `/x/relation/followings` 的 `mtime`，历史 `view_at`、收藏 `fav_time` 镜像进 canonical `metadata.timestamp`，CLI guided init 采集同样保留；首次同步给事件标 `snapshot`。本机账本实测 89,866 条观看只落在 950 个 `created_at` 秒、2,429 条关注只落在 93 个秒，正是「同一秒关注四十多人」的来源。新增 `soul/event_provenance.py` 在 prompt 边界统一投影：`created_at` 不再进入模型（只认 `metadata.timestamp`），存量关注聚合成一行「导入存量：关注了 N 位创作者（时间区间）」，无时间事件标 `time_quality=ingest`。偏好 / 觉察 / 灵魂画像 / 洞察四条 prompt 同步加规则：不得用库存推断外向、EI 只认用户自己的表达、MBTI 不得当 insight 证据；`ProfileBuilder` 对 MBTI 输出做 pole 校验、type 与维度一致性重算，任一维度 strength < 0.60 时把 confidence 压到 0.55。偏好 / 觉察两条 prompt 的用户消息渲染 golden 随之重新采样，并在测试里注明是显式的契约变更。
 
 - 平台时间审计与来源修复：读取侧统一认交互时间私有键（`INTERACTION_TIME_KEYS`，含 `watched_at` / `interaction_time` / `starred_at` 等），并在 prompt 投影里把它们提升为 canonical `timestamp`；`published_at` / `pubtime` / `created_at` 永不当作行为时间。审计结论：有真实交互时间的是 B 站（历史/收藏/关注）、YouTube Takeout、linux.do / 微博 / 知乎、GitHub；小红书 / 抖音 / TikTok / Instagram / Reddit / V2EX / X 只能拿到内容发布时间，按「时间未知」处理。新增「用工具≠口味」门（`soul/meta_usage.py`）：对话在讲本产品时，运维式候选兴趣直接丢弃，同轮的真实口味保留，settles 不受影响；同一判定接入事件侧偏好分析（对话轮次以 `dialogue` 事件入库，会二次造出「系统配置与测试」）。真实 rebuild 产出的 162 个兴趣里，该过滤拦下 14 个复合运维话题，同时保留「软件测试」。新增 `openbiliclaw profile-repair-provenance`（默认 dry-run）：剥掉 insight 里把 MBTI 当证据的条目、用真实交互时间校验觉察笔记的时序断言（只隔离证实为假的）、归档对话来源的产品运维兴趣与避雷；实测 dry-run 命中 3 条 MBTI 证据、9 个运维兴趣、1 个避雷主题，另有 5 个单词级话题留待人工确认。对话洞察 prompt 的新规则让字节基线同步重采一次，并在测试里注明是有意的契约变更。

@@ -46,6 +46,11 @@ jobs:
           python packaging/macos_store/smoke.py \
             'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app' \
             --output "$RUNNER_TEMP/store-smoke"
+      - name: Test configured model restart and native IPv6 readiness
+        run: |
+          python packaging/macos_store/restart_smoke.py \
+            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app' \
+            --output "$RUNNER_TEMP/store-restart"
       - name: Package the archive with signatures and symlinks intact
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
@@ -59,4 +64,5 @@ jobs:
           path: |
             ${{ runner.temp }}/mac-app-store-arm64-QA.xcarchive.zip
             ${{ runner.temp }}/store-smoke
+            ${{ runner.temp }}/store-restart
           if-no-files-found: warn
