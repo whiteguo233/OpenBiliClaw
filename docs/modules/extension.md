@@ -1082,3 +1082,8 @@ gitignore），因此后端不可达时插件自身界面仍可本地化；后�
 | 流式暂时故障 | `streamAgentChatTurn()` 保留SSE的 `retrying` 为异常的 `agentRetrying`；`popupDriveAgentStream()` 保留消息pending并交回现有轮询，直到服务端完成或真正失败。 |
 
 公开函数签名不变，错误对象新增上述布尔标记；终态错误仍沿用 `agentStreamError`。共享移动Web采用相同区分。手工验证：开启免费方案、创建聊天，在首段前中断测试连接，看到后台重试提示后读取同一turn结果；完成消息重连不重复执行。证据与重复步骤见[验收](../testing/2026-11-05-sponsored-resilience.md)。
+
+
+### 初始化期间的对话错误（2026-11-05）
+
+已实现：插件与 PC/手机共用的 `contextErrorMessage` 保留后端初始化守卫的扁平错误详情；初始化期间未送出的草稿不会误报成内容问题。公开共享 helper 签名、发送与持久队列协议不变，新增实际错误形状回归。

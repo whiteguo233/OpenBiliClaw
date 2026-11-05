@@ -298,7 +298,7 @@
         <p class="sub" id="doneSummary">基础配置和首轮初始化已完成，本地引擎可以开始为你工作了。</p>
         <ul class="check-list">
           <li><span class="tick">✓</span><div><b>AI 大脑</b><br><span class="hint" id="doneLlm">已连接</span></div></li>
-          <li><span class="tick">✓</span><div><b>本地语义引擎</b><br><span class="hint">Ollama bge-m3 已随包就绪,推荐去重 / 多样性已开启</span></div></li>
+          <li><span class="tick">✓</span><div><b>文本向量</b><br><span class="hint" id="doneEmbedding">按所选配置使用文本向量。</span></div></li>
           <li id="biliDone" class="pending"><span class="tick">…</span><div><b>平台账号</b><br><span class="hint" id="doneBili">B 站可稍后连接；Reddit 等来源按初始化勾选项检查</span></div></li>
           <li id="initDoneRow"><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint" id="doneInit">完整画像和首轮可用推荐均已就绪</span></div></li>
         </ul>
@@ -1523,6 +1523,11 @@
     }
 
     function showInitCompletion(status = null) {
+      $("#doneEmbedding").textContent = $("#provider").value === "sponsored"
+        ? (sponsoredForm().collect().embedding_mode === "local"
+          ? "本地 Ollama 文本向量已就绪。"
+          : "硅基流动 BGE-M3 文本向量已就绪。")
+        : "按所选配置使用文本向量。";
       const partial = Boolean(status?.partial_success);
       $("#doneTitle").textContent = partial ? "初始化部分完成" : "就绪 🎉";
       $("#doneSummary").textContent = partial
