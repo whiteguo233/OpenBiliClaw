@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,8 @@ from openbiliclaw.discovery.candidate_pool import (
     row_to_discovered_content,
 )
 from openbiliclaw.discovery.engine import (
+    ContentDiscoveryEngine,
+    DiscoveredContent,
     _batch_evaluation_content_item,
     _single_evaluation_content_summary,
 )
@@ -26,6 +29,8 @@ from openbiliclaw.llm.evaluation_wire import (
 from openbiliclaw.sources.github import github_repository_to_content
 from openbiliclaw.sources.v2ex import v2ex_topic_to_content
 from openbiliclaw.storage.database import Database
+
+from .test_discovery_engine import _build_profile
 
 
 def test_v2ex_native_replies_survive_storage_and_sparse_evaluation(tmp_path: Path) -> None:
@@ -130,3 +135,105 @@ def test_sparse_system_prompt_matches_reviewed_golden() -> None:
 
     golden = Path(__file__).parent / "golden/evaluation/sparse-system-v7.txt"
     assert golden.read_text() == _SPARSE_BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.asyncio
+async def test_long_source_bodies_split_at_the_real_free_model_context_guard(wrapped: bool) -> None:
+    from openbiliclaw.llm.service import LLMProviderExecutionError
+    from openbiliclaw.llm.sponsored_errors import SponsoredRequestTooLargeError
+    from openbiliclaw.llm.sponsored_profiles import approved_registry
+    from openbiliclaw.llm.sponsored_provider import SponsoredProvider
+
+    contract = next(c for c in approved_registry() if c.task_id == "llm.structured")
+    attempted_sizes: list[int] = []
+    successful_bodies: dict[str, str] = {}
+
+    class ContextGuardService:
+        async def complete_structured_task(self, **kwargs):
+            user = kwargs["user_input"]
+            block = user.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0]
+            items = json.loads(block)["items"]
+            attempted_sizes.append(len(items))
+            payload = {
+                "messages": [
+                    {"role": "system", "content": kwargs["system_instruction"]},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": kwargs["max_tokens"],
+            }
+            try:
+                SponsoredProvider._check_context(contract, payload)
+            except SponsoredRequestTooLargeError as exc:
+                if wrapped:
+                    raise LLMProviderExecutionError("provider task failed") from exc
+                raise
+            successful_bodies.update({item["title"]: item["body_text"] for item in items})
+            return SimpleNamespace(
+                content=json.dumps(
+                    [{"id": item["id"], "score": 0.73, "reason": "batch"} for item in items]
+                )
+            )
+
+    contents = [
+        DiscoveredContent(
+            bvid=f"note-{i}",
+            title=f"note-{i}",
+            body_text="长" * 8000,
+            source_platform="xiaohongshu",
+            content_type="note",
+        )
+        for i in range(8)
+    ]
+    engine = ContentDiscoveryEngine(llm_service=ContextGuardService())
+    scores = await engine._evaluate_batch(
+        contents,
+        _build_profile(),
+        negative_examples=[],
+        apply_batch_caps=False,
+    )
+    assert scores == [0.73] * 8
+    assert attempted_sizes[0] == 8
+    assert 1 < len(attempted_sizes) <= 7
+    assert max(attempted_sizes[1:]) <= 4
+    assert successful_bodies == {item.title: item.body_text for item in contents}
+
+
+@pytest.mark.parametrize(
+    ("count", "limits"),
+    [(1, {}), (2, {"max_extra_requests": 0}), (2, {"max_split_depth": 0})],
+)
+@pytest.mark.asyncio
+async def test_unsplittable_input_keeps_actionable_error(count, limits) -> None:
+    from unittest.mock import AsyncMock
+
+    from openbiliclaw.llm.sponsored_errors import SponsoredRequestTooLargeError
+
+    engine = ContentDiscoveryEngine(llm_service=SimpleNamespace())
+    engine._evaluate_batch_once = AsyncMock(side_effect=SponsoredRequestTooLargeError("too large"))
+    with pytest.raises(SponsoredRequestTooLargeError):
+        await engine._evaluate_batch(
+            [DiscoveredContent(bvid=f"note-{i}", title="long source") for i in range(count)],
+            _build_profile(),
+            **limits,
+        )
+    assert engine._evaluate_batch_once.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_input_split_budget_cannot_silently_drop_an_unattempted_member() -> None:
+    from unittest.mock import AsyncMock
+
+    from openbiliclaw.llm.sponsored_errors import SponsoredRequestTooLargeError
+
+    engine = ContentDiscoveryEngine(llm_service=SimpleNamespace())
+    engine._evaluate_batch_once = AsyncMock(
+        side_effect=[SponsoredRequestTooLargeError("too large"), [0.73]],
+    )
+    with pytest.raises(SponsoredRequestTooLargeError):
+        await engine._evaluate_batch(
+            [DiscoveredContent(bvid=f"note-{i}", title="long source") for i in range(2)],
+            _build_profile(),
+            max_extra_requests=1,
+        )
+    assert engine._evaluate_batch_once.await_count == 2

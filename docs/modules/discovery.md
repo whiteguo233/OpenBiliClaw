@@ -10,6 +10,7 @@
 | 原生互动指标 | sparse JSON 保留正数 `reply_count/retweet_count/bookmark_count`，修复 V2EX 回复被省略，以及 X / 微博原生互动缺口。 |
 | 仓库语义字段 | GitHub `source_metadata` 仅投影创建/更新/推送时间、语言、可见性、fork/archived/disabled、fork/issues/watchers 计数与许可证；内部 ID 和原始响应不进入模型。 |
 | 无绝对日期时的时间标签 | 保留 `published_label`，不虚构绝对时间。有 published_at 时省略重复标签。 |
+| 长正文批次 | 免费模型的 typed 输入超限错误（含 service cause）沿用最多3层、6个额外请求的拆分预算，不裁切正文；单条仍超限或预算耗尽保留明确错误，不放大认证、限流或网络失败。 |
 
 公开调用签名不变：single/batch 内容投影同时服务 LLM 与 Jev；规范字段在候选池和缓存中保持原样，只清洗发给评估器的副本。LLM 缓存命名空间升为 `content-eval-v7`，静态 sparse 系统提示有固定 golden。row-wire-v1 列不变，不能承载的新字段明确报错。审计范围与回归证据见[记录](../testing/2026-11-06-security-metadata.md)。
 
