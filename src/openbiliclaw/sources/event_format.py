@@ -249,28 +249,73 @@ def render_retraction_marked_events(
     return marked
 
 
+# Producers store the real moment under platform-private keys instead of the
+# canonical ``timestamp`` — ``view_at`` (B 站历史), ``fav_time`` (收藏),
+# ``mtime`` (关注), ``watched_at`` (YouTube Takeout), ``interaction_time``
+# (linux.do / 微博 / 知乎), ``starred_at`` (GitHub). Every one of them answers
+# "when did the user do this", so the reader must accept them; otherwise the
+# value is fetched, persisted, and then invisible to every consumer that asks
+# this module for a time.
+#
+# Deliberately absent: ``published_at`` / ``pubtime`` / ``created_at``. When a
+# post was published is not when the user saved, liked or watched it, and
+# treating it as event time invents a timeline that never happened.
+INTERACTION_TIME_KEYS: tuple[str, ...] = (
+    "occurred_at",
+    "interaction_time",
+    "watched_at",
+    "view_at",
+    "fav_time",
+    "mtime",
+    "starred_at",
+    "liked_at",
+    "saved_at",
+    "subscribed_at",
+    "read_at",
+)
+
+
 def parse_event_timestamp(metadata: dict[str, Any] | None) -> datetime | None:
-    """Extract a timezone-aware UTC event time from ``metadata.timestamp``.
+    """Extract a timezone-aware UTC event time from an event's metadata.
+
+    Canonical ``metadata.timestamp`` wins. Producers that kept a
+    platform-private key (see ``INTERACTION_TIME_KEYS``) are honoured next, so a
+    real interaction time is never discarded just because it was written under
+    ``interaction_time`` rather than ``timestamp``.
 
     The extension folds ``item.timestamp`` (epoch milliseconds) into
     ``metadata.timestamp`` at ingest; account_sync / server events may carry an
-    ISO string. Returns ``None`` when no usable timestamp is present so callers
-    can conservatively skip causality-dependent decisions (Phase 0 rule: time
-    unavailable → do not discount).
+    ISO string. Returns ``None`` when no usable interaction time is present so
+    callers can conservatively skip causality-dependent decisions (Phase 0 rule:
+    time unavailable → do not discount). Content-publication fields are never
+    consulted.
     """
     if not isinstance(metadata, dict):
         return None
-    raw = metadata.get("timestamp")
-    if isinstance(raw, bool):  # bool is an int subclass — never a timestamp
+    parsed = _coerce_event_time(metadata.get("timestamp"))
+    if parsed is not None:
+        return parsed
+    for key in INTERACTION_TIME_KEYS:
+        parsed = _coerce_event_time(metadata.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _coerce_event_time(raw: object) -> datetime | None:
+    """Coerce one metadata value (epoch seconds/ms or ISO text) to UTC."""
+    if raw is None or isinstance(raw, bool):  # bool is an int subclass
         return None
     if isinstance(raw, int | float):
-        return _epoch_to_datetime(float(raw))
+        return _epoch_to_datetime(float(raw)) if raw > 0 else None
     if isinstance(raw, str) and raw.strip():
         text = raw.strip()
         try:
-            return _epoch_to_datetime(float(text))
+            seconds = float(text)
         except ValueError:
-            pass
+            seconds = 0.0
+        if seconds > 0:
+            return _epoch_to_datetime(seconds)
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:

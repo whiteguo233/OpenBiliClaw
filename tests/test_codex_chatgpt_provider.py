@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -20,6 +21,16 @@ def _jwt_with_payload(payload: dict[str, object]) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     payload_b64 = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
     return ".".join([json.dumps({"alg": "none"}), payload_b64, "sig"])
+
+
+def _rendered_input_texts(body: dict[str, object]) -> list[str]:
+    """Flatten a request body's ``input`` items into their text blocks."""
+    items = cast("list[dict[str, object]]", body["input"])
+    texts: list[str] = []
+    for item in items:
+        for block in cast("list[dict[str, object]]", item["content"]):
+            texts.append(str(block.get("text") or ""))
+    return texts
 
 
 def test_normalize_codex_base_url_accepts_only_official_chatgpt_paths() -> None:
@@ -84,11 +95,55 @@ def test_build_request_body_uses_responses_contract() -> None:
     assert body["store"] is False
     assert body["stream"] is True
     assert "max_output_tokens" not in body
-    assert body["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    # json_mode adds the tail marker because the caller payload has no
+    # "json" token and the backend validates input items only (#334).
+    assert body["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Return valid json."}],
+        },
+    ]
     assert body["text"]["verbosity"] == "medium"
     assert body["text"]["format"] == {"type": "json_object"}
     assert "temperature" not in body
     assert "reasoning" not in body
+
+
+def test_build_request_body_adds_json_marker_only_when_input_lacks_it() -> None:
+    provider = CodexChatGPTProvider(access_token="token", account_id="acct", model="gpt-5.4")
+
+    def build(messages: list[dict[str, str]], *, json_mode: bool = True) -> dict[str, object]:
+        return provider._build_request_body(
+            messages,
+            effective_model="gpt-5.4",
+            max_tokens=16,
+            json_mode=json_mode,
+            reasoning_effort="",
+        )
+
+    # The system/instructions-level "JSON" rule does not satisfy the backend
+    # check: the marker must land in the input items (#334).
+    body = build(
+        [
+            {"role": "system", "content": "请只输出严格 JSON。"},
+            {"role": "user", "content": "<event_batch>[]</event_batch>"},
+        ]
+    )
+    assert _rendered_input_texts(body) == [
+        "<event_batch>[]</event_batch>",
+        "Return valid json.",
+    ]
+    text_config = cast("dict[str, object]", body["text"])
+    assert text_config["format"] == {"type": "json_object"}
+
+    # A caller payload that already carries the token stays untouched.
+    body = build([{"role": "user", "content": '{"wants_json": true}'}])
+    assert _rendered_input_texts(body) == ['{"wants_json": true}']
+
+    # Non-JSON calls never get the marker.
+    body = build([{"role": "user", "content": "hi"}], json_mode=False)
+    assert _rendered_input_texts(body) == ["hi"]
 
 
 @pytest.mark.asyncio
@@ -240,6 +295,53 @@ async def test_complete_retries_without_text_format_on_rejection(
     assert response.content == '{"ok": true}'
     assert len(calls) == 2
     assert "format" not in str(calls[1].get("text"))
+
+
+@pytest.mark.asyncio
+async def test_complete_satisfies_json_marker_for_system_only_json_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#334: preference analysis declares JSON in system, not in the user input."""
+    provider = CodexChatGPTProvider(access_token="token", account_id="acct", model="gpt-5.4")
+    sent: list[dict[str, object]] = []
+
+    async def fake_post_once(
+        url: str, headers: dict[str, str], body: dict[str, object]
+    ) -> tuple[int, str]:
+        sent.append(body)
+        if "json" not in " ".join(_rendered_input_texts(body)).lower():
+            # How the Codex backend rejects text.format=json_object today:
+            # HTTP 200 plus an SSE error event that aborts stream parsing.
+            return 200, "data: " + json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "message": (
+                            "Response input messages must contain the word 'json' in some "
+                            "form to use 'text.format' of type 'json_object'."
+                        )
+                    },
+                }
+            )
+        return 200, "data: " + json.dumps(
+            {"type": "response.output_text.delta", "delta": '{"ok": true}'}
+        )
+
+    monkeypatch.setattr(provider, "_post_once", fake_post_once)
+    response = await provider.complete(
+        [
+            {"role": "system", "content": "请只输出严格 JSON。"},
+            {"role": "user", "content": "<event_batch>[]</event_batch>"},
+        ],
+        temperature=0,
+        max_tokens=16,
+        json_mode=True,
+        reasoning_effort="",
+    )
+
+    assert response.content == '{"ok": true}'
+    assert len(sent) == 1
+    assert "json" in " ".join(_rendered_input_texts(sent[0])).lower()
 
 
 @pytest.mark.asyncio

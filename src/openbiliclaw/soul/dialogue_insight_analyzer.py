@@ -15,6 +15,7 @@ from openbiliclaw.llm.json_utils import (
 from openbiliclaw.llm.prompts import build_dialogue_insight_prompt
 from openbiliclaw.llm.service import LLMServiceError
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.soul.meta_usage import should_drop_dialogue_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +98,34 @@ class DialogueInsightAnalyzer:
         except (LLMProviderError, LLMServiceError) as exc:
             raise DialogueInsightAnalysisError(str(exc)) from exc
 
-        return self._parse_response(
+        parsed = self._parse_response(
             response.content,
             anchor_kind=str(anchor.get("kind", "")) if anchor else "",
         )
+        # Talking about configuring / testing / deploying this product is not a
+        # taste. Candidates raised in such a turn are dropped when they are
+        # themselves operational ("系统配置与测试"), while a genuine interest
+        # mentioned in the same turn survives. Settles are untouched: they
+        # answer existing hypotheses rather than adding new ones.
+        candidates = parsed.get("candidates")
+        if isinstance(candidates, list):
+            kept = [
+                candidate
+                for candidate in candidates
+                if not should_drop_dialogue_candidate(
+                    str(candidate.get("content", "")),
+                    user_message=user_message,
+                )
+            ]
+            dropped = len(candidates) - len(kept)
+            if dropped:
+                logger.info(
+                    "dialogue insight: dropped %d meta-usage candidate(s) from a "
+                    "product-operations turn",
+                    dropped,
+                )
+            parsed["candidates"] = kept
+        return parsed
 
     def _parse_response(self, content: str, *, anchor_kind: str = "") -> dict[str, object]:
         parsed = parse_llm_json_tolerant(content)

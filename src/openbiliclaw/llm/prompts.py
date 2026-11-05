@@ -13,6 +13,7 @@ from openbiliclaw.soul.event_prompt_views import (
     build_cognition_event_view_v1,
     normalize_cognition_input_view,
 )
+from openbiliclaw.soul.event_provenance import prepare_cognition_events
 from openbiliclaw.soul.profile_views import (
     build_cognition_profile_view_v1,
     preference_prompt_payload,
@@ -378,6 +379,14 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
     当证据不足以判断时，直接省略该字段或填 0.5（openness/数值型）；
     严禁用 "unknown"、"未知"、"none" 之类占位符或用 0 当"没数据"的替身
     （0 会被当作"该维度确实极低"的真实取值）。
+15. **时间字段契约**：事件里已经没有任何"写入时间"，只有 `metadata.timestamp`
+    才是用户真正动作的时刻。没有 timestamp 的行（会带 `time_quality: "ingest"`）
+    **时间未知**——不得据此写"同一天""连续""短期内""最近集中""快速切换"
+    这类时序判断，也不要把它当作近期信号。宁可只说"有一批历史行为"。
+16. **存量不是行为**：`metadata.snapshot: true` 的行是首次接入账号时一次性导入的
+    历史清单（一条行代表多条的汇总，条数在 `snapshot_total`，创作者名单在
+    `creators`）。它只说明"长期关注/收藏了这些"，**不能**用来推断行为频率、
+    活跃时段、近期动向、社交活跃度或外向程度；也不要把它拆回"今天关注了 N 个人"。
 </rules>
 
 <output_schema>
@@ -451,7 +460,9 @@ def build_preference_analysis_prompt(
     existing_preference = preference_prompt_payload(existing_preference)
     system_prompt = _PREFERENCE_ANALYSIS_SYSTEM_PROMPT
     selected_view = normalize_cognition_input_view(input_view)
-    rendered_events = render_retraction_marked_events(events)
+    # Provenance first: the model must never see an ingest timestamp dressed up
+    # as event time, and an account import must not arrive as N behaviour rows.
+    rendered_events = prepare_cognition_events(render_retraction_marked_events(events))
     if selected_view == "compact-v1":
         profile_view = build_cognition_profile_view_v1(
             preference_summary=existing_preference,
@@ -632,6 +643,14 @@ def build_soul_profile_prompt(
     爱玩、外向、社交驱动可能是 ESFP/ENFP;
     审美驱动可能是 INFP/ISFP;
     行动驱动可能是 ESTP/ESTJ 等。
+12b. **EI 只能由用户自己的表达支撑**:评论、弹幕、对话、自己写下的文字、主动搜索的词。
+    关注数、收藏数、关注清单长度、接入的平台数量、是否自己配过工具链 —— 这些是
+    **库存和配置**,不是社交行为。关注 500 个 UP 主可能只是十年顺手点的,
+    一个人搭了十条订阅源也不代表他爱社交。没有表达类证据时,EI 给 strength 0.5,
+    不要在 portrait 里描述"外向/内向"。
+12c. 任一维度 strength 落在 0.50~0.58 之间 = 证据不足定不了向:该维度 strength
+    就给 0.5,confidence 不得超过 0.55。贴线的 0.55 撑不起一个确定的类型字母,
+    宁可把类型说得模糊,也不要给出一个精确但没根据的结论。
 13. history_summary 里的 `contexts` / `recent_contexts` / `older_contexts`
     (v0.3.22+ 跨源统一)是用户行为的中文自然语言摘要,每行形如
     "在 B 站收藏了《...》,作者:..." 或 "小红书点赞:... 作者:..."。
@@ -901,6 +920,7 @@ _AWARENESS_SYSTEM_PROMPT = """
 5. 每条事件自带 `context` 字段（v0.3.22+ 跨源统一），是中文自然语言摘要——优先以 context 来理解事件本身，配合 metadata.source_platform 区分平台。所有平台信号都参与觉察推断,不区别对待。
 6. 如果 recent_events 出现 `feedback_type=dislike`、`reaction=thumbs_down` 或 `inferred_satisfaction=negative`，把它当作用户最近开始避开某类内容的信号；可以生成“最近开始避开 X”这类保守观察，但不要把单次 dislike 上升成人格结论。
 7. 负反馈一致性：笔记中描述「点踩 / dislike / 不感兴趣」等明确负反馈行为时，recent_events 里必须真的存在这类事件（`feedback_type=dislike` 或 `inferred_satisfaction=negative`）；没有就绝不能在笔记中声称用户点踩了——只能描述实际观察到的浏览行为。
+8. 时间一致性：只有带 `metadata.timestamp` 的事件才有真实发生时间；带 `time_quality: "ingest"` 的行时间未知，**不要**据此写"同一天""连续""半小时内""快速切换"。`metadata.snapshot: true` 的行是账号导入的存量清单，不是最近行为，不要拿来描述"最近在做什么"。
 </rules>
 
 <output_schema>
@@ -928,7 +948,7 @@ def build_awareness_prompt(
 
     preference_summary = preference_prompt_payload(preference_summary)
     selected_view = normalize_cognition_input_view(input_view)
-    rendered_events = render_retraction_marked_events(events)
+    rendered_events = prepare_cognition_events(render_retraction_marked_events(events))
     if selected_view == "compact-v1":
         profile_view = build_cognition_profile_view_v1(
             soul_profile=soul_profile,
@@ -1085,7 +1105,7 @@ def build_awareness_with_confusions_prompt(
 
     preference_summary = preference_prompt_payload(preference_summary)
     selected_view = normalize_cognition_input_view(input_view)
-    rendered_events = render_retraction_marked_events(events)
+    rendered_events = prepare_cognition_events(render_retraction_marked_events(events))
     if selected_view == "compact-v1":
         profile_view = build_cognition_profile_view_v1(
             soul_profile=soul_profile,
@@ -1205,6 +1225,10 @@ _INSIGHT_SYSTEM_PROMPT = """
 4. confidence 保持在 0~1，且不要过高。
 5. existing_hypotheses（如有）是当前已有的活跃假设，仅作上下文参考。本次新的觉察笔记若印证某条已有假设，可重述同一 hypothesis 文本以累积其证据/置信；若指向新方向，再生成新假设。不要为凑数而重复已有假设；尤其不要生成与已有假设中 `validated=true` 或 `user_verdict=confirmed / rejected` 条目意思近似、仅换措辞的新假设。
 6. 只依据本次觉察笔记里的新信号下结论；existing_hypotheses 本身不是新证据。
+7. **MBTI 不是证据**：soul_profile 里的 mbti.type / 维度字母只能当背景标签，不能写进
+   evidence，也不能作为推理依据（"因为他是 ENTP 所以喜欢跨领域"这类链条作废）。
+   evidence 必须引用具体行为、觉察笔记或用户自己的话。若某条假设只能靠 MBTI 撑住，
+   就不要生成它。
 </rules>
 
 <output_schema>
@@ -1448,6 +1472,10 @@ core_memory、这轮对话、以及 active_list 都在 user 消息里给出。
 7. settles[].verdict 只允许: confirm (这轮明确印证), reject (这轮明确否定)。
    只有用户明确表态才结算,含糊不清时不结算。
 8. 若没有可结算对象,settles 返回空数组。
+9. **用工具不等于兴趣**：用户只是在配置、调试、部署、排障 OpenBiliClaw 本身时,
+   不要生成「系统配置与测试」「参数化调试方法论」这类候选;只有用户明确表达
+   自己长期喜欢的内容或活动才算 interest,对 dislike 同理。提到产品名不代表
+   产品本身是兴趣。
 </rules>
 
 <output_schema>

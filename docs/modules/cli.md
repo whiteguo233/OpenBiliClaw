@@ -118,6 +118,7 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `keyword-inspiration-preview` | `keyword-inspiration-dry-run` 的等价别名；支持 `--persist-axes` | ✅ |
 | `keyword-inspiration-report` | 输出 inspiration / merged 关键词 cohort 对比和 replace 启用门禁判定 | ✅ |
 | `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题；也支持一级分类词表迁移（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
+| `profile-repair-provenance` | ✅ | 一次性修复被错误来源污染的画像数据：① 删除 insight `evidence` 里把 MBTI 类型当证据的条目，删空则作废该假设（confidence ≤0.2、`invalidated_reason`）；② 校验觉察笔记的「同一天 / 快速切换」断言——用事件真实交互时间（`view_at`/`fav_time`/`mtime`/`interaction_time`…）重算，跨度 >36h 的**证实为假**才隔离到 `quarantined_notes`，无法验证的保留并计数；③ 把对话来源、且名字是复合运维短语（「系统配置与测试」）的兴趣移到 `archived_interests`、避雷移到 `archived_disliked_topics`，单个运维词（「软件测试」）只列为待人工确认。默认 dry-run，`--apply` 前先把三层文件备份到 `data/memory/provenance_repair_runs/<ts>/`；写入前需停掉后端 |
 | `discover` | 手动触发发现 | ✅ |
 | `discover-douyin` | 单独调试抖音 search / hot / feed 内容发现 | ✅ |
 | `discover-zhihu` | 单独触发知乎插件搜索 discovery，并把候选写入待评估池 | ✅ |

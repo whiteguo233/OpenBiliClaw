@@ -350,6 +350,12 @@ def test_generation_remains_monotonic_after_release(tmp_path: Path) -> None:
 
 
 def test_no_anchor_dialogue_insight_prompt_bytes_match_pre_task_baseline() -> None:
+    """Byte baseline for the no-anchor dialogue-insight prompt.
+
+    Re-captured once, deliberately: system rule 9 now forbids turning
+    "operating this product" into a taste candidate. The baseline still
+    guards that the no-anchor path carries no anchor contract.
+    """
     from openbiliclaw.llm.prompts import build_dialogue_insight_prompt
 
     messages = build_dialogue_insight_prompt(
@@ -361,7 +367,7 @@ def test_no_anchor_dialogue_insight_prompt_bytes_match_pre_task_baseline() -> No
     raw = json.dumps(messages, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     assert hashlib.sha256(raw.encode()).hexdigest() == (
-        "cb16707401107cba2d0820da6db3652aebcaca2c562175150f90076df1a24e2a"
+        "816cbe40eb03ac35c90d9d72bd16635e04436c9c9f5f3dd07933d7e31a9f1f50"
     )
 
 

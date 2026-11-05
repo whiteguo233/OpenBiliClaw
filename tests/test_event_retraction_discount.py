@@ -471,9 +471,12 @@ async def test_late_relike_after_retraction_not_reconciled(tmp_path: Path) -> No
 
 # --- Task 2: render marker + replay invariance -------------------------------
 
-# Fixed no-retraction event set + its rendered-prompt byte snapshot (sha256),
-# captured on the pre-marker rendering. The marker wiring must leave this
-# byte-identical (invariant 2: replay invariance, scope = event rendering).
+# Fixed no-retraction event set + its rendered-prompt byte snapshot (sha256).
+# The snapshot moved once, deliberately: the provenance projection now drops
+# ``created_at`` and labels undated rows ``time_quality="ingest"`` so a model
+# can never read an import moment as event time. Beyond that change the golden
+# still pins byte-identical rendering (invariant 2: replay invariance, scope =
+# event rendering) — re-capture only together with an explicit contract change.
 _INVARIANCE_EVENTS = [
     {
         "event_type": "like",
@@ -494,8 +497,8 @@ _INVARIANCE_EVENTS = [
         "metadata": {"source_platform": "bilibili", "bvid": "BV1a", "signal_strength": 0.35},
     },
 ]
-_PREFERENCE_RENDER_SHA256 = "a0b24ab081562fc1a5280d7b539791b52a1ae0ace12104420c7912d71bca8c43"
-_AWARENESS_RENDER_SHA256 = "86cce383eff2d40d8d8d3510c43fc7cbbefa0fe95121445af70c3c0e3b6259d7"
+_PREFERENCE_RENDER_SHA256 = "08fb0deaff576c42bfa3668250fa318c5cda9b3559f44b40f8b0afac5163b705"
+_AWARENESS_RENDER_SHA256 = "76b2c8f59f84c9b1c11e3b69b39dd100a79a41b72bfbbf9b228672002576928d"
 
 
 def _sha256(text: str) -> str:

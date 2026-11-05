@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 function installFetchMock() {
   const calls: any[] = [];
   const events: string[] = [];
-  (globalThis as any).location = { protocol: "http:", host: "127.0.0.1:8420" };
+  (globalThis as any).location = new URL("http://127.0.0.1:8420/m/");
   (globalThis as any).window = {
     dispatchEvent(ev: any) {
       events.push(ev?.type ?? "");

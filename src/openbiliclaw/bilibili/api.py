@@ -187,11 +187,19 @@ def favorite_item_is_dead(item: dict[str, Any]) -> bool:
 
 @dataclass
 class FollowingUser:
-    """Basic followed user info."""
+    """Basic followed user info.
+
+    ``mtime`` is Bilibili's own "when did I follow this account" timestamp
+    (epoch seconds, returned by ``/x/relation/followings``). It is the only
+    honest time a follow can carry, and dropping it is why an account import
+    used to look like "followed 40 creators in one second": without it the
+    ledger fell back to the import moment. Zero means upstream omitted it.
+    """
 
     mid: int
     uname: str
     sign: str = ""
+    mtime: int = 0
 
 
 @dataclass
@@ -1584,6 +1592,10 @@ class BilibiliAPIClient:
                 mid=int(user.get("mid", 0)),
                 uname=str(user.get("uname", "")),
                 sign=str(user.get("sign", "")),
+                # Seconds, per the upstream contract ("关注时间，秒级时间戳").
+                # Never substitute the fetch time here: one sync covering 500
+                # follows would stamp them all with a single moment again.
+                mtime=max(0, _int_value(user.get("mtime"))),
             )
             for user in users
         ]

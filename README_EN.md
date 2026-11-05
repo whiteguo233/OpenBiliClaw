@@ -22,8 +22,8 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="/whiteguo233/OpenBiliClaw/raw/main/docs/images/siliconflow-logo-dark.png">
-    <img src="/whiteguo233/OpenBiliClaw/raw/main/docs/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
+    <source media="(prefers-color-scheme: dark)" srcset="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo-dark.png">
+    <img src="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
   </picture>
   <br>
   <sub>Model compute support: thanks to <a href="https://www.siliconflow.cn">SiliconFlow</a> for free model credits and inference support · <a href="docs/partners.md">Partnership details</a></sub>
@@ -35,7 +35,7 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.232 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 ## OpenBiliClaw in 10 Seconds
 
@@ -66,7 +66,7 @@ Phone connections: Desktop Web / extension **Mobile** offers LAN, Tailscale and 
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.232. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
@@ -235,12 +235,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.232 (2026-10-26)**
+📌 Latest: **v0.3.233 (2026-10-30)**
 
-- **Reliable Douyin discovery**: fixes shared extension presence, native hot-word search and rotation; task pages are muted before loading, and failures retain results with backoff.
-- **Faster first screens and covers**: reduces startup blocking and duplicate requests; fixes QR login, configuration-save status, and chat and extension layouts.
-- **More reliable search inspiration**: adds optional free anonymous Keenable search and fixes Bing redirects and single-backend failure handling.
-- **More model options**: adds optional full Jev evaluation and updates MiniMax text presets to M3.1 Flash.
+- **More trustworthy portraits**: Bilibili history, favorites and follows carry real interaction times; imported backlog is no longer read as your behaviour, and library volume can no longer infer personality.
+- **Cleaner interests**: a new "using tools ≠ taste" gate keeps ops-style topics from becoming interests (14 compound topics filtered in a real rebuild, while "software testing" stayed).
+- **ChatGPT subscriptions work again**: fixes the Codex `json_mode` initialization failure that failed structured profiling calls wholesale.
+- **Repair existing portraits**: the new `openbiliclaw profile-repair-provenance` command (dry-run by default) removes MBTI-as-evidence items and falsified timeline claims.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -324,7 +324,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.232 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.232) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.232). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)

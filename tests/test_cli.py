@@ -10207,6 +10207,57 @@ class TestInitSignalsAreDeduplicable:
         assert event["metadata"]["content_id"] == "BV2"
         assert "watch_seconds" not in event["metadata"]
 
+    def test_history_event_carries_real_view_time_not_import_time(self) -> None:
+        """导入时刻不是观看时刻——view_at 必须落到 canonical timestamp。"""
+        from openbiliclaw.cli import _history_item_to_event
+
+        event = _history_item_to_event(self._history_item())
+
+        assert event["metadata"]["timestamp"] == 1_785_000_000
+        assert event["metadata"]["snapshot"] is True
+
+    def test_init_follow_events_carry_mtime(self) -> None:
+        from openbiliclaw.cli import _build_bilibili_init_events
+
+        events = _build_bilibili_init_events(
+            history=[],
+            favorites_data=[],
+            following_data=[{"name": "某UP", "sign": "", "mtime": 1_584_271_945}],
+        )
+
+        follow = events[0]
+        assert follow["event_type"] == "follow"
+        assert follow["metadata"]["timestamp"] == 1_584_271_945
+        assert follow["metadata"]["mtime"] == 1_584_271_945
+        assert follow["metadata"]["snapshot"] is True
+
+    def test_init_follow_without_mtime_has_no_timestamp(self) -> None:
+        from openbiliclaw.cli import _build_bilibili_init_events
+
+        events = _build_bilibili_init_events(
+            history=[],
+            favorites_data=[],
+            following_data=[{"name": "某UP", "sign": ""}],
+        )
+
+        assert "timestamp" not in events[0]["metadata"]
+
+    def test_follow_time_window_renders_the_real_span(self) -> None:
+        from openbiliclaw.cli import _follow_time_window
+
+        # 2020-03-15 and 2026-07-09 (UTC)
+        assert (
+            _follow_time_window([{"mtime": 1_584_271_945}, {"mtime": 1_785_000_000}])
+            == "（关注时间 2020-03 ~ 2026-07）"
+        )
+
+    def test_follow_time_window_is_empty_without_mtime(self) -> None:
+        """No upstream timestamp ⇒ say nothing, never invent a window."""
+        from openbiliclaw.cli import _follow_time_window
+
+        assert _follow_time_window([{"name": "某UP"}]) == ""
+        assert _follow_time_window([{"name": "某UP", "mtime": 0}]) == ""
+
     def test_favorite_events_carry_identity(self) -> None:
         """收藏没有身份就进不了 seen_items——收藏过的视频会被再推一遍。"""
         from openbiliclaw.cli import _build_bilibili_init_events

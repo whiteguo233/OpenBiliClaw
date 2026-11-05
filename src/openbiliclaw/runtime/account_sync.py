@@ -369,7 +369,12 @@ class AccountSyncService:
                 last_bvid=str(state.get("last_history_bvid", "")),
                 seen_bvids_at_last_view_at=previous_history_bvids,
             )
-            events.extend(self._history_events(new_history))
+            # No cursor yet ⇒ this is the account's back catalogue, not a
+            # behaviour that just happened. The flag travels with the events so
+            # the cognition lane can present it as inventory instead of
+            # treating a whole viewing history as one afternoon.
+            history_is_first_import = previous_history_view_at <= 0
+            events.extend(self._history_events(new_history, snapshot=history_is_first_import))
             state["last_history_view_at"] = last_view_at
             state["last_history_bvid"] = last_bvid
             state["history_bvids_at_last_view_at"] = self._history_cursor_bvids(
@@ -408,7 +413,12 @@ class AccountSyncService:
             self._mark_favorites_seen(self._favorite_bvids(favorites))
             if current_signature and current_signature != previous_signature:
                 new_favorites = self._filter_favorite_folders(favorites, previous_bvids)
-                events.extend(self._favorite_events(new_favorites))
+                events.extend(
+                    self._favorite_events(
+                        new_favorites,
+                        snapshot=not str(state.get("last_favorites_sync_at") or "").strip(),
+                    )
+                )
                 state["favorite_signature"] = current_signature
                 state["favorite_bvids"] = self._favorite_bvids(favorites)
                 state["last_favorites_sync_at"] = self._now().isoformat()
@@ -433,7 +443,15 @@ class AccountSyncService:
         previous_mids = self._following_mids_from_state(state)
         if current_signature and current_signature != previous_signature:
             new_following = self._filter_following(following, previous_mids)
-            events.extend(self._following_events(new_following))
+            # Without this flag the first import's whole following list reads
+            # as "followed N creators today" — the exact misread that pushed
+            # personality dimensions from an import artefact.
+            events.extend(
+                self._following_events(
+                    new_following,
+                    snapshot=not str(state.get("last_following_sync_at") or "").strip(),
+                )
+            )
             state["following_signature"] = current_signature
             state["following_mids"] = self._following_mids(following)
             state["last_following_sync_at"] = self._now().isoformat()
@@ -1594,27 +1612,40 @@ class AccountSyncService:
                 newest_bvid = bvid
         return accepted, newest_view_at, newest_bvid
 
-    def _history_events(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _history_events(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        snapshot: bool = False,
+    ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for item in items:
             history_meta = item.get("history", {})
             if not isinstance(history_meta, dict):
                 history_meta = {}
             bvid = str(history_meta.get("bvid", "")).strip()
+            view_at = self._to_int(history_meta.get("view_at", item.get("view_at", 0)))
+            metadata: dict[str, Any] = {
+                "bvid": bvid,
+                "author": str(item.get("author", "")).strip(),
+                "view_at": view_at,
+                "source": "account_sync",
+                "signal_strength": 0.35,
+            }
+            # ``view_at`` is the real watch moment. Mirroring it into the
+            # canonical ``timestamp`` key is what lets the cognition lane
+            # honour it — the ledger's ``created_at`` is the import moment
+            # (a whole page shares one second), not when the video was seen.
+            if view_at > 0:
+                metadata["timestamp"] = view_at
+            if snapshot:
+                metadata["snapshot"] = True
             events.append(
                 {
                     "event_type": "view",
                     "title": str(item.get("title", "")).strip(),
                     "url": f"https://www.bilibili.com/video/{bvid}" if bvid else "",
-                    "metadata": {
-                        "bvid": bvid,
-                        "author": str(item.get("author", "")).strip(),
-                        "view_at": self._to_int(
-                            history_meta.get("view_at", item.get("view_at", 0))
-                        ),
-                        "source": "account_sync",
-                        "signal_strength": 0.35,
-                    },
+                    "metadata": metadata,
                 }
             )
         return events
@@ -1715,7 +1746,12 @@ class AccountSyncService:
             )
         return filtered
 
-    def _favorite_events(self, folders: list[Any]) -> list[dict[str, Any]]:
+    def _favorite_events(
+        self,
+        folders: list[Any],
+        *,
+        snapshot: bool = False,
+    ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for folder in folders:
             folder_obj = getattr(folder, "folder", None)
@@ -1752,6 +1788,13 @@ class AccountSyncService:
                 ):
                     if isinstance(value, (int, float)) and value > 0:
                         metadata[key] = int(value)
+                # ``fav_time`` is when the user saved this item; mirror it into
+                # the canonical time key so a 500-item first import is not read
+                # as 500 saves inside one second.
+                if metadata.get("fav_time"):
+                    metadata["timestamp"] = metadata["fav_time"]
+                if snapshot:
+                    metadata["snapshot"] = True
                 events.append(
                     {
                         "event_type": "favorite",
@@ -1819,23 +1862,40 @@ class AccountSyncService:
             and str(getattr(user, "mid", "")).strip() not in seen_mids
         ]
 
-    def _following_events(self, following: list[Any]) -> list[dict[str, Any]]:
+    def _following_events(
+        self,
+        following: list[Any],
+        *,
+        snapshot: bool = False,
+    ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for user in following:
             mid = int(getattr(user, "mid", 0) or 0)
             uname = str(getattr(user, "uname", "")).strip()
+            metadata: dict[str, Any] = {
+                "up_mid": mid,
+                "up_name": uname,
+                "sign": str(getattr(user, "sign", "")).strip(),
+                "source": "account_sync",
+                "signal_strength": 0.6,
+            }
+            # Bilibili returns the follow moment as ``mtime`` (epoch seconds).
+            # It is the only field that distinguishes "I followed this creator
+            # in 2019" from "this row was written during today's import"; the
+            # ledger's ``created_at`` cannot, because a first sync commits the
+            # whole page in the same second.
+            mtime = self._to_int(getattr(user, "mtime", 0))
+            if mtime > 0:
+                metadata["mtime"] = mtime
+                metadata["timestamp"] = mtime
+            if snapshot:
+                metadata["snapshot"] = True
             events.append(
                 {
                     "event_type": "follow",
                     "title": uname,
                     "url": f"https://space.bilibili.com/{mid}" if mid else "",
-                    "metadata": {
-                        "up_mid": mid,
-                        "up_name": uname,
-                        "sign": str(getattr(user, "sign", "")).strip(),
-                        "source": "account_sync",
-                        "signal_strength": 0.6,
-                    },
+                    "metadata": metadata,
                 }
             )
         return events

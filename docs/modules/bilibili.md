@@ -131,7 +131,7 @@ folder = await client.ensure_favorite_folder("OpenBiliClaw")
 await client.add_video_to_favorite("BV1xx411c7mD", folder.media_id)
 await client.add_video_to_watch_later("BV1xx411c7mD")
 
-# 关注
+# 关注（mtime = 关注时间，epoch 秒；0 = 上游未返回）
 following = await client.get_following(page=1, page_size=50)  # list[FollowingUser]
 
 # 视频
@@ -211,7 +211,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | `VideoInfo` | 视频详情（标题、UP主、播放/点赞/收藏数等） |
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
-| `FollowingUser` | 关注用户（mid, uname, sign） |
+| `FollowingUser` | 关注用户（mid, uname, sign, mtime）；`mtime` 是 `/x/relation/followings` 返回的关注时间（epoch 秒），缺省为 0 表示上游没给——不拿抓取时刻顶替，否则一次同步会把整份关注列表写成同一秒 |
 | `CommentInfo` | 评论（mid, uname, message, like_count；`rpid` / `root` / `parent` 用于楼中楼回复，默认 0） |
 | `AuthStatus` | 认证状态（has_cookie, authenticated, username 等；`network_error=True` 表示校验死在传输层——代理 / 风控 / 超时——而非 Cookie 失效） |
 | `BilibiliAuthExpiredError` | 任意 `_get_json()` endpoint 返回 `-101` 时的专项异常，仍继承 `BilibiliAPIError` |

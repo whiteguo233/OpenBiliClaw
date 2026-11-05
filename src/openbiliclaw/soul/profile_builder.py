@@ -24,6 +24,22 @@ from .tone import build_tone_profile
 
 logger = logging.getLogger(__name__)
 
+# MBTI dimension letters, in type-string order. A pole outside its axis is
+# dropped rather than coerced: a wrong letter is worse than a missing one.
+_MBTI_POLES: dict[str, frozenset[str]] = {
+    "EI": frozenset({"E", "I"}),
+    "SN": frozenset({"S", "N"}),
+    "TF": frozenset({"T", "F"}),
+    "JP": frozenset({"J", "P"}),
+}
+# Calibration (reopen on any provider/model swap): 0.60 is the first strength a
+# pole can carry and still mean "leaning this way". The real-account ENTP that
+# triggered this rule rested on EI=0.55 — a letter produced by a coin flip.
+# 0.55 keeps a weak type visible (confidence reflects it) without letting it
+# claim the same certainty as a 0.8 dimension.
+_MBTI_WEAK_DIMENSION_STRENGTH = 0.60
+_MBTI_WEAK_CONFIDENCE_CAP = 0.55
+
 
 class SupportsCoreMemoryTask(Protocol):
     async def complete_structured_task(
@@ -74,19 +90,36 @@ _STRONG_HISTORY_EVENTS = frozenset(
 
 
 def _history_timestamp(item: dict[str, Any]) -> float:
-    """Best-effort epoch seconds for a history row (0.0 when unknown)."""
+    """Best-effort epoch seconds for a history row (0.0 when unknown).
+
+    The metadata reader is shared with the event layer so every interaction-time
+    key (``view_at`` / ``fav_time`` / ``mtime`` / ``watched_at`` /
+    ``interaction_time`` / ``starred_at``) buckets identically — a row was
+    falling out of the time buckets whenever its producer picked a different
+    key name.
+    """
+    from openbiliclaw.sources.event_format import parse_event_timestamp
+
     raw_metadata = item.get("metadata")
     metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    parsed = parse_event_timestamp(metadata)
+    if parsed is not None:
+        return parsed.timestamp()
     for value in (
         item.get("view_at"),
         # Favourites timestamp themselves with fav_time; without it every
         # favourite would look undated and fall out of the time bucketing that
         # keeps early behaviour represented.
         item.get("fav_time"),
+        # Follows date themselves with Bilibili's mtime. A creator row without
+        # it was undated and dropped out of the time buckets, which is how a
+        # years-old following list came to look like one day of activity.
+        item.get("mtime"),
         item.get("timestamp"),
         metadata.get("timestamp"),
         metadata.get("view_at"),
         metadata.get("fav_time"),
+        metadata.get("mtime"),
     ):
         if isinstance(value, bool) or value is None:
             continue
@@ -372,6 +405,7 @@ class ProfileBuilder:
         if not str(payload.get("current_phase", "")).strip():
             payload["current_phase"] = "还在根据最近的行为信号整理当前阶段。"
             defaulted.append("current_phase")
+        self._normalize_mbti_payload(payload)
 
         if defaulted:
             logger.warning(
@@ -379,6 +413,93 @@ class ProfileBuilder:
                 ", ".join(defaulted),
             )
         return payload
+
+    @staticmethod
+    def _normalize_mbti_payload(payload: dict[str, object]) -> None:
+        """Make ``mbti.type`` agree with the dimension strengths it ships with.
+
+        Two failure modes were observed on a real account: the model emitted a
+        type letter on a dimension that sat at 0.55 (a dead-zone coin flip), and
+        its ``type`` string could disagree with its own ``dimensions[].pole``.
+        Downstream surfaces (portrait page, dialogue) trust ``type``, so the two
+        must never drift apart.
+
+        Normalization only clamps and reconciles — it never invents a pole and
+        never flips a letter. Weak dimensions are surfaced instead: confidence
+        is capped and a WARNING is logged so the caller can see that the letter
+        rests on thin evidence.
+        """
+        raw = payload.get("mbti")
+        if not isinstance(raw, dict):
+            return
+        raw_dimensions = raw.get("dimensions")
+        dimensions: dict[str, dict[str, object]] = {}
+        strengths: dict[str, float] = {}
+        axes = ("EI", "SN", "TF", "JP")
+        if isinstance(raw_dimensions, dict):
+            for axis in axes:
+                entry = raw_dimensions.get(axis)
+                if not isinstance(entry, dict):
+                    continue
+                pole = str(entry.get("pole") or "").strip().upper()
+                allowed = _MBTI_POLES[axis]
+                if pole not in allowed:
+                    logger.warning(
+                        "soul profile mbti: dropping %s dimension with invalid pole %r", axis, pole
+                    )
+                    continue
+                try:
+                    strength = float(entry.get("strength", 0.5))
+                except (TypeError, ValueError):
+                    strength = 0.5
+                # A "pole strength" below 0.5 is self-contradictory (it would
+                # argue for the other pole); 1.0 is the ceiling by schema.
+                clamped = round(min(1.0, max(0.5, strength)), 4)
+                dimensions[axis] = {"pole": pole, "strength": clamped}
+                strengths[axis] = clamped
+
+        declared = str(raw.get("type") or "").strip().upper()
+        derived = "".join(str(dimensions[axis]["pole"]) for axis in axes if axis in dimensions)
+        if dimensions and derived != declared:
+            logger.warning(
+                "soul profile mbti: declared type %r disagrees with dimension poles %r; "
+                "using the dimensions",
+                declared,
+                derived,
+            )
+            declared = derived
+
+        try:
+            confidence = float(raw.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        # Calibration (reopen on any provider/model swap): 0.60 is the first
+        # strength at which a pole is meaningfully off the midpoint. Anything
+        # below it is a coin flip with a decimal point, so the whole type must
+        # not be reported as confident.
+        weak = sorted(
+            axis for axis, strength in strengths.items() if strength < _MBTI_WEAK_DIMENSION_STRENGTH
+        )
+        if weak:
+            confidence = min(confidence, _MBTI_WEAK_CONFIDENCE_CAP)
+            logger.warning(
+                "soul profile mbti: dimensions %s sit below %.2f strength; "
+                "capping confidence at %.2f (declared %r)",
+                ", ".join(weak),
+                _MBTI_WEAK_DIMENSION_STRENGTH,
+                _MBTI_WEAK_CONFIDENCE_CAP,
+                declared,
+            )
+
+        normalized: dict[str, object] = {
+            "type": declared,
+            "confidence": round(min(1.0, max(0.0, confidence)), 4),
+            "dimensions": dimensions,
+        }
+        inferred_from = raw.get("inferred_from")
+        if isinstance(inferred_from, list):
+            normalized["inferred_from"] = [str(item) for item in inferred_from if str(item)]
+        payload["mbti"] = normalized
 
     def _validate_payload(self, payload: Mapping[str, object]) -> None:
         if "personality_portrait" not in payload:
