@@ -1,0 +1,42 @@
+{
+  "initialized": true,
+  "running": false,
+  "current_stage": 4,
+  "stages": [
+    {
+      "n": 1,
+      "label": "拉取数据",
+      "status": "ok",
+      "reason": null,
+      "progress": null,
+      "eta_seconds": null
+    },
+    {
+      "n": 2,
+      "label": "分析偏好",
+      "status": "ok",
+      "reason": null,
+      "progress": null,
+      "eta_seconds": null
+    },
+    {
+      "n": 3,
+      "label": "生成并保存完整画像",
+      "status": "ok",
+      "reason": null,
+      "progress": null,
+      "eta_seconds": null
+    },
+    {
+      "n": 4,
+      "label": "生成首轮可用推荐",
+      "status": "ok",
+      "reason": null,
+      "progress": null,
+      "eta_seconds": null
+    }
+  ],
+  "partial_success": false,
+  "reason": "already_initialized",
+  "detail": "已经初始化过了；如需重建请用 force"
+}

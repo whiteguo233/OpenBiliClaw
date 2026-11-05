@@ -1,0 +1,61 @@
+{
+  "product_commit": "c2509384a578268287179709a7c39cf5ef0666d0",
+  "ci": {
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42024509220",
+    "conclusion": "success",
+    "pytest": {
+      "passed": 12417,
+      "skipped": 161,
+      "duration_seconds": 1273.19
+    },
+    "browser_e2e": {
+      "passed": 70,
+      "duration_seconds": 164.26
+    },
+    "windows_hkcu": {
+      "passed": 4,
+      "skipped": 1
+    },
+    "firefox_build": "pass",
+    "ruff": "pass",
+    "mypy": {
+      "status": "pass",
+      "source_files": 386
+    }
+  },
+  "sdk_ci": {
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42024509317",
+    "conclusion": "success"
+  },
+  "local_final": {
+    "web_js": {
+      "passed": 150
+    },
+    "extension": {
+      "passed": 1859
+    },
+    "chrome_build": "pass",
+    "i18n": {
+      "fixed_strings": 2980,
+      "patterns": 211,
+      "status": "pass"
+    },
+    "targeted_python": 126,
+    "web_identity_regression": 16,
+    "setup_completion_browser_regression": 2,
+    "i18n_python": 34,
+    "process_recovery_script_ruff": "pass"
+  },
+  "preserved_pre_fix_snapshot": {
+    "commit": "a6527118",
+    "pytest": {
+      "passed": 12576,
+      "skipped": 71,
+      "failed": 1,
+      "duration_seconds": 4117.24
+    },
+    "failed_test": "tests/test_token_streaming.py::TestChatStreamEndpoints::test_agent_stream_forwards_delta_events_but_does_not_persist_them",
+    "failure": "Old expected event list omitted the required execution_started checkpoint. Fixed in 318c4b4d and passed in later full CI."
+  },
+  "scope": "Automated regressions are separate from the real-provider business matrices. Manual scripts and evidence added after product_commit do not modify src/, extension/, or tests/."
+}

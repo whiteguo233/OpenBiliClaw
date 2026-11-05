@@ -1,0 +1,176 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "real_server_startup_and_user_surfaces",
+      "status": "pass",
+      "result": {
+        "/api/health": {
+          "status": 200,
+          "bytes": 135
+        },
+        "/api/profile-summary": {
+          "status": 200,
+          "bytes": 7456
+        },
+        "/web/": {
+          "status": 200,
+          "bytes": 185538
+        },
+        "/m/": {
+          "status": 200,
+          "bytes": 1685
+        }
+      },
+      "seconds": 15.264,
+      "calls": []
+    },
+    {
+      "name": "real_sse_two_turn_chat_and_durable_history",
+      "status": "pass",
+      "result": {
+        "turns": [
+          {
+            "first_content_seconds": 4.643,
+            "elapsed_seconds": 7.615,
+            "reply": "“蓝色番茄731”已存入记忆，Rust 借用（Borrowing）的核心作用是用引用（引用所有权）避免手动管理内存，同时保证数据不被重复修改；它通过“不可变借用”“可变借用”和“生命周期”规则，确保同一时间只有一份“有效”视图，既防止数据竞争又避免悬垂指针。",
+            "event_counts": {
+              "delta": 77,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          },
+          {
+            "first_content_seconds": 9.932,
+            "elapsed_seconds": 10.165,
+            "reply": "蓝色番茄731",
+            "event_counts": {
+              "delta": 5,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          }
+        ]
+      },
+      "seconds": 17.863,
+      "calls": [
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 4928,
+          "completion_tokens": 77,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 3101,
+          "completion_tokens": 817,
+          "success": 1
+        },
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 5087,
+          "completion_tokens": 5,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "awareness_and_insight_cognition_cycle",
+      "status": "pass",
+      "result": {
+        "ran": true,
+        "throttled": false,
+        "awareness_generated": 0,
+        "insight_generated": 1,
+        "total_awareness_after": 4,
+        "total_insight_after": 6,
+        "errors": []
+      },
+      "seconds": 21.671,
+      "calls": [
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2735,
+          "completion_tokens": 103,
+          "success": 1
+        },
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 4891,
+          "completion_tokens": 994,
+          "success": 1
+        },
+        {
+          "caller": "discovery.search.queries",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2083,
+          "completion_tokens": 112,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2649,
+          "completion_tokens": 16,
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 5619,
+          "completion_tokens": 21,
+          "success": 1
+        },
+        {
+          "caller": "soul.insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 3832,
+          "completion_tokens": 111,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "post_chat_learning_queue_drained",
+      "status": "pass",
+      "result": {
+        "drained": true,
+        "dialogue_events": 3
+      },
+      "seconds": 0.002,
+      "calls": []
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3-8B",
+      "status": "fail",
+      "error": "AssertionError: {'ok': False, 'service_status': {'notices': [], 'update_url': 'https://github.com/whiteguo233/OpenBiliClaw/releases/latest'}, 'kind': 'sponsored', 'instance_id': '', 'provider': 'sponsored', 'model': 'Qwen/Qwen3-8B', 'message': '', 'error': '免费对话可用，但本地向量尚未就绪。请在初始化页准备/修复 Ollama 向量模型后重试。', 'latency_ms': 0, 'apply_seconds': 0.333}",
+      "seconds": 16.28,
+      "calls": []
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3.5-4B",
+      "status": "fail",
+      "error": "AssertionError: {'ok': False, 'service_status': {'notices': [], 'update_url': 'https://github.com/whiteguo233/OpenBiliClaw/releases/latest'}, 'kind': 'sponsored', 'instance_id': '', 'provider': 'sponsored', 'model': 'Qwen/Qwen3.5-4B', 'message': '', 'error': '免费对话可用，但本地向量尚未就绪。请在初始化页准备/修复 Ollama 向量模型后重试。', 'latency_ms': 0, 'apply_seconds': 0.154}",
+      "seconds": 15.869,
+      "calls": []
+    }
+  ],
+  "background_observations": []
+}

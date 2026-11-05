@@ -864,3 +864,5 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 | 重启与重复连接 | pending消息的重试次数、首段/工具执行边界保存在agent_events；重启恢复不会回放已开始的工具。已完成消息直接读取结果。 |
 
 公开API仍为 `DurableChatReplyScheduler.schedule/start/close` 与 `DialogueExecutionCoordinator.lease`；调度器本体接口未变，免费错误分类和终止决定在API处理器完成。HTTP订阅断开后执行继续；服务重启后仅尚未开始的pending轮次自动恢复。真实Rust与云端故障验收见[报告](../testing/2026-11-05-sponsored-resilience.md)。
+
+2026-11-05 扩展验收：`scripts/sponsored_process_recovery_acceptance.py --source-root <隔离基线> --root <新目录>` 复制已完成基线，启动并仅终止自身 POSIX 进程组；分别验证已开始轮次停止重放和未开始轮次自动恢复。正式队列 API 不变，支持 macOS/Linux，完整场景与限制见[报告](../testing/2026-11-05-sponsored-comprehensive.md)。

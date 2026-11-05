@@ -1,0 +1,59 @@
+[
+  {
+    "path": "/api/health",
+    "status": 200,
+    "seconds": 7.183
+  },
+  {
+    "path": "/api/chat/agent/ping",
+    "status": 200,
+    "seconds": 9.096
+  },
+  {
+    "path": "/api/init-status",
+    "status": 200,
+    "seconds": 0.126,
+    "stages": [
+      {
+        "n": 1,
+        "label": "拉取数据",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 2,
+        "label": "分析偏好",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 3,
+        "label": "生成并保存完整画像",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 4,
+        "label": "生成首轮可用推荐",
+        "status": "running",
+        "reason": null,
+        "progress": {
+          "done": 0,
+          "total": 4,
+          "note": "正在基于完整画像生成发现方向并抓取候选 · 已处理 40s",
+          "mode": "indeterminate",
+          "elapsed_seconds": 40,
+          "max_seconds": 3600
+        },
+        "eta_seconds": null
+      }
+    ],
+    "running": true
+  }
+]

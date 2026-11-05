@@ -1,0 +1,53 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "long_context_middle_record_and_model_specific_bound",
+      "status": "fail",
+      "error": "AssertionError: 翠竹 59427",
+      "seconds": 97.556,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 7152,
+          "completion_tokens": 1373,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 7282,
+          "completion_tokens": 1303,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 714,
+          "completion_tokens": 69,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 6913,
+          "completion_tokens": 1026,
+          "success": 1
+        }
+      ]
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation active mode lacks scope/evidence; using unknown",
+      "failure": false
+    }
+  ]
+}
