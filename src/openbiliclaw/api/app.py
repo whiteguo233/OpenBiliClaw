@@ -6426,9 +6426,9 @@ def create_app(
                     target_pool_count,
                     fully_parallel=True,
                     progress_callback=progress_callback,
-                    # Instagram's explicit init uses the formal task-backed
-                    # producer. Other sources retain their legacy backfill.
-                    sources=effective if "instagram" in effective else None,
+                    # These sources own a complete producer/evaluate/copy
+                    # init wave; never substitute an unselected Bilibili run.
+                    sources=effective if effective & {"instagram", "github"} else None,
                     register_instagram_task=lambda task_id: coord.register_enqueued_task(
                         run_id, task_id
                     ),

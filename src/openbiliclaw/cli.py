@@ -17,7 +17,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -3448,7 +3448,7 @@ async def _run_init_discovery_backfill_async(
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
 
-    if selected_sources is not None and "instagram" in selected_sources:
+    if selected_sources is not None and selected_sources & {"instagram", "github"}:
         from openbiliclaw.config import load_config
         from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
         from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
@@ -3486,9 +3486,42 @@ async def _run_init_discovery_backfill_async(
             pool_source_shares=effective_pool_source_shares(config),
             llm_concurrency_gate=gate,
         )
-        return await controller.run_init_backfill(
-            profile, target, sources=selected_sources, progress_callback=progress_callback
-        )
+        async with AsyncExitStack() as resources:
+            if "github" in selected_sources:
+                from openbiliclaw.runtime.github_producer import GitHubDiscoveryProducer
+                from openbiliclaw.sources.github_client import (
+                    GitHubClient,
+                    resolve_github_access_token,
+                )
+
+                github = config.sources.github
+                token, _ = resolve_github_access_token(github.access_token)
+                client = await resources.enter_async_context(
+                    GitHubClient(
+                        token=token or None,
+                        request_interval_seconds=float(github.request_interval_seconds),
+                    )
+                )
+                controller.github_producer = GitHubDiscoveryProducer(
+                    database=database,
+                    soul_engine=soul_engine,
+                    client=client,
+                    enabled=bool(github.enabled),
+                    access_token=token,
+                    source_modes=tuple(github.source_modes),
+                    daily_search_budget=int(github.daily_search_budget),
+                    daily_ranked_budget=int(github.daily_ranked_budget),
+                    daily_latest_budget=int(github.daily_latest_budget),
+                    min_interval_minutes=int(github.min_interval_minutes),
+                    candidate_pipeline=pipeline,
+                    candidate_evaluation_owned_by_coordinator=True,
+                    keyword_fetch=KeywordFetchCoordinator(
+                        database=database, discovery_config=config.discovery
+                    ),
+                )
+            return await controller.run_init_backfill(
+                profile, target, sources=selected_sources, progress_callback=progress_callback
+            )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -11152,6 +11185,7 @@ async def run_guided_init(
                 ("v2ex", include_v2ex),
                 ("weibo", include_weibo),
                 ("instagram", include_instagram),
+                ("github", include_github),
             )
             if included
         }

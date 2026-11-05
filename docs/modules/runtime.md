@@ -34,6 +34,10 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 已实现功能
 
+| 本轮修复 | 行为 |
+|---|---|
+| GitHub 显式初始化补池 | 与 Instagram 共用来源 producer → 同步 flush 评估 → 推荐文案的完成边界；不以未选择的 B站替代。 |
+
 | 功能 | 状态 | 说明 |
 |---|---|---|
 | 免费模型组件安装/升级 | 已实现，SDK组件已发布 | Core固定信任根、验签后自检、版本目录原子激活，Git/Docker/桌面共用；失败保留原组件。 |
@@ -159,6 +163,8 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+`ContinuousRefreshController.run_init_backfill(..., sources={"github"})` 在初始化暂停后台期间直接调用正式 GitHub producer，尊重来源预算和限流，至少一条候选完成评估与文案后才成功；空结果保留 `InitialPoolUnavailableError`。Instagram 的任务归属/取消行为不变。
 
 ### PresenceTracker
 

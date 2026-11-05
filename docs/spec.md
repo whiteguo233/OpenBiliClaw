@@ -742,6 +742,8 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ + 各自 producer│ │ bounded task/result│  │             │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ Web 抽取 → 完整 URL 身份 → 去重；原生平台 ID 保留           │ │
+│  │ GitHub/Instagram init → 所选 producer → 评估/文案 → 可用库存 │ │
 │  │ sources.platforms：十四平台 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │

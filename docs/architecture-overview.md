@@ -61,6 +61,8 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 封面：proxy 前台 + refresh 预取 → app-stable lane（总4/后台3、前台优先）
                                → cache-key singleflight → 公网 DNS（代理固定 DoH）→ 固定 IP / TLS → 原子缓存
 Instagram 手动补库 → 来源配额/任务锁 → 正式发现/评估/文案 → 可用库存或明确失败
+GitHub / Instagram 显式初始化 → 所选来源 producer → 同步评估 / 文案 → 首轮可用库存
+通用网页抽取 → 完整 URL 规范化身份 → 候选去重（原生平台 ID 不变）
 ```
 
 ```

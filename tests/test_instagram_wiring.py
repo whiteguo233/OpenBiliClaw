@@ -46,8 +46,9 @@ from openbiliclaw.sources.platforms import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-async def test_cli_instagram_init_reuses_source_aware_backfill(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("source", ["instagram", "github"])
+async def test_cli_source_init_reuses_source_aware_backfill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
 ) -> None:
     from types import SimpleNamespace
 
@@ -56,7 +57,7 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     from openbiliclaw.storage.database import Database
 
     config = Config()
-    config.sources.instagram.enabled = True
+    getattr(config.sources, source).enabled = True
     config.sources.bilibili.enabled = False
     config.scheduler.enabled = False
     db = Database(tmp_path / "cli-init.db")
@@ -74,9 +75,10 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     monkeypatch.setattr(cli, "_build_discovery_candidate_pipeline", lambda **_: SimpleNamespace())
 
     async def backfill(self: Any, profile: Any, target: int, **kwargs: Any) -> int:
-        assert target == 7 and kwargs["sources"] == {"instagram"}
-        assert self.instagram_producer is not None
-        assert self.instagram_producer.candidate_evaluation_owned_by_coordinator is True
+        assert target == 7 and kwargs["sources"] == {source}
+        producer = getattr(self, f"{source}_producer")
+        assert producer is not None
+        assert producer.candidate_evaluation_owned_by_coordinator is True
         assert self.scheduler_config.enabled is False
         assert "bilibili" not in self.pool_source_shares
         return 3
@@ -84,7 +86,7 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     monkeypatch.setattr(ContinuousRefreshController, "run_init_backfill", backfill)
     assert (
         await cli._run_init_discovery_backfill_async(
-            object(), target_pool_count=7, selected_sources={"instagram"}
+            object(), target_pool_count=7, selected_sources={source}
         )
         == 3
     )

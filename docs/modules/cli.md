@@ -163,6 +163,8 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 
 ## 详细说明
 
+GitHub 初始化补池修复（2026-11-05）：`openbiliclaw init` 保留 GitHub 来源选择，并通过正式 producer、同步评估和文案建立首轮库存；GitHub HTTP client 随本轮关闭，不依赖后台调度开启。命令参数不变。
+
 ### 初始化语言选择
 
 `openbiliclaw init` 在交互终端首先显示 `简体中文 / 繁體中文 / English`，接受编号或 locale，

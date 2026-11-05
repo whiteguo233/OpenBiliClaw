@@ -250,6 +250,8 @@ guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST 
 
 ## GitHub 配置、初始化与推荐 DTO
 
+已实现修复（2026-11-05）：`POST /api/init` 的 GitHub 来源选择一直传递到正式补池入口；公开 Star 画像生成后，使用 GitHub producer、同步评估及推荐文案，不落入 B站旧发现计划。接口字段不变。
+
 `GET /api/config` 的 `sources.github` 返回启用状态、公开用户名、固定
 `token_env="OPENBILICLAW_GITHUB_TOKEN"`、三种 discovery mode、预算 / 节流和 bootstrap
 上限；秘密只用 `access_token_set` 表示是否存在，`access_token` 永不回显。`PUT /api/config`

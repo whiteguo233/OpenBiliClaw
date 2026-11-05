@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any
 
+from openbiliclaw.saved_sync.identity import make_item_key
 from openbiliclaw.sources.llm_extractor import extract_content_from_page
 
 
@@ -25,6 +27,46 @@ class FakeLLMService:
 
 
 class TestLLMExtractor:
+    def test_web_identity_uses_full_url_when_model_shortens_ids(self) -> None:
+        urls = [
+            "https://example.com/post/rust-17",
+            "https://example.com/post/garden-17",
+            "https://elsewhere.example/post/rust-17",
+        ]
+        service = FakeLLMService(
+            json.dumps(
+                [
+                    {"title": f"Article {i}", "url": url, "content_id": "17"}
+                    for i, url in enumerate(urls)
+                ]
+            )
+        )
+        items = asyncio.run(
+            extract_content_from_page(
+                "article source text " * 10, source_platform="web", llm_service=service
+            )
+        )
+        assert [item.item_key for item in items] == [make_item_key("web", "", url) for url in urls]
+        assert len({item.item_key for item in items}) == 3
+
+    def test_web_identity_is_stable_across_model_ids_and_relative_links(self) -> None:
+        keys = []
+        for model_id in ("17", "rust-17", "guessed-id"):
+            service = FakeLLMService(
+                json.dumps([{"title": "Rust", "url": "/post/rust-17", "content_id": model_id}])
+            )
+            items = asyncio.run(
+                extract_content_from_page(
+                    "article source text " * 10,
+                    source_platform="web",
+                    llm_service=service,
+                    base_url="https://example.com/list",
+                )
+            )
+            assert items[0].content_url == "https://example.com/post/rust-17"
+            keys.append(items[0].item_key)
+        assert len(set(keys)) == 1
+
     def test_extracts_items_from_valid_json(self) -> None:
         response = """[
             {
@@ -103,7 +145,9 @@ class TestLLMExtractor:
                 llm_service=service,
             )
         )
-        assert items[0].content_id == "abc123"
+        assert items[0].content_id == make_item_key(
+            "web", "", "https://example.com/posts/abc123"
+        ).removeprefix("web:")
 
     def test_truncates_long_page_text(self) -> None:
         service = FakeLLMService("[]")

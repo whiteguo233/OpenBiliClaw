@@ -660,6 +660,8 @@ Setup / extension / desktop / mobile / CLI → local config → shared sponsored
   Cloud text embeddings → BGE-M3 (1024 dimensions, default); optional image understanding → 4B
   → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
   Silent transient failure → bounded retry / free fallback → durable queue; started work is not replayed
+  Explicit GitHub/Instagram setup → selected producer → evaluation/copy → first usable inventory
+  Generic web extraction → canonical full-URL identity → deduplication; native platform IDs remain
   Results → source-evidence validation → profile / memory; one bounded temporal correction
   Local vector choice → Ollama (independent cache/endpoint, no sponsored key)
   Credential / policy failure → durable status → settings + inbox → update app or configure own key
