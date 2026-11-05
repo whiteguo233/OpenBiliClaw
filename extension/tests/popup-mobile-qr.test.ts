@@ -72,6 +72,6 @@ test("mobile QR LAN-IP lookup uses the lightweight QR endpoint", () => {
   assert.ok(renderSource, "popup.js must keep renderMobileQrPanel");
   assert.match(renderSource, /\/api\/qr-info/);
   assert.doesNotMatch(renderSource, /\/api\/health/);
-  assert.match(renderSource, /endpoint\.scheme === "https" \? "https" : "http"/);
-  assert.match(renderSource, /`\$\{scheme\}:\/\/\$\{urlHost\}:\$\{endpoint\.port\}`/);
+  assert.match(renderSource, /connection\.endpointUrl\(endpoint\)/);
+  assert.match(renderSource, /mobileQrPanel\.update\(\{ endpoint, info \}\)/);
 });

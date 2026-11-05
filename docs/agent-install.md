@@ -1,5 +1,9 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+## Phone QR connections (2026-10-26)
+
+Desktop packages and AI / script installs default to `0.0.0.0`; preserve a user's explicit loopback setting. The local `Health URL` is intentionally loopback and must not be encoded as a phone link. Open Desktop Web / extension **手机版** and choose LAN, Tailscale or public/custom access. Both surfaces refresh `/api/qr-info` each time; missing detection never produces a loopback QR. The companion Android / iOS App now offers **扫码连接** to save the endpoint and connection mode; a phone camera opens the same `/m/` URL. System Tailscale uses direct App transport; an embedded helper adds `?obc_connection=tailscale` for the App's built-in transport. First-time enrollment and existing password login are still required. No new installation dependency or config field. For Docker, enter a reachable host URL with its published port. See [connection protocol](mobile-connection.md).
+
 > 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
 
 > **Important:** If you're an AI coding agent reading this file, use
@@ -103,7 +107,7 @@ Next action (AI service check failed):
 
 Next action (init has been run automatically):
   - Verify the backend is healthy: curl -sS <Health URL>
-  - Open Mobile Web: click the phone icon in the extension header and scan the QR code; if the backend address is loopback, the extension calls `GET /api/qr-info` and reads the `lan_ip` response field to show the LAN URL automatically
+  - Open Mobile Web: click the phone icon in the extension header and scan the QR code; the extension refreshes `GET /api/qr-info` on every open and offers LAN, Tailscale and public/custom links; the companion App can scan the same URL to import the backend
   - See recommendations:    cd <dir> && uv run openbiliclaw recommend
   - View the soul profile:  cd <dir> && uv run openbiliclaw profile
   - Re-run init manually if needed: cd <dir> && uv run openbiliclaw init

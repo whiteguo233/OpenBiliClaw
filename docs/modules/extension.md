@@ -1,5 +1,14 @@
 # 浏览器插件模块
 
+## 手机扫码入口（2026-10-26）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 局域网 / Tailscale / 公网 | 顶部「手机版」在每次打开时读取轻量 `GET /api/qr-info`，可切换网络；公网地址可从当前 HTTPS endpoint 保留或在浮层输入。 |
+| 浏览器与原生 App | 同一 HTTP(S) 二维码可打开 Mobile Web，也可由新版 App「扫码连接」导入；应用内节点携带连接方式，系统节点保留直接连接。 |
+
+公开 helper `OBCMobileConnection.connectionChoices()` / `createPanel()` 来自 `web/shared/mobile-connection.js`，构建时复制到插件 `popup/shared/`，由 popup 和 side panel 共用。无新插件权限或远程脚本。获取 Tailscale 地址用于手机扫码，不改变插件自身远程 HTTP endpoint 的权限限制。无可用地址时不画回环二维码，复制 / 打开按钮禁用。详见[手机扫码连接](../mobile-connection.md)。
+
 ## 小鱼设置请求（2026-10-23）
 
 实际 MV3 验收发现小鱼面板把 `/api` 重复拼进 URL。面板现在统一向 `requestJson` 传 `/fish/*` 相对路径，由公共 helper 添加一次 `/api`；配置、状态、账号保存/清除、扫码生成/轮询与运行入口共用此约定。新增公共 helper 与面板事件组合回归，覆盖 HTTP 方法与最终路径。后端公开 API 不变。
