@@ -2672,14 +2672,12 @@ def create_app(
     register_auth_routes(app, _get_auth_gate)
 
     def _local_or_authenticated_gate(request: Request, *, detail: str) -> JSONResponse | None:
-        """Self-gate privileged routes for when the password gate is off.
+        """Retain the privileged-route guard behind the default local-only gate.
 
-        The auth middleware short-circuits when ``[api.auth]`` is disabled (the
-        default), so privileged routes must self-gate like ``/api/auth/admin``:
-        trusted-local callers always pass; remote callers must enable the
-        password gate first (the middleware then requires an authenticated
-        session). Returns ``None`` when the request may proceed. See issues
-        #299 (credential export) and #300 (config tampering).
+        The middleware now rejects remote private requests when auth is off.
+        This handler guard also protects direct handler reuse: trusted-local
+        callers pass, and remote access requires the enabled middleware gate.
+        See issues #299 (credential export) and #300 (config tampering).
         """
         gate = _get_auth_gate()
         if gate.auth.enabled or gate.is_trusted_local(request):
@@ -16819,6 +16817,20 @@ def create_app(
                 note.get("published_at") or note.get("pubdate"),
                 label=note.get("published_label"),
             )
+            raw_description = note.get("description") or note.get("desc") or note.get("text")
+            description = raw_description[:8000] if isinstance(raw_description, str) else ""
+            raw_tags = note.get("tags")
+            tags = (
+                list(
+                    dict.fromkeys(
+                        tag.strip()[:128]
+                        for tag in raw_tags[:32]
+                        if isinstance(tag, str) and tag.strip()
+                    )
+                )
+                if isinstance(raw_tags, list)
+                else []
+            )
 
             item = DiscoveredContent(
                 bvid=note_id,
@@ -16835,9 +16847,9 @@ def create_app(
                 ),
                 comment_count=_intish(note.get("comment_count") or note.get("comments")),
                 share_count=_intish(note.get("share_count") or note.get("shares")),
-                description=str(
-                    note.get("description") or note.get("desc") or note.get("text") or ""
-                ),
+                description=description,
+                body_text=description,
+                tags=tags,
                 source_strategy=f"xhs-extension-{page_type}",
                 content_id=note_id,
                 content_url=best_url,

@@ -80,7 +80,7 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `tailnet disable` | 持久关闭应用内 Tailnet，保留本机节点身份 | ✅ |
 | `tailnet status` | 查看开关、节点名、helper 路径、最近事件、MagicDNS / Tailnet IP | ✅ |
 | `tailnet build-helper` | 源码安装用 Go 1.26.6 构建并安装当前平台 helper | ✅ |
-| `set-password` | 设置 / 修改局域网访问密码（`--disable` 关闭门禁 / `--logout-all` / `--rotate-secret`） | ✅ |
+| `set-password` | 设置 / 修改局域网访问密码（`--disable` 恢复仅可信本机访问 / `--logout-all` / `--rotate-secret`） | ✅ |
 | `ext-key generate` | 生成并保存一个扩展设备访问密钥（明文只显示一次） | ✅ |
 | `ext-key enable` | 开启远程扩展设备认证（默认关闭） | ✅ |
 | `ext-key disable` | 关闭新会话交换但保留密钥摘要 | ✅ |

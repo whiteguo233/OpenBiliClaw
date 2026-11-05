@@ -1,5 +1,22 @@
 # Docker 部署指南
 
+## 远程认证变更（2026-11-06）
+
+默认 `api.auth.enabled=false` 只开放可信本机私有 API。Docker bridge、局域网、HTTPS/反向代理通常属于远程访问，首次连接前须通过容器内 `openbiliclaw set-password` 或 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD` 配置密码；重启后登录。不能通过关闭密码来开放端口。详见[认证契约](modules/api-auth.md)。
+
+容器启动后，先在宿主机终端完成认证设置：
+
+```bash
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker exec -it openbiliclaw-backend openbiliclaw ext-key generate
+docker exec -it openbiliclaw-backend openbiliclaw ext-key enable
+docker restart openbiliclaw-backend
+```
+
+Web 先打开 `http://127.0.0.1:8420/web/` 登录，再进入 `/setup/` 配置。扩展在设置页使用上面仅显示一次的设备密钥配对；它不是硅基流动的模型 Key。容器内 CLI 可直接管理配置。环境变量方式需要在 Compose 的 backend `environment` 或 `docker run -e` 显式传入，并重建容器，不能只在宿主机 export 而不传入容器。
+
+脚本安装等待扩展 Cookie 时，可在另一个终端完成这些步骤。再次执行 bootstrap 前，须将容器内最新的 `[api.auth]` 配置同步回宿主项目 `config.toml`（仍只保存在本机）；bootstrap 会把该文件同步到容器，避免旧配置覆盖新密码和设备密钥摘要。
+
 ## 手机扫码连接（2026-10-26）
 
 桌面 Web / 插件「手机版」支持局域网、Tailscale、公网地址。Docker 用户应选手机可达的**宿主机地址与发布端口**，容器内部网卡 IP 无法保证被手机访问：可在「公网 / 自定义访问地址」输入 `http://<宿主机 LAN IP>:<发布端口>`，或现有 HTTPS 域名。浏览器扫码打开 `/m/`，新版 Android / iOS App「扫码连接」导入同一链接。镜像仍不内置 Tailnet helper；容器内也不保证能探测宿主机系统 Tailscale 地址，需要填写宿主机的 Tailscale URL 后生成二维码。扫码不改变 Docker 端口映射、代理或密码门禁。详见[手机扫码连接](mobile-connection.md)。
@@ -8,7 +25,7 @@
 
 [← 返回 README](../README.md)
 
-> 🔒 **局域网访问安全（可选密码门禁）**：容器把后端暴露在 `8420`，同网段设备都能访问。需要为局域网 / 远程设备加登录密码时（本机与浏览器扩展仍免登录），设置环境变量 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…`（或进容器跑 `openbiliclaw set-password`）。若手动套其他反向代理，记得配 `[api.auth].trusted_proxies` 或让代理自行鉴权；仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见 [`docs/modules/api-auth.md`](modules/api-auth.md)。
+> 🔒 **容器访问需要认证**：容器的私有 API 只对可信本机免登录，映射端口后的宿主机浏览器通常也需要密码，扩展使用独立设备密钥。反向代理的鉴权不能代替应用密码；`trusted_proxies` 只配置可信转发解析。仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见上面的首次认证步骤与[认证契约](modules/api-auth.md)。
 
 > 🛜 **应用内 Tailnet 首版不属于 Docker 镜像能力**：macOS / Windows 桌面安装包会内置
 > `tsnet` helper，源码主机可用 Go 1.26.6 显式构建；当前 backend / prebuilt Docker 镜像不
@@ -79,7 +96,7 @@ OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当
 
 ## 快速开始
 
-三种方式按省事程度排序。**无论选哪种，启动后端后都建议打开图形化引导页 `http://127.0.0.1:8420/setup/` 完成 AI 配置与前置检查**——它和桌面安装包是同一套向导：配置 LLM / embedding、选择初始化来源（B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub）、真实校验前置条件。Bangumi 与 GitHub 的公开 discovery 无需登录；两者只有填写公开用户名后才能提供对应收藏/starred 画像信号，GitHub PAT 仍为可选。微博公开 discovery 无需登录，但选择微博个人初始化必须让宿主机浏览器登录微博并保持扩展在线。
+三种方式按省事程度排序。**无论选哪种，启动后端后先完成上面的认证步骤，再打开图形化引导页 `http://127.0.0.1:8420/setup/` 完成 AI 配置与前置检查**——它和桌面安装包是同一套向导：配置 LLM / embedding、选择初始化来源（B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub）、真实校验前置条件。Bangumi 与 GitHub 的公开 discovery 无需登录；两者只有填写公开用户名后才能提供对应收藏/starred 画像信号，GitHub PAT 仍为可选。微博公开 discovery 无需登录，但选择微博个人初始化必须让宿主机浏览器登录微博并保持扩展在线。
 
 > ⚠️ **容器内「开始初始化」按钮不可用**：Docker 运行时后端会拒绝网页发起的图形化初始化（`unsupported_runtime`），向导页会直接给出替代命令。在 `/setup/` 完成配置和前置检查后，初始化本身在宿主机执行：
 >
@@ -140,7 +157,7 @@ $env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliCl
 2. 写入宿主机 `config.toml`。
 3. `docker compose up -d --build` 启动后端和 Ollama embedding sidecar。
 4. 把确认后的 `config.toml` / Cookie 文件同步到容器 `/app/runtime`。
-5. 等浏览器扩展把 B 站 Cookie 推到 `http://127.0.0.1:8420/api/bilibili/cookie`。
+5. 按首次认证步骤在容器设置密码和设备密钥，重启后配对扩展，再等待扩展把 B 站 Cookie 推到 `http://127.0.0.1:8420/api/bilibili/cookie`。
 6. 在容器运行时里按顺序检查全局 LLM 实例链，并单独检查 embedding 服务。
 7. 检查通过后自动运行 `openbiliclaw init`。
 

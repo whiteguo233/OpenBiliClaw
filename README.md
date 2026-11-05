@@ -70,6 +70,9 @@
 2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.233，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
 
    ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
    ```
 
@@ -86,7 +89,7 @@
 源码 / 一句话安装则先运行
 `openbiliclaw tailnet build-helper`（需要 Go 1.26.6），再运行 `openbiliclaw tailnet enable`
 并重启。电脑无需安装或全局开启系统 Tailscale；入口默认关闭、只在 tailnet 私网可见，
-不启用 Funnel/Serve，建议同时在本机 Web 设置中开启应用密码（源码安装也可执行
+不启用 Funnel/Serve，远程使用前需在本机 Web 设置中开启应用密码（源码安装也可执行
 `openbiliclaw set-password`）。详见[应用内 Tailnet](docs/modules/tailnet.md)。
 
 可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](docs/modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](docs/modules/discovery.md#可选-keenable-grounding)。
@@ -381,7 +384,7 @@ openbiliclaw start
 
 > 首次运行 `openbiliclaw init` 时会询问是否允许局域网访问（默认 Y）。如果选了 N 或想改回来，编辑 `config.toml` 的 `[api].host`（`0.0.0.0` = 通过可用的 IPv4 / IPv6 局域网访问，`127.0.0.1` = 仅本机）。二维码优先使用 IPv4；仅有 IPv6 时会自动生成带方括号的 IPv6 地址。
 >
-> **安全提示**：`0.0.0.0` 绑定意味着同网络的任何设备都能访问后端。默认配置下 `[api.auth]` 密码门禁是关闭的，此时历史、画像和点赞/评论等写接口对局域网零鉴权开放；B 站登录凭据接口和设置写/探测接口（`PUT /api/config` 等）例外——它们始终要求本机或已登录会话。只要在不可信网络（公共 Wi-Fi、共享热点、端口映射到公网）使用，请立即执行 `openbiliclaw set-password` 开启门禁。
+> **远程访问**：默认 `[api.auth].enabled=false` 只允许可信本机调用私有 API。手机、局域网和反向代理连接前，请先在后端电脑的设置页启用访问密码，或执行 `openbiliclaw set-password`；远程插件还需设备密钥配对。静态页面和健康探针公开可达。详见[访问认证](docs/modules/api-auth.md)。
 
 打开 `/m/` 后可以把手机页面保存成桌面快捷入口：iPhone / iPad 用 Safari 的「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；如果想要更稳定的完整 PWA 安装提示，建议在可信环境里用 HTTPS 反代访问本机后端。
 
@@ -415,7 +418,10 @@ Windows 原生（PowerShell，不需要 Docker / WSL2）：
 mkdir -p ~/openbiliclaw && cd ~/openbiliclaw
 curl -fsSLO https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
-# 然后打开 http://127.0.0.1:8420/setup/ 完成初始化
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker restart openbiliclaw-backend
+# 先打开 http://127.0.0.1:8420/web/ 登录，再进入 /setup/
+# 扩展设备密钥配对及容器初始化见下方 Docker 部署指南
 ```
 
 也可以把下面这句粘给 AI 编程助手，走终端向导 + 自动 init：

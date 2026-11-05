@@ -441,7 +441,7 @@ async def test_image_service_forwarding_reuses_client(monkeypatch: pytest.Monkey
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
     try:
         async with original_client(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as browser:
             for name in ("one", "two", "three"):
                 response = await browser.get(

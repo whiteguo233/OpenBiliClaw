@@ -1,0 +1,9 @@
+{
+  "platform": "macos-x86_64",
+  "manifest_sha256": "20bb2b6a9f1934ca952ffb00394ddd1ada3ec09e65e8b5b4a00236ce767bef3d",
+  "download_native_check_activation": true,
+  "repeat_install_reuses_active": true,
+  "desktop_stage_verified": true,
+  "damaged_update_preserves_active": true,
+  "model_api_calls": 0
+}

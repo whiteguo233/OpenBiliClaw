@@ -226,8 +226,8 @@ def test_remote_config_cannot_stage_tailnet_secret(monkeypatch, tmp_path: Path) 
             },
         )
 
-    assert response.status_code == 403
-    # The whole config route self-gates for remote callers with the auth gate
-    # off (issue #300), before the tailnet-specific loopback check is reached.
-    assert response.json()["error"] == "local_only"
+    assert response.status_code == 401
+    # Default local-only middleware rejects the remote request before the
+    # Tailnet-specific physical-loopback guard is reached.
+    assert response.json()["error"] == "auth_setup_required"
     assert not (config.data_path / "tailnet" / ".bootstrap-credential.json").exists()

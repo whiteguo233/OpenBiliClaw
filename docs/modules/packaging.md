@@ -87,3 +87,5 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 冻结入口每次启动会重新发现随包的SDK。自启动守卫仅豁免与当前可执行文件旁的 `sponsored`（Mac为 `Contents/Resources/sponsored`）一致且存在的路径；源码启动、外部SDK路径和用户provider环境变量仍按外部配置处理。Windows整包验收覆盖配置开启、旧注册项迁移和关闭清理。
 
 Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runner对cryptography 50.0.2进行了源码编译，动态链接Homebrew OpenSSL；PyInstaller同时收集Python自己的旧libssl，导致已公证应用启动时报 `_SSL_get0_group_name` 缺失。两条Mac构建工作流现在以 `OPENSSL_STATIC=1` 安装依赖并禁用wheel缓存，构建入口在PyInstaller之前用otool拒绝动态libssl/libcrypto。已有环境需先执行 `OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography`；该配置只作用于构建，不改变用户配置或SDK签名。依据：[cryptography静态构建说明](https://cryptography.io/en/latest/installation/#building-cryptography-on-macos)。
+
+安全SDK目录更新为 `sponsored-runtime-2026-11-06.1`，后端/桌面/Docker沿用固定目录强制验签暂存流程；五个平台发行、Mac旧账本兼容、公开下载与损坏包拒绝的证据见[安全验收](../testing/2026-11-06-security-metadata.md)。SDK发行不等于主应用整包已发布。

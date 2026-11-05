@@ -1940,11 +1940,11 @@ class AgentConfig:
 
 @dataclass
 class ApiAuthConfig:
-    """Optional password gate for LAN / remote access (see
+    """Password gate required for LAN / remote access (see
     ``docs/plans/2026-05-30-web-password-auth-design.md``).
 
-    Only takes effect when ``enabled`` is true *and* the request is not a
-    trusted-local request (loopback without forwarding headers, see §4.1).
+    When disabled, private APIs are trusted-local only. Enabling the gate
+    allows authenticated remote access (see §4.1 for trusted-local rules).
     ``session_secret`` is auto-generated on first enable. The revocation epoch
     (``auth_epoch``) and password fingerprint live in SQLite, not here (§4.7).
     """

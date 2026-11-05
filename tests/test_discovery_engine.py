@@ -4834,9 +4834,9 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
     assert _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT == "sparse-json"
     assert default_engine.evaluation_candidate_transport == "sparse-json"
     assert default_key == sparse_key
-    assert default_key.startswith("content-eval-v6:batch:")
+    assert default_key.startswith("content-eval-v7:batch:")
     assert default_key.endswith(":transport:sparse-json")
-    assert explicit_production_key.startswith("content-eval-v6:batch:")
+    assert explicit_production_key.startswith("content-eval-v7:batch:")
     assert ":transport:" not in explicit_production_key
     assert explicit_production_key != default_key
     assert row_key.endswith(":transport:row-wire-v1")
@@ -4852,8 +4852,8 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
         content(),
         profile_digest="profile",
     )
-    assert single_key.startswith("content-eval-v6:single:")
-    old_batch_key = default_key.replace("content-eval-v6:", "content-eval-v5:", 1)
+    assert single_key.startswith("content-eval-v7:single:")
+    old_batch_key = default_key.replace("content-eval-v7:", "content-eval-v6:", 1)
     default_engine._set_eval_cache_entry(
         old_batch_key,
         (0.9, "old", "old", "deep_focus", ""),
@@ -5175,9 +5175,9 @@ async def test_evaluate_batch_sends_metrics_and_tags() -> None:
     assert item["comment_count"] == 70
     assert item["share_count"] == 60
     assert item["danmaku_count"] == 50
-    assert "reply_count" not in item
-    assert "retweet_count" not in item
-    assert "bookmark_count" not in item
+    assert item["reply_count"] == 40
+    assert item["retweet_count"] == 30
+    assert item["bookmark_count"] == 20
 
 
 @pytest.mark.asyncio

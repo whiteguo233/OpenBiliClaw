@@ -1,0 +1,44 @@
+{
+  "expected_runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+  "logical_requests": 3,
+  "production_user_data_used": false,
+  "cases": [
+    {
+      "kind": "embedding",
+      "model": "BAAI/bge-m3",
+      "ok": true,
+      "dimensions": 1024,
+      "duration_seconds": 0.314
+    },
+    {
+      "kind": "stream",
+      "model": "Qwen/Qwen3-8B",
+      "first_delta_seconds": 0.426,
+      "ok": true,
+      "streamed_chunks": 4,
+      "usage": {
+        "prompt_tokens": 37,
+        "completion_tokens": 4,
+        "total_tokens": 41
+      },
+      "content": "安全组件连接成功",
+      "duration_seconds": 0.593
+    },
+    {
+      "kind": "stream",
+      "model": "Qwen/Qwen3.5-4B",
+      "first_delta_seconds": 0.453,
+      "ok": true,
+      "streamed_chunks": 4,
+      "usage": {
+        "prompt_tokens": 35,
+        "completion_tokens": 4,
+        "total_tokens": 39
+      },
+      "content": "安全组件连接成功",
+      "duration_seconds": 0.633
+    }
+  ],
+  "platform": "macos-x86_64",
+  "isolated_keychain_entry_removed": true
+}

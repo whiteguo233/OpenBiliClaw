@@ -23,17 +23,11 @@ host = "0.0.0.0"
 # 后端 API 监听端口。
 port = 8420
 
-# 局域网/远程访问的可选密码门禁。本机（127.0.0.1 直连）默认始终免登录。
+# 局域网/远程访问必须认证。可信本机（127.0.0.1 直连且同源）默认免登录。
 [api.auth]
-# 是否开启密码登录门禁。
-# 安全警告：enabled = false 且 host 绑定 0.0.0.0（默认组合）时，历史记录、画像、
-# 推荐和点赞/评论/关注等写接口对同一网络中的任何人完全开放（零鉴权）。
-# B 站凭据接口（/api/bilibili/auth/import|export|session）与设置写/探测接口
-# （PUT /api/config、/api/config/probe-service、/api/config/discover-models）
-# 不受此开关影响：它们始终要求本机访问或已登录会话，远程调用一律 403
-#（issue #299、#300）。
-# 只要端口可被局域网或公网访问，强烈建议设为 true 并用
-# `openbiliclaw set-password` 设置密码。
+# enabled=false 表示仅可信本机可以调用私有 API，不开放匿名远程访问。
+# 从手机、局域网或反向代理连接前，请先在本机设置页启用访问密码，
+# 或执行 `openbiliclaw set-password`；远程扩展还需单独配对设备密钥。
 enabled = false
 # 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
 password_hash = ""

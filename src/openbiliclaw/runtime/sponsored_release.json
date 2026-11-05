@@ -2,29 +2,29 @@
   "public_key_hex": "a11ea610baa5c797c7ff2738c48d530333a30219c6988bdeba948000716893bc",
   "releases": {
     "linux-arm64": {
-      "manifest_sha256": "4b558e9e6b5f7b8e118bc360a1000842c744d414ea6a529faf4478455206a88c",
-      "sha256": "3cf4a50b7f124b8dbd344c54d3c5bd4cb1947625c4190b6f59f08b948442f0fa",
-      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-05.1/obc-sponsored-runtime-linux-arm64.tar.gz"
+      "manifest_sha256": "05990422915cf360c1f5e5e482c40818d5d0820ae17629ed2c1c177eaa61a5d4",
+      "sha256": "4a0a4c7649ab1c366a639f3d34fd6c8406f72b46441bee98e6493fef60020431",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-06.1/obc-sponsored-runtime-linux-arm64.tar.gz"
     },
     "linux-x86_64": {
-      "manifest_sha256": "a7d966885400da3eaeeb86bf91d5a3ddeac58df4946d618dd097346b1f098a41",
-      "sha256": "226ee8d0c8cb751db965a7bd4872d25827de254c21efaeec497bc1b901b54dd1",
-      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-05.1/obc-sponsored-runtime-linux-x86_64.tar.gz"
+      "manifest_sha256": "487b9ae03e5496cea7f3c845de289a86063043ef9902def04008dd84661fb7f3",
+      "sha256": "a164b328f889612379ffac1bee3c23905cbdf5f8f2bd12d559f6e8debd66acdb",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-06.1/obc-sponsored-runtime-linux-x86_64.tar.gz"
     },
     "macos-arm64": {
-      "manifest_sha256": "575fd9d5d1f39c65ea4f15ed9b88162c17305550b94934a4274e7ec912e48e38",
-      "sha256": "b11b54db364b2bffc05a85fd7a20eb3e78ab53e9f568adb98b3001a1a57b0899",
-      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-05.1/obc-sponsored-runtime-macos-arm64.tar.gz"
+      "manifest_sha256": "19c11a38643631b14d8b3f9b7f0c08c56587d4c8403fe73cc81a62fbf593f670",
+      "sha256": "7a050580e46a06a6b4a3c60921646a5f99897a530a63ae811c05f94f2b766997",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-06.1/obc-sponsored-runtime-macos-arm64.tar.gz"
     },
     "macos-x86_64": {
-      "manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
-      "sha256": "8636b117264788a62961b0bac197df45be470405aab9ec90a3e10faf07bb5123",
-      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-05.1/obc-sponsored-runtime-macos-x86_64.tar.gz"
+      "manifest_sha256": "20bb2b6a9f1934ca952ffb00394ddd1ada3ec09e65e8b5b4a00236ce767bef3d",
+      "sha256": "5cdb77c1230df2920261c0e7cdcfa7bc44dbcb18f48af46588786e7e9b42c1ac",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-06.1/obc-sponsored-runtime-macos-x86_64.tar.gz"
     },
     "windows-x86_64": {
-      "manifest_sha256": "ce757440a23a590755e4a9fed905f72aac03cf0b87608ebc16587625b31f5d46",
-      "sha256": "f23c9c5945862b9ec726de6b853b01bdbbaa25ab0ab747250505323222592694",
-      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-05.1/obc-sponsored-runtime-windows-x86_64.tar.gz"
+      "manifest_sha256": "22f471672dc35cac27bda97b267872407a072b030a6388b896903f8b94eaa717",
+      "sha256": "1bfe5bb383e6df51495fa026e86b00789750521660144091d71130e719ebbe22",
+      "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-2026-11-06.1/obc-sponsored-runtime-windows-x86_64.tar.gz"
     }
   },
   "schema_version": 1

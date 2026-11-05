@@ -66,7 +66,10 @@ from openbiliclaw.discovery.temporal import (
     schedule_temporal_evaluation,
 )
 from openbiliclaw.llm.base import is_reasoning_budget_exhausted
-from openbiliclaw.llm.evaluation_wire import encode_evaluation_row_wire
+from openbiliclaw.llm.evaluation_wire import (
+    encode_evaluation_row_wire,
+    project_evaluation_source_metadata,
+)
 from openbiliclaw.llm.json_utils import (
     extract_llm_json_list,
     parse_llm_json_tolerant,
@@ -168,7 +171,7 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-_EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
+_EVAL_BATCH_CACHE_VERSION = "content-eval-v7"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
 _EVAL_SCORER_DEFAULT = "llm"
@@ -635,6 +638,20 @@ _PROMPT_VISIBLE_METRIC_FIELDS: tuple[str, ...] = (
 )
 
 
+def _is_sponsored_input_too_large(exc: BaseException) -> bool:
+    """Recognize a typed input bound through service wrappers, never auth/429."""
+    from openbiliclaw.llm.sponsored_errors import SponsoredError, SponsoredRequestTooLargeError
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, SponsoredError):
+            return isinstance(current, SponsoredRequestTooLargeError)
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, object]:
     fields: dict[str, object] = {
         field_name: int(getattr(content, field_name, 0) or 0)
@@ -650,6 +667,9 @@ def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, obje
         fields["rating_count"] = rating_count
     if source_rank > 0:
         fields["source_rank"] = source_rank
+    metadata = project_evaluation_source_metadata(content.source_platform, content.source_metadata)
+    if metadata:
+        fields["source_metadata"] = metadata
     return fields
 
 
@@ -4226,7 +4246,7 @@ class ContentDiscoveryEngine:
         max_extra_requests: int = 6,
         valid_score_indices: set[int] | None = None,
     ) -> list[float]:
-        """Retry only missing members from successful malformed responses."""
+        """Bound retries for missing output and size-dependent free-model failures."""
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
         if not evaluated_at or not evaluation_bucket:
@@ -4249,6 +4269,7 @@ class ContentDiscoveryEngine:
 
         async def run(indices: list[int], depth: int) -> None:
             subset = [batch[index] for index in indices]
+            input_limit_error: Exception | None = None
             try:
                 subset_results = await self._evaluate_batch_once(
                     subset,
@@ -4260,17 +4281,25 @@ class ContentDiscoveryEngine:
                     normal_cache_enabled=normal_cache_enabled,
                 )
             except Exception as exc:
-                if not is_reasoning_budget_exhausted(exc):
+                oversized = _is_sponsored_input_too_large(exc)
+                if oversized and (
+                    len(subset) <= 1 or depth >= max_split_depth or budget["remaining"] <= 0
+                ):
+                    # A single item / exhausted split budget cannot be repaired
+                    # by repeating identical input. Preserve the actionable error.
                     raise
+                if not oversized and not is_reasoning_budget_exhausted(exc):
+                    raise
+                if oversized:
+                    input_limit_error = exc
                 # A reasoning-first model burned the whole output budget on
-                # invisible thinking and returned no final content. Unlike a
-                # timeout, the failure is size-dependent: mark every member
-                # missing so the recursive split below retries the same work
-                # in smaller batches until it fits. Rate limits / auth /
-                # transport failures keep propagating unchanged.
+                # invisible thinking, or full source text exceeded the model's
+                # input guard. Split the same members without clipping their
+                # bodies; retain the existing depth / extra-request limits.
+                # Rate limits / auth / transport failures keep propagating.
                 logger.warning(
-                    "Batch evaluation exhausted the output budget on %d item(s); "
-                    "splitting the batch",
+                    "Batch evaluation exceeded its %s budget on %d item(s); splitting the batch",
+                    "input" if oversized else "output",
                     len(subset),
                 )
                 subset_results = [None] * len(subset)
@@ -4288,7 +4317,11 @@ class ContentDiscoveryEngine:
                 midpoint = max(1, len(missing) // 2)
                 children = (missing[:midpoint], missing[midpoint:])
             for child in children:
-                if not child or budget["remaining"] <= 0:
+                if not child:
+                    continue
+                if budget["remaining"] <= 0:
+                    if input_limit_error is not None:
+                        raise input_limit_error
                     break
                 budget["remaining"] -= 1
                 await run(child, depth + 1)

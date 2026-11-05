@@ -204,7 +204,7 @@ async def test_default_engine_uses_sparse_local_ids_on_cold_and_warm_prompt_path
 
     cache_keys = list(engine._eval_cache_store())  # noqa: SLF001
     assert cache_keys
-    assert all(key.startswith("content-eval-v6:batch:") for key in cache_keys)
+    assert all(key.startswith("content-eval-v7:batch:") for key in cache_keys)
     assert all(key.endswith(":transport:sparse-json") for key in cache_keys)
 
 

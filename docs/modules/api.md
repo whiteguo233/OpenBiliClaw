@@ -1,5 +1,18 @@
 # 后端 API
 
+小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
+
+
+## 默认远程访问限制（2026-11-06）
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| 关闭密码时的私有接口 | 仅 trusted-local 可达；远程 HTTP `401 auth_setup_required`、runtime WebSocket `4401`。不触发模型或业务处理。 |
+| `GET /api/auth/status` | 关闭时增加 `setup_required`；authenticated 仅表示当前调用者是否可信本机。 |
+| 桌面 / 手机登录入口 | 未设置密码显示本机设置指引；重新检查后正常登录。 |
+
+详见 [API Auth](api-auth.md)。
+
 ## 免费模型设置（SDK已发行，应用集成见PR336）
 
 | 已实现能力 | 行为 |

@@ -1,5 +1,7 @@
 # Runtime Module
 
+Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提示先在容器设置密码、生成/启用设备密钥并重启配对；公开命令参数与状态结构不变。容器映射端口按远程访问处理，见[首次认证步骤](../docker-deployment.md#远程认证变更2026-11-06)。
+
 ## 免费组件随包强制集成（2026-11-06）
 
 | 已实现能力 | 合同 |
@@ -839,7 +841,7 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 ### 免费模型组件安装与更新
 
-当前目录固定 `sponsored-runtime-2026-11-05.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。新组件含长归并思考预算与额度账本短锁竞争修复，Core信任公钥不变。正式应用是否已发布须与SDK组件分开判断；详见[补测及发行证据](../testing/2026-11-05-sponsored-followup.md)。
+当前目录固定 `sponsored-runtime-2026-11-06.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。组件更新TLS依赖、账本秘密文件/DPAPI保护，并兼容Mac旧钥匙串ACL，Core信任公钥、模型、额度和原到期时间不变。最终签名组件通过本机旧账本升级、公开下载/损坏包拒绝与两模型流式+BGE并发实测。正式应用是否已发布须与SDK组件分开判断；详见[安全发行及验收](../testing/2026-11-06-security-metadata.md)。
 
 公开入口：`verify_bundle(directory)` 在执行前检查 Core 固定 Ed25519 公钥、manifest/策略签名、文件hash、平台、兼容版本和任务契约；`install_archive(archive)` 拒绝路径穿越/链接/重复/超大成员，离线 `--check-policy` 成功后原子更新 `.sponsored/active`；`installed_runtime_command()` 只返回已验证组件；`ensure_runtime()` 从固定发行目录获取组件，已匹配manifest不重复下载；`stage_runtime_bundle(destination)` 供Docker与桌面打包使用。
 
