@@ -49,6 +49,7 @@ CACHE_HIT_DISCOUNT: dict[str, float] = {
     "requesty": 0.50,
     "api_route": 0.50,
     "cheaperinference": 0.50,
+    "sponsored": 1.0,
     "ollama": 0.0,  # local; cached or not, cost is 0
 }
 
@@ -165,6 +166,7 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # model, use the same midrange estimate as OpenRouter.
         "default": (0.005, 0.015),
     },
+    "sponsored": {"default": (0.0, 0.0)},
     "ollama": {
         "default": (0.0, 0.0),
     },

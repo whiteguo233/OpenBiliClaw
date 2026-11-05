@@ -11,6 +11,8 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.llm.sponsored_router import complete_project_task
+
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
 
@@ -144,7 +146,8 @@ class PersonaGenerator:
 
         # Fallback: direct LLM call
         messages = build_persona_prompt(constraints)
-        response: LLMResponse = await self._llm.complete(
+        response: LLMResponse = await complete_project_task(
+            self._llm,
             messages,
             temperature=0.9,
             max_tokens=4096,

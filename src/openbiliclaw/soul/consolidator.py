@@ -48,7 +48,7 @@ from openbiliclaw.llm.json_utils import (
     parse_llm_json_tolerant,
 )
 from openbiliclaw.llm.prompts import build_profile_consolidation_prompt
-from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.llm.task_options import execute_sponsored_or_structured
 from openbiliclaw.soul.ledger import ProfileLedger
 
 if TYPE_CHECKING:
@@ -537,7 +537,7 @@ class ProfileConsolidator:
         ]
         report.clusters_sent = len(clusters)
         if clusters and self._llm_service is not None:
-            report.llm_batches = _batch_count(len(clusters), _JUDGE_CLUSTER_BATCH)
+            report.llm_batches = _batch_count(len(clusters), self._judge_batch_size())
 
         # ── Stage 2: LLM judgement ─────────────────────────────────────────
         valid_ops: list[dict[str, object]] = []
@@ -1045,6 +1045,15 @@ class ProfileConsolidator:
 
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
+    @staticmethod
+    def _judge_batch_size() -> int:
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        # Nov 5 live SDK: 16 clusters took 78s/125s on 8B/4B. Keep individual
+        # free requests away from the 180s deadline without dropping clusters;
+        # this provisional size needs remeasurement after a provider swap.
+        return min(_JUDGE_CLUSTER_BATCH, 8) if sponsored_enabled() else _JUDGE_CLUSTER_BATCH
+
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.
 
@@ -1055,10 +1064,8 @@ class ProfileConsolidator:
         if self._llm_service is None:
             return {}
         ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
-        batches = [
-            clusters[i : i + _JUDGE_CLUSTER_BATCH]
-            for i in range(0, len(clusters), _JUDGE_CLUSTER_BATCH)
-        ]
+        batch_size = self._judge_batch_size()
+        batches = [clusters[i : i + batch_size] for i in range(0, len(clusters), batch_size)]
         last_error: Exception | None = None
         succeeded = 0
         for batch in batches:
@@ -1148,13 +1155,24 @@ class ProfileConsolidator:
         # payload in the user prompt (see ``build_profile_consolidation_prompt``);
         # the user's portrait/core memory is irrelevant to whether two labels denote
         # the same interest. Opt out of the default core-memory injection.
-        response = await self._llm_service.complete_structured_task(
-            system_instruction=messages[0]["content"],
-            user_input=messages[1]["content"],
+        #
+        # The official build may route this through the Sponsored Runtime, which
+        # validates the structured payload against the signed policy. The legacy
+        # prompt pair above remains the BYOK / Ollama fallback and the only path
+        # in source deployments.
+        response = await execute_sponsored_or_structured(
+            self._llm_service,
+            caller="soul.consolidation",
+            payload={
+                "likes_clusters": likes_payload,
+                "dislikes_clusters": dislikes_payload,
+            },
+            fallback_system_instruction=messages[0]["content"],
+            fallback_user_input=messages[1]["content"],
+            user_text=messages[1]["content"],
             temperature=0.2,
             max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
-            caller="soul.consolidation",
-            **without_core_memory_kwargs(self._llm_service.complete_structured_task),
+            inject_core_memory=False,
         )
         parsed = parse_llm_json_tolerant(response.content)
         if not isinstance(parsed, dict):
@@ -1216,13 +1234,27 @@ class ProfileConsolidator:
         for op in ops:
             kind = str(op.get("op", ""))
             if kind == "keep":
-                ref = op.get("member", op.get("name", ""))
-                consumed = consume(ref)
-                if consumed is None:
-                    return f"keep references unknown member: {ref!r}"
-                key, _name = consumed
-                covered.append(key)
-                op["_member_keys"] = [key]
+                # Real free-model replies sometimes group several keeps in
+                # `members`. This still means preserve each original item;
+                # validate every reference with the same coverage rules.
+                refs = (
+                    op["members"]
+                    if "member" not in op
+                    and "name" not in op
+                    and isinstance(op.get("members"), list)
+                    else [op.get("member", op.get("name", ""))]
+                )
+                if not refs:
+                    return "keep has no members"
+                kept_keys = []
+                for ref in refs:
+                    consumed = consume(ref)
+                    if consumed is None:
+                        return f"keep references unknown member: {ref!r}"
+                    key, _name = consumed
+                    covered.append(key)
+                    kept_keys.append(key)
+                op["_member_keys"] = kept_keys
             elif kind == "merge":
                 raw_members = op.get("members", [])
                 member_refs = raw_members if isinstance(raw_members, list) else []

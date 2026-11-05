@@ -306,6 +306,8 @@ embedding choice is instead pointed at the compose sidecar
 
 ### Step 1 — Pick an LLM service
 
+First offer the free Qwen3-8B / Qwen3.5-4B + BGE-M3 scheme. Use the backend's `/setup/` page or `openbiliclaw init` interactive guide; do not invent a `--provider sponsored` bootstrap flag. The guide prepares and verifies the runtime, probes the selected model and embedding, and saves the normal config. An unpublished runtime catalog is a real blocker for that option; report it and preserve the user's current configuration. The BYOK menu below applies when the user selects their own provider. For free chat, skip the shared-key question and offer two vector modes: cloud BGE-M3 (recommended default) or existing/local Ollama. Local mode still requires preparing and checking the selected model before initialization.
+
 Tell the user, in plain Chinese (or the conversation's language):
 
 > 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
@@ -963,3 +965,16 @@ as configured, not calibrated: only the user's real calibration record can justi
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+
+
+## 免费模型安装与切换
+
+初始化和配置页常驻“硅基流动免费方案”内置Provider，未启用时也保留入口。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
+
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件、PC或手机配置页开启免费方案即可，切换后保存并等待运行时应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+
+源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
+
+本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+
+默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。

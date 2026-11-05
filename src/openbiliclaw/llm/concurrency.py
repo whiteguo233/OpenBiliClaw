@@ -369,6 +369,7 @@ _EXPRESSION_CALLERS = {
 _EVALUATION_CALLERS = {
     "discovery.evaluate_batch",
     "discovery.evaluate_single",
+    "discovery.temporal_repair",
     "recommendation.evaluate_batch",
 }
 _SUPPLY_PREFIXES = (
@@ -397,6 +398,11 @@ _MAINTENANCE_CALLERS: set[str] = {
     "fish.comment_reply",
     "fish.owner_notice",
 }
+
+
+def is_interactive_caller(caller: str) -> bool:
+    """Use the same foreground classification for admission and IPC routing."""
+    return caller.strip() in _INTERACTIVE_CALLERS
 
 
 class LLMConcurrencyGate:
@@ -456,7 +462,7 @@ class LLMConcurrencyGate:
 
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()
-        if tag in _INTERACTIVE_CALLERS:
+        if is_interactive_caller(tag):
             return LLMTrafficClass.INTERACTIVE
         if tag in _EXPRESSION_CALLERS:
             return LLMTrafficClass.REFILL_EXPRESSION

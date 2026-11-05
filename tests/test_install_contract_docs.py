@@ -23,7 +23,7 @@ def test_shell_installers_recommend_same_default_llm_provider() -> None:
     install_ps1 = _read("scripts/install.ps1")
     config_example = _read("config.example.toml")
 
-    expected_default = "Choose your LLM chat provider (default: deepseek):"
+    expected_default = "Open the setup wizard for the recommended free Qwen + BGE-M3 option."
     expected_supported = (
         "Supported: deepseek | openai | gemini | claude | openrouter | requesty | "
         "api_route | cheaperinference | openai_compatible"

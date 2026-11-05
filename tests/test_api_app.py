@@ -6396,6 +6396,10 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {
             "initialized": True,
+            "sponsored_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
+            },
             "recommendation_count": 5,
             "pending_signal_events": 3,
             "last_refresh_at": "2026-03-10T12:00:00",

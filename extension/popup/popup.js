@@ -130,6 +130,7 @@ import {
   markDelightSent,
   openPendingConfirmation,
   probeConfigService,
+  prepareSponsoredRuntime,
   startEmbeddingRepair,
   startInit,
   readCachedConfigSnapshot,
@@ -2807,6 +2808,16 @@ async function handleStartInitClick() {
 }
 
 function renderPoolStatus(runtimeStatus) {
+  window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgSponsoredSettings"), runtimeStatus?.sponsored_status);
+  const messageList = elements.messagesList;
+  if (messageList) {
+    let notice = document.getElementById("sponsoredMessageNotice");
+    if (!notice) { notice = document.createElement("div"); notice.id = "sponsoredMessageNotice"; messageList.before(notice); }
+    window.OpenBiliClawSponsoredSettings?.renderNotice(notice, runtimeStatus?.sponsored_status, () => {
+      closeMessagesPanel(); document.getElementById("settingsGear")?.click();
+    });
+    updateMessageBadge();
+  }
   if (
     !(elements.poolStatus instanceof HTMLElement) ||
     !(elements.poolAvailable instanceof HTMLElement) ||
@@ -3800,7 +3811,7 @@ async function handleProbeResponse(responseType) {
 function updateMessageBadge() {
   const badge = elements.messageBadge;
   if (!(badge instanceof HTMLElement)) return;
-  const count = state.messages.length;
+  const count = state.messages.length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
   badge.textContent = String(count);
   badge.hidden = count === 0;
 }
@@ -3815,6 +3826,7 @@ async function openMessagesPanel() {
   // Render whatever we have synchronously so the panel doesn't open
   // empty while we refetch.
   renderMessagesList();
+  try { state.runtimeStatus = await fetchRuntimeStatus(); renderPoolStatus(state.runtimeStatus); } catch { /* Keep the last known notice while offline. */ }
   // Then force-refresh the profile so the inbox shows the *current*
   // active speculations.  Without this, probes that the speculator
   // rotated out (TTL, replacement, manual force_tick) can sit stale
@@ -4084,6 +4096,7 @@ function renderMessagesList() {
   container.replaceChildren();
 
   if (state.messages.length === 0) {
+    if (state.runtimeStatus?.sponsored_status?.notices?.length) return;
     const empty = document.createElement("div");
     empty.className = "messages-empty";
     empty.innerHTML = '<div class="messages-empty-icon">\u{1F4EC}</div><p>\u6682\u65F6\u6CA1\u6709\u65B0\u6D88\u606F\u3002<br>\u5174\u8DA3\u786E\u8BA4\u3001\u60CA\u559C\u63A8\u8350\u548C\u901A\u77E5\u90FD\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p>';
@@ -6073,6 +6086,11 @@ async function popupDriveAgentStream(turn, { onUpdate, onDone } = {}) {
     void refreshChatSessions();
   } catch (error) {
     popupStreamingTurnIds.delete(turn.turn_id);
+    if (error?.agentRetrying) {
+      popupAgentRuns.delete(turn.turn_id);
+      onUpdate?.({ ...turn, status: "pending" });
+      throw error; // Let the existing poll loop observe durable recovery.
+    }
     if (error?.agentStreamError) {
       const failed = { ...turn, status: "failed", error: String(error.message || "对话失败了") };
       activeChatPolls.delete(turn.turn_id);
@@ -10843,6 +10861,10 @@ function bindSettings() {
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
+    window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings"), {
+      prepare: prepareSponsoredRuntime,
+      probe: sponsored => probeConfigService("sponsored", { llm: { sponsored } }),
+    }).load(cfg.llm?.sponsored);
     ensurePopupSourceDateFields();
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
@@ -11301,6 +11323,7 @@ function bindSettings() {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
+        sponsored: window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings")).collect(),
         routing_version: 2,
         instances: clonePlain(llmDraft.instances),
         default_chain: [...llmDraft.default_chain],

@@ -1,0 +1,26 @@
+{
+  "synthetic_inputs_only": true,
+  "public_catalog_download": true,
+  "real_backend": true,
+  "cases": [
+    {
+      "selected_model": "Qwen/Qwen3.5-4B",
+      "returned_model": "Qwen/Qwen3.5-4B",
+      "api_status": 200,
+      "stream_and_bge_ok": true,
+      "latency_ms": 9267,
+      "saved_without_key": true
+    },
+    {
+      "selected_model": "Qwen/Qwen3-8B",
+      "returned_model": "Qwen/Qwen3-8B",
+      "api_status": 200,
+      "stream_and_bge_ok": true,
+      "latency_ms": 18418,
+      "saved_without_key": true
+    }
+  ],
+  "restart_preserved_selection": true,
+  "paid_fallback_disabled": true,
+  "temporary_ledger_secret_removed": true
+}

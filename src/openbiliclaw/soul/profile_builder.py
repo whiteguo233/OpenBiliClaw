@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -17,7 +18,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompts import build_soul_profile_prompt
 from openbiliclaw.llm.service import LLMServiceError
-from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.llm.task_options import call_accepts_keyword, without_core_memory_kwargs
 
 from .profile import SoulProfile
 from .tone import build_tone_profile
@@ -39,6 +40,20 @@ _MBTI_POLES: dict[str, frozenset[str]] = {
 # claim the same certainty as a 0.8 dimension.
 _MBTI_WEAK_DIMENSION_STRENGTH = 0.60
 _MBTI_WEAK_CONFIDENCE_CAP = 0.55
+
+# Passive history can support tentative information preferences, not a life
+# story. Closed wording prevents a small model smuggling invented experiences
+# back into the portrait after its unsupported structured fields are cleared.
+_INFORMATION_PREFERENCES = {
+    "principles": "讲清原理的解释",
+    "examples": "结合具体例子的说明",
+    "steps": "按步骤展开的内容",
+    "comparison": "对不同方案的比较",
+    "visual": "重视画面与表达细节的内容",
+    "story": "有叙事和人物线索的内容",
+    "concise": "简洁直接的信息",
+    "exploration": "介绍新概念与不同视角的内容",
+}
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -127,7 +142,7 @@ def _history_timestamp(item: dict[str, Any]) -> float:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if number <= 0:
+        if not math.isfinite(number) or number <= 0:
             continue
         # Extension events arrive in epoch milliseconds; history rows in seconds.
         return number / 1000.0 if number > 1e11 else number
@@ -286,6 +301,21 @@ class ProfileBuilder:
         awareness_notes: list[dict[str, Any]],
         active_insights: list[dict[str, Any]],
     ) -> SoulProfile:
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        # User confirmation is evidence; model confidence or auto-validation
+        # alone is not. Preserve this distinction on history-free rebuilds.
+        confirmed = [
+            str(item["hypothesis"]).strip()
+            for item in active_insights
+            if item.get("user_verdict") == "confirmed"
+            and isinstance(item.get("hypothesis"), str)
+            and str(item["hypothesis"]).strip()
+        ]
+        history_summary = {**history_summary, "confirmed_self_descriptions": confirmed}
+        personal_evidence = bool(history_summary.get("authored_expressions") or confirmed)
+        source_grounding = sponsored_enabled()
+        passive_grounding = source_grounding and not personal_evidence
         raw_mix = preference.get("source_platform_mix") if isinstance(preference, dict) else None
         source_mix = raw_mix if isinstance(raw_mix, dict) and raw_mix else None
         messages = build_soul_profile_prompt(
@@ -300,20 +330,75 @@ class ProfileBuilder:
             ),
             source_platform_mix=source_mix,
             reply_style=self.reply_style,
+            passive_grounding=passive_grounding,
+            authored_grounding=source_grounding and personal_evidence,
         )
         try:
             complete_structured = self.registry.complete_structured_task
+            task_options = without_core_memory_kwargs(complete_structured)
+            if source_grounding and call_accepts_keyword(complete_structured, "reasoning_effort"):
+                task_options["reasoning_effort"] = ""
             response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
-                max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
+                max_tokens=2048 if source_grounding else DEFAULT_STRUCTURED_MAX_TOKENS,
                 caller="soul.profile_build",
                 temperature=0.5,
-                **without_core_memory_kwargs(complete_structured),
+                **task_options,
             )
         except (LLMProviderError, LLMServiceError) as exc:
             raise SoulProfileBuildError(str(exc)) from exc
         payload = self._parse_response(response.content)
+        if not personal_evidence:
+            # A model's confidence is not evidence of E/I. Consumption and
+            # imported account inventories never establish social behaviour.
+            mbti = payload.get("mbti")
+            if isinstance(mbti, dict) and isinstance(mbti.get("dimensions"), dict):
+                mbti["confidence"] = min(
+                    float(mbti.get("confidence", 0.0)), _MBTI_WEAK_CONFIDENCE_CAP
+                )
+                ei = mbti["dimensions"].get("EI")
+                if isinstance(ei, dict):
+                    ei["strength"] = 0.5
+                self._normalize_mbti_payload(payload)
+            if response.provider == "sponsored":
+                # The two small free models repeatedly asserted life events
+                # from passive titles. Keep their information-style portrait,
+                # but do not store unsupported identity or psychological facts.
+                payload["life_stage"] = "暂无明确自述"
+                payload["current_phase"] = "暂无明确自述"
+                for name in ("core_traits", "deep_needs", "values", "motivational_drivers"):
+                    payload[name] = []
+                titles = history_summary.get("titles")
+                source_titles = {str(t) for t in titles} if isinstance(titles, list) else set()
+                preferences = payload.get("information_preferences")
+                supported: list[str] = []
+                if isinstance(preferences, list):
+                    for entry in preferences:
+                        if not isinstance(entry, dict):
+                            continue
+                        kind, evidence = entry.get("kind"), entry.get("evidence")
+                        source_index = entry.get("source_index")
+                        has_source = (
+                            isinstance(titles, list)
+                            and type(source_index) is int
+                            and 0 <= source_index < len(titles)
+                        ) or (isinstance(evidence, str) and evidence in source_titles)
+                        if (
+                            isinstance(kind, str)
+                            and kind in _INFORMATION_PREFERENCES
+                            and has_source
+                            and _INFORMATION_PREFERENCES[kind] not in supported
+                        ):
+                            supported.append(_INFORMATION_PREFERENCES[kind])
+                payload["cognitive_style"] = supported[:3]
+                payload["personality_portrait"] = (
+                    "从你关注的内容看，你可能更喜欢" + "、".join(supported[:3]) + "。"
+                    "这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。"
+                    if supported
+                    else "目前我主要了解你的内容选择，现有线索还不足以判断你的性格和生活经历。"
+                    "我会继续整理你的信息偏好，也欢迎你用自己的话补充或纠正这个初步印象。"
+                )
         profile = SoulProfile(
             personality_portrait=str(payload.get("personality_portrait", "")),
             core_traits=self._as_str_list(payload.get("core_traits")),
@@ -354,6 +439,7 @@ class ProfileBuilder:
             value = history_summary.get(key)
             if isinstance(value, str) and value.strip():
                 compact[f"{key}_present"] = True
+        compact["authored_expressions"] = history_summary.get("authored_expressions", [])
         return compact
 
     def _parse_response(self, content: str) -> dict[str, object]:
@@ -509,10 +595,10 @@ class ProfileBuilder:
 
         portrait = str(payload.get("personality_portrait", "")).strip()
         portrait_len = len(portrait)
-        if portrait_len < 120 or portrait_len > 500:
+        if portrait_len < 30 or portrait_len > 500:
             raise SoulProfileBuildError(
                 f"LLM soul profile portrait length out of range "
-                f"(got {portrait_len}, expected 120-500 chars)."
+                f"(got {portrait_len}, expected 30-500 chars)."
             )
 
         list_fields = (
@@ -607,18 +693,26 @@ class ProfileBuilder:
                 author=author,
             )
 
-        # Time-based grouping: split into recent vs older if timestamps exist
+        # Only source timestamps establish chronology. Sampling is ascending,
+        # so taking its first 30% used to label the oldest records as recent.
+        # Unknown dates remain in the main summary; ties stay in one group.
         recent_titles: list[str] = []
         older_titles: list[str] = []
         recent_contexts: list[str] = []
         older_contexts: list[str] = []
-        cutoff = max(1, len(sampled_items) * 3 // 10)
-        for i, item in enumerate(sampled_items):
+        source_times = sorted(t for item in sampled_items if (t := _history_timestamp(item)) > 0)
+        cutoff_time = (
+            source_times[-max(1, math.ceil(len(source_times) * 0.3))] if source_times else None
+        )
+        for item in sampled_items:
+            timestamp = _history_timestamp(item)
+            if timestamp <= 0 or cutoff_time is None:
+                continue
             title = str(item.get("title", "")).strip()
             if not title:
                 continue
             ctx_line = _item_context(item)
-            if i < cutoff:
+            if timestamp >= cutoff_time:
                 recent_titles.append(title)
                 if ctx_line:
                     recent_contexts.append(ctx_line)
@@ -642,6 +736,24 @@ class ProfileBuilder:
             "titles": titles,
             "authors": top_authors,
         }
+        from .event_provenance import event_metadata, event_type_of
+
+        # Titles name someone else's content; only typed, user-authored text
+        # can supply self-description. Never promote assistant dialogue text.
+        expressions = []
+        for item in sampled_items:
+            metadata = event_metadata(item)
+            kind = event_type_of(item)
+            text = ""
+            if kind == "dialogue":
+                text = str(metadata.get("user_message") or "").strip()
+            elif kind in {"comment", "reply", "danmaku"}:
+                text = str(metadata.get("comment_text") or item.get("comment_text") or "").strip()
+            elif kind == "search":
+                text = str(metadata.get("query") or item.get("query") or "").strip()
+            if text:
+                expressions.append(text[:2000])
+        summary["authored_expressions"] = expressions
         if len(sampled_items) < len(regular_items):
             summary["sampling_hint"] = (
                 f"共 {len(regular_items)} 条历史，按「时间分布 + 代表性权重」抽取 "
@@ -661,7 +773,8 @@ class ProfileBuilder:
         if recent_titles:
             summary["recent_titles"] = recent_titles
             summary["recent_hint"] = (
-                f"最近观看的 {len(recent_titles)} 个视频(前30%)代表当前活跃兴趣"
+                f"以下{len(recent_titles)}条属于有来源时间的样本中较新的约30%；"
+                "相同时间不拆分，未定时事件不参与新旧比较，不代表最近几天。"
             )
         if older_titles:
             summary["older_titles"] = older_titles

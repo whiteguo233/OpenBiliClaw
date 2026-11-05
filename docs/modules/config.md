@@ -1718,3 +1718,41 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 
 热词选择沿用既有 6 小时复用 TTL，现在从已入队 hot payload 恢复，客户端重建 / 进程重启
 也不会清空。它与失败冷却的 6 小时上限是两项独立规则，没有新增配置项或更改成功间隔。
+
+
+### `[llm.sponsored]`
+
+免费方案由配套私有 Rust 组件执行。新用户在初始化推荐项中选择后启用；原有用户配置不自动改写。无需用户填写共享 Key 或安装 Rust。浏览器只能设置下表的用户字段，不能指定可执行文件、URL、Key 或额外模型。
+
+| 键 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 免费方案开关；启用后允许无自有模型 Key（兼容 legacy 与 v2 路由），必须有可验证组件。 |
+| `embedding_mode` | `cloud` | `cloud` 使用硅基流动BGE-M3；`local` 使用 `[llm.embedding]` 的Ollama。保存本地选择时保留已有本地模型/地址，否则设置 `bge-m3` 和默认本机地址；禁用隐式向量回退。 |
+| `model` | `Qwen/Qwen3-8B` | 仅8B或 `Qwen/Qwen3.5-4B`；文本任务随选择切换。 |
+| `fallback_to_other_free_model` | `true` | 可用性失败时尝试另一个获批免费模型；已输出内容的流不重放。 |
+| `fallback_to_user_provider` | `false` | 高级选项，显式允许回退已有自有渠道。 |
+| `notify_on_fallback` | `true` | 保留回退诊断提示。 |
+| `request_timeout_seconds` | `180.0` | 请求超时；Web API 接受10..1200秒，TOML兼容1..3600秒。 |
+| `runtime_path` | `""` | 仅本机高级覆盖；空时自动定位已验签的安装/内置组件，Web不可修改。 |
+
+```toml
+[llm.sponsored]
+enabled = true
+model = "Qwen/Qwen3-8B"
+embedding_mode = "cloud" # 或 local；local 同时需要 llm.embedding.provider="ollama"
+fallback_to_other_free_model = true
+fallback_to_user_provider = false
+request_timeout_seconds = 180.0
+```
+
+默认云端文本向量固定 `BAAI/bge-m3`/1024维，暂时覆盖但保留 `[llm.embedding]`。选择本地模式后使用该表的Ollama模型和地址，默认 `bge-m3`；已用桌面私有11435端口或Docker `ollama:11434` 时继续保留。切换向量模式走常规运行时重建和既有provenance隔离，不走仅聊天模型切换的快速路径。关闭免费方案后使用当前 `[llm.embedding]` 配置。图片理解可选并由4B承担；BGE-M3不支持图片向量，即使原 `multimodal_enabled` 开启也不会伪装成支持。
+
+`load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。 `validate_runtime_config()` 在免费独占路由下不要求未参与调用的自有渠道凭据、端点或本地聊天模型；保存重载后的 legacy / v2 配置与云端 / 本地向量均遵循此规则。显式开启 `fallback_to_user_provider` 后仍校验自有渠道，免费组件、向量与非模型运行时校验继续生效。
+
+`runtime/sponsored_release.json` 固定公钥、归档摘要与平台目录；目录尚未配置正式产物时，安装入口明确提示版本不可用。组件验签及原子更新详见[Runtime](runtime.md#免费模型组件安装与更新)。
+
+### 免费模型路由即时应用（2026-11-05）
+
+无显式思考的交互流在输出首段前最多等待 `min(request_timeout_seconds, 30)` 秒，同一逻辑请求的重试/退避/免费互备共用此预算；有输出后按正常请求时限执行。画像与后台评估不受此交互专用首段限制，超时仍会明确报错。
+
+无新增字段。方案已启用时，仅修改 `llm.sponsored.model`、免费互备开关、`notify_on_fallback`或`request_timeout_seconds`可即时应用，无需等待学习任务排空。配置API仍发布applied修订状态；API进程内旧请求持有原模型，新请求读取新选择；独立worker模式会递增配置generation，由现有supervisor重启后台进程并按原持久化规则恢复任务。切换自有provider回退开关（需要重建registry链）、方案启用状态、runtime_path或其它配置继续走完整运行时交接。

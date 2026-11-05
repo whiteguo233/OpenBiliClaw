@@ -1,5 +1,14 @@
 # LLM 多模型支持
 
+## 免费结构化输出约束（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 觉察示例来源 | 示例source_event_ids为空，避免小模型复制并不存在的示例编号；实际允许的来源在user输入中提供。 |
+
+公开API与调用约定：觉察prompt builder的公开签名不变。免费觉察的当前批次/回看/纠错输入由Soul调用者组织；推荐导演仅对免费路线请求扁平的有序引用列表。二者继续经过正常用量记录和输出验证。
+
+
 > 运行时并发由单一 `LLMConcurrencyGate` 管理：所有 provider 请求受总 gate（默认 3）约束，后台还受 `max(1, total-1)`（默认 2）约束。后台 admission 依据 canonical durable inventory 把工作分为 `refill.expression > refill.evaluation > refill.supply > maintenance`；有 refill waiter 时保证下一批新准入至少两个 refill 槽并可借满三个，库存为零时 park 新 maintenance（**park 有 5 分钟上限** `MAINTENANCE_STARVATION_GRACE_SECONDS`：库存持续为零且补货始终不来时——所有 source 关闭、凭据失效或网络不通——到点强制放行并打 WARNING 指出补货可能失败。画像流水线归 `soul.*` = maintenance，无上限的 park 会让日常浏览静默停止更新画像，而 maintenance 本身不可能把池子补上；库存恢复非 EMPTY 时该豁免立即撤销并为下次重新武装）。对话、`api.sentiment`、用户主动发起的 `api.config_probe` 与「聊一聊」agent loop 两条车道（`agent.chat` 交互对话、`agent.task` 用户显式发起的后台任务）是交互流量——后台任务不是 daemon maintenance，不会被空库存的 refill 保留位 park；未知 caller 只告警一次并按 maintenance 处理。旧 `bypass_semaphore=True` 只绕过后台 gate，`PrioritySemaphore` 仍从 `llm.service` 兼容导出。
 
 热重载不会替换 gate 对象，而是原地 `reconfigure()`：升容立即按优先级唤醒等待者；降容不撤销已进入 provider 的工作，并在 active 降到新容量以下前停止新准入。配置探测使用 `api.config_probe` 交互分类，只经过 total gate：即使 canonical inventory 为空，用户仍能测试并修复阻塞初始化的模型配置，但探测不会绕过总 provider 并发上限。
@@ -20,6 +29,13 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
+| 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
+| 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
+| 免费服务故障恢复 | 已实现 | 交互首段30秒预算分给候选模型；瞬时错误同模型最多重试一次，已有输出不重放；共享凭据/策略/额度失败不做免费互备 |
+| 免费工作池真实并发验收 | 支持有界并发，稳定性有限 | 单池1前台＋2后台/向量，真实峰值3；两应用进程共用账本达6。6/12项提交会排队，首段超时与长向量等待保留，见[并发实测](../testing/2026-11-05-sponsored-concurrency.md)。 |
+| 免费双模型方案（SDK已发布，主程序待发布） | 主要链路实测通过，稳定性未全过 | 8B/4B 可选、Agent 真 SSE、通用操作有界思考、免费互备、文本 BGE-M3；覆盖统一 LLM/评测/向量入口。默认无付费回退、无图片向量；可选图片理解走4B。后台长批次/切换等待及内容质量限制见[系统验收](../testing/2026-11-04-sponsored-system-acceptance.md)，入口设计见[用户流程](../plans/2026-11-04-sponsored-user-flow.md) |
+| 授权模型签名实测配置（2026-10-28） | 已实现，非默认配置 | `granted_test_registry()` 将 Qwen3-8B / Qwen3.5-4B 和 BGE-M3 绑定到临时签名策略；BGE仅文本，8B不开放视觉；不允许请求覆盖模型。真实结果见[验收](../testing/2026-10-28-sponsored-granted-models.md) |
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
 | OpenAI SDK 首次资源加载 | ✅ | Chat Completions / Responses 的惰性资源属性在工作线程解析，避免首次就绪探测同步导入 SDK 时阻塞封面、推荐及其它 HTTP 请求；实际异步请求与流仍运行在原事件循环。 |
@@ -152,6 +168,8 @@ Responses tool-calling limitation still applies (the service uses prompt simulat
 Full conversation history remains client-side.
 
 ## 公开 API
+
+`build_soul_profile_prompt(..., passive_grounding=False, authored_grounding=False)` 可为免费被动历史切换到有来源编号的信息偏好提取，或在存在用户原文/明确确认时只整理这些个人证据；调用方负责校验来源与闭集标签。两种窄任务均关闭隐式思考。`build_temporal_repair_prompt(items)` 只接受本次候选的局部ID和内容，不包含画像、相关性评分或评估时钟；由 `discovery.temporal_repair` 通过同一 LLMService/gate 调用，归入 `evaluation` 路由及补池评估队列，与原评估同优先级；空池时不能把它停在维护队列，否则评估和入池会互相等待。两接口均不改变模型路由或允许付费回退。
 
 `describe_llm_failure(exc)` 的模型缺失说明不默认指向本机 Ollama；仅同一异常包含 Ollama 和模型缺失信号时追加服务所在机器的拉取建议。固定安全文案不回显原始异常、API Key 或地址凭据；API、桌面/移动 Web、插件与 CLI 消费同一错误边界。签名与错误分类未变。
 
@@ -814,3 +832,44 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
     关键词规划不接该指令，避免行为在不同语言间漂移。`output_language=""` 是显式 no-op，
     保持既有 prompt golden 不变。`zh-Hant` 额外带「只用繁體字」字符约束（真实 provider 实测：
     只说 Traditional Chinese 时首轮仍可能回简体）；配置保存/应用提示同样按新语言返回。
+
+### 固定画像合并子契约 API（兼容保留）
+
+`execute_task(caller="soul.consolidation", user_payload={"likes_clusters": [...], "dislikes_clusters": [...]})` 是保留的 contract2 入口；完整 SDK 见下节；user_text/system_prompt 仅作本地旧 Prompt 漂移检查。未知类型或嵌套额外字段失败；Runtime 对同一结构独立复核，不信任 Python 的校验结果。模型、目标和温度不能通过请求覆盖。
+
+`to_policy_task()` 输出 canonical system_prompt 与 hash，policy 生成仍无需任何 Key。新增请求类型必须补齐公共注册/结构、私有 renderer 与共享测试，不能只改签名 Policy 白名单。
+
+
+### 全项目赞助 SDK 接口
+
+2026-11-05 补测：`_stream_operation` 保留整次交互首段30秒上限，并按剩余候选数分配等待时间（默认两候选首个约15秒）；同模型重试共用这份预算，超时后及时释放进程、给另一个模型机会。只有未发出任何内容时，`UPSTREAM_ERROR/UNAVAILABLE/RATE_LIMITED` 最多重试一次，退避0.25秒且不延长截止时间。显式思考请求仍采用请求级时限。该阈值是小样本延迟取舍，不保证服务SLA。
+
+`is_free_model_fallback_allowed(error)` 区分免费互备和显式自有渠道回退：共享Key失效、策略过期、额度/余额耗尽、账本异常不能通过换免费模型恢复；原有 `is_fallback_allowed` 仍供显式BYOK策略使用。非流式网络错误与429/5xx由Rust最多3次处理；BGE真实断线恢复发生在同一个IPC请求中。详见[故障注入与恢复验收](../testing/2026-11-05-sponsored-resilience.md)。
+
+`approved_registry()` 是生产路由与发行策略共用的十项固定契约。`SponsoredProvider(..., model=..., fallback_to_other_free_model=True)` 仅接受获批的8B/4B；选择更改后新调用使用相应签名 task ID。`stream_complete()` 转发 Rust 的真实内容 delta 和 terminal response，`raw.requested_model/free_model_fallback` 保留实际回退信息；流开始后不重试。旧 Runtime 未声明 streaming 时保留兼容的缓冲路径。
+
+`complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`stream_complete_with_tools()` 同样走 Rust SSE，普通 Agent 回复增量显示；可能属于工具调用的 JSON/数组/代码围栏先缓冲，终帧解析为工具请求后交给 Core，普通 JSON 答案则补发正文。流已开始后不回放，主动关闭或取消时回收子进程并释放请求锁。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
+
+免费模型的通用 SDK 操作有明确隐式思考预算：8B 的 `llm.structured` 在输出额度至少2048时默认 `low`（Rust 映射为最多1024思考 tokens）；更短的请求、4B 以及普通文本/工具回复默认关闭思考，避免隐式思考占满短回答额度或触发 SDK 最小预算限制。调用方显式传入空字符串、high/max等仍原样保留；免费互备按实际签名模型重新选择默认值。真实完整建像曾在未指定思考时超时。固定结构的 `soul.consolidation` 请求也进入总并发gate；已发行11月4日SDK仍沿用旧思考默认值，私有PR5给该路径补齐同样的预算，需新组件发行后才生效。全系统实测及尚存限制见[业务验收](../testing/2026-11-04-sponsored-system-acceptance.md)。
+
+`shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用 `SponsoredProviderPool`；池内1个前台与2个后台串行Rust子进程共用同一签名策略和安装账本。握手串行、网络请求并行，上层总并发gate继续有效。旧组件启动时若明确报告安装账本短锁竞争，仅握手最多重试两次；其它策略/契约/启动错误仍报错。取消流会回收对应子进程并归还工作位。模型选择更改后旧请求保留原Provider，新请求使用新选择。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
+
+真实并发验证表明工作池两类槽不互借，只有聊天时峰值1，只有后台/向量时最多2；修改 `llm.concurrency` 不会扩容固定3子进程的池。向量可在后台长评估后排队；30秒首段限制和180秒请求限制均不等同于含排队的总延迟。多个应用进程拥有独立池/gate，共用签名账本的短事务锁不覆盖网络请求；本地RPM策略不是账户全局并发上限。`DialogueExecutionCoordinator` 还串行保护应用内聊天写入，SSE忙状态可能由durable worker继续完成，需核对最终turn状态。参见[真实并发验收及复验入口](../testing/2026-11-05-sponsored-concurrency.md)。
+
+JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和所选向量来源，禁用免费互备以免误报。`select_local_embedding(config)` 保留已有Ollama端点/模型，否则设置安全本地默认值；`build_embedding_service()` 仅在 `uses_cloud_embedding` 时覆盖为免费BGE。不同来源沿用独立provenance缓存空间。
+
+`SponsoredProvider` 在每次实际完成/流式/向量任务后记录稳定错误码或成功恢复；AUTH_FAILED 与 POLICY_INVALID 提示更新安装包或配置自有Key。旧Rust在hello前输出的稳定 `POLICY_INVALID` 也归一化为授权失效。流取消、网络错误和429不会清除先前撤销证据。见[状态接口与轮换步骤](runtime.md#免费凭据状态与轮换)。
+
+### 已申请模型的独立实测配置
+
+`llm.sponsored_live_profile.granted_test_registry(chat_model)` 只接受 `Qwen/Qwen3-8B` 或 `Qwen/Qwen3.5-4B`，用于配套签名测试包，不改默认注册表。文本向量绑定 `BAAI/bge-m3`、1024维，不注册图片向量任务；仅4B配置注册视觉任务。`SponsoredProvider.embedding()` 根据当前注册表校验响应模型和维度，不再固定假定所有签名包都使用Qwen-VL向量空间；未注册的能力在子进程启动前失败。
+
+### 2026-11-05 可靠性边界
+
+工具结果后继续携带原始用户任务，提醒完成尚缺的工具步骤；工具执行及写入授权仍由Core控制。画像提示将职业、年龄和经历限制为明确自述，示例不再示范心理和生活经历断言；推荐单条与批量提示禁止补写内容细节、用户经历或串用候选。提示约束不能保证语言模型无事实错误，必须结合真实业务输出验收。
+
+交互流式请求在任何原始delta或终帧之前遇到上游/可用性错误时，同一所选模型最多重试一次；已输出内容（包括尚未交给工具执行器的JSON）后不重放，配额/契约错误不走该重试。无显式思考的交互请求共享一个最多30秒的首个非空delta时限，覆盖同模型重试、退避、免费互备和长输入；若用户完整请求超时更短则取更短值。首段输出后沿用正常请求时限，显式思考沿用正常时限。这是11月4–5日实测后的暂定值，不是供应商SLA；模型变更后需要重新测量。
+
+明确以 `tool_call` / `tool_calls` 开头但JSON语法损坏的完整回复，在工具尚未执行、未向用户输出正文时最多请求一次格式纠正；再经原有严格JSON解析、工具白名单和Core参数/授权校验。纠正失败明确报协议错误，不能把坏JSON当作成功答案；不从损坏内容猜测或直接执行工具。普通JSON答案和已显示的回复不进入此纠正，成功时usage合计两次调用。
+
+结构化 `complete(json_mode=True)` 允许根对象或数组；若返回值整体是Markdown JSON围栏且围栏内可严格解析为对象/数组，则移除外层围栏后交给业务校验。不改正文数据、不提取夹在自然语言中的JSON、不修补不完整JSON，普通文本请求保留代码围栏原文。真实4B搜索查询复测定位了此格式差异，防止正确查询因围栏触发本地兜底。

@@ -48,6 +48,59 @@ def build_llm_registry(
     provider_overrides: dict[str, LLMProvider] | None = None,
     fallback_order: list[str] | None = None,
 ) -> LLMRegistry:
+    """Build all routes, including a sponsor-only install with no BYOK keys."""
+    from .sponsored_router import sponsored_bypassed
+
+    if sponsored_bypassed():
+        return _build_user_llm_registry(
+            config, provider_overrides=provider_overrides, fallback_order=fallback_order
+        )
+    from openbiliclaw.sponsored_runtime_state import (
+        SponsoredRuntimeSettings,
+        install_sponsored_settings,
+    )
+
+    cfg = config.llm.sponsored
+    install_sponsored_settings(
+        SponsoredRuntimeSettings(
+            enabled=cfg.enabled,
+            runtime_path=cfg.runtime_path,
+            model=cfg.model,
+            embedding_mode=cfg.embedding_mode,
+            fallback_to_other_free_model=cfg.fallback_to_other_free_model,
+            fallback_to_user_provider=cfg.fallback_to_user_provider,
+            notify_on_fallback=cfg.notify_on_fallback,
+            request_timeout_seconds=cfg.request_timeout_seconds,
+        ),
+        data_path=config.data_path,
+    )
+    try:
+        registry = _build_user_llm_registry(
+            config,
+            provider_overrides=provider_overrides,
+            fallback_order=fallback_order,
+        )
+    except RegistryBuildError:
+        if not cfg.enabled:
+            raise
+        registry = LLMRegistry()
+    if cfg.enabled:
+        from .sponsored_adapter import SponsoredChatAdapter
+
+        user_order = registry._fallback_order()
+        registry.register(SponsoredChatAdapter(), default=True)
+        registry.configure_chain(
+            ["sponsored", *user_order] if cfg.fallback_to_user_provider else ["sponsored"]
+        )
+    return registry
+
+
+def _build_user_llm_registry(
+    config: Config,
+    *,
+    provider_overrides: dict[str, LLMProvider] | None = None,
+    fallback_order: list[str] | None = None,
+) -> LLMRegistry:
     """Build an LLM registry from application config."""
     if bool(getattr(config.llm, "instance_routing", False)):
         return _build_instance_llm_registry(
@@ -313,6 +366,13 @@ def build_embedding_service(
             SupportsEmbed,
             build_embedding_provenance,
         )
+
+        from .sponsored_router import sponsored_bypassed
+
+        if config.llm.sponsored.uses_cloud_embedding and not sponsored_bypassed():
+            from .sponsored_embedding import build_sponsored_embedding_service
+
+            return build_sponsored_embedding_service(config)
 
         emb_cfg = config.llm.embedding
         requested_name = emb_cfg.provider.strip().lower()

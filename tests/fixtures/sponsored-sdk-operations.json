@@ -1,0 +1,505 @@
+{
+  "cases": [
+    {
+      "input": {
+        "caller": "project.fixture",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "OpenBiliClaw project context.",
+            "role": "system"
+          },
+          {
+            "content": "A bounded project task.",
+            "role": "user"
+          }
+        ],
+        "reasoning_effort": null,
+        "temperature": 0.4
+      },
+      "task_id": "llm.structured"
+    },
+    {
+      "input": {
+        "caller": "project.fixture",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "OpenBiliClaw project context.",
+            "role": "system"
+          },
+          {
+            "content": "A bounded project task.",
+            "role": "user"
+          }
+        ],
+        "reasoning_effort": null,
+        "temperature": 0.4
+      },
+      "task_id": "llm.text"
+    },
+    {
+      "input": {
+        "caller": "soul.dialogue.tools",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "OpenBiliClaw project context.",
+            "role": "system"
+          },
+          {
+            "content": "A bounded project task.",
+            "role": "user"
+          }
+        ],
+        "reasoning_effort": null,
+        "temperature": 0.4
+      },
+      "task_id": "llm.tools"
+    },
+    {
+      "input": {
+        "caller": "project.fixture",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "OpenBiliClaw project context.",
+            "role": "system"
+          },
+          {
+            "content": [
+              {
+                "text": "封面分析",
+                "type": "text"
+              },
+              {
+                "image_url": {
+                  "url": "data:image/png;base64,aW1hZ2U="
+                },
+                "type": "image_url"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "reasoning_effort": null,
+        "temperature": 0.4
+      },
+      "task_id": "llm.vision"
+    },
+    {
+      "input": {
+        "text": "画像兴趣"
+      },
+      "task_id": "llm.embedding_text"
+    },
+    {
+      "input": {
+        "image": "data:image/png;base64,aW1hZ2U="
+      },
+      "task_id": "llm.embedding_image"
+    }
+  ],
+  "policy": {
+    "core": {
+      "max": "",
+      "min": ""
+    },
+    "expires_at": "2099-01-01T00:00:00Z",
+    "generated_at": "2026-10-27T00:00:00Z",
+    "keys": [],
+    "policy_version": 2,
+    "tasks": {
+      "llm.embedding_image.v3": {
+        "embedding_dimensions": 1024,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "image"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 12582912,
+        "max_output_tokens": 1,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "operation": "embedding_image",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: embedding_image.\n\njson",
+        "system_prompt_sha256": "sha256:dd095831ca2774a7a82f27088282c0928532645c50e42b48cfc105ee98ab2b6b",
+        "temperature": 0.2
+      },
+      "llm.embedding_text.v3": {
+        "embedding_dimensions": 1024,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 1,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen3-VL-Embedding-8B",
+        "operation": "embedding_text",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: embedding_text.\n\njson",
+        "system_prompt_sha256": "sha256:03e9c414ec140cb1c515609e09df66acdc905e34edcd9075318af76d12700d1a",
+        "temperature": 0.2
+      },
+      "llm.structured.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "structured",
+        "priority": "core",
+        "response_format": "json_object",
+        "system_prompt": "OpenBiliClaw SDK operation: structured.\n\njson",
+        "system_prompt_sha256": "sha256:97f56db536d899693f892bf5802e2c63085fc688b69c8fd3ea61fb5958f6e9f9",
+        "temperature": 0.2
+      },
+      "llm.text.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "text",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: text.\n\njson",
+        "system_prompt_sha256": "sha256:18be66e257853fa3246569f1c6ceb3f0966ea3463bd15d44f09ee21609f113c6",
+        "temperature": 0.2
+      },
+      "llm.tools.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 2097152,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "operation": "tools",
+        "priority": "core",
+        "response_format": "text",
+        "system_prompt": "OpenBiliClaw SDK operation: tools.\n\njson",
+        "system_prompt_sha256": "sha256:720100407301854d893a31f2634a6f09681dbb5f7310327703928989df32c34e",
+        "temperature": 0.2
+      },
+      "llm.vision.v3": {
+        "embedding_dimensions": 0,
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "caller": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "max_tokens": {
+              "maximum": 32768,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messages": {
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            "reasoning_effort": {},
+            "temperature": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "messages",
+            "temperature",
+            "max_tokens",
+            "reasoning_effort",
+            "caller"
+          ],
+          "type": "object"
+        },
+        "max_input_bytes": 12582912,
+        "max_output_tokens": 32768,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "operation": "vision",
+        "priority": "core",
+        "response_format": "json_object",
+        "system_prompt": "OpenBiliClaw SDK operation: vision.\n\njson",
+        "system_prompt_sha256": "sha256:c9bef2d3666ae46d07e00998ab006f882abcf2e2c38bc3e010aa0b5ffe8be206",
+        "temperature": 0.2
+      },
+      "soul.consolidation.v2": {
+        "input_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "dislikes_clusters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "cluster_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "known_distinct_pairs": {
+                    "items": {
+                      "items": {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "maxItems": 128,
+                    "type": "array"
+                  },
+                  "members": {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 128,
+                    "minItems": 2,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "cluster_id",
+                  "known_distinct_pairs",
+                  "members"
+                ],
+                "type": "object"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "likes_clusters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "cluster_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "known_distinct_pairs": {
+                    "items": {
+                      "items": {
+                        "maxLength": 512,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "maxItems": 128,
+                    "type": "array"
+                  },
+                  "members": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "category": {
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "weight": {
+                          "maximum": 1000000,
+                          "minimum": -1000000,
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "weight",
+                        "category"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 128,
+                    "minItems": 2,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "cluster_id",
+                  "known_distinct_pairs",
+                  "members"
+                ],
+                "type": "object"
+              },
+              "maxItems": 32,
+              "type": "array"
+            }
+          },
+          "required": [
+            "likes_clusters",
+            "dislikes_clusters"
+          ],
+          "title": "OpenBiliClaw fixed consolidation v2",
+          "type": "object"
+        },
+        "limits": {
+          "daily_requests": 200,
+          "daily_tokens": 500000
+        },
+        "max_input_bytes": 262144,
+        "max_output_tokens": 16384,
+        "message_topology": [
+          "system",
+          "user"
+        ],
+        "model": "THUDM/GLM-4-9B-0414",
+        "priority": "core",
+        "response_format": "json_object",
+        "system_prompt": "<task>\n你是用户画像的整理器。输入是若干「嫌疑重复」的主题簇（cluster），\n分为 likes（兴趣主题）和 dislikes（避雷主题）两组。\n你要对每个簇内的主题做出裁决：哪些在用户画像里表达相同的推荐意图、\n继续并存只会重复占位（应合并），哪些能带来不同推荐结果（应保留）。\n</task>\n\n<rules>\n1. 只能输出操作（op），不能输出整理后的列表。每个操作是 merge 或 keep。\n2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n   同名异类成员必须用 {\"name\": 原名, \"category\": 原分类} 精确引用。\n3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n4. merge 至少 2 个 members。canonical 是合并后的代表性 item 名。优先选择能准确\n   覆盖整组的简洁旧 member；只有旧 member 都只覆盖一部分时才起具体组合名。\n   新名必须与 members 同等具体或更精确，不得为了看似完整而堆砌近义词。\n5. likes 的目标是减少画像槽位重复，不限于字典意义上的严格同义词。措辞变体、\n   同粒度且推荐/搜索结果高度重叠的标签、以及加了空泛前后缀但没有新增选择价值的\n   标签都应 merge（如「搞笑」vs「娱乐搞笑」）。\n   真正的父子兴趣若会带来不同推荐结果仍须 keep（如「篮球」vs「NBA」、\n   「AI技术」vs「AI视频技术」、「游戏」vs「手机游戏」）。\n6. dislikes 组的标准更严：只合并语义几乎相同的真同义项；【严禁向上泛化】——\n   canonical 绝不能比 members 更宽泛（如把「一个案例反复切悬念拖时长」归并成\n   「低质内容」是严重错误，会误伤大量正常内容）。拿不准时一律 keep。\n7. likes 可以按「是否重复占用同一推荐意图」从宽合并，但同样不允许把具体兴趣\n   向上合并成会改变召回范围的大类。拿不准两项能否产生不同结果时才 keep。\n8. likes 成员带 category（一级分类）。同名/近名但 category 不同且语义不同的条目\n   是【同名异义】（如 苹果(科技) vs 苹果(美食)），必须分别 keep，严禁合并。\n   只有确认它们是同一概念被误标了不同分类时才 merge；此时 merge.members 和\n   keep.member 都必须使用 {name, category}，使每个同名条目可被逐一追踪。\n9. 每个簇可带 known_distinct_pairs；这些 pair 是用户回滚或当前策略下已确认要分开\n   的成员，严禁在任何 merge 中放到一起，也无需重新裁决它们之间的关系。\n10. 输出严格 json，不要附带解释文本。\n11. 各变量见 user 消息：likes_clusters / dislikes_clusters（各簇带 cluster_id、\n   members、known_distinct_pairs 及权重 / category 元数据）。\n</rules>\n\n<output_schema>\n{\n  \"likes\": [\n    {\"cluster_id\": \"L1\", \"op\": \"merge\", \"members\": [\"AI工具与技术\", \"AI工具与工程实践\"],\n     \"canonical\": \"AI工程工具链\", \"reason\": \"新 item 能同时代表工具和工程实践\"},\n    {\"cluster_id\": \"L2\", \"op\": \"keep\", \"name\": \"篮球\", \"reason\": \"NBA 是其子集而非同义\"},\n    {\"cluster_id\": \"H1\", \"op\": \"merge\",\n     \"members\": [{\"name\": \"苹果\", \"category\": \"科技\"}, {\"name\": \"苹果\", \"category\": \"资讯\"}],\n     \"canonical\": \"苹果公司\"},\n    {\"cluster_id\": \"H1\", \"op\": \"keep\", \"member\": {\"name\": \"苹果\", \"category\": \"美食\"}}\n  ],\n  \"dislikes\": [\n    {\"cluster_id\": \"D1\", \"op\": \"merge\", \"members\": [\"偶像团体练习室内容\", \"偶像练习室物料\"],\n     \"canonical\": \"偶像练习室物料\"}\n  ]\n}\n</output_schema>",
+        "system_prompt_sha256": "sha256:4f1ca729a26ce89fa3e41e4f0160b6e2c98aa109cb7bb8c5e42bd1622d0ca4f5",
+        "temperature": 0.2
+      }
+    }
+  }
+}

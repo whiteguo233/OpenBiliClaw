@@ -425,6 +425,29 @@ def _evidence_anchors_deadline(evidence: str, deadline: datetime) -> bool:
     return False
 
 
+def has_explicit_deadline_hint(content_text: str) -> bool:
+    """Spot a missed deadline for re-evaluation, never authorize hard expiry."""
+    normalized = unicodedata.normalize("NFKC", content_text).casefold()
+    return bool(
+        re.search(r"截止|到期|有效期|deadline|valid until|ends? at", normalized)
+        and _EVIDENCE_DEADLINE_PATTERN.search(normalized)
+    )
+
+
+def canonicalize_deadline_state(payload: Mapping[str, object]) -> dict[str, object]:
+    """Drop a redundant model state; code derives deadline expiry from the clock.
+
+    Does not change dates, evidence, class, scope or confidence. They must
+    still pass the complete existing contract and source-grounding checks.
+    """
+    normalized = dict(payload)
+    if payload.get("temporal_validity_mode") == "explicit_deadline" and payload.get(
+        "temporal_state"
+    ) in ("active", "expired", "superseded"):
+        normalized["temporal_state"] = "unknown"
+    return normalized
+
+
 def _evidence_affirms_terminal_state(*, mode: str, evidence: str) -> bool:
     """Accept terminal state evidence only when its polarity is unambiguous."""
 

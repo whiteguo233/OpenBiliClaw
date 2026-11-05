@@ -27,6 +27,7 @@ DESKTOP_SCRIPTS = (
     "/shared/source-status.js",
     "/shared/i18n.js",
     "/shared/director-client.js",
+    "/shared/sponsored-settings.js",
     "/shared/jev-settings.js",
     "/web/assets/js/chat-agent-core.js",
     "/web/assets/js/fish-settings.js",
@@ -36,6 +37,7 @@ _STYLESHEETS = (
     "/web/assets/css/app.css",
     "/web/assets/css/classic.css",
     "/shared/jev-settings.css",
+    "/shared/sponsored-settings.css",
 )
 _SCRIPT_TAG = re.compile(
     r'<script\b[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>\s*</script>', re.IGNORECASE

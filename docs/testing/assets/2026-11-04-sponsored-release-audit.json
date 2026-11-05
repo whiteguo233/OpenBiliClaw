@@ -1,0 +1,55 @@
+{
+  "release_run": 41830285859,
+  "platforms": [
+    {
+      "platform": "linux-arm64",
+      "platform_signing": "manifest-only",
+      "core_sha": "b8f4079d9ccd87b4ac57542701553012b9f77f8d",
+      "runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
+      "notarization_id": null,
+      "archive": "obc-sponsored-runtime-linux-arm64.tar.gz",
+      "sha256": "b786d92ccca8fe5508b41d7b710d5d523e6b74a224f796c1eeb585f28b20261d",
+      "policy_expires_at": "2027-02-02T12:33:19Z"
+    },
+    {
+      "platform": "linux-x86_64",
+      "platform_signing": "manifest-only",
+      "core_sha": "b8f4079d9ccd87b4ac57542701553012b9f77f8d",
+      "runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
+      "notarization_id": null,
+      "archive": "obc-sponsored-runtime-linux-x86_64.tar.gz",
+      "sha256": "e52ca9698cee8c975307bffe02649a73e8b9965ad4752e1f7ed383053766aa13",
+      "policy_expires_at": "2027-02-02T12:33:19Z"
+    },
+    {
+      "platform": "macos-arm64",
+      "platform_signing": "macos-notarized",
+      "core_sha": "b8f4079d9ccd87b4ac57542701553012b9f77f8d",
+      "runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
+      "notarization_id": "7d17fe4c-2cb3-47e5-b897-2b080e0273f2",
+      "archive": "obc-sponsored-runtime-macos-arm64.tar.gz",
+      "sha256": "3590b39dae4c260f75d552546a94cf4dd6b601c78f79e5a873d1717adfdda78e",
+      "policy_expires_at": "2027-02-02T12:33:19Z"
+    },
+    {
+      "platform": "macos-x86_64",
+      "platform_signing": "macos-notarized",
+      "core_sha": "b8f4079d9ccd87b4ac57542701553012b9f77f8d",
+      "runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
+      "notarization_id": "44d6522d-4fb7-4801-8c00-6279b33da75f",
+      "archive": "obc-sponsored-runtime-macos-x86_64.tar.gz",
+      "sha256": "3bd71dd36cbe15ce77b808becced6ff13c257b1be3e9a4079127a17e4422254b",
+      "policy_expires_at": "2027-02-02T12:33:19Z"
+    },
+    {
+      "platform": "windows-x86_64",
+      "platform_signing": "manifest-only",
+      "core_sha": "b8f4079d9ccd87b4ac57542701553012b9f77f8d",
+      "runtime_sha": "8283137d3e5c138e3f7ca5cbb6b88eb0c3682cbb",
+      "notarization_id": null,
+      "archive": "obc-sponsored-runtime-windows-x86_64.tar.gz",
+      "sha256": "2c402617eb31de7262961a238a9af3fdf4d7f052b6f4c13257ad3aced7cf67ad",
+      "policy_expires_at": "2027-02-02T12:33:19Z"
+    }
+  ]
+}

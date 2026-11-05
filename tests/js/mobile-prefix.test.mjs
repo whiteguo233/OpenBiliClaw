@@ -4,6 +4,16 @@ import test from 'node:test';
 
 const web = new URL('../../src/openbiliclaw/web/', import.meta.url);
 
+test('mobile free-model assets stay under the scanned backend prefix', async () => {
+  const html = await readFile(new URL('index.html', web), 'utf8');
+  const assets = [...html.matchAll(/(?:src|href)="([^"]*sponsored-settings\.(?:js|css))"/g)]
+    .map(match => new URL(match[1], 'https://obc.example/tenant/one/m/').pathname);
+  assert.deepEqual(assets.sort(), [
+    '/tenant/one/shared/sponsored-settings.css',
+    '/tenant/one/shared/sponsored-settings.js',
+  ]);
+});
+
 async function load(relative, tag) {
   const source = await readFile(new URL(relative, web), 'utf8');
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${tag}`);

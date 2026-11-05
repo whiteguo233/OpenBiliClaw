@@ -1,0 +1,678 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "web_content_extraction_preserves_items_and_urls",
+      "status": "pass",
+      "result": {
+        "items": [
+          {
+            "bvid": "",
+            "title": "Rust借用检查实例",
+            "up_name": "",
+            "up_mid": 0,
+            "cover_url": "",
+            "duration": 0,
+            "view_count": 0,
+            "like_count": 0,
+            "favorite_count": 0,
+            "collect_count": 0,
+            "comment_count": 0,
+            "share_count": 0,
+            "danmaku_count": 0,
+            "reply_count": 0,
+            "retweet_count": 0,
+            "bookmark_count": 0,
+            "engagement_available": [],
+            "rating_score": 0.0,
+            "rating_count": 0,
+            "source_rank": 0,
+            "tags": [],
+            "topic_key": "",
+            "topic_group": "",
+            "style_key": "",
+            "franchise_key": "",
+            "description": "用三个可运行的例子解释引用的作用域。",
+            "published_at": "",
+            "published_label": "",
+            "source_strategy": "web_extract",
+            "discovery_lane": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "semantic_filter_deferred": false,
+            "semantic_filter_review": false,
+            "temporal_class": "unknown",
+            "temporal_confidence": 0.0,
+            "temporal_reason": "",
+            "temporal_policy_version": "v2",
+            "temporal_validity_mode": "none",
+            "temporal_valid_until": "",
+            "temporal_scope": "none",
+            "temporal_evidence": "",
+            "temporal_state": "unknown",
+            "temporal_next_review_at": "",
+            "temporal_evaluated_at": "",
+            "temporal_evidence_complete": false,
+            "temporal_evaluated": false,
+            "pool_expression": "",
+            "pool_topic_label": "",
+            "candidate_tier": "primary",
+            "discovered_at": "",
+            "last_scored_at": "",
+            "content_id": "url:13914351213c735b89e07dbb",
+            "item_key": "web:url:13914351213c735b89e07dbb",
+            "content_url": "https://example.com/post/rust-17",
+            "source_platform": "web",
+            "author_name": "小林",
+            "score_threshold": 0.0,
+            "body_text": "",
+            "content_type": "video",
+            "source_metadata": {},
+            "source_keyword_id": null
+          },
+          {
+            "bvid": "",
+            "title": "番茄支架搭建记录",
+            "up_name": "",
+            "up_mid": 0,
+            "cover_url": "",
+            "duration": 0,
+            "view_count": 0,
+            "like_count": 0,
+            "favorite_count": 0,
+            "collect_count": 0,
+            "comment_count": 0,
+            "share_count": 0,
+            "danmaku_count": 0,
+            "reply_count": 0,
+            "retweet_count": 0,
+            "bookmark_count": 0,
+            "engagement_available": [],
+            "rating_score": 0.0,
+            "rating_count": 0,
+            "source_rank": 0,
+            "tags": [],
+            "topic_key": "",
+            "topic_group": "",
+            "style_key": "",
+            "franchise_key": "",
+            "description": "记录阳台番茄支架安装过程以及本周的浇水安排。",
+            "published_at": "",
+            "published_label": "",
+            "source_strategy": "web_extract",
+            "discovery_lane": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "semantic_filter_deferred": false,
+            "semantic_filter_review": false,
+            "temporal_class": "unknown",
+            "temporal_confidence": 0.0,
+            "temporal_reason": "",
+            "temporal_policy_version": "v2",
+            "temporal_validity_mode": "none",
+            "temporal_valid_until": "",
+            "temporal_scope": "none",
+            "temporal_evidence": "",
+            "temporal_state": "unknown",
+            "temporal_next_review_at": "",
+            "temporal_evaluated_at": "",
+            "temporal_evidence_complete": false,
+            "temporal_evaluated": false,
+            "pool_expression": "",
+            "pool_topic_label": "",
+            "candidate_tier": "primary",
+            "discovered_at": "",
+            "last_scored_at": "",
+            "content_id": "url:9cb8a658aec37b339763adf5",
+            "item_key": "web:url:9cb8a658aec37b339763adf5",
+            "content_url": "https://example.com/post/garden-29",
+            "source_platform": "web",
+            "author_name": "阿青",
+            "score_threshold": 0.0,
+            "body_text": "",
+            "content_type": "video",
+            "source_metadata": {},
+            "source_keyword_id": null
+          }
+        ]
+      },
+      "seconds": 68.794,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5982,
+          "completion_tokens": 1103,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5884,
+          "completion_tokens": 1102,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1218,
+          "completion_tokens": 814,
+          "success": 1
+        },
+        {
+          "caller": "sources.web.extract",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 364,
+          "completion_tokens": 1102,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "interest_speculation_generation_and_persistence",
+      "status": "pass",
+      "result": {
+        "tick": {
+          "generated": [
+            {
+              "domain": "阳台蔬菜轮作方案",
+              "category": "生活",
+              "reason": "番茄种久了想换点新花样？试试和多肉植物轮作的妙招",
+              "experience_mode": "wander_observe",
+              "entry_load": "light",
+              "confidence": 0.5,
+              "weight": 0.5,
+              "created_at": "2026-11-05T19:43:57.865350",
+              "ttl_days": 3,
+              "confirmation_count": 0,
+              "confirmation_threshold": 3,
+              "status": "active",
+              "confirming_events": [],
+              "specifics": [
+                {
+                  "name": "不同作物搭配指南",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "容器栽培技巧分享",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                }
+              ],
+              "probe_mode": "near",
+              "confirmation_source": "",
+              "confirmed_at": "",
+              "deferred_at": "",
+              "deferred_until": "",
+              "defer_count": 0
+            },
+            {
+              "domain": "番茄种植避坑指南",
+              "category": "生活",
+              "reason": "你已经在种番茄，这类记录常见问题的视频肯定对你有帮助",
+              "experience_mode": "wander_observe",
+              "entry_load": "light",
+              "confidence": 0.52,
+              "weight": 0.52,
+              "created_at": "2026-11-05T19:43:57.865350",
+              "ttl_days": 3,
+              "confirmation_count": 0,
+              "confirmation_threshold": 3,
+              "status": "active",
+              "confirming_events": [],
+              "specifics": [
+                {
+                  "name": "阳台番茄病虫害防治",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "不同品种生长对比",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "支架搭建技巧",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                }
+              ],
+              "probe_mode": "near",
+              "confirmation_source": "",
+              "confirmed_at": "",
+              "deferred_at": "",
+              "deferred_until": "",
+              "defer_count": 0
+            },
+            {
+              "domain": "开源硬件农业应用",
+              "category": "科技",
+              "reason": "你对编程和硬件都感兴趣，这类用ESP32做环境监测的项目很值得尝试",
+              "experience_mode": "hands_on",
+              "entry_load": "heavy",
+              "confidence": 0.48,
+              "weight": 0.48,
+              "created_at": "2026-11-05T19:43:57.865350",
+              "ttl_days": 3,
+              "confirmation_count": 0,
+              "confirmation_threshold": 3,
+              "status": "active",
+              "confirming_events": [],
+              "specifics": [
+                {
+                  "name": "ESP32农业监测系统",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "硬件控制开源社区",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "DIY智能温室案例",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                }
+              ],
+              "probe_mode": "lateral",
+              "confirmation_source": "",
+              "confirmed_at": "",
+              "deferred_at": "",
+              "deferred_until": "",
+              "defer_count": 0
+            },
+            {
+              "domain": "城市微农场设计",
+              "category": "生活",
+              "reason": "种番茄时可能想过更系统化的方案，这类用模块化搭建的阳台农场教程很实用",
+              "experience_mode": "knowledge",
+              "entry_load": "light",
+              "confidence": 0.5,
+              "weight": 0.5,
+              "created_at": "2026-11-05T19:43:57.865350",
+              "ttl_days": 3,
+              "confirmation_count": 0,
+              "confirmation_threshold": 3,
+              "status": "active",
+              "confirming_events": [],
+              "specifics": [
+                {
+                  "name": "模块化种植架搭建",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "垂直农场空间规划",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "小户型绿植布局",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                }
+              ],
+              "probe_mode": "lateral",
+              "confirmation_source": "",
+              "confirmed_at": "",
+              "deferred_at": "",
+              "deferred_until": "",
+              "defer_count": 0
+            },
+            {
+              "domain": "智能灌溉系统DIY",
+              "category": "科技",
+              "reason": "你对编程和园艺都感兴趣，这种用树莓派控制的自动浇水装置应该很合拍",
+              "experience_mode": "hands_on",
+              "entry_load": "heavy",
+              "confidence": 0.45,
+              "weight": 0.45,
+              "created_at": "2026-11-05T19:43:57.865350",
+              "ttl_days": 3,
+              "confirmation_count": 0,
+              "confirmation_threshold": 3,
+              "status": "active",
+              "confirming_events": [],
+              "specifics": [
+                {
+                  "name": "树莓派灌溉项目教程",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "土壤湿度传感器选型",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                },
+                {
+                  "name": "Arduino自动浇水设计",
+                  "confirmation_count": 0,
+                  "confirming_events": []
+                }
+              ],
+              "probe_mode": "bridge",
+              "confirmation_source": "",
+              "confirmed_at": "",
+              "deferred_at": "",
+              "deferred_until": "",
+              "defer_count": 0
+            }
+          ],
+          "promoted": [],
+          "rejected": [],
+          "revived": [],
+          "stalemate": [],
+          "observed_matches": 0
+        },
+        "active": [
+          {
+            "domain": "阳台蔬菜轮作方案",
+            "category": "生活",
+            "reason": "番茄种久了想换点新花样？试试和多肉植物轮作的妙招",
+            "experience_mode": "wander_observe",
+            "entry_load": "light",
+            "confidence": 0.5,
+            "weight": 0.5,
+            "created_at": "2026-11-05T19:43:57.865350",
+            "ttl_days": 3,
+            "confirmation_count": 0,
+            "confirmation_threshold": 3,
+            "status": "active",
+            "confirming_events": [],
+            "specifics": [
+              {
+                "name": "不同作物搭配指南",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "容器栽培技巧分享",
+                "confirmation_count": 0,
+                "confirming_events": []
+              }
+            ],
+            "probe_mode": "near",
+            "confirmation_source": "",
+            "confirmed_at": "",
+            "deferred_at": "",
+            "deferred_until": "",
+            "defer_count": 0
+          },
+          {
+            "domain": "番茄种植避坑指南",
+            "category": "生活",
+            "reason": "你已经在种番茄，这类记录常见问题的视频肯定对你有帮助",
+            "experience_mode": "wander_observe",
+            "entry_load": "light",
+            "confidence": 0.52,
+            "weight": 0.52,
+            "created_at": "2026-11-05T19:43:57.865350",
+            "ttl_days": 3,
+            "confirmation_count": 0,
+            "confirmation_threshold": 3,
+            "status": "active",
+            "confirming_events": [],
+            "specifics": [
+              {
+                "name": "阳台番茄病虫害防治",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "不同品种生长对比",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "支架搭建技巧",
+                "confirmation_count": 0,
+                "confirming_events": []
+              }
+            ],
+            "probe_mode": "near",
+            "confirmation_source": "",
+            "confirmed_at": "",
+            "deferred_at": "",
+            "deferred_until": "",
+            "defer_count": 0
+          },
+          {
+            "domain": "开源硬件农业应用",
+            "category": "科技",
+            "reason": "你对编程和硬件都感兴趣，这类用ESP32做环境监测的项目很值得尝试",
+            "experience_mode": "hands_on",
+            "entry_load": "heavy",
+            "confidence": 0.48,
+            "weight": 0.48,
+            "created_at": "2026-11-05T19:43:57.865350",
+            "ttl_days": 3,
+            "confirmation_count": 0,
+            "confirmation_threshold": 3,
+            "status": "active",
+            "confirming_events": [],
+            "specifics": [
+              {
+                "name": "ESP32农业监测系统",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "硬件控制开源社区",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "DIY智能温室案例",
+                "confirmation_count": 0,
+                "confirming_events": []
+              }
+            ],
+            "probe_mode": "lateral",
+            "confirmation_source": "",
+            "confirmed_at": "",
+            "deferred_at": "",
+            "deferred_until": "",
+            "defer_count": 0
+          },
+          {
+            "domain": "城市微农场设计",
+            "category": "生活",
+            "reason": "种番茄时可能想过更系统化的方案，这类用模块化搭建的阳台农场教程很实用",
+            "experience_mode": "knowledge",
+            "entry_load": "light",
+            "confidence": 0.5,
+            "weight": 0.5,
+            "created_at": "2026-11-05T19:43:57.865350",
+            "ttl_days": 3,
+            "confirmation_count": 0,
+            "confirmation_threshold": 3,
+            "status": "active",
+            "confirming_events": [],
+            "specifics": [
+              {
+                "name": "模块化种植架搭建",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "垂直农场空间规划",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "小户型绿植布局",
+                "confirmation_count": 0,
+                "confirming_events": []
+              }
+            ],
+            "probe_mode": "lateral",
+            "confirmation_source": "",
+            "confirmed_at": "",
+            "deferred_at": "",
+            "deferred_until": "",
+            "defer_count": 0
+          },
+          {
+            "domain": "智能灌溉系统DIY",
+            "category": "科技",
+            "reason": "你对编程和园艺都感兴趣，这种用树莓派控制的自动浇水装置应该很合拍",
+            "experience_mode": "hands_on",
+            "entry_load": "heavy",
+            "confidence": 0.45,
+            "weight": 0.45,
+            "created_at": "2026-11-05T19:43:57.865350",
+            "ttl_days": 3,
+            "confirmation_count": 0,
+            "confirmation_threshold": 3,
+            "status": "active",
+            "confirming_events": [],
+            "specifics": [
+              {
+                "name": "树莓派灌溉项目教程",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "土壤湿度传感器选型",
+                "confirmation_count": 0,
+                "confirming_events": []
+              },
+              {
+                "name": "Arduino自动浇水设计",
+                "confirmation_count": 0,
+                "confirming_events": []
+              }
+            ],
+            "probe_mode": "bridge",
+            "confirmation_source": "",
+            "confirmed_at": "",
+            "deferred_at": "",
+            "deferred_until": "",
+            "defer_count": 0
+          }
+        ]
+      },
+      "seconds": 53.373,
+      "calls": [
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 969,
+          "completion_tokens": 414,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5608,
+          "completion_tokens": 755,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 770,
+          "completion_tokens": 82,
+          "success": 1
+        },
+        {
+          "caller": "soul.speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2104,
+          "completion_tokens": 1778,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "long_context_middle_record_and_model_specific_bound",
+      "status": "fail",
+      "error": "AssertionError: record_0731=普通验收记录0731",
+      "seconds": 8.779,
+      "calls": []
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    }
+  ]
+}

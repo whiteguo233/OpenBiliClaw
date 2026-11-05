@@ -6316,12 +6316,14 @@ def test_save_runtime_provider_config_persists_triplet(
         load_config_with_diagnostics,
         save_config,
     )
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
 
     config_path = tmp_path / "config.toml"
     save_config(
         Config(
             llm=LLMConfig(
                 default_provider="claude",
+                sponsored=SponsoredRuntimeSettings(enabled=True, model="Qwen/Qwen3.5-4B"),
                 openai=LLMProviderConfig(
                     api_key="sk-old",
                     base_url="https://old.example.com/v1",
@@ -6342,6 +6344,8 @@ def test_save_runtime_provider_config_persists_triplet(
         model="gpt-4o-mini",
     )
     reloaded, _ = load_config_with_diagnostics()
+    assert not reloaded.llm.sponsored.enabled
+    assert reloaded.llm.sponsored.model == "Qwen/Qwen3.5-4B"
     assert reloaded.llm.default_provider == "openai"
     assert reloaded.llm.openai.api_key == "sk-new"
     assert reloaded.llm.openai.base_url == "https://new.example.com/v1"

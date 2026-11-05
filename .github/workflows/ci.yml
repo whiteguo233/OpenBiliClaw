@@ -164,5 +164,5 @@ jobs:
       - name: Install Playwright Chromium
         run: python -m playwright install --with-deps chromium
 
-      - name: Run web guided-init E2E
-        run: python -m pytest -q tests/test_web_guided_init_e2e.py
+      - name: Run web guided-init and free-plan E2E
+        run: python -m pytest -q tests/test_web_guided_init_e2e.py tests/test_sponsored_runtime_e2e.py

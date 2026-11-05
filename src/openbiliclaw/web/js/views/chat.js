@@ -30,6 +30,7 @@ import {
   fetchProfileSummary,
   fetchActivityFeed,
   fetchPendingNotifications,
+  fetchRuntimeStatus,
   fetchPendingProbes,
   fetchPendingAvoidanceProbes,
   ackNotification,
@@ -232,6 +233,7 @@ function setSessionSkill(sessionId, skillName) {
 // Messages overlay state
 let overlayOpen = false;
 let notifications = [];
+let sponsoredStatus = {};
 let delightMsgs = [];
 const pendingProbeActions = new Map();
 
@@ -1615,6 +1617,17 @@ async function driveAgentStream(turnId, message, sourceTurn = null) {
       await driveLegacyStream(turnId, message);
       return;
     }
+    if (error?.agentRetrying) {
+      streamingTurnIds.delete(turnId);
+      agentRunsByTurnId.delete(turnId);
+      if (sessionId === activeSessionId) {
+        pendingTurnId = turnId;
+        setDialogueStatus(String(error.message), "info");
+        render();
+        pollForResponse();
+      }
+      return;
+    }
     const messageText = error?.agentStreamError
       ? String(error.message || "对话失败了，请稍后重试。")
       : "连接中断了，可以重试。";
@@ -1961,6 +1974,12 @@ function renderOverlay() {
   header.appendChild(closeBtn);
   panel.appendChild(header);
 
+  const serviceNotice = document.createElement("div");
+  window.OpenBiliClawSponsoredSettings?.renderNotice(serviceNotice, sponsoredStatus, () => {
+    window.location.href = "/web/?settings=models";
+  });
+  panel.appendChild(serviceNotice);
+
   // Probe notifications
   for (const n of notifications) {
     const domain = n.domain || n.title || "";
@@ -1994,7 +2013,7 @@ function renderOverlay() {
     panel.appendChild(card);
   }
 
-  if (notifications.length === 0) {
+  if (notifications.length === 0 && !sponsoredStatus.notices?.length) {
     const emptyState = document.createElement("div");
     emptyState.className = "messages-empty-state";
     emptyState.innerHTML = `
@@ -2110,7 +2129,7 @@ function renderOverlay() {
 function updateBadgeCount() {
   const msgs = { notifications: [...notifications], delights: [] };
   patchState({ messages: msgs });
-  setUnreadCount(notifications.length);
+  setUnreadCount(notifications.length + (sponsoredStatus.notices?.length || 0));
 }
 
 // ── Load ─────────────────────────────────────────────────────
@@ -2282,12 +2301,14 @@ async function refreshAfterChatTurn() {
 
 export async function loadNotifications({ includeDelights = false } = {}) {
   try {
-    const [notifData, probeData, avoidanceProbeData, delightData] = await Promise.all([
+    const [notifData, probeData, avoidanceProbeData, delightData, runtimeData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
       fetchPendingProbes().catch(() => []),
       fetchPendingAvoidanceProbes().catch(() => []),
       includeDelights ? fetchDelightBatch().catch(() => []) : Promise.resolve(delightMsgs),
+      fetchRuntimeStatus().catch(() => null),
     ]);
+    if (runtimeData) sponsoredStatus = runtimeData.sponsored_status || {};
     // Start with persisted probes from backend
     const probes = [
       ...(Array.isArray(probeData) ? probeData.map((p) => ({ ...p, type: "interest.probe" })) : []),
@@ -2314,6 +2335,14 @@ export function initChatView(root) {
   syncChatViewport();
   if (!loaded) {
     loaded = true;
+    subscribe((nextState, changed) => {
+      if (!("runtimeStatus" in changed)) return;
+      const nextStatus = nextState.runtimeStatus?.sponsored_status || {};
+      const noticesChanged = JSON.stringify(nextStatus.notices || []) !== JSON.stringify(sponsoredStatus.notices || []);
+      sponsoredStatus = nextStatus;
+      updateBadgeCount();
+      if (overlayOpen && noticesChanged) renderOverlay();
+    });
     loadNotifications();
     void refreshSkills().then(render);
     void refreshPersonas().then(render);

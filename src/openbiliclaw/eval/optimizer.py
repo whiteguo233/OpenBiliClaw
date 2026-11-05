@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from openbiliclaw.eval.evaluator import FIELD_TO_PARAM, FieldScore
+from openbiliclaw.llm.sponsored_router import complete_project_task
 
 logger = logging.getLogger(__name__)
 
@@ -452,7 +453,8 @@ class PromptOptimizer:
         ]
 
         try:
-            response = await self._llm.complete(
+            response = await complete_project_task(
+                self._llm,
                 messages,
                 temperature=0.4,
                 max_tokens=2048,
@@ -515,7 +517,8 @@ class PromptOptimizer:
         ]
 
         try:
-            response = await self._llm.complete(
+            response = await complete_project_task(
+                self._llm,
                 messages,
                 temperature=0.9,
                 max_tokens=2048,

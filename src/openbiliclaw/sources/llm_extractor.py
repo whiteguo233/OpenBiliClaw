@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin
 
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.saved_sync.identity import make_item_key
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
@@ -118,6 +121,17 @@ async def extract_content_from_page(
 
         content_id = str(item.get("content_id") or "").strip()
         content_url = str(item.get("url") or "").strip()
+        if content_url and base_url:
+            with suppress(ValueError):
+                content_url = urljoin(base_url, content_url)
+
+        # Generic web pages have no platform-wide native ID. A model may
+        # shorten rust-17 and garden-17 to the same "17", or choose a different
+        # ID on the next extraction. Reuse the canonical URL identity used by
+        # storage; native platform IDs retain their existing contract.
+        if source_platform == "web" and content_url:
+            with suppress(ValueError):  # Non-HTTP URLs have no canonical identity.
+                content_id = make_item_key("web", "", content_url).removeprefix("web:")
 
         # Generate a content_id from URL if not provided
         if not content_id and content_url:

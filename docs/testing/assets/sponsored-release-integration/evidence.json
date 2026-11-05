@@ -1,0 +1,1463 @@
+{
+  "sdk_release": "sponsored-runtime-2026-11-05.1",
+  "runs": [
+    {
+      "run": "cloud-8b/director-after.json",
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "director_two_screens_with_default_planning_budget",
+          "status": "fail",
+          "seconds": 6.361,
+          "calls": [
+            {
+              "caller": "recommendation.director.plan",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1666,
+              "completion_tokens": 83,
+              "success": 1
+            },
+            {
+              "caller": "recommendation.director.plan",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1882,
+              "completion_tokens": 83,
+              "success": 1
+            }
+          ],
+          "error": "AssertionError: plan=None reason_code='invalid_planner_output' calls=2"
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-8b/director-flat.json",
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "director_two_screens_with_default_planning_budget",
+          "status": "pass",
+          "seconds": 3.322,
+          "calls": [
+            {
+              "caller": "recommendation.director.plan",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1675,
+              "completion_tokens": 65,
+              "success": 1
+            }
+          ],
+          "result": {
+            "reason_code": "agent_horizon_prepared",
+            "planner_calls": 1,
+            "screen_refs": [
+              [
+                "c0",
+                "c2",
+                "c5"
+              ],
+              [
+                "c3",
+                "c4",
+                "c1"
+              ]
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-4b/director-flat.json",
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "director_two_screens_with_default_planning_budget",
+          "status": "pass",
+          "seconds": 3.878,
+          "calls": [
+            {
+              "caller": "recommendation.director.plan",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1677,
+              "completion_tokens": 66,
+              "success": 1
+            }
+          ],
+          "result": {
+            "reason_code": "agent_horizon_prepared",
+            "planner_calls": 1,
+            "screen_refs": [
+              [
+                "c0",
+                "c1",
+                "c2"
+              ],
+              [
+                "c3",
+                "c4",
+                "c5"
+              ]
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-8b/release-acceptance.json",
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "agent_exact_values_in_1200_record_memory",
+          "status": "pass",
+          "seconds": 5.385,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3133,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3283,
+              "completion_tokens": 7,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3133,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3283,
+              "completion_tokens": 7,
+              "success": 1
+            }
+          ],
+          "result": {
+            "stored_records": 1200,
+            "queries": [
+              {
+                "key": "record_0731",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0731"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0731')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "翠"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "竹"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "5"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "4"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "7"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "翠竹59427"
+                  }
+                ]
+              },
+              {
+                "key": "record_0847",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0847"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0847')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0847\", \"layer\": \"event\", \"value\": \"青杉68219\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "青"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "杉"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "6"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "8"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "1"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "青杉68219"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fresh_cognition_with_historical_lookback",
+          "status": "fail",
+          "seconds": 25.911,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4084,
+              "completion_tokens": 1130,
+              "success": 1
+            }
+          ],
+          "error": "AttributeError: 'AwarenessNote' object has no attribute 'to_dict'"
+        },
+        {
+          "name": "builtin_provider_and_three_concurrent_real_probes",
+          "status": "pass",
+          "seconds": 0.933,
+          "calls": [],
+          "result": {
+            "provider": {
+              "provider_id": "siliconflow_free",
+              "display_name": "硅基流动免费方案",
+              "builtin": true,
+              "models": [
+                {
+                  "id": "Qwen/Qwen3-8B",
+                  "context_window": 131072
+                },
+                {
+                  "id": "Qwen/Qwen3.5-4B",
+                  "context_window": 262144
+                }
+              ],
+              "enabled": true,
+              "embedding_mode": "cloud",
+              "service_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+              },
+              "model": "Qwen/Qwen3-8B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 131072,
+              "image_embedding": false
+            },
+            "probes": [
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 790
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 647
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 728
+              }
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-4b/release-acceptance.json",
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "agent_exact_values_in_1200_record_memory",
+          "status": "fail",
+          "seconds": 10.392,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3077,
+              "completion_tokens": 36,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3213,
+              "completion_tokens": 36,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3278,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3356,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3434,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3512,
+              "completion_tokens": 61,
+              "success": 1
+            }
+          ],
+          "error": "AssertionError: [{'type': 'tool_call', 'step': 1, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'key': 'release_test_records/record_0731'}, 'summary': \"read_memory(layer='event', key='release_test_records/record_0731')\"}, {'type': 'tool_result', 'step': 1, 'text': '{\"next_offset\": null, \"notes\": [], \"offset\": 0, \"total\": 0}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'tool_call', 'step': 2, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'key': 'release_test_records/record_0731'}, 'summary': \"read_memory(layer='event', key='release_test_records/record_0731')\"}, {'type': 'tool_result', 'step': 2, 'text': '{\"next_offset\": null, \"notes\": [], \"offset\": 0, \"total\": 0}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'tool_call', 'step': 3, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'json_pointer': '/release_test_records/record_0731'}, 'summary': \"read_memory(layer='event', json_pointer='/release_test_records/record_0731')\"}, {'type': 'tool_result', 'step': 3, 'text': '{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'tool_call', 'step': 4, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'json_pointer': '/release_test_records/record_0731'}, 'summary': \"read_memory(layer='event', json_pointer='/release_test_records/record_0731')\"}, {'type': 'tool_result', 'step': 4, 'text': '{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'tool_call', 'step': 5, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'json_pointer': '/release_test_records/record_0731'}, 'summary': \"read_memory(layer='event', json_pointer='/release_test_records/record_0731')\"}, {'type': 'tool_result', 'step': 5, 'text': '{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'delta', 'step': 6, 'text': '已'}, {'type': 'delta', 'step': 6, 'text': '读取'}, {'type': 'delta', 'step': 6, 'text': ' event'}, {'type': 'delta', 'step': 6, 'text': ' '}, {'type': 'delta', 'step': 6, 'text': '层'}, {'type': 'delta', 'step': 6, 'text': ' '}, {'type': 'delta', 'step': 6, 'text': '`/release_test_records/record_0731` 的原值：\\n\\n```json\\n{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}\\n```'}, {'type': 'final', 'step': 6, 'text': '已读取 event 层 `/release_test_records/record_0731` 的原值：\\n\\n```json\\n{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}\\n```'}]"
+        },
+        {
+          "name": "fresh_cognition_with_historical_lookback",
+          "status": "fail",
+          "seconds": 6.156,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5274,
+              "completion_tokens": 183,
+              "success": 1
+            }
+          ],
+          "error": "AttributeError: 'AwarenessNote' object has no attribute 'to_dict'"
+        },
+        {
+          "name": "builtin_provider_and_three_concurrent_real_probes",
+          "status": "pass",
+          "seconds": 0.992,
+          "calls": [],
+          "result": {
+            "provider": {
+              "provider_id": "siliconflow_free",
+              "display_name": "硅基流动免费方案",
+              "builtin": true,
+              "models": [
+                {
+                  "id": "Qwen/Qwen3-8B",
+                  "context_window": 131072
+                },
+                {
+                  "id": "Qwen/Qwen3.5-4B",
+                  "context_window": 262144
+                }
+              ],
+              "enabled": true,
+              "embedding_mode": "cloud",
+              "service_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+              },
+              "model": "Qwen/Qwen3.5-4B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 262144,
+              "image_embedding": false
+            },
+            "probes": [
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 831
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 738
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 787
+              }
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-8b-final/release-acceptance.json",
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "agent_exact_values_in_1200_record_memory",
+          "status": "pass",
+          "seconds": 5.256,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3157,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3307,
+              "completion_tokens": 7,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3157,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3307,
+              "completion_tokens": 7,
+              "success": 1
+            }
+          ],
+          "result": {
+            "stored_records": 1200,
+            "queries": [
+              {
+                "key": "record_0731",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0731"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0731')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "翠"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "竹"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "5"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "4"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "7"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "翠竹59427"
+                  }
+                ]
+              },
+              {
+                "key": "record_0847",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0847"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0847')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0847\", \"layer\": \"event\", \"value\": \"青杉68219\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "青"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "杉"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "6"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "8"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "1"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "青杉68219"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fresh_cognition_with_historical_lookback",
+          "status": "pass",
+          "seconds": 27.051,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4081,
+              "completion_tokens": 1254,
+              "success": 1
+            }
+          ],
+          "result": {
+            "historical_max_id": 24,
+            "batch_ids": [
+              25,
+              26,
+              27,
+              28
+            ],
+            "added": 1,
+            "notes": [
+              {
+                "date": "",
+                "observation": "连续浏览蓝晒手工的多个步骤教程（感光液调配、棉布涂布、植物摆放、日晒显影）",
+                "trend": "正在逐步探索蓝晒手工的完整流程",
+                "emotion_guess": "对流程感兴趣但尚未明确是否投入实践",
+                "note_id": "e40f26eb39be",
+                "source_event_ids": [
+                  25,
+                  26,
+                  27,
+                  28
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "watermark": 28
+          }
+        },
+        {
+          "name": "builtin_provider_and_three_concurrent_real_probes",
+          "status": "pass",
+          "seconds": 0.95,
+          "calls": [],
+          "result": {
+            "provider": {
+              "provider_id": "siliconflow_free",
+              "display_name": "硅基流动免费方案",
+              "builtin": true,
+              "models": [
+                {
+                  "id": "Qwen/Qwen3-8B",
+                  "context_window": 131072
+                },
+                {
+                  "id": "Qwen/Qwen3.5-4B",
+                  "context_window": 262144
+                }
+              ],
+              "enabled": true,
+              "embedding_mode": "cloud",
+              "service_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+              },
+              "model": "Qwen/Qwen3-8B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 131072,
+              "image_embedding": false
+            },
+            "probes": [
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 710
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 721
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 751
+              }
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "run": "cloud-4b-final/release-acceptance.json",
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "agent_exact_values_in_1200_record_memory",
+          "status": "fail",
+          "seconds": 13.488,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3098,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3247,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3325,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3403,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3481,
+              "completion_tokens": 7,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3098,
+              "completion_tokens": 36,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3235,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 6710,
+              "completion_tokens": 64,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3391,
+              "completion_tokens": 7,
+              "success": 1
+            }
+          ],
+          "error": "AssertionError: [{'type': 'tool_call', 'step': 1, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'key': 'release_test_records/record_0847'}, 'summary': \"read_memory(layer='event', key='release_test_records/record_0847')\"}, {'type': 'tool_result', 'step': 1, 'text': '工具执行出错: key只接受聊天笔记键名；原始字段路径请使用json_pointer并以/开头。', 'tool_name': 'read_memory', 'ok': False, 'truncated': False}, {'type': 'tool_call', 'step': 2, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'json_pointer': '/release_test_records/record_0847'}, 'summary': \"read_memory(layer='event', json_pointer='/release_test_records/record_0847')\"}, {'type': 'tool_result', 'step': 2, 'text': '{\"json_pointer\": \"/release_test_records/record_0847\", \"layer\": \"event\", \"value\": \"青杉68219\"}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'tool_call', 'step': 3, 'tool_name': 'read_memory', 'arguments': {'layer': 'event', 'json_pointer': '/release_test_records/record_0847'}, 'summary': \"read_memory(layer='event', json_pointer='/release_test_records/record_0847')\"}, {'type': 'tool_result', 'step': 3, 'text': '{\"json_pointer\": \"/release_test_records/record_0847\", \"layer\": \"event\", \"value\": \"青杉68219\"}', 'tool_name': 'read_memory', 'ok': True, 'truncated': False}, {'type': 'delta', 'step': 4, 'text': '青'}, {'type': 'delta', 'step': 4, 'text': '杉'}, {'type': 'delta', 'step': 4, 'text': '6'}, {'type': 'delta', 'step': 4, 'text': '8'}, {'type': 'delta', 'step': 4, 'text': '2'}, {'type': 'delta', 'step': 4, 'text': '1'}, {'type': 'delta', 'step': 4, 'text': '9'}, {'type': 'final', 'step': 4, 'text': '青杉68219'}]"
+        },
+        {
+          "name": "fresh_cognition_with_historical_lookback",
+          "status": "pass",
+          "seconds": 7.906,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5275,
+              "completion_tokens": 183,
+              "success": 1
+            }
+          ],
+          "result": {
+            "historical_max_id": 25,
+            "batch_ids": [
+              26,
+              27,
+              28,
+              29
+            ],
+            "added": 1,
+            "notes": [
+              {
+                "date": "",
+                "observation": "用户今日连续浏览了四段关于蓝晒手工（感光液调配、棉布涂布、植物摆放、日晒显影）的教程视频，且均为只确认浏览状态。",
+                "trend": "从之前的 Rust 编程和园艺养护转向了具体的手工艺术（蓝晒）工艺学习。",
+                "emotion_guess": "可能处于探索新技能或寻找动手操作的乐趣阶段，但尚未明确表达对该领域的深度兴趣。",
+                "note_id": "8d451276be0d",
+                "source_event_ids": [
+                  26,
+                  27,
+                  28,
+                  29
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "watermark": 29
+          }
+        },
+        {
+          "name": "builtin_provider_and_three_concurrent_real_probes",
+          "status": "pass",
+          "seconds": 0.86,
+          "calls": [],
+          "result": {
+            "provider": {
+              "provider_id": "siliconflow_free",
+              "display_name": "硅基流动免费方案",
+              "builtin": true,
+              "models": [
+                {
+                  "id": "Qwen/Qwen3-8B",
+                  "context_window": 131072
+                },
+                {
+                  "id": "Qwen/Qwen3.5-4B",
+                  "context_window": 262144
+                }
+              ],
+              "enabled": true,
+              "embedding_mode": "cloud",
+              "service_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+              },
+              "model": "Qwen/Qwen3.5-4B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 262144,
+              "image_embedding": false
+            },
+            "probes": [
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 720
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 636
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3.5-4B",
+                "message": "流式对话和 BGE-M3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 655
+              }
+            ]
+          }
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.agent.tools.registry",
+          "message": "Tool dispatch error: read_memory",
+          "failure": true
+        }
+      ]
+    },
+    {
+      "run": "local-8b-final/release-acceptance.json",
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "agent_exact_values_in_1200_record_memory",
+          "status": "pass",
+          "seconds": 6.308,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3157,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3307,
+              "completion_tokens": 7,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3157,
+              "completion_tokens": 37,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3307,
+              "completion_tokens": 7,
+              "success": 1
+            }
+          ],
+          "result": {
+            "stored_records": 1200,
+            "queries": [
+              {
+                "key": "record_0731",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0731"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0731')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0731\", \"layer\": \"event\", \"value\": \"翠竹59427\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "翠"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "竹"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "5"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "4"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "7"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "翠竹59427"
+                  }
+                ]
+              },
+              {
+                "key": "record_0847",
+                "events": [
+                  {
+                    "type": "tool_call",
+                    "step": 1,
+                    "tool_name": "read_memory",
+                    "arguments": {
+                      "layer": "event",
+                      "json_pointer": "/release_test_records/record_0847"
+                    },
+                    "summary": "read_memory(layer='event', json_pointer='/release_test_records/record_0847')"
+                  },
+                  {
+                    "type": "tool_result",
+                    "step": 1,
+                    "text": "{\"json_pointer\": \"/release_test_records/record_0847\", \"layer\": \"event\", \"value\": \"青杉68219\"}",
+                    "tool_name": "read_memory",
+                    "ok": true,
+                    "truncated": false
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "青"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "杉"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "6"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "8"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "2"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "1"
+                  },
+                  {
+                    "type": "delta",
+                    "step": 2,
+                    "text": "9"
+                  },
+                  {
+                    "type": "final",
+                    "step": 2,
+                    "text": "青杉68219"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fresh_cognition_with_historical_lookback",
+          "status": "pass",
+          "seconds": 39.546,
+          "calls": [
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2156,
+              "completion_tokens": 1440,
+              "success": 1
+            },
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5195,
+              "completion_tokens": 1212,
+              "success": 1
+            }
+          ],
+          "result": {
+            "historical_max_id": 24,
+            "batch_ids": [
+              25,
+              26,
+              27,
+              28
+            ],
+            "added": 1,
+            "notes": [
+              {
+                "date": "",
+                "observation": "连续浏览蓝晒手工相关教程但未出现点赞或收藏行为。",
+                "trend": "对生活类内容的接触呈现工具化倾向。",
+                "emotion_guess": "可能在尝试不同领域的知识获取方式。",
+                "note_id": "200c965f6b44",
+                "source_event_ids": [
+                  25,
+                  26,
+                  27,
+                  28
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "watermark": 28
+          }
+        },
+        {
+          "name": "builtin_provider_and_three_concurrent_real_probes",
+          "status": "pass",
+          "seconds": 8.289,
+          "calls": [],
+          "result": {
+            "provider": {
+              "provider_id": "siliconflow_free",
+              "display_name": "硅基流动免费方案",
+              "builtin": true,
+              "models": [
+                {
+                  "id": "Qwen/Qwen3-8B",
+                  "context_window": 131072
+                },
+                {
+                  "id": "Qwen/Qwen3.5-4B",
+                  "context_window": 262144
+                }
+              ],
+              "enabled": true,
+              "embedding_mode": "local",
+              "service_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+              },
+              "model": "Qwen/Qwen3-8B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "bge-m3",
+              "context_window": 131072,
+              "image_embedding": false
+            },
+            "probes": [
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和本地 bge-m3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 5062
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和本地 bge-m3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 6526
+              },
+              {
+                "ok": true,
+                "service_status": {
+                  "notices": [],
+                  "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+                },
+                "kind": "sponsored",
+                "instance_id": "",
+                "provider": "sponsored",
+                "model": "Qwen/Qwen3-8B",
+                "message": "流式对话和本地 bge-m3 文本向量均可用",
+                "error": "",
+                "error_code": "",
+                "retryable": false,
+                "latency_ms": 8101
+              }
+            ]
+          }
+        }
+      ],
+      "background_observations": []
+    }
+  ],
+  "raw_context_reasoning_probe": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "needle": 731,
+      "answer": "\n\nrecord_0731=普通验收记录0731",
+      "pass": false,
+      "usage": {
+        "prompt_tokens": 18033,
+        "completion_tokens": 291,
+        "total_tokens": 18324
+      },
+      "seconds": 5.134
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "needle": 847,
+      "answer": "\n\nrecord_0847=青杉68219",
+      "pass": true,
+      "usage": {
+        "prompt_tokens": 18033,
+        "completion_tokens": 470,
+        "total_tokens": 18503
+      },
+      "seconds": 6.648
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "needle": 731,
+      "answer": "\n\n翠竹 59427",
+      "pass": false,
+      "usage": {
+        "prompt_tokens": 18034,
+        "completion_tokens": 435,
+        "total_tokens": 18469
+      },
+      "seconds": 14.14
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "needle": 847,
+      "answer": "\n\n青杉 68219",
+      "pass": false,
+      "usage": {
+        "prompt_tokens": 18034,
+        "completion_tokens": 407,
+        "total_tokens": 18441
+      },
+      "seconds": 11.917
+    }
+  ]
+}

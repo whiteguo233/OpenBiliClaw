@@ -1,0 +1,22 @@
+{
+  "agent.chat": 21,
+  "agent.task": 10,
+  "discovery.evaluate_batch": 43,
+  "discovery.keyword_inspiration": 5,
+  "discovery.keyword_planner": 9,
+  "discovery.search.queries": 8,
+  "discovery.temporal_repair": 16,
+  "pool_purge.llm_agent": 2,
+  "recommendation.director.plan": 3,
+  "recommendation.write_expression": 14,
+  "soul.avoidance_speculate": 15,
+  "soul.awareness_confusions": 13,
+  "soul.consolidation": 6,
+  "soul.dialogue_insight": 15,
+  "soul.insight": 8,
+  "soul.posture_gate": 7,
+  "soul.preference": 14,
+  "soul.profile_build": 8,
+  "soul.speculate": 20,
+  "sources.web.extract": 4
+}

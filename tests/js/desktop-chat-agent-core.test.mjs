@@ -70,23 +70,29 @@ test("SSE parser flushes a trailing event without blank line on end()", () => {
 
 // ── SSE 读看门狗 ──────────────────────────────────────────────
 
-test("SSE read watchdog aborts after a silent window", async () => {
+test("SSE read watchdog aborts after a silent window", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const watchdog = createSseReadWatchdog({ timeoutMs: 20 });
-  const aborted = new Promise((resolve) => watchdog.signal.addEventListener("abort", resolve));
   watchdog.reset();
-  await aborted;
+  t.mock.timers.tick(19);
+  assert.equal(watchdog.signal.aborted, false);
+  t.mock.timers.tick(1);
   assert.equal(watchdog.signal.aborted, true);
 });
 
-test("SSE read watchdog reset postpones and cancel disarms", async () => {
+test("SSE read watchdog reset postpones and cancel disarms", (t) => {
+  // Advance elapsed time explicitly. A real 25 ms sleep can wake after the
+  // 40 ms deadline under parallel CI/browser load, correctly aborting a live
+  // watchdog before this test has had a chance to deliver its heartbeat.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const watchdog = createSseReadWatchdog({ timeoutMs: 40 });
   watchdog.reset();
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  t.mock.timers.tick(25);
   watchdog.reset(); // 心跳/字节到达 → 重新计时
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  t.mock.timers.tick(25);
   assert.equal(watchdog.signal.aborted, false);
   watchdog.cancel();
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  t.mock.timers.tick(60);
   assert.equal(watchdog.signal.aborted, false);
 });
 

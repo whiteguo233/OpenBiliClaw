@@ -1,0 +1,123 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "default_planning_budget": 20.0,
+  "synthetic_candidates": true,
+  "model_context_limit_rejected": true,
+  "seconds": 18.334,
+  "items": [
+    {
+      "item_key": "bilibili:BV0000000000",
+      "title": "Synthetic card 0"
+    },
+    {
+      "item_key": "bilibili:BV0000000001",
+      "title": "Synthetic card 1"
+    },
+    {
+      "item_key": "bilibili:BV0000000002",
+      "title": "Synthetic card 2"
+    },
+    {
+      "item_key": "bilibili:BV0000000003",
+      "title": "Synthetic card 3"
+    }
+  ],
+  "realized_strategy": "deterministic",
+  "trace": {
+    "horizon": null,
+    "horizon_traces": [],
+    "patches": [],
+    "planning": {
+      "calls": 2,
+      "completion": null,
+      "reason_code": "invalid_planner_output",
+      "source": "fresh"
+    },
+    "proposal": {
+      "brief": {
+        "avoid": [],
+        "evidence_refs": [],
+        "objective": "结合当前兴趣与实际反馈，安排有衔接、适度探索的一屏内容。",
+        "revise_when": [
+          "explicit_intent_changed",
+          "explicit_feedback",
+          "candidate_unavailable",
+          "profile_changed"
+        ],
+        "schema_version": "screen-brief.v1",
+        "source": "conservative",
+        "task": "browse",
+        "uncertainties": [
+          "Clicks do not confirm preference; unacted exposures do not reject it.",
+          "Viewing duration, completion, mastery and fatigue are unknown."
+        ]
+      },
+      "candidate_digest": "2d1211ec812f67ec14f4f885dea995b492f5cffcf9e20b9e82d04132e1bed552",
+      "card_refs": [
+        "c_0d87ededbb8a45a75b3a94ab",
+        "c_ff58b12714d53c0efdb7a733",
+        "c_16ea89de5dc8edd069c07449",
+        "c_9f41d036e5910045c4fba633"
+      ],
+      "constraints_digest": "0752da082538724a47166e3640e35b3a75cefaa8698dcbe6649b7649eae9051c",
+      "direction": "结合当前兴趣与实际反馈，安排有衔接、适度探索的一屏内容。",
+      "direction_ref": "direction_b4875831942fc40e31e3183a",
+      "input_digest": "67c519063134a68269279c6da6862b9d6275ae3a617d4e0f37fc42d3b7468480",
+      "pairs": [
+        {
+          "audit_evidence_json": null,
+          "evidence_json": null,
+          "intent": "Preserve useful independent choices; do not force an unsupported role.",
+          "origin": "deterministic",
+          "pair_index": 0,
+          "prefix_refs": [],
+          "reason_code": "provider_disabled",
+          "role": "open",
+          "selected_refs": [
+            "c_0d87ededbb8a45a75b3a94ab",
+            "c_ff58b12714d53c0efdb7a733"
+          ]
+        },
+        {
+          "audit_evidence_json": null,
+          "evidence_json": null,
+          "intent": "Preserve useful independent choices; do not force an unsupported role.",
+          "origin": "deterministic",
+          "pair_index": 1,
+          "prefix_refs": [
+            "c_0d87ededbb8a45a75b3a94ab",
+            "c_ff58b12714d53c0efdb7a733"
+          ],
+          "reason_code": "provider_disabled",
+          "role": "open",
+          "selected_refs": [
+            "c_16ea89de5dc8edd069c07449",
+            "c_9f41d036e5910045c4fba633"
+          ]
+        }
+      ],
+      "plan_id": null,
+      "plan_revision": null,
+      "provider_calls": 0,
+      "realized_strategy": "deterministic",
+      "reason_code": "agent_plan_missing",
+      "request_id": "live-once",
+      "requested_strategy": "agent_only",
+      "schema_version": "director-proposal.v1",
+      "screen_id": null,
+      "screen_review": {
+        "check": "normalized_title_duplicates",
+        "repeated_title_groups": [],
+        "schema_version": "screen-review.v1",
+        "semantic_quality": "not_certified"
+      },
+      "screen_revision": null,
+      "status": "COMPLETE",
+      "target_count": 4,
+      "tentative": true
+    },
+    "replan_required": true
+  },
+  "status": "pass",
+  "restored_same_batch": true
+}

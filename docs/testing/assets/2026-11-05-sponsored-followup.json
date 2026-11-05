@@ -1,0 +1,5247 @@
+{
+  "scope": "Synthetic production SDK evidence-boundary regression; free and paid fallback disabled",
+  "models": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明、按步骤展开的内容、对不同方案的比较。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明",
+                "按步骤展开的内容",
+                "对不同方案的比较"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 8.767,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 208,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.75,
+              0.65,
+              0.35,
+              0.68,
+              0.58,
+              0.72
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.96,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.75,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.92,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 45.554,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4381,
+              "completion_tokens": 1003,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 750,
+              "completion_tokens": 139,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏了两个关于编程语言底层机制（Rust 借用机制）和高级应用模式（Python 异步编程）的技术视频。",
+                "trend": "兴趣点集中在具体的技术实现细节和代码逻辑上，偏好结构化、有步骤解析的内容。",
+                "emotion_guess": "对当前所学技术主题保持较高的专注度和求知欲。",
+                "note_id": "e74a16d5169f",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 3.997,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1228,
+              "completion_tokens": 141,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.376,
+                "seconds": 0.497,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.498,
+                "seconds": 0.52,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.279,
+                "seconds": 0.366,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.635,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 7.788,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 165,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.68,
+              0.65,
+              0.72
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.82,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 35.061,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 827,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "收藏了两条关于编程语言机制的视频，均包含具体示例讲解",
+                "trend": "持续关注需要深度理解的技术内容",
+                "emotion_guess": "可能处于主动学习或知识整理阶段",
+                "note_id": "8c87134a2971",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 29.04,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 726,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.571,
+                "seconds": 0.724,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.511,
+                "seconds": 0.541,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.505,
+                "seconds": 0.607,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 2.092,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "retained_previous_8b_failure": {
+    "name": "six_temporal_semantics_and_no_cross_item_date",
+    "status": "fail",
+    "error": "AssertionError: [{'bvid': 'BVfollow0', 'title': 'Rust 借用与所有权原理', 'temporal_class': 'evergreen', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow1', 'title': '光合作用基本原理', 'temporal_class': 'evergreen', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow2', 'title': '比赛报名入口', 'temporal_class': 'unknown', 'temporal_confidence': 0.0, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': False}, {'bvid': 'BVfollow3', 'title': '阿波罗13号历史纪录片', 'temporal_class': 'historical', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'freshness_only', 'temporal_valid_until': '', 'temporal_scope': 'hook', 'temporal_state': 'unknown', 'temporal_evidence': '回顾1970年阿波罗13号任务全过程和当时的救援。', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow4', 'title': '限时免费领取Rust教程', 'temporal_class': 'evergreen', 'temporal_confidence': 0.8, 'temporal_validity_mode': 'none', 'temporal_valid_until': '', 'temporal_scope': 'none', 'temporal_state': 'unknown', 'temporal_evidence': '', 'temporal_evidence_complete': True}, {'bvid': 'BVfollow5', 'title': 'Python 3.12 版本指南', 'temporal_class': 'versioned', 'temporal_confidence': 0.9, 'temporal_validity_mode': 'freshness_only', 'temporal_valid_until': '', 'temporal_scope': 'core', 'temporal_state': 'unknown', 'temporal_evidence': 'Python 3.12 版本指南', 'temporal_evidence_complete': True}]",
+    "seconds": 79.962,
+    "calls": [
+      {
+        "caller": "discovery.evaluate_batch",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "prompt_tokens": 4541,
+        "completion_tokens": 870,
+        "success": 1
+      },
+      {
+        "caller": "discovery.temporal_repair",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "prompt_tokens": 943,
+        "completion_tokens": 396,
+        "success": 1
+      }
+    ]
+  },
+  "verification": {
+    "focused_pytest": "874 passed, 1 skipped, 184 warnings in 90.37s",
+    "mypy": "385 source files passed",
+    "ruff": "passed",
+    "call_inventory": 111,
+    "config_show": "passed on isolated free configuration",
+    "rebuild_evidence_regression": "215 passed; included in final 874",
+    "final_authored_prompt_regression": "159 passed after final narrow self-description prompt change",
+    "temporal_admission_regression": "179 passed after 1 red empty-pool correction test",
+    "final_awareness_date_regression": "183 passed; includes date/citation/chronology/prompt and cognition retry coverage"
+  },
+  "prior_fixed_snapshot": {
+    "sha": "97ab360b7f10b00031cac56a13a60bffcdf72ca5",
+    "ci_run": 41878995795,
+    "ci_result": "success",
+    "installation_run": 41878995881,
+    "installation_result": "success"
+  },
+  "sdk_release": {
+    "release_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1",
+    "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+    "core_contract_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+    "workflow_run": 41871053646,
+    "artifacts": [
+      {
+        "archive": "obc-sponsored-runtime-linux-arm64.tar.gz",
+        "sha256": "3cf4a50b7f124b8dbd344c54d3c5bd4cb1947625c4190b6f59f08b948442f0fa",
+        "platform": "linux-arm64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      },
+      {
+        "archive": "obc-sponsored-runtime-linux-x86_64.tar.gz",
+        "sha256": "226ee8d0c8cb751db965a7bd4872d25827de254c21efaeec497bc1b901b54dd1",
+        "platform": "linux-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      },
+      {
+        "archive": "obc-sponsored-runtime-macos-arm64.tar.gz",
+        "sha256": "b11b54db364b2bffc05a85fd7a20eb3e78ab53e9f568adb98b3001a1a57b0899",
+        "platform": "macos-arm64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "macos-notarized",
+        "notarization_id": "0b408eaa-fc99-438c-852d-332f69484933"
+      },
+      {
+        "archive": "obc-sponsored-runtime-macos-x86_64.tar.gz",
+        "sha256": "8636b117264788a62961b0bac197df45be470405aab9ec90a3e10faf07bb5123",
+        "platform": "macos-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "macos-notarized",
+        "notarization_id": "2bcc80bc-1578-475e-bef0-11e079109843"
+      },
+      {
+        "archive": "obc-sponsored-runtime-windows-x86_64.tar.gz",
+        "sha256": "f23c9c5945862b9ec726de6b853b01bdbbaa25ab0ab747250505323222592694",
+        "platform": "windows-x86_64",
+        "core_sha": "1d50bb6ce22264489075b9baedbe958d125eb418",
+        "runtime_sha": "1d46c5ba9ff9a70e21ef56066eed4be6e15a51d8",
+        "profile": "siliconflow-free-v1",
+        "platform_signing": "manifest-only"
+      }
+    ]
+  },
+  "limits": [
+    "Small synthetic sample, not a capacity benchmark or SLA",
+    "Information-style choices still model judgments; life-story/personality assertions are excluded from passive free profiles",
+    "Tutorial category labels still differ between models; incomplete or foreign evidence must not authorize expiry",
+    "Image understanding and image embeddings are outside base acceptance",
+    "Main application release is separate from SDK release"
+  ],
+  "repeated_quality_script_run": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、结合具体例子的说明、按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "讲清原理的解释",
+                "结合具体例子的说明",
+                "按步骤展开的内容"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 5.832,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 209,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.85,
+              0.82,
+              0.3,
+              0.7,
+              0.4,
+              0.75
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.6,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.99,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "current",
+                "temporal_confidence": 0.8,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取Rust教程",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 44.03,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4382,
+              "completion_tokens": 1063,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 728,
+              "completion_tokens": 100,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "用户最近收藏了关于编程语言底层机制（Rust借用机制）和高级特性（Python异步编程）的教程视频。",
+                "trend": "持续偏好寻求“讲清原理”和“按步骤展开”的深度内容，与当前画像中的认知风格一致。",
+                "emotion_guess": "处于主动学习和探索技术原理的阶段。",
+                "note_id": "19faa79ebf10",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 9.424,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1230,
+              "completion_tokens": 141,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.416,
+                "seconds": 0.552,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.357,
+                "seconds": 0.463,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.344,
+                "seconds": 0.453,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.67,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation deadline is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 6.604,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 166,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.65,
+              0.68,
+              0.82
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 39.125,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 857,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏两个技术类视频，内容均涉及编程语言的具体机制与示例",
+                "trend": "对需要具体案例支撑的技术解释类内容保持持续关注",
+                "emotion_guess": "可能处于主动吸收和整理信息的阶段",
+                "note_id": "8f26cab3adf3",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 19.996,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 584,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.503,
+                "seconds": 0.598,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.485,
+                "seconds": 0.573,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.436,
+                "seconds": 0.479,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.851,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "final_full_quality_before_authored_prompt_fix": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、结合具体例子的说明、按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "讲清原理的解释",
+                "结合具体例子的说明",
+                "按步骤展开的内容"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 3.39,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 560,
+              "completion_tokens": 120,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.88,
+              0.85,
+              0.25,
+              0.72,
+              0.65,
+              0.82
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 0.95,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.96,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "current",
+                "temporal_confidence": 0.8,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "hook",
+                "temporal_state": "unknown",
+                "temporal_evidence": "限时免费领取Rust教程",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.94,
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "Python 3.12 仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 40.908,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4382,
+              "completion_tokens": 1106,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 792,
+              "completion_tokens": 301,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "用户收藏了两条技术原理类视频，主题分别涉及 Rust 借用机制与 Python 异步编程。",
+                "trend": "近期关注点聚焦于编程语言底层机制或高级特性的原理性讲解。",
+                "emotion_guess": "可能处于主动学习或对比不同语言特性的阶段。",
+                "note_id": "42ca7f070658",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 5.438,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 1230,
+              "completion_tokens": 130,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.354,
+                "seconds": 0.448,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.332,
+                "seconds": 0.417,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.309,
+                "seconds": 0.383,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.448,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 24,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "你这人挺坦诚，直接把自己定位成中学数学老师，还特意澄清不是程序员，看来对自我身份挺有数，喜欢直给不绕弯子。",
+              "core_traits": [
+                "坦诚",
+                "自我意识强"
+              ],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 10.647,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2700,
+              "completion_tokens": 237,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: declared type 'INFJ' disagrees with dimension poles 'INTJ'; using the dimensions",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: dimensions EI, JP, SN, TF sit below 0.60 strength; capping confidence at 0.55 (declared 'INTJ')",
+          "failure": false
+        }
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "passive_portrait_is_grounded",
+          "status": "pass",
+          "result": {
+            "profile": {
+              "personality_portrait": "从你关注的内容看，你可能更喜欢结合具体例子的说明。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+              "core_traits": [],
+              "cognitive_style": [
+                "结合具体例子的说明"
+              ],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "暂无明确自述",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            },
+            "mbti": {
+              "type": "",
+              "confidence": 0.5,
+              "dimensions": {}
+            }
+          },
+          "seconds": 7.612,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 580,
+              "completion_tokens": 166,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "six_temporal_semantics_and_no_cross_item_date",
+          "status": "pass",
+          "result": {
+            "scores": [
+              0.78,
+              0.72,
+              0.45,
+              0.38,
+              0.63,
+              0.74
+            ],
+            "results": [
+              {
+                "bvid": "BVfollow0",
+                "title": "Rust 借用与所有权原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow1",
+                "title": "光合作用基本原理",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.91,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow2",
+                "title": "比赛报名入口",
+                "temporal_class": "current",
+                "temporal_confidence": 1.0,
+                "temporal_validity_mode": "explicit_deadline",
+                "temporal_valid_until": "2026-11-01T10:00:00Z",
+                "temporal_scope": "core",
+                "temporal_state": "unknown",
+                "temporal_evidence": "本比赛报名截止 2026-11-01T18:00:00+08:00。截止后此报名入口关闭，不再受理。",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow3",
+                "title": "阿波罗13号历史纪录片",
+                "temporal_class": "historical",
+                "temporal_confidence": 0.67,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow4",
+                "title": "限时免费领取Rust教程",
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.9,
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_state": "unknown",
+                "temporal_evidence": "",
+                "temporal_evidence_complete": true
+              },
+              {
+                "bvid": "BVfollow5",
+                "title": "Python 3.12 版本指南",
+                "temporal_class": "versioned",
+                "temporal_confidence": 0.82,
+                "temporal_validity_mode": "version_state",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_state": "active",
+                "temporal_evidence": "Python 3.12仍是当前受支持版本",
+                "temporal_evidence_complete": true
+              }
+            ]
+          },
+          "seconds": 42.459,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4542,
+              "completion_tokens": 831,
+              "success": 1
+            },
+            {
+              "caller": "discovery.temporal_repair",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 821,
+              "completion_tokens": 231,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_has_no_foreign_event_citations",
+          "status": "pass",
+          "result": {
+            "notes": [
+              {
+                "date": "2026-11-04",
+                "observation": "连续收藏两个技术类视频",
+                "trend": "对编程相关深度内容保持持续关注",
+                "emotion_guess": "可能处于主动学习或知识整理阶段",
+                "note_id": "53f8f479be0f",
+                "source_event_ids": [
+                  1,
+                  2
+                ],
+                "source_event_ids_approximate": false
+              }
+            ],
+            "confusions": []
+          },
+          "seconds": 22.103,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 1167,
+              "completion_tokens": 535,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "three_streams_and_bge_after_public_install",
+          "status": "pass",
+          "result": {
+            "chat": [
+              {
+                "first_delta_seconds": 0.519,
+                "seconds": 0.622,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.429,
+                "seconds": 0.518,
+                "reply": "连接正常"
+              },
+              {
+                "first_delta_seconds": 0.332,
+                "seconds": 0.591,
+                "reply": "连接正常"
+              }
+            ],
+            "embedding_dimensions": 1024
+          },
+          "seconds": 1.897,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 25,
+              "completion_tokens": 2,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "fail",
+          "error": "AssertionError: 暂无明确自述",
+          "seconds": 28.785,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2761,
+              "completion_tokens": 763,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": [
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation non-deadline has valid_until; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.discovery.temporal",
+          "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: declared type '暂无明确结论' disagrees with dimension poles 'INTP'; using the dimensions",
+          "failure": false
+        },
+        {
+          "logger": "openbiliclaw.soul.profile_builder",
+          "message": "soul profile mbti: dimensions EI, JP, SN, TF sit below 0.60 strength; capping confidence at 0.55 (declared 'INTP')",
+          "failure": false
+        }
+      ]
+    }
+  ],
+  "authored_evidence_after_narrow_prompt": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "你是一名中学数学老师，并特意澄清自己并非程序员。关于你的性格、价值观、深层需求、认知风格及MBTI类型，目前没有明确信息。",
+              "core_traits": [],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 5.203,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 300,
+              "completion_tokens": 137,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "complete": true,
+      "cases": [
+        {
+          "name": "self_description_survives_rebuild",
+          "status": "pass",
+          "result": {
+            "source_event_count": 1,
+            "profile": {
+              "personality_portrait": "您是一名中学数学老师，已确认职业身份。目前未提及具体活动或阶段。性格、价值观、深层需求、动机及认知风格未明确说明。",
+              "core_traits": [],
+              "cognitive_style": [],
+              "motivational_drivers": [],
+              "current_phase": "暂无明确自述",
+              "values": [],
+              "life_stage": "中学数学老师",
+              "deep_needs": [],
+              "preferences": {
+                "interests": [],
+                "style": {
+                  "preferred_duration": "",
+                  "preferred_pace": "",
+                  "quality_sensitivity": 0.5,
+                  "humor_preference": 0.5,
+                  "depth_preference": 0.5
+                },
+                "context": {
+                  "weekday_patterns": "",
+                  "weekend_patterns": "",
+                  "time_of_day_patterns": "",
+                  "session_type": ""
+                },
+                "exploration_openness": 0.5,
+                "disliked_topics": [],
+                "favorite_up_users": [],
+                "source_platform_mix": {}
+              },
+              "recent_awareness": [],
+              "active_insights": [],
+              "created_at": "",
+              "updated_at": "",
+              "version": 0
+            }
+          },
+          "seconds": 5.01,
+          "calls": [
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 303,
+              "completion_tokens": 125,
+              "success": 1
+            }
+          ]
+        }
+      ],
+      "background_observations": []
+    }
+  ],
+  "full_business_4b_at_686aaaa1": {
+    "model": "Qwen/Qwen3.5-4B",
+    "complete": true,
+    "cases": [
+      {
+        "name": "install_verified_published_sdk",
+        "status": "pass",
+        "result": {
+          "verified": true,
+          "downloaded_production_sdk": true
+        },
+        "seconds": 1.396
+      },
+      {
+        "name": "application_startup_and_saved_config",
+        "status": "pass",
+        "result": {
+          "health": {
+            "status": "ok",
+            "service": "openbiliclaw-api",
+            "profile_ready": false,
+            "lan_ip": "192.168.31.98",
+            "embedding_ready": true,
+            "llm_registered": true
+          },
+          "sponsored": {
+            "enabled": true,
+            "model": "Qwen/Qwen3.5-4B",
+            "fallback_to_other_free_model": false,
+            "fallback_to_user_provider": false,
+            "notify_on_fallback": true,
+            "request_timeout_seconds": 180.0,
+            "runtime_available": true,
+            "embedding_model": "BAAI/bge-m3",
+            "context_window": 262144,
+            "image_embedding": false
+          }
+        },
+        "seconds": 0.411,
+        "calls": []
+      },
+      {
+        "name": "behavior_to_preference_to_persisted_profile",
+        "status": "pass",
+        "result": {
+          "interests": [
+            {
+              "name": "科技",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "编程",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Web 开发",
+              "category": "科技",
+              "weight": 0.7,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "游戏",
+              "category": "游戏",
+              "weight": 0.85,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Rust",
+              "category": "游戏",
+              "weight": 0.85,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Python",
+              "category": "游戏",
+              "weight": 0.85,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "生活",
+              "category": "生活",
+              "weight": 0.8,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "园艺",
+              "category": "生活",
+              "weight": 0.8,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "知识",
+              "category": "知识",
+              "weight": 0.75,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "数据库",
+              "category": "知识",
+              "weight": 0.75,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "软件工程",
+              "category": "知识",
+              "weight": 0.75,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            }
+          ],
+          "portrait": {
+            "version": 2,
+            "personality_portrait": "从你关注的内容看，你可能更喜欢按步骤展开的内容、讲清原理的解释。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+            "core": {
+              "core_traits": [],
+              "deep_needs": [],
+              "mbti": {
+                "type": "",
+                "dimensions": {},
+                "confidence": 0.5,
+                "inferred_from": []
+              }
+            },
+            "values_layer": {
+              "values": [],
+              "motivational_drivers": []
+            },
+            "interest": {
+              "likes": [
+                {
+                  "domain": "科技",
+                  "weight": 0.95,
+                  "specifics": [
+                    {
+                      "name": "编程",
+                      "weight": 0.95
+                    },
+                    {
+                      "name": "Web 开发",
+                      "weight": 0.7
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "favorite/like"
+                },
+                {
+                  "domain": "游戏",
+                  "weight": 0.85,
+                  "specifics": [
+                    {
+                      "name": "Rust",
+                      "weight": 0.85
+                    },
+                    {
+                      "name": "Python",
+                      "weight": 0.85
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "favorite/like"
+                },
+                {
+                  "domain": "生活",
+                  "weight": 0.8,
+                  "specifics": [
+                    {
+                      "name": "园艺",
+                      "weight": 0.8
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "favorite/like"
+                },
+                {
+                  "domain": "知识",
+                  "weight": 0.75,
+                  "specifics": [
+                    {
+                      "name": "数据库",
+                      "weight": 0.75
+                    },
+                    {
+                      "name": "软件工程",
+                      "weight": 0.75
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "favorite/like"
+                }
+              ],
+              "dislikes": [],
+              "favorite_up_users": [
+                "合成验收样本"
+              ]
+            },
+            "role": {
+              "life_stage": "暂无明确自述",
+              "current_phase": "暂无明确自述"
+            },
+            "surface": {
+              "cognitive_style": [
+                "按步骤展开的内容",
+                "讲清原理的解释"
+              ],
+              "style": {
+                "preferred_duration": "long",
+                "preferred_pace": "moderate",
+                "quality_sensitivity": 0.9,
+                "humor_preference": 0.2,
+                "depth_preference": 0.95
+              },
+              "context": {
+                "weekday_patterns": "无特定规律",
+                "weekend_patterns": "无特定规律",
+                "time_of_day_patterns": "无特定规律",
+                "session_type": "深度技术钻研型"
+              },
+              "exploration_openness": 0.4
+            },
+            "source_platform_mix": {
+              "bilibili": 1.0
+            },
+            "recent_awareness": [],
+            "active_insights": [],
+            "created_at": "",
+            "updated_at": ""
+          },
+          "profile_api_status": 200
+        },
+        "seconds": 39.172,
+        "calls": [
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 5584,
+            "completion_tokens": 694,
+            "success": 1
+          },
+          {
+            "caller": "soul.profile_build",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 560,
+            "completion_tokens": 209,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "event_ingress_persistence_and_deduplication",
+        "status": "pass",
+        "result": {
+          "response": {
+            "accepted": 2,
+            "duplicates": 0,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": true,
+                "duplicate": false
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": true,
+                "duplicate": false
+              }
+            ]
+          },
+          "replay": {
+            "accepted": 2,
+            "duplicates": 2,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": false,
+                "duplicate": true
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": false,
+                "duplicate": true
+              }
+            ]
+          },
+          "stored_events": 14
+        },
+        "seconds": 0.039,
+        "calls": []
+      },
+      {
+        "name": "bge_text_embedding_similarity_and_cache",
+        "status": "pass",
+        "result": {
+          "model": "BAAI/bge-m3",
+          "dimensions": 1024,
+          "cache_hit": true,
+          "related_cosine": 0.701545983651942,
+          "unrelated_cosine": 0.31304706430964524
+        },
+        "seconds": 0.783,
+        "calls": []
+      },
+      {
+        "name": "production_discovery_keyword_generation",
+        "status": "pass",
+        "result": {
+          "queries": [
+            "数据库 架构 进阶 解析",
+            "软件工程 设计模式 推荐"
+          ]
+        },
+        "seconds": 4.95,
+        "calls": [
+          {
+            "caller": "discovery.search.queries",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 2062,
+            "completion_tokens": 113,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "anonymous_live_bilibili_search",
+        "status": "pass",
+        "result": {
+          "query": "数据库 架构 进阶 解析",
+          "items": 3,
+          "titles": [
+            "<em class=\"keyword\">数据库</em>第3章 SQL（第三部分：数据更新与视图-数据的插入修改删除）",
+            "24分布式<em class=\"keyword\">数据库</em>表结构设计：如何正确地将数据分片？",
+            "<em class=\"keyword\">数据库</em>原理实战：从 SQL、索引到事务与高并发"
+          ]
+        },
+        "seconds": 0.559,
+        "calls": []
+      },
+      {
+        "name": "production_batch_evaluation_and_pool_admission",
+        "status": "pass",
+        "result": {
+          "input_count": 12,
+          "scores": [
+            {
+              "title": "Rust 所有权实战：修复借用检查错误",
+              "score": 0.92,
+              "reason": "精准匹配 Rust 所有权核心原理与步骤化教学需求"
+            },
+            {
+              "title": "SQLite 查询优化：建立复合索引",
+              "score": 0.88,
+              "reason": "直接回应数据库索引优化与 SQL 原理探究兴趣"
+            },
+            {
+              "title": "Python asyncio 超时与取消",
+              "score": 0.94,
+              "reason": "完美契合 Python 异步编程原理与资源清理机制学习"
+            },
+            {
+              "title": "FastAPI 与 SQLite 事务测试",
+              "score": 0.91,
+              "reason": "精准覆盖软件测试与数据库事务回滚原理需求"
+            },
+            {
+              "title": "Docker 多阶段构建 Python 服务",
+              "score": 0.85,
+              "reason": "符合容器化部署原理与多阶段构建实操学习"
+            },
+            {
+              "title": "Git worktree 同时维护两个分支",
+              "score": 0.82,
+              "reason": "满足 Git 工作流分支管理与多环境维护需求"
+            },
+            {
+              "title": "Rust 的 Result 错误类型设计",
+              "score": 0.93,
+              "reason": "深度契合 Rust 错误处理模式与类型系统设计"
+            },
+            {
+              "title": "给 Python HTTP 客户端写回归测试",
+              "score": 0.86,
+              "reason": "直接响应 HTTP 客户端网络编程与测试验证兴趣"
+            },
+            {
+              "title": "阳台番茄浇水和光照记录",
+              "score": 0.72,
+              "reason": "契合用户园艺兴趣及按步骤展开的认知风格"
+            },
+            {
+              "title": "盆栽番茄搭支架和整枝",
+              "score": 0.82,
+              "reason": "契合园艺兴趣且符合用户偏好步骤展开与原理讲解的风格"
+            },
+            {
+              "title": "赌场必胜秘诀与下注攻略",
+              "score": 0.0,
+              "reason": ""
+            },
+            {
+              "title": "明星绯闻速报",
+              "score": 0.15,
+              "reason": ""
+            }
+          ],
+          "admitted": 10
+        },
+        "seconds": 38.53,
+        "calls": [
+          {
+            "caller": "discovery.evaluate_batch",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 5100,
+            "completion_tokens": 649,
+            "success": 1
+          },
+          {
+            "caller": "discovery.evaluate_batch",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 5329,
+            "completion_tokens": 1321,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "batch_copy_ranking_and_recommendation_delivery",
+        "status": "pass",
+        "result": {
+          "copy_generated": 10,
+          "served": [
+            {
+              "content": {
+                "bvid": "BV1EVL000006",
+                "title": "Rust 的 Result 错误类型设计",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "编程"
+                ],
+                "topic_key": "",
+                "topic_group": "编程语言",
+                "style_key": "deep_focus",
+                "franchise_key": "",
+                "description": "从错误枚举到问号操作符的练习。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.93,
+                "relevance_reason": "深度契合 Rust 错误处理模式与类型系统设计",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.98,
+                "temporal_reason": "语言类型系统与错误模型不变",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2026-11-04T19:22:33Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "这个 UP 主从枚举错误类型讲到问号操作符的用法，逻辑链条很顺，适合想把 Rust 错误处理用熟练的你慢慢啃。",
+                "pool_topic_label": "Rust 错误类型设计",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:23:12",
+                "last_scored_at": "2026-11-04 19:23:12",
+                "content_id": "BV1EVL000006",
+                "item_key": "bilibili:BV1EVL000006",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000006",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 1,
+              "expression": "这个 UP 主从枚举错误类型讲到问号操作符的用法，逻辑链条很顺，适合想把 Rust 错误处理用熟练的你慢慢啃。",
+              "topic_label": "Rust 错误类型设计",
+              "confidence": 0.93,
+              "presented": false,
+              "feedback": null
+            },
+            {
+              "content": {
+                "bvid": "BV1EVL000008",
+                "title": "阳台番茄浇水和光照记录",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "园艺"
+                ],
+                "topic_key": "",
+                "topic_group": "园艺",
+                "style_key": "daily_wander",
+                "franchise_key": "",
+                "description": "盆栽番茄的日常养护记录，不涉及商业种植。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.72,
+                "relevance_reason": "契合用户园艺兴趣及按步骤展开的认知风格",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "current",
+                "temporal_confidence": 0.65,
+                "temporal_reason": "记录依赖当前季节与生长阶段",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "freshness_only",
+                "temporal_valid_until": "",
+                "temporal_scope": "core",
+                "temporal_evidence": "日常养护记录",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "2026-11-18T19:22:33Z",
+                "temporal_evaluated_at": "2026-11-04T19:22:33Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "这期阳台番茄浇水和光照记录比较轻，适合想放松看看生活日常的你，纯粹记录日常状态。",
+                "pool_topic_label": "阳台生活记录",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:23:12",
+                "last_scored_at": "2026-11-04 19:23:12",
+                "content_id": "BV1EVL000008",
+                "item_key": "bilibili:BV1EVL000008",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000008",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 2,
+              "expression": "这期阳台番茄浇水和光照记录比较轻，适合想放松看看生活日常的你，纯粹记录日常状态。",
+              "topic_label": "阳台生活记录",
+              "confidence": 0.72,
+              "presented": false,
+              "feedback": null
+            },
+            {
+              "content": {
+                "bvid": "BV1EVL000005",
+                "title": "Git worktree 同时维护两个分支",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "编程"
+                ],
+                "topic_key": "",
+                "topic_group": "版本控制",
+                "style_key": "hands_on",
+                "franchise_key": "",
+                "description": "示范独立工作目录中开发、测试和清理。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.82,
+                "relevance_reason": "满足 Git 工作流分支管理与多环境维护需求",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.96,
+                "temporal_reason": "Git 基本工作机制长期稳定",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2026-11-04T19:22:33Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "Git worktree 能同时维护两个分支，这个方法在处理多版本迭代时特别顺手，很适合你这种需要兼顾开发测试的人。",
+                "pool_topic_label": "Git 工作区管理",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:23:12",
+                "last_scored_at": "2026-11-04 19:23:12",
+                "content_id": "BV1EVL000005",
+                "item_key": "bilibili:BV1EVL000005",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000005",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 3,
+              "expression": "Git worktree 能同时维护两个分支，这个方法在处理多版本迭代时特别顺手，很适合你这种需要兼顾开发测试的人。",
+              "topic_label": "Git 工作区管理",
+              "confidence": 0.82,
+              "presented": false,
+              "feedback": null
+            }
+          ]
+        },
+        "seconds": 18.255,
+        "calls": [
+          {
+            "caller": "recommendation.write_expression",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 3985,
+            "completion_tokens": 718,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "feedback_persistence_and_profile_learning",
+        "status": "pass",
+        "result": {
+          "persisted_feedback": 3,
+          "learning": {
+            "triggered": true,
+            "feedback_count": 3,
+            "preference_updated": true,
+            "preference_changed": false,
+            "profile_rebuilt": false,
+            "unified_interest_line": true,
+            "migrated_feedback_events": 3,
+            "enqueued_feedback_events": 3
+          }
+        },
+        "seconds": 119.022,
+        "calls": [
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 4237,
+            "completion_tokens": 685,
+            "success": 1
+          },
+          {
+            "caller": "soul.speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 1875,
+            "completion_tokens": 1753,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 803,
+            "completion_tokens": 735,
+            "success": 1
+          },
+          {
+            "caller": "soul.awareness_confusions",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 7135,
+            "completion_tokens": 193,
+            "success": 1
+          },
+          {
+            "caller": "soul.insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 3189,
+            "completion_tokens": 155,
+            "success": 1
+          },
+          {
+            "caller": "soul.speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 1875,
+            "completion_tokens": 1539,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 1277,
+            "completion_tokens": 749,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "agent_real_tool_execution_and_final_answer",
+        "status": "pass",
+        "result": {
+          "events": [
+            {
+              "type": "tool_call",
+              "step": 1,
+              "tool_name": "get_profile",
+              "summary": "get_profile()"
+            },
+            {
+              "type": "tool_result",
+              "step": 1,
+              "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Web 开发 (0.70)\n\n#### 游戏 (权重 0.85)\n- Rust (0.85)\n- Python (0.85)\n\n#### 生活 (权重 0.80)\n- 园艺 (0.80)\n\n#### 知识 (权重 0.75)\n- 数据库 (0.75)\n- 软件工程 (0.75)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 暂无明确自述\n- 当前状态: 暂无明确自述\n\n## 表层 Surface\n\n### 认知风格\n- 按步骤展开的内容\n- 讲清原理的解释\n\n### 内容偏好\n- 时长偏好: long\n- 深度偏好: 0.95\n- 质量敏感度: 0.90\n\n### 情境模式\n- 工作日: 无特定规律\n- 周末: 无特定规律\n- 探索开放度: 0.40\n\n---\n\n## 综合叙事\n\n从你关注的内容看，你可能更喜欢按步骤展开的内容、讲清原理的解释。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。\n\n## 近期观察\n- [init] 用户高度关注编程底层原理与工程实践，同时兼顾生活技能\n- [2026-03-08] 用户持续收藏和点赞关于 Rust、Python 及数据库技术细节的视频，且偏好包含可运行代码与原理讲解的内容。\n\n## 当前洞察\n- 用户可能正在构建个人技术栈或准备进行系统级开发 (置信度: 82%)\n- 用户可能正在通过系统性地学习底层语言机制（如 Rust）来构建或验证某种具体的系统级开发能力。 (置信度: 65%)\n",
+              "tool_name": "get_profile",
+              "ok": true,
+              "truncated": false
+            },
+            {
+              "type": "tool_call",
+              "step": 2,
+              "tool_name": "read_memory",
+              "arguments": {
+                "layer": "core",
+                "max_chars": 3000
+              },
+              "summary": "read_memory(layer='core', max_chars=3000)"
+            },
+            {
+              "type": "tool_result",
+              "step": 2,
+              "text": "## 用户画像\n从你关注的内容看，你可能更喜欢按步骤展开的内容、讲清原理的解释。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。\n\n## 偏好摘要\n兴趣标签: 编程, Rust, Python, 园艺, 数据库\n常看UP主: 合成验收样本\n\n## 近期观察\n- [init] 用户高度关注编程底层原理与工程实践，同时兼顾生活技能\n- [2026-03-08] 用户持续收藏和点赞关于 Rust、Python 及数据库技术细节的视频，且偏好包含可运行代码与原理讲解的内容。\n\n## 当前洞察\n- 用户可能正在构建个人技术栈或准备进行系统级开发 (置信度: 82%)\n- 用户可能正在通过系统性地学习底层语言机制（如 Rust）来构建或验证某种具体的系统级开发能力。 (置信度: 65%)",
+              "tool_name": "read_memory",
+              "ok": true,
+              "truncated": false
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "基于"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "已"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "获取"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "的用户"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "画像"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "（"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "get"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "_profile"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "）"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "和"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "记忆"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "层"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "摘要"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "（"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "read"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "_memory"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "），"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "您的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "两个"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "主要"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "兴趣"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "概括"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "如下"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "："
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "\n\n"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "1"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "."
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " "
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " **"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "编程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "与"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "系统"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "级"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "开发"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "**"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "："
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "您"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "深度"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "关注"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "编程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "底层"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "原理"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "与"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "工程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "实践"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "特别是对"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " Rust"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " "
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "和"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " Python"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " "
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "语言"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "机制"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "钻研"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "以及"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "数据库"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "和"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "软件工程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "相关知识"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "显示出"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "正在"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "构建"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "个人"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "技术"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "栈"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "或"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "验证"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "系统"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "级"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "开发"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "能力的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "倾向"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "。"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "\n"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "2"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "."
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " "
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": " **"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "园艺"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "与生活"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "技能"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "**"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "："
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "在"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "技术"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "之外"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "您"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "也有"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "较高的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "权重"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "关注"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "生活"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "类"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "内容"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "特别是"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "园艺"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "体现了"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "对"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "实际"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "生活"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "技能的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "兴趣"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "。"
+            },
+            {
+              "type": "final",
+              "step": 3,
+              "text": "基于已获取的用户画像（get_profile）和记忆层摘要（read_memory），您的两个主要兴趣概括如下：\n\n1.  **编程与系统级开发**：您深度关注编程底层原理与工程实践，特别是对 Rust 和 Python 语言机制的钻研，以及数据库和软件工程相关知识，显示出正在构建个人技术栈或验证系统级开发能力的倾向。\n2.  **园艺与生活技能**：在技术之外，您也有较高的权重关注生活类内容，特别是园艺，体现了对实际生活技能的兴趣。"
+            }
+          ]
+        },
+        "seconds": 11.876,
+        "calls": [
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 2965,
+            "completion_tokens": 16,
+            "success": 1
+          },
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 3510,
+            "completion_tokens": 50,
+            "success": 1
+          },
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 3753,
+            "completion_tokens": 110,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "explicit_dialogue_learning",
+        "status": "pass",
+        "result": {
+          "learning": {
+            "outcome": "completed",
+            "settlement": null,
+            "classification": null,
+            "classifier": null,
+            "resulting_action": null,
+            "exploration_intent": null
+          },
+          "profile_after": {
+            "version": 2,
+            "personality_portrait": "你喜欢 Rust 编程，同时也喜欢阳台种番茄，并明确拒绝赌博内容。关于你的职业、当前活动、性格特质、价值观、深层需求、动机驱动及认知风格，目前均无明确信息。",
+            "core": {
+              "core_traits": [],
+              "deep_needs": [],
+              "mbti": {
+                "type": "",
+                "dimensions": {},
+                "confidence": 0.0,
+                "inferred_from": []
+              }
+            },
+            "values_layer": {
+              "values": [],
+              "motivational_drivers": []
+            },
+            "interest": {
+              "likes": [
+                {
+                  "domain": "科技",
+                  "weight": 0.95,
+                  "specifics": [
+                    {
+                      "name": "编程",
+                      "weight": 0.95
+                    },
+                    {
+                      "name": "Web 开发",
+                      "weight": 0.7
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "existing"
+                },
+                {
+                  "domain": "游戏",
+                  "weight": 0.92,
+                  "specifics": [
+                    {
+                      "name": "Rust",
+                      "weight": 0.92
+                    },
+                    {
+                      "name": "Python",
+                      "weight": 0.85
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "existing"
+                },
+                {
+                  "domain": "生活",
+                  "weight": 0.8,
+                  "specifics": [
+                    {
+                      "name": "园艺",
+                      "weight": 0.8
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "existing"
+                },
+                {
+                  "domain": "知识",
+                  "weight": 0.75,
+                  "specifics": [
+                    {
+                      "name": "数据库",
+                      "weight": 0.75
+                    },
+                    {
+                      "name": "软件工程",
+                      "weight": 0.75
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "existing"
+                }
+              ],
+              "dislikes": [
+                {
+                  "domain": "赌博内容",
+                  "weight": 0.9,
+                  "specifics": [],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "favorite_up_users": [
+                "合成验收样本"
+              ]
+            },
+            "role": {
+              "life_stage": "暂无明确自述",
+              "current_phase": "暂无明确自述"
+            },
+            "surface": {
+              "cognitive_style": [],
+              "style": {
+                "preferred_duration": "long",
+                "preferred_pace": "moderate",
+                "quality_sensitivity": 0.9,
+                "humor_preference": 0.2,
+                "depth_preference": 0.95
+              },
+              "context": {
+                "weekday_patterns": "无特定规律",
+                "weekend_patterns": "无特定规律",
+                "time_of_day_patterns": "无特定规律",
+                "session_type": "深度技术钻研型"
+              },
+              "exploration_openness": 0.4
+            },
+            "source_platform_mix": {
+              "bilibili": 1.0
+            },
+            "recent_awareness": [],
+            "active_insights": [],
+            "created_at": "",
+            "updated_at": ""
+          }
+        },
+        "seconds": 32.379,
+        "calls": [
+          {
+            "caller": "soul.dialogue_insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 2041,
+            "completion_tokens": 282,
+            "success": 1
+          },
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 3882,
+            "completion_tokens": 726,
+            "success": 1
+          },
+          {
+            "caller": "soul.profile_build",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 305,
+            "completion_tokens": 149,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "profile_consolidation_and_embedding_recall",
+        "status": "pass",
+        "result": {
+          "ran": true,
+          "throttled": false,
+          "skipped_clean": false,
+          "dry_run": true,
+          "applied": false,
+          "write_conflict": false,
+          "run_id": "20261105-032613",
+          "rule_merges": [],
+          "clusters_sent": 0,
+          "llm_batches": 0,
+          "merges": [],
+          "rejected_clusters": [],
+          "likes_before": 7,
+          "likes_after": 7,
+          "dislikes_before": 1,
+          "dislikes_after": 1,
+          "likes_target_upper": 512,
+          "likes_target_soft": 450,
+          "like_similarity_threshold": 0.8,
+          "archived_interests": [],
+          "protected_interests": [],
+          "inventory_reason": "",
+          "retry_pending": false,
+          "errors": [],
+          "live_judge_clusters": 4,
+          "operations": {
+            "live-0": [
+              {
+                "cluster_id": "live-0",
+                "op": "merge",
+                "members": [
+                  {
+                    "name": "Rust所有权",
+                    "category": ""
+                  },
+                  {
+                    "name": "Rust所有权实践",
+                    "category": ""
+                  }
+                ],
+                "canonical": "Rust所有权",
+                "reason": "实践是理论的具体应用，合并后能完整覆盖理论到实践的推荐意图",
+                "_member_keys": [
+                  "Rust所有权",
+                  "Rust所有权实践"
+                ]
+              }
+            ],
+            "live-1": [
+              {
+                "cluster_id": "live-1",
+                "op": "merge",
+                "members": [
+                  {
+                    "name": "Python异步编程",
+                    "category": ""
+                  },
+                  {
+                    "name": "Python异步编程实践",
+                    "category": ""
+                  }
+                ],
+                "canonical": "Python异步编程",
+                "reason": "实践是理论的具体应用，合并后能完整覆盖理论到实践的推荐意图",
+                "_member_keys": [
+                  "Python异步编程",
+                  "Python异步编程实践"
+                ]
+              }
+            ],
+            "live-2": [
+              {
+                "cluster_id": "live-2",
+                "op": "merge",
+                "members": [
+                  {
+                    "name": "SQLite索引优化",
+                    "category": ""
+                  },
+                  {
+                    "name": "SQLite索引优化实践",
+                    "category": ""
+                  }
+                ],
+                "canonical": "SQLite索引优化",
+                "reason": "实践是理论的具体应用，合并后能完整覆盖理论到实践的推荐意图",
+                "_member_keys": [
+                  "SQLite索引优化",
+                  "SQLite索引优化实践"
+                ]
+              }
+            ],
+            "live-3": [
+              {
+                "cluster_id": "live-3",
+                "op": "merge",
+                "members": [
+                  {
+                    "name": "盆栽番茄养护",
+                    "category": ""
+                  },
+                  {
+                    "name": "盆栽番茄养护实践",
+                    "category": ""
+                  }
+                ],
+                "canonical": "盆栽番茄养护",
+                "reason": "实践是理论的具体应用，合并后能完整覆盖理论到实践的推荐意图",
+                "_member_keys": [
+                  "盆栽番茄养护",
+                  "盆栽番茄养护实践"
+                ]
+              }
+            ]
+          }
+        },
+        "seconds": 12.146,
+        "calls": [
+          {
+            "caller": "soul.posture_gate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 2826,
+            "completion_tokens": 208,
+            "success": 1
+          },
+          {
+            "caller": "soul.consolidation",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "prompt_tokens": 1395,
+            "completion_tokens": 467,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "database_and_profile_reload",
+        "status": "pass",
+        "result": {
+          "restored_interests": 11,
+          "restored_events": 19,
+          "saved_model": "Qwen/Qwen3.5-4B"
+        },
+        "seconds": 0.09,
+        "calls": []
+      }
+    ],
+    "background_observations": []
+  },
+  "full_business_8b_before_admission_fix": {
+    "model": "Qwen/Qwen3-8B",
+    "complete": false,
+    "cases": [
+      {
+        "name": "install_verified_published_sdk",
+        "status": "pass",
+        "result": {
+          "verified": true,
+          "downloaded_production_sdk": true
+        },
+        "seconds": 1.203
+      },
+      {
+        "name": "application_startup_and_saved_config",
+        "status": "pass",
+        "result": {
+          "health": {
+            "status": "ok",
+            "service": "openbiliclaw-api",
+            "profile_ready": false,
+            "lan_ip": "192.168.31.98",
+            "embedding_ready": true,
+            "llm_registered": true
+          },
+          "sponsored": {
+            "enabled": true,
+            "model": "Qwen/Qwen3-8B",
+            "fallback_to_other_free_model": false,
+            "fallback_to_user_provider": false,
+            "notify_on_fallback": true,
+            "request_timeout_seconds": 180.0,
+            "runtime_available": true,
+            "embedding_model": "BAAI/bge-m3",
+            "context_window": 131072,
+            "image_embedding": false
+          }
+        },
+        "seconds": 0.512,
+        "calls": []
+      },
+      {
+        "name": "behavior_to_preference_to_persisted_profile",
+        "status": "pass",
+        "result": {
+          "interests": [
+            {
+              "name": "科技",
+              "category": "科技",
+              "weight": 0.9,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "编程",
+              "category": "科技",
+              "weight": 0.9,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "技术实践",
+              "category": "科技",
+              "weight": 0.85,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            }
+          ],
+          "portrait": {
+            "version": 2,
+            "personality_portrait": "从你关注的内容看，你可能更喜欢按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+            "core": {
+              "core_traits": [],
+              "deep_needs": [],
+              "mbti": {
+                "type": "",
+                "dimensions": {},
+                "confidence": 0.5,
+                "inferred_from": []
+              }
+            },
+            "values_layer": {
+              "values": [],
+              "motivational_drivers": []
+            },
+            "interest": {
+              "likes": [
+                {
+                  "domain": "科技",
+                  "weight": 0.9,
+                  "specifics": [
+                    {
+                      "name": "编程",
+                      "weight": 0.9
+                    },
+                    {
+                      "name": "技术实践",
+                      "weight": 0.85
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "watch history"
+                }
+              ],
+              "dislikes": [],
+              "favorite_up_users": [
+                "合成验收样本"
+              ]
+            },
+            "role": {
+              "life_stage": "暂无明确自述",
+              "current_phase": "暂无明确自述"
+            },
+            "surface": {
+              "cognitive_style": [
+                "按步骤展开的内容"
+              ],
+              "style": {
+                "preferred_duration": "medium",
+                "preferred_pace": "moderate",
+                "quality_sensitivity": 0.7,
+                "humor_preference": 0.2,
+                "depth_preference": 0.9
+              },
+              "context": {
+                "weekday_patterns": "连续工作日收藏与点赞编程技术类视频",
+                "weekend_patterns": "无明确周末行为模式",
+                "time_of_day_patterns": "无时间分布特征",
+                "session_type": "技术钻研型"
+              },
+              "exploration_openness": 0.65
+            },
+            "source_platform_mix": {
+              "bilibili": 1.0
+            },
+            "recent_awareness": [],
+            "active_insights": [],
+            "created_at": "",
+            "updated_at": ""
+          },
+          "profile_api_status": 200
+        },
+        "seconds": 64.358,
+        "calls": [
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 5337,
+            "completion_tokens": 1404,
+            "success": 1
+          },
+          {
+            "caller": "soul.profile_build",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 580,
+            "completion_tokens": 165,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "event_ingress_persistence_and_deduplication",
+        "status": "pass",
+        "result": {
+          "response": {
+            "accepted": 2,
+            "duplicates": 0,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": true,
+                "duplicate": false
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": true,
+                "duplicate": false
+              }
+            ]
+          },
+          "replay": {
+            "accepted": 2,
+            "duplicates": 2,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": false,
+                "duplicate": true
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": false,
+                "duplicate": true
+              }
+            ]
+          },
+          "stored_events": 14
+        },
+        "seconds": 0.036,
+        "calls": []
+      },
+      {
+        "name": "bge_text_embedding_similarity_and_cache",
+        "status": "pass",
+        "result": {
+          "model": "BAAI/bge-m3",
+          "dimensions": 1024,
+          "cache_hit": true,
+          "related_cosine": 0.70244782974506,
+          "unrelated_cosine": 0.31304706430964524
+        },
+        "seconds": 0.624,
+        "calls": []
+      },
+      {
+        "name": "production_discovery_keyword_generation",
+        "status": "pass",
+        "result": {
+          "queries": [
+            "科技 新品 测评",
+            "编程 项目 实战"
+          ]
+        },
+        "seconds": 39.376,
+        "calls": [
+          {
+            "caller": "discovery.search.queries",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1648,
+            "completion_tokens": 1132,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "anonymous_live_bilibili_search",
+        "status": "pass",
+        "result": {
+          "query": "科技 新品 测评",
+          "items": 3,
+          "titles": [
+            "2026北京EDC玩具展 全展会限定&amp;<em class=\"keyword\">新品</em>前瞻",
+            "<em class=\"keyword\">新品</em>爆料！！！！",
+            "（全彩<em class=\"keyword\">新品</em>）rokid 2026<em class=\"keyword\">新品</em>发布会全程回放"
+          ]
+        },
+        "seconds": 0.636,
+        "calls": []
+      }
+    ],
+    "background_observations": [],
+    "interruption_reason": "Stopped while temporal repair was parked as maintenance in an empty pool; an empty-pool gate regression reproduced the wait"
+  },
+  "full_business_8b_after_admission_fix": {
+    "model": "Qwen/Qwen3-8B",
+    "complete": true,
+    "cases": [
+      {
+        "name": "install_verified_published_sdk",
+        "status": "pass",
+        "result": {
+          "verified": true,
+          "downloaded_production_sdk": true
+        },
+        "seconds": 1.62
+      },
+      {
+        "name": "application_startup_and_saved_config",
+        "status": "pass",
+        "result": {
+          "health": {
+            "status": "ok",
+            "service": "openbiliclaw-api",
+            "profile_ready": false,
+            "lan_ip": "192.168.31.98",
+            "embedding_ready": true,
+            "llm_registered": true
+          },
+          "sponsored": {
+            "enabled": true,
+            "model": "Qwen/Qwen3-8B",
+            "fallback_to_other_free_model": false,
+            "fallback_to_user_provider": false,
+            "notify_on_fallback": true,
+            "request_timeout_seconds": 180.0,
+            "runtime_available": true,
+            "embedding_model": "BAAI/bge-m3",
+            "context_window": 131072,
+            "image_embedding": false
+          }
+        },
+        "seconds": 0.396,
+        "calls": []
+      },
+      {
+        "name": "behavior_to_preference_to_persisted_profile",
+        "status": "pass",
+        "result": {
+          "interests": [
+            {
+              "name": "科技",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "编程",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "生活",
+              "category": "生活",
+              "weight": 0.8,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "园艺",
+              "category": "生活",
+              "weight": 0.8,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            }
+          ],
+          "portrait": {
+            "version": 2,
+            "personality_portrait": "从你关注的内容看，你可能更喜欢按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。",
+            "core": {
+              "core_traits": [],
+              "deep_needs": [],
+              "mbti": {
+                "type": "",
+                "dimensions": {},
+                "confidence": 0.5,
+                "inferred_from": []
+              }
+            },
+            "values_layer": {
+              "values": [],
+              "motivational_drivers": []
+            },
+            "interest": {
+              "likes": [
+                {
+                  "domain": "科技",
+                  "weight": 0.95,
+                  "specifics": [
+                    {
+                      "name": "编程",
+                      "weight": 0.95
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                },
+                {
+                  "domain": "生活",
+                  "weight": 0.8,
+                  "specifics": [
+                    {
+                      "name": "园艺",
+                      "weight": 0.8
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "dislikes": [],
+              "favorite_up_users": [
+                "合成验收样本"
+              ]
+            },
+            "role": {
+              "life_stage": "暂无明确自述",
+              "current_phase": "暂无明确自述"
+            },
+            "surface": {
+              "cognitive_style": [
+                "按步骤展开的内容"
+              ],
+              "style": {
+                "preferred_duration": "medium",
+                "preferred_pace": "moderate",
+                "quality_sensitivity": 0.7,
+                "humor_preference": 0.3,
+                "depth_preference": 0.9
+              },
+              "context": {
+                "weekday_patterns": "连续工作日关注编程技术实践",
+                "weekend_patterns": "未观察到周末行为",
+                "time_of_day_patterns": "未观察到明显时间段集中",
+                "session_type": "技术钻研型"
+              },
+              "exploration_openness": 0.65
+            },
+            "source_platform_mix": {
+              "bilibili": 1.0
+            },
+            "recent_awareness": [],
+            "active_insights": [],
+            "created_at": "",
+            "updated_at": ""
+          },
+          "profile_api_status": 200
+        },
+        "seconds": 76.719,
+        "calls": [
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 5337,
+            "completion_tokens": 1437,
+            "success": 1
+          },
+          {
+            "caller": "soul.profile_build",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 580,
+            "completion_tokens": 165,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "event_ingress_persistence_and_deduplication",
+        "status": "pass",
+        "result": {
+          "response": {
+            "accepted": 2,
+            "duplicates": 0,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": true,
+                "duplicate": false
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": true,
+                "duplicate": false
+              }
+            ]
+          },
+          "replay": {
+            "accepted": 2,
+            "duplicates": 2,
+            "rejected": [],
+            "receipts": [
+              {
+                "index": 0,
+                "event_id": 13,
+                "event_type": "favorite",
+                "inserted": false,
+                "duplicate": true
+              },
+              {
+                "index": 1,
+                "event_id": 14,
+                "event_type": "like",
+                "inserted": false,
+                "duplicate": true
+              }
+            ]
+          },
+          "stored_events": 14
+        },
+        "seconds": 0.04,
+        "calls": []
+      },
+      {
+        "name": "bge_text_embedding_similarity_and_cache",
+        "status": "pass",
+        "result": {
+          "model": "BAAI/bge-m3",
+          "dimensions": 1024,
+          "cache_hit": true,
+          "related_cosine": 0.7024223412907872,
+          "unrelated_cosine": 0.31304706430964524
+        },
+        "seconds": 0.501,
+        "calls": []
+      },
+      {
+        "name": "production_discovery_keyword_generation",
+        "status": "pass",
+        "result": {
+          "queries": [
+            "科技 新品 测评",
+            "生活 小技巧 合集"
+          ]
+        },
+        "seconds": 40.018,
+        "calls": [
+          {
+            "caller": "discovery.search.queries",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1705,
+            "completion_tokens": 1119,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "anonymous_live_bilibili_search",
+        "status": "pass",
+        "result": {
+          "query": "科技 新品 测评",
+          "items": 3,
+          "titles": [
+            "2026北京EDC玩具展 全展会限定&amp;<em class=\"keyword\">新品</em>前瞻",
+            "<em class=\"keyword\">新品</em>爆料！！！！",
+            "（全彩<em class=\"keyword\">新品</em>）rokid 2026<em class=\"keyword\">新品</em>发布会全程回放"
+          ]
+        },
+        "seconds": 0.55,
+        "calls": []
+      },
+      {
+        "name": "production_batch_evaluation_and_pool_admission",
+        "status": "pass",
+        "result": {
+          "input_count": 12,
+          "scores": [
+            {
+              "title": "Rust 所有权实战：修复借用检查错误",
+              "score": 0.95,
+              "reason": "讲解 Rust 所有权与借用检查"
+            },
+            {
+              "title": "SQLite 查询优化：建立复合索引",
+              "score": 0.95,
+              "reason": "讲解 SQLite 索引优化"
+            },
+            {
+              "title": "Python asyncio 超时与取消",
+              "score": 0.95,
+              "reason": "讲解 Python 异步取消机制"
+            },
+            {
+              "title": "FastAPI 与 SQLite 事务测试",
+              "score": 0.95,
+              "reason": "讲解 FastAPI 与 SQLite 测试"
+            },
+            {
+              "title": "Docker 多阶段构建 Python 服务",
+              "score": 0.95,
+              "reason": "讲解 Docker 构建 Python 服务"
+            },
+            {
+              "title": "Git worktree 同时维护两个分支",
+              "score": 0.95,
+              "reason": "讲解 Git worktree 分支管理"
+            },
+            {
+              "title": "Rust 的 Result 错误类型设计",
+              "score": 0.95,
+              "reason": "讲解 Rust Result 错误类型"
+            },
+            {
+              "title": "给 Python HTTP 客户端写回归测试",
+              "score": 0.95,
+              "reason": "讲解 Python HTTP 客户端测试"
+            },
+            {
+              "title": "阳台番茄浇水和光照记录",
+              "score": 0.85,
+              "reason": "符合园艺兴趣，步骤清晰"
+            },
+            {
+              "title": "盆栽番茄搭支架和整枝",
+              "score": 0.85,
+              "reason": "符合园艺兴趣，步骤清晰"
+            },
+            {
+              "title": "赌场必胜秘诀与下注攻略",
+              "score": 0.15,
+              "reason": ""
+            },
+            {
+              "title": "明星绯闻速报",
+              "score": 0.2,
+              "reason": ""
+            }
+          ],
+          "admitted": 10
+        },
+        "seconds": 42.316,
+        "calls": [
+          {
+            "caller": "discovery.evaluate_batch",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 4661,
+            "completion_tokens": 495,
+            "success": 1
+          },
+          {
+            "caller": "discovery.evaluate_batch",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 4898,
+            "completion_tokens": 990,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "batch_copy_ranking_and_recommendation_delivery",
+        "status": "pass",
+        "result": {
+          "copy_generated": 9,
+          "served": [
+            {
+              "content": {
+                "bvid": "BV1EVL000001",
+                "title": "SQLite 查询优化：建立复合索引",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "编程"
+                ],
+                "topic_key": "",
+                "topic_group": "数据库",
+                "style_key": "deep_focus",
+                "franchise_key": "",
+                "description": "用 EXPLAIN QUERY PLAN 比较索引前后查询。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.95,
+                "relevance_reason": "讲解 SQLite 索引优化",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心价值不依赖当前时间",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2026-11-04T19:29:13Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "这UP主有点东西，用 EXPLAIN QUERY PLAN 对比索引前后的 SQLite 查询，手把手教你怎么用计划看查询优化效果。",
+                "pool_topic_label": "数据库优化",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:29:56",
+                "last_scored_at": "2026-11-04 19:29:56",
+                "content_id": "BV1EVL000001",
+                "item_key": "bilibili:BV1EVL000001",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000001",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 1,
+              "expression": "这UP主有点东西，用 EXPLAIN QUERY PLAN 对比索引前后的 SQLite 查询，手把手教你怎么用计划看查询优化效果。",
+              "topic_label": "数据库优化",
+              "confidence": 0.95,
+              "presented": false,
+              "feedback": null
+            },
+            {
+              "content": {
+                "bvid": "BV1EVL000008",
+                "title": "阳台番茄浇水和光照记录",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "园艺"
+                ],
+                "topic_key": "",
+                "topic_group": "园艺",
+                "style_key": "hands_on",
+                "franchise_key": "",
+                "description": "盆栽番茄的日常养护记录，不涉及商业种植。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.85,
+                "relevance_reason": "符合园艺兴趣，步骤清晰",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心价值不依赖当前时间",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2026-11-04T19:29:13Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "这视频有点意思，阳台种番茄的浇水光照记录，像看代码一样按步骤走，连缓苗期都写得清清楚楚。",
+                "pool_topic_label": "家庭园艺",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:29:56",
+                "last_scored_at": "2026-11-04 19:29:56",
+                "content_id": "BV1EVL000008",
+                "item_key": "bilibili:BV1EVL000008",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000008",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 2,
+              "expression": "这视频有点意思，阳台种番茄的浇水光照记录，像看代码一样按步骤走，连缓苗期都写得清清楚楚。",
+              "topic_label": "家庭园艺",
+              "confidence": 0.85,
+              "presented": false,
+              "feedback": null
+            },
+            {
+              "content": {
+                "bvid": "BV1EVL000004",
+                "title": "Docker 多阶段构建 Python 服务",
+                "up_name": "合成验收样本",
+                "up_mid": 0,
+                "cover_url": "",
+                "duration": 600,
+                "view_count": 1000,
+                "like_count": 0,
+                "favorite_count": 0,
+                "collect_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "danmaku_count": 0,
+                "reply_count": 0,
+                "retweet_count": 0,
+                "bookmark_count": 0,
+                "engagement_available": [],
+                "rating_score": 0.0,
+                "rating_count": 0,
+                "source_rank": 0,
+                "tags": [
+                  "编程"
+                ],
+                "topic_key": "",
+                "topic_group": "编程",
+                "style_key": "deep_focus",
+                "franchise_key": "",
+                "description": "构建并运行一个可复现的 Python 容器。",
+                "published_at": "",
+                "published_label": "",
+                "source_strategy": "search",
+                "discovery_lane": "",
+                "relevance_score": 0.95,
+                "relevance_reason": "讲解 Docker 构建 Python 服务",
+                "semantic_filter_deferred": false,
+                "semantic_filter_review": false,
+                "temporal_class": "evergreen",
+                "temporal_confidence": 0.95,
+                "temporal_reason": "核心价值不依赖当前时间",
+                "temporal_policy_version": "v2",
+                "temporal_validity_mode": "none",
+                "temporal_valid_until": "",
+                "temporal_scope": "none",
+                "temporal_evidence": "",
+                "temporal_state": "unknown",
+                "temporal_next_review_at": "",
+                "temporal_evaluated_at": "2026-11-04T19:29:13Z",
+                "temporal_evidence_complete": true,
+                "temporal_evaluated": false,
+                "pool_expression": "这视频绝对值得反复看，Docker 多阶段构建 Python 服务的全流程演示，连镜像分层都解释得明明白白。",
+                "pool_topic_label": "容器技术",
+                "candidate_tier": "primary",
+                "discovered_at": "2026-11-04 19:29:56",
+                "last_scored_at": "2026-11-04 19:29:56",
+                "content_id": "BV1EVL000004",
+                "item_key": "bilibili:BV1EVL000004",
+                "content_url": "https://www.bilibili.com/video/BV1EVL000004",
+                "source_platform": "bilibili",
+                "author_name": "合成验收样本",
+                "score_threshold": 0.0,
+                "body_text": "",
+                "content_type": "video",
+                "source_metadata": {},
+                "source_keyword_id": null
+              },
+              "recommendation_id": 3,
+              "expression": "这视频绝对值得反复看，Docker 多阶段构建 Python 服务的全流程演示，连镜像分层都解释得明明白白。",
+              "topic_label": "容器技术",
+              "confidence": 0.95,
+              "presented": false,
+              "feedback": null
+            }
+          ]
+        },
+        "seconds": 64.796,
+        "calls": [
+          {
+            "caller": "recommendation.write_expression",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3262,
+            "completion_tokens": 1614,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "feedback_persistence_and_profile_learning",
+        "status": "pass",
+        "result": {
+          "persisted_feedback": 3,
+          "learning": {
+            "triggered": true,
+            "feedback_count": 3,
+            "preference_updated": true,
+            "preference_changed": true,
+            "profile_rebuilt": false,
+            "unified_interest_line": true,
+            "migrated_feedback_events": 3,
+            "enqueued_feedback_events": 3
+          }
+        },
+        "seconds": 193.158,
+        "calls": [
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3257,
+            "completion_tokens": 1393,
+            "success": 1
+          },
+          {
+            "caller": "soul.speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1903,
+            "completion_tokens": 1760,
+            "success": 1
+          },
+          {
+            "caller": "soul.speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1913,
+            "completion_tokens": 1851,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 767,
+            "completion_tokens": 1829,
+            "success": 1
+          },
+          {
+            "caller": "soul.awareness_confusions",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 6032,
+            "completion_tokens": 629,
+            "success": 1
+          },
+          {
+            "caller": "soul.avoidance_speculate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 767,
+            "completion_tokens": 1793,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "agent_real_tool_execution_and_final_answer",
+        "status": "pass",
+        "result": {
+          "events": [
+            {
+              "type": "tool_call",
+              "step": 1,
+              "tool_name": "get_profile",
+              "summary": "get_profile()"
+            },
+            {
+              "type": "tool_result",
+              "step": 1,
+              "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.98)\n- 编程 (0.98)\n\n#### 知识 (权重 0.85)\n- 技术教程 (0.85)\n\n#### 生活 (权重 0.80)\n- 园艺 (0.80)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 暂无明确自述\n- 当前状态: 暂无明确自述\n\n## 表层 Surface\n\n### 认知风格\n- 偏好原理说明与操作例子结合的系统性教学\n- 倾向关注技术实现细节与实践应用\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.90\n- 质量敏感度: 0.80\n\n### 情境模式\n- 工作日: 工作日持续关注编程技术实践\n- 周末: 未观察到周末行为\n- 探索开放度: 0.65\n\n---\n\n## 综合叙事\n\n从你关注的内容看，你可能更喜欢按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。\n",
+              "tool_name": "get_profile",
+              "ok": true,
+              "truncated": false
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "tool_name": "read_memory",
+              "arguments": {
+                "layer": "core"
+              },
+              "summary": "read_memory(layer='core')"
+            },
+            {
+              "type": "tool_result",
+              "step": 1,
+              "text": "## 用户画像\n从你关注的内容看，你可能更喜欢按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。\n\n## 偏好摘要\n兴趣标签: 编程, 技术教程, 园艺\n常看UP主: 合成验收样本\n\n## 近期观察\n- [init] 连续点赞和收藏多个编程技术实践视频\n- [init] 收藏包含原理说明与操作例子的视频内容\n- [2026-03-08] 持续关注编程技术实践内容，包含多个收藏与点赞行为\n\n## 当前洞察\n- 用户可能偏向于通过具体案例理解编程概念 (置信度: 80%)",
+              "tool_name": "read_memory",
+              "ok": true,
+              "truncated": false
+            },
+            {
+              "type": "tool_call",
+              "step": 2,
+              "tool_name": "read_memory",
+              "arguments": {
+                "layer": "core",
+                "max_chars": 3000
+              },
+              "summary": "read_memory(layer='core', max_chars=3000)"
+            },
+            {
+              "type": "tool_result",
+              "step": 2,
+              "text": "## 用户画像\n从你关注的内容看，你可能更喜欢按步骤展开的内容。这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。\n\n## 偏好摘要\n兴趣标签: 编程, 技术教程, 园艺\n常看UP主: 合成验收样本\n\n## 近期观察\n- [init] 连续点赞和收藏多个编程技术实践视频\n- [init] 收藏包含原理说明与操作例子的视频内容\n- [2026-03-08] 持续关注编程技术实践内容，包含多个收藏与点赞行为\n\n## 当前洞察\n- 用户可能偏向于通过具体案例理解编程概念 (置信度: 80%)",
+              "tool_name": "read_memory",
+              "ok": true,
+              "truncated": false
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "我的"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "两个"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "主要"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "兴趣"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "是"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "编程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "和技术"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "教程"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "，"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "以及"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "园"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "艺"
+            },
+            {
+              "type": "delta",
+              "step": 3,
+              "text": "。"
+            },
+            {
+              "type": "final",
+              "step": 3,
+              "text": "我的两个主要兴趣是编程和技术教程，以及园艺。"
+            }
+          ]
+        },
+        "seconds": 5.445,
+        "calls": [
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3010,
+            "completion_tokens": 33,
+            "success": 1
+          },
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3601,
+            "completion_tokens": 30,
+            "success": 1
+          },
+          {
+            "caller": "agent.chat",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3805,
+            "completion_tokens": 13,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "explicit_dialogue_learning",
+        "status": "pass",
+        "result": {
+          "learning": {
+            "outcome": "completed",
+            "settlement": null,
+            "classification": null,
+            "classifier": null,
+            "resulting_action": null,
+            "exploration_intent": null
+          },
+          "profile_after": {
+            "version": 2,
+            "personality_portrait": "用户明确喜欢Rust编程教程和阳台种番茄，但未提及性格、价值观、深层需求或动机。未提供MBTI类型信息。",
+            "core": {
+              "core_traits": [],
+              "deep_needs": [],
+              "mbti": {
+                "type": "",
+                "dimensions": {},
+                "confidence": 0.0,
+                "inferred_from": []
+              }
+            },
+            "values_layer": {
+              "values": [],
+              "motivational_drivers": []
+            },
+            "interest": {
+              "likes": [
+                {
+                  "domain": "科技",
+                  "weight": 0.98,
+                  "specifics": [
+                    {
+                      "name": "编程",
+                      "weight": 0.98
+                    },
+                    {
+                      "name": "Rust",
+                      "weight": 0.95
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "watch history"
+                },
+                {
+                  "domain": "知识",
+                  "weight": 0.85,
+                  "specifics": [
+                    {
+                      "name": "技术教程",
+                      "weight": 0.85
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "watch history"
+                },
+                {
+                  "domain": "生活",
+                  "weight": 0.85,
+                  "specifics": [
+                    {
+                      "name": "园艺",
+                      "weight": 0.85
+                    },
+                    {
+                      "name": "阳台种植",
+                      "weight": 0.8
+                    }
+                  ],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": "watch history"
+                }
+              ],
+              "dislikes": [
+                {
+                  "domain": "赌博内容",
+                  "weight": 0.9,
+                  "specifics": [],
+                  "first_seen": "",
+                  "last_seen": "",
+                  "source": ""
+                }
+              ],
+              "favorite_up_users": [
+                "合成验收样本"
+              ]
+            },
+            "role": {
+              "life_stage": "暂无明确自述",
+              "current_phase": "暂无明确自述"
+            },
+            "surface": {
+              "cognitive_style": [],
+              "style": {
+                "preferred_duration": "medium",
+                "preferred_pace": "moderate",
+                "quality_sensitivity": 0.8,
+                "humor_preference": 0.3,
+                "depth_preference": 0.9
+              },
+              "context": {
+                "weekday_patterns": "工作日持续关注编程技术实践",
+                "weekend_patterns": "未观察到周末行为",
+                "time_of_day_patterns": "未观察到明显时间段集中",
+                "session_type": "技术钻研型"
+              },
+              "exploration_openness": 0.65
+            },
+            "source_platform_mix": {
+              "bilibili": 1.0
+            },
+            "recent_awareness": [],
+            "active_insights": [],
+            "created_at": "",
+            "updated_at": ""
+          }
+        },
+        "seconds": 104.402,
+        "calls": [
+          {
+            "caller": "soul.insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 2125,
+            "completion_tokens": 972,
+            "success": 1
+          },
+          {
+            "caller": "soul.dialogue_insight",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1597,
+            "completion_tokens": 1174,
+            "success": 1
+          },
+          {
+            "caller": "soul.preference",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 3056,
+            "completion_tokens": 1501,
+            "success": 1
+          },
+          {
+            "caller": "soul.profile_build",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 311,
+            "completion_tokens": 124,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "profile_consolidation_and_embedding_recall",
+        "status": "pass",
+        "result": {
+          "ran": true,
+          "throttled": false,
+          "skipped_clean": false,
+          "dry_run": true,
+          "applied": false,
+          "write_conflict": false,
+          "run_id": "20261105-033604",
+          "rule_merges": [],
+          "clusters_sent": 0,
+          "llm_batches": 0,
+          "merges": [],
+          "rejected_clusters": [],
+          "likes_before": 5,
+          "likes_after": 5,
+          "dislikes_before": 1,
+          "dislikes_after": 1,
+          "likes_target_upper": 512,
+          "likes_target_soft": 450,
+          "like_similarity_threshold": 0.8,
+          "archived_interests": [],
+          "protected_interests": [],
+          "inventory_reason": "",
+          "retry_pending": false,
+          "errors": [],
+          "live_judge_clusters": 4,
+          "operations": {
+            "live-0": [
+              {
+                "cluster_id": "live-0",
+                "op": "merge",
+                "members": [
+                  "Rust所有权",
+                  "Rust所有权实践"
+                ],
+                "canonical": "Rust所有权",
+                "reason": "实践内容属于所有权主题的延伸，推荐意图高度重合",
+                "_member_keys": [
+                  "Rust所有权",
+                  "Rust所有权实践"
+                ]
+              }
+            ],
+            "live-1": [
+              {
+                "cluster_id": "live-1",
+                "op": "merge",
+                "members": [
+                  "Python异步编程",
+                  "Python异步编程实践"
+                ],
+                "canonical": "Python异步编程",
+                "reason": "实践内容属于异步编程主题的延伸，推荐意图高度重合",
+                "_member_keys": [
+                  "Python异步编程",
+                  "Python异步编程实践"
+                ]
+              }
+            ],
+            "live-2": [
+              {
+                "cluster_id": "live-2",
+                "op": "merge",
+                "members": [
+                  "SQLite索引优化",
+                  "SQLite索引优化实践"
+                ],
+                "canonical": "SQLite索引优化",
+                "reason": "实践内容属于索引优化主题的延伸，推荐意图高度重合",
+                "_member_keys": [
+                  "SQLite索引优化",
+                  "SQLite索引优化实践"
+                ]
+              }
+            ],
+            "live-3": [
+              {
+                "cluster_id": "live-3",
+                "op": "merge",
+                "members": [
+                  "盆栽番茄养护",
+                  "盆栽番茄养护实践"
+                ],
+                "canonical": "盆栽番茄养护",
+                "reason": "实践内容属于养护主题的延伸，推荐意图高度重合",
+                "_member_keys": [
+                  "盆栽番茄养护",
+                  "盆栽番茄养护实践"
+                ]
+              }
+            ]
+          }
+        },
+        "seconds": 50.323,
+        "calls": [
+          {
+            "caller": "soul.posture_gate",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 2148,
+            "completion_tokens": 773,
+            "success": 1
+          },
+          {
+            "caller": "soul.consolidation",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "prompt_tokens": 1360,
+            "completion_tokens": 1309,
+            "success": 1
+          }
+        ]
+      },
+      {
+        "name": "database_and_profile_reload",
+        "status": "pass",
+        "result": {
+          "restored_interests": 8,
+          "restored_events": 18,
+          "saved_model": "Qwen/Qwen3-8B"
+        },
+        "seconds": 0.09,
+        "calls": []
+      }
+    ],
+    "background_observations": []
+  },
+  "empty_pool_live_correction": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 6.925,
+      "inventory": "empty",
+      "lane": "refill.evaluation",
+      "valid_until": "2026-11-01T10:00:00Z",
+      "calls": [
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 8.312,
+      "inventory": "empty",
+      "lane": "refill.evaluation",
+      "valid_until": "2026-11-01T10:00:00Z",
+      "calls": [
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    }
+  ],
+  "awareness_date_before_prose_guard": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 4.065,
+      "source_date": "2026-11-04",
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "source_event_ids": [
+            1,
+            2
+          ],
+          "observation": "用户连续两天（10:00 和 11:00）将编程原理类视频标记为收藏。"
+        }
+      ],
+      "calls": [
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 14.766,
+      "source_date": "2026-11-04",
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "source_event_ids": [
+            1,
+            2
+          ],
+          "observation": "连续收藏技术性内容"
+        }
+      ],
+      "calls": [
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    }
+  ],
+  "awareness_date_after_guard_and_production_retry": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 5.962,
+      "source_date": "2026-11-04",
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "source_event_ids": [
+            1,
+            2
+          ],
+          "observation": "用户在短时间内连续收藏了两篇关于编程语言底层原理（Rust 所有权、Python 异步）的示例内容。"
+        }
+      ],
+      "calls": [
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 43.186,
+      "source_date": "2026-11-04",
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "source_event_ids": [
+            1,
+            2
+          ],
+          "observation": "连续收藏技术性内容（Rust所有权原理、Python异步编程原理）"
+        }
+      ],
+      "calls": [
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "success": 1
+        }
+      ],
+      "status": "pass"
+    }
+  ],
+  "verified_installation_after_admission_fix": {
+    "sha": "5e4e4ff2bc9ad8099f28daea69084b554ab3b53c",
+    "run_id": 41897178489,
+    "result": "success",
+    "native_platforms": 5,
+    "docker_architectures": 2
+  }
+}

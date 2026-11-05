@@ -476,13 +476,46 @@ def test_close_splash_noop_without_pyi_splash() -> None:
     entry._close_splash()  # must not raise
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+def test_free_embedding_skips_local_download_and_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fallback: bool
+) -> None:
+    from openbiliclaw.config import Config
+    from openbiliclaw.runtime import embedding_progress, embedding_seed
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
+
+    cfg = Config()
+    cfg.llm.embedding.provider = "ollama"
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, fallback_to_user_provider=fallback)
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+
+    def unexpected_local_work(*args, **kwargs):
+        pytest.fail("cloud BGE must not download or seed local embedding weights")
+
+    monkeypatch.setattr(entry.threading, "Thread", unexpected_local_work)
+    monkeypatch.setattr(embedding_seed, "seed_embedding_model", unexpected_local_work)
+    (tmp_path / "bge-m3-seed").mkdir()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("# preserved local settings\n")
+    progress = embedding_progress.snapshot()
+
+    entry._ensure_embedding_model_async()
+    assert entry._seed_bundled_embedding_model(tmp_path, config_path) is False
+    assert config_path.read_text() == "# preserved local settings\n"
+    assert embedding_progress.snapshot() == progress
+
+
+@pytest.mark.parametrize("free_chat", [False, True])
 def test_ensure_embedding_model_async_reports_global_pull_progress(
     monkeypatch: pytest.MonkeyPatch,
+    free_chat: bool,
 ) -> None:
     from openbiliclaw.config import Config
     from openbiliclaw.runtime import embedding_progress
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
 
     cfg = Config()
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=free_chat, embedding_mode="local")
     cfg.llm.embedding.provider = "ollama"
     cfg.llm.embedding.model = "bge-m3"
     cfg.llm.embedding.base_url = "http://localhost:11434/v1"
@@ -519,6 +552,11 @@ def test_ensure_embedding_model_async_reports_global_pull_progress(
     assert snap["model"] == "bge-m3"
     assert snap["completed"] == 240 * 1024 * 1024
     assert snap["total"] == 568 * 1024 * 1024
+
+
+def test_frozen_selftest_rejects_missing_free_runtime(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="sponsored"):
+        entry._verify_packaged_sponsored_runtime(tmp_path)
 
 
 def test_main_source_selftest_does_not_migrate_ignored_project_data(

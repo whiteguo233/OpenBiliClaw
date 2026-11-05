@@ -1,0 +1,3154 @@
+{
+  "baseline_commit": "f431ab763e7e348b1b5333594d2fe4f0f11effd7",
+  "runtime_tag": "sponsored-runtime-2026-11-05.1",
+  "scope": "Real published Rust SDK and real SiliconFlow requests; synthetic prompts and isolated application data. Multiple scenarios partially overlap; latency comparisons are descriptive, not controlled model rankings. No provider responses replaced. No paid/other-free-model fallback.",
+  "regression": {
+    "passed": 106,
+    "command": "pytest tests/test_sponsored_responsiveness.py tests/test_llm_concurrency.py tests/test_sponsored_provider.py -q"
+  },
+  "cross_process": {
+    "processes": [
+      {
+        "name": "process8b",
+        "exit_code": 0
+      },
+      {
+        "name": "process4b",
+        "exit_code": 0
+      }
+    ],
+    "shared_ledger": {
+      "generation": 17,
+      "day_requests": 8,
+      "day_tokens": 2920,
+      "tasks": {
+        "llm.embedding_text.v3": {
+          "requests": 2,
+          "tokens": 40
+        },
+        "llm.structured.qwen35_4b.v3": {
+          "requests": 2,
+          "tokens": 900
+        },
+        "llm.structured.v3": {
+          "requests": 2,
+          "tokens": 1707
+        },
+        "llm.text.qwen35_4b.v3": {
+          "requests": 1,
+          "tokens": 132
+        },
+        "llm.text.v3": {
+          "requests": 1,
+          "tokens": 141
+        }
+      }
+    },
+    "combined_peak_ipc_inflight": 6,
+    "clock_note": "Each relative trace is aligned using its wall_clock_started timestamp, recorded just after Trace initialization; overlap is seconds long, not a sub-millisecond ordering claim."
+  },
+  "runs": {
+    "qwen8b": {
+      "model": "Qwen/Qwen3-8B",
+      "stages": [
+        {
+          "name": "single-child-3",
+          "submitted": 3,
+          "passed": 3,
+          "elapsed_seconds": 11.061,
+          "peak_ipc_inflight": 1,
+          "worker_pids": [
+            6448
+          ],
+          "max_queue_seconds": 7.591,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-3",
+          "submitted": 3,
+          "passed": 3,
+          "elapsed_seconds": 35.809,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6466,
+            6469,
+            6471
+          ],
+          "max_queue_seconds": 0.216,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "chat-only-3",
+          "submitted": 3,
+          "passed": 2,
+          "elapsed_seconds": 35.456,
+          "peak_ipc_inflight": 1,
+          "worker_pids": [
+            6471,
+            7258
+          ],
+          "max_queue_seconds": 33.01,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-6",
+          "submitted": 6,
+          "passed": 5,
+          "elapsed_seconds": 32.845,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6466,
+            6469,
+            7258
+          ],
+          "max_queue_seconds": 27.772,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-12",
+          "submitted": 12,
+          "passed": 9,
+          "elapsed_seconds": 94.498,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6466,
+            6469,
+            7326,
+            7363,
+            7414
+          ],
+          "max_queue_seconds": 63.537,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "after-cancel",
+          "submitted": 3,
+          "passed": 3,
+          "elapsed_seconds": 45.571,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6466,
+            6469,
+            7551
+          ],
+          "max_queue_seconds": 0.122,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        }
+      ],
+      "requests": [
+        {
+          "name": "single-child-3-0",
+          "kind": "chat",
+          "marker": "CC-ba749efcd2bb",
+          "submitted": 0.001471,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 76,
+            "total_tokens": 136
+          },
+          "finished": 4.205139,
+          "elapsed_seconds": 4.204,
+          "queue_seconds": 0.107
+        },
+        {
+          "name": "single-child-3-1",
+          "kind": "chat",
+          "marker": "CC-e2ec48831c97",
+          "submitted": 0.00493,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 73,
+            "total_tokens": 135
+          },
+          "finished": 7.59519,
+          "elapsed_seconds": 7.59,
+          "queue_seconds": 4.202
+        },
+        {
+          "name": "single-child-3-2",
+          "kind": "chat",
+          "marker": "CC-a0d0296abc37",
+          "submitted": 0.005312,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 61,
+            "completion_tokens": 72,
+            "total_tokens": 133
+          },
+          "finished": 11.061127,
+          "elapsed_seconds": 11.056,
+          "queue_seconds": 7.591
+        },
+        {
+          "name": "mixed-3-2",
+          "kind": "chat",
+          "marker": "CC-7b7b6722d919",
+          "submitted": 11.073705,
+          "first_content": 11.824697,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 64,
+            "completion_tokens": 75,
+            "total_tokens": 139
+          },
+          "finished": 14.699356,
+          "elapsed_seconds": 3.626,
+          "queue_seconds": 0.216,
+          "first_content_seconds": 0.751
+        },
+        {
+          "name": "mixed-3-1",
+          "kind": "evaluation",
+          "marker": "CC-a90a316006d8",
+          "submitted": 11.072811,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 207,
+            "completion_tokens": 673,
+            "total_tokens": 880
+          },
+          "finished": 34.081575,
+          "elapsed_seconds": 23.009,
+          "queue_seconds": 0.132
+        },
+        {
+          "name": "mixed-3-0",
+          "kind": "evaluation",
+          "marker": "CC-02ebb585f00a",
+          "submitted": 11.064776,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 202,
+            "completion_tokens": 802,
+            "total_tokens": 1004
+          },
+          "finished": 46.871025,
+          "elapsed_seconds": 35.806,
+          "queue_seconds": 0.058
+        },
+        {
+          "name": "chat-only-3-0",
+          "kind": "chat",
+          "marker": "CC-2db2a0f412bf",
+          "submitted": 46.875396,
+          "first_content": 47.460585,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 58,
+            "total_tokens": 120
+          },
+          "finished": 49.795016,
+          "elapsed_seconds": 2.92,
+          "queue_seconds": 0.001,
+          "first_content_seconds": 0.585
+        },
+        {
+          "name": "chat-only-3-1",
+          "kind": "chat",
+          "marker": "CC-5face9cffe72",
+          "submitted": 46.876838,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 79.809131,
+          "elapsed_seconds": 32.932,
+          "queue_seconds": 2.922
+        },
+        {
+          "name": "chat-only-3-2",
+          "kind": "chat",
+          "marker": "CC-de3e076f8f95",
+          "submitted": 46.877711,
+          "first_content": 80.352713,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 67,
+            "total_tokens": 129
+          },
+          "finished": 82.328661,
+          "elapsed_seconds": 35.451,
+          "queue_seconds": 33.01,
+          "first_content_seconds": 33.475
+        },
+        {
+          "name": "mixed-6-2",
+          "kind": "embedding",
+          "marker": "CC-64b41d1b5ddd",
+          "submitted": 82.334357,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 82.78294,
+          "elapsed_seconds": 0.449,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-6-1",
+          "kind": "chat",
+          "marker": "CC-7f71c6773f95",
+          "submitted": 82.333975,
+          "first_content": 82.811018,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 64,
+            "completion_tokens": 56,
+            "total_tokens": 120
+          },
+          "finished": 85.168948,
+          "elapsed_seconds": 2.835,
+          "queue_seconds": 0.0,
+          "first_content_seconds": 0.477
+        },
+        {
+          "name": "mixed-6-3",
+          "kind": "evaluation",
+          "marker": "CC-9200e9178c30",
+          "submitted": 82.335421,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 212,
+            "completion_tokens": 761,
+            "total_tokens": 973
+          },
+          "finished": 110.102677,
+          "elapsed_seconds": 27.767,
+          "queue_seconds": 0.449
+        },
+        {
+          "name": "mixed-6-5",
+          "kind": "embedding",
+          "marker": "CC-408f11e8ef70",
+          "submitted": 82.335832,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 110.537182,
+          "elapsed_seconds": 28.201,
+          "queue_seconds": 27.772
+        },
+        {
+          "name": "mixed-6-0",
+          "kind": "evaluation",
+          "marker": "CC-cd5a58fc3a8d",
+          "submitted": 82.33327,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 202,
+            "completion_tokens": 654,
+            "total_tokens": 856
+          },
+          "finished": 112.926799,
+          "elapsed_seconds": 30.594,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-6-4",
+          "kind": "chat",
+          "marker": "CC-cd54b1c8d07c",
+          "submitted": 82.335695,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 115.175345,
+          "elapsed_seconds": 32.84,
+          "queue_seconds": 2.835
+        },
+        {
+          "name": "mixed-12-2",
+          "kind": "embedding",
+          "marker": "CC-ae9a57992aa3",
+          "submitted": 115.191314,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 115.485588,
+          "elapsed_seconds": 0.294,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-12-1",
+          "kind": "chat",
+          "marker": "CC-42cfd5a5d947",
+          "submitted": 115.182035,
+          "first_content": 115.793934,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 63,
+            "completion_tokens": 74,
+            "total_tokens": 137
+          },
+          "finished": 118.537796,
+          "elapsed_seconds": 3.356,
+          "queue_seconds": 0.121,
+          "first_content_seconds": 0.612
+        },
+        {
+          "name": "mixed-12-3",
+          "kind": "evaluation",
+          "marker": "CC-2858cb3c00df",
+          "submitted": 115.192237,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 202,
+            "completion_tokens": 674,
+            "total_tokens": 876
+          },
+          "finished": 146.791527,
+          "elapsed_seconds": 31.599,
+          "queue_seconds": 0.296
+        },
+        {
+          "name": "mixed-12-5",
+          "kind": "embedding",
+          "marker": "CC-62d21f07693c",
+          "submitted": 115.216303,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 147.229883,
+          "elapsed_seconds": 32.014,
+          "queue_seconds": 31.581
+        },
+        {
+          "name": "mixed-12-8",
+          "kind": "embedding",
+          "marker": "CC-26e526fbfd4b",
+          "submitted": 115.216555,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 147.451886,
+          "elapsed_seconds": 32.235,
+          "queue_seconds": 32.018
+        },
+        {
+          "name": "mixed-12-11",
+          "kind": "embedding",
+          "marker": "CC-56a39c31e61b",
+          "submitted": 115.216781,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 147.681795,
+          "elapsed_seconds": 32.465,
+          "queue_seconds": 32.238
+        },
+        {
+          "name": "mixed-12-4",
+          "kind": "chat",
+          "marker": "CC-98e7afd2f7ef",
+          "submitted": 115.216143,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 148.543447,
+          "elapsed_seconds": 33.327,
+          "queue_seconds": 3.324
+        },
+        {
+          "name": "mixed-12-0",
+          "kind": "evaluation",
+          "marker": "CC-e5326e44581a",
+          "submitted": 115.180683,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 207,
+            "completion_tokens": 602,
+            "total_tokens": 809
+          },
+          "finished": 176.144617,
+          "elapsed_seconds": 60.964,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-12-7",
+          "kind": "chat",
+          "marker": "CC-3c1834c89a92",
+          "submitted": 115.216482,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 178.645901,
+          "elapsed_seconds": 63.429,
+          "queue_seconds": 33.424
+        },
+        {
+          "name": "mixed-12-6",
+          "kind": "evaluation",
+          "marker": "CC-ee2fee70bb5f",
+          "submitted": 115.216352,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 192,
+            "completion_tokens": 644,
+            "total_tokens": 836
+          },
+          "finished": 208.075787,
+          "elapsed_seconds": 92.859,
+          "queue_seconds": 60.932
+        },
+        {
+          "name": "mixed-12-10",
+          "kind": "chat",
+          "marker": "CC-feafb3cc5327",
+          "submitted": 115.216697,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 208.757278,
+          "elapsed_seconds": 93.541,
+          "queue_seconds": 63.537
+        },
+        {
+          "name": "mixed-12-9",
+          "kind": "evaluation",
+          "marker": "CC-4c2558782084",
+          "submitted": 115.216593,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 212,
+            "completion_tokens": 651,
+            "total_tokens": 863
+          },
+          "finished": 209.674714,
+          "elapsed_seconds": 94.458,
+          "queue_seconds": 63.445
+        },
+        {
+          "name": "cancel-real-stream",
+          "kind": "cancel_stream",
+          "marker": "CC-5e7d35f02c1f",
+          "submitted": 209.680932,
+          "first_content": 210.198432,
+          "status": "cancelled_after_real_delta",
+          "finished": 210.200434,
+          "elapsed_seconds": 0.52,
+          "queue_seconds": 0.085,
+          "first_content_seconds": 0.517
+        },
+        {
+          "name": "after-cancel-1",
+          "kind": "embedding",
+          "marker": "CC-36be86ae3a0c",
+          "submitted": 210.210887,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 210.743469,
+          "elapsed_seconds": 0.533,
+          "queue_seconds": 0.0
+        },
+        {
+          "name": "after-cancel-0",
+          "kind": "chat",
+          "marker": "CC-339eb177fe3e",
+          "submitted": 210.210372,
+          "first_content": 217.043592,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 59,
+            "total_tokens": 121
+          },
+          "finished": 219.821813,
+          "elapsed_seconds": 9.611,
+          "queue_seconds": 0.122,
+          "first_content_seconds": 6.833
+        },
+        {
+          "name": "after-cancel-2",
+          "kind": "evaluation",
+          "marker": "CC-1aec220989ba",
+          "submitted": 210.211854,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 197,
+            "completion_tokens": 570,
+            "total_tokens": 767
+          },
+          "finished": 255.767917,
+          "elapsed_seconds": 45.556,
+          "queue_seconds": 0.001
+        }
+      ],
+      "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+      "concurrency": 3,
+      "private_runtime_response_replacements": false,
+      "wall_clock_started": 1793862023.119652,
+      "frames": [
+        {
+          "id": "dbffd3a47bb649aa91e906dda628bb9b",
+          "job": "single-child-3-0",
+          "pid": 6448,
+          "task": "llm.text",
+          "sent": 0.108122,
+          "first_delta": null,
+          "finished": 4.204612,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "c869d03b8f7e436ebde314f882b5e3ff",
+          "job": "single-child-3-1",
+          "pid": 6448,
+          "task": "llm.text",
+          "sent": 4.206653,
+          "first_delta": null,
+          "finished": 7.594781,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "ca8c333f84364928aad13a510e0f32ac",
+          "job": "single-child-3-2",
+          "pid": 6448,
+          "task": "llm.text",
+          "sent": 7.59618,
+          "first_delta": null,
+          "finished": 11.06079,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "8176f22f167b43378a106a48c7762b92",
+          "job": "mixed-3-0",
+          "pid": 6466,
+          "task": "llm.structured",
+          "sent": 11.123158,
+          "first_delta": null,
+          "finished": 46.869654,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "405a4fd375fc47a5a0dd1d1042290bcf",
+          "job": "mixed-3-1",
+          "pid": 6469,
+          "task": "llm.structured",
+          "sent": 11.204499,
+          "first_delta": null,
+          "finished": 34.079446,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "a93801e4d9de4adcaeb4729c0580a5ed",
+          "job": "mixed-3-2",
+          "pid": 6471,
+          "task": "llm.text",
+          "sent": 11.28989,
+          "first_delta": 11.824629,
+          "finished": 14.69849,
+          "delta_count": 75,
+          "ok": true
+        },
+        {
+          "id": "64861882e41649d9bb6ad1eb2a053f53",
+          "job": "chat-only-3-0",
+          "pid": 6471,
+          "task": "llm.text",
+          "sent": 46.876728,
+          "first_delta": 47.460554,
+          "finished": 49.793672,
+          "delta_count": 58,
+          "ok": true
+        },
+        {
+          "id": "a48ab02813614b83838f36ae14a6fc98",
+          "job": "chat-only-3-1",
+          "pid": 6471,
+          "task": "llm.text",
+          "sent": 49.798904,
+          "first_delta": null,
+          "finished": 79.809146,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "2f0d537e56f24a80ac148ae9d01b5cfe",
+          "job": "chat-only-3-2",
+          "pid": 7258,
+          "task": "llm.text",
+          "sent": 79.887563,
+          "first_delta": 80.352674,
+          "finished": 82.328141,
+          "delta_count": 67,
+          "ok": true
+        },
+        {
+          "id": "51db561bb64e411dba64bee497364179",
+          "job": "mixed-6-0",
+          "pid": 6469,
+          "task": "llm.structured",
+          "sent": 82.333847,
+          "first_delta": null,
+          "finished": 112.926277,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "7b2034a1822d4fcebd0f3c474f70a085",
+          "job": "mixed-6-1",
+          "pid": 7258,
+          "task": "llm.text",
+          "sent": 82.334283,
+          "first_delta": 82.810972,
+          "finished": 85.168551,
+          "delta_count": 56,
+          "ok": true
+        },
+        {
+          "id": "aa2dee5d5f7f48bebc03c06ae2792c65",
+          "job": "mixed-6-2",
+          "pid": 6466,
+          "task": "llm.embedding_text",
+          "sent": 82.335303,
+          "first_delta": null,
+          "finished": 82.782061,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "d6160c9e97c74476a85d8b8a7ac246a9",
+          "job": "mixed-6-3",
+          "pid": 6466,
+          "task": "llm.structured",
+          "sent": 82.784619,
+          "first_delta": null,
+          "finished": 110.096131,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "ebf02e72dd7942869e5c50ddd1f9d6cb",
+          "job": "mixed-6-4",
+          "pid": 7258,
+          "task": "llm.text",
+          "sent": 85.170979,
+          "first_delta": null,
+          "finished": 115.175362,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "0ca2d8c208cf4bbf91f02fcab1629e14",
+          "job": "mixed-6-5",
+          "pid": 6466,
+          "task": "llm.embedding_text",
+          "sent": 110.108288,
+          "first_delta": null,
+          "finished": 110.536009,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "8c07961de031460fbfef3c46bad54ee2",
+          "job": "mixed-12-0",
+          "pid": 6466,
+          "task": "llm.structured",
+          "sent": 115.18188,
+          "first_delta": null,
+          "finished": 176.143704,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "0ee47b4869964e15b8f2e9ae3fac2bce",
+          "job": "mixed-12-2",
+          "pid": 6469,
+          "task": "llm.embedding_text",
+          "sent": 115.192063,
+          "first_delta": null,
+          "finished": 115.484539,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "972805a2ac704b64a4512869828c409b",
+          "job": "mixed-12-1",
+          "pid": 7326,
+          "task": "llm.text",
+          "sent": 115.303471,
+          "first_delta": 115.793865,
+          "finished": 118.536863,
+          "delta_count": 74,
+          "ok": true
+        },
+        {
+          "id": "54ffaad113b64be7abc6b9cb24cf4959",
+          "job": "mixed-12-3",
+          "pid": 6469,
+          "task": "llm.structured",
+          "sent": 115.487972,
+          "first_delta": null,
+          "finished": 146.791007,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "2ba1c688db2f4e0b80979ca045dbb984",
+          "job": "mixed-12-4",
+          "pid": 7326,
+          "task": "llm.text",
+          "sent": 118.540523,
+          "first_delta": null,
+          "finished": 148.543462,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "1d5483ceca52451facf3ca4257092e2a",
+          "job": "mixed-12-5",
+          "pid": 6469,
+          "task": "llm.embedding_text",
+          "sent": 146.797611,
+          "first_delta": null,
+          "finished": 147.228911,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "0ec7947948894dd3a173da9237695d11",
+          "job": "mixed-12-8",
+          "pid": 6469,
+          "task": "llm.embedding_text",
+          "sent": 147.234302,
+          "first_delta": null,
+          "finished": 147.450873,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "0f2fce38a6a24cb4a1a85520f6510b76",
+          "job": "mixed-12-11",
+          "pid": 6469,
+          "task": "llm.embedding_text",
+          "sent": 147.454947,
+          "first_delta": null,
+          "finished": 147.680761,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "81e3f59f7f694b87ab914171ae689436",
+          "job": "mixed-12-7",
+          "pid": 7363,
+          "task": "llm.text",
+          "sent": 148.640752,
+          "first_delta": null,
+          "finished": 178.645922,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "b3cdd05ac3d74d64a94230bef05e11e0",
+          "job": "mixed-12-6",
+          "pid": 6469,
+          "task": "llm.structured",
+          "sent": 176.147974,
+          "first_delta": null,
+          "finished": 208.073741,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "49c6deb73dc04f8b8cba62c3b02496eb",
+          "job": "mixed-12-9",
+          "pid": 6466,
+          "task": "llm.structured",
+          "sent": 178.661873,
+          "first_delta": null,
+          "finished": 209.673625,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "3773ecf038404b0b89e4c6ab72e2c46c",
+          "job": "mixed-12-10",
+          "pid": 7414,
+          "task": "llm.text",
+          "sent": 178.753774,
+          "first_delta": null,
+          "finished": 208.757301,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "3a20db21c2d34aaaa8468c816b6adaaa",
+          "job": "cancel-real-stream",
+          "pid": 7544,
+          "task": "llm.text",
+          "sent": 209.766024,
+          "first_delta": 210.198347,
+          "finished": 210.200462,
+          "delta_count": 1,
+          "interrupted": true
+        },
+        {
+          "id": "c054295b787942e69040e0b13c472ec1",
+          "job": "after-cancel-1",
+          "pid": 6469,
+          "task": "llm.embedding_text",
+          "sent": 210.21124,
+          "first_delta": null,
+          "finished": 210.742266,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "d1d162cd1ba141198f75ce18ffc69f7f",
+          "job": "after-cancel-2",
+          "pid": 6466,
+          "task": "llm.structured",
+          "sent": 210.212531,
+          "first_delta": null,
+          "finished": 255.765078,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "8fb1ae6dc3b74a9b85a4bfde59ce2db4",
+          "job": "after-cancel-0",
+          "pid": 7551,
+          "task": "llm.text",
+          "sent": 210.332654,
+          "first_delta": 217.043538,
+          "finished": 219.82132,
+          "delta_count": 59,
+          "ok": true
+        }
+      ],
+      "wall_clock_finished": 1793862278.904376
+    },
+    "qwen4b": {
+      "model": "Qwen/Qwen3.5-4B",
+      "stages": [
+        {
+          "name": "single-child-3",
+          "submitted": 3,
+          "passed": 3,
+          "elapsed_seconds": 116.475,
+          "peak_ipc_inflight": 1,
+          "worker_pids": [
+            6250
+          ],
+          "max_queue_seconds": 88.806,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-3",
+          "submitted": 3,
+          "passed": 2,
+          "elapsed_seconds": 54.966,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6847,
+            6849,
+            6853
+          ],
+          "max_queue_seconds": 0.231,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "chat-only-3",
+          "submitted": 3,
+          "passed": 2,
+          "elapsed_seconds": 84.208,
+          "peak_ipc_inflight": 1,
+          "worker_pids": [
+            7310,
+            7359
+          ],
+          "max_queue_seconds": 59.841,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-6",
+          "submitted": 6,
+          "passed": 6,
+          "elapsed_seconds": 65.874,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6847,
+            6849,
+            7359
+          ],
+          "max_queue_seconds": 38.054,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "mixed-12",
+          "submitted": 12,
+          "passed": 11,
+          "elapsed_seconds": 259.991,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6847,
+            6849,
+            7359,
+            8045
+          ],
+          "max_queue_seconds": 93.15,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        },
+        {
+          "name": "after-cancel",
+          "submitted": 3,
+          "passed": 3,
+          "elapsed_seconds": 34.487,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            6847,
+            6849,
+            9189
+          ],
+          "max_queue_seconds": 0.078,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        }
+      ],
+      "requests": [
+        {
+          "name": "single-child-3-0",
+          "kind": "chat",
+          "marker": "CC-ba749efcd2bb",
+          "submitted": 0.004365,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 58,
+            "completion_tokens": 54,
+            "total_tokens": 112
+          },
+          "finished": 28.62333,
+          "elapsed_seconds": 28.619,
+          "queue_seconds": 0.269
+        },
+        {
+          "name": "single-child-3-1",
+          "kind": "chat",
+          "marker": "CC-e2ec48831c97",
+          "submitted": 0.017949,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 62,
+            "total_tokens": 122
+          },
+          "finished": 88.823228,
+          "elapsed_seconds": 88.805,
+          "queue_seconds": 28.606
+        },
+        {
+          "name": "single-child-3-2",
+          "kind": "chat",
+          "marker": "CC-a0d0296abc37",
+          "submitted": 0.01839,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 59,
+            "completion_tokens": 59,
+            "total_tokens": 118
+          },
+          "finished": 116.469501,
+          "elapsed_seconds": 116.451,
+          "queue_seconds": 88.806
+        },
+        {
+          "name": "mixed-3-2",
+          "kind": "chat",
+          "marker": "CC-7b7b6722d919",
+          "submitted": 116.51595,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 146.748665,
+          "elapsed_seconds": 30.233,
+          "queue_seconds": 0.231
+        },
+        {
+          "name": "mixed-3-0",
+          "kind": "evaluation",
+          "marker": "CC-02ebb585f00a",
+          "submitted": 116.499286,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 199,
+            "completion_tokens": 227,
+            "total_tokens": 426
+          },
+          "finished": 158.068082,
+          "elapsed_seconds": 41.569,
+          "queue_seconds": 0.074
+        },
+        {
+          "name": "mixed-3-1",
+          "kind": "evaluation",
+          "marker": "CC-a90a316006d8",
+          "submitted": 116.514906,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 204,
+            "completion_tokens": 233,
+            "total_tokens": 437
+          },
+          "finished": 171.462796,
+          "elapsed_seconds": 54.948,
+          "queue_seconds": 0.147
+        },
+        {
+          "name": "chat-only-3-0",
+          "kind": "chat",
+          "marker": "CC-2db2a0f412bf",
+          "submitted": 171.465711,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 201.552166,
+          "elapsed_seconds": 30.086,
+          "queue_seconds": 0.082
+        },
+        {
+          "name": "chat-only-3-1",
+          "kind": "chat",
+          "marker": "CC-5face9cffe72",
+          "submitted": 171.474329,
+          "first_content": 229.210075,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 57,
+            "completion_tokens": 54,
+            "total_tokens": 111
+          },
+          "finished": 231.306616,
+          "elapsed_seconds": 59.832,
+          "queue_seconds": 30.165,
+          "first_content_seconds": 57.736
+        },
+        {
+          "name": "chat-only-3-2",
+          "kind": "chat",
+          "marker": "CC-de3e076f8f95",
+          "submitted": 171.475035,
+          "first_content": 253.123972,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 59,
+            "total_tokens": 119
+          },
+          "finished": 255.669092,
+          "elapsed_seconds": 84.194,
+          "queue_seconds": 59.841,
+          "first_content_seconds": 81.649
+        },
+        {
+          "name": "mixed-6-2",
+          "kind": "embedding",
+          "marker": "CC-64b41d1b5ddd",
+          "submitted": 255.684166,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 256.022544,
+          "elapsed_seconds": 0.338,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-6-1",
+          "kind": "chat",
+          "marker": "CC-7f71c6773f95",
+          "submitted": 255.68323,
+          "first_content": 285.160844,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 65,
+            "total_tokens": 127
+          },
+          "finished": 287.624237,
+          "elapsed_seconds": 31.941,
+          "queue_seconds": 0.001,
+          "first_content_seconds": 29.478
+        },
+        {
+          "name": "mixed-6-3",
+          "kind": "evaluation",
+          "marker": "CC-9200e9178c30",
+          "submitted": 255.684979,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 209,
+            "completion_tokens": 237,
+            "total_tokens": 446
+          },
+          "finished": 293.739136,
+          "elapsed_seconds": 38.054,
+          "queue_seconds": 0.34
+        },
+        {
+          "name": "mixed-6-5",
+          "kind": "embedding",
+          "marker": "CC-408f11e8ef70",
+          "submitted": 255.68757,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 293.9921,
+          "elapsed_seconds": 38.305,
+          "queue_seconds": 38.054
+        },
+        {
+          "name": "mixed-6-0",
+          "kind": "evaluation",
+          "marker": "CC-cd5a58fc3a8d",
+          "submitted": 255.676896,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 199,
+            "completion_tokens": 228,
+            "total_tokens": 427
+          },
+          "finished": 295.641103,
+          "elapsed_seconds": 39.964,
+          "queue_seconds": 0.006
+        },
+        {
+          "name": "mixed-6-4",
+          "kind": "chat",
+          "marker": "CC-cd54b1c8d07c",
+          "submitted": 255.686596,
+          "first_content": 311.459128,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 61,
+            "completion_tokens": 74,
+            "total_tokens": 135
+          },
+          "finished": 321.546356,
+          "elapsed_seconds": 65.86,
+          "queue_seconds": 31.941,
+          "first_content_seconds": 55.773
+        },
+        {
+          "name": "mixed-12-2",
+          "kind": "embedding",
+          "marker": "CC-ae9a57992aa3",
+          "submitted": 321.62477,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 321.870647,
+          "elapsed_seconds": 0.246,
+          "queue_seconds": 0.0
+        },
+        {
+          "name": "mixed-12-1",
+          "kind": "chat",
+          "marker": "CC-42cfd5a5d947",
+          "submitted": 321.55651,
+          "first_content": 351.240258,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 61,
+            "completion_tokens": 63,
+            "total_tokens": 124
+          },
+          "finished": 353.69029,
+          "elapsed_seconds": 32.134,
+          "queue_seconds": 0.068,
+          "first_content_seconds": 29.684
+        },
+        {
+          "name": "mixed-12-0",
+          "kind": "evaluation",
+          "marker": "CC-e5326e44581a",
+          "submitted": 321.554773,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 204,
+            "completion_tokens": 265,
+            "total_tokens": 469
+          },
+          "finished": 361.64213,
+          "elapsed_seconds": 40.087,
+          "queue_seconds": 0.001
+        },
+        {
+          "name": "mixed-12-5",
+          "kind": "embedding",
+          "marker": "CC-62d21f07693c",
+          "submitted": 321.625365,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 361.947167,
+          "elapsed_seconds": 40.322,
+          "queue_seconds": 40.018
+        },
+        {
+          "name": "mixed-12-8",
+          "kind": "embedding",
+          "marker": "CC-26e526fbfd4b",
+          "submitted": 321.625588,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 362.22214,
+          "elapsed_seconds": 40.597,
+          "queue_seconds": 40.324
+        },
+        {
+          "name": "mixed-12-11",
+          "kind": "embedding",
+          "marker": "CC-56a39c31e61b",
+          "submitted": 321.625848,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 362.420655,
+          "elapsed_seconds": 40.795,
+          "queue_seconds": 40.598
+        },
+        {
+          "name": "mixed-12-3",
+          "kind": "evaluation",
+          "marker": "CC-2858cb3c00df",
+          "submitted": 321.625027,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 199,
+            "completion_tokens": 266,
+            "total_tokens": 465
+          },
+          "finished": 362.554633,
+          "elapsed_seconds": 40.93,
+          "queue_seconds": 0.248
+        },
+        {
+          "name": "mixed-12-4",
+          "kind": "chat",
+          "marker": "CC-98e7afd2f7ef",
+          "submitted": 321.625236,
+          "first_content": 382.261708,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 59,
+            "completion_tokens": 61,
+            "total_tokens": 120
+          },
+          "finished": 384.697978,
+          "elapsed_seconds": 63.073,
+          "queue_seconds": 32.071,
+          "first_content_seconds": 60.636
+        },
+        {
+          "name": "mixed-12-7",
+          "kind": "chat",
+          "marker": "CC-3c1834c89a92",
+          "submitted": 321.625518,
+          "status": "fail",
+          "error_type": "SponsoredUnavailableError",
+          "error": "sponsored first output timed out",
+          "finished": 414.707522,
+          "elapsed_seconds": 93.082,
+          "queue_seconds": 63.074
+        },
+        {
+          "name": "mixed-12-6",
+          "kind": "evaluation",
+          "marker": "CC-ee2fee70bb5f",
+          "submitted": 321.625409,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 189,
+            "completion_tokens": 217,
+            "total_tokens": 406
+          },
+          "finished": 421.2169,
+          "elapsed_seconds": 99.591,
+          "queue_seconds": 63.074
+        },
+        {
+          "name": "mixed-12-10",
+          "kind": "chat",
+          "marker": "CC-feafb3cc5327",
+          "submitted": 321.625749,
+          "first_content": 442.440593,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 57,
+            "completion_tokens": 50,
+            "total_tokens": 107
+          },
+          "finished": 444.172435,
+          "elapsed_seconds": 122.547,
+          "queue_seconds": 93.15,
+          "first_content_seconds": 120.815
+        },
+        {
+          "name": "mixed-12-9",
+          "kind": "evaluation",
+          "marker": "CC-4c2558782084",
+          "submitted": 321.625642,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 209,
+            "completion_tokens": 237,
+            "total_tokens": 446
+          },
+          "finished": 581.542626,
+          "elapsed_seconds": 259.917,
+          "queue_seconds": 93.089
+        },
+        {
+          "name": "cancel-real-stream",
+          "kind": "cancel_stream",
+          "marker": "CC-5e7d35f02c1f",
+          "submitted": 581.546532,
+          "first_content": 609.795912,
+          "status": "cancelled_after_real_delta",
+          "finished": 609.797378,
+          "elapsed_seconds": 28.251,
+          "queue_seconds": 0.001,
+          "first_content_seconds": 28.249
+        },
+        {
+          "name": "after-cancel-1",
+          "kind": "embedding",
+          "marker": "CC-36be86ae3a0c",
+          "submitted": 609.802161,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 610.442521,
+          "elapsed_seconds": 0.64,
+          "queue_seconds": 0.0
+        },
+        {
+          "name": "after-cancel-0",
+          "kind": "chat",
+          "marker": "CC-339eb177fe3e",
+          "submitted": 609.802032,
+          "first_content": 635.756163,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 64,
+            "total_tokens": 124
+          },
+          "finished": 637.885401,
+          "elapsed_seconds": 28.083,
+          "queue_seconds": 0.078,
+          "first_content_seconds": 25.954
+        },
+        {
+          "name": "after-cancel-2",
+          "kind": "evaluation",
+          "marker": "CC-1aec220989ba",
+          "submitted": 609.802376,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 194,
+            "completion_tokens": 222,
+            "total_tokens": 416
+          },
+          "finished": 644.282963,
+          "elapsed_seconds": 34.481,
+          "queue_seconds": 0.001
+        }
+      ],
+      "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+      "concurrency": 3,
+      "private_runtime_response_replacements": false,
+      "wall_clock_started": 1793861954.355001,
+      "frames": [
+        {
+          "id": "1675fbd72c1748b19762664266fbf335",
+          "job": "single-child-3-0",
+          "pid": 6250,
+          "task": "llm.text.qwen35_4b",
+          "sent": 0.273077,
+          "first_delta": null,
+          "finished": 28.622663,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "04ac6646b5474a568b0171310d92f84e",
+          "job": "single-child-3-1",
+          "pid": 6250,
+          "task": "llm.text.qwen35_4b",
+          "sent": 28.624324,
+          "first_delta": null,
+          "finished": 88.822851,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "97ae2ae845544434ae0623e6653be176",
+          "job": "single-child-3-2",
+          "pid": 6250,
+          "task": "llm.text.qwen35_4b",
+          "sent": 88.82396,
+          "first_delta": null,
+          "finished": 116.46825,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "db594281751842f281092c974056d089",
+          "job": "mixed-3-0",
+          "pid": 6847,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 116.573611,
+          "first_delta": null,
+          "finished": 158.062979,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "bffc51c40a954166ab7288b50e7a3d19",
+          "job": "mixed-3-1",
+          "pid": 6849,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 116.661667,
+          "first_delta": null,
+          "finished": 171.461426,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "1a5a5000aceb488883d8cc3e5a0d2953",
+          "job": "mixed-3-2",
+          "pid": 6853,
+          "task": "llm.text.qwen35_4b",
+          "sent": 116.746671,
+          "first_delta": null,
+          "finished": 146.748685,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "6b65b1b2de5049dd9c8484362542d0eb",
+          "job": "chat-only-3-0",
+          "pid": 7310,
+          "task": "llm.text.qwen35_4b",
+          "sent": 171.54809,
+          "first_delta": null,
+          "finished": 201.552187,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "be30866ea2324de18006662aaf98b94b",
+          "job": "chat-only-3-1",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 201.639786,
+          "first_delta": 229.207516,
+          "finished": 231.302383,
+          "delta_count": 54,
+          "ok": true
+        },
+        {
+          "id": "0eb7bc0102584e0688c54af6e53bd515",
+          "job": "chat-only-3-2",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 231.315589,
+          "first_delta": 253.123919,
+          "finished": 255.664171,
+          "delta_count": 59,
+          "ok": true
+        },
+        {
+          "id": "f4c4ada33bd14a44a469d20a44766a0b",
+          "job": "mixed-6-0",
+          "pid": 6847,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 255.682712,
+          "first_delta": null,
+          "finished": 295.640536,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "c0eae8c5f72f4a5d95de265ad0e83f78",
+          "job": "mixed-6-1",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 255.684013,
+          "first_delta": 285.160805,
+          "finished": 287.62371,
+          "delta_count": 65,
+          "ok": true
+        },
+        {
+          "id": "be1cd318ba1747ee957358a2e581d929",
+          "job": "mixed-6-2",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 255.684831,
+          "first_delta": null,
+          "finished": 256.021148,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "ccbc46e0e22a4ff289562190e56c8b58",
+          "job": "mixed-6-3",
+          "pid": 6849,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 256.024672,
+          "first_delta": null,
+          "finished": 293.737881,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "5ddd4dc7f8754a70b4bb0486f4122939",
+          "job": "mixed-6-4",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 287.627308,
+          "first_delta": 311.459099,
+          "finished": 321.545786,
+          "delta_count": 74,
+          "ok": true
+        },
+        {
+          "id": "b5d5e7e6a8a34dd586a5e3b92cff720e",
+          "job": "mixed-6-5",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 293.741549,
+          "first_delta": null,
+          "finished": 293.990002,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "90928a70909a436c9d5ef6aea4173c27",
+          "job": "mixed-12-0",
+          "pid": 6849,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 321.555468,
+          "first_delta": null,
+          "finished": 361.641783,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "bfea90735fad492bbb93f09abcd198db",
+          "job": "mixed-12-1",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 321.624651,
+          "first_delta": 351.240221,
+          "finished": 353.689884,
+          "delta_count": 63,
+          "ok": true
+        },
+        {
+          "id": "f5296948691b465cb53db72d9e933b78",
+          "job": "mixed-12-2",
+          "pid": 6847,
+          "task": "llm.embedding_text",
+          "sent": 321.62494,
+          "first_delta": null,
+          "finished": 321.869652,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "31bd7c4694b747b595e8ed12863d8069",
+          "job": "mixed-12-3",
+          "pid": 6847,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 321.873465,
+          "first_delta": null,
+          "finished": 362.554331,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "ac53a07e00584e36aacacafd5db4971b",
+          "job": "mixed-12-4",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 353.695825,
+          "first_delta": 382.261685,
+          "finished": 384.69772,
+          "delta_count": 61,
+          "ok": true
+        },
+        {
+          "id": "bfb5368968404605af3fad8a158e8a68",
+          "job": "mixed-12-5",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 361.643502,
+          "first_delta": null,
+          "finished": 361.946717,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "409188a0246d4658aa10781aa218a849",
+          "job": "mixed-12-8",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 361.949774,
+          "first_delta": null,
+          "finished": 362.22145,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "a090fe2a9e0444b589d02b15bb3dd6bf",
+          "job": "mixed-12-11",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 362.223683,
+          "first_delta": null,
+          "finished": 362.420159,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "d7d83ff21a7e4ab6b448d9c2952e07f3",
+          "job": "mixed-12-7",
+          "pid": 7359,
+          "task": "llm.text.qwen35_4b",
+          "sent": 384.699301,
+          "first_delta": null,
+          "finished": 414.707542,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "106f5eb3b4d1400b924b304d846b03b8",
+          "job": "mixed-12-6",
+          "pid": 6849,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 384.6996,
+          "first_delta": null,
+          "finished": 421.215069,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "e41e36acc7ed4cf39252acade54437a2",
+          "job": "mixed-12-9",
+          "pid": 6847,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 414.714793,
+          "first_delta": null,
+          "finished": 581.541709,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "b8befa2670324b4e910d97fce9f47f93",
+          "job": "mixed-12-10",
+          "pid": 8045,
+          "task": "llm.text.qwen35_4b",
+          "sent": 414.776129,
+          "first_delta": 442.440532,
+          "finished": 444.172127,
+          "delta_count": 50,
+          "ok": true
+        },
+        {
+          "id": "b2460d991f3f44bdb6beb87b8e9f6bbe",
+          "job": "cancel-real-stream",
+          "pid": 8045,
+          "task": "llm.text.qwen35_4b",
+          "sent": 581.547558,
+          "first_delta": 609.795889,
+          "finished": 609.797392,
+          "delta_count": 1,
+          "interrupted": true
+        },
+        {
+          "id": "7239e11ea984480eb4e20f57fba73a68",
+          "job": "after-cancel-1",
+          "pid": 6849,
+          "task": "llm.embedding_text",
+          "sent": 609.802321,
+          "first_delta": null,
+          "finished": 610.441779,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "fe19647df6ac49369f92b0cdf36632df",
+          "job": "after-cancel-2",
+          "pid": 6847,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 609.803412,
+          "first_delta": null,
+          "finished": 644.28248,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "87357c51e57e49adbb84dee2182694a8",
+          "job": "after-cancel-0",
+          "pid": 9189,
+          "task": "llm.text.qwen35_4b",
+          "sent": 609.879561,
+          "first_delta": 635.756131,
+          "finished": 637.884973,
+          "delta_count": 64,
+          "ok": true
+        }
+      ],
+      "wall_clock_finished": 1793862598.616426
+    },
+    "http8b": {
+      "model": "Qwen/Qwen3-8B",
+      "stages": [],
+      "requests": [
+        {
+          "name": "http-chat-1",
+          "kind": "http_chat",
+          "submitted": 0.159411,
+          "status": "fail",
+          "error_type": "AssertionError",
+          "error": "[{'event': 'error', 'data': {'error': '对话通道正忙，请稍后查看回复。'}}]",
+          "finished": 30.254111,
+          "elapsed_seconds": 30.095
+        },
+        {
+          "name": "http-chat-0",
+          "kind": "http_chat",
+          "submitted": 0.158388,
+          "status": "fail",
+          "error_type": "AssertionError",
+          "error": "[{'event': 'error', 'data': {'error': 'AI 服务响应超时；请检查网络连通性或稍后重试。'}}]",
+          "finished": 30.464329,
+          "elapsed_seconds": 30.306
+        },
+        {
+          "name": "http-eval-1",
+          "kind": "evaluation",
+          "marker": "CC-29869180e839",
+          "submitted": 0.14308,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 212,
+            "completion_tokens": 683,
+            "total_tokens": 895
+          },
+          "finished": 30.592248,
+          "elapsed_seconds": 30.449,
+          "queue_seconds": 0.213
+        },
+        {
+          "name": "http-embedding-0",
+          "kind": "embedding",
+          "marker": "CC-07c07007eb97",
+          "submitted": 0.159781,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 30.773375,
+          "elapsed_seconds": 30.614,
+          "queue_seconds": 30.433
+        },
+        {
+          "name": "http-embedding-1",
+          "kind": "embedding",
+          "marker": "CC-e4a7e1e2eedb",
+          "submitted": 0.159858,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 30.954018,
+          "elapsed_seconds": 30.794,
+          "queue_seconds": 30.614
+        },
+        {
+          "name": "http-eval-0",
+          "kind": "evaluation",
+          "marker": "CC-01d58b4ad542",
+          "submitted": 0.122725,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 207,
+            "completion_tokens": 727,
+            "total_tokens": 934
+          },
+          "finished": 37.09441,
+          "elapsed_seconds": 36.972,
+          "queue_seconds": 0.159
+        }
+      ],
+      "frames": [
+        {
+          "id": "3f85c68a5ab3487ca9d1f99b065a3eab",
+          "job": "http-eval-0",
+          "pid": 7815,
+          "task": "llm.structured",
+          "sent": 0.281326,
+          "first_delta": null,
+          "finished": 37.093352,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "8908d5af65ae43f593caff2d6fcf206b",
+          "job": "http-eval-1",
+          "pid": 7818,
+          "task": "llm.structured",
+          "sent": 0.356116,
+          "first_delta": null,
+          "finished": 30.590063,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "1499ba9f3caf4f9295766f316c7063e6",
+          "job": "http-chat-0",
+          "pid": 7820,
+          "task": "llm.tools",
+          "sent": 0.42493,
+          "first_delta": null,
+          "finished": 54.478811,
+          "delta_count": 0,
+          "interrupted": true
+        },
+        {
+          "id": "2ddb68a891cf4e0183dfa6e06c655acd",
+          "job": "",
+          "pid": 8015,
+          "task": "llm.tools",
+          "sent": 30.500533,
+          "first_delta": 32.067194,
+          "finished": 34.400164,
+          "delta_count": 42,
+          "ok": true
+        },
+        {
+          "id": "a8ebbb585b134d09ae71909d5e173cef",
+          "job": "http-embedding-0",
+          "pid": 7818,
+          "task": "llm.embedding_text",
+          "sent": 30.592962,
+          "first_delta": null,
+          "finished": 30.772606,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "2ba18222c96e4805a286910f99a7d375",
+          "job": "http-embedding-1",
+          "pid": 7818,
+          "task": "llm.embedding_text",
+          "sent": 30.774349,
+          "first_delta": null,
+          "finished": 30.953525,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "be158824dc0b4ca49f16b34d896a25b8",
+          "job": "",
+          "pid": 7818,
+          "task": "llm.structured",
+          "sent": 34.420916,
+          "first_delta": null,
+          "finished": 54.474578,
+          "delta_count": 0,
+          "ok": true
+        }
+      ],
+      "http_summary": {
+        "passed": 4,
+        "total": 6,
+        "seconds": 37.423,
+        "pings": [
+          {
+            "ok": true,
+            "seconds": 0.071
+          },
+          {
+            "ok": true,
+            "seconds": 0.0072
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0047
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0031
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0043
+          },
+          {
+            "ok": true,
+            "seconds": 0.005
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0048
+          },
+          {
+            "ok": true,
+            "seconds": 0.0043
+          },
+          {
+            "ok": true,
+            "seconds": 0.0025
+          },
+          {
+            "ok": true,
+            "seconds": 0.0024
+          },
+          {
+            "ok": true,
+            "seconds": 0.003
+          },
+          {
+            "ok": true,
+            "seconds": 0.0081
+          },
+          {
+            "ok": true,
+            "seconds": 0.0048
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0029
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0049
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0043
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0049
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0046
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.005
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0029
+          }
+        ],
+        "gate": {
+          "llm_total_concurrency": 3,
+          "llm_background_concurrency": 2,
+          "llm_total_active": 1,
+          "llm_total_waiting": 0,
+          "llm_background_active": 0,
+          "llm_background_waiting": 0,
+          "llm_refill_active": 0,
+          "llm_refill_waiting": 0,
+          "llm_maintenance_active": 0,
+          "llm_maintenance_waiting": 0,
+          "llm_refill_priority_active": true,
+          "inventory_priority_state": "empty"
+        }
+      },
+      "peak_ipc_inflight": 4,
+      "durable_after_shutdown": [
+        {
+          "turn_id": "concurrency-1793862319596130000-0",
+          "status": "failed",
+          "reply": "",
+          "error": "AI 服务响应超时；请检查网络连通性或稍后重试。"
+        },
+        {
+          "turn_id": "concurrency-1793862319596950000-1",
+          "status": "completed",
+          "reply": "HTTP-鲸鱼-1-3957\n\n异步请求排队是指多个请求按顺序处理，每个请求在前一个请求完成后再开始，确保系统资源合理分配和稳定运行。",
+          "error": ""
+        }
+      ],
+      "corrected_peak_ipc_inflight": 3,
+      "instrumentation_note": "First HTTP harness did not close an interrupted IPC interval until shutdown. Raw peak=4 is an observer artifact. Bounding that interval by the HTTP error return yields peak=3. Original frames/peak are retained; the SDK matrix provides independent concurrency evidence. The later HTTP harness closes this interval at the error return.",
+      "ping_summary": {
+        "total": 74,
+        "passed": 74,
+        "p95_ms": 5.0,
+        "max_ms": 71.0
+      }
+    },
+    "http4b": {
+      "model": "Qwen/Qwen3.5-4B",
+      "stages": [],
+      "requests": [
+        {
+          "name": "http-chat-0",
+          "kind": "http_chat",
+          "submitted": 0.151152,
+          "turn_id": "concurrency-1793862481905509000-0",
+          "marker": "HTTP-鲸鱼-0-3957",
+          "first_content": 16.45671,
+          "status": "pass",
+          "durable_reply_matches": true,
+          "event_counts": {
+            "final": 1,
+            "delta": 28,
+            "done": 1
+          },
+          "finished": 17.588079,
+          "elapsed_seconds": 17.437,
+          "first_content_seconds": 16.306,
+          "durable_status": "completed",
+          "durable_error": "",
+          "durable_observed_seconds": 34.644
+        },
+        {
+          "name": "http-eval-1",
+          "kind": "evaluation",
+          "marker": "CC-29869180e839",
+          "submitted": 0.140481,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 209,
+            "completion_tokens": 275,
+            "total_tokens": 484
+          },
+          "finished": 24.208813,
+          "elapsed_seconds": 24.068,
+          "queue_seconds": 0.164
+        },
+        {
+          "name": "http-embedding-0",
+          "kind": "embedding",
+          "marker": "CC-07c07007eb97",
+          "submitted": 0.152136,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 24.514989,
+          "elapsed_seconds": 24.363,
+          "queue_seconds": 24.058
+        },
+        {
+          "name": "http-embedding-1",
+          "kind": "embedding",
+          "marker": "CC-e4a7e1e2eedb",
+          "submitted": 0.152193,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 24.669307,
+          "elapsed_seconds": 24.517,
+          "queue_seconds": 24.363
+        },
+        {
+          "name": "http-eval-0",
+          "kind": "evaluation",
+          "marker": "CC-01d58b4ad542",
+          "submitted": 0.122344,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 204,
+            "completion_tokens": 229,
+            "total_tokens": 433
+          },
+          "finished": 24.999557,
+          "elapsed_seconds": 24.877,
+          "queue_seconds": 0.121
+        },
+        {
+          "name": "http-chat-1",
+          "kind": "http_chat",
+          "submitted": 0.151892,
+          "turn_id": "concurrency-1793862481906290000-1",
+          "marker": "HTTP-鲸鱼-1-3957",
+          "first_content": 33.078898,
+          "status": "pass",
+          "durable_reply_matches": true,
+          "event_counts": {
+            "final": 1,
+            "delta": 42,
+            "done": 1
+          },
+          "finished": 34.789697,
+          "elapsed_seconds": 34.638,
+          "first_content_seconds": 32.927,
+          "durable_status": "completed",
+          "durable_error": "",
+          "durable_observed_seconds": 34.648
+        }
+      ],
+      "frames": [
+        {
+          "id": "5b032c0a295d43c680607910eca0b3c6",
+          "job": "http-eval-0",
+          "pid": 8814,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 0.243464,
+          "first_delta": null,
+          "finished": 24.998707,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "e0321602a8da43a5aa3e49a9fef466d5",
+          "job": "http-eval-1",
+          "pid": 8817,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 0.304118,
+          "first_delta": null,
+          "finished": 24.207162,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "a754b2c91db14ae6b5f348f1c312fcb8",
+          "job": "http-chat-0",
+          "pid": 8819,
+          "task": "llm.tools.qwen35_4b",
+          "sent": 0.364834,
+          "first_delta": 16.455679,
+          "finished": 17.559091,
+          "delta_count": 28,
+          "ok": true
+        },
+        {
+          "id": "b94bc787990546bfb1e370c5bf08a129",
+          "job": "http-chat-1",
+          "pid": 8819,
+          "task": "llm.tools.qwen35_4b",
+          "sent": 17.579202,
+          "first_delta": 33.07814,
+          "finished": 34.779223,
+          "delta_count": 42,
+          "ok": true
+        },
+        {
+          "id": "336896f2891a4a9ebedbade5148ea9ef",
+          "job": "http-embedding-0",
+          "pid": 8817,
+          "task": "llm.embedding_text",
+          "sent": 24.20966,
+          "first_delta": null,
+          "finished": 24.514464,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "2d32393cf50e4395b7e4874448b82ed6",
+          "job": "http-embedding-1",
+          "pid": 8817,
+          "task": "llm.embedding_text",
+          "sent": 24.51567,
+          "first_delta": null,
+          "finished": 24.668672,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "abf46dc15f514103bd2caee1b01bd0fa",
+          "job": "",
+          "pid": 8817,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 24.670073,
+          "first_delta": null,
+          "finished": 53.463702,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "749d16799cea47468cdc26ea36a49c6f",
+          "job": "",
+          "pid": 8814,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 53.482022,
+          "first_delta": null,
+          "finished": 65.246239,
+          "delta_count": 0,
+          "interrupted": true
+        }
+      ],
+      "http_summary": {
+        "passed": 6,
+        "total": 6,
+        "seconds": 34.985,
+        "pings": [
+          {
+            "ok": true,
+            "seconds": 0.0549
+          },
+          {
+            "ok": true,
+            "seconds": 0.005
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0045
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0042
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0054
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0047
+          },
+          {
+            "ok": true,
+            "seconds": 0.0052
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0031
+          },
+          {
+            "ok": true,
+            "seconds": 0.0042
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0041
+          },
+          {
+            "ok": true,
+            "seconds": 0.113
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0037
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.003
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0038
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0036
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.003
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0035
+          },
+          {
+            "ok": true,
+            "seconds": 0.0029
+          },
+          {
+            "ok": true,
+            "seconds": 0.0026
+          },
+          {
+            "ok": true,
+            "seconds": 0.0044
+          },
+          {
+            "ok": true,
+            "seconds": 0.0039
+          },
+          {
+            "ok": true,
+            "seconds": 0.0042
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          },
+          {
+            "ok": true,
+            "seconds": 0.0054
+          },
+          {
+            "ok": true,
+            "seconds": 0.0034
+          },
+          {
+            "ok": true,
+            "seconds": 0.004
+          },
+          {
+            "ok": true,
+            "seconds": 0.004
+          },
+          {
+            "ok": true,
+            "seconds": 0.0032
+          },
+          {
+            "ok": true,
+            "seconds": 0.0033
+          }
+        ],
+        "gate": {
+          "llm_total_concurrency": 3,
+          "llm_background_concurrency": 2,
+          "llm_total_active": 1,
+          "llm_total_waiting": 0,
+          "llm_background_active": 0,
+          "llm_background_waiting": 0,
+          "llm_refill_active": 0,
+          "llm_refill_waiting": 0,
+          "llm_maintenance_active": 0,
+          "llm_maintenance_waiting": 0,
+          "llm_refill_priority_active": true,
+          "inventory_priority_state": "empty"
+        }
+      },
+      "peak_ipc_inflight": 3,
+      "ping_summary": {
+        "total": 69,
+        "passed": 69,
+        "p95_ms": 5.4,
+        "max_ms": 113.0
+      }
+    },
+    "process8b": {
+      "model": "Qwen/Qwen3-8B",
+      "stages": [
+        {
+          "name": "process-mixed",
+          "submitted": 4,
+          "passed": 4,
+          "elapsed_seconds": 46.59,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            8830,
+            8833,
+            8839
+          ],
+          "max_queue_seconds": 36.419,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        }
+      ],
+      "requests": [
+        {
+          "name": "process-mixed-2",
+          "kind": "chat",
+          "marker": "CC-1e784f4b6937",
+          "submitted": 0.00883,
+          "first_content": 9.791409,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 64,
+            "completion_tokens": 77,
+            "total_tokens": 141
+          },
+          "finished": 13.220457,
+          "elapsed_seconds": 13.212,
+          "queue_seconds": 0.355,
+          "first_content_seconds": 9.783
+        },
+        {
+          "name": "process-mixed-1",
+          "kind": "evaluation",
+          "marker": "CC-9c7ea97cca07",
+          "submitted": 0.008233,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 197,
+            "completion_tokens": 548,
+            "total_tokens": 745
+          },
+          "finished": 36.427289,
+          "elapsed_seconds": 36.419,
+          "queue_seconds": 0.288
+        },
+        {
+          "name": "process-mixed-3",
+          "kind": "embedding",
+          "marker": "CC-0362b89c506e",
+          "submitted": 0.008957,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 36.599885,
+          "elapsed_seconds": 36.591,
+          "queue_seconds": 36.419
+        },
+        {
+          "name": "process-mixed-0",
+          "kind": "evaluation",
+          "marker": "CC-9488d7f446d2",
+          "submitted": 0.001859,
+          "status": "pass",
+          "model": "Qwen/Qwen3-8B",
+          "usage": {
+            "prompt_tokens": 212,
+            "completion_tokens": 750,
+            "total_tokens": 962
+          },
+          "finished": 46.591081,
+          "elapsed_seconds": 46.589,
+          "queue_seconds": 0.119
+        }
+      ],
+      "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+      "concurrency": 3,
+      "private_runtime_response_replacements": false,
+      "wall_clock_started": 1793862501.793046,
+      "frames": [
+        {
+          "id": "7c4c8af92d184c1da04a741e913477d1",
+          "job": "process-mixed-0",
+          "pid": 8830,
+          "task": "llm.structured",
+          "sent": 0.120845,
+          "first_delta": null,
+          "finished": 46.590759,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "475e659b84e84e54a1b56df2b938f151",
+          "job": "process-mixed-1",
+          "pid": 8833,
+          "task": "llm.structured",
+          "sent": 0.296641,
+          "first_delta": null,
+          "finished": 36.426381,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "d2977f4fb0a74f05a46b94458d0b192a",
+          "job": "process-mixed-2",
+          "pid": 8839,
+          "task": "llm.text",
+          "sent": 0.363522,
+          "first_delta": 9.791373,
+          "finished": 13.220019,
+          "delta_count": 77,
+          "ok": true
+        },
+        {
+          "id": "231ac37c039d46a0883ffe98d842ac6d",
+          "job": "process-mixed-3",
+          "pid": 8833,
+          "task": "llm.embedding_text",
+          "sent": 36.428393,
+          "first_delta": null,
+          "finished": 36.599358,
+          "delta_count": 0,
+          "ok": true
+        }
+      ],
+      "wall_clock_finished": 1793862548.385424
+    },
+    "process4b": {
+      "model": "Qwen/Qwen3.5-4B",
+      "stages": [
+        {
+          "name": "process-mixed",
+          "submitted": 4,
+          "passed": 4,
+          "elapsed_seconds": 25.44,
+          "peak_ipc_inflight": 3,
+          "worker_pids": [
+            8829,
+            8835,
+            8837
+          ],
+          "max_queue_seconds": 24.134,
+          "verified_from_recorded_frames": {
+            "expected_peak_observed": true,
+            "each_child_serial": true,
+            "worker_identity_observed": true
+          }
+        }
+      ],
+      "requests": [
+        {
+          "name": "process-mixed-2",
+          "kind": "chat",
+          "marker": "CC-1e784f4b6937",
+          "submitted": 0.00927,
+          "first_content": 16.575146,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 62,
+            "completion_tokens": 70,
+            "total_tokens": 132
+          },
+          "finished": 19.293808,
+          "elapsed_seconds": 19.285,
+          "queue_seconds": 0.419,
+          "first_content_seconds": 16.566
+        },
+        {
+          "name": "process-mixed-1",
+          "kind": "evaluation",
+          "marker": "CC-9c7ea97cca07",
+          "submitted": 0.008439,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 194,
+            "completion_tokens": 222,
+            "total_tokens": 416
+          },
+          "finished": 24.141111,
+          "elapsed_seconds": 24.133,
+          "queue_seconds": 0.224
+        },
+        {
+          "name": "process-mixed-3",
+          "kind": "embedding",
+          "marker": "CC-0362b89c506e",
+          "submitted": 0.00942,
+          "dimensions": 1024,
+          "status": "pass",
+          "finished": 24.317022,
+          "elapsed_seconds": 24.308,
+          "queue_seconds": 24.134
+        },
+        {
+          "name": "process-mixed-0",
+          "kind": "evaluation",
+          "marker": "CC-9488d7f446d2",
+          "submitted": 0.002054,
+          "status": "pass",
+          "model": "Qwen/Qwen3.5-4B",
+          "usage": {
+            "prompt_tokens": 209,
+            "completion_tokens": 275,
+            "total_tokens": 484
+          },
+          "finished": 25.440753,
+          "elapsed_seconds": 25.439,
+          "queue_seconds": 0.168
+        }
+      ],
+      "runtime_manifest_sha256": "9c4f6dad43996b9882d54da4eb82412335b4eaf55c5bab5a4fca4a27478ec3de",
+      "concurrency": 3,
+      "private_runtime_response_replacements": false,
+      "wall_clock_started": 1793862501.793043,
+      "frames": [
+        {
+          "id": "74c4b37657374aa8a3dc78a320a61e8c",
+          "job": "process-mixed-0",
+          "pid": 8829,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 0.169946,
+          "first_delta": null,
+          "finished": 25.440336,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "63bd8505d28e4161b3ef2c1414b0f775",
+          "job": "process-mixed-1",
+          "pid": 8835,
+          "task": "llm.structured.qwen35_4b",
+          "sent": 0.232802,
+          "first_delta": null,
+          "finished": 24.14032,
+          "delta_count": 0,
+          "ok": true
+        },
+        {
+          "id": "d646137fc2a14e798d39e2449691d839",
+          "job": "process-mixed-2",
+          "pid": 8837,
+          "task": "llm.text.qwen35_4b",
+          "sent": 0.428436,
+          "first_delta": 16.575109,
+          "finished": 19.29337,
+          "delta_count": 70,
+          "ok": true
+        },
+        {
+          "id": "82923b7568524a1ab24d867e90aaf27c",
+          "job": "process-mixed-3",
+          "pid": 8835,
+          "task": "llm.embedding_text",
+          "sent": 24.143878,
+          "first_delta": null,
+          "finished": 24.316424,
+          "delta_count": 0,
+          "ok": true
+        }
+      ],
+      "wall_clock_finished": 1793862527.235837
+    }
+  }
+}

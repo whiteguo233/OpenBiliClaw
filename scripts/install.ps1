@@ -553,6 +553,8 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
         Write-Host "Setup wizard: $setupUrl"
         Write-Host '             (open in a browser to configure LLM / embedding and'
         Write-Host '              run prerequisite checks - same guided page as the desktop app)'
+        Write-Host 'Free models: choose Qwen3-8B or Qwen3.5-4B + BGE-M3 in the setup wizard.'
+        Write-Host '             No shared API key entry; requires a verified runtime release.'
     }
     if ($missing) { Write-Host "Missing:     $missing" }
     else { Write-Host 'Missing:     (none)' }
@@ -643,7 +645,8 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
     } elseif ($missing) {
         Write-Host 'Next steps (credentials are missing):'
         Write-Host ''
-        Write-Host '  1. Choose your LLM chat provider (default: deepseek):'
+        Write-Host '  1. Open the setup wizard for the recommended free Qwen + BGE-M3 option.'
+        Write-Host '     If this build has no verified runtime release, choose your own provider:'
         Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible'
         Write-Host '     (Local Ollama is embedding-only here - not offered as a chat provider.)'
         Write-Host ''

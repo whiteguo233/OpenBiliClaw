@@ -1856,3 +1856,37 @@ def test_setup_failed_last_write_is_not_marked_saved_after_switching_back(
       return {saved: setupLocaleSaved, writes};
     }""")
     assert result == {"saved": False, "writes": 3}
+
+
+@pytest.mark.parametrize(
+    "mode,label",
+    [
+        ("cloud", "硅基流动 BGE-M3 文本向量已就绪。"),
+        ("local", "本地 Ollama 文本向量已就绪。"),
+    ],
+)
+def test_setup_completion_reports_selected_embedding_mode(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+    mode: str,
+    label: str,
+) -> None:
+    base_url, state = guided_init_server
+    state.config_override = {
+        "config": {
+            "llm": {
+                "sponsored": {
+                    "enabled": True,
+                    "model": "Qwen/Qwen3.5-4B",
+                    "embedding_mode": mode,
+                    "runtime_available": True,
+                }
+            }
+        }
+    }
+    state.set_initialized()
+    page = chromium_page
+    page.goto(base_url + "/setup/")
+    page.wait_for_selector('[data-panel="3"].active')
+    assert page.locator("#doneEmbedding").inner_text() == label
+    assert "已随包就绪" not in page.locator('[data-panel="3"]').inner_text()

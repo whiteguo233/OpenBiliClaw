@@ -2843,7 +2843,7 @@ class SoulEngine:
                     turn_id=turn_id,
                 ) as _entry:
                     legacy_profile = await self._profile_builder.build(
-                        history=[],
+                        history=self._profile_rebuild_history(),
                         preference=updated_preference,
                         awareness_notes=[
                             awareness_note_to_dict(item) for item in self._load_awareness_notes()
@@ -3591,7 +3591,7 @@ class SoulEngine:
                 source_refs=source_refs,
             ) as _entry:
                 legacy_profile = await self._profile_builder.build(
-                    history=[],
+                    history=self._profile_rebuild_history(),
                     preference=updated_preference,
                     awareness_notes=[
                         awareness_note_to_dict(item) for item in self._load_awareness_notes()
@@ -4000,6 +4000,18 @@ class SoulEngine:
         age = reference - created
         return age >= timedelta(days=_AUTO_VALIDATE_MIN_AGE_DAYS)
 
+    def _profile_rebuild_history(self) -> list[dict[str, Any]]:
+        """Retain original free-profile evidence instead of erasing it on rebuild."""
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+
+        from .event_provenance import event_metadata
+
+        if not sponsored_enabled():
+            return []
+        return [
+            {**row, "metadata": event_metadata(row)} for row in self._memory.query_events(limit=512)
+        ]
+
     def _rebuild_active_insights(self) -> list[dict[str, object]]:
         """Insight dicts eligible to shape a soul rebuild (spec invariant 3 / F1).
 
@@ -4241,7 +4253,7 @@ class SoulEngine:
                 source_refs=source_refs,
             ) as _entry:
                 legacy_profile = await self._profile_builder.build(
-                    history=[],
+                    history=self._profile_rebuild_history(),
                     preference=preference,
                     awareness_notes=[
                         awareness_note_to_dict(item) for item in self._load_awareness_notes()

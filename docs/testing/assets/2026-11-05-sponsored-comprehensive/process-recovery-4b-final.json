@@ -1,0 +1,41 @@
+[
+  {
+    "model": "Qwen/Qwen3.5-4B"
+  },
+  {
+    "case": "before_SIGKILL",
+    "first_delta_seen": true,
+    "first_status": "pending",
+    "queued_status": "pending",
+    "backend_pid": 44702
+  },
+  {
+    "case": "after_restart",
+    "interrupted": {
+      "status": "failed",
+      "reply": "",
+      "error": "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。"
+    },
+    "queued": {
+      "status": "completed",
+      "reply": "进程恢复 842。",
+      "error": ""
+    },
+    "turn_count": 2,
+    "events_before_crash": [
+      "delta",
+      "delta"
+    ]
+  },
+  {
+    "case": "reply_fidelity",
+    "exact_copy": false,
+    "reply": "进程恢复 842。"
+  },
+  {
+    "case": "recovery_assertions",
+    "status": "pass",
+    "partial_work_not_replayed": true,
+    "untouched_queued_work_resumed": true
+  }
+]

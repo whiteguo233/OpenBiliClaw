@@ -599,6 +599,7 @@ class TestMobileWebViewModels:
             assert.deepEqual(
               normalizeRuntimeStatus({ initialized: true }),
               {
+                sponsored_status: {},
                 initialized: true,
                 recommendation_count: 0,
                 pending_signal_events: 0,

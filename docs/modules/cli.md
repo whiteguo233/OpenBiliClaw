@@ -163,6 +163,8 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 
 ## 详细说明
 
+GitHub 初始化补池修复（2026-11-05）：`openbiliclaw init` 保留 GitHub 来源选择，并通过正式 producer、同步评估和文案建立首轮库存；GitHub HTTP client 随本轮关闭，不依赖后台调度开启。命令参数不变。
+
 ### 初始化语言选择
 
 `openbiliclaw init` 在交互终端首先显示 `简体中文 / 繁體中文 / English`，接受编号或 locale，
@@ -1773,3 +1775,17 @@ $ openbiliclaw db-repair
 TikTok full-source 初始化在后台标签页顺序读取喜欢、收藏、关注三个默认 scope（网页历史可选）；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。
 
 TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历史数据标为“默认不采集”，避免把未请求历史写成成功采集 0 条。
+
+
+## 可选全项目 Sponsored SDK（未发布）
+
+业务CLI保持不变。启用配套全任务Runtime/Policy后，文本、JSON、工具、流式、视觉、向量与评测经统一SDK。源码默认关闭，无新增Rust编译或用户Key依赖。`generate_sponsored_policy.py` 生成无Key策略，`audit_sponsored_coverage.py` 生成调用清单；正式生产禁用mock/unsigned/外部公钥覆盖。见[设计](../plans/2026-10-27-sponsored-all-tasks.md)。
+
+
+### 免费模型初始化与显示
+
+`openbiliclaw init` 的首次模型引导推荐免费方案，可选 Qwen3-8B 或 Qwen3.5-4B，再选择默认硅基流动BGE-M3或本地Ollama向量，自动准备已签名组件并保存 `llm.sponsored`；无法取得组件时给出安装原因。选择自有渠道会关闭免费开关但保留免费模型选择。初始化继续执行真实前置检查；`openbiliclaw config-show` 显示免费模型、上下文、实际向量来源及当前凭据通知。本地选项保留已有地址/模型，未配置时采用Ollama/bge-m3，并沿用原安装/拉取过程；`setup-embedding` 显式选Ollama会同步设置免费方案的本地向量模式。免费模式无需自有Key，图片能力仍可选。
+
+免费独占模式（`enabled=true`、`fallback_to_user_provider=false`）的已保存 legacy / v2 配置可直接执行 `recommend` 等命令，不再因未使用的 DeepSeek 等自有 Key 为空而被旧运行时校验拦截。开启自有渠道回退时仍需配置该渠道。四种对话/向量组合的真实 `config-show`、`profile` 与公开数据的实际推荐出卡见[真实端到端验收](../testing/2026-11-05-sponsored-real-e2e.md)。
+
+安装器子命令 `python -m openbiliclaw.runtime.sponsored_bundle` 的 `--archive/--stage/--if-available` 见[Runtime API](runtime.md#免费模型组件安装与更新)。

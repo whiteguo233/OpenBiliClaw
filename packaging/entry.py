@@ -64,6 +64,32 @@ def _macos_app_bundle_root(exe_dir: Path) -> Path:
     return exe_dir.parent.parent
 
 
+def _verify_packaged_sponsored_runtime(resources: Path) -> None:
+    """Fail the frozen installer smoke if its signed native runtime cannot run."""
+    from openbiliclaw.proc import no_window_kwargs
+    from openbiliclaw.runtime.sponsored_bundle import verify_bundle
+
+    bundle = resources / "sponsored"
+    if not bundle.is_dir():
+        raise RuntimeError("Packaged sponsored runtime is missing")
+    verify_bundle(bundle)
+    binary = bundle / ("obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime")
+    # Offline policy validation: exercise the actual bundled executable after
+    # signing/installation without making model calls or disclosing credentials.
+    result = subprocess.run(
+        [
+            str(binary), "--policy", str(bundle / "sponsored-policy.json"),
+            "--signature", str(bundle / "sponsored-policy.sig"), "--check-policy",
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+        **no_window_kwargs(),
+    )
+    if result.returncode:
+        raise RuntimeError("Packaged sponsored runtime failed native policy validation")
+
+
 def _user_data_root_for(
     os_name: str, platform: str, home: Path, environ: Mapping[str, str]
 ) -> Path:
@@ -487,6 +513,8 @@ def _ensure_embedding_model_async() -> None:
 
         cfg = load_config()
         emb = cfg.llm.embedding
+        if cfg.llm.sponsored.uses_cloud_embedding:
+            return  # Free text vectors use cloud BGE, including with chat fallback.
         if str(emb.provider).strip().lower() != "ollama":
             return
         model = str(emb.model).strip() or "bge-m3"
@@ -593,9 +621,24 @@ def _seed_bundled_embedding_model(bundled_resources: Path, config_path: Path) ->
         from openbiliclaw.runtime.ollama_supervisor import start_managed_ollama_at
 
         cfg = load_config()
+        if cfg.llm.sponsored.uses_cloud_embedding:
+            return False  # Preserve the local seed until local embedding is selected.
         provider = str(cfg.llm.embedding.provider).strip().lower()
         if provider not in ("", "ollama"):
             return False  # user chose a remote embedding provider — respect it
+        if cfg.llm.sponsored.enabled:
+            from urllib.parse import urlsplit
+
+            selected_model = cfg.llm.embedding.model.strip()
+            selected_url = cfg.llm.embedding.base_url.strip()
+            endpoint = urlsplit(selected_url or "http://127.0.0.1:11434/v1")
+            if (
+                selected_model not in {"", "bge-m3", "bge-m3:latest"}
+                or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or endpoint.port not in {11434, _PRIVATE_OLLAMA_PORT}
+                or endpoint.path.rstrip("/") not in {"", "/v1"}
+            ):
+                return False  # Free chat must not overwrite an existing local deployment.
 
         target = effective_embedding_models_dir(
             user_ollama_models=os.environ.get("OLLAMA_MODELS"),
@@ -1169,11 +1212,22 @@ def main() -> None:
     # Make a bundled ollama (if this build shipped one) discoverable before any
     # config is read, so the existing supervisor finds it via shutil.which.
     has_bundled_ollama = _inject_bundled_ollama_on_path(bundled_resources)
+    if (bundled_resources / "sponsored").is_dir():
+        os.environ["OPENBILICLAW_SPONSORED_BUNDLE"] = str(bundled_resources / "sponsored")
 
     # Seed a default config.toml if the user hasn't created one yet. On a fresh
     # packaged install with a bundled ollama, default embedding to it so local
     # semantic features work out of the box.
     seeded = _seed_default_config(project_root, bundled_resources)
+    if seeded:
+        from dataclasses import replace
+        from openbiliclaw.config import load_config_with_diagnostics, save_config
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        if installed_runtime_command():
+            initial_config, _ = load_config_with_diagnostics()
+            initial_config.llm.sponsored = replace(initial_config.llm.sponsored, enabled=True)
+            save_config(initial_config)
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")
@@ -1232,6 +1286,10 @@ def main() -> None:
     # port. Lets CI / a local check smoke-test the packaged build even
     # when a real serve-api already owns the port.
     if os.environ.get("OPENBILICLAW_SELFTEST"):
+        if getattr(sys, "frozen", False):
+            _verify_packaged_sponsored_runtime(bundled_resources)
+            if seeded and (runtime_config is None or not runtime_config.llm.sponsored.enabled):
+                raise RuntimeError("Fresh packaged config did not enable its built-in provider")
         create_app()
         _close_splash()
         print("[OpenBiliClaw] selftest OK — 依赖与后端装配正常")

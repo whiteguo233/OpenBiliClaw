@@ -571,6 +571,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
+    allow_sponsored_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -606,6 +607,10 @@ async def _run_init_heartbeat(
 _EMBEDDING_READY_TTL_SECONDS = 30.0
 _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+# The Nov 5 simultaneous-workload acceptance returned a valid local vector at
+# 20.493s; local model cold loading also takes 10–30s. User-triggered probes get
+# a bounded 45s budget, independently of the short background health poll.
+_LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS = 45.0
 _EmbeddingProbeOutcome = Literal["ready", "failed", "timed_out"]
 _LAN_IP_TTL_SECONDS = 30.0
 _AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
@@ -3674,6 +3679,15 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
+        if item.allow_sponsored_live_apply and not item.restart_required:
+            async with config_runtime_reload_lock:
+                if ctx.try_apply_sponsored_config(item.config):
+                    if ctx.full_worker_expected():
+                        # Separate workers own startup config snapshots. Let
+                        # the existing supervisor reload them after the apply
+                        # queue settles; durable jobs recover on restart.
+                        app.state.backend_config_generation += 1
+                    return tr("api.config.saved_applied", path=item.saved_path)
         # Chat knobs have no dependency on profile/feedback owners. Keep the
         # same queue, lock and last-good transaction, but don't drain unrelated
         # work when the complete candidate differs only in known chat fields.
@@ -3789,6 +3803,10 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
+                            config_apply_pending.allow_sponsored_live_apply = (
+                                config_apply_pending.allow_sponsored_live_apply
+                                and item.allow_sponsored_live_apply
+                            )
                             _set_config_apply_status(
                                 "queued",
                                 (
@@ -3889,6 +3907,9 @@ def create_app(
             # requirement even when the newest revision is a small agent edit.
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
+            )
+            item.allow_sponsored_live_apply = (
+                item.allow_sponsored_live_apply and config_apply_pending.allow_sponsored_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -5370,6 +5391,38 @@ def create_app(
         stored_payload["agent_events"] = [dict(event) for event in events]
         return True
 
+    def _agent_turn_started(turn_id: str) -> bool:
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        return any(
+            isinstance(event, dict) and event.get("type") != "sponsored_retry" for event in events
+        )
+
+    def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
+        """Persist a bounded recovery count; never replay output or tool work."""
+        from openbiliclaw.llm.sponsored_errors import SponsoredError
+
+        if not isinstance(exc, SponsoredError) or _agent_turn_started(turn_id):
+            return False
+        if exc.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+            return False
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        # At most two durable retries after the original attempt. Each SDK
+        # attempt already includes bounded free-model fallback; do not keep a
+        # permanently unavailable service at the head of the dialogue lane.
+        if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
+            return False
+        return _append_chat_turn_agent_event(turn_id, {"type": "sponsored_retry", "code": exc.code})
+
+    def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
+        # Persist the first delta boundary without storing token fragments.
+        # A restart can then distinguish untouched work from partial output.
+        if event.type != "delta":
+            _append_chat_turn_agent_event(turn_id, event.to_dict())
+        elif not _agent_turn_started(turn_id):
+            _append_chat_turn_agent_event(turn_id, {"type": "execution_started"})
+
     # --- Multi-session chat helpers (「聊一聊」 M5) ---
 
     def _chat_session_db_method(name: str) -> Any:
@@ -5778,7 +5831,9 @@ def create_app(
         cfg = getattr(ctx, "config", None)
         emb = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb, "provider", "") or "").strip()
-        return bool(provider)
+        return bool(provider) or bool(
+            getattr(getattr(getattr(cfg, "llm", None), "sponsored", None), "enabled", False)
+        )
 
     @app.get("/api/ping")
     async def ping() -> JSONResponse:
@@ -6375,9 +6430,9 @@ def create_app(
                     target_pool_count,
                     fully_parallel=True,
                     progress_callback=progress_callback,
-                    # Instagram's explicit init uses the formal task-backed
-                    # producer. Other sources retain their legacy backfill.
-                    sources=effective if "instagram" in effective else None,
+                    # These sources own a complete producer/evaluate/copy
+                    # init wave; never substitute an unselected Bilibili run.
+                    sources=effective if effective & {"instagram", "github"} else None,
                     register_instagram_task=lambda task_id: coord.register_enqueued_task(
                         run_id, task_id
                     ),
@@ -11653,6 +11708,9 @@ def create_app(
         payload["bilibili_cookie_staged"] = (
             peek_staged_bilibili_cookie(active_runtime_data_path) is not None
         )
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        payload["sponsored_status"] = await asyncio.to_thread(sponsored_status, ctx.config)
         response = RuntimeStatusResponse(**payload)
         runtime_status_cache = response
         runtime_status_cached_at = time.monotonic()
@@ -12653,6 +12711,11 @@ def create_app(
                                     },
                                 )
                             return
+                    if turn_id and _agent_turn_started(turn_id):
+                        raise TerminalChatReplyError(
+                            "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                            code="interrupted_agent_turn",
+                        )
                     agent_loop = getattr(ctx, "agent_loop", None)
                     stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
                     if agent_loop is None or not callable(stream_fn):
@@ -12683,8 +12746,8 @@ def create_app(
                         data = event.to_dict()
                         # Persist semantic events incrementally for recovery;
                         # token deltas are live-only, replay uses final/thinking.
-                        if turn_id and event.type != "delta":
-                            _append_chat_turn_agent_event(turn_id, data)
+                        if turn_id:
+                            _checkpoint_agent_event(turn_id, event)
                         if event.type == "final":
                             final_reply = event.text
                         yield sse(event.type, data)
@@ -12713,7 +12776,21 @@ def create_app(
                 return
             except Exception as exc:
                 logger.exception("Agent chat stream failed")
-                error_message = safe_llm_failure_message(exc)
+                error_message = (
+                    exc.safe_message
+                    if isinstance(exc, TerminalChatReplyError)
+                    else safe_llm_failure_message(exc)
+                )
+                if turn_id and _retry_silent_sponsored_turn(turn_id, exc):
+                    chat_reply_scheduler.schedule(turn_id)
+                    yield sse(
+                        "error",
+                        {
+                            "error": error_message + " 正在后台重试，可稍后查看本条回复。",
+                            "retrying": True,
+                        },
+                    )
+                    return
                 if turn_id:
                     _fail_chat_turn_row(turn_id, error=error_message)
                 yield sse("error", {"error": error_message})
@@ -13406,6 +13483,11 @@ def create_app(
         stream_fn = getattr(dialogue_owner, "stream_agent_reply", None)
         if agent_loop is None or not callable(stream_fn):
             return None
+        if _agent_turn_started(turn.turn_id):
+            raise TerminalChatReplyError(
+                "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                code="interrupted_agent_turn",
+            )
         skill_catalog = _resolve_skill_catalog()
         skill_name = str(turn.payload.get("agent_skill") or "").strip()
         skill_definition = skill_catalog.get(skill_name) if skill_name else None
@@ -13438,7 +13520,7 @@ def create_app(
             # live-render only and never persisted into agent_events.
             if event.type != "delta":
                 events.append(event.to_dict())
-                _append_chat_turn_agent_event(turn.turn_id, event.to_dict())
+            _checkpoint_agent_event(turn.turn_id, event)
             if event.type == "final":
                 reply = event.text
         if not reply.strip():
@@ -14295,7 +14377,16 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
+                from openbiliclaw.llm.sponsored_errors import SponsoredError
 
+                if isinstance(exc, TerminalChatReplyError):
+                    raise
+                if isinstance(exc, SponsoredError) and not _retry_silent_sponsored_turn(
+                    turn_id, exc
+                ):
+                    raise TerminalChatReplyError(
+                        safe_llm_failure_message(exc), code=exc.code
+                    ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
                         safe_llm_failure_message(exc),
@@ -21392,6 +21483,7 @@ def create_app(
             degraded=degraded,
             degraded_reason=degraded_reason,
             llm=LLMConfigOut(
+                sponsored=_sponsored_config_out(cfg),
                 routing_version=2,
                 instances={
                     instance_id: _instance_out(instance)
@@ -22253,10 +22345,82 @@ def create_app(
             return []
         return [str(item).strip() for item in value if str(item).strip()]
 
+    def _sponsored_config_out(cfg: Any) -> Any:
+        from openbiliclaw.api.models import SponsoredConfigOut, SponsoredModelOut
+        from openbiliclaw.llm.sponsored_profiles import (
+            CHAT_MODELS,
+            CONTEXT_WINDOWS,
+            DEFAULT_CHAT_MODEL,
+        )
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        settings = cfg.llm.sponsored
+        model = settings.model if settings.model in CHAT_MODELS else DEFAULT_CHAT_MODEL
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        return SponsoredConfigOut(
+            models=[
+                SponsoredModelOut(id=item, context_window=CONTEXT_WINDOWS[item])
+                for item in CHAT_MODELS
+            ],
+            enabled=settings.enabled,
+            embedding_mode="local" if settings.embedding_mode == "local" else "cloud",
+            embedding_model=(
+                cfg.llm.embedding.model if settings.embedding_mode == "local" else "BAAI/bge-m3"
+            ),
+            service_status=sponsored_status(cfg),
+            model=cast("Literal['Qwen/Qwen3-8B', 'Qwen/Qwen3.5-4B']", model),
+            fallback_to_other_free_model=settings.fallback_to_other_free_model,
+            fallback_to_user_provider=settings.fallback_to_user_provider,
+            notify_on_fallback=settings.notify_on_fallback,
+            request_timeout_seconds=settings.request_timeout_seconds,
+            runtime_available=bool(settings.runtime_path or installed_runtime_command()),
+            context_window=CONTEXT_WINDOWS[model],
+        )
+
     def _apply_llm_update(cfg: Any, llm_data: object) -> None:
         """Apply the LLM subset of a config update to an in-memory config."""
         if not isinstance(llm_data, dict):
             return
+        if "sponsored" in llm_data:
+            from dataclasses import replace
+
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            raw = llm_data["sponsored"]
+            boolean_fields = {
+                "enabled",
+                "fallback_to_other_free_model",
+                "fallback_to_user_provider",
+                "notify_on_fallback",
+            }
+            if not isinstance(raw, dict) or set(raw) - boolean_fields - {
+                "model",
+                "embedding_mode",
+                "request_timeout_seconds",
+            }:
+                raise HTTPException(status_code=400, detail="invalid llm.sponsored fields")
+            if any(not isinstance(raw[k], bool) for k in boolean_fields & raw.keys()):
+                raise HTTPException(status_code=400, detail="free-model switches must be boolean")
+            if "model" in raw and raw["model"] not in CHAT_MODELS:
+                raise HTTPException(status_code=400, detail="请选择 Qwen3-8B 或 Qwen3.5-4B")
+            if "embedding_mode" in raw and (
+                not isinstance(raw["embedding_mode"], str)
+                or raw["embedding_mode"] not in {"cloud", "local"}
+            ):
+                raise HTTPException(status_code=400, detail="请选择 cloud 或 local 向量模式")
+            if "request_timeout_seconds" in raw:
+                timeout = raw["request_timeout_seconds"]
+                if (
+                    isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float))
+                    or not 10 <= timeout <= 1200
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="free-model timeout must be between 10 and 1200 seconds",
+                    )
+            cfg.llm.sponsored = replace(cfg.llm.sponsored, **raw)
         from openbiliclaw.config import (
             _LLM_PROVIDER_DISPLAY_NAMES,
             LLMInstanceConfig,
@@ -22603,6 +22767,17 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        # The shared form submits this explicit choice on all four surfaces.
+        # Preserve an existing Ollama model/private port; never reuse cloud credentials.
+        sponsored_update = llm_data.get("sponsored", {})
+        if (
+            cfg.llm.sponsored.enabled
+            and isinstance(sponsored_update, dict)
+            and sponsored_update.get("embedding_mode") == "local"
+        ):
+            from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+            select_local_embedding(cfg)
         for module_name in ("soul", "discovery", "recommendation", "evaluation"):
             if module_name in llm_data and isinstance(llm_data[module_name], dict):
                 mod_cfg = getattr(cfg.llm, module_name)
@@ -22983,6 +23158,11 @@ def create_app(
         emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb_cfg, "provider", "") or "").strip().lower()
         model = str(getattr(emb_cfg, "model", "") or "").strip()
+        timeout_s = (
+            _LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS
+            if provider == "ollama"
+            else _EMBEDDING_PROBE_TIMEOUT_SECONDS
+        )
         if not provider:
             return ConfigServiceProbeResponse(
                 ok=False,
@@ -23008,7 +23188,7 @@ def create_app(
                 # building it successfully is the best signal we have.
                 ok = True
             else:
-                ok = bool(await asyncio.wait_for(probe(), timeout=15.0))
+                ok = bool(await asyncio.wait_for(probe(), timeout=timeout_s))
             return ConfigServiceProbeResponse(
                 ok=ok,
                 kind="embedding",
@@ -23016,6 +23196,22 @@ def create_app(
                 model=model,
                 message="Embedding provider is available." if ok else "",
                 error="" if ok else "Embedding provider returned no vector.",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        except TimeoutError:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="embedding",
+                provider=provider,
+                model=model,
+                error=(
+                    f"本地向量服务在 {timeout_s:g} 秒内未完成，可能正在加载模型或处理其他任务。"
+                    "请稍后重试，或切换硅基流动 BGE-M3。"
+                    if provider == "ollama"
+                    else f"向量服务连接测试超过 {timeout_s:g} 秒，请稍后重试。"
+                ),
+                error_code="EMBEDDING_BUSY",
+                retryable=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
         except Exception as exc:
@@ -23132,13 +23328,126 @@ def create_app(
         llm_data = update.get("llm")
         if isinstance(llm_data, dict):
             _apply_llm_update(cfg, llm_data)
-        if payload.kind == "embedding":
-            return await _probe_embedding_config(cfg)
-        return await _probe_llm_config(
-            cfg,
-            kind=payload.kind,
-            instance_id=payload.instance_id,
-        )
+        from openbiliclaw.llm.sponsored_router import bypass_sponsored
+
+        if payload.kind == "sponsored":
+            import shlex
+
+            from openbiliclaw.llm.sponsored_profiles import approved_registry
+            from openbiliclaw.llm.sponsored_provider import SponsoredProvider
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+            from openbiliclaw.sponsored_status import sponsored_status
+
+            settings = cfg.llm.sponsored
+            command = settings.runtime_path or installed_runtime_command()
+            started = time.monotonic()
+            if not command:
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="sponsored",
+                    error="请先准备免费模型组件；组件到期时请更新安装包/版本",
+                    service_status=sponsored_status(cfg),
+                )
+            provider = SponsoredProvider(
+                shlex.split(command),
+                registry=approved_registry(),
+                model=settings.model,
+                fallback_to_other_free_model=False,
+                request_timeout=settings.request_timeout_seconds,
+            )
+            try:
+                assert ctx.llm_concurrency_gate is not None
+                async with ctx.llm_concurrency_gate.slot(caller="api.config_probe"):
+                    response = None
+                    async for chunk in provider.stream_complete(
+                        [{"role": "user", "content": "请只回复：连接成功"}],
+                        max_tokens=128,
+                        reasoning_effort="",
+                    ):
+                        if chunk.response is not None:
+                            response = chunk.response
+                    embedding_message = ""
+                    if payload.check_embedding:
+                        if settings.embedding_mode == "local":
+                            with bypass_sponsored():
+                                local_probe = await _probe_embedding_config(cfg)
+                            if not local_probe.ok:
+                                return ConfigServiceProbeResponse(
+                                    ok=False,
+                                    kind="sponsored",
+                                    provider="sponsored",
+                                    model=settings.model,
+                                    error="免费对话可用；" + local_probe.error,
+                                    error_code=local_probe.error_code,
+                                    retryable=local_probe.retryable,
+                                    latency_ms=int((time.monotonic() - started) * 1000),
+                                    service_status=sponsored_status(cfg),
+                                )
+                            embedding_message = f"和本地 {local_probe.model} 文本向量均可用"
+                        else:
+                            vector = await provider.embedding("OpenBiliClaw 文本向量连接测试")
+                            if len(vector) != 1024:
+                                raise ValueError("incomplete free embedding probe")
+                            embedding_message = "和 BGE-M3 文本向量均可用"
+                if response is None or not response.content.strip():
+                    raise ValueError("incomplete free-model probe")
+                return ConfigServiceProbeResponse(
+                    ok=True,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=response.model,
+                    service_status=sponsored_status(cfg),
+                    message="流式对话"
+                    + (embedding_message or "可用；本地向量将在初始化时准备和验证"),
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            except Exception as exc:
+                from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.sponsored_status import GUIDANCE
+
+                error = (
+                    GUIDANCE.get(exc.code, ("", f"免费模型测试失败：{exc.code}"))[1]
+                    if isinstance(exc, SponsoredError)
+                    else "免费模型测试失败，请检查组件或稍后重试"
+                )
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=settings.model,
+                    error=error,
+                    service_status=sponsored_status(cfg),
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            finally:
+                await provider.aclose()
+
+        # Draft-provider probes must validate their selected target, including
+        # embedding and default-chain probes, rather than borrow sponsor health.
+        with bypass_sponsored():
+            if payload.kind == "embedding":
+                return await _probe_embedding_config(cfg)
+            return await _probe_llm_config(
+                cfg,
+                kind=payload.kind,
+                instance_id=payload.instance_id,
+            )
+
+    @app.post("/api/config/sponsored/prepare", response_model=None)
+    async def prepare_sponsored_runtime(request: Request) -> dict[str, object] | JSONResponse:
+        """Install only the release pinned by this Core version, without accepting paths."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        try:
+            await asyncio.to_thread(ensure_runtime)
+            return {"ok": True, "message": "免费模型组件已就绪"}
+        except BundleError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception:
+            return {"ok": False, "error": "免费模型组件下载失败，请检查网络后重试"}
 
     @app.post("/api/config/discover-models", response_model=ConfigModelDiscoveryResponse)
     async def discover_config_models(
@@ -25191,6 +25500,9 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
+                allow_sponsored_live_apply=(
+                    not pending_credential_writes and "tailnet" not in update
+                ),
             )
 
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，

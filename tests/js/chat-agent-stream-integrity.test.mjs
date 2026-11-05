@@ -27,6 +27,17 @@ function frame(type, data) {
 }
 
 for (const [surface, api] of [["mobile", mobile], ["popup", popup]]) {
+  test(`${surface}: a durable retry is distinguishable from a terminal error`, async () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = streamFetch([frame("error", { error: "正在后台重试", retrying: true })]);
+    try {
+      await assert.rejects(api.streamAgentChatTurn({ message: "你好" }), error => {
+        assert.equal(error.agentRetrying, true);
+        assert.equal(error.agentStreamError, true);
+        return true;
+      });
+    } finally { globalThis.fetch = previous; }
+  });
   test(`${surface}: EOF before done cannot report a completed agent turn`, async () => {
     const previous = globalThis.fetch;
     globalThis.fetch = streamFetch([frame("final", { text: "尚未持久化的答复" })]);

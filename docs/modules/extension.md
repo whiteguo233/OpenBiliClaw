@@ -1,5 +1,23 @@
 # 浏览器插件模块
 
+## 免费模型设置（SDK已发行，应用集成见PR336）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 常驻硅基流动 Provider | 即使关闭免费方案或尚未准备组件仍显示；两模型及上下文从后端目录读取，不要求共享Key。 |
+| 本地向量忙诊断 | 设置探测给Ollama 45秒冷启动/排队预算，超时返回可重试忙状态；后台健康探测仍为15秒。 |
+| 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
+| 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
+| 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。限流/网络错误不会冒充过期。 |
+| 向量模式独立选择 | 默认硅基流动BGE-M3，也可选本地Ollama；本地配置、缓存与服务健康独立于免费凭据。 |
+| 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
+
+公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留稳定错误码对应的安全说明。`llm.sponsored.embedding_mode` 仅接受 `cloud/local`；`service_status` 与 `GET /api/runtime-status` 的 `sponsored_status` 返回当前 `notices`。每条含 `code/title/message/requires_update/capabilities`，不包含密钥、原始上游错误或路径。初始化选择本地时使用 `check_embedding=false` 仅验证免费对话，保存后由现有初始化前置检查/修复验证本地向量；普通测试按钮默认同时验证两者。
+
+新增只读输出：`llm.sponsored.provider_id="siliconflow_free"`、`display_name`、`builtin=true`、`models:[{id,context_window}]`。这些字段不能通过保存接口修改。`ConfigServiceProbeResponse` 新增 `error_code` 和 `retryable`；本地探测超时为 `EMBEDDING_BUSY / true`，组合测试保留具体原因。共享卡片显示“内置 Provider”和当前路由提示，启用状态仍由用户配置决定。
+
+共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
+
 ## 手机扫码入口（2026-10-26）
 
 | 已实现能力 | 行为 |
@@ -1062,3 +1080,16 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新
 `language` 再切一次。`bg` / 通知里的用户可见文案随 `/i18n/ui` 目录一起覆盖。完整契约见
 [多语言模块](i18n.md)。
+
+### 免费聊天后台恢复（2026-11-05）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 流式暂时故障 | `streamAgentChatTurn()` 保留SSE的 `retrying` 为异常的 `agentRetrying`；`popupDriveAgentStream()` 保留消息pending并交回现有轮询，直到服务端完成或真正失败。 |
+
+公开函数签名不变，错误对象新增上述布尔标记；终态错误仍沿用 `agentStreamError`。共享移动Web采用相同区分。手工验证：开启免费方案、创建聊天，在首段前中断测试连接，看到后台重试提示后读取同一turn结果；完成消息重连不重复执行。证据与重复步骤见[验收](../testing/2026-11-05-sponsored-resilience.md)。
+
+
+### 初始化期间的对话错误（2026-11-05）
+
+已实现：插件与 PC/手机共用的 `contextErrorMessage` 保留后端初始化守卫的扁平错误详情；初始化期间未送出的草稿不会误报成内容问题。公开共享 helper 签名、发送与持久队列协议不变，新增实际错误形状回归。

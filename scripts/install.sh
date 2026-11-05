@@ -487,6 +487,8 @@ PY
     echo "================================================================"
     echo "Status:      $status"
     echo "Checkout:    $INSTALL_DIR"
+    echo "Free AI:     Built-in SiliconFlow provider is available in setup/settings."
+    echo "             Choose Qwen3-8B or Qwen3.5-4B; prepare the verified component if prompted."
     if [ -n "$REUSE_FROM" ]; then
         echo "Reused from: $REUSE_FROM"
         case "$missing" in
@@ -523,6 +525,8 @@ PY
     echo "Setup wizard: $setup_url"
     echo "             (open in a browser to configure LLM / embedding and"
     echo "              run prerequisite checks — same guided page as the desktop app)"
+    echo "Free models: choose Qwen3-8B or Qwen3.5-4B in the setup wizard."
+    echo "             Choose cloud BGE-M3 (default) or local Ollama vectors; no shared key entry."
     if [ -n "$missing" ]; then
         echo "Missing:     $missing"
     else
@@ -623,12 +627,13 @@ PY
     elif [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
-        echo "  1. Choose your LLM chat provider (default: deepseek):"
+        echo "  1. Open the setup wizard for the recommended free Qwen + BGE-M3 option."
+        echo "     If this build has no verified runtime release, choose your own provider:"
         echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible"
         echo "     (Local Ollama is embedding-only here — not offered as a chat provider.)"
         echo ""
-        echo "  2. Ask which embedding service to use:"
-        echo "     Default: local Ollama bge-m3 (free/offline/no extra API key)."
+        echo "  2. Free chat offers cloud BGE-M3 (default) or local Ollama embedding."
+        echo "     For your own chat provider, default: local Ollama bge-m3 (free/offline)."
         echo "     Alternatives: Gemini embedding, OpenAI text-embedding-3-small,"
         echo "     or a custom OpenAI-compatible embedding endpoint."
         echo ""

@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -881,6 +883,67 @@ async def test_cross_category_shared_suffix_does_not_bridge_components(tmp_path:
     )
 
     assert [cluster.members for cluster in clusters] == [["游戏", "游戏资讯"]]
+
+
+@pytest.mark.parametrize(
+    ("members", "valid"),
+    [
+        (["主题甲", "主题乙"], True),
+        (["主题甲", "未知主题"], False),
+        (["主题甲", "主题甲"], False),
+        ([], False),
+    ],
+)
+def test_grouped_keep_preserves_all_distinct_members(
+    tmp_path: Path, members: list[str], valid: bool
+) -> None:
+    from openbiliclaw.soul.consolidator import _Cluster
+
+    consolidator = ProfileConsolidator(
+        memory=_FakeMemory({"interests": [], "disliked_topics": []}),
+        llm_service=None,
+        data_dir=tmp_path,
+    )
+    cluster = _Cluster(
+        cluster_id="L1",
+        scope="likes",
+        members=["主题甲", "主题乙"],
+        known_distinct_pairs=[["主题甲", "主题乙"]],
+    )
+    ops = [{"op": "keep", "members": members}]
+    problem = consolidator._validate_cluster_ops(cluster, ops)
+    assert bool(problem) is not valid
+    if valid:
+        assert ops[0]["_member_keys"] == ["主题甲", "主题乙"]
+        assert consolidator._cluster_survivors(cluster, []) == ["主题甲", "主题乙"]
+
+
+async def test_free_consolidation_splits_large_work_without_losing_clusters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openbiliclaw.soul.consolidator import _Cluster
+
+    monkeypatch.setattr("openbiliclaw.llm.sponsored_router.sponsored_enabled", lambda: True)
+    consolidator = ProfileConsolidator(
+        memory=_FakeMemory({"interests": [], "disliked_topics": []}),
+        llm_service=_StubLLM({}),
+        data_dir=tmp_path,
+    )
+    clusters = [
+        _Cluster(cluster_id=f"L{i}", scope="likes", members=[f"主题{i}", f"主题{i}实践"])
+        for i in range(33)
+    ]
+    batches = []
+
+    async def judge(batch: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
+        batches.append(batch)
+        return {c.cluster_id: [{"op": "keep", "members": c.members}] for c in batch}
+
+    monkeypatch.setattr(consolidator, "_judge_batch", judge)
+    result = await consolidator._judge(clusters)
+    assert all(len(batch) <= 8 for batch in batches)
+    assert [c.cluster_id for batch in batches for c in batch] == [c.cluster_id for c in clusters]
+    assert list(result) == [c.cluster_id for c in clusters]
 
 
 def test_validator_rejects_merge_across_known_distinct_pair(tmp_path: Path) -> None:

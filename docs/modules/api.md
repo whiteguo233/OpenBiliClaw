@@ -1,5 +1,26 @@
 # 后端 API
 
+## 免费模型设置（SDK已发行，应用集成见PR336）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 常驻硅基流动 Provider | 即使关闭免费方案或尚未准备组件仍显示；两模型及上下文从后端目录读取，不要求共享Key。 |
+| 本地向量忙诊断 | 设置探测给Ollama 45秒冷启动/排队预算，超时返回可重试忙状态；后台健康探测仍为15秒。 |
+| 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
+| 免费模型即时切换 | PUT /api/config仅变更已启用免费方案的模型/免费互备/通知/超时选择时，无需排空后台学习；新请求生效。独立worker部署由现有supervisor重启后台进程以同步配置，持久化任务按原恢复规则继续。 |
+| 免费聊天故障恢复 | 流未输出且未执行工具时，暂时性免费服务故障保留pending，最多追加两次持久重试；共享凭据/策略失败直接failed；已经开始的回复不从头重跑。 |
+| 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
+| 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。限流/网络错误不会冒充过期。 |
+| 无活动免费方案 | `sponsored_status.notices` 为空，仍返回固定的应用更新链接；响应契约回归保留完整字段相等校验。 |
+| 向量模式独立选择 | 默认硅基流动BGE-M3，也可选本地Ollama；本地配置、缓存与服务健康独立于免费凭据。 |
+| 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
+
+公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留稳定错误码对应的安全说明。`llm.sponsored.embedding_mode` 仅接受 `cloud/local`；`service_status` 与 `GET /api/runtime-status` 的 `sponsored_status` 返回当前 `notices`。每条含 `code/title/message/requires_update/capabilities`，不包含密钥、原始上游错误或路径。初始化选择本地时使用 `check_embedding=false` 仅验证免费对话，保存后由现有初始化前置检查/修复验证本地向量；普通测试按钮默认同时验证两者。
+
+新增只读输出：`llm.sponsored.provider_id="siliconflow_free"`、`display_name`、`builtin=true`、`models:[{id,context_window}]`。这些字段不能通过保存接口修改。`ConfigServiceProbeResponse` 新增 `error_code` 和 `retryable`；本地探测超时为 `EMBEDDING_BUSY / true`，组合测试保留具体原因。共享卡片显示“内置 Provider”和当前路由提示，启用状态仍由用户配置决定。
+
+共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
+
 ## 抖音账号导入来源校验（2026-11-06）
 
 | 接口 | 状态 | 契约 |
@@ -240,6 +261,8 @@ guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST 
 配置、SQLite、画像、白名单 UI 偏好和其它数据都要等下一次 `openbiliclaw start`、`openbiliclaw serve-api` 或桌面包启动取得 migration runtime lock 并成功 apply 后才生效；status 的 staged / applied 响应都只可能携带白名单 `frontend`，桌面端会忽略 staged 值。`state="applied"` 后，每个浏览器会把 `migration_id` 记为本地一次性交接回执，只应用该迁移的偏好一次；之后用户修改主题或滚动设置，即使旧 applied status 仍持久存在也不会再次覆盖。详见[存储层的可移植数据迁移](storage.md#可移植数据迁移)。再次提交合法迁移包会替换尚未应用的暂存包，也可在重启前调用 `DELETE /api/migration/pending` 取消。
 
 ## GitHub 配置、初始化与推荐 DTO
+
+已实现修复（2026-11-05）：`POST /api/init` 的 GitHub 来源选择一直传递到正式补池入口；公开 Star 画像生成后，使用 GitHub producer、同步评估及推荐文案，不落入 B站旧发现计划。接口字段不变。
 
 `GET /api/config` 的 `sources.github` 返回启用状态、公开用户名、固定
 `token_env="OPENBILICLAW_GITHUB_TOKEN"`、三种 discovery mode、预算 / 节流和 bootstrap
@@ -602,3 +625,20 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 - `PUT /api/config` 的 `language` 接受规范 id 与已知别名（`zh`、`zh-TW`、`en-US`…），
   落盘前规范化；未知值返回 `400 unsupported_language` 并列出支持值。
 - `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
+
+
+### 可选赞助通道与配置探测
+
+| 行为 | 状态 | 说明 |
+| --- | --- | --- |
+| 显式草稿服务探针 | 已实现 | Chat 实例/默认链与 embedding 均绕过赞助替代，验证用户指定目标 |
+
+业务 LLM/向量请求在选择免费方案后通过统一 Sponsored SDK（组件已发行）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的模型、工具模拟与真实流式边界见[用户流程](../plans/2026-11-04-sponsored-user-flow.md)。
+
+`RuntimeContext.try_apply_sponsored_config(new_config) -> bool` 在API配置修订锁内严格比较完整配置，只接受已启用方案的路由字段变更；切换自有provider回退开关、启用状态、runtime路径、其它配置或凭据更新仍走原安全交接。与原配置持久化、修订合并和失败回滚共用事务。
+
+### 免费聊天恢复的 SSE 与持久状态契约
+
+`POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
+
+四端范围：插件与手机API保留 `agentRetrying` 标记，页面继续轮询而不将消息本地标为failed；桌面已有历史刷新读取权威状态并显示后台重试提示；CLI复用SDK传输重试，不创建HTTP持久消息。[验收与限制](../testing/2026-11-05-sponsored-resilience.md)。

@@ -1,5 +1,15 @@
 # 灵魂引擎
 
+## 免费觉察引用纠错（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 当前批次与回看分离 | 免费模式recent_events仅保留可引用批次；历史内容放read_only_lookback，不带可引用id。 |
+| 一次有原因的纠错 | 越界引用/连续天数校验失败，原有唯一重试带具体invalid_field；持续失败不推进水位。 |
+
+公开API与调用约定：`AwarenessAnalyzer.analyze_with_confusions(..., validation_feedback="")` 新增可选参数。`AwarenessGroundingError` 继承原生成错误并提供 `code`，认知周期把白名单错误码送到下一次调用。system说明始终静态，当前id/历史/反馈均进入user消息。
+
+
 > `SoulEngine` 接受 runtime-owned gate，内部服务与主服务共享同一对象；`SocraticDialogue` 优先复用 Soul 服务。Prompt、token 与成本语义未变。
 
 > 用户深度理解核心 — 从行为数据到人格画像的推理引擎。
@@ -50,8 +60,12 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 
 ## 已实现功能
 
+免费方案归并可靠性（2026-11-05）：单请求最多8簇，保留全部候选和顺序；接受模型将多个保留项写成 `keep.members` 的等价格式，但每个引用仍必须存在且全簇恰好覆盖一次。未知成员、重复引用、缺失项和违反已确认不合并关系的merge仍整簇拒绝，保留原数据等待重试。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费画像与觉察证据约束 | 已实现 | 被动历史仅生成有来源支持的信息偏好；缺少自述不保存身份/经历/心理特质，E/I强度保持中性。觉察的显式批外事件引用触发重试，失败不推进消费水位。 |
+| 可选 Sponsored SDK（组件已发布，主程序待发布） | 已接线 | 画像初始化、分析、合并、觉察、洞察、推测与对话统一走 LLMService；合并保留 contract2 簇数据入口，其余业务使用完整 SDK，默认关闭 |
 | 按需画像公共 API | ✅ | `build_profile_catalog` / `select_profile_context` 分离本地全集与预算视图；确定性词法检索、整条事实选择、完整负偏好底线，供 Jev 评估和导演共享 |
 | OnionProfile 五层重构 | ✅ | 将 SoulProfile 重构为五层洋葱模型（CoreLayer → ValuesLayer → InterestLayer → RoleLayer → SurfaceLayer） |
 | MBTI 人格类型 | ✅ | Core 层新增 MBTI 类型与维度强度（E/I, S/N, T/F, J/P），支持置信度标注 |
@@ -83,7 +97,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 | SoulEngine.get_raw_profile() / get_overrides() | ✅ | 返回不叠加覆盖的纯 AI 画像 / 当前 `ProfileOverrides`，供编辑态与 AI 漂移比对 |
 | 用户画像覆盖层 (`soul/overrides.py`) | ✅ | `ProfileOverrides` + 纯函数 `apply_overrides`（文本/标量固定、列表增删、兴趣树 domain 增删/权重与 specifics 增删）+ 带校验的 `apply_edit` 归约器 + `build_edit_state`；兴趣二级项通过 `/api/profile/edit` 的 `parent` 字段定位父 domain，`edit-state` 同步暴露 `specific_edits` 供三端编辑 UI 标注；同一二级项新增后再删除会归约为空覆盖，避免留下伪编辑痕迹；用户手动编辑存独立 `profile_overrides.json`，读时叠加到 AI 画像之上，画像重建不覆盖；列表 remove 持续抑制 AI 再次推断出的同项 |
 | 分类词表 + 一次性迁移 | ✅ | `soul/taxonomy.py` 定义 19 项固定一级分类词表 `CATEGORY_VOCAB`（含「其他」，代码常量非 config），`resolve_category()` 按精确命中 → embedding 最近邻（≥0.55）→「其他」解析；`CategoryMigrator` 用一次 LLM 映射把存量自由分类迁移到词表，代码校验完整覆盖且目标必须在词表内，失败零写入；应用前写 `consolidation_runs/<run_id>.json`（`kind=category_migration`）并追加 `soul_changelog.md`，复用 `profile-consolidate --revert` 回滚 |
-| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类构造独占的强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 用 `name::category` 限定键）→ likes 以 embedding + 词面重叠构造相似图并取连通分量，不再用“首成员命中即占用”的贪心分组；默认跨类候选阈值 ≥0.80、同一 category 的二级兴趣再放宽 0.04，超库存按水位压力最低到 0.72，dislikes 保持严格 ≥0.85。跨 category 的词面召回只接受包含关系，避免“游戏资讯 / 科技资讯”靠通用后缀串成大簇；无 embedding 仍可走同一保守词面图。no-merge 会切断已判 distinct 的边但不遮住成员的新邻居，且以 `known_distinct_pairs` 进入 prompt 与代码校验，禁止经传递路径重新合并；策略版本升级只清理旧“严格同义词”口径的模型 keep，用户显式 revert 的 pair 单独保护，旧状态也可从 run snapshot + changelog 恢复。分批 LLM（每批 32 簇）按“是否重复占用同一推荐意图”输出 merge/keep：像“搞笑 / 娱乐搞笑”可合并，真正改变召回范围的父子兴趣仍保留；代码继续校验 members 逐字存在、簇内全覆盖、canonical 禁裸大词与避雷严禁向上泛化。单批失败不阻断其它批，但只要存在失败 / 缺失 / 非法响应就不写 clean digest，下一 due tick 会重试相同输入；完成日志带 `retry_pending`。LLM canonical 优先选能覆盖整组的简洁旧 member，写回时保留原词到 `aliases`，后续增量命中 alias 会强化 canonical。覆盖范围默认为 likes 权重 top-512 + 全量避雷；active likes 超过 `profile_consolidation_like_target_upper` 时临时开 full boundary，合并后仍超上限则把低权重且非用户保护的长尾移入 `archived_interests`，新信号可复活；`profile-consolidate --full` 仍可手动全量整理。embedding + LLM 窗口结束、真正写入前会对 active / archived / dislikes 做完整 revision 校验；若 preference analyzer 同期落入新证据，本轮零写入、零状态推进并让下一 tick 重试，避免旧快照覆盖新兴趣。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树，且先 remap `profile_overrides.json` 再刷新有效画像镜像；应用记录在 `consolidation_runs/<run_id>.json`，同时备份原始 flat preference、完整 raw `soul.json` 与被改动的 overrides，再追加 `soul_changelog.md`；新记录的 `revert(run_id)` 会精确恢复原始 Soul 树及有效画像镜像，旧记录仍兼容按 flat preference 重建，并固定被回滚 pair。由 pipeline tick 调度（默认 12h），应用后发 `profile_consolidation` 认知更新卡片 |
+| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类构造独占的强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 用 `name::category` 限定键）→ likes 以 embedding + 词面重叠构造相似图并取连通分量，不再用“首成员命中即占用”的贪心分组；默认跨类候选阈值 ≥0.80、同一 category 的二级兴趣再放宽 0.04，超库存按水位压力最低到 0.72，dislikes 保持严格 ≥0.85。跨 category 的词面召回只接受包含关系，避免“游戏资讯 / 科技资讯”靠通用后缀串成大簇；无 embedding 仍可走同一保守词面图。no-merge 会切断已判 distinct 的边但不遮住成员的新邻居，且以 `known_distinct_pairs` 进入 prompt 与代码校验，禁止经传递路径重新合并；策略版本升级只清理旧“严格同义词”口径的模型 keep，用户显式 revert 的 pair 单独保护，旧状态也可从 run snapshot + changelog 恢复。分批 LLM（每批 32 簇，免费方案暂限 8 簇）按“是否重复占用同一推荐意图”输出 merge/keep：像“搞笑 / 娱乐搞笑”可合并，真正改变召回范围的父子兴趣仍保留；代码继续校验 members 逐字存在、簇内全覆盖、canonical 禁裸大词与避雷严禁向上泛化。单批失败不阻断其它批，但只要存在失败 / 缺失 / 非法响应就不写 clean digest，下一 due tick 会重试相同输入；完成日志带 `retry_pending`。LLM canonical 优先选能覆盖整组的简洁旧 member，写回时保留原词到 `aliases`，后续增量命中 alias 会强化 canonical。覆盖范围默认为 likes 权重 top-512 + 全量避雷；active likes 超过 `profile_consolidation_like_target_upper` 时临时开 full boundary，合并后仍超上限则把低权重且非用户保护的长尾移入 `archived_interests`，新信号可复活；`profile-consolidate --full` 仍可手动全量整理。embedding + LLM 窗口结束、真正写入前会对 active / archived / dislikes 做完整 revision 校验；若 preference analyzer 同期落入新证据，本轮零写入、零状态推进并让下一 tick 重试，避免旧快照覆盖新兴趣。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树，且先 remap `profile_overrides.json` 再刷新有效画像镜像；应用记录在 `consolidation_runs/<run_id>.json`，同时备份原始 flat preference、完整 raw `soul.json` 与被改动的 overrides，再追加 `soul_changelog.md`；新记录的 `revert(run_id)` 会精确恢复原始 Soul 树及有效画像镜像，旧记录仍兼容按 flat preference 重建，并固定被回滚 pair。由 pipeline tick 调度（默认 12h），应用后发 `profile_consolidation` 认知更新卡片 |
 | 画像整理成员引用兼容（2026-09-16） | ✅ | 普通 likes 整理簇同时接受字符串和 `{name, category}` 成员引用，避免模型按输入对象原样返回时被误判为 unknown member；同名异类簇仍强制使用 `name::category` 分类限定键。 |
 | 画像证据与衰减一致性（2026-09-16） | ✅ | 增量画像只把本轮 `last_seen` 变化的兴趣计为新生命周期证据，保留项不再虚增 `evidence_count` 或复活；偏好权重用持久化 `last_decay_at` 增量衰减，同一快照重复处理与按日分批处理结果一致。 |
 | SoulEngine.get_effective_disliked_topics() | ✅ | base（raw soul.interest.dislikes ∪ raw preference.disliked_topics）再套覆盖层 remove/add（remove 最后生效），供推荐 / delight 最终过滤，用户移除项不被 raw 反向打穿；`get_profile()` 会在 Soul 重建前把该快照覆盖进有效画像 |
@@ -893,6 +907,10 @@ system prompt 的核心约束是：
 
 ## 公开 API
 
+`ProfileBuilder.build()` 签名不变。历史按源时间分成较新/较旧样本，不按输入数组位置推断先后；无日期只保留内容，同一时刻不会被拆成前后变化。免费模式且没有用户原文时，关闭隐式思考，模型只能从闭集信息偏好中选择并引用本次标题；程序生成保留不确定性的画像文案，身份/阶段显示“暂无明确自述”，心理特质等留空。用户评论、搜索与对话原文单独进入 `authored_expressions`，不会把观看标题或助手话语当作自述。最短文案从120字降至30字，避免无依据填充。 后续聊天/反馈/假设确认触发免费画像重建时，会读取最近最多512条有效原始事件并规范化元数据，保留用户原话；用户明确确认的洞察以 `confirmed_self_descriptions` 单独传递。高置信度、自动验证或被拒绝的假设不能冒充用户确认，避免保守初始画像覆盖后续学到的信息。有自述/确认时改用只整理个人证据的窄提示，避免完整画像模板把明确职业也返回成未知。
+
+`AwarenessAnalyzer.analyze()` 签名不变；`analyze_with_confusions()` 新增可选 `validation_feedback`。实际免费模型返回的 `source_event_ids` 如果包含批次外编号，生成任何笔记前抛出 `AwarenessGenerationError`；已有认知周期负责有界重试并在失败时保留水位。未给编号仍按原有规则标注近似来源，不能把显式错误引用降级后悄悄落库。 免费觉察的 `date` 由代码取其引用事件中最近的真实发生日（UTC）；任一引用缺少可靠时间就留空，不用入库时间、其它未引用事件或模型示例日期补齐。对“连续N天”（数字或常见中文数词）的明确断言，校验被引用日期是否真正连续且足够；不支持则抛同一生成错误，让原有周期有界重试。这不是通用自然语言事实验证器。
+
 ### SoulEngine
 
 ```python
@@ -1458,3 +1476,12 @@ tone = build_tone_profile(
 ### 2026-10-02 流式链接一致性
 
 `respond_stream()` 与 `respond()`、`stream_agent_reply()` 一样摄取当轮用户链接并注入元数据；原始消息、卡片绑定和学习输入保持原值，历史用关系前缀表达分享。无链接不调用摄取器，摄取失败不阻断回复。
+
+
+### 画像合并与可选赞助 SDK
+
+`SoulConsolidator` 通过 `execute_sponsored_or_structured()` 把有界 likes/dislikes clusters 交给旧合并子契约；原 Prompt 仍用于 BYOK 路径，输出继续使用既有解析和写回规则。其他 Soul 任务通过 LLMService 的文本/结构化/工具入口接入全项目 SDK，包含 Agent 工具循环与真实流式接口。配置、回退与真实能力验收边界见[全项目设计](../plans/2026-10-27-sponsored-all-tasks.md)。
+
+### 免费归并的调用边界
+
+`ProfileConsolidator.run()` 的公开参数不变，报告中的 `llm_batches` 与实际小批数一致。`_judge()` 对免费路由使用8簇上限（11月5日16簇实测78/125秒后的暂定值），其它provider保持32；`_validate_cluster_ops()`兼容仅含members列表的批量keep，不把无效merge自动改写成keep。固定合并契约仍经LLMService总gate，Rust端思考预算的更新需要新SDK。

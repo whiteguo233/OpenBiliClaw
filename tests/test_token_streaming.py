@@ -645,7 +645,10 @@ class TestChatStreamEndpoints:
         assert row is not None
         assert row["status"] == "completed"
         persisted = row["payload"]["agent_events"]
-        assert [event["type"] for event in persisted] == ["final"]
+        # The first delta persists only a restart-safety boundary, never text.
+        assert [event["type"] for event in persisted] == ["execution_started", "final"]
+        assert persisted[0] == {"type": "execution_started"}
+        assert not any(event["type"] == "delta" for event in persisted)
 
     def test_legacy_chat_stream_sends_real_deltas(self, tmp_path: Path) -> None:
         dialogue = FakeStreamAPIDialogue([])

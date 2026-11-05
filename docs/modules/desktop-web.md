@@ -1,5 +1,24 @@
 # 桌面 Web（Desktop Web UI）
 
+## 免费模型设置（SDK已发行，应用集成见PR336）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 常驻硅基流动 Provider | 即使关闭免费方案或尚未准备组件仍显示；两模型及上下文从后端目录读取，不要求共享Key。 |
+| 本地向量忙诊断 | 设置探测给Ollama 45秒冷启动/排队预算，超时返回可重试忙状态；后台健康探测仍为15秒。 |
+| 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
+| 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
+| 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。手机只在通知变化时重建消息面板，保留用户焦点。限流/网络错误不会冒充过期。 |
+| 向量模式独立选择 | 默认硅基流动BGE-M3，也可选本地Ollama；本地配置、缓存与服务健康独立于免费凭据。 |
+| 聊天暂时故障 | 免费服务首段失败时显示后台重试提示，读取持久消息最终状态；手机保留 `agentRetrying` 并轮询，不在本地把pending误标failed。 |
+| 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
+
+公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留稳定错误码对应的安全说明。`llm.sponsored.embedding_mode` 仅接受 `cloud/local`；`service_status` 与 `GET /api/runtime-status` 的 `sponsored_status` 返回当前 `notices`。每条含 `code/title/message/requires_update/capabilities`，不包含密钥、原始上游错误或路径。初始化选择本地时使用 `check_embedding=false` 仅验证免费对话，保存后由现有初始化前置检查/修复验证本地向量；普通测试按钮默认同时验证两者。
+
+新增只读输出：`llm.sponsored.provider_id="siliconflow_free"`、`display_name`、`builtin=true`、`models:[{id,context_window}]`。这些字段不能通过保存接口修改。`ConfigServiceProbeResponse` 新增 `error_code` 和 `retryable`；本地探测超时为 `EMBEDDING_BUSY / true`，组合测试保留具体原因。共享卡片显示“内置 Provider”和当前路由提示，启用状态仍由用户配置决定。
+
+共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
+
 ## 手机扫码连接（2026-10-26）
 
 | 已实现能力 | 行为 |
@@ -234,3 +253,14 @@ tab 栏改为按内容宽度排布并允许横向滚动。完整契约见 [多�
 首次设置 `/setup/` 的语言菜单在桌面和手机均可见，先选语言再填模型。语言写请求串行，
 保存失败可见且可重试，配置预填不能覆盖用户刚选的语言。共享 i18n 运行时也监听动态提示属性，
 并保证快速切换以最新选择为准；翻译目录下载失败后可重新请求。接口仍为 `PUT /api/config {language}`。
+初始化仅在后端提供免费方案元数据且没有现存Key时推荐免费入口；已保存的兼容服务和未列入向导的渠道继续保留预填或提示，兼容旧配置。
+
+
+### 免费方案完成状态与错误提示（2026-11-05）
+
+| 已实现修复 | 行为 |
+|---|---|
+| 初始化完成页 | 按实际选择显示云端 BGE-M3 或本地 Ollama，避免云端模式声称本地模型已安装。 |
+| 初始化写入阻断 | 保留服务端扁平 `detail` 文本，提示初始化进行中；发送草稿继续保留。 |
+
+共享接口 `OpenBiliClawDialogueConfirmation.contextErrorCode/contextErrorMessage` 同时识别嵌套 `detail.code/message` 与写入守卫的 `error/detail`；没有改变请求或重试策略。完成页继续使用同一份 Sponsored 表单配置。

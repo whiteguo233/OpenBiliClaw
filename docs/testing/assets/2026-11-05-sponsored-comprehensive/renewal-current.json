@@ -1,0 +1,159 @@
+[
+  {
+    "phase": "auth-cloud",
+    "probe": {
+      "ok": false,
+      "service_status": {
+        "notices": [
+          {
+            "id": "sponsored-auth_failed",
+            "code": "AUTH_FAILED",
+            "title": "免费方案凭据不可用",
+            "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+            "requires_update": true,
+            "capabilities": [
+              "chat"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "kind": "sponsored",
+      "instance_id": "",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3.5-4B",
+      "message": "",
+      "error": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+      "latency_ms": 286
+    },
+    "health": {
+      "embedding_ready": false,
+      "llm_ready": null
+    },
+    "notices": [
+      {
+        "id": "sponsored-auth_failed",
+        "code": "AUTH_FAILED",
+        "title": "免费方案凭据不可用",
+        "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+        "requires_update": true,
+        "capabilities": [
+          "chat",
+          "embedding"
+        ]
+      }
+    ]
+  },
+  {
+    "phase": "auth-local",
+    "probe": {
+      "ok": false,
+      "service_status": {
+        "notices": [
+          {
+            "id": "sponsored-auth_failed",
+            "code": "AUTH_FAILED",
+            "title": "免费方案凭据不可用",
+            "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+            "requires_update": true,
+            "capabilities": [
+              "chat"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "kind": "sponsored",
+      "instance_id": "",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3.5-4B",
+      "message": "",
+      "error": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+      "latency_ms": 192
+    },
+    "health": {
+      "embedding_ready": true,
+      "llm_ready": null
+    },
+    "notices": [
+      {
+        "id": "sponsored-auth_failed",
+        "code": "AUTH_FAILED",
+        "title": "免费方案凭据不可用",
+        "message": "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，改用自己的 API Key。更换两个免费模型不能更新凭据。",
+        "requires_update": true,
+        "capabilities": [
+          "chat"
+        ]
+      }
+    ]
+  },
+  {
+    "phase": "expired",
+    "probe": {
+      "ok": false,
+      "service_status": {
+        "notices": [
+          {
+            "id": "sponsored-policy_invalid",
+            "code": "POLICY_INVALID",
+            "title": "免费组件需要更新",
+            "message": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+            "requires_update": true,
+            "capabilities": [
+              "chat",
+              "embedding"
+            ]
+          }
+        ],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "kind": "sponsored",
+      "instance_id": "",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3.5-4B",
+      "message": "",
+      "error": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+      "latency_ms": 36
+    },
+    "health": {
+      "embedding_ready": false,
+      "llm_ready": null
+    },
+    "notices": [
+      {
+        "id": "sponsored-policy_invalid",
+        "code": "POLICY_INVALID",
+        "title": "免费组件需要更新",
+        "message": "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；也可关闭免费方案，改用自己的 API Key。",
+        "requires_update": true,
+        "capabilities": [
+          "chat",
+          "embedding"
+        ]
+      }
+    ]
+  },
+  {
+    "phase": "published-healthy",
+    "probe": {
+      "ok": true,
+      "service_status": {
+        "notices": [],
+        "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+      },
+      "kind": "sponsored",
+      "instance_id": "",
+      "provider": "sponsored",
+      "model": "Qwen/Qwen3.5-4B",
+      "message": "流式对话和 BGE-M3 文本向量均可用",
+      "error": "",
+      "latency_ms": 789
+    },
+    "health": {
+      "embedding_ready": true,
+      "llm_ready": null
+    },
+    "notices": []
+  }
+]

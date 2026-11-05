@@ -1,0 +1,78 @@
+{
+  "source_commit": "439f87d7",
+  "artifact_id": 13438208403,
+  "entry": "frozen recommendation/API worker",
+  "cases": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 3.617,
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "error_code": "",
+        "retryable": false,
+        "latency_ms": 3555
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 0.843,
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3.5-4B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "error_code": "",
+        "retryable": false,
+        "latency_ms": 767
+      }
+    }
+  ],
+  "builtin_provider": {
+    "provider_id": "siliconflow_free",
+    "display_name": "硅基流动免费方案",
+    "builtin": true,
+    "models": [
+      {
+        "id": "Qwen/Qwen3-8B",
+        "context_window": 131072
+      },
+      {
+        "id": "Qwen/Qwen3.5-4B",
+        "context_window": 262144
+      }
+    ],
+    "enabled": true,
+    "embedding_mode": "cloud",
+    "service_status": {
+      "notices": [],
+      "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+    },
+    "model": "Qwen/Qwen3-8B",
+    "fallback_to_other_free_model": false,
+    "fallback_to_user_provider": false,
+    "notify_on_fallback": true,
+    "request_timeout_seconds": 180.0,
+    "runtime_available": true,
+    "embedding_model": "BAAI/bge-m3",
+    "context_window": 131072,
+    "image_embedding": false
+  },
+  "passed": true
+}

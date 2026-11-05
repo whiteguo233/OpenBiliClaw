@@ -148,6 +148,13 @@ test("known context errors use localized copy before an English server message",
   assert.equal(api.contextErrorMessage(unknown), "A useful server detail.");
 });
 
+test("initialization write guard keeps its useful flat detail", () => {
+  const api = dialogue as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const error = { details: { error: "init_running", detail: "初始化进行中，请稍后再试" } };
+  assert.equal(api.contextErrorCode(error), "init_running");
+  assert.equal(api.contextErrorMessage(error), "初始化进行中，请稍后再试");
+});
+
 test("turns without structured payload keep the text conversation fallback", () => {
   const markup = dialogue!.renderTurnMarkup(
     {

@@ -30,6 +30,7 @@ committed, so the runtime never imports OpenCC.
 from __future__ import annotations
 
 import argparse
+import ast
 import itertools
 import json
 import re
@@ -337,6 +338,15 @@ def collect_inventory() -> dict[str, str]:
     """Return ``{source_text: source_text}`` for every Chinese UI string."""
 
     found: set[str] = set()
+    # These API-owned notices are rendered verbatim in the shared settings/inbox
+    # component. Read the literal without importing/executing backend modules.
+    status_source = ROOT / "src/openbiliclaw/sponsored_status.py"
+    for node in ast.parse(status_source.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "GUIDANCE" for target in node.targets
+        ):
+            for title, message in ast.literal_eval(node.value).values():
+                found.update((title, message))
     for path in HTML_SOURCES:
         if not path.is_file():
             raise SystemExit(f"missing HTML source: {path}")

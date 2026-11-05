@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import shutil
 import tomllib
 from copy import deepcopy
@@ -23,6 +24,11 @@ from urllib.parse import urlparse
 from openbiliclaw.discovery.inspiration_backends import (
     DEFAULT_INSPIRATION_SEARCH_BACKENDS,
     normalize_inspiration_search_backends,
+)
+from openbiliclaw.sponsored_runtime_state import (
+    DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
+    SponsoredRuntimeSettings,
+    install_sponsored_settings,
 )
 
 if TYPE_CHECKING:
@@ -673,6 +679,9 @@ class LLMConfig:
     discovery: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     recommendation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     evaluation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
+    # Official-build Sponsored Runtime. Disabled in source deployments; the
+    # settings are installed process-wide by ``load_config_with_diagnostics``.
+    sponsored: SponsoredRuntimeSettings = field(default_factory=SponsoredRuntimeSettings)
 
 
 _LLM_PROVIDER_CONFIG_FIELDS = tuple(field_.name for field_ in fields(LLMProviderConfig))
@@ -2494,6 +2503,21 @@ def _build_config(
             )
         )
 
+    sponsored_raw = llm_raw.get("sponsored", {})
+    if not isinstance(sponsored_raw, dict):
+        sponsored_raw = {}
+    sponsored = SponsoredRuntimeSettings(
+        enabled=bool(sponsored_raw.get("enabled", False)),
+        runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
+        model=str(sponsored_raw.get("model", "Qwen/Qwen3-8B")),
+        embedding_mode=str(sponsored_raw.get("embedding_mode", "cloud")),
+        fallback_to_other_free_model=bool(sponsored_raw.get("fallback_to_other_free_model", True)),
+        fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", False)),
+        notify_on_fallback=bool(sponsored_raw.get("notify_on_fallback", True)),
+        request_timeout_seconds=_normalize_sponsored_timeout(
+            sponsored_raw.get("request_timeout_seconds")
+        ),
+    )
     llm = LLMConfig(
         default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
@@ -2524,6 +2548,7 @@ def _build_config(
         discovery=_module_config("discovery"),
         recommendation=_module_config("recommendation"),
         evaluation=_module_config("evaluation"),
+        sponsored=sponsored,
     )
     if instance_routing:
         ordered_instance_ids = [
@@ -4529,6 +4554,25 @@ def _normalize_llm_timeout(value: object) -> int:
     return normalized
 
 
+def _normalize_sponsored_timeout(value: object) -> float:
+    """Normalize ``llm.sponsored.request_timeout_seconds`` with a safe fallback."""
+
+    if isinstance(value, bool):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if isinstance(value, int | float):
+        normalized = float(value)
+    elif isinstance(value, str):
+        try:
+            normalized = float(value.strip())
+        except ValueError:
+            return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    else:
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if not (1.0 <= normalized <= 3600.0):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    return normalized
+
+
 def llm_concurrency_from_config(config: object) -> int:
     """Extract LLM concurrency from a config object, with safe fallback.
 
@@ -4724,7 +4768,7 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
     issues: list[ConfigIssue] = []
     instances = llm.instances
 
-    if not instances:
+    if not instances and not llm.sponsored.enabled:
         issues.append(
             ConfigIssue(
                 field="llm.instances",
@@ -4834,7 +4878,9 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                     )
                 )
 
-        if not instance.enabled:
+        if not instance.enabled or (
+            llm.sponsored.enabled and not llm.sponsored.fallback_to_user_provider
+        ):
             continue
         if not str(instance.model or "").strip():
             issues.append(
@@ -4906,7 +4952,7 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                     )
                 )
 
-    _validate_chain("llm.default_chain", llm.default_chain, allow_empty=False)
+    _validate_chain("llm.default_chain", llm.default_chain, allow_empty=llm.sponsored.enabled)
     for bucket in _LLM_MODULE_BUCKETS:
         route = getattr(llm, bucket)
         field_name = f"llm.routes.{bucket}.chain"
@@ -5035,6 +5081,68 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 severity="blocking",
             )
         )
+
+    sponsored = getattr(config.llm, "sponsored", None)
+    if sponsored is not None:
+        from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+        if sponsored.embedding_mode not in {"cloud", "local"}:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.embedding_mode",
+                    message="请选择 cloud（硅基流动）或 local（本地 Ollama）向量模式",
+                    severity="blocking",
+                )
+            )
+        if (
+            sponsored.enabled
+            and sponsored.embedding_mode == "local"
+            and (config.llm.embedding.provider != "ollama")
+        ):
+            issues.append(
+                ConfigIssue(
+                    field="llm.embedding.provider",
+                    message="免费方案的本地向量模式需要配置 Ollama；请重新选择本地向量并保存。",
+                    severity="blocking",
+                )
+            )
+        if sponsored.model not in CHAT_MODELS:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.model",
+                    message="请选择 Qwen3-8B 或 Qwen3.5-4B",
+                    severity="blocking",
+                )
+            )
+    if sponsored is not None and sponsored.enabled:
+        runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
+        if not runtime_path:
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+            runtime_path = installed_runtime_command()
+        try:
+            command = shlex.split(runtime_path)
+        except ValueError:
+            command = []
+        if not runtime_path:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=("免费模型组件尚未安装或需要更新，请在模型设置中准备免费组件后重试。"),
+                    severity="blocking",
+                )
+            )
+        elif not command or shutil.which(command[0]) is None:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=(
+                        f"未找到 Sponsored Runtime：{runtime_path}。"
+                        "请确认官方安装包完整或关闭 llm.sponsored.enabled。"
+                    ),
+                    severity="warning",
+                )
+            )
 
     incremental_intervals = (
         ("source_incremental_hours", config.scheduler.source_incremental_hours, False),
@@ -5335,8 +5443,14 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # at save/load time is the only user-visible diagnosis. Runs before the
     # default-provider early return so a broken default provider does not
     # hide fallback problems.
+    # Free-only routing never invokes the saved legacy user providers. Keep
+    # validating their schema, but require credentials/endpoints only when
+    # they are an active route (including an explicitly enabled fallback).
+    user_provider_required = not (
+        config.llm.sponsored.enabled and not config.llm.sponsored.fallback_to_user_provider
+    )
     fallback_name = str(config.llm.fallback_provider or "").strip().lower()
-    if fallback_name:
+    if fallback_name and user_provider_required:
         default_name = str(config.llm.default_provider or "").strip().lower()
         if fallback_name not in _SUPPORTED_CHAT_PROVIDERS:
             supported = ", ".join(sorted(_SUPPORTED_CHAT_PROVIDERS))
@@ -5509,7 +5623,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             has_codex_credentials = codex_credentials_exist()
         except Exception:
             has_codex_credentials = False
-        if not has_codex_credentials:
+        if not has_codex_credentials and user_provider_required:
             issues.append(
                 ConfigIssue(
                     field="llm.openai.codex_oauth",
@@ -5521,7 +5635,8 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     has_env_fallback = provider_name == "gemini" and bool(_gemini_api_key_from_env())
     provider_uses_codex_oauth = provider_name == "openai" and openai_auth_mode == "codex_oauth"
     if (
-        required_field
+        user_provider_required
+        and required_field
         and not provider_config.api_key.strip()
         and not has_env_fallback
         and not provider_uses_codex_oauth
@@ -5539,7 +5654,11 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # would just be ``openai`` with extra steps. Surface this so the user
     # knows to fill ``[llm.openai_compatible].base_url`` (Groq:
     # https://api.groq.com/openai/v1, vLLM: http://your-vllm:8000/v1, ...).
-    if provider_name == "openai_compatible" and not config.llm.openai_compatible.base_url.strip():
+    if (
+        user_provider_required
+        and provider_name == "openai_compatible"
+        and not config.llm.openai_compatible.base_url.strip()
+    ):
         issues.append(
             ConfigIssue(
                 field="llm.openai_compatible.base_url",
@@ -5550,7 +5669,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
-    if provider_name == "ollama" and not config.llm.ollama.model.strip():
+    if user_provider_required and provider_name == "ollama" and not config.llm.ollama.model.strip():
         issues.append(
             ConfigIssue(
                 field="llm.ollama.model",
@@ -5763,6 +5882,7 @@ def load_config_with_diagnostics(
     # _build_discovery ever runs — the values are ignored, never fail-fast.
     diagnostics.issues.extend(_removed_discovery_key_issues(raw))
     config = _build_config(raw, consult_environment=consult_environment)
+    install_sponsored_settings(config.llm.sponsored, data_path=config.data_path)
     diagnostics.issues.extend(_collect_config_issues(config))
     return config, diagnostics
 
@@ -6534,6 +6654,18 @@ def _render_config_toml(
         lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
     lines.extend(
         [
+            "[llm.sponsored]",
+            f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
+            f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
+            f"model = {_toml_string(config.llm.sponsored.model)}",
+            f"embedding_mode = {_toml_string(config.llm.sponsored.embedding_mode)}",
+            "fallback_to_other_free_model = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_other_free_model)}",
+            "fallback_to_user_provider = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_user_provider)}",
+            f"notify_on_fallback = {_toml_bool(config.llm.sponsored.notify_on_fallback)}",
+            f"request_timeout_seconds = {config.llm.sponsored.request_timeout_seconds}",
+            "",
             "[llm.embedding]",
             f"provider = {_toml_string(config.llm.embedding.provider)}",
             f"model = {_toml_string(config.llm.embedding.model)}",

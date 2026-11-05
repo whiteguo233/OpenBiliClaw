@@ -17,7 +17,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -1962,6 +1962,8 @@ def _save_runtime_provider_config(
     model: str = "",
 ) -> None:
     """Persist one complete provider instance and make it the global primary."""
+    from dataclasses import replace
+
     from openbiliclaw.config import (
         LLMInstanceConfig,
         effective_llm_default_chain,
@@ -2021,6 +2023,9 @@ def _save_runtime_provider_config(
         instance.model = model.strip()
 
     config.llm.instance_routing = True
+    # This entry point is an explicit BYOK choice in the CLI setup wizard.
+    # Preserve the free model selection so switching back does not lose it.
+    config.llm.sponsored = replace(config.llm.sponsored, enabled=False)
     config.llm.instances = instances
     config.llm.default_chain = [
         instance_id,
@@ -2530,6 +2535,10 @@ def _save_embedding_config(
     config, diagnostics = load_config_with_diagnostics()
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
+    if config.llm.sponsored.enabled and provider == "ollama":
+        from dataclasses import replace
+
+        config.llm.sponsored = replace(config.llm.sponsored, embedding_mode="local")
     if base_url:
         config.llm.embedding.base_url = base_url.strip()
     elif provider == "ollama" and not config.llm.embedding.base_url.strip():
@@ -3227,10 +3236,68 @@ def _interactive_runtime_config_setup() -> None:
       4) Optional per-module overrides (advanced, default skip).
     """
     _print_page_title("初始化前配置引导", "选 LLM、配 Embedding、填 B 站 Cookie")
+    console.print("[cyan]free.[/cyan] 硅基流动免费方案（默认，无需 Key，含 BGE-M3 文本向量）")
     _print_provider_table()
 
     while True:
-        raw = typer.prompt("\n请输入序号或名称（默认 1=DeepSeek）", default="1")
+        raw = typer.prompt("\n请输入序号或名称（默认 free=免费方案）", default="free")
+        if raw.strip().lower() in {"free", "sponsored", "免费"}:
+            from dataclasses import replace
+
+            from openbiliclaw.config import load_config_with_diagnostics, save_config
+            from openbiliclaw.llm.sponsored_profiles import ALTERNATE_CHAT_MODEL, DEFAULT_CHAT_MODEL
+            from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+            cfg, _diagnostics = load_config_with_diagnostics()
+            chosen = typer.prompt("选择模型 [1=Qwen3-8B / 2=Qwen3.5-4B]", default="1")
+            if chosen not in {"1", "2"}:
+                console.print("[yellow]请选择 1 或 2。[/yellow]")
+                continue
+            embedding_choice = typer.prompt(
+                "文本向量 [1=硅基流动 BGE-M3（推荐） / 2=本地 Ollama]", default="1"
+            ).strip()
+            if embedding_choice not in {"1", "2"}:
+                console.print("[yellow]请选择 1 或 2。[/yellow]")
+                continue
+            try:
+                if not cfg.llm.sponsored.runtime_path:
+                    ensure_runtime()
+            except BundleError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                continue
+            cfg.llm.sponsored = replace(
+                cfg.llm.sponsored,
+                enabled=True,
+                model=DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL,
+                embedding_mode="cloud" if embedding_choice == "1" else "local",
+                fallback_to_other_free_model=True,
+                fallback_to_user_provider=False,
+            )
+            if embedding_choice == "2":
+                from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+                select_local_embedding(cfg)
+                endpoint = (
+                    cfg.llm.embedding.base_url.rstrip("/").removesuffix("/v1")
+                    or "http://127.0.0.1:11434"
+                )
+                if _is_default_ollama_endpoint(endpoint) and _ollama_install_if_missing():
+                    _ollama_start_serve_background()
+                if not _ollama_has_model(
+                    cfg.llm.embedding.model, host=endpoint
+                ) and not _ollama_pull_model(cfg.llm.embedding.model, host=endpoint):
+                    console.print(
+                        "[yellow]本地向量尚未就绪；请准备 Ollama 模型后再初始化。[/yellow]"
+                    )
+            save_config(cfg)
+            embedding_label = (
+                "硅基流动 BGE-M3" if embedding_choice == "1" else f"本地 {cfg.llm.embedding.model}"
+            )
+            console.print(
+                f"[green]已选择 {cfg.llm.sponsored.model} + {embedding_label}；"
+                "初始化将验证真实连接。[/green]"
+            )
+            return
         choice = _resolve_menu_choice(raw)
         if choice is None:
             console.print("[bold red]看不懂这个输入，请重新输入序号或名称[/bold red]")
@@ -3381,7 +3448,7 @@ async def _run_init_discovery_backfill_async(
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
 
-    if selected_sources is not None and "instagram" in selected_sources:
+    if selected_sources is not None and selected_sources & {"instagram", "github"}:
         from openbiliclaw.config import load_config
         from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
         from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
@@ -3419,9 +3486,42 @@ async def _run_init_discovery_backfill_async(
             pool_source_shares=effective_pool_source_shares(config),
             llm_concurrency_gate=gate,
         )
-        return await controller.run_init_backfill(
-            profile, target, sources=selected_sources, progress_callback=progress_callback
-        )
+        async with AsyncExitStack() as resources:
+            if "github" in selected_sources:
+                from openbiliclaw.runtime.github_producer import GitHubDiscoveryProducer
+                from openbiliclaw.sources.github_client import (
+                    GitHubClient,
+                    resolve_github_access_token,
+                )
+
+                github = config.sources.github
+                token, _ = resolve_github_access_token(github.access_token)
+                client = await resources.enter_async_context(
+                    GitHubClient(
+                        token=token or None,
+                        request_interval_seconds=float(github.request_interval_seconds),
+                    )
+                )
+                controller.github_producer = GitHubDiscoveryProducer(
+                    database=database,
+                    soul_engine=soul_engine,
+                    client=client,
+                    enabled=bool(github.enabled),
+                    access_token=token,
+                    source_modes=tuple(github.source_modes),
+                    daily_search_budget=int(github.daily_search_budget),
+                    daily_ranked_budget=int(github.daily_ranked_budget),
+                    daily_latest_budget=int(github.daily_latest_budget),
+                    min_interval_minutes=int(github.min_interval_minutes),
+                    candidate_pipeline=pipeline,
+                    candidate_evaluation_owned_by_coordinator=True,
+                    keyword_fetch=KeywordFetchCoordinator(
+                        database=database, discovery_config=config.discovery
+                    ),
+                )
+            return await controller.run_init_backfill(
+                profile, target, sources=selected_sources, progress_callback=progress_callback
+            )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -11085,6 +11185,7 @@ async def run_guided_init(
                 ("v2ex", include_v2ex),
                 ("weibo", include_weibo),
                 ("instagram", include_instagram),
+                ("github", include_github),
             )
             if included
         }
@@ -18193,6 +18294,20 @@ def config_show() -> None:
         "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
     )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
+    if cfg.llm.sponsored.enabled:
+        from openbiliclaw.llm.sponsored_profiles import CONTEXT_WINDOWS
+
+        window = CONTEXT_WINDOWS.get(cfg.llm.sponsored.model, 0)
+        embedding_label = (
+            "硅基流动 BGE-M3"
+            if cfg.llm.sponsored.uses_cloud_embedding
+            else f"本地 {cfg.llm.embedding.model}"
+        )
+        llm_value = f"免费 · {cfg.llm.sponsored.model} ({window} tokens) + {embedding_label}"
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        for notice in sponsored_status(cfg)["notices"]:
+            console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
     from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
 
     try:

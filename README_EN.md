@@ -115,7 +115,7 @@ This is the core differentiator: the system **guesses domains you might enjoy bu
 
 ### 🔒 100% local, 100% yours
 
-Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. LLM calls use your own API key by default, with an experimental option to reuse local Codex CLI ChatGPT OAuth credentials. There is no OpenBiliClaw-operated cloud account, and no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
+Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. Choose the free model option, your own API key, or experimental reuse of local Codex CLI ChatGPT OAuth credentials. Cloud model calls send the text and profile context needed for the task to your selected model provider. There is no OpenBiliClaw-operated cloud account. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
 
 > 💡 **How it compares**
 >
@@ -646,11 +646,31 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🚀 **Guided Init in the UI** — the packaged `/setup/` wizard, Desktop Web, and the extension can all initialize with one click; no terminal required
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
 - 🔬 **Self-Optimizing Eval Loops** — five modules each carry an LLM-as-judge loop that improves prompt quality over rounds
-- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls use your own key, and each instance is built for exactly one person
+- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls can use free models or your own key, and each instance is built for exactly one person
 - 🔌 **Local Embedding** — optional Ollama + bge-m3, automatic acceleration with CPU fallback, no extra API key
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
+
+Free model integration (implemented on this branch; SDK bundles published, application release pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings default to cloud BGE-M3 with local Ollama available as an independent choice. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
+
+```text
+Built-in SiliconFlow provider: setup / extension / desktop / mobile / CLI → local config → shared sponsored router
+  Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
+  Cloud text embeddings → BGE-M3 (1024 dimensions, default); optional image understanding → 4B
+  → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
+  Silent transient failure → bounded retry / free fallback → durable queue; started work is not replayed
+  Explicit GitHub/Instagram setup → selected producer → evaluation/copy → first usable inventory
+  Generic web extraction → canonical full-URL identity → deduplication; native platform IDs remain
+  Results → source-evidence validation → profile / memory; one bounded temporal correction
+  Local vector choice → Ollama (independent cache/endpoint, no sponsored key)
+  Credential / policy failure → durable status → settings + inbox → update app or configure own key
+  Backend packaging / Docker → required pinned signed Rust SDK → fail if unavailable
+  Installer / updater → verify → prefer current Core pin → atomic activation
+  Exact memory → JSON Pointer values; free director → ordered refs → validated pairing
+```
+
+Text/JSON calls forward real streaming deltas; tools use the project's existing simulation protocol. Automatic fallback stays within the two free models unless the user explicitly enables their own provider. BGE-M3 has no image embeddings.
 
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener

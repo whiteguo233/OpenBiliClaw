@@ -83,8 +83,12 @@ async def judge_speculations(
 
     try:
         from openbiliclaw.eval.agents import collect_json
+        from openbiliclaw.llm.sponsored_router import sponsored_enabled
 
-        agent_options = import_module("claude_agent_sdk").ClaudeAgentOptions
+        if sponsored_enabled():
+            from .sponsored_agents import agent_options
+        else:
+            agent_options = import_module("claude_agent_sdk").ClaudeAgentOptions
 
         result = await collect_json(
             prompt=user_prompt,

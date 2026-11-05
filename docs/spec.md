@@ -287,6 +287,34 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
+免费模型方案通过共享配置接入全部日常文本任务；图片理解是可选增量能力，BGE-M3 仅生成文本向量。组件发行前仍保留明确的不可用状态，详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+
+```text
+Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
+  → LLMService / Registry / eval → selected signed 8B or 4B task
+  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
+  → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
+  → SiliconFlow SSE / embeddings
+  → Core schema / evidence validation
+      ├ passive portrait: source-backed information preferences
+      ├ invalid temporal fields: one narrow LLM correction → source validation
+      └ awareness batch vs lookback → reject foreign citations → one corrective retry
+  → normal profile, discovery, recommendation, agent flows
+Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
+Auth failure / signed-policy expiry → durable capability status → settings + message notices
+  → update application / installer OR configure a user-owned API key
+Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+  → shared 30s first-output budget; no replay after output
+Silent transient chat failure → persisted retry count (max 2) → durable worker
+Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
+Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
+  → required pinned SDK staging → offline self-check → versioned bundle / atomic activation
+  → prefer current Core pin over stale active SDK after application update
+Agent exact memory lookup → JSON Pointer → bounded original value (no bulk-context guessing)
+Free director → ordered refs → deterministic pairing → unchanged horizon validation
+Optional image understanding: 4B; image embeddings: unavailable in the free profile
+```
+
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
@@ -721,6 +749,8 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ + 各自 producer│ │ bounded task/result│  │             │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ Web 抽取 → 完整 URL 身份 → 去重；原生平台 ID 保留           │ │
+│  │ GitHub/Instagram init → 所选 producer → 评估/文案 → 可用库存 │ │
 │  │ sources.platforms：十四平台 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │

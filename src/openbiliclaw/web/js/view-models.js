@@ -776,6 +776,7 @@ export function normalizePoolStatus(status) {
 
 export function normalizeRuntimeStatus(status) {
   return {
+    sponsored_status: status?.sponsored_status || {},
     initialized: Boolean(status?.initialized),
     recommendation_count: Number(status?.recommendation_count ?? 0),
     pending_signal_events: Number(status?.pending_signal_events ?? 0),

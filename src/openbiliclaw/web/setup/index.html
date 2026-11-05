@@ -143,6 +143,9 @@
     }
   </style>
   <script src="/shared/i18n.js"></script>
+<link rel="stylesheet" href="/shared/sponsored-settings.css">
+<script src="/shared/sponsored-settings.js"></script>
+<style>#setupSponsoredSettings > .sponsored-toggle{display:none}</style>
 </head>
   <body>
     <!-- weibo, instagram and tiktok are included in the shared guided-init
@@ -172,9 +175,10 @@
       <!-- Step 0: 连接 AI -->
       <section class="panel active" data-panel="0">
         <h2>连接 AI 大脑</h2>
-        <p class="sub">OpenBiliClaw 用大模型理解你、生成推荐解释。选一个服务商,填入它的 API Key 即可。</p>
+        <p class="sub">OpenBiliClaw 用大模型理解你、生成推荐解释。可直接使用免费方案，也可配置自己的服务商。</p>
         <label for="provider">AI 服务商</label>
         <select id="provider">
+          <option value="sponsored">硅基流动免费方案（推荐 · 无需 Key）</option>
           <option value="deepseek">DeepSeek（推荐 · 便宜好用）</option>
           <option value="openai">OpenAI</option>
           <option value="claude">Claude（Anthropic）</option>
@@ -187,6 +191,8 @@
           <option value="openai_compatible">OpenAI 兼容接口（自建 / 第三方）</option>
         </select>
 
+        <div id="setupSponsoredSettings"></div>
+        <div id="byokFields">
         <div id="keyWrap">
           <label for="apiKey">API Key</label>
           <input id="apiKey" type="password" placeholder="粘贴你的 API Key" autocomplete="off">
@@ -237,6 +243,7 @@
           <option value="max"></option>
         </datalist>
         <div class="hint" id="reasoningEffortHint">协议没有 Effort 枚举接口；这里是本地建议，也支持手填，保存后会做真实连接测试。</div>
+        </div>
 
         <div class="msg" id="msg0"></div>
         <div class="row-actions">
@@ -291,7 +298,7 @@
         <p class="sub" id="doneSummary">基础配置和首轮初始化已完成，本地引擎可以开始为你工作了。</p>
         <ul class="check-list">
           <li><span class="tick">✓</span><div><b>AI 大脑</b><br><span class="hint" id="doneLlm">已连接</span></div></li>
-          <li><span class="tick">✓</span><div><b>本地语义引擎</b><br><span class="hint">Ollama bge-m3 已随包就绪,推荐去重 / 多样性已开启</span></div></li>
+          <li><span class="tick">✓</span><div><b>文本向量</b><br><span class="hint" id="doneEmbedding">按所选配置使用文本向量。</span></div></li>
           <li id="biliDone" class="pending"><span class="tick">…</span><div><b>平台账号</b><br><span class="hint" id="doneBili">B 站可稍后连接；Reddit 等来源按初始化勾选项检查</span></div></li>
           <li id="initDoneRow"><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint" id="doneInit">完整画像和首轮可用推荐均已就绪</span></div></li>
         </ul>
@@ -596,6 +603,9 @@
 
     function renderProvider() {
       const p = $("#provider").value;
+      $("#byokFields").hidden = p === "sponsored";
+      $("#setupSponsoredSettings").hidden = p !== "sponsored";
+      if (p === "sponsored") return;
       const isCompat = p === "openai_compatible";
       const isClaude = p === "claude";
       const isOpenAI = p === "openai";
@@ -958,6 +968,7 @@
 
     async function saveLlm() {
       const provider = $("#provider").value;
+      if (provider === "sponsored") { await saveSponsored(); return; }
       const apiKey = $("#apiKey").value.trim();
       const baseUrl = $("#baseUrl").value.trim();
       const model = $("#model").value.trim();
@@ -990,6 +1001,7 @@
       const payload = {
         suppress_background_llm_work: true,
         llm: {
+          sponsored: { enabled: false },
           routing_version: 2,
           instances: routing.instances,
           default_chain: routing.default_chain,
@@ -1054,6 +1066,58 @@
           ? "重新保存配置"
           : "保存并继续 →";
       }
+    }
+
+    function sponsoredForm() {
+      return window.OpenBiliClawSponsoredSettings.mount($("#setupSponsoredSettings"), {
+        useOwn: () => { $("#provider").value = "deepseek"; switchProvider(); $("#apiKey").focus(); },
+        prepare: async () => {
+          const r = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
+          if (!r.ok) throw new Error("组件准备失败，请确认已登录后重试。");
+          return await r.json();
+        },
+        probe: async sponsored => {
+          const r = await fetchWithTimeout("/api/config/probe-service", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "sponsored", config: { llm: { sponsored } } }),
+          }, 370000);
+          if (!r.ok) throw new Error("连接测试失败，请确认已登录后重试。");
+          return await r.json();
+        },
+      });
+    }
+
+    async function saveSponsored() {
+      const btn = $("#saveLlm");
+      btn.disabled = true; btn.textContent = "正在准备并验证免费模型…";
+      clearMsg("#msg0");
+      try {
+        if (!sponsoredForm().ready) {
+          const r = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
+          const result = await r.json();
+          if (!r.ok || !result.ok) throw new Error(result.error || "免费模型组件准备失败");
+        }
+        const sponsored = { ...sponsoredForm().collect(), enabled: true };
+        const probe = await fetchWithTimeout("/api/config/probe-service", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "sponsored", check_embedding: sponsored.embedding_mode !== "local", config: { llm: { sponsored } } }),
+        }, 370000);
+        const checked = await probe.json();
+        if (!probe.ok || !checked.ok) throw new Error(checked.error || "免费模型连接测试失败");
+        await ensureSetupLocaleSaved();
+        const r = await fetchWithTimeout("/api/config", { method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suppress_background_llm_work: true, llm: { sponsored } }),
+        });
+        const saved = await r.json();
+        if (!r.ok) throw new Error(configSaveErrorMessage(r, saved));
+        if (saved.apply_state === "queued" || saved.apply_state === "applying") await waitForConfigApply(Number(saved.apply_revision || 0));
+        if (saved.restart_required === true) { writeSetupRestartMarker("sponsored"); waitForBackendRestart("sponsored"); return; }
+        $("#doneLlm").textContent = "已连接 · " + checked.model + (sponsored.embedding_mode === "local" ? " · 本地向量将在初始化时准备" : " + BGE-M3");
+        clearSetupRestartMarker(); setStep(1);
+      } catch (error) {
+        showTextMsg("#msg0", error.message || "免费模型配置失败", "err");
+      } finally { btn.disabled = false; btn.textContent = "保存并继续 →"; }
     }
 
     // Reads the same source-auth contract the settings pages render, through
@@ -1459,6 +1523,11 @@
     }
 
     function showInitCompletion(status = null) {
+      $("#doneEmbedding").textContent = $("#provider").value === "sponsored"
+        ? (sponsoredForm().collect().embedding_mode === "local"
+          ? "本地 Ollama 文本向量已就绪。"
+          : "硅基流动 BGE-M3 文本向量已就绪。")
+        : "按所选配置使用文本向量。";
       const partial = Boolean(status?.partial_success);
       $("#doneTitle").textContent = partial ? "初始化部分完成" : "就绪 🎉";
       $("#doneSummary").textContent = partial
@@ -2086,6 +2155,7 @@
             void applySetupLocale(currentConfig.language);
           }
           const llm = currentConfig?.llm || {};
+          sponsoredForm().load(llm.sponsored ? { ...llm.sponsored, enabled: true } : {});
           configLoaded = true;
           backendDegraded = currentConfig?.degraded === true;
           savedLlmInstances = { ...(llm.instances || {}) };
@@ -2137,7 +2207,10 @@
             if (String(cfg.api_key || "").trim()) savedKeyProviders.add(provider);
           }
           const primaryInstance = savedLlmInstances[savedLlmDefaultChain[0]];
-          const prov = String(primaryInstance?.provider_type || llm.default_provider || "");
+          const savedProvider = String(primaryInstance?.provider_type || llm.default_provider || "");
+          const preferFree = llm.sponsored && savedKeyProviders.size === 0
+            && (!savedProvider || savedProvider === "deepseek");
+          const prov = llm.sponsored?.enabled || preferFree ? "sponsored" : savedProvider;
           const optionExists = Array.from($("#provider").options).some((option) => option.value === prov);
           if (prov && optionExists) {
             $("#provider").value = prov;

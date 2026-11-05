@@ -64,6 +64,7 @@ dependencies = [
     # Multiline chat input (issue #83): PromptSession with custom key bindings.
     "prompt_toolkit>=3.0",
     "pydantic>=2.0",
+    "cryptography>=41",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
 ]

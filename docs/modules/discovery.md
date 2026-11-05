@@ -739,8 +739,13 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ## 已实现功能
 
+| 本轮修复 | 行为 |
+|---|---|
+| 通用网页稳定身份 | LLM 简称 ID 不用于通用网页去重；有有效链接时使用规范化完整 URL。 |
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 免费模型评估分批 | 已实现 | evaluate_content_batch在免费LLM路由下每次最多8条；全部条目、ID、顺序和校验保留，Jev不受影响 |
 | 抖音发现共享冷却 | ✅ | 已领取且最终 failed 的 search / hot / feed 从 `dy_tasks` 推导持久冷却；producer 在关键词 claim 前检查，client 在 hot-word / 取数和 direct fallback 前检查，队列暂停新的 pending discovery claim。有效 partial 保留，失败不被候选数量清除。 |
 | 抖音热词跨轮次轮换 | ✅ | 客户端从 `dy_tasks.payload_json.hot_items` 读取最近 6 小时已入队选择；正式 producer 每轮重建 transport 和进程重启均不会丢失轮换记录。沿用新词优先、全部最近使用时仍补足数量的原策略。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
@@ -776,6 +781,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | eval-batch 互动指标与封面图输入 | ✅ | `DiscoveredContent` / `discovery_candidates` / `content_cache` 透传观看、点赞、收藏、评论、分享、弹幕、转推、书签等指标；batch prompt 会带 `tags/body_text` 和互动指标，但画像摘要会先压缩到高权重兴趣、最新 awareness / insight 与完整避雷项。`[discovery].multimodal_evaluation_enabled=true` 且 evaluation 模型支持图像时，封面图经运行时图片缓存命中或白名单抓取后压缩为 image input 一并评估，并用 `cover_image_ref="cover:<content_id>"` 和图片前置文字锚点稳定绑定候选，自动使用更小 batch |
 | 封面 image-only embedding 预热 | ✅ | 入池后除 MMR 文本 embedding 预热外，当 `[llm.embedding].multimodal_enabled=true` 且 embedding model 支持图像（如 `gemini-embedding-2` 或 `dashscope`/`qwen3-vl-embedding`）时，`_warm_cover_embeddings` 用 `prepare_cover_bytes_for_embedding` + `embed_image` 预热封面向量，并以 `image_embedding_cache_key_for_url(cover_url)` 为键落缓存，供 recommendation `precompute_delight_scores` 的封面视觉加成按 URL 命中（与 vision eval 开关独立；纯文本 embedding 自动跳过、best-effort 不抛错） |
 | 多平台发布时间元数据 | ✅ | 十四个平台来源都只从语义明确的上游字段提取发布时间；GitHub repository 使用 `created_at`，不用发现、Star 或 `updated_at` 冒充发布日期。`published_at` 统一规范为 UTC RFC 3339，只有相对时间时写 `published_label`。两字段贯穿 `DiscoveredContent` → `discovery_candidates` → `content_cache`，重新发现时空值分别保留已有非空值；缺失/异常值默认不影响候选入队，仅显式严格发布日期偏好（`recommendation_date_weight=1`）按范围外排除（issue #257）。YouTube 配置非 `all` 日期偏好时按 channel id 抓取公开 Atom feed 补精确 `published_at`（只写 feed 的 `<published>`；RSS 未覆盖的旧视频保持 label-only）。小红书配置非 `all` 日期偏好时从 `user_posted.time` 和笔记详情 state `noteDetailMap[noteId].note.time`（epoch ms）补精确时间；搜索 / 收藏卡片本身没有时间字段，隐藏 iframe 补全单任务最多 5 条。旧缓存不联网回填，也不以发现时间、任务时间、互动时间或推荐生成时间代替发布时间。 |
+| 免费日期字段有界纠错 | ✅ | 时间契约无效或遗漏原文明示的完整截止时刻时，以本次局部ID单独重评一次；不改相关性分数，仍验证逐字证据/时区/日期/分类与范围；失败保留未验证状态 |
 | Evaluation Agent 证据驱动时效三态 | ✅ | evaluator 在同一请求中原子输出 `class/confidence/reason + validity_mode/valid_until/scope/evidence/state`，相关性分数保持时间中性；代码补齐评估/复审时钟、policy version 与 completeness。策略只在 `confidence>=0.80`、完整、`scope=core` 且 evidence 逐字 grounded 时，按已过明确 deadline 或 `expired/superseded` 状态 hard expire；其它内容 fail-neutral。1 / 14 / 60 天只是三类内容的复审节奏，`versioned` 另有 120 天准入 TTL（v1 legacy 行按年龄触发复审），旧 3 / 60 天行也只触发复审。`review_due` 回到待评估队列或进入可逆 `temporal_review_hold`，复审可恢复；`expired` 才进入 `rejected_temporal_stale` / `stale`。 |
 | v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`，也不把候选当 0 分拒绝；runtime 待评估池会把本批 claim 释放回 `pending_eval`，待 provider 恢复后继续评估，避免一次 Gemini 429 放大成逐条请求或误淘汰整批候选 |
 | 推理预算耗尽评估分批（未发布） | ✅ | batch LLM 调用若因推理实例把 `max_tokens` 全花在 thinking、正文为空（`returned reasoning but no final content`，`finish_reason=length`）而失败，`_evaluate_batch` 把该子批整体标记为 missing 后走既有有界 split-retry（深度 3 / 额外请求 6）：批次减半重试直到每条 JSON 放得下，耗尽后仍未评到的成员才落 0 分并标 `evaluation_response_missing`。限流 / 鉴权 / 超时等非预算异常继续原样上抛，rate limit 也不拆分（回到上面的 claim 释放路径）；文本 batch 预算保持 16384，`LLMService` 对所有结构化调用统一 4096 下限 |
@@ -830,6 +836,10 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+`extract_content_from_page(..., source_platform="web", base_url=...)` 将相对链接解析后，使用已有 `make_item_key` 的 URL 身份契约；同链接不同模型 ID 保持同身份，不同域名/路径不互相覆盖。其他平台保留原生 ID，旧持久数据不批量改写。
+
+免费模式的单条/批量评估增加最多一次 `discovery.temporal_repair` 调用，公开签名不变。只重评失败或漏掉明确截止时刻的条目，合并成一个窄任务，复用补池评估准入而非空池时暂停的维护队列；响应按局部ID唯一匹配，不接收评分修改。纠错输入不带发布时间/评估时钟，避免把“已经过期的入口”误判成“历史资料”；最终是否过期仍由代码计算。`canonicalize_deadline_state(payload)` 只清除 explicit_deadline 的冗余模型状态，日期、证据、分类、范围和置信度仍须通过原校验。`has_explicit_deadline_hint(text)` 仅决定是否值得重评，绝不据关键词直接淘汰内容。纠错失败不阻断正常评分，不放宽 hard-expire 门槛。
 
 `JevContentEvaluator(provider, model=..., config=..., context_budget=...)` 接受模型绑定的共享
 预算；`evaluate(profile_summary=..., content_items=...)` 支持命名 on-demand catalog，
@@ -1741,3 +1751,5 @@ V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍�
 - 单后端配置同样获得既有的错误 cooldown、`provider_failures` / `provider_successes` 计数和 `last_search_provider` 归因；此前裸 provider 会让 `grounding_source` 退化成 `"none"`，并在每次 probe 重打同一个失败端点。
 - 单后端时 `pages_per_probe` 固定为 1，单次请求条数与装配前一致；多后端仍按配置的每 probe 页数叠加。
 - 失败语义不变：链上有可用结果就返回，全部失败时把最后一个真实错误抛给调用方，不吞异常。
+
+2026-11-05：`evaluate_content_batch(contents, profile, batch_size=...)` 在免费LLM启用时将单请求批量上限限制为8，仍评估整个输入；共享并发gate及原缺项重试、持久化claim语义保持不变。实际30条与完整后台重测见本轮验收。
