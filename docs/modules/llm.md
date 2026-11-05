@@ -1,5 +1,13 @@
 # LLM 多模型支持
 
+## 评估输入字段（2026-11-06）
+
+| 已实现能力 | 契约 |
+| --- | --- |
+| sparse 评估元信息 | 保留原生回复/转发/书签数、缺少绝对日期时的原始时间标签、GitHub 有界语义元信息。静态提示说明同义计数不能相加、缺失不等于零、仓库推送不等于发布时间。 |
+
+公开纯函数 `evaluation_wire.project_evaluation_source_metadata(source_platform, metadata)` 只返回白名单副本，当前支持 GitHub。canonical 校验拒绝未规范化扩展字段；返回值深拷贝嵌套许可证。row-wire-v1 保持旧列，对无法表示的新字段明确失败。缓存 v7 与 `tests/golden/evaluation/sparse-system-v7.txt` 同步。
+
 ## 免费结构化输出约束（2026-11-06）
 
 | 已实现能力 | 合同 |

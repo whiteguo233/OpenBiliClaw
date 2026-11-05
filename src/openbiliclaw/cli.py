@@ -7337,7 +7337,7 @@ def autostart_disable() -> None:
 
 @app.command("set-password")
 def set_password(
-    disable: bool = typer.Option(False, "--disable", help="关闭密码门禁"),
+    disable: bool = typer.Option(False, "--disable", help="关闭远程访问，恢复仅本机模式"),
     logout_all: bool = typer.Option(
         False, "--logout-all", help="使所有设备的登录态立即失效（不改密码/密钥）"
     ),
@@ -7410,7 +7410,11 @@ def set_password(
     if disable:
         cfg.api.auth.enabled = False
         save_config(cfg)
-        _print_status_panel("success", "已关闭密码门禁", "重启后端 (openbiliclaw start) 后生效。")
+        _print_status_panel(
+            "success",
+            "已关闭密码门禁",
+            "恢复仅可信本机访问；重启后端 (openbiliclaw start) 后生效。",
+        )
         return
 
     if rotate_secret:
@@ -8625,10 +8629,10 @@ def _maybe_setup_password_in_init(*, allow_lan: bool) -> None:
     if not allow_lan or not _is_interactive_terminal():
         return
     console.print()
-    console.print("[bold]🔒 访问密码（可选）[/bold]")
+    console.print("[bold]🔒 远程访问密码（仅本机使用可跳过）[/bold]")
     console.print(
-        "为局域网/远程设备访问设置登录密码？[bold]本机访问始终免登录[/bold]，"
-        "只有手机和其他电脑需要输入密码。"
+        "为局域网/远程设备访问设置登录密码？[bold]可信本机默认免登录[/bold]。"
+        "跳过后仅允许本机访问；手机和其他电脑需设置密码后才能连接。"
     )
     console.print("[dim]后续可用 `openbiliclaw set-password` 设置或修改。[/dim]")
     console.print()

@@ -955,8 +955,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "bilibili": {"browser_executable": "/tmp/obc_backdoor"},
         },
     )
-    assert tamper.status_code == 403
-    assert tamper.json()["error"] == "local_only"
+    assert tamper.status_code == 401
+    assert tamper.json()["error"] == "auth_setup_required"
     assert config_path.read_text(encoding="utf-8") == before
 
     probe = remote.post(
@@ -966,8 +966,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
         },
     )
-    assert probe.status_code == 403
-    assert probe.json()["error"] == "local_only"
+    assert probe.status_code == 401
+    assert probe.json()["error"] == "auth_setup_required"
 
     discover = remote.post(
         "/api/config/discover-models",
@@ -976,8 +976,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
         },
     )
-    assert discover.status_code == 403
-    assert discover.json()["error"] == "local_only"
+    assert discover.status_code == 401
+    assert discover.json()["error"] == "auth_setup_required"
 
 
 def _auth_config() -> Config:

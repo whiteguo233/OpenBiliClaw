@@ -1,5 +1,18 @@
 # 内容发现引擎
 
+小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
+
+
+## 评估元信息补齐（2026-11-06）
+
+| 已实现能力 | 说明 |
+| --- | --- |
+| 原生互动指标 | sparse JSON 保留正数 `reply_count/retweet_count/bookmark_count`，修复 V2EX 回复被省略，以及 X / 微博原生互动缺口。 |
+| 仓库语义字段 | GitHub `source_metadata` 仅投影创建/更新/推送时间、语言、可见性、fork/archived/disabled、fork/issues/watchers 计数与许可证；内部 ID 和原始响应不进入模型。 |
+| 无绝对日期时的时间标签 | 保留 `published_label`，不虚构绝对时间。有 published_at 时省略重复标签。 |
+
+公开调用签名不变：single/batch 内容投影同时服务 LLM 与 Jev；规范字段在候选池和缓存中保持原样，只清洗发给评估器的副本。LLM 缓存命名空间升为 `content-eval-v7`，静态 sparse 系统提示有固定 golden。row-wire-v1 列不变，不能承载的新字段明确报错。审计范围与回归证据见[记录](../testing/2026-11-06-security-metadata.md)。
+
 2026-10-03：普通手动“换一批”也接入 Instagram 正式 producer → `drain_pending(..., flush=True)` → 有界推荐表达，与初始化/后台任务共用锁、预算与准入。callback 已拥有的 post-admission copy 不再重复执行；评估或文案失败映射为明确失败态，不把仅触发任务当作供给成功。
 
 显式 Instagram 初始化使用同一正式 producer 和候选管线完成首轮供给。`DiscoveryCandidatePipeline.drain_pending(..., flush=True)` 只跳过后台小批量 coalescing 等待，并保留调用者数量上限、引擎 hard cap、锁、claim token、评分与池准入规则；默认 `flush=False` 的后台行为不变。初始化持有 refresh 锁，待完整画像落盘后才发现、即时评估一批并同步生成推荐文案；没有可浏览条目仍返回首池未就绪，不以 queued/waiting 冒充成功。
@@ -262,7 +275,7 @@ Instagram 已观察的兴趣别名只映射为有界候选 seed，不宣称站�
 
    **Reason 契约（v0.3.171 减肥）**：批量 / 单条评估 prompt 明确 reason 仅供内部诊断，不是用户文案；`score < 0.5` 写空串，`score >= 0.5` 写不超过 30 个 Unicode code points 的精炼中文。`normalize_evaluation_reason()` 在 runtime 再执行同一契约：缺失 / `None` 归一为空串，其它非字符串按 malformed member 重试，高分先 strip 再截 30 code points，低分和被 franchise / style cap 淘汰的条目强制清空。对象、eval cache 与候选持久化只接收归一化后的值。0.5 是 baked 进静态 system prompt 的常量；所有 admission 路径仍高于它，所以减掉低分诊断不会改变准入。推荐表达与 delight 文案由独立生成链产生，不展示 `relevance_reason`。
 
-   **候选 sparse JSON 已上线，row-wire 继续拒绝**：batch evaluator 默认使用 `sparse-json` canonical envelope，每次请求分配 `0..N-1` local ID，只保留 title / author 与非空正文、简介、权威 `published_at`、时长、互动、标签、目录指标、tail recall 和真实图片引用；URL、全局内容 ID、重复作者/来源字段、平台指标别名和零值不进入模型 wire。同平台/类型提到 batch defaults，mixed batch 才逐项携带；只有 effective context 精确等于 `explore` 才标 `mode=explore`。顶层 `evaluation_context` 另携带精确 UTC `evaluated_at`；二者只用于 `temporal_*` 判断，不改写 relevance。输出仍为严格 JSON，并要求每个成员完整携带模型拥有的八个 temporal v2 字段；多成员必须按 local ID 绑定，缺失/重复/未知成员走 bounded repair，禁止按位置误绑。真实 100×3 中 sparse 相对历史 production 的 prompt/total 中位分别节省 `27.99% / 24.05%` 并通过全部门，因此继续作为默认；sparse landing 曾把 cache namespace 从 v3 升至 v4，temporal v2 原子证据契约升至 v5，本次无条件 state 证据契约再升至 v6。显式 `evaluation_candidate_transport="production"` 保留 pretty JSON/global-ID 回滚；`row-wire-v1` 因冻结列协议不能承载 `published_at`，编码时会明确拒绝，而且相对 sparse 的 prompt 中位只省 `2.20%`、未达锁定 `5%`，故仍严格限制为 replay-only。**入 wire 的文本统一过 `_sanitize_wire_text()` 清洗（#284）**：来源数据夹带的 C0 控制字符（`\t \r \n` 之外）与 DEL 在 `build_canonical_evaluation_batch` 边界被剥除、孤立代理项被替换，清洗后为空串的 tag 条目被丢弃，正文、简介、`published_at` 清洗后为空则整字段省略；此前单条脏候选会让 `_validate_text` 抛错、整批 burn 完 `batch_eval_attempts` 进 `failed_eval`。清洗只作用于发给 LLM 的副本，存储行保留原文；wire 校验器本身保持严格，继续拦截 LLM 响应侧的非法文本。已死信的历史行由 coordinator 启动时的 `revive_failed_eval_candidates` 自动复活重评。
+   **候选 sparse JSON 已上线，row-wire 继续拒绝**：batch evaluator 默认使用 `sparse-json` canonical envelope，每次请求分配 `0..N-1` local ID，只保留 title / author 与非空正文、简介、权威 `published_at`、时长、互动、标签、目录指标、tail recall 和真实图片引用；URL、全局内容 ID、重复作者/来源字段、零值不进入模型 wire；原生回复、转发、书签指标在 v7 中保留。同平台/类型提到 batch defaults，mixed batch 才逐项携带；只有 effective context 精确等于 `explore` 才标 `mode=explore`。顶层 `evaluation_context` 另携带精确 UTC `evaluated_at`；二者只用于 `temporal_*` 判断，不改写 relevance。输出仍为严格 JSON，并要求每个成员完整携带模型拥有的八个 temporal v2 字段；多成员必须按 local ID 绑定，缺失/重复/未知成员走 bounded repair，禁止按位置误绑。真实 100×3 中 sparse 相对历史 production 的 prompt/total 中位分别节省 `27.99% / 24.05%` 并通过全部门，因此继续作为默认；sparse landing 曾把 cache namespace 从 v3 升至 v4，temporal v2 原子证据契约升至 v5，无条件 state 证据契约升至 v6，元信息补齐升至 v7。显式 `evaluation_candidate_transport="production"` 保留 pretty JSON/global-ID 回滚；`row-wire-v1` 因冻结列协议不能承载 `published_at`，编码时会明确拒绝，而且相对 sparse 的 prompt 中位只省 `2.20%`、未达锁定 `5%`，故仍严格限制为 replay-only。**入 wire 的文本统一过 `_sanitize_wire_text()` 清洗（#284）**：来源数据夹带的 C0 控制字符（`\t \r \n` 之外）与 DEL 在 `build_canonical_evaluation_batch` 边界被剥除、孤立代理项被替换，清洗后为空串的 tag 条目被丢弃，正文、简介、`published_at` 清洗后为空则整字段省略；此前单条脏候选会让 `_validate_text` 抛错、整批 burn 完 `batch_eval_attempts` 进 `failed_eval`。清洗只作用于发给 LLM 的副本，存储行保留原文；wire 校验器本身保持严格，继续拦截 LLM 响应侧的非法文本。已死信的历史行由 coordinator 启动时的 `revive_failed_eval_candidates` 自动复活重评。
 
 5. **按相关性、时效三态、供给层级和池子上限入推荐池**
    通过相关性阈值且 temporal disposition 为 `eligible` 的候选会先调用 `ContentDiscoveryEngine.normalize_evaluated_results()` 复用 discovery 旧路径的 topic_group / topic_key embedding normalization，再交给 `cache_evaluated_results()` 复用既有 `_cache_results()` 入库逻辑，写入正式推荐池 `content_cache`。`_cache_results()` 在真正写库前会再次调用同一 admission + temporal policy，任何兼容 / 手动调用即使绕过候选队列，也不能把未评估、缺分、低分、待复审或明确过期内容写入可服务池；`review_due` 使用可逆 hold/requeue，只有 `expired` 才终态拒绝。`Database.cache_content()` 的缺省分数为 `0.0`，不再凭空赋予 `0.60`。数据库的普通取池、缓存回填、平台补位、文案预计算、池配额统计、历史推荐和 delight 出口同样使用来源感知的准入条件，所以 `explore=0.58` 能真实展示，而任意非 `explore=0.58` 仍被拒绝。写入前会检查 `count_pool_candidates()`；如果 `pool_available_count >= pool_target_count`，pipeline 直接停止 drain，runtime 也不会继续 discovery。因此“推荐池到了上限就不 discovery”的边界仍以正式可换池为准。成功 admission 的 item 会保存在 pipeline 的 `last_admitted_items` 中，供 runtime 更新 `recent_pool_topics`。

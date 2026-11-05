@@ -69,6 +69,9 @@ Four steps for most users. Firefox, Docker, scripted, and manual setup paths all
 2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
    ```
 
@@ -85,7 +88,7 @@ authorized device tags; fully restart the app afterward. The credential is stage
 next start and is never written to `config.toml`, echoed by the API, or logged. Source / scripted installs first run `openbiliclaw tailnet build-helper` with Go
 1.26.6, then `openbiliclaw tailnet enable` and restart. The computer needs no system-wide Tailscale;
 this default-off edge is tailnet-private and enables no Funnel/Serve. Enable the app password in the
-local Web settings as defense in depth (source installs may also use `openbiliclaw set-password`). See
+local Web settings before connecting remotely (source installs may also use `openbiliclaw set-password`). See
 [Embedded Tailnet](docs/modules/tailnet.md).
 
 Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding). `keenable` can be added the same way; see [Discovery](docs/modules/discovery.md#可选-keenable-grounding).
@@ -380,7 +383,7 @@ openbiliclaw start
 
 > During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable over available IPv4 and IPv6, `127.0.0.1` = local only). QR links prefer IPv4 and automatically use a bracketed IPv6 literal when IPv4 is unavailable.
 >
-> **Security note**: binding `0.0.0.0` makes the backend reachable by every device on the network. The `[api.auth]` password gate is off by default, which leaves history, profile, and write endpoints (likes/comments/follows) open to the LAN with zero authentication. The Bilibili credential routes and the settings write/probe routes (`PUT /api/config`, `probe-service`, `discover-models`) are the exception — they always require a local or authenticated caller. On any untrusted network (public Wi-Fi, shared hotspot, port forwarded to the internet), run `openbiliclaw set-password` to enable the gate immediately.
+> **Remote access**: with `[api.auth].enabled=false`, private APIs are trusted-local only. Before connecting a phone, LAN client, or reverse proxy, enable an access password in the backend computer’s Settings or run `openbiliclaw set-password`. Remote extensions also require device-key pairing. Static pages and health probes stay public. See [authentication](docs/modules/api-auth.md).
 
 After opening `/m/`, save it as a home-screen shortcut: on iPhone / iPad, use Safari's Share menu and choose "Add to Home Screen"; on Android Chrome / Chromium browsers, use the menu item "Install app" or "Add to Home screen". LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind HTTPS in a trusted local setup.
 

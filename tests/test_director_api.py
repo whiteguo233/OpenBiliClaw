@@ -38,7 +38,7 @@ async def test_explicit_generate_restores_exact_screen_and_get_never_allocates(
     register_director_routes(app, ctx)
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             empty = await client.get("/api/recommendations/director/restore?stream_ref=web")
             assert empty.status_code == 200
@@ -80,7 +80,7 @@ async def test_presentation_ack_only_counts_rendered_subset_and_retries_once(
     )
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             generated = (
                 await client.post(
@@ -122,7 +122,7 @@ async def test_duplicate_ack_items_are_client_error_not_server_error(tmp_path: P
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://test",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             generated = (
                 await client.post(
@@ -157,7 +157,7 @@ async def test_generation_payload_validation_and_request_conflict(tmp_path: Path
     )
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             route = "/api/recommendations/director/generate"
             assert (
@@ -192,7 +192,7 @@ async def test_disabled_director_routes_preserve_opt_in_contract(tmp_path: Path)
     )
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             status = await client.get("/api/recommendations/director/status")
             assert status.json()["enabled"] is False
@@ -303,7 +303,7 @@ async def test_full_app_routes_restore_generate_click_and_feedback_with_single_e
     assert runtime is not None
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             restored_empty = await client.get("/api/recommendations")
             assert restored_empty.status_code == 200
@@ -389,7 +389,7 @@ async def test_generation_reports_post_commit_inventory_and_wakes_replenishment(
     )
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             response = await client.post(
                 "/api/recommendations/director/generate", json={"request_id": "screen", "limit": 4}
@@ -428,7 +428,7 @@ async def test_new_topic_ban_suppresses_restore_and_replay_without_mutating_hist
     )
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             payload = {"request_id": "screen", "limit": 4}
             generated = (

@@ -1247,10 +1247,11 @@
 
     function handleAuthRequired() {
       // Mid-session token loss (expired / revoked): reload after re-login.
-      showLoginOverlay();
+      fetchAuthStatus().then((status) => showLoginOverlay(undefined, Boolean(status?.setup_required)))
+        .catch(() => showLoginOverlay());
     }
 
-    function showLoginOverlay(onSuccess) {
+    function showLoginOverlay(onSuccess, setupRequired = false) {
       if (_authOverlayShown) return;
       _authOverlayShown = true;
       const overlay = document.createElement("div");
@@ -1268,6 +1269,16 @@
         '<p id="authError" class="auth-error" role="alert" hidden></p>' +
         "</form>";
       document.body.appendChild(overlay);
+      if (setupRequired) {
+        overlay.querySelector(".auth-copy").textContent =
+          "请先在运行后端的电脑上，打开设置并启用局域网访问密码，然后返回此页面。";
+        overlay.querySelector("#authPassword")?.remove();
+        const retry = overlay.querySelector("button");
+        retry.type = "button";
+        retry.textContent = "已设置，重新检查";
+        retry.addEventListener("click", () => location.reload());
+        return;
+      }
       const input = overlay.querySelector("#authPassword");
       const button = overlay.querySelector("button");
       const errorEl = overlay.querySelector("#authError");
@@ -1317,8 +1328,8 @@
 
     function ensureAuthenticated() {
       return fetchAuthStatus().then((status) => {
-        if (status && status.enabled && status.authenticated === false) {
-          return new Promise((resolve) => showLoginOverlay(resolve));
+        if (status && status.authenticated === false) {
+          return new Promise((resolve) => showLoginOverlay(resolve, Boolean(status.setup_required)));
         }
         return undefined;
       });
@@ -10173,7 +10184,7 @@ ${cardFeedbackBarHtml()}`;
         if (!current) setHint("无法读取后端鉴权状态。");
         else if (!can) setHint(current.env_managed ? "由环境变量管理，请改环境变量并重启后端。" : "仅本机 / 浏览器插件可修改此设置。");
         else if (current.enabled) setHint("已开启：局域网 / 远程设备访问需要登录密码（本机与插件免登录）。");
-        else setHint("已关闭：局域网访问无需密码。");
+        else setHint("已关闭：仅允许本机访问，远程设备需先启用密码。");
       }
       async function load() {
         current = await requestJson("/auth/status");

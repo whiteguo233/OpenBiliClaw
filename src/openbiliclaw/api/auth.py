@@ -328,12 +328,30 @@ def make_auth_middleware(get_gate: GateGetter) -> Any:
 
     async def auth_guard(request: Request, call_next: Any) -> Any:
         gate: AuthGate = get_gate()
-        if not gate.auth.enabled:
-            return await call_next(request)
         if _is_public(request):
             return await call_next(request)
         if gate.is_trusted_local(request):
             return await call_next(request)
+        if not gate.auth.enabled:
+            # Migration has its own stricter physical-loopback + same-origin
+            # + X-OBC-Auth guard, independent of trust_loopback. Keep local
+            # recovery available when ordinary loopback bypass is disabled.
+            if request.url.path in {
+                "/api/migration/export",
+                "/api/migration/import",
+                "/api/migration/status",
+                "/api/migration/pending",
+            }:
+                return await call_next(request)
+            return _cors_echo(
+                JSONResponse(
+                    {
+                        "error": "auth_setup_required",
+                        "detail": "请先在运行后端的电脑上设置访问密码，再从其他设备连接。",
+                    },
+                    status_code=401,
+                )
+            )
 
         used_cookie, token = gate.pick_token(request)
         # Fallback: <img src> cannot carry cookies (cross-origin) or custom
@@ -399,7 +417,7 @@ def authorize_websocket(gate: AuthGate, websocket: Any) -> bool:
     from an extension Origin or an explicitly allowed bearer Origin.
     """
     if not gate.auth.enabled:
-        return True
+        return gate.is_trusted_local(websocket)
     if gate.is_trusted_local(websocket):
         return True
     token = websocket_session_token(gate, websocket)
@@ -463,7 +481,8 @@ def register_auth_routes(app: FastAPI, get_gate: GateGetter) -> None:
             return JSONResponse(
                 {
                     "enabled": False,
-                    "authenticated": True,
+                    "authenticated": local,
+                    "setup_required": not local,
                     "trust_loopback": gate.auth.trust_loopback,
                     "env_managed": env_managed,
                     "can_manage": can_manage,

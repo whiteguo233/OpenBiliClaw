@@ -1,5 +1,9 @@
 # Docker 部署指南
 
+## 远程认证变更（2026-11-06）
+
+默认 `api.auth.enabled=false` 只开放可信本机私有 API。Docker bridge、局域网、HTTPS/反向代理通常属于远程访问，首次连接前须通过容器内 `openbiliclaw set-password` 或 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD` 配置密码；重启后登录。不能通过关闭密码来开放端口。详见[认证契约](modules/api-auth.md)。
+
 ## 手机扫码连接（2026-10-26）
 
 桌面 Web / 插件「手机版」支持局域网、Tailscale、公网地址。Docker 用户应选手机可达的**宿主机地址与发布端口**，容器内部网卡 IP 无法保证被手机访问：可在「公网 / 自定义访问地址」输入 `http://<宿主机 LAN IP>:<发布端口>`，或现有 HTTPS 域名。浏览器扫码打开 `/m/`，新版 Android / iOS App「扫码连接」导入同一链接。镜像仍不内置 Tailnet helper；容器内也不保证能探测宿主机系统 Tailscale 地址，需要填写宿主机的 Tailscale URL 后生成二维码。扫码不改变 Docker 端口映射、代理或密码门禁。详见[手机扫码连接](mobile-connection.md)。

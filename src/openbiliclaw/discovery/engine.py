@@ -66,7 +66,10 @@ from openbiliclaw.discovery.temporal import (
     schedule_temporal_evaluation,
 )
 from openbiliclaw.llm.base import is_reasoning_budget_exhausted
-from openbiliclaw.llm.evaluation_wire import encode_evaluation_row_wire
+from openbiliclaw.llm.evaluation_wire import (
+    encode_evaluation_row_wire,
+    project_evaluation_source_metadata,
+)
 from openbiliclaw.llm.json_utils import (
     extract_llm_json_list,
     parse_llm_json_tolerant,
@@ -168,7 +171,7 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-_EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
+_EVAL_BATCH_CACHE_VERSION = "content-eval-v7"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
 _EVAL_SCORER_DEFAULT = "llm"
@@ -650,6 +653,9 @@ def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, obje
         fields["rating_count"] = rating_count
     if source_rank > 0:
         fields["source_rank"] = source_rank
+    metadata = project_evaluation_source_metadata(content.source_platform, content.source_metadata)
+    if metadata:
+        fields["source_metadata"] = metadata
     return fields
 
 

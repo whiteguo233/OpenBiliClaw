@@ -290,6 +290,9 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 免费模型方案通过共享配置接入全部日常文本任务；图片理解是可选增量能力，BGE-M3 仅生成文本向量。组件发行前仍保留明确的不可用状态，详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
 
 ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
 Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
   → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)

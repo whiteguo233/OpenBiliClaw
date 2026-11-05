@@ -588,12 +588,13 @@ async function startApp() {
   navigateToTab(route.id, { libraryTab: route.libraryTab, replaceRoute: route.legacy });
 }
 
-function showLogin() {
+function showLogin(setupRequired = false) {
   patchState({ needsLogin: true });
   document.body.classList.add("auth-locked");
   $statusBar.innerHTML = "";
   $tabBar.innerHTML = "";
   renderLoginView($app, {
+    setupRequired,
     // Reload after a successful login instead of re-running startApp() in place:
     // renderLoginView cleared #app (detaching cached view nodes that ensureView
     // would otherwise return stale), and the view modules aren't safe to re-init.
@@ -611,7 +612,7 @@ window.addEventListener("obc:auth-required", () => {
   if (state.needsLogin) return;
   try { stream.disconnect(); } catch { /* ignore */ }
   patchState({ authenticated: false });
-  showLogin();
+  fetchAuthStatus().then((status) => showLogin(Boolean(status.setup_required)));
 });
 
 (async function boot() {
@@ -620,8 +621,8 @@ window.addEventListener("obc:auth-required", () => {
   const enabled = Boolean(status.enabled);
   const authenticated = status.authenticated !== false;
   patchState({ authEnabled: enabled, authenticated });
-  if (enabled && !authenticated) {
-    showLogin();
+  if (!authenticated) {
+    showLogin(Boolean(status.setup_required));
     return;
   }
   startApp();

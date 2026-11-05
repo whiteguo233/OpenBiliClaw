@@ -124,11 +124,11 @@ Tailnet 的完整字段级优先级是：`OPENBILICLAW_TAILNET_ENABLED` /
 
 ### `[api.auth]`
 
-局域网 / 远程访问的**可选密码门禁**（`ApiAuthConfig`）。仅当 `enabled=true` 且请求非可信本机时生效；本机（loopback 且无转发头）默认免登录。远程浏览器扩展必须另行启用设备密钥认证。详见 [`docs/modules/api-auth.md`](api-auth.md)。
+局域网 / 远程访问的**必需认证门禁**（`ApiAuthConfig`）。`enabled=false` 时私有 API 只允许可信本机，远程 HTTP 返回 `401 auth_setup_required`、WebSocket 返回 `4401`；`enabled=true` 后远程必须登录。可信本机默认免登录。远程浏览器扩展必须另行启用设备密钥认证。详见 [`docs/modules/api-auth.md`](api-auth.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `enabled` | bool | `false` | 是否为局域网 / 远程访问开启密码门禁。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
+| `enabled` | bool | `false` | 是否允许经过密码认证的局域网 / 远程访问；关闭时仅可信本机可访问私有 API。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
 | `password_hash` | string | `""` | scrypt 密码哈希。**请勿手填明文**；用 `openbiliclaw set-password` / `init` / 环境变量设置 |
 | `session_secret` | string | `""` | 登录态 HMAC 签名密钥。首次启用为空时自动生成并写回 config；请勿外泄 |
 | `session_ttl_hours` | int | `0` | 登录态有效期（小时）。`0` = 永不过期（默认，「记住登录」）；`>0` = 限时登录 |

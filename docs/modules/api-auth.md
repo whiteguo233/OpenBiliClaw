@@ -1,8 +1,14 @@
 # API Auth Module（局域网密码门禁）
 
+## 默认本机边界（2026-11-06）
+
+关闭密码不再等于开放远程访问。`GET /api/auth/status` 在关闭时返回 `authenticated=trusted_local` 与 `setup_required=!trusted_local`。桌面和手机 Web 为远程用户显示本机设置指引，设置完成后重新检查并进入密码登录；插件继续使用独立设备密钥。已启用认证的 token、Origin、CSRF 和撤销策略不变。
+
+公开 API 增量：`setup_required` 是仅在未启用密码时返回的布尔提示；私有 HTTP 的 `auth_setup_required` 稳定错误码供其他客户端显示相同指引。
+
 ## 概述
 
-`src/openbiliclaw/auth_core.py` + `src/openbiliclaw/api/auth.py` 实现局域网 / 远程访问的**可选密码门禁**。可信 loopback 默认免登录；远程 Web 使用密码会话，远程浏览器扩展使用默认关闭的设备密钥认证。
+`src/openbiliclaw/auth_core.py` + `src/openbiliclaw/api/auth.py` 实现局域网 / 远程访问的**必需认证门禁**。可信 loopback 默认免登录；远程 Web 使用密码会话，远程浏览器扩展使用默认关闭的设备密钥认证。
 
 - `auth_core.py`：**纯标准库**实现 —— scrypt 密码哈希、HMAC 无状态签名 token、稳定密码指纹、反向代理 / Origin 解析与归一化。无任何第三方依赖。
 - `api/auth.py`：FastAPI 集成 —— `AuthGate`、HTTP 中间件、`/api/auth/*` 路由、cookie / CSRF 处理、登录失败限流。在 `create_app()` 内于 degraded-mode guard 之后注册（更外层、最先执行）。
@@ -13,11 +19,11 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| 总开关 | ✅ | `[api.auth].enabled=false` 时中间件直接放行；`true` 且无密码视为配置错误（blocking）。例外：B 站凭据接口在门禁关闭时仍自查（见下行）。 |
-| B 站凭据接口特权化 | ✅ | `POST /api/bilibili/auth/import`、`POST /api/bilibili/auth/export`、`DELETE /api/bilibili/auth/session` 无论门禁开关都要求 trusted-local 或已认证会话：门禁关闭时远程调用一律 `403 local_only`，杜绝默认部署（0.0.0.0 + 门禁关闭）下局域网零鉴权导出登录 Cookie 接管账号（issue #299）。移动 App 远程使用这三接口前需先开启密码门禁并登录。 |
-| 配置写 / 探测接口特权化 | ✅ | `PUT /api/config`、`POST /api/config/probe-service`、`POST /api/config/discover-models` 同样无论门禁开关都要求 trusted-local 或已认证会话（与 B 站凭据接口共用 `_local_or_authenticated_gate`）。门禁关闭时远程调用一律 `403 local_only`，堵住默认部署下篡改 `llm.*.base_url` 劫持 LLM 流量（连带泄露存储的 API Key）与植入 `bilibili.browser_executable` 任意执行（issue #300）；probe / discover 不写盘也会把存储的 Key 发往提交的 base_url，故一并收口。桌面 / 移动 Web 与扩展在门禁关闭时跨设备改设置会被拒，需先开启门禁。 |
+| 总开关 | ✅ | `[api.auth].enabled=false` 时只有可信本机可以访问私有 HTTP/WS；远程返回 `401 auth_setup_required` / WS `4401`。`true` 且无密码视为配置错误（blocking）。公开健康探针和静态登录壳保留。迁移的四个端点在关闭密码时仍交给自身更严格的真实 loopback + 同源 + X-OBC-Auth 检查，远程保持403，确保 trust_loopback=false 时本机恢复不被锁死。 |
+| B 站凭据接口特权化 | ✅ | `POST /api/bilibili/auth/import`、`POST /api/bilibili/auth/export`、`DELETE /api/bilibili/auth/session` 无论门禁开关都要求 trusted-local 或已认证会话：门禁关闭时远程调用在中间件返回 `401 auth_setup_required`，杜绝默认部署（0.0.0.0 + 门禁关闭）下局域网零鉴权导出登录 Cookie 接管账号（issue #299）。移动 App 远程使用这三接口前需先开启密码门禁并登录。 |
+| 配置写 / 探测接口特权化 | ✅ | `PUT /api/config`、`POST /api/config/probe-service`、`POST /api/config/discover-models` 同样无论门禁开关都要求 trusted-local 或已认证会话（与 B 站凭据接口共用 `_local_or_authenticated_gate`）。门禁关闭时远程调用在中间件返回 `401 auth_setup_required`，堵住默认部署下篡改 `llm.*.base_url` 劫持 LLM 流量（连带泄露存储的 API Key）与植入 `bilibili.browser_executable` 任意执行（issue #300）；probe / discover 不写盘也会把存储的 Key 发往提交的 base_url，故一并收口。桌面 / 移动 Web 与扩展在门禁关闭时跨设备改设置会被拒，需先开启门禁。 |
 | 信任模型 | ✅ | `trust_loopback=true`（默认）下，loopback 且无 `X-Forwarded-For` / `X-Real-IP` / `Forwarded` 头的请求免登录；带转发头的 loopback fail-closed（要求登录），防同机反代绕过。 |
-| 应用内 Tailnet 反代边界 | ✅ | Go helper 丢弃客户端自带的全部转发头，再从 tsnet peer 重建 `X-Forwarded-For`，同时保留外部 Host / Origin。FastAPI 收到的是“loopback 代理 + 远端来源”，不会继承本机免登录；Tailnet ACL 是外层设备门，仍建议开启应用密码。 |
+| 应用内 Tailnet 反代边界 | ✅ | Go helper 丢弃客户端自带的全部转发头，再从 tsnet peer 重建 `X-Forwarded-For`，同时保留外部 Host / Origin。FastAPI 收到的是“loopback 代理 + 远端来源”，不会继承本机免登录；Tailnet ACL 是外层设备门，必须开启应用密码。 |
 | 反代真实 IP 解析 | ✅ | `resolve_client_ip()`：仅当直接对端命中 `trusted_proxies` 才采信 `X-Forwarded-For`，并**从右向左**穿越受信代理链取第一个非受信 IP；任何缺失 / 畸形 / 伪造 loopback 都 fail-closed，绝不 500 / fail-open。 |
 | 无状态 token | ✅ | `sign_token()` / `verify_token()`：`b64url(payload).b64url(HMAC_SHA256)`，payload 含 `v/iat/ep`（限时还含 `exp`）。校验常量时间比对 + 过期检查 + `ep >= 当前 auth_epoch`。 |
 | 记住登录 | ✅ | `session_ttl_hours=0`（默认）签发无 `exp` token + 超长 cookie `Max-Age`，关浏览器 / 重启后端都不失效。 |
@@ -52,10 +58,10 @@
 监听与 `[api].port` 相同的端口，再固定转发到 `127.0.0.1:<port>`。它不启用 Funnel / Serve，
 也不把端口暴露到公网。helper 不信任入站 `Forwarded`、`X-Forwarded-*` 或 `X-Real-IP`，全部
 清除后用实际 tsnet peer 重建 XFF；因此 AuthGate 的 loopback fast path 必定 fail-closed 为远程
-请求。不要为了“让 Tailnet 免登录”关闭该行为。多人 tailnet 或 ACL 较宽时应在本机 Web
-设置中开启应用密码做第二层控制；源码安装也可执行 `openbiliclaw set-password`。移动 App 按
-普通远程 Web/API 客户端登录；门禁关闭时其 B 站凭据导入 / 导出 / 注销调用会被
-`403 local_only` 拒绝，需先开启门禁（issue #299）。
+请求。不要为了“让 Tailnet 免登录”关闭该行为。远程访问前须在本机 Web
+设置中开启应用密码；源码安装也可执行 `openbiliclaw set-password`。移动 App 按
+普通远程 Web/API 客户端登录；门禁关闭时私有 API 返回
+`401 auth_setup_required`，需先开启门禁。
 
 浏览器扩展仍受自己的 remote endpoint、HTTPS 与设备 key 契约约束。首版 Tailnet 入口只服务
 已内嵌 tsnet 的 `OpenBiliClaw-mobile` Android / iOS 原生 App，不包括其 Web / Linux / macOS /

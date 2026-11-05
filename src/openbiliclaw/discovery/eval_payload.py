@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from openbiliclaw.llm.evaluation_wire import (
     EvaluationWireError,
+    project_evaluation_source_metadata,
     validate_canonical_evaluation_envelope,
 )
 
@@ -27,6 +29,9 @@ _OPTIONAL_POSITIVE_INTEGER_FIELDS = (
     "comment_count",
     "share_count",
     "danmaku_count",
+    "reply_count",
+    "retweet_count",
+    "bookmark_count",
     "rating_count",
     "source_rank",
 )
@@ -66,7 +71,7 @@ class CanonicalEvaluationBatch:
 
 
 def _copy_item(item: Mapping[str, object]) -> dict[str, object]:
-    return {key: list(value) if isinstance(value, list) else value for key, value in item.items()}
+    return deepcopy(dict(item))
 
 
 def _text(value: object) -> str:
@@ -170,6 +175,10 @@ def build_canonical_evaluation_batch(
             value = source.get(field)
             if isinstance(value, str) and (sanitized := _sanitize_wire_text(value)):
                 item[field] = sanitized
+        if "published_at" not in item:
+            label = source.get("published_label")
+            if isinstance(label, str) and (sanitized := _sanitize_wire_text(label)):
+                item["published_label"] = sanitized
         for field in _OPTIONAL_POSITIVE_INTEGER_FIELDS:
             value = source.get(field)
             if _is_positive_integer(value):
@@ -188,6 +197,11 @@ def build_canonical_evaluation_batch(
                     item[field] = entries
         if _text(source.get("cover_image_ref")):
             item["cover_image_ref"] = f"cover:{local_id}"
+        metadata = project_evaluation_source_metadata(
+            platforms[index], source.get("source_metadata")
+        )
+        if metadata:
+            item["source_metadata"] = metadata
         canonical_items.append(item)
 
     batch = CanonicalEvaluationBatch(

@@ -61,6 +61,9 @@ def test_canonical_sparse_batch_omits_empty_duplicate_and_global_fields() -> Non
             "body_text": "完整正文\n第二行",
             "published_at": "2026-08-04T08:00:00Z",
             "view_count": 120,
+            "reply_count": 99,
+            "retweet_count": 88,
+            "bookmark_count": 77,
             "rating_count": 5,
             "tags": ["AI", "系统"],
             "related_interests": ["架构"],
@@ -73,9 +76,9 @@ def test_canonical_sparse_batch_omits_empty_duplicate_and_global_fields() -> Non
     assert "BV-private" not in wire
     assert "global-private" not in wire
     assert "example.com" not in wire
-    assert "reply_count" not in wire
-    assert "retweet_count" not in wire
-    assert "bookmark_count" not in wire
+    assert '"reply_count":99' in wire
+    assert '"retweet_count":88' in wire
+    assert '"bookmark_count":77' in wire
 
 
 def test_canonical_sparse_batch_uses_mixed_fields_and_explore_only_mode() -> None:

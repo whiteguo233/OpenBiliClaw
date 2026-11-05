@@ -58,6 +58,9 @@ export interface XhsNoteMetadata {
   title: string;
   author: string;
   cover_url: string;
+  /** Optional public fields captured from this note's own API card. */
+  description?: string;
+  tags?: string[];
   /**
    * Cover bytes (base64) harvested in the page context by cover-harvest.ts —
    * fetched at scrape time while the rotating xhscdn URL token is freshest,

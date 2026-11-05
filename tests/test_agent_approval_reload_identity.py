@@ -48,7 +48,7 @@ async def test_config_approval_stays_executed_across_data_path_normalization(
     )
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
     ) as client:
         response = await client.post(f"/api/chat/approvals/{approval.approval_id}/approve")
         assert response.status_code == 200
