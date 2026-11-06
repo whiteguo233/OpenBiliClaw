@@ -2,7 +2,7 @@
 
 商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。现阶段提供构建与验证入口；**尚未上架或提交审核**。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
 
-桌面 App 与商店展示名称统一为 `OpenBiliClaw`。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
+安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
 ## 运行与数据
 

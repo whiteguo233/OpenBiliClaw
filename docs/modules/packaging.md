@@ -65,7 +65,7 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 
 | Implemented feature | Status | Boundary |
 |---|---|---|
-| Separate sandboxed native host + frozen helpers | Candidate | `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item, App Store managed updates. Not submitted. |
+| Separate sandboxed native host + frozen helpers | Candidate | Store listing `OpenBiliClaw Hub`, installed App `OpenBiliClaw`; `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item, App Store managed updates. Not submitted. |
 | Store app display name | Candidate | The installed app, native window, menu accessibility label and localized Quit action use `OpenBiliClaw`; the archive contains `OpenBiliClaw.app`. |
 | Identified Python license records | QA packaging | Actual license texts and version/source metadata for bilibili-api-python and browser-cookie3; complete distribution review remains pending. |
 
