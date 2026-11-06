@@ -38,6 +38,8 @@
 
 代码回归和手工Mac候选包固定 `3d80ab5713aafe6432cdffaff579955598b1daad`；其后的本分支提交仅增加跨平台CI和验收文档，产品源码/测试/插件目录保持相同。三OS专项直接检验设备私钥并发写入和真实IPC，不从Mac结果推断Windows。正式发布会补齐主应用渠道，SDK仍不能代替整包验收。
 
+正式标签发行遇到Safari runner调度错误：[42166773941](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42166773941) 的Chrome/Firefox构建成功，Safari的macOS14配置被拒绝。后续独立分支把runner改为已由桌面构建验证可调度的macOS15，通过 `release_tag=extension-v0.3.234` 补发；保留原始标签和失败记录，最终结果记录于发行附件。
+
 实际下载的Intel归档再通过本机codesign深度严格校验、Gatekeeper评估与DMG票据校验，[SHA与验签记录](assets/2026-11-06-relay/intel-package-verified.json)。以包内冻结API进程、隔离的明确免费配置进行HTTP保存/热切模型，两模型均完成流式+BGE-M3组合探测，8B 1.431秒、4B 0.745秒，[请求记录](assets/2026-11-06-relay/frozen-live.json)。首轮测试脚本漏传父进程配置/端口，被主动终止并保留本机失败记录；这是测试入口修正，不修改产品源码。正式桌面初始化覆盖以CI入口自检及浏览器E2E为准，不将内部API进程声称为本机GUI安装验收。
 
 请求记录中的首次Keychain清理未匹配：测试目录原路径与配置resolve后的路径不同。随后仅查询本应用服务的条目元信息，以8秒测试时间窗与本次临时安装包ACL路径双重匹配，唯一条目通过SecKeychainItemDelete精确删除，未读取秘密值；[清理补验](assets/2026-11-06-relay/frozen-keychain-cleanup.json)。测试进程和临时配置已退出/删除。

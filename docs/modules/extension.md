@@ -1,5 +1,7 @@
 # 浏览器插件模块
 
+Safari发行环境（2026-11-06）：`release-extension.yml` 使用macOS15 runner。macOS14曾在调度阶段返回不支持的配置，未执行编译；可使用 `workflow_dispatch.release_tag` 指向已有版本标签，从修复后的工作流补齐资产，不移动已有标签或改动插件功能。最终构建/公证结果以对应发行工作流为准。
+
 小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
 
 
