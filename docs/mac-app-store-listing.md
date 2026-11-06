@@ -7,6 +7,8 @@
 - 商店名称：OpenBiliClaw Hub（已通过后台名称校验并保存）；安装后的 App 仍为 OpenBiliClaw。
 - 初版：1.0.0，当前候选 build 3（已上传并选入版本草稿，替代 build 2）；类别：Productivity
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
+- 发行地区：仅中国大陆，已保存并重新打开核验；不自动加入未来地区。此设置只针对独立 macOS 记录。
+- 出口合规：build 3 已按标准加密算法、不在法国分发保存，缺项已消除。
 - 中文副标题：你的 AI 内容中枢
 - English subtitle: Your local AI discovery server
 - 支持 URL：`https://github.com/whiteguo233/OpenBiliClaw/issues`
@@ -45,4 +47,4 @@ The signed Python backend and native tools inherit the host's App Sandbox. The b
 
 ## 后台仍需确认
 
-上述 URL 沿用项目既有公开入口。名称已保存为 OpenBiliClaw Hub；免费价格、版权主体、分发区域、年龄分级、App Privacy、截图、Apple Silicon 的发行包和审核联系人，均需按真实账号与最终发行结果填写并保存。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式尚待核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。
+上述 URL 沿用项目既有公开入口。名称、免费价格、版权行、中国大陆供应范围、年龄分级、App Privacy、截图和审核联系人均已保存；此次上传为 Intel 发行包，Apple Silicon 仅完成独立 QA。2026-11-07 点击「添加以供审核」后，Apple 当前唯一提示为未设置内容版权信息；尚待发行方确认第三方内容使用权，未代填。账号级欧盟 DSA 身份未改动，本次中国大陆范围未触发该项提交缺项。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式尚待核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。

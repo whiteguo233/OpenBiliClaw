@@ -67,4 +67,12 @@ App Store Connect 构建处理、构建选择、隐私标签发布和最终审�
 - [Apple Silicon 同轮 QA](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42285317800) 在代码提交 `ee2989c6` 通过，包含真实 HTTP、双启动、IPv6 和退出清理；它是 ad-hoc QA，不能当作已上传的 ARM 发行包。此次上传仍为 Intel 包。
 - 第一方 `6c5e2b3b` 源码归档与三项已识别 copyleft 上游源码已备份；PyPI sdist 校验发布哈希，pystray 0.19.5 无 sdist，改从上游版本 tag 归档，13 个 Python 文件与已安装 wheel 一致。材料不等于完整对应源码提供或商店许可兼容结论。初步 TOC 清点映射到 82 个 Python distribution；80 个在安装环境中含许可/声明文件，qrcode-terminal 与 rdt-cli 的已检查 wheel/sdist 未找到独立许可文件（元数据分别声明 MIT、Apache-2.0）。这个清点不表示 80 项文本已全部写入 App，完整分发核对仍待完成。
 
-本轮持久材料：`2026-11-07/OpenBiliClaw-1.0.0-3-evidence/`、`OpenBiliClaw-1.0.0-3-Xcode-upload/` 和 `OpenBiliClaw-1.0.0-3-source-materials/`。发布仍需发行方的内容使用权声明、法国发行/加密材料选择、欧盟 DSA 身份，以及上述分发许可核对。
+本轮持久材料：`2026-11-07/OpenBiliClaw-1.0.0-3-evidence/`、`OpenBiliClaw-1.0.0-3-Xcode-upload/` 和 `OpenBiliClaw-1.0.0-3-source-materials/`。上述为地区选择前的历史状态，最新结果如下。
+
+### 中国大陆发行与审核预检查
+
+发行方明确要求提审并说明不在国外使用后，仅将本 macOS App 的供应范围收窄到中国大陆。重新载入供应情况页面核验为 1 个地区，中国大陆「App 发布时供应」，法国、美国等其余地区「未供应」；管理对话框确认没有自动加入未来地区。既有手机 App、其他 App 及账号级 DSA 身份均未更改。
+
+build 3 的出口合规问卷选「与 Apple 操作系统加密并用的标准加密算法」，对应包内 TLS / WireGuard；法国发行选「否」。保存后构建行不再显示「缺少出口合规证明」。点击「添加以供审核」后，Apple 返回唯一缺项：「你必须在 App 信息中设置内容版权信息」。未把缺少字段的版本描述成已提交；内容使用权事实已再次向发行方询问。
+
+本轮没有修改二进制或重跑构建测试，沿用上述签名安装包及已记录 QA。新增后台核验保存在 build 3 evidence 的 `asc-china-availability.json`、`asc-review-preflight-china.json`。完整开源分发许可核对仍保持前述未完成边界；法国材料和欧盟 DSA 不再是本次中国大陆候选的预检查缺项。

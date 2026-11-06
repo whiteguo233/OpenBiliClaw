@@ -4,6 +4,8 @@
 
 ## v0.3.233：画像时间溯源与 ChatGPT 订阅修复（2026-10-30）
 
+- Mac App Store 发行范围按发行方要求保存为仅中国大陆，不自动加入未来地区；build 3 按标准加密算法、不在法国分发完成问卷，出口合规缺项消除。「添加以供审核」当前仅提示内容版权声明缺项，等待发行方确认；手机 App 和账号级 DSA 设置未改动，尚未提交审核。
+
 - Mac App Store 许可文本补漏：冻结 TOC 中还包含 pystray，签名前记录现覆盖三项已识别 Python GPL/LGPL 依赖，并保留 `COPYING.LGPL` 等补充文本；build 3 已上传并选入商店草稿，替代 build 2 提审候选。相关打包测试 130 passed / 2 skipped；签名 App 冒烟同步检查三项记录及 LGPL 补充条款，Intel 和 Apple Silicon 的新一轮沙盒真实请求与退出清理通过；尚未提交审核。
 
 - Mac App Store 商店名称保存为 OpenBiliClaw Hub，副标题「你的 AI 内容中枢」；安装后的桌面 App 仍名为 OpenBiliClaw。1.0.0 (2) 已由 Xcode 完成上传（含架构与 dSYM 警告），尚未提交审核。
