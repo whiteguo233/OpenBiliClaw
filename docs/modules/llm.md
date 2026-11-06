@@ -886,6 +886,8 @@ JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vi
 
 ## 免费中继与元信息交付（v0.3.234）
 
+`RelayStore.reserve(device, tokens, attempts=1)` 按最多3次上游尝试原子预留请求数和Token，失败不退款；服务端非流式调用使用3次，流式使用1次，防止不确定的重试消耗漏算。
+
 | 已实现能力 | 公共接口与边界 |
 | --- | --- |
 | llm | `SponsoredRelayProvider` 继承现有完整任务、工具模拟、模型互备、embedding 校验，以 HTTPS 发送固定任务。公开构造 `SponsoredRelayProvider(url, device_path, **kwargs)`；短期 Token 仅在内存，设备签名绑定方法/路径/正文/时间/nonce/Token。`SponsoredProviderPool` 新增 `worker_count=3`、`shared_queue=False`；本地仍为 1+2，服务端默认 12 个共享 worker，单设备最多 3 路。中继失败不退回本机共享 Key；使用自有渠道仍需显式开启。 |

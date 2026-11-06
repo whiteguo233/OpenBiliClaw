@@ -215,9 +215,14 @@ class RelayStore:
             db.execute("UPDATE devices SET revoked=1 WHERE id=?", (device,))
             db.execute("DELETE FROM sessions WHERE device=?", (device,))
 
-    def reserve(self, device: str, tokens: int) -> None:
+    def reserve(self, device: str, tokens: int, *, attempts: int = 1) -> None:
         """Conservative reservations persist on failure/disconnect, never refund blindly."""
-        if type(tokens) is not int or tokens <= 0:
+        if (
+            type(tokens) is not int
+            or tokens <= 0
+            or type(attempts) is not int
+            or not 1 <= attempts <= 3
+        ):
             raise RelayDeniedError("invalid reservation")
         now = int(time.time())
         day, month = now - 86400, now - 31 * 86400
@@ -235,13 +240,15 @@ class RelayStore:
                     (now - 60, day, day, *args),
                 ).fetchone()
                 if (
-                    (counts[0] or 0) >= rpm
-                    or (counts[1] or 0) >= daily_requests
-                    or counts[2] + tokens > daily_tokens
-                    or counts[3] + tokens > monthly_tokens
+                    (counts[0] or 0) + attempts > rpm
+                    or (counts[1] or 0) + attempts > daily_requests
+                    or counts[2] + tokens * attempts > daily_tokens
+                    or counts[3] + tokens * attempts > monthly_tokens
                 ):
                     raise RelayLimitError("quota exceeded")
-            db.execute("INSERT INTO reservations VALUES (?,?,?)", (device, now, tokens))
+            db.executemany(
+                "INSERT INTO reservations VALUES (?,?,?)", [(device, now, tokens)] * attempts
+            )
 
 
 def wire_json(value: Any) -> bytes:

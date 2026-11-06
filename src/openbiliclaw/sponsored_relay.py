@@ -144,6 +144,9 @@ def create_relay(
                 + len(contract.system_prompt.encode())
                 + contract.max_output_tokens
                 + 1024,
+                # Pinned Rust HttpUpstream retries non-stream requests up to
+                # three times. An ambiguous failure may still consume quota.
+                attempts=1 if message["stream"] else 3,
             )
         except (RelayDeniedError, sqlite3.Error) as exc:
             active[device] -= 1

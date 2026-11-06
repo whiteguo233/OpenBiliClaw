@@ -522,12 +522,14 @@ PY
     echo "Health URL:  $health_url"
     echo "Phone:       Web / extension → 手机版 → LAN / Tailscale / public QR"
     echo "Remote API:  Set an access password on the backend first; disabled auth is local-only."
+    echo "             Use HTTPS or an encrypted private network when connecting from other devices."
     echo "             Phone camera opens Web; App Scan to connect imports the backend."
     echo "Setup wizard: $setup_url"
     echo "             (open in a browser to configure LLM / embedding and"
     echo "              run prerequisite checks — same guided page as the desktop app)"
     echo "Free models: choose Qwen3-8B or Qwen3.5-4B in the setup wizard."
     echo "             Choose cloud BGE-M3 (default) or local Ollama vectors; no shared key entry."
+    echo "             If unavailable, test the connection in Settings or choose your own provider."
     if [ -n "$missing" ]; then
         echo "Missing:     $missing"
     else

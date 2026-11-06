@@ -144,6 +144,52 @@ def enroll(store, key):
     return store.session(device)["token"]
 
 
+async def test_relay_reserves_all_upstream_attempts_before_dispatch(tmp_path):
+    from openbiliclaw.llm.relay_auth import wire_json
+
+    app = create_relay(
+        command=[sys.executable, "-m", "openbiliclaw.llm.sponsored_mock_runtime", "--approved"],
+        state_path=tmp_path / "relay.db",
+    )
+    store = RelayStore(tmp_path / "relay.db")
+    key = Ed25519PrivateKey.generate()
+    token = enroll(store, key)
+    # Only one upstream attempt fits; the non-stream operation can retry three
+    # times, so reject before starting any worker and retain the prior budget.
+    store.reserve(public_id(key), 997000)
+    body = wire_json(
+        {
+            "task_id": "llm.embedding_text",
+            "contract_version": 3,
+            "input": {"text": "hello"},
+            "stream": False,
+        }
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+        response = await client.post(
+            "https://relay.example/v1/task",
+            content=body,
+            headers=signed_headers(key, "/v1/task", body, token),
+        )
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "QUOTA_EXCEEDED"
+    with store.connect() as db:
+        assert db.execute("SELECT count(*),sum(tokens) FROM reservations").fetchone() == (
+            1,
+            997000,
+        )
+
+
+def test_retry_reservations_also_count_against_request_limit(tmp_path):
+    store = RelayStore(tmp_path / "relay.db")
+    key = Ed25519PrivateKey.generate()
+    enroll(store, key)
+    for _ in range(10):
+        store.reserve(public_id(key), 1, attempts=3)
+    with pytest.raises(RelayDeniedError, match="quota"):
+        store.reserve(public_id(key), 1)
+
+
 def test_captured_token_replay_tamper_expiry_and_revocation(tmp_path):
     store = RelayStore(tmp_path / "relay.db")
     key = Ed25519PrivateKey.generate()
