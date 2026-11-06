@@ -18,6 +18,57 @@ from openbiliclaw.llm.sponsored_relay_client import SponsoredRelayProvider, vali
 from openbiliclaw.sponsored_relay import create_relay
 
 
+async def test_disconnect_before_body_releases_server_capacity(tmp_path):
+    from starlette.requests import ClientDisconnect
+
+    from openbiliclaw.llm.relay_auth import wire_json
+
+    app = create_relay(
+        command=[sys.executable, "-m", "openbiliclaw.llm.sponsored_mock_runtime", "--approved"],
+        state_path=tmp_path / "relay.db",
+        worker_count=2,
+    )
+    key = Ed25519PrivateKey.generate()
+    token = enroll(RelayStore(tmp_path / "relay.db"), key)
+    body = wire_json(
+        {
+            "task_id": "llm.embedding_text",
+            "contract_version": 3,
+            "input": {"text": "hello"},
+            "stream": False,
+        }
+    )
+    statuses = []
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            statuses.append(message["status"])
+        raise OSError("test disconnect before body")
+
+    async with app.router.lifespan_context(app):
+        for _ in range(4):
+            headers = httpx.Headers(signed_headers(key, "/v1/task", body, token))
+            scope = {
+                "type": "http",
+                "asgi": {"spec_version": "2.4"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/v1/task",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [(key.lower(), value) for key, value in headers.raw],
+                "client": ("127.0.0.1", 12345),
+                "server": ("relay.example", 443),
+            }
+            with pytest.raises(ClientDisconnect):
+                await app(scope, receive, send)
+    assert statuses == [200] * 4
+
+
 def test_official_relay_package_omits_key_sdk_and_rejects_old_bundle(tmp_path, monkeypatch):
     from openbiliclaw.runtime import relay_release, sponsored_bundle
     from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings

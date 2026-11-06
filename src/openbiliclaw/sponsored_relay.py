@@ -13,7 +13,7 @@ import shlex
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -22,6 +22,9 @@ from openbiliclaw.llm.relay_auth import RelayDeniedError, RelayLimitError, Relay
 from openbiliclaw.llm.sponsored_errors import SponsoredError
 from openbiliclaw.llm.sponsored_pool import SponsoredProviderPool
 from openbiliclaw.llm.sponsored_profiles import approved_registry
+
+if TYPE_CHECKING:
+    from starlette.types import Receive, Scope, Send
 
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
@@ -153,6 +156,25 @@ def create_relay(
                 else failure("UPSTREAM_ERROR", 503)
             )
 
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                active[device] -= 1
+                if not active[device]:
+                    del active[device]
+                permits.release()
+
+        class TaskResponse(StreamingResponse):
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                try:
+                    await super().__call__(scope, receive, send)
+                finally:
+                    # Includes disconnect before the body generator ever starts.
+                    release()
+
         async def frames() -> Any:
             try:
                 async with asyncio.timeout(180):
@@ -190,12 +212,9 @@ def create_relay(
                     + b"\n"
                 )
             finally:
-                active[device] -= 1
-                if not active[device]:
-                    del active[device]
-                permits.release()
+                release()
 
-        return StreamingResponse(
+        return TaskResponse(
             frames(),
             media_type="application/x-ndjson",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},

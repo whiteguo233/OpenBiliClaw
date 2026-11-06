@@ -217,6 +217,8 @@ class RelayStore:
 
     def reserve(self, device: str, tokens: int) -> None:
         """Conservative reservations persist on failure/disconnect, never refund blindly."""
+        if type(tokens) is not int or tokens <= 0:
+            raise RelayDeniedError("invalid reservation")
         now = int(time.time())
         day, month = now - 86400, now - 31 * 86400
         with self.connect() as db:
