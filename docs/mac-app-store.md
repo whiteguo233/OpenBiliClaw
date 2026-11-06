@@ -1,6 +1,8 @@
-# Mac App Store 后端版
+# Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw Backend** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。现阶段提供构建与验证入口；**尚未上架或提交审核**。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。现阶段提供构建与验证入口；**尚未上架或提交审核**。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
+
+桌面 App 与商店展示名称统一为 `OpenBiliClaw`。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
 ## 运行与数据
 
@@ -67,12 +69,12 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 
 ```bash
 .venv/bin/python packaging/macos_store/smoke.py \
-  "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app" \
+  "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app" \
   --output /tmp/obc-store-smoke
 # 可选 --models-root ~/.ollama/models：经 HTTP 将已有公开权重导入隔离容器，验证真实推理。
 # --crash-host：验证宿主异常退出后的 EOF 清理。
 .venv/bin/python packaging/macos_store/restart_smoke.py \
-  "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app" \
+  "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app" \
   --output /tmp/obc-store-restart
 # 同一隔离配置两次启动，验证独立 embedding 端口、IPv6 就绪和两次退出清理。
 ```

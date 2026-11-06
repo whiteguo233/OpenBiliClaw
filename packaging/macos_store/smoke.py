@@ -79,7 +79,7 @@ def main():
         assert item["version"]
         assert list((licenses / item["name"]).glob("LICENSE-*.txt"))
     profile = "smoke-" + str(time.time_ns())
-    executable = args.app.resolve() / "Contents/MacOS/OpenBiliClaw Backend"
+    executable = args.app.resolve() / "Contents/MacOS/OpenBiliClaw"
     proc = subprocess.Popen(
         [
             str(executable),

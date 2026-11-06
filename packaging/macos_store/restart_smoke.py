@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=18590)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    app = args.app.resolve() / "Contents/MacOS/OpenBiliClaw Backend"
+    app = args.app.resolve() / "Contents/MacOS/OpenBiliClaw"
     profile = "mixed-restart-" + str(time.time_ns())
     report = {"profile": profile}
 

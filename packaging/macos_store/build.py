@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 OUTPUT = ROOT / "dist" / "mac-app-store"
 BUNDLE_ID = "com.openbiliclaw.backend"
-APP_NAME = "OpenBiliClaw Backend"
+APP_NAME = "OpenBiliClaw"
 
 
 def preserve_dependency_licenses(backend: Path) -> None:

@@ -66,9 +66,12 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 | Implemented feature | Status | Boundary |
 |---|---|---|
 | Separate sandboxed native host + frozen helpers | Candidate | `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item, App Store managed updates. Not submitted. |
+| Store app display name | Candidate | The installed app, native window, menu accessibility label and localized Quit action use `OpenBiliClaw`; the archive contains `OpenBiliClaw.app`. |
 | Identified Python license records | QA packaging | Actual license texts and version/source metadata for bilibili-api-python and browser-cookie3; complete distribution review remains pending. |
 
 Public build interface: `python packaging/macos_store/build.py --ollama-bin PATH --team TEAM --signing-identity ID [--local] [--version 1.0.0] [--build-number 1]`. Xcode creates `.xcarchive`; `--local` explicitly permits non-store QA signing. `archive_command()` rejects a Developer ID identity for store builds. `embed.py` relocates native tools and signs helper executables with exactly sandbox + inherit before Xcode seals the host. DMG/Windows builds remain in `packaging/build.py`. Full behavior, limitations and account handoff: [Mac App Store](../mac-app-store.md).
+
+The Store product is `OpenBiliClaw.app` and its native executable is `Contents/MacOS/OpenBiliClaw`. `smoke.py` and `restart_smoke.py` use that installed product name. The internal backend helper and bundle identifier retain their technical identifiers.
 
 QA interfaces: `smoke.py APP --output DIR [--crash-host] [--models-root DIR]` waits for both real HTTP and an enabled native Open Web button before exit/crash checks. `restart_smoke.py APP --output DIR [--port 18590]` saves a separate Ollama chat route through the real API, quits, then restarts the same isolated profile bound to IPv6; the private embedding daemon must restart and stop with its owner. The arm64 workflow runs both scripts and retains their reports with the signed QA archive. These probes do not register a login item or join a Tailnet.
 

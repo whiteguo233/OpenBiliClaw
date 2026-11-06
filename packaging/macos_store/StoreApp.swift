@@ -89,7 +89,7 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 450),
             styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "OpenBiliClaw Backend"
+        window.title = "OpenBiliClaw"
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -144,10 +144,10 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: text("Open Web & connection QR"), action: #selector(openWeb), keyEquivalent: "")
         menu.addItem(withTitle: text("Show logs"), action: #selector(showLogs), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: text("Quit OpenBiliClaw Backend"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: text("Quit OpenBiliClaw"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "OpenBiliClaw Backend")
+        statusItem.button?.image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "OpenBiliClaw")
         statusItem.menu = menu
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()

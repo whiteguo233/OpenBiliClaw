@@ -44,12 +44,12 @@ jobs:
       - name: Test real sandbox startup, HTTP and cleanup
         run: |
           python packaging/macos_store/smoke.py \
-            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app' \
+            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app' \
             --output "$RUNNER_TEMP/store-smoke"
       - name: Test configured model restart and native IPv6 readiness
         run: |
           python packaging/macos_store/restart_smoke.py \
-            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw Backend.app' \
+            'dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app' \
             --output "$RUNNER_TEMP/store-restart"
       - name: Package the archive with signatures and symlinks intact
         run: |

@@ -5,7 +5,7 @@
 "Optional. macOS controls login approval in System Settings → General → Login Items." = "可选。macOS 可在「系统设置 → 通用 → 登录项」中管理启动授权。";
 "Show logs" = "查看日志";
 "Show backend" = "显示后端窗口";
-"Quit OpenBiliClaw Backend" = "退出 OpenBiliClaw Backend";
+"Quit OpenBiliClaw" = "退出 OpenBiliClaw";
 "Starting backend…" = "正在启动后端…";
 "Stop backend" = "停止后端";
 "Start backend" = "启动后端";

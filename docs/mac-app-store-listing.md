@@ -3,8 +3,9 @@
 此文件是可审阅的提审材料；没有向 Apple 提交，也没有代填年龄分级或隐私声明。
 
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
-- App 名称草案：OpenBiliClaw Backend（需后台检查是否可用）
-- 初版：1.0.0，build 1；类别：Productivity
+- App 显示名称：OpenBiliClaw（与桌面 App 一致；商店记录保存仍需通过后台校验）
+- 初版：1.0.0，当前候选 build 2；类别：Productivity
+- 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 中文副标题：在自己的 Mac 上运行 AI 内容发现后端
 - English subtitle: Your local AI discovery server
 

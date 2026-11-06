@@ -5,7 +5,7 @@
 "Optional. macOS controls login approval in System Settings → General → Login Items." = "Optional. macOS controls login approval in System Settings → General → Login Items.";
 "Show logs" = "Show logs";
 "Show backend" = "Show backend";
-"Quit OpenBiliClaw Backend" = "Quit OpenBiliClaw Backend";
+"Quit OpenBiliClaw" = "Quit OpenBiliClaw";
 "Starting backend…" = "Starting backend…";
 "Stop backend" = "Stop backend";
 "Start backend" = "Start backend";
