@@ -671,6 +671,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices
 Git / Docker / desktop + updater → pinned SDK verification → atomic activation
@@ -712,9 +714,9 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
-聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
+聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 正文工具协议检查 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
 
-配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
+配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，默认调用链仅调整 registry 顺序，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
 
 后台配置：`完整配置应用成功 → 队列结束 → 父进程确认旧子进程退出 → worker / 推荐 / 图片服务读取新配置`；保留当前数据目录与持久化候选，修正模型后补池可继续。
 

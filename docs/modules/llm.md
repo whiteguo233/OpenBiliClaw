@@ -6,6 +6,18 @@
 | --- | --- |
 | `siliconflow_free` 目录 | 两个固定 LLM 实例参与原有默认 / 模块链；`LLMRegistry.configure_chain()` 只切换顺序，不修改 adapter 模型或共享凭据。 |
 | BGE-M3 Embedding | 独立固定文本模型与 1024 维；可切换 Provider，模型、地址、凭据与图片能力不可改。相似度阈值、缓存和备用选择属于业务策略，不是模型配置。 |
+| 工具示例与执行分离 | 免费适配器仍通过项目模拟协议调用工具。`complete_with_tools()` / `stream_complete_with_tools()` 支持 `{"reply":"..."}` 展示原样 JSON，一次解封后不再解析为工具；流式和最终正文一致。 |
+
+工具请求必须是仅含 `tool_call` 或 `tool_calls` 的完整顶层封套；带 `reply`、说明或其他
+数据字段的对象不会因内部出现工具名就被执行。普通正文保持增量输出，原样 JSON 的
+`reply` 字符串待完整校验后显示；用户可索要工具协议示例。该规则在 Python 适配层生效，
+不修改 Rust SDK 的签名任务、凭据或配额。后续 [Agent 正文检查](agent.md#agentloop)
+负责处理正常回答中意外夹带的工具协议；真实复测见[验收](../testing/2026-11-07-tool-text-guard.md)。
+
+`sponsored_errors.find_sponsored_error(error)` 沿 `__cause__` / `__context__` 找回有类型的
+运行时错误，循环链安全结束，无对应原因时返回 `None`。普通实例 adapter 的错误翻译
+不改变 SDK 原因；API 用该接口识别恢复和终止条件，避免通用包装使有限重试失效或变成
+后台无限重试。不通过错误文本猜测类型。
 
 
 ## 评估输入字段（2026-11-06）

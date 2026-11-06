@@ -639,11 +639,15 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 | `POST /api/config/probe-service` | `llm_instance` 构造以目标 ID 为首项的临时 registry，其他未配置的默认实例不拦截探测；不会用备用结果冒充目标成功。Embedding 与 LLM 独立探测。 |
 | `POST /api/config/discover-models` | 免费实例直接返回两个签名目录模型 ID，不请求任意上游 URL。 |
 | `PUT /api/config` | 免费实例与向量模型、维度、凭据和地址覆盖在保存前拒绝；切换 Embedding Provider 清除旧凭据和地址，避免跨服务携带。 |
-| `RuntimeContext.try_apply_llm_instance_config(new_config)` | 完整比较配置，只允许已启用免费实例的模型字段快速替换；仍经过原保存/修订/回滚锁。新请求查普通 registry，独立 worker 通过现有 generation 重启同步。 |
+| `RuntimeContext.try_apply_llm_instance_config(new_config)` | 完整比较配置，仅默认实例链及其兼容别名变化时即时应用，实例本身不可编辑；仍经过原保存/修订/回滚锁。PC/插件整表保存附带未修改的 Tailnet 字段也可进入此路径，不等待学习队列。实际网络/凭据修改仍走重建或重启。新请求查普通 registry，独立 worker 通过现有 generation 重启同步。 |
 
 旧 `kind=sponsored` 草稿探针保留兼容用途；新客户端统一使用普通探针。业务不再调用全局 sponsored 拦截器，内部 SDK 设置不覆盖模块路由。
 
 ### 免费聊天恢复的 SSE 与持久状态契约
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| 免费实例错误链识别 | 流式入口和后台回复 worker 都通过 `find_sponsored_error()` 识别 adapter / registry / service 包装中的实际错误码；仅无输出、无工具动作的瞬时错误允许最多两次持久重试，鉴权/策略等错误立即终止。 |
 
 `POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
 

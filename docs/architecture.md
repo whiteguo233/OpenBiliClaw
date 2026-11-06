@@ -204,6 +204,8 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final); protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint queues background execution + config_update_hook → settings apply queue / last-good + ledger audit
@@ -342,6 +344,7 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - 任务调度和策略决策
 - 多步推理和自省优化
 - Skill 注册、发现和调度
+- `tool_text.py` 检查流式及最终正文中的完整工具封套，并隔离其后无执行依据的完成声明；用户原文与自动拼接的模型上下文分开传递，代码/原样数据请求保留。纯协议空答复最多纠正一次，文本不进入工具执行或审批路径。
 - 「聊一聊」chat agent loop（2026-09-23）：`loop.py` 多跳工具调用循环（`[agent] loop_max_steps` 默认 64 跳，事件流 thinking/tool_call/tool_result/approval_request/final）；`tools/` JSON Schema 工具注册表 + read / soft_write / hard_write 三级权限与 v1 标准工具集；`skill.py` SKILL.md 目录加载（`skills_builtin/` 内置 4 个 + `{data_dir}/skills/` 用户覆盖）；`tasks.py` durable 后台任务中心（只读 loop + `propose_suggestion` 建议清单 + 完成后 `agent_task_summary` 汇总 turn 回写来源会话）；`approvals.py` L2 hard_write 审批门（`chat_approvals.json` 单文件状态机 pending → approved → executing → executed / failed，另有 rejected / expired，决策写 `profile_update_ledger` 审计；approve 端点异步化——立即返回，`chat_approval_execute` 后台任务执行并回写终态，2026-09-25）
 
 ### Blue Fish Lab (`fish/`)
@@ -785,6 +788,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices
 Git / Docker / desktop + updater → pinned SDK verification → atomic activation

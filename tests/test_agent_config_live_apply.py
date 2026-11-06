@@ -34,8 +34,12 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.parametrize("separate_worker", [False, True])
+@pytest.mark.parametrize("echo_tailnet", [False, True])
 async def test_free_model_switch_applies_while_learning_is_running(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separate_worker: bool
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    separate_worker: bool,
+    echo_tailnet: bool,
 ) -> None:
     import sys
 
@@ -72,14 +76,15 @@ async def test_free_model_switch_applies_while_learning_is_running(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
-            response = await client.put(
-                "/api/config",
-                json={
-                    "llm": {
-                        "default_chain": [alternate_id, "siliconflow-free"],
-                    }
+            update = {
+                "llm": {
+                    "default_chain": [alternate_id, "siliconflow-free"],
                 },
-            )
+            }
+            if echo_tailnet:
+                # Both settings UIs echo unchanged Tailnet settings on save.
+                update["tailnet"] = (await client.get("/api/config")).json()["tailnet"]
+            response = await client.put("/api/config", json=update)
             assert response.status_code == 202, response.text
             for _ in range(100):
                 status = (await client.get("/api/config/apply-status")).json()

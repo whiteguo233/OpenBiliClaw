@@ -670,6 +670,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices
 Git / Docker / desktop + updater → pinned SDK verification → atomic activation
@@ -711,9 +713,9 @@ Local embedding: `requests / diagnostics → Ollama automatic acceleration → v
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
-Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
+Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → tool-protocol text guard → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
 
-Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
+Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings, reorder the registry for default-chain changes; drain and rebuild for other changes`. Local updates preserve active conversations and learning tasks.
 
 Background configuration: `successful full apply → queue settles → parent confirms old children exited → workers / recommendation / images read new settings`. The active data directory and durable candidates survive; model repairs can resume pool filling.
 

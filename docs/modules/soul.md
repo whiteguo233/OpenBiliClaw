@@ -95,6 +95,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像；同一 dialogue 实例逐轮串行执行普通与工具调用，用户 turn 在真实回复完成前仅为临时历史，异常/取消只回滚本轮且不触发学习 |
 | Agent 显式聊天笔记 | ✅ | 通过 LLMService.memory 读取有界 agent_notes，仅 chat 且角色允许 read_memory 时加入 user 引用；原消息、system 与学习载荷不变 |
 | Agent 表达风格 | ✅ | `stream_agent_reply(persona_id=...)` 为 chat scope 叠加已冻结的表达模板；natural、legacy 与非 chat 保持原 prompt，风格不更改学习输入或权限 |
+| Agent 正文协议隔离 | ✅ | 向 `AgentLoop.run(original_user_message=...)` 单独传入用户原文，防止语言规则中的 JSON 保留指令或引用笔记误关闭协议检查；历史与学习接收检查后的 `final`，不记录已移除的工具封套 |
 | SocraticDialogue.stream_agent_reply()（M2） | ✅ | 多跳 agent loop 的对话侧入口（`POST /api/chat/agent/stream` 调用）：在 `_respond_lock` 下与 `respond()` 串行，复用共享朋友人设与长期记忆，采用按当前请求调整深度的聊天风格（简单问题简答、复杂任务充分展开，追问遵循共享收敛规则，访谈由用户探索意愿触发）；显式 `session_id` 的短期历史按会话隔离，首次使用从本会话 durable rows 恢复；`dialogue_binding` 同时用于 prompt 和学习冻结锚；user turn 先 append（loop 异常/空答复回滚本轮且不触发学习），完成后 append agent 答复并按 learning mode 走与 `respond()` 相同的 `_queue_dialogue_learning()` 提交（queued / legacy_direct / reply_only_test 语义一致） |
 | SocraticDialogue.respond_stream()（issue #83） | ✅ | `respond()` 的流式变体：逐 token yield 回复增量（`LLMService.stream_socratic_dialogue()`），历史追加 / 回滚 / 学习语义与 `respond()` 完全一致；工具回合保持一次性工具流、最终回复作为单个 delta 吐出；service 缺少流式方法时回退一次性 `complete_socratic_dialogue()`。CLI `chat` 与 legacy `/api/chat/stream` 均走此路径 |
 | 对话内链接摄入（issue #83，`sources/link_ingest.py`） | ✅ | `SocraticDialogue` 可选接收 `LinkIngestor`；`respond()`、`respond_stream()` 与 `stream_agent_reply()` 在 user turn append 后、LLM 调用前对消息做链接预处理：提取 URL（无 `://` 快速短路）→ 展开 b23.tv / xhslink.com 短链（跟随重定向，8s 超时 + 256 KiB 上限 + 非 HTML 拒绝，httpx 一律 `trust_env=False`）→ 按 `sources/platforms.py` 注册表识别平台（bilibili 复用 `BilibiliAPIClient.get_video_info` 拿标题/简介/UP 主/标签，其余平台抓 title/description/og 元数据）→ 摘要块注入当轮 prompt（历史与审计仍存用户原文，仅靠 `relation_prefix` 让后续轮次知道「分享了链接《…》」），并把每个抓取成功的链接经注入的 `event_sink`（生产 = `MemoryManager.propagate_event`）记为 `share` 事件（显式正向偏好，默认强度 0.85，用户消息摘录进 `comment_text`）。单链接失败降级为「仅链接」形态进上下文，事件写入失败只记 WARNING，绝不阻塞聊天；未接 ingestor 时 prompt 逐字节不变 |
@@ -1047,6 +1048,13 @@ queue/guard。每个 `SocraticDialogue` 实例用独立异步锁串行执行完�
 要求优先，非 natural 风格优先于旧全局语气中的冲突措辞；功能角色与工具审批规则不变。
 
 `stream_agent_reply(..., session_id="chat-…", dialogue_binding=binding)` 接受独立对话 id 和已冻结的回复目标。短期 prompt 只包含该会话近期完成的消息；长期画像与记忆继续共享。省略 `session_id` 的旧调用保留共享历史兼容，`clear_history()` 同时清除全部内存会话历史。绑定的卡片/问题标题进入本轮 prompt，同一 binding 随学习任务提交并冻结目标锚，避免把回复记到后来切换的目标上。
+
+`stream_agent_reply()` 将模型提示词与原始用户请求分开传给 loop：`user_message` 仍包含
+时间、引用资料和输出语言规则，`original_user_message` 只包含当轮用户原文。工具协议正文
+检查据此保留用户主动索要的 JSON/代码/原值，而不会把系统附加的“Keep JSON keys”误当作
+原样输出请求。`final` 同时作为历史和学习队列的答复；协议空答复纠正后仍失败时沿用异常
+回滚，不形成成功的空会话。旧单跳 `respond()` / `respond_stream()` 不经过此 AgentLoop
+检查；详见 [Agent 模块](agent.md#agentloop)。
 
 ### DialogueAnchorManager / ConfusionManager
 

@@ -5399,11 +5399,12 @@ def create_app(
 
     def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
         """Persist a bounded recovery count; never replay output or tool work."""
-        from openbiliclaw.llm.sponsored_errors import SponsoredError
+        from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
-        if not isinstance(exc, SponsoredError) or _agent_turn_started(turn_id):
+        sponsored_error = find_sponsored_error(exc)
+        if sponsored_error is None or _agent_turn_started(turn_id):
             return False
-        if exc.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+        if sponsored_error.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
             return False
         row = _get_chat_turn_row(turn_id)
         events = (row or {}).get("payload", {}).get("agent_events", [])
@@ -5412,7 +5413,9 @@ def create_app(
         # permanently unavailable service at the head of the dialogue lane.
         if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
             return False
-        return _append_chat_turn_agent_event(turn_id, {"type": "sponsored_retry", "code": exc.code})
+        return _append_chat_turn_agent_event(
+            turn_id, {"type": "sponsored_retry", "code": sponsored_error.code}
+        )
 
     def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
         # Persist the first delta boundary without storing token fragments.
@@ -14376,15 +14379,14 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
-                from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
                 if isinstance(exc, TerminalChatReplyError):
                     raise
-                if isinstance(exc, SponsoredError) and not _retry_silent_sponsored_turn(
-                    turn_id, exc
-                ):
+                sponsored_error = find_sponsored_error(exc)
+                if sponsored_error is not None and not _retry_silent_sponsored_turn(turn_id, exc):
                     raise TerminalChatReplyError(
-                        safe_llm_failure_message(exc), code=exc.code
+                        safe_llm_failure_message(exc), code=sponsored_error.code
                     ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
@@ -25605,7 +25607,10 @@ def create_app(
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
                 allow_llm_instance_live_apply=(
-                    not pending_credential_writes and "tailnet" not in update
+                    # Both settings UIs echo Tailnet even when it is unchanged.
+                    # Actual settings/credential changes still require restart;
+                    # mere presence must not turn a chain switch into a drain.
+                    not pending_credential_writes and not tailnet_restart_required
                 ),
             )
 
