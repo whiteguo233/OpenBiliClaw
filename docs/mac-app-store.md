@@ -82,8 +82,8 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 
 ## 第三方许可待核对
 
-本轮实际构建环境中的 `bilibili-api-python 17.4.2` 为 `GPL-3.0-or-later`，`browser-cookie3 0.20.1` 随包许可证为 LGPLv3。项目自身的 MIT 许可证不会替代这些上游许可；现有 `THIRD_PARTY_NOTICES.md` 主要记录 Tailnet 的 Go 依赖，不能视为 Python 依赖已经核对完毕。
+本轮实际构建环境中的 `bilibili-api-python 17.4.2` 为 `GPL-3.0-or-later`，`browser-cookie3 0.20.1` 随包许可证为 LGPLv3；冻结 TOC 还包含 `pystray 0.19.5`（LGPLv3）。项目自身的 MIT 许可证不会替代这些上游许可；现有 `THIRD_PARTY_NOTICES.md` 主要记录 Tailnet 的 Go 依赖，不能视为 Python 依赖已经核对完毕。
 
-构建器在最终签名前把上述两个依赖的许可证原文、实际版本及项目来源写入 `Contents/Resources/ThirdPartyLicenses`，复用冻结 payload 时也会更新；缺少许可证原文即构建失败。这个有限记录不等于完整 SBOM、对应源码提供或已确认商店兼容。
+构建器在最终签名前把上述三个依赖的许可证原文、实际版本及项目来源写入 `Contents/Resources/ThirdPartyLicenses`，复用冻结 payload 时也会更新；缺少许可证原文即构建失败。扫描包括 `COPYING.LGPL` 等 `COPYING.*` / `LICENSE*` 补充文本，避免只保留通用 GPL 正文而漏掉 LGPL 补充条款。build 2 上传后核对发现 pystray 原文遗漏，后续改由补齐后的 build 3 作为提审候选。这个有限记录不等于完整 SBOM、对应源码提供或已确认商店兼容。
 
 正式分发前还需确认这些组件的分发条件、对应源码的提供方式，以及与适用商店协议的兼容性。Apple 的[标准 EULA](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)包含开源组件许可的例外，也允许自定义 EULA；FSF 曾针对[2010 年的 App Store 条款](https://www.fsf.org/blogs/licensing/more-about-the-app-store-gpl-enforcement)提出冲突意见。旧案例不足以单独判定当前 macOS 候选能否分发，本次没有取得上游额外授权，也没有完成这一许可结论。不要把技术验证通过解释为许可问题已经解决；候选保持未提交状态，不擅自修改上游许可或删去核心 B 站功能。

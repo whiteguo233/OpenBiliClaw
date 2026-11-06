@@ -1,9 +1,12 @@
 """Store packaging contracts, independent of Xcode/signing availability in CI."""
 
 import importlib.util
+import json
 import plistlib
 import struct
+from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +22,33 @@ def load_file(name):
 
 builder = load_file("build")
 embed = load_file("embed")
+
+
+def test_store_keeps_all_copyleft_texts_including_lgpl_supplement(tmp_path, monkeypatch):
+    distributions = {}
+    for name in ("bilibili-api-python", "browser-cookie3", "pystray"):
+        metadata = Message()
+        metadata["License"] = "LGPLv3" if name == "pystray" else "GPL-3.0-or-later"
+        files = [Path(f"{name}.dist-info/COPYING")]
+        if name == "pystray":
+            files.append(Path(f"{name}.dist-info/COPYING.LGPL"))
+        for file in files:
+            (tmp_path / file).parent.mkdir(exist_ok=True)
+            (tmp_path / file).write_text(f"License text: {file.name}")
+        distributions[name] = SimpleNamespace(
+            files=files, metadata=metadata, version="1.2.3", locate_file=lambda p: tmp_path / p
+        )
+    monkeypatch.setattr(builder.importlib.metadata, "distribution", distributions.__getitem__)
+
+    builder.preserve_dependency_licenses(tmp_path / "backend")
+
+    notices = tmp_path / "backend/Contents/Resources/ThirdPartyLicenses"
+    manifest = json.loads((notices / "manifest.json").read_text())
+    assert {p["name"] for p in manifest["packages"]} == set(distributions)
+    assert {p.read_text() for p in (notices / "pystray").glob("LICENSE-*.txt")} == {
+        "License text: COPYING",
+        "License text: COPYING.LGPL",
+    }
 
 
 def test_store_export_rejects_developer_id_before_running_xcode(tmp_path):

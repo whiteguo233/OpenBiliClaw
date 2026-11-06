@@ -5,7 +5,7 @@
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
 - App Store Connect 记录：`6831698888`
 - 商店名称：OpenBiliClaw Hub（已通过后台名称校验并保存）；安装后的 App 仍为 OpenBiliClaw。
-- 初版：1.0.0，当前候选 build 2；类别：Productivity
+- 初版：1.0.0，下一候选 build 3（补齐许可证文本，build 2 已上传）；类别：Productivity
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 中文副标题：你的 AI 内容中枢
 - English subtitle: Your local AI discovery server

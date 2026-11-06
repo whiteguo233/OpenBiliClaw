@@ -40,10 +40,12 @@
 
 ## 提交状态与边界
 
-App Store Connect 的独立 macOS 记录为 `6831698888`。独立记录使用 `OpenBiliClaw` 的保存被 Apple 拒绝，原因是同账号手机 App 已占用该名称；后改为 `OpenBiliClaw Hub`，副标题「你的 AI 内容中枢」，后台已显示保存成功。中文描述、关键词、支持/营销 URL、1.0.0 版本号、版权行和审核备注已保存。截图、隐私、分级和审核联系人仍在处理；**尚未完成上传或提交审核**。
+App Store Connect 的独立 macOS 记录为 `6831698888`。独立记录使用 `OpenBiliClaw` 的保存被 Apple 拒绝，原因是同账号手机 App 已占用该名称；后改为 `OpenBiliClaw Hub`，副标题「你的 AI 内容中枢」，后台已显示保存成功。中文描述、关键词、支持/营销 URL、1.0.0 版本号、版权行和审核备注已保存。中文截图已上传 1 张，审核联系人沿用现有手机 App；隐私政策 URL 与 16+ 分级（旧系统 17+）已保存。免费价格已选定，供应情况设置为 175 个地区。**Xcode 已完成上传，尚未提交审核**。
 
-新发行证书、私钥和安装包签名已经就绪，不能再把它们列为缺失条件。是否通过 Apple 的发行验证、上传、审核和实际公开上架，需要分别确认。
+Xcode Organizer 已显示 `Upload completed with warnings`。警告为 Intel 归档不含 arm64，以及 PyObjC `_AppKit` / `_inlines` 扩展缺少 dSYM；这些警告未阻止上传。此前的手动导出包与这次 GUI 重新签名上传的安装包是不同文件：实际上传包为 271,701,862 字节，SHA-256 `7c0ed8a3a70f6038579dc8dbcc30d47de5020c9ded21066151b509b48ec4f0e8`，从上传暂存目录保留后再次验签通过，版本和构建号仍为 `1.0.0 (2)`。
+
+App Store Connect 构建处理、构建选择、隐私标签发布和最终审核提交需继续确认。第三方内容版权声明已向发行方询问，尚未代填。
 
 实际 Tailnet/公网跨机连接、登录项注册/撤销以及已识别 GPL/LGPL 依赖的完整分发与对应源码提供核对仍保持原有未完成边界；参见 [商店版说明](../mac-app-store.md#第三方许可待核对)。
 
-本机持久证据放在 Xcode Archives 的 `2026-11-07/OpenBiliClaw-1.0.0-2-evidence/` 与 `OpenBiliClaw-1.0.0-2-Store-export/`，包含候选状态、真实请求报告、截图和安装包摘要；临时构建日志不作为唯一存档。
+本机持久证据放在 Xcode Archives 的 `2026-11-07/OpenBiliClaw-1.0.0-2-evidence/` 、`OpenBiliClaw-1.0.0-2-Store-export/` 与 `OpenBiliClaw-1.0.0-2-Xcode-upload/`，包含候选状态、真实请求报告、截图和安装包摘要；临时构建日志不作为唯一存档。

@@ -33,13 +33,12 @@ def preserve_dependency_licenses(backend: Path) -> None:
     """
     destination = backend / "Contents/Resources/ThirdPartyLicenses"
     records = []
-    for name in ("bilibili-api-python", "browser-cookie3"):
+    for name in ("bilibili-api-python", "browser-cookie3", "pystray"):
         package = importlib.metadata.distribution(name)
         texts = [
             path
             for path in package.files or []
-            if ".dist-info/" in str(path)
-            and path.name.upper() in ("LICENSE", "LICENSE.TXT", "LICENSE.MD", "COPYING")
+            if ".dist-info/" in str(path) and path.name.upper().startswith(("LICENSE", "COPYING"))
         ]
         if not texts:
             raise ValueError(f"Missing installed license text for {name}")
