@@ -74,10 +74,18 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     licenses = args.app.resolve() / "Contents/Resources/ThirdPartyLicenses"
     records = json.loads((licenses / "manifest.json").read_text())["packages"]
-    assert {item["name"] for item in records} == {"bilibili-api-python", "browser-cookie3"}
+    assert {item["name"] for item in records} == {
+        "bilibili-api-python",
+        "browser-cookie3",
+        "pystray",
+    }
     for item in records:
         assert item["version"]
         assert list((licenses / item["name"]).glob("LICENSE-*.txt"))
+    assert any(
+        "GNU LESSER GENERAL PUBLIC LICENSE" in text.read_text(encoding="utf-8")
+        for text in (licenses / "pystray").glob("LICENSE-*.txt")
+    )
     profile = "smoke-" + str(time.time_ns())
     executable = args.app.resolve() / "Contents/MacOS/OpenBiliClaw"
     proc = subprocess.Popen(
