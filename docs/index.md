@@ -1,6 +1,6 @@
 # 📖 OpenBiliClaw 文档导航
 
-- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md) / [三端真实复验](verification/2026-11-06-jev-all-surfaces-real-e2e.md) / [时效矛盾修复复验](verification/2026-11-07-jev-temporal-joint-evidence.md)：三端可配置并显式测试的文本、受控分类模式；不隐式回退 LLM，有限样本通过不代表真实中文质量认证。
+- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md) / [早期三端复验](verification/2026-11-06-jev-all-surfaces-real-e2e.md) / [时效修复及当前三端真请求复验](verification/2026-11-07-jev-temporal-joint-evidence.md)：三端可配置并显式测试的文本、受控分类模式；当前代码默认预算下 11 次真请求通过，不隐式回退 LLM，有限样本通过不代表真实中文质量认证。
 
 > 本页面是项目文档的一站式入口。用户看第一区块就够了；第二区块起面向开发者和贡献者。
 
