@@ -680,7 +680,8 @@ Background configuration: `successful full apply → queue settles → parent co
 
 Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
 Jev connection: `shared Web / popup / mobile form → config API validation → local URL/token/pinned-model/limits → runtime rebuild`; read responses never return the token.
-Jev draft test: `shared test button → synthetic profile + one item → real full 10-question request → safe result`; warns of cost and does not save. Contradictory temporal evidence is parked without same-context paid retries.
+Jev draft test: `shared test button → synthetic profile + one item → real full 8-question request → safe result`; warns of cost and does not save. Contradictory temporal evidence is parked without same-context paid retries.
+Jev time evidence: `joint outcome + representative excerpt → source/time-bound hard claims → atomic validation`. Invalid native answers are also parked; correcting the endpoint permits recovery, rotating a token does not.
 Jev text path: `full descriptions (no early 400-character trim) → budgeted whole-source excerpts → full-source cache identity`; originals stay unchanged.
 Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
 No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.

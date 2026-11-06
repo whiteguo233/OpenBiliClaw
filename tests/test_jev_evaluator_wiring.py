@@ -389,7 +389,7 @@ async def test_input_budget_failure_does_not_discard_valid_batch_member(tmp_path
             await pipeline.evaluate_claim(claim, _build_profile())
         )
         assert receipt == {"evaluated": 1, "cached": 1, "rejected": 0, "stale": 0, "blocked": 1}
-        assert len(provider.requests) == 1 and len(provider.requests[0].questions) == 10
+        assert len(provider.requests) == 1 and len(provider.requests[0].questions) == 8
         rows = db.get_discovery_candidates_by_ids([1, 2])
         assert [row["status"] for row in rows] == ["cached", "failed_eval"]
         assert rows[1]["temporal_evidence_complete"] == 0

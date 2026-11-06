@@ -47,7 +47,7 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
 已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 32,000（state＋最长题）/64,000（完整请求）UTF-8 字节护栏，
 含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
-保守工程策略，不是精确 token 数。每条候选的 10 题是不可拆单元，多候选多题共用请求；
+保守工程策略，不是精确 token 数。每条候选的 8 题是不可拆单元，多候选多题共用请求；
 默认候选上限 64 是有界打包搜索保护，不是官方题数上限；实际批量由双容量与用户更严上限决定。
 首次适配的候选视图不因同行缩短；first-fit 回填已开批次，后面短候选可利用前批空位。
 max_calls 用尽也继续检查可填的既有批次，不重评候选、不增加业务调用轮次。
@@ -59,7 +59,7 @@ max_calls 用尽也继续检查可填的既有批次，不重评候选、不增�
 处理，不缩短后二次发送。
 每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
 问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
-本轮输入合同升为 `jev-full-evaluation-v4`，预算身份为 `jev-wire-bytes-ceiling-v2`，
+本轮输入合同升为 `jev-full-evaluation-v5-joint-outcomes`，预算身份为 `jev-wire-bytes-ceiling-v2`，
 新增 `first-fit-open-batches-v1` 打包身份，旧缓存不会跨合同复用。
 成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
 字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
@@ -82,6 +82,29 @@ max_calls 用尽也继续检查可填的既有批次，不重评候选、不增�
 `invalid_evaluation_evidence:<context fingerprint>` 单独停放，不进入 missing-response
 自动重评，不改成“有效未知”，其它有效候选照常处理。源文本与先前证据保留，
 同上下文不再次收费；测试按钮同样返回明确失败。详见[本轮验收](../verification/2026-11-06-jev-all-surfaces-real-e2e.md)。
+
+2026-11-07 将时效合同改为 **联合结论 + 独立原文摘录**：8 题分别是相关性、理由、
+主题、IP、风格、时效结论、代表原句、时效置信度。普通结论只有 6 类和 2 个耐久内容
+的 hook 变体，不再把同一类别乘以原文句数。breaking/current/versioned 按定义携带
+freshness_only，不需要凭空提供截止时间；代表原句从当前可见原文中独立选取，
+不产生过期结论，none 模式不使用该句。硬状态选项将类别、范围、状态、原句与时间
+联合绑定，发送前通过现有 grounding，落库前再完整原子校验；条件／未来句不能
+冒充已经过期或被替代，缺少时钟／时区的日期不能成为 deadline。
+超过原生 255 选项时重新预算显式源视图；必需内容仍放不下则本地停放，不静默
+截断备选后保留“完整覆盖”。没有新增评分阈值，不补评、不强改模型选择的 unknown。
+native provider 的 INVALID（未知选项、缺题、错模型等）也进入证据停放，不作为
+暂态缺失反复计费；503 等暂态故障仍沿用原路径。
+`JevContentEvaluator(..., provider_identity=...)` 的可选身份由正式 CLI / runtime / probe
+传入已校验端点：修正网关可恢复停放项，Token 轮换和重启不改变证据身份。
+新合同为 `jev-full-evaluation-v5-joint-outcomes`，旧缓存不复用。
+`candidate_text_view()` 的预算选择改用 canonical JSON 条目字节累加，避免每加入一段
+都序列化整个视图；逗号、计数位宽和 partial 布尔长度均精确计入，完成后仍做一次
+实际序列化兜底校验。4 档 golden 和 24 组原样本比较逐字节相同，source-spans-v1
+政策、源摘要和条件邻句规则不变，不用延长生产评估预算。
+候选纯本地准备在线程中顺序执行，避免长文反复试装阻塞共享 HTTP 事件循环。
+首次 await 前仍完整快照调用方输入；线程不访问 provider／数据库，并沿用同一截止时间。
+取消等待不会继续派发模型请求；线程内已开始的本地计算可在既有截止检查处结束。
+真实复验和未认证边界见[修复验收](../verification/2026-11-07-jev-temporal-joint-evidence.md)。
 
 配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
 [Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与

@@ -7,6 +7,10 @@
 `candidate_eval_input_budget_blocked` 分开。两类 refusal 均通过 pipeline 在上下文变更后
 有界恢复；同配置的启动、手动刷新和保存不触发重评。已付费返回的矛盾时效证据不再
 折叠为 missing response，不修改评分或准入规则；暂态服务错误继续原有退避。
+2026-11-07 起 native INVALID 也走该路径。`status_payload()` 提示无效／矛盾答案；
+正式 runtime 将配置端点传入 evaluator 的证据身份，修正网关可恢复，单换 Token 不复活。
+后台 Jev 候选的纯本地打包改在线程执行，避免与配置／候选入队共用的事件循环被长文
+试装占住。数据先快照，provider 仍在原协程中按顺序调用；取消打包等待不会触发远端请求。
 
 ## Jev 输入预算失败恢复（2026-10-27）
 

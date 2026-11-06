@@ -32,6 +32,7 @@ def test_probe_uses_draft_and_discards_success_after_edit(chromium_page: Page) -
     }""")
     button = page.get_by_role("button", name="测试连接与评估", exact=True)
     assert button.count() == 1
+    assert "完整 8 题" in page.locator("body").inner_text()
     page.get_by_label("Token", exact=True).fill("synthetic-draft-token")
     button.click()
     assert button.is_disabled()

@@ -276,4 +276,4 @@ def test_saved_connection_drives_real_native_http_without_proxy_or_env_key_overr
         asyncio.run(evaluate())
         assert len(backend.requests) == 1
         assert backend.requests[0]["model"] == "jev-1.14.0"
-        assert len(backend.requests[0]["questions"]) == 10
+        assert len(backend.requests[0]["questions"]) == 8

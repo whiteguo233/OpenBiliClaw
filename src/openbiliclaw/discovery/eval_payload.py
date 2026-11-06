@@ -56,7 +56,7 @@ class InputBudgetFailure:
 
 @dataclass(frozen=True)
 class InvalidEvaluationEvidence:
-    """Received but contradictory evidence, parked instead of paid reevaluation.
+    """Received but invalid evidence, parked instead of paid reevaluation.
 
     This is not an input overflow or a low relevance score. A changed effective
     evaluation context permits one new attempt; unchanged restarts do not.

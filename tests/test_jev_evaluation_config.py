@@ -31,6 +31,22 @@ def _configured() -> Config:
     return cfg
 
 
+def test_endpoint_fix_changes_evidence_identity_but_token_rotation_does_not() -> None:
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
+
+    cfg = _configured()
+    cfg.discovery.eval_scorer = "jev"
+    cfg.decision.providers.jev.api_key = "synthetic-first-key"
+    first = build_cli_jev_evaluator(cfg)
+    assert first is not None
+    cfg.decision.providers.jev.api_key = "synthetic-rotated-key"
+    rotated = build_cli_jev_evaluator(cfg)
+    assert rotated is not None and rotated.cache_namespace == first.cache_namespace
+    cfg.decision.providers.jev.endpoint_url = "https://relay.example/v1/systemone"
+    repaired = build_cli_jev_evaluator(cfg)
+    assert repaired is not None and repaired.cache_namespace != first.cache_namespace
+
+
 def test_jev_evaluation_roundtrip_and_route_enablement(tmp_path: Path) -> None:
     cfg = _configured()
     cfg.discovery.eval_scorer = "jev"
@@ -85,7 +101,7 @@ def test_config_cannot_enlarge_an_official_models_standard_window(tmp_path: Path
         ("max_calls", True),
         ("max_candidates_per_request", 0),
         ("max_candidates_per_request", True),
-        ("max_questions_per_request", 9),
+        ("max_questions_per_request", 7),
         ("max_questions_per_request", True),
         ("max_question_bytes", 255),
         ("budget_seconds", float("nan")),

@@ -107,7 +107,7 @@ def mock_success(http_request: httpx.Request) -> httpx.Response:
     body = json.loads(http_request.content)
     assert set(body) == {"model", "state", "questions"}
     assert body["model"] == MODEL
-    assert len(body["questions"]) % 10 == 0
+    assert len(body["questions"]) % 8 == 0
     # Reconstruct typed questions from the ACTUAL outbound JSON. The local IDs
     # below are not part of the response; the production provider binds its own.
     request = DecisionRequest.model_validate_json(
@@ -276,10 +276,10 @@ async def test_contradictory_jev_evidence_is_parked_without_repeat_billing(
         calls += 1
         payload = mock_success(request).json()
         if contradictory:
-            # Individually valid independent choices, jointly impossible:
-            # evergreen content cannot have core event-state expiry.
-            answer = payload["answers"]["c0.validity"]
-            answer["choice"] = "event_expired_core"
+            # A gateway cannot reintroduce a forbidden class/claim combination
+            # by returning a choice that was never offered in the joint question.
+            answer = payload["answers"]["c0.temporal"]
+            answer["choice"] = "evergreen_event_expired_core_e0"
             answer["probabilities"] = {
                 key: float(key == answer["choice"]) for key in answer["probabilities"]
             }

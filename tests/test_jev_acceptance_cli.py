@@ -25,7 +25,11 @@ def run_cli(*args: str, env: dict[str, str] | None = None) -> subprocess.Complet
         env=variables,
         capture_output=True,
         text=True,
-        timeout=30,
+        # Two isolated cohorts can each budget up to 60s in the runner;
+        # allow 30s for cold imports/schema setup as well. This outer test
+        # watchdog must not truncate a correctly bounded child. It changes
+        # neither provider timeouts/attempts nor the runner's success checks.
+        timeout=150,
         check=False,
     )
 

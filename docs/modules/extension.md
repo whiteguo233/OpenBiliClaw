@@ -25,7 +25,7 @@ Jev 连接配置区与 Web 共用 `web/shared/jev-settings.js/.css`，构建时�
 更换 URL 必须重填，保存后输入框清空，缓存配置只有安全状态不含 Token。没有新 host permission
 或后台直连 Jev：请求仍从后端发出。Chrome API stub 的 Chromium 测试不是实际 MV3 安装验收。
 共用表单现提供“测试连接与评估”：经 `POST /api/config/probe-service` 测试当前草稿，
-仅一次 native HTTP 尝试、1 条合成内容完整 10 题。提示少量费用，不自动保存；测试期间禁用按钮，
+仅一次 native HTTP 尝试、1 条合成内容完整 8 题。提示少量费用，不自动保存；测试期间禁用按钮，
 编辑配置使旧结果失效。实际 MV3 安装验收与手机实机范围见[复验记录](../verification/2026-11-06-jev-all-surfaces-real-e2e.md)。
 Base 模式允许任何兼容原生协议的可信网关，自动补 `/v1/systemone`（已有 `/v1` 不重复）；
 完整模式保留自定义路径。后端返回 `base_url_supported` 才开放 Base 编辑；其它凭据、安全

@@ -40,6 +40,7 @@ from openbiliclaw.discovery.jev_context import (
 )
 from openbiliclaw.discovery.style_keys import STYLE_KEY_DEFINITIONS
 from openbiliclaw.discovery.temporal import (
+    TemporalEvaluation,
     ground_temporal_evaluation,
     parse_temporal_evaluation,
 )
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
     from openbiliclaw.decision.models import DecisionAnswer, DecisionQuestion
 
 logger = logging.getLogger(__name__)
-_SCHEMA = "jev-full-evaluation-v4"
+_SCHEMA = "jev-full-evaluation-v5-joint-outcomes"
 _PROFILE_ALLOCATION = "mandatory-plus-optional-third-positive-v2"
 _BATCH_PACKING = "first-fit-open-batches-v1"
 _UNKNOWN = "u"
@@ -165,9 +166,8 @@ _TEMPORAL_RUBRIC = (
     "Strong textual evidence for a specific class; minor ambiguity remains.",
     "Direct, unambiguous textual evidence for why the core value does or does not expire.",
 )
-# One finite choice expresses these coupled fields jointly, avoiding impossible
-# combinations such as `event_state/superseded`. Class/evidence still validate
-# atomically below; independent questions are never treated as chained reasoning.
+# These claim templates are expanded into source-bound alternatives. They are
+# never independent questions: class, claim, excerpt and date are one choice.
 _VALIDITY = {
     "none": ("none", "none", "unknown"),
     "fresh_core": ("freshness_only", "core", "unknown"),
@@ -183,6 +183,32 @@ _VALIDITY = {
     "version_superseded_core": ("version_state", "core", "superseded"),
     "version_superseded_hook": ("version_state", "hook", "superseded"),
 }
+_CLASS_CLAIMS = {
+    "breaking": (
+        "fresh_core",
+        "fresh_hook",
+        "deadline_core",
+        "deadline_hook",
+        "event_active_core",
+        "event_active_hook",
+        "event_expired_core",
+        "event_expired_hook",
+    ),
+    "current": tuple(key for key in _VALIDITY if key != "none"),
+    "versioned": (
+        "fresh_core",
+        "fresh_hook",
+        "deadline_core",
+        "deadline_hook",
+        "version_active_core",
+        "version_active_hook",
+        "version_superseded_core",
+        "version_superseded_hook",
+    ),
+    "evergreen": ("none", "fresh_hook", "deadline_hook"),
+    "historical": ("none", "fresh_hook", "deadline_hook"),
+    "unknown": ("none",),
+}
 _TEMPORAL_INSTRUCTIONS = (
     "Assess only explicit evidence in this candidate's title/description/body_text/"
     "published_label. Do not infer expiry from publication age, evaluated_at, "
@@ -192,6 +218,17 @@ _TEMPORAL_INSTRUCTIONS = (
     "Core means the content's core usefulness; hook means only a promotional/title "
     "hook expires while durable content remains useful. Evergreen/historical may "
     "only use none or hook-scoped validity. Unknown class means none validity. "
+    "The temporal question selects ONE coherent outcome, not fields to combine. "
+    "Class definitions are in temporal_classes and claim templates in temporal_claims. "
+    "An offered alternative is only a hypothesis, NOT an assertion that it is true. "
+    "Choose the outcome whose class AND claim describe this candidate. "
+    "Prefer a supported explicit deadline, then an unconditional state assertion, "
+    "then freshness_only. Freshness_only means time-sensitive usefulness, NOT expired. "
+    "A breaking/current/versioned classification already means time-sensitive usefulness; "
+    "it does NOT need an explicit date, version number or expiry assertion. "
+    "Choose unknown ONLY if the core subject cannot be classified from the visible text. "
+    "For ordinary freshness, a separate independent question extracts a representative "
+    "source span; it never supplies a new class, deadline or hard-state assertion. "
 )
 # Same explicit date forms as temporal grounding. No inferred end-of-day or
 # timezone. The selected full sentence, not just a date token, must prove a deadline.
@@ -246,13 +283,83 @@ def _deadline_values(texts: list[str]) -> dict[str, str]:
     return values
 
 
+def _temporal_options(view: CandidateTextView) -> dict[str, TemporalEvaluation] | None:
+    """Offer coherent outcomes with source-bound hard claims.
+
+    No inference or extra model call happens here. Hard claims must pass the
+    same grounding gate as the final answer. The model still decides whether a
+    proposed class/scope actually describes the content. If the native 255-choice
+    cap is exceeded, the caller must budget the explicit source view again; no
+    tail of alternatives is silently dropped while claiming full coverage.
+    Ordinary freshness is implied by a time-sensitive class, not a separate
+    validity decision. Its representative source span is extracted independently.
+    Do not multiply ordinary class options by span count: indistinguishable
+    outcomes can split support and bias the unknown/durable choices.
+    """
+    options: dict[str, TemporalEvaluation] = {}
+    for temporal_class, claims in _CLASS_CLAIMS.items():
+        for claim in claims:
+            mode, scope, state = _VALIDITY[claim]
+            if mode == "freshness_only" and (
+                not view.excerpts
+                or (temporal_class in {"breaking", "current", "versioned"} and scope != "core")
+            ):
+                continue
+            excerpts = {"": ""} if mode in {"none", "freshness_only"} else view.excerpts
+            for ref, excerpt in excerpts.items():
+                dates = list(_deadline_values([excerpt])) if mode == "explicit_deadline" else [""]
+                for index, until in enumerate(dates):
+                    proposed = TemporalEvaluation(
+                        temporal_class=temporal_class,
+                        temporal_confidence=0.0 if temporal_class == "unknown" else 1.0,
+                        temporal_reason=_TEMPORAL_REASONS[temporal_class],
+                        temporal_validity_mode=mode,
+                        temporal_valid_until=until,
+                        temporal_scope=scope,
+                        temporal_evidence=excerpt,
+                        temporal_state=state,
+                        # Ordinary freshness is completed only after its
+                        # independently selected source reference is bound.
+                        evidence_complete=mode != "freshness_only",
+                    )
+                    if (
+                        mode not in {"none", "freshness_only"}
+                        and ground_temporal_evaluation(proposed, content_text=excerpt) != proposed
+                    ):
+                        continue
+                    if mode in {"none", "freshness_only"}:
+                        key = temporal_class + ("_hook" if scope == "hook" else "")
+                    else:
+                        key = f"{temporal_class}_{claim}_{ref}"
+                    if until:
+                        key += f"_d{index}"
+                    options[key] = proposed
+                    if len(options) > 255:
+                        return None
+    return options
+
+
+def _temporal_description(option: TemporalEvaluation, view: CandidateTextView) -> str:
+    """Keep the complete meaning in the description, not just the answer key."""
+    parts = [
+        _TEMPORAL_CLASSES[option.temporal_class],
+        f"mode={option.temporal_validity_mode}; scope={option.temporal_scope}; "
+        f"state={option.temporal_state}.",
+    ]
+    if option.temporal_evidence:
+        ref = next(ref for ref, text in view.excerpts.items() if text == option.temporal_evidence)
+        parts.append(f"Evidence: content.text_spans.{ref}.text.")
+    if option.temporal_valid_until:
+        parts.append(f"until={option.temporal_valid_until}")
+    return " ".join(parts)
+
+
 @dataclass(frozen=True)
 class _Candidate:
     index: int
     item: dict[str, object]
     questions: dict[str, DecisionQuestion]
-    excerpts: dict[str, str]
-    deadlines: dict[str, str]
+    temporal_options: dict[str, TemporalEvaluation]
     text_view: CandidateTextView
     profile_context: dict[str, object] | None = None
 
@@ -266,7 +373,7 @@ class _Candidate:
 
 
 class JevContentEvaluator:
-    """Complete typed evaluations, aligned with inputs; a failed item is ``None``.
+    """Aligned complete evaluations, typed refusals, or transient ``None``.
 
     Calls are serial under one absolute time/call budget. Inputs are snapshotted
     before the first await. UTF-8 byte limits are conservative engineering caps,
@@ -285,12 +392,14 @@ class JevContentEvaluator:
         model: str,
         config: JevEvaluationConfig,
         context_budget: JevContextBudget | None = None,
+        provider_identity: str = "",
     ) -> None:
         if not model.strip() or model != model.strip() or model in {"jev-latest", "jev-preview"}:
             raise ValueError("Jev full evaluation requires a pinned model version")
         validate_jev_evaluation_config(config)
         self._provider = provider
         self._model = model
+        self._provider_identity = provider_identity
         self._config = replace(
             config,
             topic_labels=list(config.topic_labels),
@@ -311,6 +420,7 @@ class JevContentEvaluator:
         contract = {
             "wire_contract": JEV_WIRE_VERSION,
             "model": self._model,
+            "provider_identity": self._provider_identity,
             "schema": _SCHEMA,
             "content_policy": CONTEXT_POLICY,
             "config": asdict(self._config),
@@ -328,6 +438,7 @@ class JevContentEvaluator:
                 _TEMPORAL_REASONS,
                 _TEMPORAL_RUBRIC,
                 _VALIDITY,
+                _CLASS_CLAIMS,
                 _TEMPORAL_INSTRUCTIONS,
                 _EXPLICIT_DATE.pattern,
             ],
@@ -341,11 +452,11 @@ class JevContentEvaluator:
         guard = _GUARD.format(ref=ref)
         guard += f"Use `profile` and, where present, `candidate_profiles.{ref}`. "
         view = text_view or candidate_text_view(item)
-        dates = _deadline_values(list(view.excerpts.values())) if view is not None else {}
-        if view is None or len(dates) > 254:
+        if view is None:
             return None
-        excerpt_map = view.excerpts
-        date_map = {f"d{i}": value for i, value in enumerate(dates)}
+        temporal_options = _temporal_options(view)
+        if temporal_options is None:
+            return None
         questions: dict[str, DecisionQuestion] = {
             f"{ref}.score": ScoreQuestion(
                 instructions=guard + "Apply `evaluation_rules.relevance` to rate fit.",
@@ -376,11 +487,25 @@ class JevContentEvaluator:
                 "Use unknown only if text is insufficient.",
                 criteria={**dict(STYLE_KEY_DEFINITIONS), _UNKNOWN: "Insufficient text."},
             ),
-            f"{ref}.temporal_class": ChoiceQuestion(
+            f"{ref}.temporal": ChoiceQuestion(
                 instructions=guard
                 + "Apply `evaluation_rules.temporal`. "
-                + "Classify why this candidate's CORE value does or does not expire.",
-                criteria=dict(_TEMPORAL_CLASSES),
+                + "Classify the core subject and select its coherent temporal outcome. "
+                "Hard claims cite source spans: read those in context, including negations. "
+                "No expiry claim is required to classify evolving software/tools as versioned.",
+                criteria={
+                    key: _temporal_description(option, view)
+                    for key, option in temporal_options.items()
+                },
+            ),
+            f"{ref}.evidence": ChoiceQuestion(
+                instructions=guard
+                + "Independently extract the single source span that best represents "
+                "the candidate's core subject and its time-sensitive or durable usefulness. "
+                "Prefer the main tool/version/event/principle over incidental promotion. "
+                "Do not infer a class or expiry state and do not use another answer. "
+                "This is a source reference, not proof that anything has expired.",
+                criteria=view.evidence_options or {_UNKNOWN: "No source text is available."},
             ),
             f"{ref}.temporal_confidence": ScoreQuestion(
                 instructions=guard
@@ -390,43 +515,8 @@ class JevContentEvaluator:
                 "This is certainty of temporal evidence, NOT relevance or freshness.",
                 criteria=_TEMPORAL_RUBRIC,
             ),
-            f"{ref}.validity": ChoiceQuestion(
-                instructions=guard
-                + "Apply `evaluation_rules.temporal`. "
-                + "Select the most directly evidenced validity claim. Prefer a fully explicit "
-                "deadline, then an unconditional state assertion, then freshness evidence. "
-                "Choose none when there is no direct claim; don't fabricate an excerpt.",
-                criteria={
-                    key: f"mode={mode}; scope={scope}; state={state}"
-                    for key, (mode, scope, state) in _VALIDITY.items()
-                },
-            ),
-            f"{ref}.evidence": ChoiceQuestion(
-                instructions=guard
-                + "Apply `evaluation_rules.temporal`. "
-                + "Select the single original excerpt proving the most direct validity claim. "
-                "Prefer a full deadline, then an unconditional state assertion, then a "
-                "freshness/iterating-object cue. Choose none if validity mode should be none.",
-                criteria={
-                    **view.evidence_options,
-                    _UNKNOWN: "No temporal validity evidence / none mode.",
-                },
-            ),
-            f"{ref}.deadline": ChoiceQuestion(
-                instructions=guard
-                + "Apply `evaluation_rules.temporal`. "
-                + "Select a complete timestamp ONLY if the candidate explicitly states it "
-                "is the deadline, not a publication/event date. Otherwise select none.",
-                criteria={
-                    **{
-                        key: f"{value}; original timestamp: {dates[value]}"
-                        for key, value in date_map.items()
-                    },
-                    _UNKNOWN: "No fully explicit deadline / non-deadline validity.",
-                },
-            ),
         }
-        return _Candidate(index, item, questions, excerpt_map, date_map, view)
+        return _Candidate(index, item, questions, temporal_options, view)
 
     def _request(
         self,
@@ -450,6 +540,11 @@ class JevContentEvaluator:
                         "guard": _SHARED_GUARD,
                         "relevance": _RELEVANCE_INSTRUCTIONS,
                         "temporal": _TEMPORAL_INSTRUCTIONS,
+                        "temporal_classes": _TEMPORAL_CLASSES,
+                        "temporal_claims": {
+                            key: f"{mode}; {scope}; {state}"
+                            for key, (mode, scope, state) in _VALIDITY.items()
+                        },
                     },
                     "untrusted_candidates": [
                         {"candidate_ref": row.ref, "content": row.wire_item} for row in candidates
@@ -618,7 +713,7 @@ class JevContentEvaluator:
 
     def _answers(
         self, raw: object, expected: DecisionRequest, *, candidate_count: int
-    ) -> dict[str, DecisionAnswer] | None:
+    ) -> dict[str, DecisionAnswer] | InvalidEvaluationEvidence | None:
         if not isinstance(raw, DecisionEvidence):
             return None
         try:
@@ -641,6 +736,10 @@ class JevContentEvaluator:
                     else "provider_unavailable"
                 )
                 logger.warning("Jev full evaluator failed: %s", reason)
+                if evidence.status == "INVALID":
+                    # An answered but invalid native request is not missing
+                    # work. Retrying it in the candidate worker can bill again.
+                    return InvalidEvaluationEvidence()
                 return None
             if evidence.actual_model != self._model:
                 logger.warning("Jev full evaluator failed: model_mismatch")
@@ -689,19 +788,23 @@ class JevContentEvaluator:
             assert isinstance(answer, ScoreAnswer)
             return answer.score / (len(answer.legend) - 1)
 
-        mode, scope, state = _VALIDITY[choice("validity")]
-        temporal_class = choice("temporal_class")
+        selected = candidate.temporal_options[choice("temporal")]
+        temporal_class = selected.temporal_class
         temporal: dict[str, Any] = {
             "temporal_class": temporal_class,
             "temporal_confidence": (
                 0.0 if temporal_class == "unknown" else score("temporal_confidence")
             ),
             "temporal_reason": _TEMPORAL_REASONS[temporal_class],
-            "temporal_validity_mode": mode,
-            "temporal_valid_until": candidate.deadlines.get(choice("deadline"), ""),
-            "temporal_scope": scope,
-            "temporal_evidence": candidate.excerpts.get(choice("evidence"), ""),
-            "temporal_state": state,
+            "temporal_validity_mode": selected.temporal_validity_mode,
+            "temporal_valid_until": selected.temporal_valid_until,
+            "temporal_scope": selected.temporal_scope,
+            "temporal_evidence": (
+                candidate.text_view.excerpts.get(choice("evidence"), "")
+                if selected.temporal_validity_mode == "freshness_only"
+                else selected.temporal_evidence
+            ),
+            "temporal_state": selected.temporal_state,
         }
         parsed = parse_temporal_evaluation(temporal)
         grounded = ground_temporal_evaluation(parsed, content_text=candidate.item)
@@ -778,7 +881,14 @@ class JevContentEvaluator:
             for index, item in enumerate(items):
                 if time.monotonic() >= deadline:
                     break
-                candidate = self._prepare_candidate(index, item, base, catalog, deadline)
+                # Pure local packing can take several seconds for long source
+                # views. Keep it off the service loop so ingest/config responses
+                # are not held up by a background candidate worker. Inputs are
+                # already detached; this worker does no I/O and retains the same
+                # deadline checks. Cancellation cannot dispatch a model request.
+                candidate = await asyncio.to_thread(
+                    self._prepare_candidate, index, item, base, catalog, deadline
+                )
                 if candidate is None:
                     if time.monotonic() < deadline:
                         results[index] = InputBudgetFailure()
@@ -848,6 +958,10 @@ class JevContentEvaluator:
                 answers = None
             if answers is None:
                 logger.warning("Jev full evaluator failed: invalid_or_unavailable_evidence")
+                continue
+            if isinstance(answers, InvalidEvaluationEvidence):
+                for candidate in candidates:
+                    results[candidate.index] = answers
                 continue
             for candidate in candidates:
                 results[candidate.index] = self._result(candidate, answers)

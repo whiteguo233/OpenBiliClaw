@@ -579,7 +579,7 @@ class JevEvaluationConfig:
     # Dual model budgets choose the actual batch; do not stop at four when a
     # larger operator-confirmed window can fit more complete candidates.
     # Native Jev has no independent question-count cap; zero leaves that guard
-    # to the dual context budgets. A complete candidate currently needs 10 questions.
+    # to the dual context budgets. A complete candidate currently needs 8 questions.
     max_candidates_per_request: int = 64
     max_questions_per_request: int = 0
     max_question_bytes: int = 0
@@ -3487,8 +3487,8 @@ def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[Confi
         if type(value) is not int or not low <= value <= high:
             add(name, f"必须为 {low}..{high} 的整数。")
     questions = evaluation.max_questions_per_request
-    if type(questions) is not int or (questions != 0 and not 10 <= questions <= 640):
-        add("max_questions_per_request", "必须为 0（仅受容量限制）或 10..640；完整候选不可拆题。")
+    if type(questions) is not int or (questions != 0 and not 8 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 8..640；完整候选不可拆题。")
     if (
         type(evaluation.max_request_bytes) is int
         and type(evaluation.max_state_question_bytes) is int

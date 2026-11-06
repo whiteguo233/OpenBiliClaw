@@ -43,7 +43,7 @@ async def probe_jev_config(config: Config, update: dict[str, object]) -> ConfigS
     """Check one synthetic candidate, with no persistence or real profile loading.
 
     A click permits one HTTP attempt. The normal selected-model budget, complete
-    ten-question contract and native evidence validation still apply.
+    eight-question contract and native evidence validation still apply.
     """
     started = time.perf_counter()
     cfg = deepcopy(config)
@@ -90,7 +90,11 @@ async def probe_jev_config(config: Config, update: dict[str, object]) -> ConfigS
     provider = _ProbeProvider(native)
     try:
         evaluator = JevContentEvaluator(
-            provider, model=settings.model, config=evaluation, context_budget=budget
+            provider,
+            model=settings.model,
+            config=evaluation,
+            context_budget=budget,
+            provider_identity=settings.endpoint_url,
         )
         profile = SoulProfile(
             preferences=PreferenceLayer(interests=[InterestTag("算法与数据结构", "编程", 0.9)])
@@ -115,12 +119,16 @@ async def probe_jev_config(config: Config, update: dict[str, object]) -> ConfigS
                 "input_budget_exhausted",
             )
         if rows and isinstance(rows[0], dict):
-            return result(True, "连接及完整评估测试通过（1 条测试内容、10 题）。测试不会保存配置。")
+            return result(True, "连接及完整评估测试通过（1 条测试内容、8 题）。测试不会保存配置。")
         if rows and isinstance(rows[0], InvalidEvaluationEvidence):
             return result(
                 False,
-                "服务已返回，但时效答案矛盾或缺少依据；未重复请求。",
-                "invalid_evaluation_evidence",
+                "服务已返回，但答案不符合评估协议或缺少依据；未重复请求。",
+                (
+                    provider.evidence.reason_code
+                    if provider.evidence and provider.evidence.status == "INVALID"
+                    else "invalid_evaluation_evidence"
+                ),
             )
         evidence = provider.evidence
         code = evidence.reason_code if evidence else "invalid_evaluation"

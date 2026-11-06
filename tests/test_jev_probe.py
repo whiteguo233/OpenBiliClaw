@@ -43,7 +43,7 @@ def test_jev_draft_probe_validates_full_evaluation_without_saving(
         result = response.json()
         assert result["kind"] == "jev" and result["ok"] is (mode == "ok")
         assert len(backend.requests) == 1  # A click never silently repeats a billed request.
-        assert len(backend.requests[0]["questions"]) == 10
+        assert len(backend.requests[0]["questions"]) == 8
         assert "synthetic-test-key" not in response.text
         if mode != "ok":
             assert result["error"]

@@ -23,11 +23,9 @@ _SOCKET_TIMEOUT_SECONDS = 2.0
 _DEFAULT_CHOICES = {
     "reason": "interest",
     "style": "deep_focus",
-    "temporal_class": "evergreen",
-    "validity": "none",
+    "temporal": "evergreen",
     "franchise": "u",
     "evidence": "u",
-    "deadline": "u",
 }
 _MODES = frozenset(
     {

@@ -293,7 +293,7 @@ class CandidateEvalCoordinator:
                 if blocked_count
                 else (
                     "invalid_evaluation_evidence: "
-                    "contradictory answers parked until context changes"
+                    "invalid or contradictory answers parked until endpoint/context changes"
                 )
                 if invalid_evidence_count
                 else ""

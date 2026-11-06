@@ -29,11 +29,11 @@
           <label>请求超时（秒）<input data-jev="timeout_seconds" type="number" min="0.1" step="0.1"></label>
           <label>传输最大尝试次数<input data-jev="max_attempts" type="number" min="1" step="1"></label>
         </div>
-        <p class="jev-hint">每条候选的完整 10 题不会拆开；超限先减少合批候选，再本地摘录。传输重试仍可能计费，不是额外摘要或分段评估。</p>
+        <p class="jev-hint">每条候选的完整 8 题不会拆开；超限先减少合批候选，再本地摘录。传输重试仍可能计费，不是额外摘要或分段评估。</p>
       </details>
       <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>
       <button type="button" data-jev="probe">测试连接与评估</button>
-      <p class="jev-hint">发送 1 条合成测试内容（完整 10 题），可能产生少量费用。使用当前填写的配置，不自动保存。</p>
+      <p class="jev-hint">发送 1 条合成测试内容（完整 8 题），可能产生少量费用。使用当前填写的配置，不自动保存。</p>
       <p class="jev-hint" data-jev="probe-status" role="status" aria-live="polite"></p>`;
     const field = name => root.querySelector(`[data-jev="${name}"]`);
     for (const input of root.querySelectorAll("input, select")) input.id = `${root.id}-${input.dataset.jev}`;

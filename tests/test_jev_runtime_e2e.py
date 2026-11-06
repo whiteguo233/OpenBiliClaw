@@ -231,7 +231,7 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
             assert request["model"] == "jev-1.14.0"
             assert NEGATIVE in str(request["state"])
             candidates = request["state"]["untrusted_candidates"]
-            assert len(request["questions"]) == 10 * len(candidates)
+            assert len(request["questions"]) == 8 * len(candidates)
             for candidate in candidates:
                 content = candidate["content"]
                 seen.append(content["content_id"])
@@ -378,7 +378,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
                         db.close()
                     assert len(backend.requests) == 1
                     assert backend.requests[0]["model"] == model
-                    assert len(backend.requests[0]["questions"]) == 10
+                    assert len(backend.requests[0]["questions"]) == 8
             finally:
                 restarted.terminate()
                 try:
