@@ -125,10 +125,10 @@ budget_seconds = 30.0
 [llm]
 # v2：每个实例都是完整可调用端点（类型 + Base URL + 凭据 + 模型）。
 # default_chain 从左到右依次尝试；失败、超时或限流时降级到下一实例。
-# 可复制任意 [llm.instances.<id>] 表并换一个稳定 ID，从而配置同类型的多个账号/网关。
+# 可复制自有渠道的 [llm.instances.<id>] 表并换稳定 ID；内置免费实例不可复制或修改。
 routing_version = 2
-# 内置实例目录已初始化；删除预置实例后不会在升级时自动恢复。
-builtin_providers_version = 1
+# 两个内置免费实例固定存在；不使用时从调用链移除，不能编辑或删除。
+builtin_providers_version = 2
 default_chain = ["deepseek"]
 # Shared max concurrency for LLM requests. Higher values replenish faster but
 # may hit provider/local-proxy rate limits sooner.
@@ -193,14 +193,20 @@ timeout = 1200
 #
 # default_chain = ["deepseek", "cheaperinference"]
 
-# 免费服务是普通实例：编辑 model 选择 8B/4B，将 ID 加入 default_chain 即可使用。
-# 如需免费互备，复制此表为另一个 ID、选择另一模型，再加入调用链。
+# 两个固定免费实例共用普通路由：将所需 ID 加入 default_chain / 模块链。
+# 下列配置由程序管理，不可编辑；可同时加入两个实例并调整顺序。
 [llm.instances.siliconflow-free]
-name = "硅基流动（免费）"
+name = "硅基流动 · Qwen3-8B（免费）"
 provider_type = "siliconflow_free"
 enabled = true
 model = "Qwen/Qwen3-8B"
-# 无需 API Key / Base URL；仅接受安全组件授权的两个模型。
+# 无需 API Key / Base URL；凭据与端点由安全组件管理。
+
+[llm.instances.siliconflow-free-qwen35-4b]
+name = "硅基流动 · Qwen3.5-4B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3.5-4B"
 
 [llm.instances.deepseek]
 name = "DeepSeek 官方"

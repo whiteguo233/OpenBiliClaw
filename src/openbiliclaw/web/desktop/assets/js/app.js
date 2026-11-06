@@ -10514,6 +10514,7 @@ ${cardFeedbackBarHtml()}`;
         return;
       }
       container.innerHTML = entries.map(([instanceId, instance]) => {
+        const fixed = instance.provider_type === "siliconflow_free";
         const references = llmInstanceReferences(instanceId);
         const probe = state.llmProbeResults.get(instanceId);
         const probeText = probe?.pending
@@ -10525,15 +10526,15 @@ ${cardFeedbackBarHtml()}`;
         return `<article class="llm-instance-card" data-enabled="${instance.enabled !== false}" data-instance-card="${escapeHtml(instanceId)}">
           <div class="llm-instance-card-head">
             <div class="llm-instance-card-title"><strong>${escapeHtml(instance.name || instanceId)}</strong><code>${escapeHtml(instanceId)}</code></div>
-            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${instance.enabled !== false ? "已启用" : "已停用"}</span>
+            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用"}</span>
           </div>
           <div class="llm-instance-badges"><span class="llm-instance-badge">${escapeHtml(LLM_PROVIDER_LABELS[instance.provider_type] || instance.provider_type)}</span>${references.map((reference) => `<span class="llm-instance-badge" data-tone="muted">${escapeHtml(reference)}</span>`).join("")}</div>
           <p class="llm-instance-meta"><span>模型：${escapeHtml(instance.model || "未填写")}</span><span>地址：${escapeHtml(llmEndpointSummary(instance))}</span></p>
           <p class="llm-instance-probe" data-tone="${probeTone}" aria-live="polite">${escapeHtml(probeText)}</p>
           <div class="llm-instance-actions">
             <button class="pill-btn" type="button" data-instance-action="probe" data-instance-id="${escapeHtml(instanceId)}">测试</button>
-            <button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
-            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>
+            ${fixed ? '<span class="llm-instance-meta">在调用链中选择或切换</span>' : `<button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
+            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>`}
           </div>
         </article>`;
       }).join("");
@@ -10744,6 +10745,7 @@ ${cardFeedbackBarHtml()}`;
       if (!state.llmDraft) return;
       const dialog = $("#llmInstanceDialog");
       const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+      if (instance?.provider_type === "siliconflow_free") return;
       state.llmEditingInstanceId = instanceId;
       llmDialogReturnFocus = document.activeElement;
       dialog.dataset.providerType = instance?.provider_type || "";
@@ -10858,7 +10860,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function deleteLlmInstance(instanceId) {
-      if (!state.llmDraft?.instances[instanceId]) return;
+      if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
       const references = llmInstanceReferences(instanceId);
       if (references.length) {
         showToast(`无法删除：仍被 ${references.join("、")} 引用`);
@@ -13117,6 +13119,10 @@ ${cardFeedbackBarHtml()}`;
       state.llmProbeResults.set(instanceId, { pending: true });
       renderLlmInstances();
       try {
+        if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+          const prepared = await requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 });
+          if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+        }
         const result = await probeConfigService("llm_instance", buildConfigUpdate(), instanceId);
         state.llmProbeResults.set(instanceId, result);
       } catch (error) {

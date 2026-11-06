@@ -1724,20 +1724,20 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 
 | 已实现配置 | 语义 |
 | --- | --- |
-| `llm.instances.<id>.provider_type="siliconflow_free"` | 与其他实例同层，模型白名单为 `Qwen/Qwen3-8B`、`Qwen/Qwen3.5-4B`；不接受用户 Key、Base URL、认证或路由头覆盖。 |
-| `llm.default_chain` / `llm.routes.*.chain` | 唯一聊天选择与备用顺序。可建两个免费实例，也可显式把自有实例加入链；模块自定义链不会被免费服务截获。 |
+| `llm.instances.<id>.provider_type="siliconflow_free"` | 与其他实例同层，固定两个模型实例 `Qwen/Qwen3-8B`、`Qwen/Qwen3.5-4B`；名称、启用状态、模型及所有端点字段不可修改，不允许复制或删除。 |
+| `llm.default_chain` / `llm.routes.*.chain` | 唯一聊天选择与备用顺序。可选择两个固定免费实例，也可显式把自有实例加入链；模块自定义链不会被免费服务截获。 |
 | `llm.embedding.provider="siliconflow_free"` | 独立选择云端 `BAAI/bge-m3`，1024维、文本；可与任何 LLM 组合，也可改用原有 Ollama / 其他 Embedding Provider。 |
-| `llm.builtin_providers_version=1` | 旧原生实例配置补入一次可选预置项，不改变原链；用户删除之后不在后续升级中反复添加。 |
+| `llm.builtin_providers_version=2` | 固定保留两个模型实例。旧版本按模型归并重复项并重写链引用，保留已有首个 ID / 模型与自有凭据；缺少的模型自动补入但不加入链。 |
 | `[llm.sponsored]` | 仅承载受保护传输的超时、通知、本机 runtime 路径和可选 HTTPS 中继地址；不是第二套模型路由。旧启用/模型/互备/向量模式字段仅供迁移。 |
 
 ```toml
 [llm]
 routing_version = 2
-builtin_providers_version = 1
+builtin_providers_version = 2
 default_chain = ["siliconflow-free"]
 
 [llm.instances.siliconflow-free]
-name = "硅基流动（免费）"
+name = "硅基流动 · Qwen3-8B（免费）"
 provider_type = "siliconflow_free"
 enabled = true
 model = "Qwen/Qwen3-8B"
@@ -1748,11 +1748,11 @@ model = "BAAI/bge-m3"
 output_dimensionality = 1024
 ```
 
-公开 API：`builtin_siliconflow_instance(model)` 构造预置项；`migrate_sponsored_provider_config(llm, seed_preset=False)` 将旧全局开关转换为明确的主实例和可选备用实例，保留自有凭据及模块链，不隐式追加付费渠道；`uses_siliconflow_free(llm, include_embedding=True)` 按实际路由判断组件需求与通知。`load_config_with_diagnostics()` 读取时归一化，`save_config()` 在序列化前完成迁移。
+公开 API：`builtin_siliconflow_instance(model)` 构造固定目录项（供内部使用）；`migrate_sponsored_provider_config(llm, seed_preset=False)` 将旧全局开关转换为明确的主实例和可选备用实例，保留自有凭据及模块链，不隐式追加付费渠道；`uses_siliconflow_free(llm, include_embedding=True)` 按实际路由判断组件需求与通知。`load_config_with_diagnostics()` 读取时归一化，`save_config()` 在序列化前完成迁移。
 
 旧 `embedding_mode=cloud` 迁移为上述独立配置；旧 `local` 保留已有 Ollama 模型和地址。云端/本地采用不同缓存 provenance，聊天切换不改变向量空间。旧免费独占时未使用且缺少凭据的模板保留为停用草稿。新客户端通过普通实例/Embedding API 修改，避免继续写旧全局开关。
 
-仅修改现有免费实例的模型时，`RuntimeContext.try_apply_llm_instance_config()` 替换相同 ID 的 adapter，已开始请求保留旧对象，新请求用新模型；其他配置仍走既有修订队列与完整安全重建。SDK 每个模型保留交互首段预算和有界同模型重试，跨实例备用由正常链控制。
+仅改变默认调用链时，`RuntimeContext.try_apply_llm_instance_config()` 切换已有实例的顺序，已开始请求保留选定对象，新请求用新顺序；任何实例字段或模块链变更仍走既有修订队列与完整安全重建。SDK 每个模型保留交互首段预算和有界同模型重试，跨实例备用由正常链控制。
 
 组件固定信任根与打包方式不变；`runtime_path` 不允许通过 Web 修改，`relay_url` 仅接受 HTTPS origin。见 [Runtime](runtime.md#免费模型组件安装与更新)。
 

@@ -93,7 +93,12 @@ def test_native_instance_config_round_trips_without_collapsing_same_type(
     text = path.read_text(encoding="utf-8")
 
     assert reloaded.llm.instance_routing is True
-    assert list(reloaded.llm.instances) == ["gateway-primary", "gateway-backup"]
+    assert list(reloaded.llm.instances) == [
+        "gateway-primary",
+        "gateway-backup",
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+    ]
     assert reloaded.llm.instances["gateway-primary"].provider_type == "openai_compatible"
     assert reloaded.llm.instances["gateway-backup"].base_url == "https://backup.example/v1"
     assert reloaded.llm.default_chain == ["gateway-primary", "gateway-backup"]
@@ -176,7 +181,13 @@ def test_legacy_projection_omits_unused_remote_template_blocks() -> None:
 
     instances = effective_llm_instances(config.llm)
 
-    assert list(instances) == ["siliconflow-free", "deepseek", "ollama", "openai_compatible"]
+    assert list(instances) == [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+        "deepseek",
+        "ollama",
+        "openai_compatible",
+    ]
     assert all(instance.enabled for instance in instances.values())
     assert effective_llm_default_chain(config.llm) == ["openai_compatible"]
 
@@ -214,7 +225,12 @@ def test_legacy_projection_omits_credentialed_provider_with_empty_model() -> Non
         if issue.severity == "blocking"
     }
 
-    assert list(instances) == ["siliconflow-free", "deepseek", "openai_compatible"]
+    assert list(instances) == [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+        "deepseek",
+        "openai_compatible",
+    ]
     assert all(instance.model for instance in instances.values())
     assert "llm.instances.openai.model" not in blocking
     assert "llm.instances.claude.model" not in blocking
@@ -232,7 +248,7 @@ def test_legacy_projection_keeps_referenced_empty_model_provider_for_validation(
 
     instances = effective_llm_instances(config.llm)
 
-    assert list(instances) == ["siliconflow-free", "openai"]
+    assert list(instances) == ["siliconflow-free", "siliconflow-free-qwen35-4b", "openai"]
     assert instances["openai"].model == ""
 
     # The projected instance still lands in native v2 validation, so a
@@ -496,7 +512,12 @@ async def test_same_provider_type_instances_fallback_in_configured_order() -> No
     )
     response = await registry.complete([{"role": "user", "content": "hello"}])
 
-    assert registry.available_providers == ["gateway-primary", "gateway-backup"]
+    assert registry.available_providers == [
+        "gateway-primary",
+        "gateway-backup",
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+    ]
     assert registry.default_provider == "gateway-primary"
     assert registry.provider_type("gateway-backup") == "openai_compatible"
     assert first.call_count == 1
@@ -519,7 +540,12 @@ def test_registry_summary_reports_instance_id_as_native_configured_default() -> 
 
     assert summary.configured_default == "gateway-primary"
     assert summary.effective_default == "gateway-primary"
-    assert summary.registered_providers == ["gateway-primary", "gateway-backup"]
+    assert summary.registered_providers == [
+        "gateway-primary",
+        "gateway-backup",
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+    ]
 
 
 @pytest.mark.asyncio

@@ -10240,6 +10240,7 @@ function bindSettings() {
       return;
     }
     for (const [instanceId, instance] of entries) {
+      const fixed = instance.provider_type === "siliconflow_free";
       const references = llmInstanceReferences(instanceId);
       const probe = state.llmProbeResults.get(instanceId);
       const card = document.createElement("article");
@@ -10258,7 +10259,7 @@ function bindSettings() {
       title.append(name, id);
       head.append(
         title,
-        createLlmBadge(instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
+        createLlmBadge(fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
       );
 
       const badges = document.createElement("div");
@@ -10289,7 +10290,7 @@ function bindSettings() {
 
       const actions = document.createElement("div");
       actions.className = "settings-llm-instance-actions";
-      for (const [action, label] of [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]]) {
+      for (const [action, label] of (fixed ? [["probe", "测试"]] : [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]])) {
         const button = document.createElement("button");
         button.className = "settings-secondary-btn";
         button.type = "button";
@@ -10641,6 +10642,7 @@ function bindSettings() {
     const dialog = document.getElementById("cfgLlmInstanceDialog");
     if (!(dialog instanceof HTMLElement)) return;
     const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+    if (instance?.provider_type === "siliconflow_free") return;
     state.llmEditingInstanceId = instanceId;
     llmDialogReturnFocus = document.activeElement;
     dialog.dataset.providerType = instance?.provider_type || "";
@@ -10776,7 +10778,7 @@ function bindSettings() {
   }
 
   function deleteLlmInstance(instanceId) {
-    if (!state.llmDraft?.instances[instanceId]) return;
+    if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
     const references = llmInstanceReferences(instanceId);
     if (references.length) {
       showToast(`无法删除：仍被 ${references.join("、")} 引用。`, "error");
@@ -10796,6 +10798,10 @@ function bindSettings() {
     state.llmProbeResults.set(instanceId, { pending: true });
     renderLlmInstances();
     try {
+      if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+        const prepared = await prepareSponsoredRuntime();
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       const result = await probeConfigService("llm_instance", collectForm(), instanceId);
       state.llmProbeResults.set(instanceId, result);
     } catch (err) {

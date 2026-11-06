@@ -21359,6 +21359,7 @@ def create_app(
                 name=str(getattr(instance, "name", "") or ""),
                 provider_type=str(getattr(instance, "provider_type", "") or ""),
                 enabled=bool(getattr(instance, "enabled", True)),
+                read_only=getattr(instance, "provider_type", "") == "siliconflow_free",
             )
 
         def _legacy_provider_projection(provider_type: str) -> Any:
@@ -22453,7 +22454,8 @@ def create_app(
             current_routes = effective_llm_routes(cfg.llm)
             was_native = bool(getattr(cfg.llm, "instance_routing", False))
             cfg.llm.instance_routing = True
-            cfg.llm.builtin_providers_version = 1
+            cfg.llm.builtin_providers_version = 2
+            cfg.llm.instances = current_instances
             if not was_native:
                 for module_name, route in current_routes.items():
                     setattr(cfg.llm, module_name, route)
@@ -22543,24 +22545,25 @@ def create_app(
                         # supported. New clients send this field; old clients
                         # must retain the historical omit-on-wire behavior.
                         target.reasoning_effort = ""
-                    if target.provider_type == "siliconflow_free":
-                        from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
-
-                        if target.model not in CHAT_MODELS or any(
-                            (
-                                target.api_key,
-                                target.base_url,
-                                target.auth_mode,
-                                target.api_flavor,
-                                target.http_referer,
-                                target.x_title,
-                            )
-                        ):
+                    if existing is not None and existing.provider_type == "siliconflow_free":
+                        if target != existing:
                             raise HTTPException(
                                 status_code=400,
-                                detail="内置免费实例只支持已授权模型，凭据与地址由安全组件管理。",
+                                detail="内置免费实例不可修改，请在调用链中选择需要的模型实例。",
                             )
+                    elif target.provider_type == "siliconflow_free":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="请使用已有的两个内置免费实例，无需新建或复制。",
+                        )
                     replacement[instance_id] = target
+                # A whole-library replacement from an older client cannot delete
+                # built-ins. Removing them from chains is the supported opt-out.
+                replacement.update(
+                    (key, instance)
+                    for key, instance in current_instances.items()
+                    if instance.provider_type == "siliconflow_free"
+                )
                 cfg.llm.instances = replacement
             if "default_chain" in llm_data:
                 raw_chain = llm_data["default_chain"]
@@ -22770,6 +22773,10 @@ def create_app(
                     # Credentials never follow a provider switch to a new endpoint.
                     cfg.llm.embedding.api_key = ""
                     cfg.llm.embedding.base_url = ""
+                    if emb["provider"] == "siliconflow_free":
+                        cfg.llm.embedding.model = "BAAI/bge-m3"
+                        cfg.llm.embedding.output_dimensionality = 1024
+                        cfg.llm.embedding.multimodal_enabled = False
                 cfg.llm.embedding.provider = str(emb["provider"])
             if "model" in emb:
                 new_model = str(emb["model"])
@@ -22855,6 +22862,20 @@ def create_app(
                     )
                     if instance is None:
                         continue
+                    if provider_type == "siliconflow_free" and model:
+                        selected = next(
+                            (
+                                (key, item)
+                                for key, item in cfg.llm.instances.items()
+                                if item.provider_type == "siliconflow_free" and item.model == model
+                            ),
+                            None,
+                        )
+                        if selected is None:
+                            raise HTTPException(
+                                status_code=400, detail="请选择已有的内置模型实例。"
+                            )
+                        instance_id, instance = selected
                     if model and str(getattr(instance, "model", "") or "").strip() != model:
                         derived_id = f"legacy-{module_name}"
                         instance = LLMInstanceConfig(

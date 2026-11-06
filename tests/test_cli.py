@@ -37,6 +37,11 @@ from openbiliclaw.soul.profile import (
 @pytest.fixture(autouse=True)
 def _restore_cli_process_state() -> Iterator[None]:
     """Keep CLI-owned process globals from leaking into later tests."""
+    # Load the lazy public LLM exports before CLI tests replace LLMService.
+    # Otherwise a first import can retain the test double in SoulEngine.
+    from importlib import import_module
+
+    import_module("openbiliclaw.soul.engine")
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level

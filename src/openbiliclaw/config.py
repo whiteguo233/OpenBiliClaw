@@ -657,7 +657,7 @@ class LLMConfig:
     # marker distinguishes a deliberately empty v2 draft from a legacy config
     # whose fixed provider tables should be projected into instances.
     instance_routing: bool = False
-    builtin_providers_version: int = 1
+    builtin_providers_version: int = 2
     instances: dict[str, LLMInstanceConfig] = field(default_factory=dict)
     default_chain: list[str] = field(default_factory=list)
     openai: LLMProviderConfig = field(default_factory=LLMProviderConfig)
@@ -767,12 +767,32 @@ def _legacy_provider_is_visible(
 
 
 def builtin_siliconflow_instance(model: str = "Qwen/Qwen3-8B") -> LLMInstanceConfig:
-    """A credential-free preset using the ordinary instance contract."""
+    """An immutable built-in endpoint using the ordinary instance contract."""
     return LLMInstanceConfig(
-        name="硅基流动（免费）",
+        name=f"硅基流动 · {model.removeprefix('Qwen/')}（免费）",
         provider_type="siliconflow_free",
         model=model,
     )
+
+
+def _with_builtin_siliconflow_instances(
+    instances: dict[str, LLMInstanceConfig],
+) -> dict[str, LLMInstanceConfig]:
+    """Keep saved identities; make both fixed models available without routing them."""
+    result = dict(instances)
+    for preferred, model in (
+        ("siliconflow-free", "Qwen/Qwen3-8B"),
+        ("siliconflow-free-qwen35-4b", "Qwen/Qwen3.5-4B"),
+    ):
+        if any(i.provider_type == "siliconflow_free" and i.model == model for i in result.values()):
+            continue
+        instance_id = preferred
+        suffix = 2
+        while instance_id in result:
+            instance_id = f"{preferred}-{suffix}"
+            suffix += 1
+        result[instance_id] = builtin_siliconflow_instance(model)
+    return result
 
 
 def migrate_sponsored_provider_config(llm: LLMConfig, *, seed_preset: bool = False) -> None:
@@ -780,6 +800,8 @@ def migrate_sponsored_provider_config(llm: LLMConfig, *, seed_preset: bool = Fal
 
     Never insert a paid fallback unless the old configuration allowed it.
     Existing module overrides survive and take effect under ordinary routing.
+    ``seed_preset`` is retained for source compatibility; both fixed entries
+    are now always present, independent of their inclusion in a route.
     """
     from dataclasses import replace
 
@@ -856,13 +878,29 @@ def migrate_sponsored_provider_config(llm: LLMConfig, *, seed_preset: bool = Fal
             )
         llm.sponsored = replace(settings, enabled=False)
         llm.builtin_providers_version = 1
-    if seed_preset and llm.instance_routing and llm.builtin_providers_version < 1:
-        if not any(i.provider_type == "siliconflow_free" for i in llm.instances.values()):
-            instance_id = "siliconflow-free"
-            while instance_id in llm.instances:
-                instance_id += "-preset"
-            llm.instances[instance_id] = builtin_siliconflow_instance()
-        llm.builtin_providers_version = 1
+    if llm.instance_routing:
+        if llm.builtin_providers_version < 2:
+            # Earlier releases allowed editing/duplicating a free endpoint. Keep
+            # its model and first identity, remapping duplicate route references.
+            aliases: dict[str, str] = {}
+            by_model: dict[str, str] = {}
+            for instance_id, instance in list(llm.instances.items()):
+                if instance.provider_type != "siliconflow_free":
+                    continue
+                if instance.model not in {"Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"}:
+                    continue  # Invalid models remain visible to validation.
+                if instance.model in by_model:
+                    aliases[instance_id] = by_model[instance.model]
+                    del llm.instances[instance_id]
+                else:
+                    by_model[instance.model] = instance_id
+                    llm.instances[instance_id] = builtin_siliconflow_instance(instance.model)
+            llm.default_chain = list(dict.fromkeys(aliases.get(i, i) for i in llm.default_chain))
+            for bucket in _LLM_MODULE_BUCKETS:
+                route = getattr(llm, bucket)
+                route.chain = list(dict.fromkeys(aliases.get(i, i) for i in route.chain))
+        llm.instances = _with_builtin_siliconflow_instances(llm.instances)
+        llm.builtin_providers_version = 2
 
 
 def uses_siliconflow_free(llm: LLMConfig, *, include_embedding: bool = True) -> bool:
@@ -890,11 +928,9 @@ def effective_llm_instances(llm: LLMConfig) -> dict[str, LLMInstanceConfig]:
     explicitly opts into v2 when it submits the new shape.
     """
     if llm.instance_routing:
-        return dict(llm.instances)
+        return _with_builtin_siliconflow_instances(llm.instances)
 
-    projected: dict[str, LLMInstanceConfig] = {
-        "siliconflow-free": builtin_siliconflow_instance(),
-    }
+    projected = _with_builtin_siliconflow_instances({})
     for provider_type in sorted(_SUPPORTED_CHAT_PROVIDERS):
         provider = getattr(llm, provider_type)
         if _legacy_provider_is_visible(llm, provider_type, provider):
@@ -2649,7 +2685,7 @@ def _build_config(
         timeout=_normalize_llm_timeout(llm_raw.get("timeout")),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
-        builtin_providers_version=1 if llm_raw.get("builtin_providers_version") == 1 else 0,
+        builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
         instances=instances,
         default_chain=default_chain,
         openai=_provider_config("openai"),
@@ -4893,6 +4929,15 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
     """Validate v2 instance identities, endpoint configs, and route references."""
     issues: list[ConfigIssue] = []
     instances = llm.instances
+    free_models = [i.model for i in instances.values() if i.provider_type == "siliconflow_free"]
+    if len(free_models) != len(set(free_models)):
+        issues.append(
+            ConfigIssue(
+                field="llm.instances",
+                message="内置免费模型每个只保留一个固定实例，请勿复制。",
+                severity="blocking",
+            )
+        )
 
     if not instances:
         issues.append(
@@ -5007,6 +5052,14 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
         if provider_type == "siliconflow_free":
             from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
 
+            if instance != builtin_siliconflow_instance(instance.model):
+                issues.append(
+                    ConfigIssue(
+                        field=field_prefix,
+                        message="内置免费实例配置不可修改，请通过调用链选择或切换。",
+                        severity="blocking",
+                    )
+                )
             if instance.model not in CHAT_MODELS:
                 issues.append(
                     ConfigIssue(
@@ -6800,7 +6853,7 @@ def _render_config_toml(
             [
                 "[llm]",
                 "routing_version = 2",
-                "builtin_providers_version = 1",
+                "builtin_providers_version = 2",
                 f"default_chain = {_toml_str_list(config.llm.default_chain)}",
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",

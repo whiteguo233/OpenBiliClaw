@@ -2334,6 +2334,7 @@ class LLMInstanceConfigOut(LLMProviderConfigOut):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+    read_only: bool = False
 
 
 class EmbeddingConfigOut(BaseModel):

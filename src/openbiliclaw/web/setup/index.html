@@ -613,6 +613,10 @@
     function renderProvider() {
       const p = $("#provider").value;
       const free = p === "siliconflow_free";
+      $("#reasoningEffort").hidden = free;
+      document.querySelector('label[for="reasoningEffort"]').style.display = free ? "none" : "";
+      document.querySelector('label[for="model"]').textContent = free ? "选择内置模型实例" : "模型名";
+      $("#reasoningEffortHint").hidden = free;
       const isCompat = p === "openai_compatible";
       const isClaude = p === "claude";
       const isOpenAI = p === "openai";
@@ -643,7 +647,7 @@
         provider: p, model: $("#model"), status: $("#modelDiscoveryStatus"),
         prepare: prepareFreeComponent,
       });
-      if (free) $("#modelHint").textContent = "系统预填的 LLM 实例，可在设置页编辑模型或加入调用链。";
+      if (free) $("#modelHint").textContent = "选择内置固定实例；配置不可修改，可在设置页调整调用链。";
 
     }
 
@@ -688,6 +692,11 @@
     }
 
     function providerInstanceId(provider) {
+      if (provider === "siliconflow_free") {
+        return Object.keys(savedLlmInstances).find(id =>
+          savedLlmInstances[id].provider_type === provider && savedLlmInstances[id].model === $("#model").value
+        ) || "";
+      }
       let instanceId = savedLlmDefaultChain.find(
         (id) => savedLlmInstances[id]?.provider_type === provider,
       ) || Object.keys(savedLlmInstances).find(
@@ -1001,7 +1010,7 @@
       pcfg.reasoning_effort = $("#reasoningEffort").value.trim();
       const instanceId = providerInstanceId(provider);
       const existingInstance = savedLlmInstances[instanceId] || {};
-      const instance = {
+      let instance = {
         ...existingInstance,
         name: existingInstance.name || provider,
         provider_type: provider,
@@ -1009,10 +1018,10 @@
         ...pcfg,
       };
       if (apiKey) instance.api_key = apiKey;
-      if (provider === "siliconflow_free") Object.assign(instance, {
-        name: existingInstance.name || "硅基流动（免费）", api_key: "", base_url: "",
-        auth_mode: "", api_flavor: "", http_referer: "", x_title: "",
-      });
+      if (provider === "siliconflow_free") {
+        if (!instanceId) { showMsg("#msg0", "内置实例尚未加载，请刷新后重试。", "err"); return; }
+        instance = { ...existingInstance };
+      }
       const routing = buildSetupLlmRouting(instanceId, instance);
       const payload = {
         suppress_background_llm_work: true,

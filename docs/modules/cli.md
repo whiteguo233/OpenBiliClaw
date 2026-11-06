@@ -1786,7 +1786,7 @@ TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历�
 
 | 已实现能力 | 公共命令 |
 | --- | --- |
-| 初始化模型 | `openbiliclaw init` 的引导创建普通 `siliconflow_free` 实例，选择8B/4B并设为默认链，独立设置云端或本地 Embedding；无需用户 Key。 |
+| 初始化模型 | `openbiliclaw init` 的引导从两个固定 `siliconflow_free` 实例中选择8B/4B并设为默认链，保留另一实例供后续选择，独立设置云端或本地 Embedding；无需用户 Key。 |
 | 独立向量 | `openbiliclaw setup-embedding` 增加 `free`（默认推荐）选项；本地 Ollama 保留已有模型/地址，切换 Provider 清除旧凭据。 |
 | 显示与验证 | `openbiliclaw config-show` 展示正常实例链和 Embedding，加当前凭据通知；运行时使用同一 registry 校验。 |
 

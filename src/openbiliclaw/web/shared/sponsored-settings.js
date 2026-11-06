@@ -47,7 +47,7 @@
     if (!picker) {
       picker = document.createElement("select");
       picker.id = `${model.id}FreeChoice`;
-      picker.setAttribute("aria-label", "模型");
+      picker.setAttribute("aria-label", "选择内置模型实例");
       for (const [index, value] of freeModels.entries()) {
         const option = document.createElement("option");
         option.value = value;
@@ -70,7 +70,7 @@
     if (free) {
       if (!freeModels.includes(model.value)) model.value = freeModels[0];
       picker.value = model.value;
-      if (status) status.textContent = "内置免费实例，无需填写 Key；按调用链顺序使用。可新建第二个实例作为备用。";
+      if (status) status.textContent = "两个内置免费实例的配置固定，无需填写 Key；可选择其中一个，或在调用链中同时使用。";
     }
     let button = document.getElementById(`${model.id}Prepare`);
     if (!button && prepare) {
@@ -84,7 +84,7 @@
         try {
           const result = await prepare();
           if (!result?.ok) throw new Error(result?.error || "组件准备失败");
-          if (status) status.textContent = "免费组件已就绪，可保存实例并测试连接。";
+          if (status) status.textContent = "免费组件已就绪，可选择实例并测试连接。";
         } catch (error) { if (status) status.textContent = error.message || "组件准备失败"; }
         finally { button.disabled = false; }
       });

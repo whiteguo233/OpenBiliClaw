@@ -160,7 +160,11 @@ def test_put_native_instances_replaces_deleted_entries_and_preserves_masked_secr
     assert response.status_code == 202
     assert response.json()["apply_state"] == "queued"
     stored = load_config(path)
-    assert list(stored.llm.instances) == ["gateway-a"]
+    assert list(stored.llm.instances) == [
+        "gateway-a",
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+    ]
     assert stored.llm.instances["gateway-a"].api_key == "secret-a"
     assert stored.llm.default_chain == ["gateway-a"]
     assert stored.llm.discovery.inherit is True

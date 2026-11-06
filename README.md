@@ -664,9 +664,9 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter
-  │       └ siliconflow_free → Qwen3-8B (128K) or Qwen3.5-4B (256K)
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
   └ llm.embedding → independent EmbeddingService
-      ├ siliconflow_free → BGE-M3 (1024 text dimensions, stable cache provenance)
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
       └ Ollama / other provider → its own endpoint and vector space
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool

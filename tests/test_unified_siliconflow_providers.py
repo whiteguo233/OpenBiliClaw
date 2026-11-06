@@ -374,6 +374,13 @@ def test_native_config_api_keeps_free_instances_and_embedding_independent(
     "invalid",
     [
         {"model": "arbitrary-model"},
+        {"name": "edited"},
+        {"enabled": False},
+        {"provider_type": "ollama"},
+        {"reasoning_effort": "high"},
+        {"num_ctx": 4096},
+        {"model": "Qwen/Qwen3.5-4B"},
+        {"read_only": False, "model": "Qwen/Qwen3.5-4B"},
         {"api_key": "custom-key"},
         {"base_url": "https://example.invalid/v1"},
         {"auth_mode": "codex_oauth"},
@@ -492,3 +499,135 @@ async def test_cancelled_service_stream_releases_transport_and_request_context(
         await stream.aclose()
     await asyncio.wait_for(closed.wait(), timeout=1)
     assert callers == ["agent.chat"]
+
+
+def test_builtin_catalog_survives_omission_and_rejects_copies(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from .test_api_llm_instance_routing import _client
+
+    client, path = _client(monkeypatch, tmp_path, config_at(tmp_path))
+    value = client.get("/api/config").json()["llm"]
+    assert all(value["instances"][i]["read_only"] for i in ("free8", "free4"))
+    assert not value["instances"]["own"]["read_only"]
+    response = client.put(
+        "/api/config",
+        json={
+            "llm": {
+                "instances": {"own": value["instances"]["own"]},
+                "default_chain": ["own", "free4", "free8"],
+                "routes": {"evaluation": {"inherit": False, "chain": ["free8", "free4"]}},
+            }
+        },
+    )
+    assert response.status_code == 202, response.text
+    loaded = load_config(path, consult_environment=False)
+    assert loaded.llm.instances["free8"].model == DEFAULT_CHAT_MODEL
+    assert loaded.llm.instances["free4"].model == ALTERNATE_CHAT_MODEL
+    assert loaded.llm.default_chain == ["own", "free4", "free8"]
+    assert loaded.llm.evaluation.chain == ["free8", "free4"]
+    before = path.read_bytes()
+    response = client.put(
+        "/api/config",
+        json={
+            "llm": {
+                "instances": {**value["instances"], "copy": value["instances"]["free8"]},
+            }
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert path.read_bytes() == before
+
+
+def test_old_mutable_instances_migrate_without_changing_selected_models(tmp_path: Any) -> None:
+    cfg = config_at(tmp_path)
+    cfg.llm.instances["free4"].name = "old editable label"
+    cfg.llm.instances["duplicate4"] = replace(cfg.llm.instances["free4"], enabled=False)
+    cfg.llm.default_chain = ["free4", "free8"]
+    cfg.llm.evaluation = ModuleLLMConfig(inherit=False, chain=["duplicate4", "free8"])
+    migrate_sponsored_provider_config(cfg.llm)
+    assert cfg.llm.builtin_providers_version == 2
+    assert cfg.llm.default_chain == ["free4", "free8"]
+    assert cfg.llm.evaluation.chain == ["free4", "free8"]
+    assert "duplicate4" not in cfg.llm.instances
+    assert cfg.llm.instances["free4"] == builtin_siliconflow_instance(ALTERNATE_CHAT_MODEL)
+    cfg.llm.instances.pop("free8")
+    migrate_sponsored_provider_config(cfg.llm)
+    free = [i for i in cfg.llm.instances.values() if i.provider_type == "siliconflow_free"]
+    assert {i.model for i in free} == {DEFAULT_CHAT_MODEL, ALTERNATE_CHAT_MODEL}
+    assert len(free) == 2
+
+
+def test_builtin_seed_preserves_colliding_user_instance_and_routing(tmp_path: Any) -> None:
+    cfg = config_at(tmp_path)
+    own = cfg.llm.instances["own"]
+    cfg.llm.instances = {"siliconflow-free": own}
+    cfg.llm.default_chain = ["siliconflow-free"]
+    cfg.llm.soul = ModuleLLMConfig()
+    path = save_config(cfg, tmp_path / "config.toml")
+    loaded = load_config(path, consult_environment=False)
+    assert loaded.llm.instances["siliconflow-free"] == own
+    assert loaded.llm.default_chain == ["siliconflow-free"]
+    assert loaded.llm.instances["siliconflow-free-2"].model == DEFAULT_CHAT_MODEL
+    assert loaded.llm.instances["siliconflow-free-qwen35-4b"].model == ALTERNATE_CHAT_MODEL
+
+
+def test_selecting_builtin_embedding_only_uses_its_fixed_parameters(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from .test_api_llm_instance_routing import _client
+
+    cfg = config_at(tmp_path)
+    cfg.llm.embedding = EmbeddingConfig(
+        provider="gemini",
+        model="gemini-embedding-2",
+        api_key="old-secret",
+        output_dimensionality=1536,
+        multimodal_enabled=True,
+    )
+    client, path = _client(monkeypatch, tmp_path, cfg)
+    response = client.put(
+        "/api/config", json={"llm": {"embedding": {"provider": "siliconflow_free"}}}
+    )
+    assert response.status_code == 202, response.text
+    selected = load_config(path, consult_environment=False).llm.embedding
+    assert selected.model == "BAAI/bge-m3"
+    assert selected.output_dimensionality == 1024
+    assert not selected.api_key and not selected.base_url and not selected.multimodal_enabled
+
+
+def test_legacy_module_model_choice_selects_a_fixed_instance_instead_of_copying(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from .test_api_llm_instance_routing import _client
+
+    client, path = _client(monkeypatch, tmp_path, config_at(tmp_path))
+    response = client.put(
+        "/api/config",
+        json={
+            "llm": {
+                "soul": {
+                    "provider": "siliconflow_free",
+                    "model": ALTERNATE_CHAT_MODEL,
+                }
+            }
+        },
+    )
+    assert response.status_code == 202, response.text
+    saved = load_config(path, consult_environment=False)
+    assert saved.llm.soul.chain == ["free4"]
+    assert set(saved.llm.instances) == {"free8", "free4", "own"}
+    before = path.read_bytes()
+    response = client.put(
+        "/api/config",
+        json={
+            "llm": {
+                "soul": {
+                    "provider": "siliconflow_free",
+                    "model": "unknown-model",
+                }
+            }
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert path.read_bytes() == before

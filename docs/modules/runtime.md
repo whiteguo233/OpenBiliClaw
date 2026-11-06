@@ -1,5 +1,12 @@
 # Runtime Module
 
+## 固定实例切换（2026-11-07）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `RuntimeContext.try_apply_llm_instance_config(config)` | 仅默认链顺序改变时通过已有 registry 原地发布，新请求使用新链，API 进程已开始的请求和后台任务对象保留；独立 worker 仍按配置代际重载并恢复持久任务。实例配置或模块链改变时返回 false，走完整重建。 |
+
+
 ## Provider 结构统一（2026-11-06，应用待发布）
 
 | 已实现能力 | 公共接口与行为 |

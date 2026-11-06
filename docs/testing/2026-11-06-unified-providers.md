@@ -1,5 +1,7 @@
 # 硅基流动 Provider 统一验收（2026-11-06）
 
+后续变更：免费实例已于 2026-11-07 调整为两个固定只读 LLM 实例；下文保留前一轮验证记录，当前契约见[固定实例验收](2026-11-07-fixed-providers.md)。
+
 本次应用改动位于 `feat/unified-sponsored-providers`，基于 Core v0.3.234，尚未发布新的安装包。真实请求使用已有签名 SDK `sponsored-runtime-2026-11-06.2`，没有重新封装密钥或修改 SDK 策略。
 
 ## 配置与路由

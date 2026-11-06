@@ -211,12 +211,11 @@ async function openMobileSettings(opener) {
       <span>保存时自动同步到对应平台</span>
     </label>
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
-    <label class="mobile-settings-field" for="mobile-llm-instance"><span>默认 LLM 实例</span>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-llm-instance"><span>默认 LLM 实例</span>
       <select id="mobile-llm-instance"></select></label>
-    <label class="mobile-settings-field" id="mobile-llm-model-field" for="mobile-llm-model"><span>实例模型</span>
-      <select id="mobile-llm-model"><option value="Qwen/Qwen3-8B">Qwen3-8B · 128K</option><option value="Qwen/Qwen3.5-4B">Qwen3.5-4B · 256K</option></select></label>
+    <p id="mobile-llm-model-field" class="mobile-settings-hint">内置模型的配置固定，可通过上方实例选项切换。</p>
     <div id="mobileLlmProviderNotice" hidden></div>
-    <label class="mobile-settings-field" for="mobile-embedding"><span>Embedding Provider</span>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-embedding"><span>Embedding Provider</span>
       <select id="mobile-embedding"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="ollama">本地 Ollama（bge-m3）</option><option value="">暂不启用</option></select></label>
     <p class="mobile-settings-hint">更换默认实例会将默认链设为该实例；模块独立链保留。<a href="../web/?settings=models">管理全部实例与备用链</a></p>
     <label class="mobile-settings-field" for="mobile-eval-scorer">候选评估器</label>
@@ -242,12 +241,10 @@ async function openMobileSettings(opener) {
   const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
   let modelConfig = {};
   const llmSelect = card.querySelector("#mobile-llm-instance");
-  const modelSelect = card.querySelector("#mobile-llm-model");
   const embeddingSelect = card.querySelector("#mobile-embedding");
   const syncModel = () => {
     const instance = modelConfig.instances?.[llmSelect.value];
     card.querySelector("#mobile-llm-model-field").hidden = instance?.provider_type !== "siliconflow_free";
-    modelSelect.value = instance?.model || "Qwen/Qwen3-8B";
   };
   llmSelect.addEventListener("change", syncModel);
   const save = card.querySelector(".mobile-settings-save");
@@ -287,7 +284,8 @@ async function openMobileSettings(opener) {
       for (const [id, instance] of Object.entries(modelConfig.instances || {})) {
         if (instance.enabled === false) continue;
         const option = document.createElement("option"); option.value = id;
-        option.textContent = `${instance.name || id} · ${instance.model}`;
+        option.textContent = instance.provider_type === "siliconflow_free"
+          ? instance.name || instance.model : `${instance.name || id} · ${instance.model}`;
         llmSelect.append(option);
       }
       llmSelect.value = modelConfig.default_chain?.[0] || "";
@@ -345,9 +343,7 @@ async function openMobileSettings(opener) {
       const payload = { ...jevForm.collect(), language: selectedLanguage, saved_sync: { auto_sync_enabled: toggle.checked } };
       const id = llmSelect.value;
       const instances = structuredClone(modelConfig.instances || {});
-      const llmChanged = id !== (modelConfig.default_chain?.[0] || "")
-        || (instances[id]?.provider_type === "siliconflow_free" && instances[id].model !== modelSelect.value);
-      if (instances[id]?.provider_type === "siliconflow_free") instances[id].model = modelSelect.value;
+      const llmChanged = id !== (modelConfig.default_chain?.[0] || "");
       const provider = embeddingSelect.value;
       const embeddingChanged = provider !== (modelConfig.embedding?.provider || "");
       const embedding = provider === (modelConfig.embedding?.provider || "") ? modelConfig.embedding : {

@@ -59,6 +59,9 @@ async def test_free_model_switch_applies_while_learning_is_running(
 
     ctx.llm_registry = build_llm_registry(ctx.config)
     ctx.llm_service.registry = ctx.llm_registry
+    alternate_id = next(
+        i for i, item in ctx.config.llm.instances.items() if item.model == "Qwen/Qwen3.5-4B"
+    )
     old_adapter = ctx.llm_registry.get("siliconflow-free")
     preserved = (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
     finish = asyncio.Event()
@@ -73,12 +76,7 @@ async def test_free_model_switch_applies_while_learning_is_running(
                 "/api/config",
                 json={
                     "llm": {
-                        "instances": {
-                            instance_id: {**vars(instance), "model": "Qwen/Qwen3.5-4B"}
-                            if instance_id == "siliconflow-free"
-                            else vars(instance)
-                            for instance_id, instance in ctx.config.llm.instances.items()
-                        }
+                        "default_chain": [alternate_id, "siliconflow-free"],
                     }
                 },
             )
@@ -92,8 +90,9 @@ async def test_free_model_switch_applies_while_learning_is_running(
         drain.assert_not_called()
         assert not work.done()
         assert preserved == (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
-        assert ctx.config.llm.instances["siliconflow-free"].model == "Qwen/Qwen3.5-4B"
-        assert ctx.llm_registry.get("siliconflow-free")._model == "Qwen/Qwen3.5-4B"
+        assert ctx.config.llm.instances["siliconflow-free"].model == "Qwen/Qwen3-8B"
+        assert ctx.llm_registry.get()._model == "Qwen/Qwen3.5-4B"
+        assert ctx.llm_registry.get("siliconflow-free") is old_adapter
         assert old_adapter._model == "Qwen/Qwen3-8B"
         assert not current_sponsored_settings().enabled
         assert app.state.backend_config_generation == int(separate_worker)

@@ -3289,7 +3289,6 @@ def _interactive_runtime_config_setup() -> None:
                 console.print(f"[yellow]{exc}[/yellow]")
                 continue
             from openbiliclaw.config import (
-                builtin_siliconflow_instance,
                 effective_llm_instances,
                 effective_llm_routes,
             )
@@ -3300,22 +3299,16 @@ def _interactive_runtime_config_setup() -> None:
                 (
                     key
                     for key, item in instances.items()
-                    if item.provider_type == "siliconflow_free"
+                    if item.provider_type == "siliconflow_free" and item.model == selected_model
                 ),
                 "siliconflow-free",
             )
-            while (
-                instance_id in instances
-                and instances[instance_id].provider_type != "siliconflow_free"
-            ):
-                instance_id += "-preset"
-            instances[instance_id] = builtin_siliconflow_instance(selected_model)
             for bucket, route in effective_llm_routes(cfg.llm).items():
                 setattr(cfg.llm, bucket, route)
             cfg.llm.instances = instances
             cfg.llm.default_chain = [instance_id]
             cfg.llm.instance_routing = True
-            cfg.llm.builtin_providers_version = 1
+            cfg.llm.builtin_providers_version = 2
             protected_ids = {
                 item
                 for route in effective_llm_routes(cfg.llm).values()

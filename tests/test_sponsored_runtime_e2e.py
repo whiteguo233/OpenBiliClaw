@@ -83,8 +83,12 @@ def sponsored_app(tmp_path: Path) -> Iterator[tuple[str, Path, Any]]:
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
+            (tmp_path / "server.pid").write_text(str(process.pid))
             with httpx.Client(base_url=url, trust_env=False, timeout=2) as client:
-                deadline = time.monotonic() + 40
+                # Cold Python imports on a busy developer machine can exceed
+                # 40s before Uvicorn starts. This only bounds fixture readiness;
+                # browser actions and provider requests keep their own budgets.
+                deadline = time.monotonic() + 120
                 while time.monotonic() < deadline:
                     assert process.poll() is None, (tmp_path / "server.log").read_text()[-4000:]
                     try:
@@ -93,10 +97,12 @@ def sponsored_app(tmp_path: Path) -> Iterator[tuple[str, Path, Any]]:
                     except httpx.TransportError:
                         pass
                     time.sleep(0.1)
-                pytest.fail("backend startup timed out")
+                pytest.fail(
+                    "backend startup timed out\n" + (tmp_path / "server.log").read_text()[-4000:]
+                )
 
-        restart()
         try:
+            restart()
             yield url, tmp_path, restart
         finally:
             if process is not None:
@@ -131,16 +137,25 @@ def probe_primary(client: Any) -> dict[str, Any]:
     ).json()
 
 
-def edit_model(page: Any, model: str, *, popup: bool = False) -> None:
-    selector = '[data-llm-instance-action="edit"]' if popup else '[data-instance-action="edit"]'
-    page.locator(selector).first.click()
-    prefix = "cfgLlmInstance" if popup else "llmInstance"
-    page.locator(f"#{prefix}ModelFreeChoice").select_option(model)
-    assert not page.locator(f"#{prefix}ApiKey").is_visible()
-    page.locator("#cfgSaveLlmInstance" if popup else "#saveLlmInstance").click()
-    page.locator("#cfgLlmInstanceDialog" if popup else "#llmInstanceDialog").wait_for(
-        state="hidden"
-    )
+def select_model_instance(page: Any, model: str, *, popup: bool = False) -> None:
+    # Choose a fixed entry through the ordinary default chain, never an editor.
+    card_attr = "data-llm-instance-id" if popup else "data-instance-card"
+    card = page.locator(f"[{card_attr}]").filter(has_text=model).first
+    card.wait_for()
+    instance_id = card.get_attribute(card_attr)
+    action_attr = "data-llm-instance-action" if popup else "data-instance-action"
+    assert card.locator(f'[{action_attr}="edit"]').count() == 0
+    assert card.locator(f'[{action_attr}="delete"]').count() == 0
+    prefix = "cfgLlm" if popup else "llm"
+    chain = page.locator(f"#{prefix}DefaultChain")
+    item = chain.locator(f'[data-instance-id="{instance_id}"]')
+    if not item.count():
+        page.locator(f"#{prefix}DefaultChainPicker").select_option(instance_id)
+        page.locator("#cfgAddLlmDefaultChainItem" if popup else "#addLlmDefaultChainItem").click()
+    action = "data-llm-chain-action" if popup else "data-chain-action"
+    up = item.locator(f'[{action}="up"]')
+    while up.is_enabled():
+        up.click()
 
 
 def test_setup_without_a_key_then_desktop_switch_and_restart(
@@ -153,6 +168,11 @@ def test_setup_without_a_key_then_desktop_switch_and_restart(
     page.locator("#modelFreeChoice").wait_for()
     assert page.locator("#provider").input_value() == "siliconflow_free"
     assert not page.locator("#apiKey").is_visible()
+    assert not page.locator("#reasoningEffort").is_visible()
+    assert not page.locator('label[for="reasoningEffort"]').is_visible()
+    artifacts = ROOT / "output/provider-unification"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(artifacts / "fixed-01-setup.png"))
     assert page.locator("#setupEmbeddingProvider").input_value() == "siliconflow_free"
     with page.expect_response(
         lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
@@ -163,7 +183,12 @@ def test_setup_without_a_key_then_desktop_switch_and_restart(
     wait_applied(url)
     page.goto(url + "/web/?settings=models")
     assert page.locator("#sponsoredSettings").count() == 0
-    edit_model(page, "Qwen/Qwen3.5-4B")
+    select_model_instance(page, "Qwen/Qwen3.5-4B")
+    assert page.locator("#embeddingModel").evaluate("el => el.readOnly")
+    assert page.locator("#embeddingOutputDimensionality").evaluate("el => el.readOnly")
+    assert not page.locator("#embeddingApiKey").is_visible()
+    page.locator("#llmInstanceList").evaluate("el => el.scrollIntoView({block: 'center'})")
+    page.locator("#llmInstanceList").screenshot(path=str(artifacts / "fixed-02-pc-instances.png"))
     with page.expect_response(
         lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
     ) as saving:
@@ -222,7 +247,12 @@ def test_popup_and_mobile_share_saved_model_with_real_backend(
     """)
     page.goto(url + "/popup/popup.html")
     page.locator("#settingsGear").click()
-    edit_model(page, "Qwen/Qwen3.5-4B", popup=True)
+    select_model_instance(page, "Qwen/Qwen3.5-4B", popup=True)
+    artifacts = ROOT / "output/provider-unification"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    assert page.locator("#cfgEmbeddingModel").evaluate("el => el.readOnly")
+    page.locator("#cfgLlmInstanceList").evaluate("el => el.scrollIntoView({block: 'center'})")
+    page.locator("#cfgLlmInstanceList").screenshot(path=str(artifacts / "fixed-03-extension.png"))
     with page.expect_response(
         lambda r: r.url.endswith("/api/config") and r.request.method == "PUT"
     ) as saving:
@@ -232,8 +262,17 @@ def test_popup_and_mobile_share_saved_model_with_real_backend(
     page.goto(url + "/m/#/recommend")
     page.get_by_role("button", name="打开保存与候选评估设置").click()
     page.locator(".mobile-settings-status").filter(has_text="设置已加载").wait_for()
-    assert page.locator("#mobile-llm-model").input_value() == "Qwen/Qwen3.5-4B"
-    page.locator("#mobile-llm-model").select_option("Qwen/Qwen3-8B")
+    assert page.locator("#mobile-llm-instance option:checked").inner_text().find("Qwen3.5-4B") >= 0
+    assert page.locator("#mobile-llm-model").count() == 0
+    page.set_viewport_size({"width": 320, "height": 900})
+    for selector in ("#mobile-llm-instance", "#mobile-embedding"):
+        box = page.locator(selector).bounding_box()
+        assert box and box["x"] >= 0 and box["x"] + box["width"] <= 320
+        assert box["height"] >= 44
+    page.set_viewport_size({"width": 420, "height": 900})
+    page.screenshot(path=str(artifacts / "fixed-04-mobile.png"))
+    option = page.locator("#mobile-llm-instance option").filter(has_text="Qwen3-8B")
+    page.locator("#mobile-llm-instance").select_option(option.get_attribute("value"))
     page.get_by_role("button", name="保存设置", exact=True).click()
     page.locator(".mobile-settings-status").filter(has_text="设置已保存").wait_for()
     wait_applied(url)
