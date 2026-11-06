@@ -28,3 +28,5 @@
 复测记录：旧实例数量断言已加入两个固定项；CLI 测试先加载真实 SoulEngine，避免懒加载把临时 LLMService mock 缓存到后续测试。浏览器夹具在启动失败时也终止自己创建的子进程，并保留启动日志用于诊断。本机并行负载下 Python 冷导入超过原 40 秒就绪预算，随后仍正常完成 Uvicorn 启动；测试夹具的就绪等待改为 120 秒，使用独立临时目录复测，页面操作、模型请求和生产超时均未放宽。
 
 原始日志位于本机 `/tmp/obc-fixed-*`。截图位于 worktree 的 `output/provider-unification/fixed-*.png`，仅包含合成测试配置。
+
+后续已补充[真实初始化与调用验收](2026-11-07-fixed-providers-live.md)：从空链分别选择两个模型，验证实际 SDK、真实 HTTP/SSE、切换、重启及 BGE-M3 并发向量；另保留了 4B 的一次正文混入工具 JSON 的质量异常。

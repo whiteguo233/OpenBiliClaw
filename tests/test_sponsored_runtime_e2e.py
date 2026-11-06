@@ -31,14 +31,19 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def sponsored_app(tmp_path: Path) -> Iterator[tuple[str, Path, Any]]:
+def sponsored_app(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[tuple[str, Path, Any]]:
     cfg = Config()
     cfg.data_dir = str(tmp_path / "data")
     cfg.llm.instance_routing = True
     cfg.llm.instances = {}
     cfg.llm.default_chain = []
     cfg.llm.embedding.provider = ""
-    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=shlex.join(COMMAND))
+    cfg.llm.sponsored = SponsoredRuntimeSettings(
+        enabled=getattr(request, "param", "legacy") != "fresh",
+        runtime_path=shlex.join(COMMAND),
+    )
     cfg.scheduler.auto_update_enabled = False
     cfg.network.mode = "direct"
     for field in fields(cfg.sources):
@@ -158,15 +163,26 @@ def select_model_instance(page: Any, model: str, *, popup: bool = False) -> None
         up.click()
 
 
+@pytest.mark.parametrize("sponsored_app", ["fresh"], indirect=True)
+@pytest.mark.parametrize("initial_model", ["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"])
 def test_setup_without_a_key_then_desktop_switch_and_restart(
     sponsored_app: tuple,
     chromium_page: Any,
+    initial_model: str,
 ) -> None:
     url, directory, restart = sponsored_app
     page = chromium_page
+    # An installed catalogue is not a selected chain. Start with neither
+    # capability active so onboarding, rather than legacy migration, must
+    # actually select and persist the user's chosen instance.
+    before = load_config(directory / "config.toml", consult_environment=False)
+    assert before.llm.default_chain == []
+    assert before.llm.embedding.provider == ""
+    assert not before.llm.sponsored.enabled
     page.goto(url + "/setup/")
     page.locator("#modelFreeChoice").wait_for()
     assert page.locator("#provider").input_value() == "siliconflow_free"
+    page.locator("#modelFreeChoice").select_option(initial_model)
     assert not page.locator("#apiKey").is_visible()
     assert not page.locator("#reasoningEffort").is_visible()
     assert not page.locator('label[for="reasoningEffort"]').is_visible()
@@ -181,9 +197,20 @@ def test_setup_without_a_key_then_desktop_switch_and_restart(
     assert saving.value.status in {200, 202}, saving.value.text()
     page.locator("#doneLlm").filter(has_text="已连接").wait_for(state="attached")
     wait_applied(url)
+    configured = load_config(directory / "config.toml", consult_environment=False)
+    assert len(configured.llm.default_chain) == 1
+    primary = configured.llm.default_chain[0]
+    assert configured.llm.instances[primary].model == initial_model
+    assert configured.llm.embedding.provider == "siliconflow_free"
+    with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
+        result = client.post("/api/config/probe-service", json={"kind": "llm_chain"}).json()
+        assert result["ok"] and result["model"] == initial_model, result
+        assert result["instance_id"] == primary
+        assert client.post("/api/config/probe-service", json={"kind": "embedding"}).json()["ok"]
+    switched_model = "Qwen/Qwen3.5-4B" if initial_model == "Qwen/Qwen3-8B" else "Qwen/Qwen3-8B"
     page.goto(url + "/web/?settings=models")
     assert page.locator("#sponsoredSettings").count() == 0
-    select_model_instance(page, "Qwen/Qwen3.5-4B")
+    select_model_instance(page, switched_model)
     assert page.locator("#embeddingModel").evaluate("el => el.readOnly")
     assert page.locator("#embeddingOutputDimensionality").evaluate("el => el.readOnly")
     assert not page.locator("#embeddingApiKey").is_visible()
@@ -197,15 +224,17 @@ def test_setup_without_a_key_then_desktop_switch_and_restart(
     wait_applied(url)
     with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
         result = probe_primary(client)
-        assert result["ok"] and result["model"] == "Qwen/Qwen3.5-4B", result
+        assert result["ok"] and result["model"] == switched_model, result
         assert client.post("/api/config/probe-service", json={"kind": "embedding"}).json()["ok"]
     config = load_config(directory / "config.toml", consult_environment=False)
     assert config.llm.instances and config.llm.embedding.provider == "siliconflow_free"
+    assert len(config.llm.default_chain) == 2
+    assert config.llm.default_chain[1] == primary
     assert not config.llm.sponsored.enabled
     restart()
     with httpx.Client(base_url=url, trust_env=False, timeout=10) as client:
         result = probe_primary(client)
-        assert result["ok"] and result["model"] == "Qwen/Qwen3.5-4B", result
+        assert result["ok"] and result["model"] == switched_model, result
 
 
 def test_popup_and_mobile_share_saved_model_with_real_backend(
