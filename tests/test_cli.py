@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +44,7 @@ def _restore_cli_process_state() -> Iterator[None]:
     original_noisy_levels = {name: logging.getLogger(name).level for name in noisy_loggers}
     runtime_components = cli_module._RUNTIME_COMPONENTS
     original_runtime_components = dict(runtime_components)
+    image_service_url = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_URL")
     runtime_components.clear()
     try:
         yield
@@ -58,6 +60,10 @@ def _restore_cli_process_state() -> Iterator[None]:
             logging.getLogger(name).setLevel(level)
         cli_module._RUNTIME_COMPONENTS.clear()
         cli_module._RUNTIME_COMPONENTS.update(original_runtime_components)
+        if image_service_url is None:
+            os.environ.pop("OPENBILICLAW_IMAGE_SERVICE_URL", None)
+        else:
+            os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = image_service_url
 
 
 def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -> None:

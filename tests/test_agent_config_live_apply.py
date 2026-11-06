@@ -55,6 +55,11 @@ async def test_free_model_switch_applies_while_learning_is_running(
     ctx.config.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=sys.executable)
     save_config(ctx.config, tmp_path / "config.toml")
     install_sponsored_settings(ctx.config.llm.sponsored)
+    from openbiliclaw.llm.registry import build_llm_registry
+
+    ctx.llm_registry = build_llm_registry(ctx.config)
+    ctx.llm_service.registry = ctx.llm_registry
+    old_adapter = ctx.llm_registry.get("siliconflow-free")
     preserved = (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
     finish = asyncio.Event()
     work = ctx.task_registry.track("active_background_learning", finish.wait())
@@ -65,7 +70,17 @@ async def test_free_model_switch_applies_while_learning_is_running(
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             response = await client.put(
-                "/api/config", json={"llm": {"sponsored": {"model": "Qwen/Qwen3.5-4B"}}}
+                "/api/config",
+                json={
+                    "llm": {
+                        "instances": {
+                            instance_id: {**vars(instance), "model": "Qwen/Qwen3.5-4B"}
+                            if instance_id == "siliconflow-free"
+                            else vars(instance)
+                            for instance_id, instance in ctx.config.llm.instances.items()
+                        }
+                    }
+                },
             )
             assert response.status_code == 202, response.text
             for _ in range(100):
@@ -77,8 +92,10 @@ async def test_free_model_switch_applies_while_learning_is_running(
         drain.assert_not_called()
         assert not work.done()
         assert preserved == (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
-        assert ctx.config.llm.sponsored.model == "Qwen/Qwen3.5-4B"
-        assert current_sponsored_settings().model == "Qwen/Qwen3.5-4B"
+        assert ctx.config.llm.instances["siliconflow-free"].model == "Qwen/Qwen3.5-4B"
+        assert ctx.llm_registry.get("siliconflow-free")._model == "Qwen/Qwen3.5-4B"
+        assert old_adapter._model == "Qwen/Qwen3-8B"
+        assert not current_sponsored_settings().enabled
         assert app.state.backend_config_generation == int(separate_worker)
     finally:
         finish.set()
@@ -336,7 +353,7 @@ def test_user_provider_fallback_change_requires_registry_rebuild() -> None:
     candidate = copy.deepcopy(config)
     candidate.llm.sponsored = replace(candidate.llm.sponsored, fallback_to_user_provider=True)
     try:
-        assert not ctx.try_apply_sponsored_config(candidate)
+        assert not ctx.try_apply_llm_instance_config(candidate)
         assert ctx.config is config
     finally:
         install_sponsored_settings(previous)

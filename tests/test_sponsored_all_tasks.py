@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from openbiliclaw.config import Config
-from openbiliclaw.llm.base import LLMRegistry, LLMResponse
+from openbiliclaw.config import Config, builtin_siliconflow_instance
+from openbiliclaw.llm.base import LLMFallbackError, LLMRegistry, LLMResponse
 from openbiliclaw.llm.service import LLMService
 from openbiliclaw.llm.sponsored_errors import (
     SponsoredContractMismatchError,
@@ -151,7 +151,17 @@ async def test_raw_registry_and_bare_provider_evaluation_are_covered(
     install_sponsored_settings(SponsoredRuntimeSettings(enabled=True))
     monkeypatch.setattr(sponsored_router, "shared_sponsored_provider", lambda: provider)
     messages = [{"role": "user", "content": "evaluate this project case"}]
-    assert (await LLMRegistry().complete(messages)).provider == "sponsored"
+    # A process-wide switch must not hijack an empty or BYOK registry.
+    with pytest.raises(LLMFallbackError):
+        await LLMRegistry().complete(messages)
+    from openbiliclaw.llm.sponsored_adapter import SponsoredChatAdapter
+
+    monkeypatch.setattr(
+        "openbiliclaw.llm.sponsored_adapter.shared_sponsored_provider", lambda **_kw: provider
+    )
+    registry = LLMRegistry()
+    registry.register(SponsoredChatAdapter(), name="free", default=True)
+    assert (await registry.complete(messages)).provider == "siliconflow_free"
     assert (
         await complete_project_task(NoUserProvider(), messages, json_mode=True)
     ).provider == "sponsored"
@@ -194,16 +204,21 @@ async def test_sponsor_only_registry_and_shared_child_with_embedding(tmp_path: P
         ),
     )
     registry = build_llm_registry(cfg)
-    assert "sponsored" in registry.available_providers
+    assert registry.default_provider == "siliconflow-free"
+    assert registry.provider_type("siliconflow-free") == "siliconflow_free"
     try:
         await registry.complete([{"role": "user", "content": "project readiness"}])
-        child = shared_sponsored_provider()
+        child = shared_sponsored_provider(model="Qwen/Qwen3-8B", settings=cfg.llm.sponsored)
         assert child is not None
         process = child._process
         embedding = build_embedding_service(cfg, registry)
         assert embedding is not None
         assert await embedding.embed("兴趣")
-        assert shared_sponsored_provider() is child and child._process is process
+        assert (
+            shared_sponsored_provider(model="Qwen/Qwen3-8B", settings=cfg.llm.sponsored) is child
+            and child._process is process
+            and child.runtime_running
+        )
         assert "BAAI/bge-m3" in str(embedding.cache_model_namespace)  # type: ignore[attr-defined]
     finally:
         await close_shared_provider()
@@ -294,7 +309,6 @@ async def test_shared_service_close_waits_for_an_active_request() -> None:
 async def test_sponsored_is_the_ready_default_while_user_chain_remains_the_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from openbiliclaw.llm import sponsored_router
     from openbiliclaw.llm.base import LLMProvider
     from openbiliclaw.llm.registry import build_llm_registry
 
@@ -315,13 +329,18 @@ async def test_sponsored_is_the_ready_default_while_user_chain_remains_the_fallb
 
     user = UserProvider()
     cfg = Config()
+    cfg.llm.default_provider = "openai"
+    cfg.llm.openai.api_key = "test-key"
     cfg.llm.sponsored = SponsoredRuntimeSettings(
         enabled=True, runtime_path="unused", fallback_to_user_provider=True
     )
     registry = build_llm_registry(cfg, provider_overrides={"openai": user})
-    assert registry.default_provider == "sponsored"
-    assert registry._fallback_order() == ["sponsored", "openai"]
-    monkeypatch.setattr(sponsored_router, "shared_sponsored_provider", lambda: Unavailable())
+    assert registry.default_provider == "siliconflow-free"
+    assert registry._fallback_order() == ["siliconflow-free", "siliconflow-free-backup", "openai"]
+    monkeypatch.setattr(
+        "openbiliclaw.llm.sponsored_adapter.shared_sponsored_provider",
+        lambda **_kw: Unavailable(),
+    )
     response = await registry.complete([{"role": "user", "content": "project task"}])
     assert response.content == "user fallback" and user.calls == 1
 
@@ -431,18 +450,21 @@ async def test_current_main_stream_entry_points_work_with_sponsored_client() -> 
 async def test_current_main_raw_registry_native_and_stream_interfaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from openbiliclaw.llm import sponsored_router
+    from openbiliclaw.llm.sponsored_adapter import SponsoredChatAdapter
 
     provider = RecordingSponsored()
-    install_sponsored_settings(SponsoredRuntimeSettings(enabled=True))
-    monkeypatch.setattr(sponsored_router, "shared_sponsored_provider", lambda: provider)
+    monkeypatch.setattr(
+        "openbiliclaw.llm.sponsored_adapter.shared_sponsored_provider", lambda **_kw: provider
+    )
     registry = LLMRegistry()
+    registry.register(SponsoredChatAdapter(), name="free", default=True)
     messages = [{"role": "user", "content": "project task"}]
-    assert (await registry.complete_with_tools(messages, [])).provider == "sponsored"
+    response = await registry.complete_with_tools(messages, [])
+    assert response.provider == "siliconflow_free" and response.instance_id == "free"
     chunks = [c async for c in registry.stream_complete(messages)]
-    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+    assert chunks[-1].response and chunks[-1].response.provider == "siliconflow_free"
     chunks = [c async for c in registry.stream_complete_with_tools(messages, [])]
-    assert chunks[-1].response and chunks[-1].response.provider == "sponsored"
+    assert chunks[-1].response and chunks[-1].response.provider == "siliconflow_free"
 
 
 @pytest.mark.parametrize(
@@ -498,15 +520,26 @@ def test_explicit_probe_factories_keep_targets_and_active_sponsored_settings() -
     active = SponsoredRuntimeSettings(enabled=True, runtime_path="active-runtime")
     install_sponsored_settings(active)
     cfg = Config()
-    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path="draft-runtime")
+    cfg.llm.sponsored = SponsoredRuntimeSettings(runtime_path="draft-runtime")
+    cfg.llm.instance_routing = True
+    cfg.llm.instances = {
+        "free": builtin_siliconflow_instance(),
+        "openai": builtin_siliconflow_instance(),
+    }
+    cfg.llm.instances["openai"].provider_type = "openai"
+    cfg.llm.instances["openai"].model = "test-model"
+    cfg.llm.default_chain = ["free"]
     cfg.llm.embedding.provider = ""
 
     class ProbeProvider(NoUserProvider):
         name = "openai"
 
     with bypass_sponsored():
-        registry = build_llm_registry(cfg, provider_overrides={"openai": ProbeProvider()})  # type: ignore[dict-item]
+        registry = build_llm_registry(
+            cfg, provider_overrides={"openai": ProbeProvider()}, fallback_order=["openai"]
+        )  # type: ignore[dict-item]
         assert registry.default_provider == "openai"
-        assert "sponsored" not in registry.available_providers
+        assert registry._fallback_order() == ["openai"]
+        assert registry.provider_type("free") == "siliconflow_free"
         assert build_embedding_service(cfg, registry) is None
     assert current_sponsored_settings() == active

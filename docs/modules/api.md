@@ -13,26 +13,18 @@
 
 详见 [API Auth](api-auth.md)。
 
-## 免费模型设置（SDK已发行，应用集成见PR336）
+## 硅基流动预置实例（2026-11-06，待随应用发布）
 
 | 已实现能力 | 行为 |
 | --- | --- |
-| 常驻硅基流动 Provider | 即使关闭免费方案或尚未准备组件仍显示；两模型及上下文从后端目录读取，不要求共享Key。 |
-| 本地向量忙诊断 | 设置探测给Ollama 45秒冷启动/排队预算，超时返回可重试忙状态；后台健康探测仍为15秒。 |
-| 共享选择与切换 | 初始化、插件、桌面与手机页共用 `shared/sponsored-settings.js/css`，选择8B/4B，默认免费互备；付费回退单独显式开启。 |
-| 免费模型即时切换 | PUT /api/config仅变更已启用免费方案的模型/免费互备/通知/超时选择时，无需排空后台学习；新请求生效。独立worker部署由现有supervisor重启后台进程以同步配置，持久化任务按原恢复规则继续。 |
-| 免费聊天故障恢复 | 流未输出且未执行工具时，暂时性免费服务故障保留pending，最多追加两次持久重试；共享凭据/策略失败直接failed；已经开始的回复不从头重跑。 |
-| 安装与真实草稿探测 | 安装组件、探测所选模型流式回复与所选云端/本地向量；成功后走已有配置保存/运行时应用状态。无需共享Key输入。 |
-| 凭据失效通知 | 设置页与消息中心显示授权/凭据故障，附最新版本与自有Key入口；消息徽标计数，运行状态刷新不覆盖未保存表单。限流/网络错误不会冒充过期。 |
-| 无活动免费方案 | `sponsored_status.notices` 为空，仍返回固定的应用更新链接；响应契约回归保留完整字段相等校验。 |
-| 向量模式独立选择 | 默认硅基流动BGE-M3，也可选本地Ollama；本地配置、缓存与服务健康独立于免费凭据。 |
-| 可选图片能力 | 默认文本任务；可选图片理解由4B承担，免费BGE不提供图片向量。 |
+| 普通 LLM 实例 | “硅基流动（免费）”与自有渠道共用实例列表、编辑器、默认链和模块链；模型选择 Qwen3-8B / Qwen3.5-4B，隐藏无需填写的 Key / Base URL。移除独立免费方案表单。 |
+| 独立 Embedding | 在原 Embedding Provider 下拉选择硅基流动 BGE-M3（1024维）或本地 Ollama；与聊天实例独立，不覆盖另一份隐藏配置。 |
+| 初始化与切换 | 初始化保存普通实例和向量配置；PC / 插件可把另一免费实例加入备用链，手机可选择主实例和模型，完整链编辑通过 PC 设置。选择免费服务不隐式添加付费备用。 |
+| 安装、探测与通知 | 字段旁准备签名组件，普通实例探测只测该实例，Embedding 单独探测。凭据通知按实际启用能力保留，状态刷新保留恢复按钮和未保存草稿。 |
 
-公开接口：`GET /api/config` 的 `llm.sponsored` 返回用户设置、组件就绪、上下文和BGE信息，不返回路径或Key；`PUT /api/config` 仅接受明确字段，拒绝任意运行命令；`POST /api/config/sponsored/prepare` 安装固定目录的已签名组件；`POST /api/config/probe-service` 的 `kind=sponsored` 验证草稿所选模型与向量，关闭互备、不保存草稿。探测经过现有并发gate，错误保留稳定错误码对应的安全说明。`llm.sponsored.embedding_mode` 仅接受 `cloud/local`；`service_status` 与 `GET /api/runtime-status` 的 `sponsored_status` 返回当前 `notices`。每条含 `code/title/message/requires_update/capabilities`，不包含密钥、原始上游错误或路径。初始化选择本地时使用 `check_embedding=false` 仅验证免费对话，保存后由现有初始化前置检查/修复验证本地向量；普通测试按钮默认同时验证两者。
+公开接口：`GET/PUT /api/config` 使用 `llm.instances`、`default_chain`、`routes` 与 `embedding`；`POST /api/config/probe-service` 使用 `kind=llm_instance`（带 `instance_id`）或 `kind=embedding`；模型发现返回获批的两个 ID。组件就绪和凭据通知仍通过兼容的 `llm.sponsored` 元信息输出，组件安装沿用 `POST /api/config/sponsored/prepare`，不向页面暴露共享 Key、路径或任意运行命令。
 
-新增只读输出：`llm.sponsored.provider_id="siliconflow_free"`、`display_name`、`builtin=true`、`models:[{id,context_window}]`。这些字段不能通过保存接口修改。`ConfigServiceProbeResponse` 新增 `error_code` 和 `retryable`；本地探测超时为 `EMBEDDING_BUSY / true`，组合测试保留具体原因。共享卡片显示“内置 Provider”和当前路由提示，启用状态仍由用户配置决定。
-
-共享组件 `mount(root, callbacks)` 暴露 `load/collect/ready/updateStatus`；`renderNotice` 安全渲染状态，`updateStatus(root, value)` 只更新通知而保留配置草稿。PC按固定manifest打包共享脚本和样式；插件遵守原保存脏状态；手机局部保存保留其他模型配置；初始化免费入口无需BYOK字段。自动化验收使用真实API和浏览器，仅SDK模型peer为mock；真实Rust/API测试另见[报告](../testing/2026-11-04-sponsored-user-flow.md)。
+共享前端 `syncInstance()` / `syncEmbedding()` 只控制普通字段；`renderNotice()` / `updateStatus()` 渲染无凭据通知。原 `mount()` 独立方案表单已移除。已有免费开关配置在后端迁移为实例和链。免费实例仅启用文本 / JSON / 工具能力，BGE 不支持图片向量；图片能力是可选能力，不影响初始化。
 
 ## 抖音账号导入来源校验（2026-11-06）
 
@@ -640,15 +632,16 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 - `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
 
 
-### 可选赞助通道与配置探测
+### 普通实例探测与模型切换
 
-| 行为 | 状态 | 说明 |
-| --- | --- | --- |
-| 显式草稿服务探针 | 已实现 | Chat 实例/默认链与 embedding 均绕过赞助替代，验证用户指定目标 |
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| `POST /api/config/probe-service` | `llm_instance` 构造以目标 ID 为首项的临时 registry，其他未配置的默认实例不拦截探测；不会用备用结果冒充目标成功。Embedding 与 LLM 独立探测。 |
+| `POST /api/config/discover-models` | 免费实例直接返回两个签名目录模型 ID，不请求任意上游 URL。 |
+| `PUT /api/config` | 免费实例与向量模型、维度、凭据和地址覆盖在保存前拒绝；切换 Embedding Provider 清除旧凭据和地址，避免跨服务携带。 |
+| `RuntimeContext.try_apply_llm_instance_config(new_config)` | 完整比较配置，只允许已启用免费实例的模型字段快速替换；仍经过原保存/修订/回滚锁。新请求查普通 registry，独立 worker 通过现有 generation 重启同步。 |
 
-业务 LLM/向量请求在选择免费方案后通过统一 Sponsored SDK（组件已发行）。`POST /api/config/probe-service` 对单实例、默认链与 embedding 的草稿探测始终验证所选用户配置：构建和执行处于局部 bypass context，赞助服务可用不会替目标返回成功；不写配置、不替换活动赞助设置。SDK 的模型、工具模拟与真实流式边界见[用户流程](../plans/2026-11-04-sponsored-user-flow.md)。
-
-`RuntimeContext.try_apply_sponsored_config(new_config) -> bool` 在API配置修订锁内严格比较完整配置，只接受已启用方案的路由字段变更；切换自有provider回退开关、启用状态、runtime路径、其它配置或凭据更新仍走原安全交接。与原配置持久化、修订合并和失败回滚共用事务。
+旧 `kind=sponsored` 草稿探针保留兼容用途；新客户端统一使用普通探针。业务不再调用全局 sponsored 拦截器，内部 SDK 设置不覆盖模块路由。
 
 ### 免费聊天恢复的 SSE 与持久状态契约
 

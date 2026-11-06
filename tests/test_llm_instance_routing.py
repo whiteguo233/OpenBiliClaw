@@ -176,7 +176,7 @@ def test_legacy_projection_omits_unused_remote_template_blocks() -> None:
 
     instances = effective_llm_instances(config.llm)
 
-    assert list(instances) == ["deepseek", "ollama", "openai_compatible"]
+    assert list(instances) == ["siliconflow-free", "deepseek", "ollama", "openai_compatible"]
     assert all(instance.enabled for instance in instances.values())
     assert effective_llm_default_chain(config.llm) == ["openai_compatible"]
 
@@ -214,7 +214,7 @@ def test_legacy_projection_omits_credentialed_provider_with_empty_model() -> Non
         if issue.severity == "blocking"
     }
 
-    assert list(instances) == ["deepseek", "openai_compatible"]
+    assert list(instances) == ["siliconflow-free", "deepseek", "openai_compatible"]
     assert all(instance.model for instance in instances.values())
     assert "llm.instances.openai.model" not in blocking
     assert "llm.instances.claude.model" not in blocking
@@ -232,7 +232,7 @@ def test_legacy_projection_keeps_referenced_empty_model_provider_for_validation(
 
     instances = effective_llm_instances(config.llm)
 
-    assert list(instances) == ["openai"]
+    assert list(instances) == ["siliconflow-free", "openai"]
     assert instances["openai"].model == ""
 
     # The projected instance still lands in native v2 validation, so a

@@ -19400,7 +19400,7 @@ class TestGuidedInitEndpoints:
         app, _ = self._make_app(tmp_path)
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_llm_registry",
-            lambda _cfg: FakeRegistry(),
+            lambda _cfg, **_kwargs: FakeRegistry(),
         )
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_embedding_service",
@@ -19472,7 +19472,7 @@ class TestGuidedInitEndpoints:
         app, _ = self._make_app(tmp_path)
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_llm_registry",
-            lambda _cfg: SlowRegistry(),
+            lambda _cfg, **_kwargs: SlowRegistry(),
         )
         monkeypatch.setattr(
             "openbiliclaw.api.app._config_llm_probe_timeout_seconds",

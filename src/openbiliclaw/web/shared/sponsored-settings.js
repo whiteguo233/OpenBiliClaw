@@ -1,12 +1,14 @@
-/** One free-model form for setup, desktop, extension and mobile. No credentials. */
+/** Built-in provider fields and credential-free notices shared by all clients. */
 (function (global) {
   "use strict";
-  const mounted = new WeakMap();
   const noticeSignatures = new WeakMap();
+  const noticeCallbacks = new WeakMap();
   const updateUrl = "https://github.com/whiteguo233/OpenBiliClaw/releases/latest";
   function renderNotice(root, value = {}, onSettings) {
     const notices = Array.isArray(value?.notices) ? value.notices : [];
-    const signature = JSON.stringify(notices);
+    if (onSettings) noticeCallbacks.set(root, onSettings);
+    const settingsCallback = noticeCallbacks.get(root);
+    const signature = JSON.stringify([notices, Boolean(settingsCallback)]);
     if (noticeSignatures.get(root) === signature) return;
     noticeSignatures.set(root, signature);
     root.replaceChildren();
@@ -30,131 +32,103 @@
       update.textContent = "查看最新版本";
       actions.append(update);
     }
-    if (onSettings) {
+    if (settingsCallback) {
       const settings = document.createElement("button");
       settings.type = "button"; settings.textContent = "配置自己的 Key";
-      settings.addEventListener("click", onSettings);
+      settings.addEventListener("click", () => noticeCallbacks.get(root)?.(notices));
       actions.append(settings);
     }
     root.append(actions);
   }
-  function mount(root, actions = {}) {
-    if (mounted.has(root)) return mounted.get(root);
-    root.classList.add("sponsored-settings");
-    root.dataset.providerId = "siliconflow_free";
-    root.innerHTML = `
-      <p class="sponsored-provider-badge">内置 Provider</p>
-      <h3>硅基流动免费方案</h3>
-      <div data-sponsored="notice" hidden></div>
-      <label class="sponsored-toggle"><input data-sponsored="enabled" type="checkbox">使用免费方案</label>
-      <p class="sponsored-hint" data-sponsored="routing-hint"></p>
-      <div data-sponsored="options">
-        <label data-sponsored="model-label">对话模型</label><select data-sponsored="model">
-          <option value="Qwen/Qwen3-8B">Qwen3-8B（默认 · 128K 上下文）</option>
-          <option value="Qwen/Qwen3.5-4B">Qwen3.5-4B（256K 上下文）</option>
-        </select>
-        <p class="sponsored-hint">无需填写 API Key。保存后新任务使用所选模型，已有画像和记录保留。</p>
-        <label data-sponsored="embedding-label">文本向量（embedding）</label>
-        <select data-sponsored="embedding-mode">
-          <option value="cloud">硅基流动 BGE-M3（默认推荐 · 无需下载）</option>
-          <option value="local">本地 Ollama（默认 bge-m3 · 不使用免费 Key）</option>
-        </select>
-        <p class="sponsored-hint" data-sponsored="embedding-hint"></p>
-        <label class="sponsored-toggle"><input data-sponsored="free-fallback" type="checkbox">不可用时尝试另一个免费模型</label>
-        <details><summary>更多选项</summary>
-          <label class="sponsored-toggle"><input data-sponsored="paid-fallback" type="checkbox">两个免费模型都不可用时，使用已配置的自费调用链</label>
-          <p class="sponsored-hint">开启后可能产生自费服务费用。图片理解可在相关功能中另行开启；免费方案不提供图片向量。</p>
-        </details>
-        <div class="sponsored-actions">
-          <button data-sponsored="prepare" type="button">准备免费组件</button>
-          <button data-sponsored="probe" type="button">测试所选模型与向量</button>
-        </div>
-      </div>
-      <p class="sponsored-status" data-sponsored="status" role="status" aria-live="polite"></p>`;
-    const field = name => root.querySelector(`[data-sponsored="${name}"]`);
-    for (const input of root.querySelectorAll("input, select")) input.id = `${root.id}-${input.dataset.sponsored}`;
-    field("model-label").htmlFor = field("model").id;
-    field("embedding-label").htmlFor = field("embedding-mode").id;
-    let ready = false;
-    let supported = false;
-    let busy = false;
-    const collect = () => ({
-      enabled: field("enabled").checked,
-      model: field("model").value,
-      embedding_mode: field("embedding-mode").value,
-      fallback_to_other_free_model: field("free-fallback").checked,
-      fallback_to_user_provider: field("paid-fallback").checked,
-    });
-    function sync() {
-      field("options").hidden = !field("enabled").checked;
-      field("routing-hint").textContent = field("enabled").checked
-        ? "保存后，日常文本任务使用此 Provider。自有服务仅在你开启自费回退时调用。"
-        : "此 Provider 始终保留，可随时启用。自有模型服务在下方配置。";
-      field("prepare").hidden = ready;
-      field("prepare").disabled = busy || !supported || !actions.prepare;
-      field("probe").disabled = busy || !supported || !actions.probe || !ready;
-      field("enabled").disabled = !supported;
-      field("embedding-hint").textContent = field("embedding-mode").value === "local"
-        ? "使用后端所在电脑的 Ollama；保留已有本地模型和地址，首次可在初始化页准备模型。占用本机资源，不受免费凭据轮换影响。切换后向量索引会逐步重建。"
-        : "云端文本向量无需本地模型，使用内置免费凭据；凭据停用时需更新版本或改用本地向量。切换后向量索引会逐步重建。";
+  const freeModels = ["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"];
+  function syncInstance({ provider, model, key, base, status, prepare }) {
+    const free = provider === "siliconflow_free";
+    let picker = document.getElementById(`${model.id}FreeChoice`);
+    if (!picker) {
+      picker = document.createElement("select");
+      picker.id = `${model.id}FreeChoice`;
+      picker.setAttribute("aria-label", "模型");
+      for (const [index, value] of freeModels.entries()) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = `${value.split("/").pop()} · ${index ? "256K" : "128K"} 上下文`;
+        picker.append(option);
+      }
+      picker.addEventListener("change", () => {
+        model.value = picker.value;
+        model.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      model.after(picker);
     }
-    root.addEventListener("change", () => {
-      sync();
-      field("status").textContent = "选择已修改，保存后生效。";
-    });
-    async function run(kind) {
-      busy = true; sync();
-      field("status").textContent = kind === "prepare" ? "正在准备免费模型组件…" : "正在测试所选模型和文本向量，请稍候…";
-      try {
-        const result = await actions[kind](collect());
-        if (result?.service_status) renderNotice(field("notice"), result.service_status, useOwn);
-        if (!result?.ok) throw new Error(result?.error || result?.message || "操作失败，请重试。");
-        if (kind === "prepare") ready = true;
-        field("status").textContent = [result.message || "组件已就绪", result.model, result.latency_ms ? `${(result.latency_ms / 1000).toFixed(1)} 秒` : ""].filter(Boolean).join(" · ");
-      } catch (error) {
-        field("status").textContent = error?.message || "操作失败，请重试。";
-      } finally { busy = false; sync(); }
+    picker.hidden = !free;
+    model.hidden = free;
+    for (const field of [key, base]) {
+      if (!field) continue;
+      field.closest(".settings-field, label").hidden = free;
+      if (free) field.value = "";
     }
-    field("prepare").addEventListener("click", () => void run("prepare"));
-    field("probe").addEventListener("click", () => void run("probe"));
-    function useOwn() {
-      field("enabled").checked = false;
-      field("enabled").dispatchEvent(new Event("change", { bubbles: true }));
-      actions.useOwn?.();
-      field("status").textContent = "请填写自己的模型服务和 API Key，再保存配置；不会自动调用自费服务。";
+    if (free) {
+      if (!freeModels.includes(model.value)) model.value = freeModels[0];
+      picker.value = model.value;
+      if (status) status.textContent = "内置免费实例，无需填写 Key；按调用链顺序使用。可新建第二个实例作为备用。";
     }
-    const api = {
-      collect,
-      updateStatus(value) { renderNotice(field("notice"), value, useOwn); },
-      load(value = {}) {
-        supported = typeof value.enabled === "boolean";
-        ready = value.runtime_available === true;
-        const models = Array.isArray(value.models) ? value.models.filter(item =>
-          ["Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"].includes(item.id) && Number.isFinite(item.context_window)
-        ) : [];
-        if (models.length) field("model").replaceChildren(...models.map(item => {
-          const option = document.createElement("option");
-          option.value = item.id;
-          option.textContent = `${item.id.split("/").pop()} · ${item.context_window / 1024}K`;
-          return option;
-        }));
-        field("enabled").checked = value.enabled === true;
-        field("model").value = value.model === "Qwen/Qwen3.5-4B" ? value.model : "Qwen/Qwen3-8B";
-        field("embedding-mode").value = value.embedding_mode === "local" ? "local" : "cloud";
-        renderNotice(field("notice"), value.service_status, useOwn);
-        field("free-fallback").checked = value.fallback_to_other_free_model !== false;
-        field("paid-fallback").checked = value.fallback_to_user_provider === true;
-        field("status").textContent = !supported ? "请更新后端以使用免费模型。" : ready ? "免费模型组件已就绪，可测试连接。" : "首次使用请准备免费模型组件。";
-        sync();
-      },
-      get ready() { return ready; },
-    };
-    mounted.set(root, api);
-    api.load();
-    return api;
+    let button = document.getElementById(`${model.id}Prepare`);
+    if (!button && prepare) {
+      button = document.createElement("button");
+      button.id = `${model.id}Prepare`; button.type = "button";
+      button.textContent = "准备免费组件";
+      button.className = "pill-btn settings-secondary-btn";
+      (status || model).after(button);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const result = await prepare();
+          if (!result?.ok) throw new Error(result?.error || "组件准备失败");
+          if (status) status.textContent = "免费组件已就绪，可保存实例并测试连接。";
+        } catch (error) { if (status) status.textContent = error.message || "组件准备失败"; }
+        finally { button.disabled = false; }
+      });
+    }
+    if (button) button.hidden = !free;
+  }
+  function syncEmbedding({ provider, model, key, base, dimension, multimodal, reset = false, prepare }) {
+    if (reset && provider === "ollama" && model.value === "BAAI/bge-m3") {
+      model.value = "bge-m3";
+      if (base) base.value = "http://127.0.0.1:11434/v1";
+    }
+    const free = provider === "siliconflow_free";
+    for (const field of [key, base]) {
+      if (!field) continue;
+      field.closest(".settings-field, label").hidden = free;
+      if (free) field.value = "";
+    }
+    model.readOnly = free;
+    if (dimension) dimension.readOnly = free;
+    if (multimodal) { multimodal.disabled = free; if (free) multimodal.checked = false; }
+    let prepareButton = document.getElementById(`${model.id}Prepare`);
+    if (!prepareButton && prepare) {
+      prepareButton = document.createElement("button");
+      prepareButton.id = `${model.id}Prepare`; prepareButton.type = "button";
+      prepareButton.textContent = "准备免费组件";
+      prepareButton.className = "pill-btn settings-secondary-btn";
+      model.closest(".settings-field, label").after(prepareButton);
+      prepareButton.addEventListener("click", async () => {
+        prepareButton.disabled = true;
+        try {
+          const result = await prepare();
+          prepareButton.textContent = result?.ok ? "免费组件已就绪" : result?.error || "准备失败，点击重试";
+        } catch (error) { prepareButton.textContent = error.message || "准备失败，点击重试"; }
+        finally { prepareButton.disabled = false; }
+      });
+    }
+    if (prepareButton) prepareButton.hidden = !free;
+    if (free) {
+      model.value = "BAAI/bge-m3";
+      if (dimension) dimension.value = "1024";
+    }
   }
   global.OpenBiliClawSponsoredSettings = {
-    mount, renderNotice,
-    updateStatus(root, value) { mounted.get(root)?.updateStatus(value); },
+    renderNotice, syncInstance, syncEmbedding,
+    updateStatus(root, value) { if (root) renderNotice(root, value); },
   };
 })(window);

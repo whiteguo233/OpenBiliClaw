@@ -6727,7 +6727,7 @@
       </div>
 
       <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
-<div id="cfgSponsoredSettings"></div>
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div>
@@ -6737,7 +6737,8 @@
         </div>
         <p class="settings-hint">每个实例独立保存 Provider 类型、模型、Base URL 与凭据；同一种 Provider 也可以创建多个渠道。插件内可维护默认 fallback 链，模块自定义链继续在 PC Web 配置。</p>
         <div id="cfgLlmRoutingSummary" class="settings-routing-summary">
-          <div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
+          <div id="cfgLlmProviderNotice" hidden></div>
+<div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
 
           <div class="settings-llm-chain-head">
             <div>
@@ -7020,7 +7021,7 @@
         </p>
         <div class="settings-field">
           <label for="cfgEmbeddingProvider">Provider</label>
-          <select id="cfgEmbeddingProvider">
+          <select id="cfgEmbeddingProvider"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option>
             <option value="">(不启用 embedding)</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini</option>
@@ -8639,7 +8640,7 @@
             <p id="cfgLlmInstanceIdHint" class="settings-instance-id-hint">保存实例后 ID 不可修改；调用链通过它稳定引用实例。</p>
             <label class="settings-field">
               <span>Provider 类型</span>
-              <select id="cfgLlmInstanceProviderType" translate="no">
+              <select id="cfgLlmInstanceProviderType" translate="no"><option value="siliconflow_free">硅基流动（免费 · 内置）</option>
                 <option value="openai">OpenAI</option>
                 <option value="claude">Claude</option>
                 <option value="gemini">Gemini</option>

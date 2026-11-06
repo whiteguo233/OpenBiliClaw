@@ -266,7 +266,7 @@ def test_probe_exact_instance_and_full_chain_use_distinct_paths_without_write(
 
     monkeypatch.setattr(
         "openbiliclaw.llm.registry.build_llm_registry",
-        lambda config: FakeRegistry(),
+        lambda config, **kwargs: FakeRegistry(),
     )
     client, path = _client(monkeypatch, tmp_path, _native_config())
     before = path.read_bytes()

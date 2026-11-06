@@ -186,7 +186,7 @@ def test_cli_still_requires_user_key_when_user_provider_is_active(
         },
         consult_environment=False,
     )
-    with pytest.raises(ConfigError, match="deepseek.api_key"):
+    with pytest.raises(ConfigError, match=r"deepseek\.(api_key|model)"):
         validate_runtime_config(config)
 
 

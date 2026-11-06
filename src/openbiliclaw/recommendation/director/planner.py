@@ -321,9 +321,9 @@ class HorizonPlanner:
         for single-call evaluation; validation and failure semantics are unchanged.
         """
         frozen = freeze_request(request)
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
-        free_plan = sponsored_enabled()
+        free_plan = uses_sponsored_route(self._llm, "recommendation.plan")
         if type(max_validation_retries) is not int or not 0 <= max_validation_retries <= 1:
             raise ValueError("validation retries must be zero or one")
         if type(horizon_screens) is not int or not 1 <= horizon_screens <= 3:

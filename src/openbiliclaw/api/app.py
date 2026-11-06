@@ -571,7 +571,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
-    allow_sponsored_live_apply: bool = False
+    allow_llm_instance_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -3677,9 +3677,9 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
-        if item.allow_sponsored_live_apply and not item.restart_required:
+        if item.allow_llm_instance_live_apply and not item.restart_required:
             async with config_runtime_reload_lock:
-                if ctx.try_apply_sponsored_config(item.config):
+                if ctx.try_apply_llm_instance_config(item.config):
                     if ctx.full_worker_expected():
                         # Separate workers own startup config snapshots. Let
                         # the existing supervisor reload them after the apply
@@ -3801,9 +3801,9 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
-                            config_apply_pending.allow_sponsored_live_apply = (
-                                config_apply_pending.allow_sponsored_live_apply
-                                and item.allow_sponsored_live_apply
+                            config_apply_pending.allow_llm_instance_live_apply = (
+                                config_apply_pending.allow_llm_instance_live_apply
+                                and item.allow_llm_instance_live_apply
                             )
                             _set_config_apply_status(
                                 "queued",
@@ -3906,8 +3906,9 @@ def create_app(
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
             )
-            item.allow_sponsored_live_apply = (
-                item.allow_sponsored_live_apply and config_apply_pending.allow_sponsored_live_apply
+            item.allow_llm_instance_live_apply = (
+                item.allow_llm_instance_live_apply
+                and config_apply_pending.allow_llm_instance_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -22452,6 +22453,7 @@ def create_app(
             current_routes = effective_llm_routes(cfg.llm)
             was_native = bool(getattr(cfg.llm, "instance_routing", False))
             cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 1
             if not was_native:
                 for module_name, route in current_routes.items():
                     setattr(cfg.llm, module_name, route)
@@ -22541,6 +22543,23 @@ def create_app(
                         # supported. New clients send this field; old clients
                         # must retain the historical omit-on-wire behavior.
                         target.reasoning_effort = ""
+                    if target.provider_type == "siliconflow_free":
+                        from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+                        if target.model not in CHAT_MODELS or any(
+                            (
+                                target.api_key,
+                                target.base_url,
+                                target.auth_mode,
+                                target.api_flavor,
+                                target.http_referer,
+                                target.x_title,
+                            )
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="内置免费实例只支持已授权模型，凭据与地址由安全组件管理。",
+                            )
                     replacement[instance_id] = target
                 cfg.llm.instances = replacement
             if "default_chain" in llm_data:
@@ -22747,6 +22766,10 @@ def create_app(
         if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
             emb = llm_data["embedding"]
             if "provider" in emb:
+                if str(emb["provider"]) != cfg.llm.embedding.provider:
+                    # Credentials never follow a provider switch to a new endpoint.
+                    cfg.llm.embedding.api_key = ""
+                    cfg.llm.embedding.base_url = ""
                 cfg.llm.embedding.provider = str(emb["provider"])
             if "model" in emb:
                 new_model = str(emb["model"])
@@ -22781,6 +22804,21 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        if cfg.llm.embedding.provider == "siliconflow_free":
+            emb_cfg = cfg.llm.embedding
+            if (
+                emb_cfg.model != "BAAI/bge-m3"
+                or emb_cfg.api_key
+                or emb_cfg.base_url
+                or emb_cfg.output_dimensionality != 1024
+                or emb_cfg.multimodal_enabled
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "免费 Embedding 仅支持 BAAI/bge-m3、1024 维文本向量，无需填写 Key 或地址。"
+                    ),
+                )
         # The shared form submits this explicit choice on all four surfaces.
         # Preserve an existing Ollama model/private port; never reuse cloud credentials.
         sponsored_update = llm_data.get("sponsored", {})
@@ -22914,6 +22952,17 @@ def create_app(
         effort_source: Literal["local_advisory", "not_available"] = (
             "local_advisory" if efforts else "not_available"
         )
+        if provider == "siliconflow_free":
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            return ConfigModelDiscoveryResponse(
+                ok=True,
+                instance_id=target_instance_id,
+                provider=provider,
+                models=list(CHAT_MODELS),
+                message="内置免费模型目录，按实例选择。",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
         if provider not in {
             "openai",
             "deepseek",
@@ -23051,7 +23100,11 @@ def create_app(
         provider = ""
         model = ""
         try:
-            registry = build_llm_registry(cfg)
+            registry = (
+                build_llm_registry(cfg, fallback_order=[target_instance])
+                if is_instance and target_instance
+                else build_llm_registry(cfg)
+            )
             if not is_chain and not is_instance and not is_fallback and not target_instance:
                 target_instance = str(getattr(registry, "default_provider", "") or "")
             if is_instance and not target_instance:
@@ -25530,7 +25583,7 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
-                allow_sponsored_live_apply=(
+                allow_llm_instance_live_apply=(
                     not pending_credential_writes and "tailnet" not in update
                 ),
             )

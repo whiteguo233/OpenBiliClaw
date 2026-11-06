@@ -63,7 +63,7 @@ def _probe_base_config() -> Config:
     )
 
 
-@pytest.mark.parametrize("kind", ["llm", "embedding"])
+@pytest.mark.parametrize("kind", ["llm_instance", "embedding"])
 def test_config_probe_preserves_explicit_target_when_sponsor_is_enabled(
     kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -84,7 +84,7 @@ def test_config_probe_preserves_explicit_target_when_sponsor_is_enabled(
 
         async def complete_provider(self, *args: Any, **kwargs: Any) -> LLMResponse:
             assert sponsored_bypassed()
-            calls.append("llm")
+            calls.append("llm_instance")
             return LLMResponse(content="OK", provider="openai", model="gpt-old")
 
     class ProbeEmbedding:
@@ -93,12 +93,15 @@ def test_config_probe_preserves_explicit_target_when_sponsor_is_enabled(
             calls.append("embedding")
             return True
 
-    def build_chat(cfg: Config) -> ProbeRegistry:
-        assert cfg.llm.sponsored.enabled and sponsored_bypassed()
+    def build_chat(cfg: Config, **kwargs: Any) -> ProbeRegistry:
+        assert not cfg.llm.sponsored.enabled and sponsored_bypassed()
+        assert cfg.llm.default_chain[0] == "siliconflow-free"
+        assert kwargs["fallback_order"] == ["openai"]
         return ProbeRegistry()
 
     def build_embedding(cfg: Config, registry: Any) -> ProbeEmbedding:
-        assert cfg.llm.sponsored.enabled and sponsored_bypassed()
+        assert not cfg.llm.sponsored.enabled and sponsored_bypassed()
+        assert cfg.llm.embedding.provider == "openai"
         return ProbeEmbedding()
 
     monkeypatch.setattr("openbiliclaw.llm.registry.build_llm_registry", build_chat)
@@ -108,7 +111,22 @@ def test_config_probe_preserves_explicit_target_when_sponsor_is_enabled(
     client, path = _client_for_config(monkeypatch, tmp_path, cfg)
     before = path.read_bytes()
     try:
-        response = client.post("/api/config/probe-service", json={"kind": kind, "config": {}})
+        response = client.post(
+            "/api/config/probe-service",
+            json={
+                "kind": kind,
+                "instance_id": "openai" if kind == "llm_instance" else "",
+                "config": {
+                    "llm": {
+                        "embedding": {
+                            "provider": "openai",
+                            "api_key": "test-embedding-key",
+                            "model": "text-embedding-3-small",
+                        }
+                    }
+                },
+            },
+        )
         assert response.status_code == 200 and response.json()["ok"] is True
         assert calls == [kind] and path.read_bytes() == before
         assert not sponsored_bypassed()

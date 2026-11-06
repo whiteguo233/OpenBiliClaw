@@ -281,7 +281,8 @@ async def test_hot_model_selection_changes_next_request_but_keeps_embedding_spac
 async def test_default_free_scheme_cannot_charge_a_registered_user_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from openbiliclaw.llm import sponsored_router
+    from openbiliclaw.llm import sponsored_adapter
+    from openbiliclaw.llm.base import LLMFallbackError
 
     class Paid(LLMProvider):
         @property
@@ -298,9 +299,9 @@ async def test_default_free_scheme_cannot_charge_a_registered_user_provider(
     cfg = Config()
     cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=shlex.join(COMMAND))
     registry = build_llm_registry(cfg, provider_overrides={"openai": Paid()})
-    assert registry._fallback_order() == ["sponsored"]
-    monkeypatch.setattr(sponsored_router, "shared_sponsored_provider", lambda: Down())
-    with pytest.raises(SponsoredUnavailableError):
+    assert registry._fallback_order() == ["siliconflow-free", "siliconflow-free-backup"]
+    monkeypatch.setattr(sponsored_adapter, "shared_sponsored_provider", lambda **kwargs: Down())
+    with pytest.raises(LLMFallbackError):
         await registry.complete(MESSAGES)
 
 

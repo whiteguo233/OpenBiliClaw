@@ -70,14 +70,6 @@ _LIVE_AGENT_CONFIG_FIELDS = frozenset(
         "task_max_steps",
     }
 )
-_LIVE_SPONSORED_CONFIG_FIELDS = frozenset(
-    {
-        "model",
-        "fallback_to_other_free_model",
-        "notify_on_fallback",
-        "request_timeout_seconds",
-    }
-)
 
 
 class _BackgroundTaskHost(Protocol):
@@ -1157,30 +1149,57 @@ class RuntimeContext:
             payload.get("worker_mode"),
         )
 
-    def try_apply_sponsored_config(self, new_config: Config) -> bool:
-        """Publish free-model routing choices without draining mutation owners.
+    def try_apply_llm_instance_config(self, new_config: Config) -> bool:
+        """Swap a free instance's model without interrupting active learning.
 
-        In-flight requests retain their immutable provider/model snapshot. Every
-        later request resolves the new selection; embedding space stays BGE-M3.
-        Enabling/disabling the runtime or changing any other setting rebuilds.
+        The instance ID, chains, credentials and embedding space stay fixed.
+        Existing requests own their old adapter; subsequent calls resolve the
+        replacement through the same registry. Other edits require rebuilding.
         """
         from openbiliclaw.config import Config
-        from openbiliclaw.sponsored_runtime_state import install_sponsored_settings
+        from openbiliclaw.llm.base import LLMRegistry
+        from openbiliclaw.llm.sponsored_adapter import SponsoredChatAdapter
 
         current = self.config
-        if self.degraded or not isinstance(current, Config) or not isinstance(new_config, Config):
+        registry = self.llm_registry
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or not isinstance(registry, LLMRegistry)
+            or not current.llm.instance_routing
+            or not new_config.llm.instance_routing
+        ):
             return False
         before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
         after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
-        if not before.llm.sponsored.enabled or not after.llm.sponsored.enabled:
+        if before.llm.instances.keys() != after.llm.instances.keys():
             return False
-        expected = replace(
-            before.llm.sponsored,
-            **{name: getattr(after.llm.sponsored, name) for name in _LIVE_SPONSORED_CONFIG_FIELDS},
+        expected = dict(before.llm.instances)
+        replacements = {}
+        for instance_id, instance in before.llm.instances.items():
+            updated = after.llm.instances[instance_id]
+            if instance == updated:
+                continue
+            if instance.provider_type != "siliconflow_free" or not instance.enabled:
+                return False
+            expected[instance_id] = replace(instance, model=updated.model)
+            replacements[instance_id] = SponsoredChatAdapter(
+                model=updated.model, settings=after.llm.sponsored
+            )
+        expected_llm = replace(
+            before.llm,
+            instances=expected,
+            # Loading native routes projects these non-authoritative legacy aliases.
+            default_provider=after.llm.default_provider,
+            fallback_provider=after.llm.fallback_provider,
         )
-        if replace(before, llm=replace(before.llm, sponsored=expected)) != after:
+        if not replacements or replace(before, llm=expected_llm) != after:
             return False
-        install_sponsored_settings(after.llm.sponsored, data_path=after.data_path)
+        # Publish only after every replacement has validated. Shared SDK pools
+        # retain in-flight work and are closed by the ordinary service lifecycle.
+        for instance_id, provider in replacements.items():
+            registry.register(provider, name=instance_id, provider_type="siliconflow_free")
         self.config = new_config
         if self.agent_tool_context is not None:
             self.agent_tool_context.config = new_config

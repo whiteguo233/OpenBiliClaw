@@ -4002,11 +4002,11 @@ class SoulEngine:
 
     def _profile_rebuild_history(self) -> list[dict[str, Any]]:
         """Retain original free-profile evidence instead of erasing it on rebuild."""
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
         from .event_provenance import event_metadata
 
-        if not sponsored_enabled():
+        if not uses_sponsored_route(self._llm_service, "soul.profile_build"):
             return []
         return [
             {**row, "metadata": event_metadata(row)} for row in self._memory.query_events(limit=512)

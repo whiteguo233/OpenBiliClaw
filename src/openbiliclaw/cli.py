@@ -2533,6 +2533,14 @@ def _save_embedding_config(
     from openbiliclaw.config import load_config_with_diagnostics, save_config
 
     config, diagnostics = load_config_with_diagnostics()
+    if config.llm.embedding.provider != provider:
+        config.llm.embedding.api_key = ""
+        config.llm.embedding.base_url = ""
+    if provider == "siliconflow_free":
+        config.llm.embedding.output_dimensionality = 1024
+        config.llm.embedding.multimodal_enabled = False
+        config.llm.embedding.fallback_enabled = False
+        config.llm.embedding.fallback_provider = ""
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
     if config.llm.sponsored.enabled and provider == "ollama":
@@ -2964,9 +2972,8 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
 def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool = False) -> None:
     """Phase 3 — embedding service (v0.3.20+ "有默认值的取舍提问").
 
-    Default = 1 (本地 Ollama bge-m3). Mirrors the question shape used by
-    docs/agent-install.md: each option carries a tradeoff explanation,
-    "不确定就回 1". Two advanced branches (custom OpenAI-compatible
+    Default = free (硅基流动 BGE-M3), with local Ollama as option 1.
+    Each option carries a tradeoff explanation. Two advanced branches (custom OpenAI-compatible
     endpoint / pin a different provider) are kept but de-emphasized so
     普通用户 don't get derailed.
 
@@ -2992,9 +2999,10 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         '"这条和你之前喜欢的那条是不是同一类"。和聊天 LLM 是分开的。[/dim]\n'
     )
     options = (
+        ("free", "硅基流动（免费 · BGE-M3）", "无需 Key、无需下载，独立于 LLM 实例"),
         (
             "1",
-            "本地 Ollama bge-m3 ★默认推荐",
+            "本地 Ollama bge-m3",
             "免费 / 离线 / 不消耗主 LLM 配额(自动装 Ollama + 拉 568MB 模型)",
         ),
         (
@@ -3019,11 +3027,26 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         table.add_row(label, name, desc)
     console.print(table)
     console.print(
-        "[dim]Tip:不确定就选 1。日常推荐质量已经够用且不消耗主 LLM 配额。"
-        "想再准一点选 2(Gemini),需要去 https://aistudio.google.com/apikey 拿 Key。[/dim]"
+        "[dim]推荐 free：硅基流动 BGE-M3，无需 Key 或本地下载。"
+        "希望本地运行选 1；已有其他服务可以选择对应 Provider。[/dim]"
     )
 
-    choice = typer.prompt("请选择 embedding 方案", default="1").strip()
+    choice = typer.prompt("请选择 embedding 方案", default="free").strip()
+
+    if choice in {"free", "siliconflow_free"}:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        settings = load_config().llm.sponsored
+        try:
+            if not settings.runtime_path and not settings.relay_url:
+                ensure_runtime()
+        except BundleError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            return
+        _save_embedding_config(provider="siliconflow_free", model="BAAI/bge-m3")
+        console.print("[green]已选择硅基流动免费 BGE-M3 Embedding。[/green]")
+        return
 
     if choice in {"0", "skip", "跳过"}:
         console.print("[dim]已跳过 embedding 配置,不修改当前设置。[/dim]")
@@ -3236,7 +3259,7 @@ def _interactive_runtime_config_setup() -> None:
       4) Optional per-module overrides (advanced, default skip).
     """
     _print_page_title("初始化前配置引导", "选 LLM、配 Embedding、填 B 站 Cookie")
-    console.print("[cyan]free.[/cyan] 硅基流动免费方案（默认，无需 Key，含 BGE-M3 文本向量）")
+    console.print("[cyan]free.[/cyan] 硅基流动（免费 · 预置 LLM 实例，无需 Key）")
     _print_provider_table()
 
     while True:
@@ -3265,14 +3288,59 @@ def _interactive_runtime_config_setup() -> None:
             except BundleError as exc:
                 console.print(f"[yellow]{exc}[/yellow]")
                 continue
-            cfg.llm.sponsored = replace(
-                cfg.llm.sponsored,
-                enabled=True,
-                model=DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL,
-                embedding_mode="cloud" if embedding_choice == "1" else "local",
-                fallback_to_other_free_model=True,
-                fallback_to_user_provider=False,
+            from openbiliclaw.config import (
+                builtin_siliconflow_instance,
+                effective_llm_instances,
+                effective_llm_routes,
             )
+
+            selected_model = DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL
+            instances = effective_llm_instances(cfg.llm)
+            instance_id = next(
+                (
+                    key
+                    for key, item in instances.items()
+                    if item.provider_type == "siliconflow_free"
+                ),
+                "siliconflow-free",
+            )
+            while (
+                instance_id in instances
+                and instances[instance_id].provider_type != "siliconflow_free"
+            ):
+                instance_id += "-preset"
+            instances[instance_id] = builtin_siliconflow_instance(selected_model)
+            for bucket, route in effective_llm_routes(cfg.llm).items():
+                setattr(cfg.llm, bucket, route)
+            cfg.llm.instances = instances
+            cfg.llm.default_chain = [instance_id]
+            cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 1
+            protected_ids = {
+                item
+                for route in effective_llm_routes(cfg.llm).values()
+                if not route.inherit
+                for item in route.chain
+            }
+            for issue in _diagnostics.issues:
+                parts = issue.field.split(".")
+                if issue.severity != "blocking" or len(parts) < 2 or parts[0] != "llm":
+                    continue
+                blocked_id = parts[2] if len(parts) > 3 and parts[1] == "instances" else parts[1]
+                if blocked_id in instances and blocked_id not in {instance_id, *protected_ids}:
+                    instances[blocked_id].enabled = False
+            if embedding_choice == "1":
+                cfg.llm.embedding = replace(
+                    cfg.llm.embedding,
+                    provider="siliconflow_free",
+                    model="BAAI/bge-m3",
+                    api_key="",
+                    base_url="",
+                    output_dimensionality=1024,
+                    fallback_enabled=False,
+                    fallback_provider="",
+                    multimodal_enabled=False,
+                )
             if embedding_choice == "2":
                 from openbiliclaw.llm.sponsored_embedding import select_local_embedding
 
@@ -3294,7 +3362,7 @@ def _interactive_runtime_config_setup() -> None:
                 "硅基流动 BGE-M3" if embedding_choice == "1" else f"本地 {cfg.llm.embedding.model}"
             )
             console.print(
-                f"[green]已选择 {cfg.llm.sponsored.model} + {embedding_label}；"
+                f"[green]已选择 LLM 实例 {selected_model} + Embedding {embedding_label}；"
                 "初始化将验证真实连接。[/green]"
             )
             return
@@ -18298,20 +18366,10 @@ def config_show() -> None:
         "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
     )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
-    if cfg.llm.sponsored.enabled:
-        from openbiliclaw.llm.sponsored_profiles import CONTEXT_WINDOWS
+    from openbiliclaw.sponsored_status import sponsored_status
 
-        window = CONTEXT_WINDOWS.get(cfg.llm.sponsored.model, 0)
-        embedding_label = (
-            "硅基流动 BGE-M3"
-            if cfg.llm.sponsored.uses_cloud_embedding
-            else f"本地 {cfg.llm.embedding.model}"
-        )
-        llm_value = f"免费 · {cfg.llm.sponsored.model} ({window} tokens) + {embedding_label}"
-        from openbiliclaw.sponsored_status import sponsored_status
-
-        for notice in sponsored_status(cfg)["notices"]:
-            console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
+    for notice in sponsored_status(cfg)["notices"]:
+        console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
     from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
 
     try:

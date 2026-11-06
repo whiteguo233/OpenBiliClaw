@@ -1,5 +1,7 @@
 # 📖 OpenBiliClaw 文档导航
 
+Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/2026-11-06-unified-providers.md)。
+
 - [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md)：三端可切换的文本、受控分类模式；不隐式回退 LLM，真实中文质量未认证。
 
 > 本页面是项目文档的一站式入口。用户看第一区块就够了；第二区块起面向开发者和贡献者。

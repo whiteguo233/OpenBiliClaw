@@ -301,7 +301,7 @@ class ProfileBuilder:
         awareness_notes: list[dict[str, Any]],
         active_insights: list[dict[str, Any]],
     ) -> SoulProfile:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
         # User confirmation is evidence; model confidence or auto-validation
         # alone is not. Preserve this distinction on history-free rebuilds.
@@ -314,7 +314,7 @@ class ProfileBuilder:
         ]
         history_summary = {**history_summary, "confirmed_self_descriptions": confirmed}
         personal_evidence = bool(history_summary.get("authored_expressions") or confirmed)
-        source_grounding = sponsored_enabled()
+        source_grounding = uses_sponsored_route(self.registry, "soul.profile_build")
         passive_grounding = source_grounding and not personal_evidence
         raw_mix = preference.get("source_platform_mix") if isinstance(preference, dict) else None
         source_mix = raw_mix if isinstance(raw_mix, dict) and raw_mix else None

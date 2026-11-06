@@ -338,6 +338,7 @@ def test_cli_free_setup_saves_embedding_choice(
     from openbiliclaw import cli
 
     cfg = config_at(tmp_path)
+    cfg.llm.sponsored = replace(cfg.llm.sponsored, embedding_mode="local")
     cfg.llm.embedding.provider = "ollama"
     cfg.llm.embedding.model = "my-existing-local-model"
     cfg.llm.embedding.base_url = "http://127.0.0.1:11435/v1"
@@ -354,8 +355,10 @@ def test_cli_free_setup_saves_embedding_choice(
     monkeypatch.setattr(cli, "_ollama_has_model", has_model)
     cli._interactive_runtime_config_setup()
     saved = load_config(tmp_path / "config.toml", consult_environment=False)
-    assert saved.llm.sponsored.model == "Qwen/Qwen3.5-4B"
-    assert saved.llm.sponsored.embedding_mode == mode
+    selected = saved.llm.instances[saved.llm.default_chain[0]]
+    assert selected.model == "Qwen/Qwen3.5-4B"
+    assert not saved.llm.sponsored.enabled
+    assert saved.llm.embedding.provider == ("siliconflow_free" if mode == "cloud" else "ollama")
     assert probed == (
         [] if mode == "cloud" else [("my-existing-local-model", "http://127.0.0.1:11435")]
     )

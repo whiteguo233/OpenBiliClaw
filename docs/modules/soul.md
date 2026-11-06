@@ -1,5 +1,13 @@
 # 灵魂引擎
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 按模块链使用免费小模型约束 | ProfileBuilder、AwarenessAnalyzer、Consolidator 与历史重建经 `uses_sponsored_route(service, caller)` 判断实际路由，保留小批量和事实落地校验；同一安装中的自有 Soul 模块链不受免费默认链影响。公开业务调用接口不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 免费觉察引用纠错（2026-11-06）
 
 | 已实现能力 | 合同 |

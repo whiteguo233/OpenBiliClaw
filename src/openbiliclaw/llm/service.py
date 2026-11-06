@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
@@ -694,20 +694,23 @@ class LLMService:
             )
 
         async def _do_llm_call() -> LLMResponse:
-            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
 
-            response = await try_sponsored_completion(
-                cast("Any", messages),
-                provider=self.sponsored_provider,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=json_mode,
-                reasoning_effort=effective_reasoning_effort,
-                caller=caller,
-            )
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    cast("Any", messages),
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    reasoning_effort=effective_reasoning_effort,
+                    caller=caller,
+                )
             if response is not None:
                 return response
-            with bypass_sponsored():
+            with sponsored_call(caller):
                 return await _do_user_call()
 
         try:
@@ -799,10 +802,18 @@ class LLMService:
                 model=model,
             )
 
-        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+        async def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_adapter import stream_in_sponsored_call
             from .sponsored_router import stream_project_completion
 
-            return stream_project_completion(
+            if self.sponsored_provider is None:
+                async with aclosing(
+                    stream_in_sponsored_call(_route_user_stream(), caller)
+                ) as stream:
+                    async for chunk in stream:
+                        yield chunk
+                return
+            async for chunk in stream_project_completion(
                 cast("Any", messages),
                 provider=self.sponsored_provider,
                 fallback=_route_user_stream,
@@ -811,7 +822,8 @@ class LLMService:
                 caller=caller,
                 json_mode=json_mode,
                 reasoning_effort=effective_reasoning_effort,
-            )
+            ):
+                yield chunk
 
         terminal: LLMResponse | None = None
         try:
@@ -886,6 +898,28 @@ class LLMService:
         feature keeps working; a contract mismatch fails loudly because it
         means shipped prompt bytes and the signed policy disagree.
         """
+
+        if self.sponsored_provider is None:
+            from .sponsored_adapter import sponsored_call
+
+            with sponsored_call(
+                caller,
+                task={
+                    "caller": caller,
+                    "contract_version": contract_version,
+                    "user_payload": payload,
+                    "user_text": user_text,
+                },
+            ):
+                return await self.complete_structured_task(
+                    system_instruction=fallback_system_instruction,
+                    user_input=fallback_user_input,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    caller=caller,
+                    reasoning_effort=reasoning_effort,
+                    inject_core_memory=inject_core_memory,
+                )
 
         from .sponsored_tasks import DEFAULT_SPONSORED_REGISTRY
 
@@ -1001,12 +1035,8 @@ class LLMService:
 
     def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
         """Best-effort check for OpenAI-compatible vision-capable routes."""
-        from .sponsored_router import sponsored_enabled
-
         if self.sponsored_provider is not None:
             return bool(getattr(self.sponsored_provider, "supports_image_input", False))
-        if sponsored_enabled():
-            return True
         routed_chain = self._resolve_module_chain(caller)
         bucket = self._route_bucket_for_caller(caller)
         module_route = self.module_overrides.get(bucket) if bucket is not None else None
@@ -1151,20 +1181,23 @@ class LLMService:
             )
 
         async def _do_llm_call() -> LLMResponse:
-            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
 
-            response = await try_sponsored_completion(
-                cast("Any", messages),
-                provider=self.sponsored_provider,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=True,
-                reasoning_effort=effective_reasoning_effort,
-                caller=caller,
-            )
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    cast("Any", messages),
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=True,
+                    reasoning_effort=effective_reasoning_effort,
+                    caller=caller,
+                )
             if response is not None:
                 return response
-            with bypass_sponsored():
+            with sponsored_call(caller):
                 return await _do_user_call()
 
         try:
@@ -1324,9 +1357,7 @@ class LLMService:
 
     def _route_supports_native_tools(self, caller: str) -> bool:
         """Return whether the first provider of the resolved route has native FC."""
-        from .sponsored_router import sponsored_enabled
-
-        if self.sponsored_provider is not None or sponsored_enabled():
+        if self.sponsored_provider is not None:
             return True
         routed_chain = self._resolve_module_chain(caller)
         if routed_chain is not None:
@@ -1382,20 +1413,23 @@ class LLMService:
             )
 
         async def _do_llm_call() -> LLMResponse:
-            from .sponsored_router import bypass_sponsored, try_sponsored_completion
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
 
-            response = await try_sponsored_completion(
-                messages,
-                tools=tools,
-                provider=self.sponsored_provider,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort,
-                caller=caller,
-            )
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    messages,
+                    tools=tools,
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    caller=caller,
+                )
             if response is not None:
                 return response
-            with bypass_sponsored():
+            with sponsored_call(caller):
                 return await _do_user_call()
 
         try:
@@ -1586,10 +1620,18 @@ class LLMService:
                 model=model,
             )
 
-        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+        async def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_adapter import stream_in_sponsored_call
             from .sponsored_router import stream_project_completion
 
-            return stream_project_completion(
+            if self.sponsored_provider is None:
+                async with aclosing(
+                    stream_in_sponsored_call(_route_user_stream(), caller)
+                ) as stream:
+                    async for chunk in stream:
+                        yield chunk
+                return
+            async for chunk in stream_project_completion(
                 cast("Any", messages),
                 provider=self.sponsored_provider,
                 fallback=_route_user_stream,
@@ -1598,7 +1640,8 @@ class LLMService:
                 caller=caller,
                 tools=tools,
                 reasoning_effort=reasoning_effort,
-            )
+            ):
+                yield chunk
 
         try:
             async with self._provider_slot(
