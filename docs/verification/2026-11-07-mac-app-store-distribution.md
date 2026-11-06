@@ -1,5 +1,7 @@
 # OpenBiliClaw 商店发行归档验证（2026-11-07）
 
+当前候选为 build 3：已上传并选入版本草稿，未提交审核。下方保留 build 2 历史，最新进展见文末。
+
 代码提交：`00bb7c3cadd2833adacd3ce135a2ee10629809b5`。商店营销版本为 `1.0.0`、build `2`；共享后端仍为 `0.3.233`。本轮只修改原生产品名称与对应构建、冒烟入口，复用上一轮同源冻结后端。
 
 ## 产品与发行包
@@ -52,6 +54,17 @@ App Store Connect 构建处理、构建选择、隐私标签发布和最终审�
 
 ## build 3 许可证补漏
 
-冻结 TOC 核对还发现 `pystray 0.19.5`。提交 `6c5e2b3b` 将其纳入签名前的许可证记录，并保留 `COPYING.LGPL` 等补充文本；新增回归测试验证 LGPL 补充不会遗漏。相关打包测试 130 passed / 2 skipped，Ruff 通过。`1.0.0 (3)` 发行归档已生成并通过深度严格验签，实际资源含三个依赖及 pystray 的 GPL/LGPL 两份正文，Xcode 正在上传；冒烟检查同步改为三项及 LGPL 补充。
+冻结 TOC 核对还发现 `pystray 0.19.5`。提交 `6c5e2b3b` 将其纳入签名前的许可证记录，并保留 `COPYING.LGPL` 等补充文本；新增回归测试验证 LGPL 补充不会遗漏。相关打包测试 130 passed / 2 skipped，Ruff 通过。`1.0.0 (3)` 发行归档已生成并通过深度严格验签，实际资源含三个依赖及 pystray 的 GPL/LGPL 两份正文，Xcode 已完成上传；冒烟检查同步改为三项及 LGPL 补充。
 
 隐私标签已经通过后台发布：其他用户内容、浏览/搜索历史、用户与设备标识及产品交互，按 App 功能和内容个性化使用，关联身份，不用于广告追踪。第三方内容版权声明仍等待发行方确认。Apple 的标准加密文稿问卷在法国发行选项下要求法国加密声明批准文件；账户 DSA 身份也未设置。法国发行范围与 DSA 身份已询问发行方，未擅自代选。
+
+### build 3 最终上传与草稿状态
+
+- 实际上传安装包：271,693,812 字节；SHA-256 `aa40f733c334c1d4a0b1b3e1810aadd5ae4db742e42482c45403325a853bca7b`，Installer 签名复验通过，版本号保持 `1.0.0 (3)`。Xcode 上传完成，仍为同样的 Intel-only 与两个 PyObjC 扩展缺少 dSYM 的警告。
+- App Store Connect 已处理 build 3，并选入 1.0.0 版本草稿保存；状态仍为「缺少出口合规证明」。未发出审核提交。
+- 审核联系人与现有手机 App 完全一致，备注 883 字符、无需登录；重新打开页面核验后确认均已保存。隐私标签已发布；175 个地区的已保存价格逐项读取，全部为 0.00。法国/欧盟供应范围仍等待发行方选择，未按默认建议擅自缩减。
+- 新签名 Intel QA App 使用端口 18703 的独立配置，9 项真实 HTTP、同机 LAN IP、私有 Ollama、商店更新边界、三个许可记录及 LGPL 补充、原生布局和 Tailnet 自检通过；累计记录的 13 个子进程均退出。没有新增跨机 Tailnet/公网验收。
+- [Apple Silicon 同轮 QA](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42285317800) 在代码提交 `ee2989c6` 通过，包含真实 HTTP、双启动、IPv6 和退出清理；它是 ad-hoc QA，不能当作已上传的 ARM 发行包。此次上传仍为 Intel 包。
+- 第一方 `6c5e2b3b` 源码归档与三项已识别 copyleft 上游源码已备份；PyPI sdist 校验发布哈希，pystray 0.19.5 无 sdist，改从上游版本 tag 归档，13 个 Python 文件与已安装 wheel 一致。材料不等于完整对应源码提供或商店许可兼容结论。初步 TOC 清点映射到 82 个 Python distribution；80 个在安装环境中含许可/声明文件，qrcode-terminal 与 rdt-cli 的已检查 wheel/sdist 未找到独立许可文件（元数据分别声明 MIT、Apache-2.0）。这个清点不表示 80 项文本已全部写入 App，完整分发核对仍待完成。
+
+本轮持久材料：`2026-11-07/OpenBiliClaw-1.0.0-3-evidence/`、`OpenBiliClaw-1.0.0-3-Xcode-upload/` 和 `OpenBiliClaw-1.0.0-3-source-materials/`。发布仍需发行方的内容使用权声明、法国发行/加密材料选择、欧盟 DSA 身份，以及上述分发许可核对。

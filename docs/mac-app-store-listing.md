@@ -1,11 +1,11 @@
 # Mac App Store 文案草稿
 
-此文件记录商店文案与实际填写进度；名称和中文版本资料已保存，尚未提交审核。年龄分级和隐私声明以后台实际保存结果为准。
+此文件记录商店文案与实际填写进度；名称、中文版本资料、截图、免费价格、年龄分级和隐私标签已保存，build 3 已选入草稿；尚未提交审核。年龄分级和隐私声明以后台实际保存结果为准。
 
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
 - App Store Connect 记录：`6831698888`
 - 商店名称：OpenBiliClaw Hub（已通过后台名称校验并保存）；安装后的 App 仍为 OpenBiliClaw。
-- 初版：1.0.0，下一候选 build 3（补齐许可证文本，build 2 已上传）；类别：Productivity
+- 初版：1.0.0，当前候选 build 3（已上传并选入版本草稿，替代 build 2）；类别：Productivity
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 中文副标题：你的 AI 内容中枢
 - English subtitle: Your local AI discovery server
