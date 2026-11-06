@@ -42,8 +42,12 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
     page.route("**/api/config*", config_api)
     page.goto(f"{base_url}/m/#/recommend")
     page.get_by_role("button", name="打开保存与候选评估设置").click()
+    assert page.locator("#mobile-eval-scorer-hint").inner_text() == (
+        "选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。"
+    )
+    assert not page.get_by_text("Jev 替换完整候选评估", exact=False).is_visible()
     root = page.locator("#mobileJevConnectionSettings")
-    root.get_by_label("启用 Jev 服务连接", exact=True).check()
+    root.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
     root.get_by_label("Token", exact=True).fill("synthetic-mobile-token")
     root.get_by_label("接口地址类型", exact=True).select_option("base")
     root.get_by_label("API Base URL", exact=True).fill("https://jev.example.test")

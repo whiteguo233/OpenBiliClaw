@@ -15,6 +15,42 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_connection_is_not_an_evaluator_switch_and_details_are_optional(
+    chromium_page: Page,
+) -> None:
+    page = chromium_page
+    page.set_content(
+        '<select id="evaluator"><option value="llm">Agent</option>'
+        '<option value="jev">Jev</option></select><div id="connection"></div>'
+    )
+    page.add_script_tag(path=str(ROOT / "src/openbiliclaw/web/shared/jev-settings.js"))
+    page.evaluate("""() => {
+      window.form = OpenBiliClawJevSettings.mount(
+        document.querySelector('#connection'), document.querySelector('#evaluator'));
+      form.load({enabled:false, api_key_configured:true, credential_source:'config',
+        base_url_supported:true, endpoint_url:'https://relay.example/v1/systemone',
+        model:'jev-1.14.0'});
+    }""")
+    assert page.locator('#evaluator option[value="jev"]').is_disabled()
+    page.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
+    assert not page.locator('#evaluator option[value="jev"]').is_disabled()
+    assert page.locator("#evaluator").input_value() == "llm"
+    collected = page.evaluate("form.collect()")
+    assert collected["decision"]["providers"]["jev"]["enabled"] is True
+    assert "discovery" not in collected
+    assert "llm" not in collected
+    assert page.get_by_text("仅支持 Jev 原生协议；画像和候选内容会发送至所填服务。").is_visible()
+    technical = page.get_by_text("URL 必须使用 Jev 原生协议", exact=False)
+    assert not technical.is_visible()
+    page.get_by_text("地址与 Token 说明", exact=True).focus()
+    page.keyboard.press("Enter")
+    assert technical.is_visible()
+    page.keyboard.press("Enter")
+    assert not technical.is_visible()
+    page.locator("#evaluator").select_option("jev")
+    assert page.locator("#evaluator").input_value() == "jev"
+
+
 def test_probe_uses_draft_and_discards_success_after_edit(chromium_page: Page) -> None:
     page = chromium_page
     page.set_content('<div id="connection"></div>')

@@ -252,6 +252,8 @@ def test_jev_api_rejects_without_persisting(monkeypatch, tmp_path: Path, conflic
 
 
 def test_jev_evaluator_three_ui_surfaces_have_honest_choice_and_readiness() -> None:
+    shared_form = (ROOT / "src/openbiliclaw/web/shared/jev-settings.js").read_text()
+    assert "api_key_env" in shared_form
     for html_path, js_path in (
         (
             "src/openbiliclaw/web/desktop/index.html",
@@ -266,5 +268,6 @@ def test_jev_evaluator_three_ui_surfaces_have_honest_choice_and_readiness() -> N
         for phrase in ("不隐式调用 LLM", "新 IP 保留未知", "不支持封面图片", "字节预算"):
             assert phrase in html
         assert "jev_provider" in js
-        assert "api_key_env" in js
+        assert "jevProvider.reason" in js
+        assert "OpenBiliClawJevSettings.mount" in js
         assert "eval_scorer:" in js

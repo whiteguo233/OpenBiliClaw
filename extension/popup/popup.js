@@ -11239,7 +11239,7 @@ function bindSettings() {
       .load(jevProvider, cfg.discovery?.jev_evaluation || {});
     const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
     if (jevStatus) {
-      jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+      jevStatus.textContent = jevProvider.reason || "请在下方配置连接。";
     }
     setVal("cfgKeywordGenerationMode", cfg.discovery?.keyword_generation_mode || "hybrid");
     const visualProfile = document.getElementById("cfgVisualProfileEnabled");

@@ -125,7 +125,7 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.get_by_role("button", name="设置", exact=True).click()
         page.get_by_role("tab", name="高级功能").click()
         form = page.locator("#jevConnectionSettings")
-        form.get_by_label("启用 Jev 服务连接", exact=True).check()
+        form.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
         form.get_by_label("接口地址类型", exact=True).select_option(address_mode)
         form.locator('[data-jev="endpoint_url"]').fill(
             backend.url.removesuffix("/v1/systemone") if address_mode == "base" else backend.url
@@ -135,7 +135,7 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.locator("#evalScorer").select_option("jev")
         # Match the fixture's 12KB ceiling explicitly through the actual form;
         # do not rely on the removed implicit 25% byte-budget reservation.
-        form.locator("summary").click()
+        form.get_by_text("上下文与请求预算", exact=True).click()
         form.get_by_label("手动设置所选模型的上下文上限", exact=True).check()
         form.get_by_label("总请求 token 上限", exact=True).fill("64000")
         form.get_by_label("state＋单题 token 上限", exact=True).fill("12000")

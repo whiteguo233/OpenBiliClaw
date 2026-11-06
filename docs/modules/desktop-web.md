@@ -37,6 +37,14 @@
 
 ## 完整候选评估器选项
 
+设置主说明收敛为一句：“选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。”
+服务连接开关直接标注“不切换评估器”；评估模式和地址 / Token 技术说明默认折叠，数据发送与测试计费提醒仍可见。
+桌面、移动 Web 和插件保持一致；仅调整文案与信息层级，公开 API、配置字段、调用路由及 CLI 均不变。
+回归入口：`tests/test_jev_connection_form.py` 检查只启用连接仍保留原评估器、技术说明默认折叠且可键盘展开；
+`test_desktop_web_settings_save_e2e.py`、`test_jev_settings_popup.py`、`test_jev_settings_mobile.py`
+检查三端一句话说明及配置保存。手工复核路径为“设置 → 高级功能 → 候选评分模式”，展开两类说明后仍可查看完整限制。
+测试修正、间歇性通用刷新失败及原分支对照见[本轮验证记录](../verification/2026-11-07-jev-settings-copy.md)。
+
 三端共用 Jev 表单增加“测试连接与评估”，以当前草稿调用 `POST /api/config/probe-service`
 的 `kind="jev"`。1 条合成内容完整 8 题、单次 HTTP 尝试；不加载真实画像、不写配置，
 费用提示在按钮旁。请求中禁用重复点击，编辑后旧结果失效；具体合同见 [API](api.md#jev-草稿完整评估探测2026-11-06)。

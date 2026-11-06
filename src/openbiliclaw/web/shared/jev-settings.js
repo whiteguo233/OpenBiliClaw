@@ -8,7 +8,7 @@
     root.classList.add("jev-settings");
     root.innerHTML = `
       <h4>Jev 连接配置</h4>
-      <label class="jev-toggle"><input data-jev="enabled" type="checkbox">启用 Jev 服务连接</label>
+      <label class="jev-toggle"><input data-jev="enabled" type="checkbox">启用 Jev 服务连接（不切换评估器）</label>
       <div class="jev-grid">
         <label>接口地址类型<select data-jev="address_mode" aria-label="接口地址类型"><option value="base">Base URL</option><option value="endpoint">完整接口地址</option></select></label>
         <label class="jev-wide"><span data-jev="url-label">API URL（完整接口地址）</span><input data-jev="endpoint_url" type="url" spellcheck="false" autocomplete="off"></label>
@@ -17,8 +17,11 @@
       </div>
       <label class="jev-toggle"><input data-jev="clear_api_key" type="checkbox">清除本机保存的 Token</label>
       <p class="jev-hint" data-jev="credential-status"></p>
-      <p class="jev-hint">URL 必须使用 Jev 原生协议，不是 Chat Completions；更换 URL 须重新填写 Token。Token 仅保存在后端本机 config.toml，页面不回显、不存浏览器。服务会收到画像和候选内容，请确认目标可信。</p>
-      <p class="jev-hint">Base URL 自动追加 /v1/systemone，已有 /v1 则只追加 /systemone。例如 OpenRouter 填 https://openrouter.ai/api；自定义路径请选择完整接口地址。不限制服务商，不自动换模型。</p>
+      <p class="jev-hint">仅支持 Jev 原生协议；画像和候选内容会发送至所填服务。</p>
+      <details><summary>地址与 Token 说明</summary>
+        <p class="jev-hint">URL 必须使用 Jev 原生协议，不是 Chat Completions；更换 URL 须重新填写 Token。Token 仅保存在后端本机 config.toml，页面不回显、不存浏览器。服务会收到画像和候选内容，请确认目标可信。</p>
+        <p class="jev-hint">Base URL 自动追加 /v1/systemone，已有 /v1 则只追加 /systemone。例如 OpenRouter 填 https://openrouter.ai/api；自定义路径请选择完整接口地址。不限制服务商，不自动换模型。</p>
+      </details>
       <details><summary>上下文与请求预算</summary>
         <label class="jev-toggle"><input data-jev="custom_capacity" type="checkbox">手动设置所选模型的上下文上限</label>
         <p class="jev-hint">已知模型使用登记容量；其它模型需填写服务商确认的双 token 上限，不自动换模型。运行时采用保守字节护栏，并非精确 tokenizer。</p>
@@ -33,7 +36,7 @@
       </details>
       <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>
       <button type="button" data-jev="probe">测试连接与评估</button>
-      <p class="jev-hint">发送 1 条合成测试内容（完整 8 题），可能产生少量费用。使用当前填写的配置，不自动保存。</p>
+      <p class="jev-hint">测试当前填写的配置（完整 8 题），可能产生少量费用，不会保存。</p>
       <p class="jev-hint" data-jev="probe-status" role="status" aria-live="polite"></p>`;
     const field = name => root.querySelector(`[data-jev="${name}"]`);
     for (const input of root.querySelectorAll("input, select")) input.id = `${root.id}-${input.dataset.jev}`;
