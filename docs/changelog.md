@@ -6,6 +6,8 @@
 
 - Mac App Store 候选的桌面显示名称统一为 `OpenBiliClaw`：同步 App 文件名、原生窗口、退出菜单、本地化、商店文案、构建和真实冒烟入口，移除产品名称中的 Backend 后缀；尚未完成上传或提审。
 
+- [商店版 1.0.0 (2) 发行归档验证](verification/2026-11-07-mac-app-store-distribution.md)：Apple Distribution 归档与 Installer 签名导出成功，改名后的 Intel 真实沙盒请求、退出清理及独立 Apple Silicon QA 通过；免费发行、无内购，商店上传与提审状态另行核对。
+
 - 新增独立的 [Mac App Store 后端候选构建](mac-app-store.md)：Xcode 原生宿主、继承沙盒的冻结后端与内置服务、容器数据、显式登录启动和商店更新边界；保留原 DMG。真实签名沙盒请求发现并修复 Uvicorn 信号重放绕过子进程清理的问题。尚未提交 Apple 审核。
 
 - Mac App Store 候选续验：修复配置独立 Ollama 对话模型后重启丢失内置 embedding 服务、原生就绪探测忽略 IPv6 绑定的问题；双启动真实请求验证通过，arm64 CI 增加同一路径，并在退出测试前等待实际原生按钮启用。记录实际 GPL/LGPL 依赖的商店分发许可待核对项，不将 QA 包作为已可提交的发行包。

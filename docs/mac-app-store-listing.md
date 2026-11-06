@@ -3,11 +3,15 @@
 此文件是可审阅的提审材料；没有向 Apple 提交，也没有代填年龄分级或隐私声明。
 
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
+- App Store Connect 记录：`6831698888`
 - App 显示名称：OpenBiliClaw（与桌面 App 一致；商店记录保存仍需通过后台校验）
 - 初版：1.0.0，当前候选 build 2；类别：Productivity
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 中文副标题：在自己的 Mac 上运行 AI 内容发现后端
 - English subtitle: Your local AI discovery server
+- 支持 URL：`https://github.com/whiteguo233/OpenBiliClaw/issues`
+- 隐私政策 URL：`https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/privacy.md`
+- Marketing URL：`https://whiteguo233.github.io/OpenBiliClaw/`
 
 ## 简体中文描述
 
@@ -41,4 +45,4 @@ The signed Python backend and native tools inherit the host's App Sandbox. The b
 
 ## 后台仍需确认
 
-支持 URL、隐私 URL、应用名称可用性、版权主体、分发区域、年龄分级、App Privacy、截图、Apple Silicon 的发行包和审核联系人，均需按真实账号与最终发行结果填写。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式尚待核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。
+上述 URL 沿用项目既有公开入口。应用名称可用性、免费价格、版权主体、分发区域、年龄分级、App Privacy、截图、Apple Silicon 的发行包和审核联系人，均需按真实账号与最终发行结果填写并保存。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式尚待核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。

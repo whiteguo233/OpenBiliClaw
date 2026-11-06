@@ -62,6 +62,7 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 ## 验证与材料
 
 - [真实环境验收记录](verification/2026-11-05-mac-app-store.md)
+- [OpenBiliClaw 1.0.0 (2) 发行归档、签名与改名复测](verification/2026-11-07-mac-app-store-distribution.md)
 - [中英文商店文案与审核备注草稿](mac-app-store-listing.md)
 - `.github/workflows/build-mac-app-store.yml`：只读的 arm64 QA 构建与真实 HTTP 冒烟，不含 Apple 发布凭据，也不上传商店。
 

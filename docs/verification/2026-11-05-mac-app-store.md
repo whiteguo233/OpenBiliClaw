@@ -1,5 +1,7 @@
 # Mac App Store 后端候选实测（2026-11-05）
 
+这是 11 月 5 日的 QA 快照；11 月 7 日已完成改名后的商店发行签名与安装包导出，最新状态见 [1.0.0 (2) 发行归档验证](2026-11-07-mac-app-store-distribution.md)。上传和审核状态仍分别核对。
+
 ## 环境与身份
 
 Intel x86_64 macOS、Xcode 26.5、Python 3.12.12、原生 Ollama 0.40.14 官方运行时。独立 worktree `feat/mac-app-store`。测试使用新 bundle ID `com.openbiliclaw.backend` 的签名 App Sandbox App，不使用手机，不修改用户的登录项或系统 VPN。
