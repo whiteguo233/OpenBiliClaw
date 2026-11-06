@@ -841,7 +841,7 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 ### 免费模型组件安装与更新
 
-当前目录固定 `sponsored-runtime-2026-11-06.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。组件更新TLS依赖、账本秘密文件/DPAPI保护，并兼容Mac旧钥匙串ACL，Core信任公钥、模型、额度和原到期时间不变。最终签名组件通过本机旧账本升级、公开下载/损坏包拒绝与两模型流式+BGE并发实测。正式应用是否已发布须与SDK组件分开判断；详见[安全发行及验收](../testing/2026-11-06-security-metadata.md)。
+上一组件发行目录为 `sponsored-runtime-2026-11-06.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。组件更新TLS依赖、账本秘密文件/DPAPI保护，并兼容Mac旧钥匙串ACL，Core信任公钥、模型、额度和原到期时间不变。最终签名组件通过本机旧账本升级、公开下载/损坏包拒绝与两模型流式+BGE并发实测。正式应用是否已发布须与SDK组件分开判断；详见[安全发行及验收](../testing/2026-11-06-security-metadata.md)。
 
 公开入口：`verify_bundle(directory)` 在执行前检查 Core 固定 Ed25519 公钥、manifest/策略签名、文件hash、平台、兼容版本和任务契约；`install_archive(archive)` 拒绝路径穿越/链接/重复/超大成员，离线 `--check-policy` 成功后原子更新 `.sponsored/active`；`installed_runtime_command()` 只返回已验证组件；`ensure_runtime()` 从固定发行目录获取组件，已匹配manifest不重复下载；`stage_runtime_bundle(destination)` 供Docker与桌面打包使用。
 
@@ -878,3 +878,10 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 公开API仍为 `DurableChatReplyScheduler.schedule/start/close` 与 `DialogueExecutionCoordinator.lease`；调度器本体接口未变，免费错误分类和终止决定在API处理器完成。HTTP订阅断开后执行继续；服务重启后仅尚未开始的pending轮次自动恢复。真实Rust与云端故障验收见[报告](../testing/2026-11-05-sponsored-resilience.md)。
 
 2026-11-05 扩展验收：`scripts/sponsored_process_recovery_acceptance.py --source-root <隔离基线> --root <新目录>` 复制已完成基线，启动并仅终止自身 POSIX 进程组；分别验证已开始轮次停止重放和未开始轮次自动恢复。正式队列 API 不变，支持 macOS/Linux，完整场景与限制见[报告](../testing/2026-11-05-sponsored-comprehensive.md)。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| runtime | 官方默认中继地址经过部署验收后，`stage_runtime_bundle` 不再下载/复制含供应商 Key 的 SDK，并拒绝旧目录混入；冻结安装包自检验证此边界。兼容模式继续验证固定 SDK，两个模式不可静默互相回退。设备认证错误与组件策略到期分开提示。公开 API `official_relay_url()`、`stage_runtime_bundle(destination)`；部署条件见 [中继说明](../sponsored-relay.md)。 |

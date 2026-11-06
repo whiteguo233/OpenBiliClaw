@@ -2509,6 +2509,9 @@ def _build_config(
     sponsored = SponsoredRuntimeSettings(
         enabled=bool(sponsored_raw.get("enabled", False)),
         runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
+        relay_url=str(
+            sponsored_raw.get("relay_url", "") or SponsoredRuntimeSettings().relay_url
+        ).strip(),
         model=str(sponsored_raw.get("model", "Qwen/Qwen3-8B")),
         embedding_mode=str(sponsored_raw.get("embedding_mode", "cloud")),
         fallback_to_other_free_model=bool(sponsored_raw.get("fallback_to_other_free_model", True)),
@@ -5114,7 +5117,20 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                     severity="blocking",
                 )
             )
-    if sponsored is not None and sponsored.enabled:
+    if sponsored is not None and sponsored.enabled and sponsored.relay_url:
+        from openbiliclaw.runtime.relay_release import validate_relay_url
+
+        try:
+            validate_relay_url(sponsored.relay_url)
+        except ValueError:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.relay_url",
+                    message="免费中继地址必须使用 HTTPS。",
+                    severity="blocking",
+                )
+            )
+    if sponsored is not None and sponsored.enabled and not sponsored.relay_url:
         runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
         if not runtime_path:
             from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
@@ -6657,6 +6673,7 @@ def _render_config_toml(
             "[llm.sponsored]",
             f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
             f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
+            f"relay_url = {_toml_string(config.llm.sponsored.relay_url)}",
             f"model = {_toml_string(config.llm.sponsored.model)}",
             f"embedding_mode = {_toml_string(config.llm.sponsored.embedding_mode)}",
             "fallback_to_other_free_model = "

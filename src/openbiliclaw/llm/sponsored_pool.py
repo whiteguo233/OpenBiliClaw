@@ -24,15 +24,26 @@ class SponsoredProviderPool(SponsoredProvider):
     Each child uses the same signed policy and installation quota ledger.
     """
 
-    def __init__(self, *args: Any, startup_lock: asyncio.Lock, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        startup_lock: asyncio.Lock,
+        worker_count: int = 3,
+        shared_queue: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        if not 2 <= worker_count <= 32:
+            raise ValueError("worker_count must be between 2 and 32")
         super().__init__(*args, **kwargs)
         self._startup_lock = startup_lock
-        self._children = [SponsoredProvider(*args, **kwargs) for _ in range(3)]
+        self._children = [SponsoredProvider(*args, **kwargs) for _ in range(worker_count)]
         self._background: asyncio.Queue[SponsoredProvider] = asyncio.Queue()
         self._interactive: asyncio.Queue[SponsoredProvider] = asyncio.Queue()
-        for child in self._children[:2]:
+        for child in self._children[:-1]:
             self._background.put_nowait(child)
-        self._interactive.put_nowait(self._children[2])
+        if shared_queue:
+            self._interactive = self._background
+        self._interactive.put_nowait(self._children[-1])
 
     @property
     def runtime_running(self) -> bool:

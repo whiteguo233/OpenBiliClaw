@@ -978,3 +978,8 @@ Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的
 本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
 
 默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。
+
+
+### 免费中继发行模式
+
+默认兼容模式继续纳入固定验签的 Rust SDK。已部署并验收的官方中继地址写入发行默认后，安装包/镜像不携带上游 Key SDK，首次使用创建独立设备身份。手工配置 `llm.sponsored.relay_url` 仅改变调用路由，不会移除旧包中的凭据；生产迁移必须发布不含 Key 的包并由供应商撤销旧 Key。[部署顺序及限制](sponsored-relay.md)。

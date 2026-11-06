@@ -876,3 +876,10 @@ db.suppress_low_confidence_recommendations()
 ### TikTok 账号任务（2026-10-11）
 
 `tiktok_tasks.payload_json` 冻结 scopes、每 scope 预算和 profile_update；result_json 保存有界 rows、实际 counts、opaque account_key、可选 sec_uid_key、sticky bounds_exceeded 和首份 staged 终态，终态重试不替换 payload。`auth_state` 的 `tiktok_profile_account_key`（handle hash）与可选 `tiktok_profile_sec_uid_key` 在 SQLite 写事务中首次绑定画像账号，secUid 暂缺或补齐不改变 account_key，已知 secUid 冲突或 handle 变化拒绝导入；普通 smoke 不写这些 key。裁剪后的 canonical status 与 staged marker 原子写为 degraded。seen/event 幂等身份带 account_key，scope+内容身份保持独立。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| storage | 新增 `storage.metadata_repair.repair_metadata(database, apply=False, backup=None)` 及 `python -m openbiliclaw.storage.metadata_repair`。默认只读预览；apply 必须提供不存在的备份路径，使用 SQLite backup 获取一致副本，然后条件更新空字段。仅同平台同内容 ID 可互补作者、绝对日期、正文、描述、标签；冲突不择一，历史相对日期不复制，评分/状态/行为不改，也不发网络/模型请求。 |

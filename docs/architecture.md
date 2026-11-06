@@ -778,7 +778,8 @@ query inspiration → configured provider chain
 Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
   → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
-  → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
+  → optional HTTPS relay: device proof + short session + replay/central quota → server Rust pool
+  → local compatibility mode: bounded Rust workers (1 interactive + 2 background; shared quota ledger)
   → SiliconFlow SSE / embeddings
   → Core schema / evidence validation
       ├ passive portrait: source-backed information preferences
@@ -805,3 +806,6 @@ Optional image understanding: 4B; image embeddings: unavailable in the free prof
 `sponsored_status.py` 将真实IPC失败与成功恢复映射为按聊天/向量独立的本地状态；API和后台worker共享通知文件，页面轮询只读状态。向量选择经配置重建进入云端签名任务或本地Ollama，已存在的向量provenance边界防止跨源混用。
 
 `runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；五平台SDK已公开发行，主程序分支仍待发布。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+
+
+中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。

@@ -1,0 +1,18 @@
+{$OBC_RELAY_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        Cache-Control "no-store"
+        -Server
+    }
+    request_body {
+        max_size 2MB
+    }
+    @allowed path /v1/session /v1/task /healthz
+    reverse_proxy @allowed 127.0.0.1:8430 {
+        flush_interval 50ms
+        transport http {
+            response_header_timeout 190s
+        }
+    }
+    respond 404
+}

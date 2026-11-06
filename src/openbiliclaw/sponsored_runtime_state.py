@@ -12,11 +12,13 @@ development env bootstrap as a fallback. Tests call the reset helper directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+from openbiliclaw.runtime.relay_release import official_relay_url
 
 DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 180.0
 
@@ -29,6 +31,7 @@ class SponsoredRuntimeSettings:
     # Executable path or command line for obc-sponsored-runtime. Official
     # installers point at the bundled binary; source builds leave it empty.
     runtime_path: str = ""
+    relay_url: str = field(default_factory=official_relay_url)
     model: str = "Qwen/Qwen3-8B"
     embedding_mode: str = "cloud"
     fallback_to_other_free_model: bool = True
@@ -47,6 +50,7 @@ class SponsoredRuntimeSettings:
 
 
 _SETTINGS = SponsoredRuntimeSettings()
+_DATA_PATH: Path | None = None
 
 
 def install_sponsored_settings(
@@ -54,8 +58,9 @@ def install_sponsored_settings(
 ) -> None:
     """Replace the process-wide settings (called by config loading)."""
 
-    global _SETTINGS
+    global _SETTINGS, _DATA_PATH
     _SETTINGS = settings
+    _DATA_PATH = data_path
     from openbiliclaw.sponsored_status import configure_status_directory
 
     configure_status_directory(data_path)
@@ -63,6 +68,13 @@ def install_sponsored_settings(
 
 def current_sponsored_settings() -> SponsoredRuntimeSettings:
     return _SETTINGS
+
+
+def relay_device_path() -> Path:
+    """Private per-install identity; never serialized into config/API output."""
+    from pathlib import Path
+
+    return (_DATA_PATH or Path("data")) / "runtime" / "relay-device.key"
 
 
 def reset_sponsored_settings() -> None:

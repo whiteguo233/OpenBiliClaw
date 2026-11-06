@@ -1,0 +1,14 @@
+{
+  "published_at": {
+    "before": 0,
+    "after": 100
+  },
+  "description": {
+    "before": 18,
+    "after": 97
+  },
+  "author_name": {
+    "before": 95,
+    "after": 103
+  }
+}

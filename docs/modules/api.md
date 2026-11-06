@@ -655,3 +655,10 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 `POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
 
 四端范围：插件与手机API保留 `agentRetrying` 标记，页面继续轮询而不将消息本地标为failed；桌面已有历史刷新读取权威状态并显示后台重试提示；CLI复用SDK传输重试，不创建HTTP持久消息。[验收与限制](../testing/2026-11-05-sponsored-resilience.md)。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| api | 设置和连接探测识别配置的 HTTPS 免费中继，准备组件时不再下载本地 Key SDK。独立 `sponsored_relay.create_relay` 暴露 POST `/v1/session`、POST `/v1/task`、GET `/healthz`；它不挂在用户后端，不允许 URL/model/header 覆盖，不读取用户数据库。部署保持 worker loopback + Caddy HTTPS，详见 [部署](../sponsored-relay.md)。 |

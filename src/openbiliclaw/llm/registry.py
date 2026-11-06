@@ -65,6 +65,7 @@ def build_llm_registry(
         SponsoredRuntimeSettings(
             enabled=cfg.enabled,
             runtime_path=cfg.runtime_path,
+            relay_url=cfg.relay_url,
             model=cfg.model,
             embedding_mode=cfg.embedding_mode,
             fallback_to_other_free_model=cfg.fallback_to_other_free_model,

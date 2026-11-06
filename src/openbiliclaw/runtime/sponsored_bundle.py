@@ -382,6 +382,12 @@ def ensure_runtime() -> str:
 
 def stage_runtime_bundle(destination: Path) -> bool:
     """Require and stage the exact Core-pinned release; never ship an incomplete package."""
+    from .relay_release import official_relay_url
+
+    if official_relay_url():
+        if destination.exists():
+            raise BundleError("relay-only package must not contain an old key-bearing SDK")
+        return True
     catalog = _catalog()
     release = catalog.get("releases", {}).get(platform_id())
     if not release:
@@ -419,6 +425,11 @@ def main() -> None:
         "--if-available", action="store_true", help="allow releases without a bundle catalog"
     )
     args = parser.parse_args()
+    from .relay_release import official_relay_url
+
+    if official_relay_url() and not args.archive and not args.stage:
+        print("免费服务使用 HTTPS 中继，无需下载含供应商凭据的本地组件")
+        return
     try:
         if args.stage:
             if not stage_runtime_bundle(args.stage):

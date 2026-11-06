@@ -49,6 +49,28 @@ def shared_sponsored_provider() -> SponsoredProvider | None:
     settings = current_sponsored_settings()
     if not sponsored_enabled():
         return None
+    if settings.relay_url:
+        from openbiliclaw.sponsored_runtime_state import relay_device_path
+
+        from .sponsored_relay_client import SponsoredRelayProvider
+
+        cache = _PROVIDERS.setdefault(asyncio.get_running_loop(), {})
+        relay_key = (
+            f"relay:{settings.relay_url}:{relay_device_path()}",
+            settings.request_timeout_seconds,
+            settings.model,
+            settings.fallback_to_other_free_model,
+        )
+        if relay_key not in cache:
+            cache[relay_key] = SponsoredRelayProvider(
+                settings.relay_url,
+                relay_device_path(),
+                registry=approved_registry(),
+                request_timeout=settings.request_timeout_seconds,
+                model=settings.model,
+                fallback_to_other_free_model=settings.fallback_to_other_free_model,
+            )
+        return cast("SponsoredProvider", cache[relay_key])
     command = (
         settings.runtime_path
         if settings.enabled
