@@ -1,0 +1,56 @@
+{
+  "workflow": 42163055896,
+  "source_commit": "3d80ab5713aafe6432cdffaff579955598b1daad",
+  "platforms": {
+    "x64": {
+      "notarizations": [
+        {
+          "file": "OpenBiliClaw-macos-v0.3.234.3d80ab5-x64.dmg.notary.json",
+          "id": "f691073d-a2f1-4ad0-92ac-1c7bbf91334c",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-notary.zip.notary.json",
+          "id": "7d6de947-2a52-4b53-b310-61f7683f0c70",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-notary.zip.status.json",
+          "id": "7d6de947-2a52-4b53-b310-61f7683f0c70",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-macos-v0.3.234.3d80ab5-x64.dmg.status.json",
+          "id": "f691073d-a2f1-4ad0-92ac-1c7bbf91334c",
+          "status": "Accepted"
+        }
+      ],
+      "frozen_selftest": "PASS"
+    },
+    "arm64": {
+      "notarizations": [
+        {
+          "file": "OpenBiliClaw-notary.zip.notary.json",
+          "id": "66c7deb9-2d0c-435d-84f3-91d700582673",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-macos-v0.3.234.3d80ab5-arm64.dmg.notary.json",
+          "id": "bde2be43-ab96-441a-a5d1-1dc7f3113573",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-macos-v0.3.234.3d80ab5-arm64.dmg.status.json",
+          "id": "bde2be43-ab96-441a-a5d1-1dc7f3113573",
+          "status": "Accepted"
+        },
+        {
+          "file": "OpenBiliClaw-notary.zip.status.json",
+          "id": "66c7deb9-2d0c-435d-84f3-91d700582673",
+          "status": "Accepted"
+        }
+      ],
+      "frozen_selftest": "PASS"
+    }
+  }
+}
