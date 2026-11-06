@@ -44,6 +44,7 @@
 `test_desktop_web_settings_save_e2e.py`、`test_jev_settings_popup.py`、`test_jev_settings_mobile.py`
 检查三端一句话说明及配置保存。手工复核路径为“设置 → 高级功能 → 候选评分模式”，展开两类说明后仍可查看完整限制。
 测试修正、间歇性通用刷新失败及原分支对照见[本轮验证记录](../verification/2026-11-07-jev-settings-copy.md)。
+该提交的真实 OpenRouter 复验已覆盖桌面 / 实际插件保存和候选评估、默认 LLM 路由保持及容量缩小；移动 Web 后续草稿探测出现 `invalid_response`，整体未全通过，调大恢复 / 重启本轮未执行，见同一记录的真实请求章节。
 
 三端共用 Jev 表单增加“测试连接与评估”，以当前草稿调用 `POST /api/config/probe-service`
 的 `kind="jev"`。1 条合成内容完整 8 题、单次 HTTP 尝试；不加载真实画像、不写配置，
