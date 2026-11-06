@@ -296,7 +296,8 @@ source metadata (including XHS note body / tag names) → candidate storage → 
 Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
   → LLMService / Registry / eval → selected signed 8B or 4B task
   → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
-  → bounded Rust workers (1 interactive + 2 background; shared quota ledger)
+  → optional HTTPS relay: device proof + short session + replay/central quota → server Rust pool
+  → local compatibility mode: bounded Rust workers (1 interactive + 2 background; shared quota ledger)
   → SiliconFlow SSE / embeddings
   → Core schema / evidence validation
       ├ passive portrait: source-backed information preferences
@@ -970,3 +971,6 @@ TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（�
 ## macOS 构建分发补充
 
 桌面打包 → Developer ID 内层/应用签名 → Apple 公证并附票据 → ZIP/DMG → DMG 签名、公证和 Gatekeeper 检查；正式 DMG 拖入 Applications 安装。此构建链不改变 §3 的运行时数据流。详见[架构分发链](architecture.md#macos-分发构建链)与[打包接口](modules/packaging.md)。
+
+
+中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。

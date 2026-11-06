@@ -3260,7 +3260,7 @@ def _interactive_runtime_config_setup() -> None:
                 console.print("[yellow]请选择 1 或 2。[/yellow]")
                 continue
             try:
-                if not cfg.llm.sponsored.runtime_path:
+                if not cfg.llm.sponsored.runtime_path and not cfg.llm.sponsored.relay_url:
                     ensure_runtime()
             except BundleError as exc:
                 console.print(f"[yellow]{exc}[/yellow]")

@@ -65,7 +65,13 @@ def _macos_app_bundle_root(exe_dir: Path) -> Path:
 
 
 def _verify_packaged_sponsored_runtime(resources: Path) -> None:
-    """Fail the frozen installer smoke if its signed native runtime cannot run."""
+    """Validate the released execution mode without accepting a mixed credential bundle."""
+    from openbiliclaw.runtime.relay_release import official_relay_url
+
+    if official_relay_url():
+        if (resources / "sponsored").exists():
+            raise RuntimeError("Relay-only package contains an unexpected local credential SDK")
+        return
     from openbiliclaw.proc import no_window_kwargs
     from openbiliclaw.runtime.sponsored_bundle import verify_bundle
 
@@ -1224,8 +1230,8 @@ def main() -> None:
         from openbiliclaw.config import load_config_with_diagnostics, save_config
         from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
 
-        if installed_runtime_command():
-            initial_config, _ = load_config_with_diagnostics()
+        initial_config, _ = load_config_with_diagnostics()
+        if initial_config.llm.sponsored.relay_url or installed_runtime_command():
             initial_config.llm.sponsored = replace(initial_config.llm.sponsored, enabled=True)
             save_config(initial_config)
     if seeded and has_bundled_ollama:

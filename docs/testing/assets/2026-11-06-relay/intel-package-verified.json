@@ -1,0 +1,22 @@
+{
+  "source_commit": "3d80ab5713aafe6432cdffaff579955598b1daad",
+  "workflow": 42163055896,
+  "artifact_id": 13477967863,
+  "file": "OpenBiliClaw-macos-v0.3.234.3d80ab5-x64.dmg",
+  "size": 267127637,
+  "sha256": "f7b572b49412fff69d1278a82bcb638ead6a4d844a99695420cbefa8b1b09797",
+  "checks": [
+    {
+      "check": "/usr/bin/codesign",
+      "exit_code": 0
+    },
+    {
+      "check": "/usr/sbin/spctl",
+      "exit_code": 0
+    },
+    {
+      "check": "xcrun",
+      "exit_code": 0
+    }
+  ]
+}

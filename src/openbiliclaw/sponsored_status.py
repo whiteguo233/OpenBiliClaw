@@ -112,7 +112,11 @@ def record_sponsored_outcome(command: Sequence[str], *, capability: str, code: s
             record_diagnostics_alert(
                 category="embedding" if capability == "embedding" else "llm",
                 code=f"sponsored_{code.lower()}",
-                message=GUIDANCE[code][1],
+                message=(
+                    "免费中继设备认证不可用，请测试连接或联系服务维护者。"
+                    if command and command[0] == "relay" and code == "AUTH_FAILED"
+                    else GUIDANCE[code][1]
+                ),
                 source="sponsored",
                 severity="error",
             )
@@ -133,7 +137,11 @@ def sponsored_status(config: Config) -> dict[str, Any]:
     from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
 
     try:
-        command = shlex.split(settings.runtime_path or installed_runtime_command())
+        command = (
+            ["relay", settings.relay_url]
+            if settings.relay_url
+            else shlex.split(settings.runtime_path or installed_runtime_command())
+        )
     except ValueError:
         return result
     if not command:
@@ -152,6 +160,13 @@ def sponsored_status(config: Config) -> dict[str, Any]:
             ]
         return result
     identity = runtime_identity(command)
+    guidance = dict(GUIDANCE)
+    if settings.relay_url:
+        guidance["AUTH_FAILED"] = (
+            "免费中继认证不可用",
+            "设备凭据或中继服务认证已失效。请重新测试连接；"
+            "持续失败时联系服务维护者，或改用自己的 API Key。",
+        )
     directory = config.data_path / "runtime" / "sponsored-status"
     capabilities = ["chat", "embedding"] if settings.uses_cloud_embedding else ["chat"]
     by_code: dict[str, dict[str, Any]] = {}
@@ -165,9 +180,10 @@ def sponsored_status(config: Config) -> dict[str, Any]:
             {
                 "id": f"sponsored-{code.lower()}",
                 "code": code,
-                "title": GUIDANCE[code][0],
-                "message": GUIDANCE[code][1],
-                "requires_update": code in {"AUTH_FAILED", "POLICY_INVALID"},
+                "title": guidance[code][0],
+                "message": guidance[code][1],
+                "requires_update": code == "POLICY_INVALID"
+                or (code == "AUTH_FAILED" and not settings.relay_url),
                 "capabilities": [],
             },
         )

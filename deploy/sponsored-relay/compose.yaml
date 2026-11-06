@@ -1,0 +1,44 @@
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: deploy/sponsored-relay/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    environment:
+      OBC_RELAY_STATE: /state/relay.db
+      OBC_RELAY_RUNTIME: /runtime/obc-sponsored-runtime --policy /runtime/sponsored-policy.json --data-dir /state/runtime
+    volumes:
+      - state:/state
+      - ${OBC_RELAY_SDK_DIR:?Set a verified Linux SDK directory}:/runtime:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8430/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    network_mode: service:relay
+    depends_on:
+      relay:
+        condition: service_healthy
+    environment:
+      OBC_RELAY_DOMAIN: ${OBC_RELAY_DOMAIN:?Set the public DNS hostname}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  state:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,70 @@
+{
+  "binary": "OpenBiliClaw",
+  "version": "0.3.234",
+  "entry": "frozen recommendation/API worker",
+  "synthetic_inputs_only": true,
+  "cases": [
+    {
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 1.431,
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "error_code": "",
+        "retryable": false,
+        "latency_ms": 1390
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 0.745,
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3.5-4B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "error_code": "",
+        "retryable": false,
+        "latency_ms": 706
+      }
+    }
+  ],
+  "configuration": "isolated approved free configuration; normal first-run default covered by packaged CI selftest",
+  "builtin_provider": {
+    "provider_id": "siliconflow_free",
+    "builtin": true,
+    "enabled": true,
+    "models": [
+      {
+        "id": "Qwen/Qwen3-8B",
+        "context_window": 131072
+      },
+      {
+        "id": "Qwen/Qwen3.5-4B",
+        "context_window": 262144
+      }
+    ],
+    "runtime_available": true,
+    "embedding_mode": "cloud"
+  },
+  "test_keychain_entries_removed": [
+    false
+  ],
+  "passed": true
+}

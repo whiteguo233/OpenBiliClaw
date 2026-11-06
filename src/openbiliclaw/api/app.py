@@ -22386,7 +22386,9 @@ def create_app(
             fallback_to_user_provider=settings.fallback_to_user_provider,
             notify_on_fallback=settings.notify_on_fallback,
             request_timeout_seconds=settings.request_timeout_seconds,
-            runtime_available=bool(settings.runtime_path or installed_runtime_command()),
+            runtime_available=bool(
+                settings.relay_url or settings.runtime_path or installed_runtime_command()
+            ),
             context_window=CONTEXT_WINDOWS[model],
         )
 
@@ -23353,20 +23355,33 @@ def create_app(
             settings = cfg.llm.sponsored
             command = settings.runtime_path or installed_runtime_command()
             started = time.monotonic()
-            if not command:
+            if not command and not settings.relay_url:
                 return ConfigServiceProbeResponse(
                     ok=False,
                     kind="sponsored",
                     error="请先准备免费模型组件；组件到期时请更新安装包/版本",
                     service_status=sponsored_status(cfg),
                 )
-            provider = SponsoredProvider(
-                shlex.split(command),
-                registry=approved_registry(),
-                model=settings.model,
-                fallback_to_other_free_model=False,
-                request_timeout=settings.request_timeout_seconds,
-            )
+            provider: SponsoredProvider
+            if settings.relay_url:
+                from openbiliclaw.llm.sponsored_relay_client import SponsoredRelayProvider
+
+                provider = SponsoredRelayProvider(
+                    settings.relay_url,
+                    cfg.data_path / "runtime" / "relay-device.key",
+                    registry=approved_registry(),
+                    model=settings.model,
+                    fallback_to_other_free_model=False,
+                    request_timeout=settings.request_timeout_seconds,
+                )
+            else:
+                provider = SponsoredProvider(
+                    shlex.split(command),
+                    registry=approved_registry(),
+                    model=settings.model,
+                    fallback_to_other_free_model=False,
+                    request_timeout=settings.request_timeout_seconds,
+                )
             try:
                 assert ctx.llm_concurrency_gate is not None
                 async with ctx.llm_concurrency_gate.slot(caller="api.config_probe"):
@@ -23451,8 +23466,11 @@ def create_app(
         denied = _config_write_gate(request)
         if denied is not None:
             return denied
+        from openbiliclaw.config import load_config
         from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
 
+        if load_config().llm.sponsored.relay_url:
+            return {"ok": True, "message": "已配置免费中继，可在模型设置中测试连接"}
         try:
             await asyncio.to_thread(ensure_runtime)
             return {"ok": True, "message": "免费模型组件已就绪"}

@@ -882,3 +882,12 @@ JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vi
 明确以 `tool_call` / `tool_calls` 开头但JSON语法损坏的完整回复，在工具尚未执行、未向用户输出正文时最多请求一次格式纠正；再经原有严格JSON解析、工具白名单和Core参数/授权校验。纠正失败明确报协议错误，不能把坏JSON当作成功答案；不从损坏内容猜测或直接执行工具。普通JSON答案和已显示的回复不进入此纠正，成功时usage合计两次调用。
 
 结构化 `complete(json_mode=True)` 允许根对象或数组；若返回值整体是Markdown JSON围栏且围栏内可严格解析为对象/数组，则移除外层围栏后交给业务校验。不改正文数据、不提取夹在自然语言中的JSON、不修补不完整JSON，普通文本请求保留代码围栏原文。真实4B搜索查询复测定位了此格式差异，防止正确查询因围栏触发本地兜底。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+`RelayStore.reserve(device, tokens, attempts=1)` 按最多3次上游尝试原子预留请求数和Token，失败不退款；服务端非流式调用使用3次，流式使用1次，防止不确定的重试消耗漏算。
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| llm | `SponsoredRelayProvider` 继承现有完整任务、工具模拟、模型互备、embedding 校验，以 HTTPS 发送固定任务。公开构造 `SponsoredRelayProvider(url, device_path, **kwargs)`；短期 Token 仅在内存，设备签名绑定方法/路径/正文/时间/nonce/Token。`SponsoredProviderPool` 新增 `worker_count=3`、`shared_queue=False`；本地仍为 1+2，服务端默认 12 个共享 worker，单设备最多 3 路。中继失败不退回本机共享 Key；使用自有渠道仍需显式开启。 |

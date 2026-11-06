@@ -1255,6 +1255,7 @@ class AutoUpdateService:
             if (
                 current_sponsored_settings().enabled
                 and not current_sponsored_settings().runtime_path
+                and not current_sponsored_settings().relay_url
             ):
                 reconcile = await self._run_command(
                     [sys.executable, "-m", "openbiliclaw.runtime.sponsored_bundle"],

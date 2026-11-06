@@ -292,6 +292,8 @@ cache_low_watermark = 0.7
 enabled = false
 # 留空自动寻找已验证的安装包。仅本机开发/诊断可写命令；网页不能修改。
 runtime_path = ""
+# 部署验证后的 HTTPS 中继地址；留空沿用发行版默认。中继模式不向客户端提供供应商 Key。
+relay_url = ""
 model = "Qwen/Qwen3-8B" # 另一个选项：Qwen/Qwen3.5-4B
 # cloud（默认）：内置凭据调用硅基流动 BGE-M3；local：独立使用 [llm.embedding] Ollama。
 embedding_mode = "cloud"
