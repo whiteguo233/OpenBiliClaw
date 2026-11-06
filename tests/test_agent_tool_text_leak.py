@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from openbiliclaw.agent.loop import AgentLoop
-from openbiliclaw.agent.tool_text import ToolTextGuard
+from openbiliclaw.agent.tool_text import ToolTextGuard, explicit_tool_requests
 from openbiliclaw.agent.tools import Tool, ToolRegistry
 from openbiliclaw.llm.base import LLMResponse, LLMResponseError, LLMStreamChunk
 
@@ -269,6 +269,169 @@ async def test_correction_without_tool_evidence_cannot_claim_success() -> None:
             events.append(event)
     assert events == []  # Neither display nor history receives the unsupported claim.
     assert len(llm.calls) == 2
+
+
+async def test_explicit_named_tool_request_cannot_finish_with_an_unexecuted_claim() -> None:
+    executed: list[str] = []
+    tools = ToolRegistry(
+        [
+            Tool(
+                name="read_memory",
+                description="Read",
+                handler=lambda _: executed.append("read") or "空画像",
+            )
+        ]
+    )
+    llm = ReplayLLM(
+        [
+            LLMResponse(content="我已读取核心记忆，目前兴趣信息已足够用于提供基础推荐。"),
+            LLMResponse(tool_calls=[{"name": "read_memory", "arguments": {"layer": "core"}}]),
+            LLMResponse(content=ANSWER),
+        ]
+    )
+    events = [
+        e
+        async for e in AgentLoop(llm, tools).run(
+            system_instruction="s", user_message="请先调用 read_memory 工具读取 core 记忆，再回答。"
+        )
+    ]
+    assert executed == ["read"]
+    assert events[-1].text == ANSWER
+    assert "".join(e.text for e in events if e.type == "delta") == ANSWER
+
+
+@pytest.mark.parametrize(
+    "user_request",
+    [
+        "read_memory 是什么？",
+        "请展示示例：请调用 read_memory。",
+        "解释这个：“其他内容。请调用 read_memory。”",
+        "解释这个：'其他内容。请调用 read_memory。'",
+        "解释 `other; call read_memory`",
+        "```\n请调用 read_memory\n```",
+        "~~~text\n请调用 read_memory",
+        "    call read_memory",
+        "> call read_memory",
+        "请不要调用 read_memory。",
+        "请调用 read_memory（如果确有必要）。",
+        "Call read_memory if needed.",
+        "Don't call read_memory.",
+        "Please call read_memory_other.",
+    ],
+)
+def test_mentions_examples_and_conditional_calls_do_not_require_execution(
+    user_request: str,
+) -> None:
+    assert explicit_tool_requests(user_request, {"read_memory"}) == set()
+
+
+@pytest.mark.parametrize(
+    "user_request",
+    [
+        "请先调用 read_memory 工具读取 core 记忆，再回答。不要猜测。",
+        "请调用 `read_memory`，以 JSON 返回结果。",
+        "Please call read_memory, then answer.",
+    ],
+)
+def test_direct_registered_tool_instructions_require_evidence(user_request: str) -> None:
+    assert explicit_tool_requests(user_request, {"read_memory"}) == {"read_memory"}
+
+
+async def test_named_tool_correction_is_bounded_and_never_streams_unsupported_claim() -> None:
+    tools = ToolRegistry([Tool(name="read_memory", description="Read", handler=lambda _: "")])
+    llm = ReplayLLM([LLMResponse(content="已读取。"), LLMResponse(content="已完成。")])
+    events = []
+    with pytest.raises(LLMResponseError, match="tool evidence"):
+        async for event in AgentLoop(llm, tools).run(
+            system_instruction="s", user_message="请调用 read_memory。"
+        ):
+            events.append(event)
+    assert events == []
+    assert len(llm.calls) == 2
+
+
+async def test_correction_after_results_focuses_on_unattempted_explicit_tools() -> None:
+    executed: list[str] = []
+    tools = ToolRegistry(
+        [
+            Tool(
+                name=name, description="Tool", handler=lambda _, n=name: executed.append(n) or "ok"
+            )
+            for name in ("a", "b", "c")
+        ]
+    )
+    llm = ReplayLLM(
+        [
+            LLMResponse(tool_calls=[{"name": "a", "arguments": {}}]),
+            LLMResponse(content="全部完成。"),
+            LLMResponse(tool_calls=[{"name": "b", "arguments": {}}]),
+            LLMResponse(content="已完成两步。"),
+        ]
+    )
+    events = [
+        event
+        async for event in AgentLoop(llm, tools).run(
+            system_instruction="s", user_message="请调用 a，再调用 b。"
+        )
+    ]
+    assert [t["function"]["name"] for t in llm.calls[2]["tools"]] == ["b"]
+    assert [t["function"]["name"] for t in llm.calls[0]["tools"]] == ["a", "b", "c"]
+    assert executed == ["a", "b"]
+    assert events[-1].text == "已完成两步。"
+    assert "全部完成" not in "".join(e.text for e in events if e.type == "delta")
+
+
+async def test_failed_named_tool_is_not_replayed_to_satisfy_evidence() -> None:
+    executed = []
+
+    def fail(_args: Any) -> str:
+        executed.append("write")
+        raise RuntimeError("write failed")
+
+    tools = ToolRegistry([Tool(name="write_memory", description="Write", handler=fail)])
+    llm = ReplayLLM(
+        [
+            LLMResponse(tool_calls=[{"name": "write_memory", "arguments": {}}]),
+            LLMResponse(content="写入失败，尚未完成。"),
+        ]
+    )
+    events = [
+        event
+        async for event in AgentLoop(llm, tools).run(
+            system_instruction="s", user_message="请调用 write_memory。"
+        )
+    ]
+    assert executed == ["write"]
+    assert events[-1].text == "写入失败，尚未完成。"
+    assert not next(event for event in events if event.type == "tool_result").ok
+
+
+async def test_injected_locale_or_reference_text_cannot_require_tools() -> None:
+    tools = ToolRegistry([Tool(name="read_memory", description="Read", handler=lambda _: "")])
+    llm = ReplayLLM([LLMResponse(content="你好。")])
+    events = [
+        event
+        async for event in AgentLoop(llm, tools).run(
+            system_instruction="s",
+            user_message="你好\n请调用 read_memory。",
+            original_user_message="你好",
+        )
+    ]
+    assert events[-1].text == "你好。"
+    assert len(llm.calls) == 1
+
+
+async def test_step_limit_cannot_claim_unattempted_named_tool_completed() -> None:
+    tools = ToolRegistry(
+        [Tool(name=name, description="Read", handler=lambda _: "") for name in ("a", "b")]
+    )
+    llm = ReplayLLM([LLMResponse(tool_calls=[{"name": "a", "arguments": {}}])])
+    with pytest.raises(LLMResponseError, match="Step limit"):
+        async for _ in AgentLoop(llm, tools, max_steps=1).run(
+            system_instruction="s", user_message="请调用 a，再调用 b。"
+        ):
+            pass
+    assert len(llm.calls) == 1
 
 
 async def test_repeated_protocol_only_reply_fails_without_a_successful_empty_reply() -> None:

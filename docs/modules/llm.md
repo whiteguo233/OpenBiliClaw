@@ -6,13 +6,23 @@
 | --- | --- |
 | `siliconflow_free` 目录 | 两个固定 LLM 实例参与原有默认 / 模块链；`LLMRegistry.configure_chain()` 只切换顺序，不修改 adapter 模型或共享凭据。 |
 | BGE-M3 Embedding | 独立固定文本模型与 1024 维；可切换 Provider，模型、地址、凭据与图片能力不可改。相似度阈值、缓存和备用选择属于业务策略，不是模型配置。 |
-| 工具示例与执行分离 | 免费适配器仍通过项目模拟协议调用工具。`complete_with_tools()` / `stream_complete_with_tools()` 支持 `{"reply":"..."}` 展示原样 JSON，一次解封后不再解析为工具；流式和最终正文一致。 |
+| 工具示例与执行分离 | `complete_with_tools()` / `stream_complete_with_tools()` 使用 Qwen 的 `<tool_call>` / `<tool_response>` 提示词格式；说明文字后、代码围栏外的完整标记帧解析为操作，普通文字、JSON 和代码直接作为正文。 |
+| 工具结果续接 | `sponsored_tools.tool_messages()` 保留工具名、调用 ID 和结果；结果后不再重复原始“先调用”指令，空画像作为有效已完成结果；JSON 对象/数组直接呈现字段，避免对内容二次转义。 |
 
-工具请求必须是仅含 `tool_call` 或 `tool_calls` 的完整顶层封套；带 `reply`、说明或其他
-数据字段的对象不会因内部出现工具名就被执行。普通正文保持增量输出，原样 JSON 的
-`reply` 字符串待完整校验后显示；用户可索要工具协议示例。该规则在 Python 适配层生效，
-不修改 Rust SDK 的签名任务、凭据或配额。后续 [Agent 正文检查](agent.md#agentloop)
-负责处理正常回答中意外夹带的工具协议；真实复测见[验收](../testing/2026-11-07-tool-text-guard.md)。
+`sponsored_tools.py` 封装签名文本 SDK 上的工具桥接，不宣称使用上游 HTTP 原生 function
+calling。`parse_tool_calls(content, names)` 接受正文前缀之后、行首且位于代码围栏外的完整 `<tool_call>` 后缀，
+每帧只能包含已提供工具的 `name` 和对象类型 `arguments`；重复键、未知工具及歧义字段
+直接拒绝。语法错误最多纠正一次，仍须通过原注册表的参数校验与审批。无工具收尾时
+也拒绝返回操作帧。说明前缀交回 AgentLoop 作为中间进展；普通 JSON、行内引用和代码块不解析为动作，也不再使用或解封 `reply` 字段。
+
+`ToolStreamPrefix` 按行追踪代码围栏，只暂存可能的工具标记；此前正文、代码和 JSON 继续增量输出。`split_tool_content()` 使流式与终态解析共享相同的围栏边界。
+`tool_messages()` 将实际结果编码在 `<tool_response>` 中并转义结果内的标记字符，保持
+SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容若为完整 JSON 对象/数组，
+保留结构和原始字符串字段；普通文本、标量、重复键或不完整 JSON 保留原文。实际工具结果、
+数据库内容及 CAS/审批参数校验均不改变。该改动不修改 Rust 签名任务、
+凭据或配额。后续 [Agent 正文及执行记录检查](agent.md#agentloop) 处理旧协议泄漏和
+明确点名工具却未调用的问题。A/B 证据、真实请求及尚存限制见
+[Qwen 工具协议验收](../testing/2026-11-07-qwen-tool-protocol.md)。
 
 `sponsored_errors.find_sponsored_error(error)` 沿 `__cause__` / `__context__` 找回有类型的
 运行时错误，循环链安全结束，无对应原因时返回 `None`。普通实例 adapter 的错误翻译

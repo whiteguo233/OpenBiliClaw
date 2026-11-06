@@ -37,6 +37,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | M1 原生 function calling | ✅ | 见 [llm 模块](llm.md)：OpenAI 系 chat-completions flavor 原生 FC，其余 provider 走 prompt 模拟兜底 |
 | M1 多跳 AgentLoop | ✅ | `agent/loop.py`：`AgentLoop.run()` 异步生成器逐跳产出事件，默认 64 跳上限（`[agent]` 配置），超限后无工具收尾汇报 |
 | 工具协议正文防护 | ✅ | `agent/tool_text.py` 在流式正文及最终回复中检查独立的工具 JSON（含误包成 JSON 代码块的调用），隔离该段及后续未经执行支持的声明；只处理完整、已注册工具的协议封套，普通正文实时输出，其他代码/引用及用户明确要求的原样数据保留。无正常答复时仅纠正一次，再次失败上抛；不会从正文执行工具 |
+| 明确调用的执行记录检查 | ✅ | `explicit_tool_requests()` 只识别用户原文中直接点名已注册工具的调用指令；没有调用记录时暂存正文并最多纠正一次，仍无调用则失败。失败调用和审批登记都计为尝试，检查本身不执行或重放操作。 |
 | 重复读取收敛 | ✅ | 连续两轮成功的只读工具、参数及完整结果均相同，模型又提出同一组调用时，第三次不执行，使用已有结果做一次无工具汇总；不同参数/结果/工具及写操作不触发此规则 |
 | M2 SSE 流式接线 | ✅ | 新端点 `POST /api/chat/agent/stream` 真流式转发 `AgentEvent`；`SocraticDialogue.stream_agent_reply()` 复用 persona prompt / 历史 / 学习队列；除 `delta` 外的 loop 事件随 turn 落 `payload.agent_events`；旧 `/api/chat` 与 `/api/chat/stream` 保持共存 |
 | M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 在无工具配置下逐 token 输出（工具回合保持一次性最终回复）；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
@@ -70,7 +71,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 ```
 agent/
 ├── loop.py              # AgentLoop + AgentEvent（多跳循环与事件模型，含 M7 审批拦截）
-├── tool_text.py         # 增量正文与终态共用的工具协议检查；不执行正文中的调用
+├── tool_text.py         # 正文协议检查与明确点名调用的执行记录要求；不从正文执行操作
 ├── approvals.py         # ApprovalStore + ApprovalRecord（M7 审批台账，JSON 文件持久化）
 ├── orchestrator.py      # 既有空壳编排器（未接 loop）
 ├── persona.py           # 独立表达模板目录（不授予工具权限）
@@ -134,7 +135,7 @@ async for event in loop.run(
   随后紧跟一条 `tool_result`（回填给模型的「等待审批」说明）。仅在 loop
   接线了 approval gate 时出现；未接线时保持 M1 直执行为。
 - `step_limit_reached`：达到 `max_steps` 时发出一次，随后 loop 追加一条收尾指令
-  并做一次**无工具**调用，让模型汇报进展。
+  并做一次**无工具**调用，让模型汇报进展。若还有明确点名但未尝试的工具，则直接报错，避免收尾误报完成。
 - `final`：最终回复文本，每个 run 恰好一个（正常收尾或步数上限收尾）。
 
 `step` 从 1 开始编号；LLM 调用失败直接抛给调用方（M2 映射为 SSE error 事件），
@@ -155,7 +156,19 @@ async for event in loop.run(
 始终不会被转换或执行，纠正后的原生调用仍经过注册表校验和原有审批门。
 若纠正前还没有任何工具结果，纠正回复必须给出正式工具调用，否则抛错；该次纠正的
 正文先暂存，避免“未调用却声称完成”先显示再撤回。已有工具结果时可直接纠正为收尾
-答复，不重复之前的操作。这一检查只约束协议纠正分支，不验证任意自然语言回答的真实性。
+答复，不重复之前的操作。该分支不验证任意自然语言回答的真实性。
+
+`explicit_tool_requests(raw_request, tool_names)` 增加独立的执行记录约束：仅识别直接的
+“请先调用 read_memory”或“Please call read_memory”等命令句，不从普通“读一下记忆”
+推断工具。代码块、引用、示例、条件句与否定调用保守退出；历史、语言规则和引用资料
+不参与判断。仍有未尝试的明确工具时，正文先暂存；若没有正式调用，最多纠正一次，
+再次缺失则抛错，不把无依据的成功回复发送、保存或送入学习。若本轮已取得工具结果，
+该次纠正仅提供尚未尝试、且用户明确点名的工具 schema，减少小模型分心；初始请求仍提供
+完整工具集以完成前置依赖，纠正也不替模型生成参数。多个工具按名字分别检查，
+达到步数上限或重复读取收敛时若仍有未尝试的工具，也直接报错。
+实际调用经原注册表执行或审批拦截；参数错误、执行失败、审批待办均算一次尝试，
+不会为了满足检查自动重复写入。此规则不验证参数语义或最终总结的全部事实，也不会
+从用户文本合成工具调用。真实证据见[协议验收](../testing/2026-11-07-qwen-tool-protocol.md)。
 
 JSON 围栏只在块内内容完全是已注册工具协议、且当前用户没有索要示例/原样数据时
 参与检查；普通代码和明确索要的工具代码块均保留。该分支来自 4B 真实输出代码块而没有

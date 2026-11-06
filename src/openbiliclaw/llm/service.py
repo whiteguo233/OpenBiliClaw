@@ -1830,17 +1830,6 @@ def _flatten_agent_messages(
     return "\n\n".join(system_parts), flattened, user_input
 
 
-def _parse_simulated_reply(content: str) -> str | None:
-    """Unwrap a literal answer once, without interpreting its contents as calls."""
-    try:
-        value = json.loads(content)
-    except (ValueError, TypeError, RecursionError):
-        return None
-    if isinstance(value, dict) and set(value) == {"reply"} and isinstance(value["reply"], str):
-        return value["reply"]
-    return None
-
-
 def _parse_simulated_tool_calls(
     content: str,
     tool_names: list[str],

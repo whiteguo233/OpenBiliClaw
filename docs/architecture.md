@@ -204,7 +204,8 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
-                 → raw user intent + ToolTextGuard(delta/final); protocol-only reply → one corrective attempt
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
                  → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
@@ -788,7 +789,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
-Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices

@@ -287,8 +287,8 @@ async def test_pool_retries_only_a_known_legacy_ledger_startup_collision(
 async def test_malformed_free_tool_json_gets_one_validated_repair(
     streaming: bool, repair_valid: bool
 ) -> None:
-    broken = '{"tool_calls": [{"name": "get_profile", "arguments": {}}}]'
-    fixed = '{"tool_calls": [{"name": "get_profile", "arguments": {}}]}'
+    broken = '<tool_call>{"name": "get_profile", "arguments": {}}]</tool_call>'
+    fixed = '<tool_call>{"name": "get_profile", "arguments": {}}</tool_call>'
     requests = []
 
     class BrokenToolReply(SponsoredProvider):

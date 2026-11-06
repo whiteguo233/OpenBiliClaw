@@ -1,5 +1,7 @@
 # 免费模型工具协议正文修复验收（2026-11-07）
 
+> 后续进展：[Qwen 工具协议验收](2026-11-07-qwen-tool-protocol.md) 记录进一步定位与修复。本文保留此前九阶段失败与观察；其中 `reply` 封套方案已由 Qwen 标记帧替代。
+
 本次继续在 `feat/unified-sponsored-providers` 上修复[上一轮实测](2026-11-07-fixed-providers-live.md)发现的 Qwen3.5-4B 正文混入工具 JSON。代码基线为 `51eb1627`，改动位于 AgentLoop、对话入口、免费模型适配层及默认链保存后的即时应用；没有改动 Rust SDK、凭据、配额或配置字段。
 
 ## 修复与失败证据

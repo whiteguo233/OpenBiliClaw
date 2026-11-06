@@ -26,6 +26,46 @@ def preserves_tool_text(request: str) -> bool:
     return bool(_EXPLICIT_DATA_REQUEST.search(request))
 
 
+def explicit_tool_requests(request: str, tool_names: set[str]) -> set[str]:
+    """Find direct, named call instructions, never infer actions from prose.
+
+    This is an evidence requirement, not a dispatcher or an intent classifier.
+    Only imperative clauses naming registered tools count. Quoted examples,
+    conditionals and negated calls opt out conservatively; ordinary requests
+    such as 'read my memory' remain the model's responsibility.
+    """
+    if re.search(
+        r"示例|例子|引用|原文|如果|必要时|按需|不要.{0,12}调用|不必.{0,12}调用|"
+        r"无需.{0,12}调用|别.{0,12}调用|\b(?:example|quote|snippet|if|unless)\b|"
+        r"\b(?:do not|don't|never)\b.{0,20}\b(?:call|invoke)\b",
+        request,
+        re.IGNORECASE,
+    ):
+        return set()
+    # Fences, including unfinished ones, cannot create an execution requirement.
+    prose = re.sub(r"(`{3,}|~{3,})[^\n]*\n.*?(?:\1|\Z)", "", request, flags=re.DOTALL)
+    prose = re.sub(r"\"[^\"]*\"|'[^']*'|“[^”]*”|‘[^’]*’", "", prose, flags=re.DOTALL)
+    prose = re.sub(r"`(?![A-Za-z_][A-Za-z_0-9]*`)[^`\n]*`", "", prose)
+    required: set[str] = set()
+    for line in prose.splitlines():
+        if line.startswith(("    ", "\t", ">")):
+            continue
+        for clause in re.split(r"[。！？；;.,，]", line):
+            match = re.match(
+                r"\s*(?:(?:请(?:你)?|麻烦(?:你)?|帮我)\s*)?(?:先|再|然后)?\s*调用\s*"
+                r"`?([A-Za-z_][A-Za-z_0-9]*)`?(?![A-Za-z_0-9])|"
+                r"\s*(?:please\s+)?(?:(?:first|then)\s+)?(?:call|invoke)\s+"
+                r"`?([A-Za-z_][A-Za-z_0-9]*)`?(?![A-Za-z_0-9])",
+                clause,
+                re.IGNORECASE,
+            )
+            if match:
+                name = match[1] or match[2]
+                if name in tool_names:
+                    required.add(name)
+    return required
+
+
 class ToolTextGuard:
     """Stream prose; quarantine a standalone tool envelope and its trailing text.
 

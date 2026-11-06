@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from openbiliclaw.llm.base import LLMResponseError
 
-from .tool_text import ToolTextGuard, preserves_tool_text
+from .tool_text import ToolTextGuard, explicit_tool_requests, preserves_tool_text
 from .tools.registry import validate_tool_arguments
 
 if TYPE_CHECKING:
@@ -266,9 +266,9 @@ class AgentLoop:
         tool_schemas = registry.llm_schemas()
         approval_context = dict(approval_context or {})
         tool_names = {str(schema["function"]["name"]) for schema in tool_schemas}
-        preserve_tool_text = preserves_tool_text(
-            user_message if original_user_message is None else original_user_message
-        )
+        raw_request = user_message if original_user_message is None else original_user_message
+        preserve_tool_text = preserves_tool_text(raw_request)
+        required_tools = explicit_tool_requests(raw_request, tool_names)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_instruction},
             *(dict(item) for item in (history or [])),
@@ -288,6 +288,7 @@ class AgentLoop:
                 terminal=terminal,
                 tool_names=tool_names,
                 preserve_tool_text=preserve_tool_text,
+                required_tools=required_tools,
             ):
                 yield delta_event
             response = terminal[0]
@@ -304,6 +305,10 @@ class AgentLoop:
             # third identical plan demonstrate no progress; changing results,
             # arguments, other tools, errors and writes do not trip this bound.
             if plan == repeated_read_plan:
+                if required_tools:
+                    raise LLMResponseError(
+                        "Repeated reads left explicitly requested tools uncalled."
+                    )
                 logger.warning("Agent stopped repeated reads (model=%s)", response.model)
                 yield AgentEvent(
                     type="thinking", step=step, text="读取结果没有变化，正在汇总已有信息。"
@@ -341,6 +346,11 @@ class AgentLoop:
                     summary=summary,
                 )
                 tool = registry.get(call.name)
+                if tool is not None:
+                    # An attempt (including a validation error or an approval
+                    # request) is evidence. Never replay a write to obtain a
+                    # successful result just to satisfy this requirement.
+                    required_tools.discard(call.name)
                 if tool is None or tool.permission_level != "read":
                     only_reads = False
                 if (
@@ -449,6 +459,8 @@ class AgentLoop:
             text=f"已达到本次任务的步数上限（{self._max_steps} 跳）。",
         )
         messages.append({"role": "user", "content": _STEP_LIMIT_WRAP_UP_INSTRUCTION})
+        if required_tools:
+            raise LLMResponseError("Step limit left explicitly requested tools uncalled.")
         try:
             terminal = []
             async for delta_event in self._stream_hop(
@@ -495,6 +507,7 @@ class AgentLoop:
         terminal: list[LLMResponse],
         tool_names: set[str],
         preserve_tool_text: bool,
+        required_tools: set[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Run one loop hop, yielding ``delta`` events as content streams in.
 
@@ -505,7 +518,8 @@ class AgentLoop:
         """
         stream_fn = getattr(self._llm, "stream_complete_with_native_tools", None)
         attempt_messages = messages
-        # One corrective attempt only when the protocol text left no answer.
+        attempt_tools = tools
+        # One correction for missing call evidence or a protocol-only answer.
         # Never turn text into actions or replay a previously executed tool.
         for attempt in range(2):
             response: LLMResponse | None = None
@@ -514,16 +528,16 @@ class AgentLoop:
             # A live 4B correction claimed a successful read without executing
             # it. Until any tool result exists, that correction must produce
             # an actual protocol call or fail. Hold its text until validation.
-            needs_tool_evidence = (
+            needs_tool_evidence = bool(required_tools) or (
                 attempt > 0 and bool(tools) and not any(m.get("role") == "tool" for m in messages)
             )
             deferred_deltas: list[str] = []
             if not callable(stream_fn):
-                response = await self._complete(attempt_messages, tools)
+                response = await self._complete(attempt_messages, attempt_tools)
             else:
                 async for chunk in stream_fn(
                     messages=attempt_messages,
-                    tools=tools,
+                    tools=attempt_tools,
                     caller=self._caller,
                     temperature=self._temperature,
                     max_tokens=self._max_tokens,
@@ -566,6 +580,30 @@ class AgentLoop:
                         continue
                     raise LLMResponseError("Model returned tool protocol text without an answer.")
             if needs_tool_evidence and not response.tool_calls:
+                if required_tools and attempt == 0:
+                    if any(m.get("role") == "tool" for m in messages):
+                        # Nov 7 live 4B confused submitting an approval with
+                        # describing it. A focused corrective schema recovered
+                        # the named remaining action without replaying reads.
+                        # Keep all tools initially so dependencies remain usable.
+                        attempt_tools = [
+                            schema
+                            for schema in tools
+                            if schema["function"]["name"] in required_tools
+                        ]
+                    attempt_messages = [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "用户明确要求调用以下工具，但本轮尚无这些工具的调用记录："
+                                + ", ".join(sorted(required_tools))
+                                + "。请使用已提供的工具调用协议发起所需调用；"
+                                "不得声称已经读取或完成。已有工具结果不要重复执行。"
+                            ),
+                        },
+                    ]
+                    continue
                 raise LLMResponseError("Model correction has no tool evidence for its answer.")
             for text in deferred_deltas:
                 yield AgentEvent(type="delta", step=step, text=text)

@@ -9,6 +9,7 @@ import pytest
 
 from openbiliclaw.llm.base import LLMResponse, LLMStreamChunk
 from openbiliclaw.llm.service import _parse_simulated_tool_calls
+from openbiliclaw.llm.sponsored_errors import SponsoredProtocolError
 from openbiliclaw.llm.sponsored_profiles import approved_registry
 from openbiliclaw.llm.sponsored_provider import SponsoredProvider
 
@@ -20,10 +21,21 @@ LITERAL = json.dumps(CALL)
 @pytest.mark.parametrize(
     ("wire", "expected", "executes"),
     [
-        (json.dumps({"reply": LITERAL}), LITERAL, False),
+        (json.dumps({"reply": LITERAL}), None, False),
         (json.dumps({**CALL, "description": "示例数据"}), None, False),
         (json.dumps({"reply": LITERAL, "other": 1}), None, False),
-        (LITERAL, "", True),
+        (LITERAL, LITERAL, False),
+        ('<tool_call>\n{"name":"get_profile","arguments":{}}\n</tool_call>', "", True),
+        (
+            '好的，我先读取。\n\n<tool_call>{"name":"get_profile","arguments":{}}</tool_call>',
+            "好的，我先读取。\n\n",
+            True,
+        ),
+        (
+            '这是示例：\n```xml\n<tool_call>{"name":"get_profile","arguments":{}}</tool_call>\n```',
+            None,
+            False,
+        ),
     ],
 )
 async def test_free_provider_keeps_literal_reply_separate_from_calls(
@@ -58,6 +70,39 @@ async def test_free_provider_keeps_literal_reply_separate_from_calls(
         assert response.content == (wire if expected is None else expected)
         if streaming:
             assert visible == response.content
+    finally:
+        await sdk.aclose()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_tool_free_wrap_up_rejects_marked_action_without_leaking_it(streaming: bool) -> None:
+    wire = '<tool_call>{"name":"get_profile","arguments":{}}</tool_call>'
+
+    class UnexpectedAction(SponsoredProvider):
+        async def _ensure_started(self) -> None:
+            self._streaming = True
+
+        async def _execute_task_once(self, **kwargs: Any) -> LLMResponse:
+            return LLMResponse(content=wire)
+
+        async def _stream_task_once(self, contract: Any, payload: Any) -> Any:
+            yield LLMStreamChunk(delta=wire)
+            yield LLMStreamChunk(response=LLMResponse(content=wire))
+
+    sdk = UnexpectedAction(["unused"], registry=approved_registry())
+    visible = ""
+    try:
+        with pytest.raises(SponsoredProtocolError):
+            if streaming:
+                async for chunk in sdk.stream_complete_with_tools(
+                    [{"role": "user", "content": "汇总已有结果。"}], [], caller="agent.chat"
+                ):
+                    visible += chunk.delta
+            else:
+                await sdk.complete_with_tools(
+                    [{"role": "user", "content": "汇总已有结果。"}], [], caller="agent.chat"
+                )
+        assert visible == ""
     finally:
         await sdk.aclose()
 

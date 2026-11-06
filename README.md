@@ -671,14 +671,15 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
-Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices
 Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
-文本/JSON 接口转发真实增量流；工具沿用项目模拟协议。备用服务只按用户配置的实例链使用。BGE-M3 不提供图片向量。
+文本/JSON 接口转发真实增量流；免费工具适配采用 Qwen 标记格式的提示词桥接，保留结果身份，普通 JSON 作为数据。备用服务只按用户配置的实例链使用。BGE-M3 不提供图片向量。
 
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener

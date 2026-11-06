@@ -670,14 +670,15 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
-Agent replies → literal JSON answer channel + tool-protocol text guard → SSE / saved reply
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution
 Fallback → only the explicit ordered chain; no replay after streamed output or tools
 Credential / policy failure → capability-scoped durable status → settings + message notices
 Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
-Text/JSON calls forward real streaming deltas; tools use the project's existing simulation protocol. Fallback follows only the explicitly configured instance chain. BGE-M3 has no image embeddings.
+Text/JSON calls forward real streaming deltas. Free tools use a Qwen-tagged prompt bridge with identified results; ordinary JSON remains data. Fallback follows only the explicitly configured instance chain. BGE-M3 has no image embeddings.
 
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
