@@ -19,13 +19,14 @@ import time
 from abc import ABC, abstractmethod
 from collections import Counter, OrderedDict
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.admission import effective_admission_threshold
 from openbiliclaw.discovery.eval_payload import (
     CanonicalEvaluationBatch,
     InputBudgetFailure,
+    InvalidEvaluationEvidence,
     build_canonical_evaluation_batch,
     render_sparse_evaluation_json,
     resolve_local_evaluation_results,
@@ -813,7 +814,7 @@ class DiscoveredContent:
     discovery_lane: str = ""
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
-    evaluation_failure: InputBudgetFailure | None = None
+    evaluation_failure: InputBudgetFailure | InvalidEvaluationEvidence | None = None
     # Per-wave soft refusal only. Never serialized into content_cache or profile.
     semantic_filter_deferred: bool = False
     semantic_filter_review: bool = False
@@ -4008,8 +4009,10 @@ class ContentDiscoveryEngine:
         )
         results: list[float | None] = []
         for index, (content, result) in enumerate(zip(batch, payload, strict=True)):
-            if isinstance(result, InputBudgetFailure):
-                content.evaluation_failure = InputBudgetFailure(recovery_fingerprint)
+            if isinstance(result, InputBudgetFailure | InvalidEvaluationEvidence):
+                content.evaluation_failure = replace(
+                    result, context_fingerprint=recovery_fingerprint
+                )
                 results.append(None)
                 continue
             score = (
@@ -4217,7 +4220,7 @@ class ContentDiscoveryEngine:
         for index, (content, score) in enumerate(zip(batch, results, strict=True)):
             if score is None:
                 content.relevance_reason = (
-                    "input_budget_exhausted"
+                    content.evaluation_failure.storage_reason.split(":", 1)[0]
                     if content.evaluation_failure
                     else "evaluation_response_missing"
                 )

@@ -1,5 +1,13 @@
 # Runtime Module
 
+## Jev 矛盾答案不重复收费（2026-11-06）
+
+已实现：`CandidateEvalCoordinator.status_payload()` 新增
+`candidate_eval_invalid_evidence_blocked`，读取 durable 停放数；与
+`candidate_eval_input_budget_blocked` 分开。两类 refusal 均通过 pipeline 在上下文变更后
+有界恢复；同配置的启动、手动刷新和保存不触发重评。已付费返回的矛盾时效证据不再
+折叠为 missing response，不修改评分或准入规则；暂态服务错误继续原有退避。
+
 ## Jev 输入预算失败恢复（2026-10-27）
 
 | 能力 / 公共接口 | 合同 |

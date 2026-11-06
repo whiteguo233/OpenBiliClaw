@@ -10966,7 +10966,9 @@ ${cardFeedbackBarHtml()}`;
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
       const jevProvider = discovery.jev_provider || {};
-      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"), {
+        probe: config => probeConfigService("jev", config),
+      })
         .load(jevProvider, discovery.jev_evaluation || {});
       const jevStatus = $("#jevEvaluatorStatus");
       if (jevStatus) {

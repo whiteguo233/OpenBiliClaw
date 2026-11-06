@@ -66,15 +66,22 @@ max_calls 用尽也继续检查可填的既有批次，不重评候选、不增�
 
 | 公共接口 / 能力 | 合同 |
 |---|---|
-| `JevContentEvaluator.evaluate()` | 按输入对齐返回有效结果、`InputBudgetFailure` 或暂态 `None`；本地预算失败不伪造评分、不调用 LLM |
+| `JevContentEvaluator.evaluate()` | 按输入对齐返回有效结果、`InputBudgetFailure`、`InvalidEvaluationEvidence` 或暂态 `None`；两类 typed 失败不伪造评分、不调用 LLM |
 | `ContentDiscoveryEngine.evaluation_context_fingerprint(profile)` | 对完整有效画像目录、负例、精确模型/容量/打包策略及 scorer 做 SHA-256，不含凭据或时钟 |
-| `DiscoveryCandidatePipeline.refresh_evaluation_context(profile)` | 仅上下文身份改变时有界重新入队预算停放项；同配置手动刷新/重启不会空重试 |
+| `DiscoveryCandidatePipeline.refresh_evaluation_context(profile)` | 仅上下文身份改变时有界重新入队预算/矛盾证据停放项；同配置手动刷新/重启不会重复请求 |
 | `DiscoveryCandidatePipeline.input_budget_blocked_count()` | 读取持久化停放数；claim 提交另报 `blocked`，不冒充 evaluated/rejected/stale |
+| `DiscoveryCandidatePipeline.invalid_evidence_blocked_count()` | 单独读取时效证据矛盾的停放数，不把它误称为超限或低相关性 |
 
 预算失败经程序内类型传递，按 claim token CAS 写为 `failed_eval` +
 `input_budget_exhausted:<context fingerprint>`；不增加模型/批次重试次数、不写有效评分或成功缓存。
 混合批次中的其它有效候选正常处理。画像、负例、容量、打包契约或显式 scorer 改变后才重新检查；
 不是定时重试，单独换 Token 或重复保存相同设置不算容量修复。详见[实测记录](../verification/2026-10-27-jev-compatible-endpoint.md)。
+
+2026-11-06 真请求发现独立题目的时效选择可能互相矛盾：HTTP 200 和题目齐全并不代表
+语义证据完整。此类结果仍严格拒绝，但改为 `InvalidEvaluationEvidence` →
+`invalid_evaluation_evidence:<context fingerprint>` 单独停放，不进入 missing-response
+自动重评，不改成“有效未知”，其它有效候选照常处理。源文本与先前证据保留，
+同上下文不再次收费；测试按钮同样返回明确失败。详见[本轮验收](../verification/2026-11-06-jev-all-surfaces-real-e2e.md)。
 
 配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
 [Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与
@@ -776,7 +783,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 5.3 相关推荐链策略 | ✅ | 事件种子 + 偏好/策略兜底种子 + 2 层相关推荐链 + LLM 评分过滤 |
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
-| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批，超限 / 失败不缓存并保留候选待评估；中文质量与真实服务尚未验收。 |
+| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批；超限和矛盾证据分别停放、不缓存。已有有界真实链路验收，中文质量仍未认证。 |
 | 独立 Jev 语义过滤 | ✅ 默认 off | 注入 `JevSemanticFilter`，使用独立 provider 与导演共享预算；窄范围稳定避雷判断、探索保留、完整校准 cohort、隐私安全审计、失败放行。校准 enforce 只在本 wave 延期，下一 claim 强制完整评估，不永久拉黑，不替代 LLM 元数据。 |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |

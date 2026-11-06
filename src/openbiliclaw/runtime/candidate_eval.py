@@ -264,6 +264,13 @@ class CandidateEvalCoordinator:
 
         snapshot = self._snapshot()
         blocked_count = 0
+        invalid_evidence_count = 0
+        invalid_count = getattr(self.pipeline, "invalid_evidence_blocked_count", None)
+        if callable(invalid_count):
+            try:
+                invalid_evidence_count = max(0, int(invalid_count()))
+            except Exception:
+                logger.debug("invalid evidence status unavailable", exc_info=True)
         count = getattr(self.pipeline, "input_budget_blocked_count", None)
         if callable(count):
             try:
@@ -279,10 +286,16 @@ class CandidateEvalCoordinator:
             "candidate_eval_supply_streak": self._supply_streak,
             "candidate_eval_supply_cooldown_until": self._supply_cooldown_until,
             "candidate_eval_input_budget_blocked": blocked_count,
+            "candidate_eval_invalid_evidence_blocked": invalid_evidence_count,
             "candidate_eval_last_error": self.last_error
             or (
                 "input_budget_exhausted: increase context capacity or reduce mandatory input"
                 if blocked_count
+                else (
+                    "invalid_evaluation_evidence: "
+                    "contradictory answers parked until context changes"
+                )
+                if invalid_evidence_count
                 else ""
             ),
             "candidate_eval_last_batch_seconds": self.last_batch_seconds,
@@ -418,7 +431,7 @@ class CandidateEvalCoordinator:
                 continue
 
             self.last_error = (
-                "input_budget_exhausted: increase context capacity or reduce mandatory input"
+                "evaluation_refused: inputs or evidence require attention; automatic retry stopped"
                 if int(result.get("blocked", 0)) > 0
                 else ""
             )

@@ -306,6 +306,12 @@ config save → safe API handoff → committed generation (wait for settings que
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
 
+Jev settings test (Web / actual MV3 / mobile Web)
+  → authenticated draft probe → synthetic profile + one candidate → full evaluator (10 questions)
+  → one native HTTP attempt → safe result; no config/DB write or real-profile read
+full Jev evaluation → contradictory temporal evidence → typed refusal → lease-CAS parking
+                    → no same-context retry; bounded recovery after context change
+
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory

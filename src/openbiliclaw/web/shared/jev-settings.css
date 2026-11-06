@@ -12,4 +12,7 @@
 .jev-settings .jev-hint { margin: 8px 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .jev-settings details { margin-top: 12px; }
 .jev-settings summary { min-height: 44px; line-height: 44px; cursor: pointer; }
+.jev-settings button { min-height: 44px; padding: 9px 14px; margin-top: 12px; border: 1px solid #8888; border-radius: 8px; font: inherit; background: transparent; color: inherit; cursor: pointer; }
+.jev-settings button:disabled { opacity: .6; cursor: default; }
+.jev-settings button:focus-visible { outline: 3px solid #4385d4; outline-offset: 2px; }
 @media (max-width: 540px) { .jev-grid { grid-template-columns: minmax(0, 1fr); } }

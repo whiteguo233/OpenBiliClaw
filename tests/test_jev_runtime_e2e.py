@@ -245,6 +245,8 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.reload()
         page.get_by_role("button", name="设置", exact=True).click()
         page.get_by_role("tab", name="高级功能").click()
+        # The settings dialog opens before its asynchronous config GET finishes.
+        form.get_by_text("本机已保存 Token。", exact=False).wait_for()
         assert page.locator("#evalScorer").input_value() == "jev"
         assert form.get_by_label("Token", exact=True).input_value() == ""
         artifacts = ROOT / "output/playwright"

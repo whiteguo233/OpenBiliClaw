@@ -640,6 +640,9 @@ flowchart LR
 完整评估设置页可同时保存 URL/Token/模型/容量并切换模式；Token 仅本机 TOML 保存，读取响应不回显，
 也兼容原有 env。三端共用 `shared/jev-settings.js`，后端严格校验、后台重建；Jev 原生仅文本，不补生成式元数据，
 未知明确保留，错误不会回退 LLM。API、CLI、OpenClaw 与旧池补评共用此选择。
+三端显式测试草稿另走 `probe-service(kind=jev) → api.jev_probe → 合成画像/内容 → 完整 evaluator → native provider`，
+只返回安全结果，不保存配置/候选，不读真实画像。主评估中的矛盾时效证据作为 typed refusal
+按租约停放，同画像/模型/容量下不重复付费；不把矛盾改成有效“未知”，与输入超限分别统计。
 详见[模块文档](modules/decision.md)和[评估合同](modules/discovery.md)。
 
 ### LLM Providers (`llm/`)

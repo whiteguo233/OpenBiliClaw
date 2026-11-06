@@ -188,6 +188,14 @@ export async function fetchConfig(timeoutMs = DEFAULT_READ_TIMEOUT_MS) {
   return requestJson("/config", { timeoutMs });
 }
 
+export async function probeJevConfig(config) {
+  return requestJson("/config/probe-service", {
+    method: "POST", timeoutMs: 25_000,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "jev", config }),
+  });
+}
+
 export async function updateConfig(data, timeoutMs = CONFIG_WRITE_TIMEOUT_MS) {
   return requestJson("/config", {
     method: "PUT",

@@ -31,7 +31,7 @@ from openbiliclaw.decision.models import (
     ScoreQuestion,
     parse_jev_response,
 )
-from openbiliclaw.discovery.eval_payload import InputBudgetFailure
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure, InvalidEvaluationEvidence
 from openbiliclaw.discovery.jev_context import (
     CONTEXT_POLICY,
     TEXT_FIELDS,
@@ -678,7 +678,7 @@ class JevContentEvaluator:
 
     def _result(
         self, candidate: _Candidate, answers: dict[str, DecisionAnswer]
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any] | InvalidEvaluationEvidence:
         def choice(field: str) -> str:
             answer = answers[f"{candidate.ref}.{field}"]
             assert isinstance(answer, ChoiceAnswer)  # validated native primitive
@@ -707,7 +707,7 @@ class JevContentEvaluator:
         grounded = ground_temporal_evaluation(parsed, content_text=candidate.item)
         if not parsed.evidence_complete or grounded != parsed or not grounded.evidence_complete:
             logger.warning("Jev full evaluator candidate failed: inconsistent_temporal_evidence")
-            return None
+            return InvalidEvaluationEvidence()
         temporal["temporal_valid_until"] = grounded.temporal_valid_until
         topic = choice("topic")
         franchise = choice("franchise")
@@ -740,9 +740,11 @@ class JevContentEvaluator:
         source_context: str = "",
         negative_examples: list[dict[str, object]] | None = None,
         evaluated_at: str = "",
-    ) -> list[dict[str, Any] | InputBudgetFailure | None]:
+    ) -> list[dict[str, Any] | InputBudgetFailure | InvalidEvaluationEvidence | None]:
         """Return an aligned complete cohort, with no LLM fallback or partial score."""
-        results: list[dict[str, Any] | InputBudgetFailure | None] = [None] * len(content_items)
+        results: list[dict[str, Any] | InputBudgetFailure | InvalidEvaluationEvidence | None] = [
+            None
+        ] * len(content_items)
         if not content_items:
             return results
         deadline = time.monotonic() + self._config.budget_seconds

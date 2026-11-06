@@ -55,6 +55,22 @@ class InputBudgetFailure:
 
 
 @dataclass(frozen=True)
+class InvalidEvaluationEvidence:
+    """Received but contradictory evidence, parked instead of paid reevaluation.
+
+    This is not an input overflow or a low relevance score. A changed effective
+    evaluation context permits one new attempt; unchanged restarts do not.
+    """
+
+    context_fingerprint: str = ""
+
+    @property
+    def storage_reason(self) -> str:
+        """Safe cause and context identity; never include the remote payload."""
+        return f"invalid_evaluation_evidence:{self.context_fingerprint}"
+
+
+@dataclass(frozen=True)
 class CanonicalEvaluationBatch:
     """One request-scoped canonical sparse evaluator batch.
 

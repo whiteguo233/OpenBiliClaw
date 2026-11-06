@@ -18,7 +18,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_input_budget_parking_honors_claim_owner_and_recovery_identity(tmp_path: Path) -> None:
+@pytest.mark.parametrize("cause", ["input_budget_exhausted", "invalid_evaluation_evidence"])
+def test_input_budget_parking_honors_claim_owner_and_recovery_identity(
+    tmp_path: Path, cause: str
+) -> None:
     db = Database(tmp_path / "budget-owner.db")
     db.initialize()
     try:
@@ -42,22 +45,22 @@ def test_input_budget_parking_honors_claim_owner_and_recovery_identity(tmp_path:
         db.claim_discovery_candidates_for_eval(limit=1, claim_token="new-owner")
         fingerprint = "a" * 64
         assert (
-            db.park_claimed_input_budget_candidates(
-                [1], claim_token="old-owner", reason=f"input_budget_exhausted:{fingerprint}"
+            db.park_claimed_evaluation_refused_candidates(
+                [1], claim_token="old-owner", reason=f"{cause}:{fingerprint}"
             )
             == 0
         )
         row = db.get_discovery_candidates_by_ids([1])[0]
         assert row["status"] == "evaluating" and row["claim_token"] == "new-owner"
         assert (
-            db.park_claimed_input_budget_candidates(
-                [1], claim_token="new-owner", reason=f"input_budget_exhausted:{fingerprint}"
+            db.park_claimed_evaluation_refused_candidates(
+                [1], claim_token="new-owner", reason=f"{cause}:{fingerprint}"
             )
             == 1
         )
         assert db.revive_failed_eval_candidates() == 0
-        assert db.revive_input_budget_candidates(context_fingerprint=fingerprint) == 0
-        assert db.revive_input_budget_candidates(context_fingerprint="b" * 64) == 1
+        assert db.revive_evaluation_refused_candidates(context_fingerprint=fingerprint) == 0
+        assert db.revive_evaluation_refused_candidates(context_fingerprint="b" * 64) == 1
         assert db.get_discovery_candidates_by_ids([1])[0]["status"] == "pending_eval"
     finally:
         db.close()

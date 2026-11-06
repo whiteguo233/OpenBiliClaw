@@ -1,5 +1,16 @@
 # 存储层
 
+## Jev 矛盾证据停放（2026-11-06）
+
+| 已实现能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_evaluation_refused_candidates(ids, claim_token=..., reason=...)` | 将预算失败或矛盾时效证据按当前租约 CAS 停放；只接受两种已知原因和 64 位摘要，不修改已有评分或增加重试数 |
+| `count_invalid_evidence_blocked_candidates()` | 单独统计 `invalid_evaluation_evidence:`，不误报为输入超限 |
+| `revive_evaluation_refused_candidates(context_fingerprint=..., limit=500)` | 上下文变更后有界重入队；重复保存/重启不恢复，旧预算专用方法保留兼容 |
+
+仍使用既有 `status/eval_error`，无 schema migration。通用暂态恢复同时排除这两类停放，
+禁止把已收到但不可信的答案再次作为缺失响应付费重评。远端用量与重试计数不是同一指标。
+
 ## Jev 输入预算停放（2026-10-27）
 
 | 能力 / 公共 API | 合同 |

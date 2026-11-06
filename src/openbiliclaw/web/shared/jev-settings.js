@@ -3,7 +3,7 @@
   "use strict";
   const mounted = new WeakMap();
   const DEFAULT_URL = "https://api.typesafe.ai/v1/systemone";
-  function mount(root, evaluator) {
+  function mount(root, evaluator, options = {}) {
     if (mounted.has(root)) return mounted.get(root);
     root.classList.add("jev-settings");
     root.innerHTML = `
@@ -31,7 +31,10 @@
         </div>
         <p class="jev-hint">每条候选的完整 10 题不会拆开；超限先减少合批候选，再本地摘录。传输重试仍可能计费，不是额外摘要或分段评估。</p>
       </details>
-      <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>`;
+      <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>
+      <button type="button" data-jev="probe">测试连接与评估</button>
+      <p class="jev-hint">发送 1 条合成测试内容（完整 10 题），可能产生少量费用。使用当前填写的配置，不自动保存。</p>
+      <p class="jev-hint" data-jev="probe-status" role="status" aria-live="polite"></p>`;
     const field = name => root.querySelector(`[data-jev="${name}"]`);
     for (const input of root.querySelectorAll("input, select")) input.id = `${root.id}-${input.dataset.jev}`;
     let provider = {};
@@ -39,6 +42,8 @@
     let initial = "";
     let initialCandidates = 64;
     let addressMode = "endpoint";
+    let probing = false;
+    let revision = 0;
     const endpoint = () => {
       const value = field("endpoint_url").value.trim().replace(/\/+$/, "");
       return field("address_mode").value === "base"
@@ -69,9 +74,13 @@
       ));
       const option = evaluator?.querySelector('option[value="jev"]');
       if (option) option.disabled = !(field("enabled").checked && hasToken && field("model").value.trim());
+      field("probe").disabled = probing || !writable || typeof options.probe !== "function"
+        || !field("enabled").checked || !hasToken || !field("model").value.trim();
       if (!writable) for (const input of root.querySelectorAll("input, select")) input.disabled = true;
     }
     root.addEventListener("input", event => {
+      revision += 1;
+      field("probe-status").textContent = "";
       if (event.target === field("model")) {
         // Never carry another model's manual capacity to a newly typed ID.
         const limits = modelLimits(field("model").value.trim());
@@ -83,6 +92,8 @@
       field("edit-status").textContent = "连接信息已修改，保存后生效；配置就绪不等于已联网验证。";
     });
     root.addEventListener("change", () => {
+      revision += 1;
+      field("probe-status").textContent = "";
       const nextMode = field("address_mode").value;
       if (nextMode !== addressMode) {
         const value = field("endpoint_url").value.trim().replace(/\/+$/, "");
@@ -97,6 +108,8 @@
     });
     const api = {
       load(nextProvider = {}, evaluation = {}) {
+        revision += 1;
+        field("probe-status").textContent = "";
         provider = nextProvider;
         // Older backends silently ignore unknown write sections. Do not offer
         // secret editing until they advertise the new safe credential status.
@@ -149,6 +162,26 @@
         return result;
       },
     };
+    field("probe").addEventListener("click", async () => {
+      if (field("probe").disabled) return;
+      const startedRevision = revision;
+      probing = true;
+      sync();
+      field("probe-status").textContent = "正在测试 Jev 连接与完整评估…";
+      try {
+        const result = await options.probe(api.collect());
+        field("probe-status").textContent = revision === startedRevision
+          ? `${result?.ok ? "测试通过" : "测试失败"}：${result?.message || "未取得有效评估结果。"}`
+          : "配置已修改，请重新测试。";
+      } catch {
+        field("probe-status").textContent = revision === startedRevision
+          ? "测试请求失败，请检查后端连接或登录状态后重试。"
+          : "配置已修改，请重新测试。";
+      } finally {
+        probing = false;
+        sync();
+      }
+    });
     mounted.set(root, api);
     return api;
   }

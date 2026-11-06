@@ -484,6 +484,7 @@ class RuntimeStatusResponse(BaseModel):
     candidate_eval_backoff_until: float = 0.0
     candidate_eval_last_error: str = ""
     candidate_eval_input_budget_blocked: int = 0
+    candidate_eval_invalid_evidence_blocked: int = 0
     candidate_eval_last_batch_seconds: float = 0.0
     candidate_eval_last_cached: int = 0
     candidate_eval_last_rejected: int = 0
@@ -2942,7 +2943,7 @@ class ConfigUpdateIn(BaseModel):
 
 
 class ConfigServiceProbeIn(BaseModel):
-    """No-write request to probe the submitted LLM or embedding config.
+    """No-write request to probe submitted LLM, Jev or embedding settings.
 
     ``llm_instance`` probes one exact endpoint instance. ``llm_chain``
     exercises the submitted global route, including sequential fallback.
@@ -2957,6 +2958,7 @@ class ConfigServiceProbeIn(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     instance_id: str = ""
     config: dict[str, object] = Field(default_factory=dict)
@@ -2973,6 +2975,7 @@ class ConfigServiceProbeResponse(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     instance_id: str = ""
     provider: str = ""

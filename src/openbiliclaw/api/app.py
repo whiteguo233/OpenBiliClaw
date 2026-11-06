@@ -23025,7 +23025,7 @@ def create_app(
     async def probe_config_service(
         request: Request, payload: ConfigServiceProbeIn
     ) -> ConfigServiceProbeResponse | JSONResponse:
-        """Probe submitted LLM / embedding / proxy settings without saving config.toml."""
+        """Probe submitted service settings without saving config.toml."""
         denied = _config_write_gate(request)
         if denied is not None:
             return denied
@@ -23064,6 +23064,10 @@ def create_app(
             return await _probe_network_proxy(mode, proxy)
 
         cfg = deepcopy(load_config())
+        if payload.kind == "jev":
+            from openbiliclaw.api.jev_probe import probe_jev_config
+
+            return await probe_jev_config(cfg, update)
         llm_data = update.get("llm")
         if isinstance(llm_data, dict):
             _apply_llm_update(cfg, llm_data)

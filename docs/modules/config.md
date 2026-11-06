@@ -331,13 +331,18 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 同时开启会报错。它原生仅文本，未识别类别如实保留；不会隐式改成混合 LLM 模式。
 沿用的入池阈值尚未做 Jev 中文标定。该切换影响后续评估，不批量迁移历史结果。
 
+三端连接区的“测试连接与评估”使用当前填写草稿（不是必须先保存），向当前固定模型发送
+1 条合成内容完整 10 题；一次 HTTP 尝试，可能少量计费。不读取真实画像、不写配置，
+成功仅代表本次完整探测通过。修改配置后旧提示失效，保存仍是独立操作。
+
 ### `[director]`
 
 推荐导演的业务路由，类型为 `Config.director → DirectorConfig`。`mode` 是灰度开关，
 `strategy` 才是用户选择的三种编排方式，两者不能混用。默认关闭，保留既有推荐路径。
 
-`[director]`、`[discovery.semantic_filter]` 和 `[decision.providers.jev]` 当前是
-TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口。修改后必须完整停止并
+`[director]` 和 `[discovery.semantic_filter]` 当前是
+TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口；`[decision.providers.jev]`
+已可由共用连接表单配置。手动修改 TOML 后必须完整停止并
 重新启动后端，使 API、推荐与发现子进程一起读取新配置；仅刷新页面或重建 API
 进程内 runtime 不会同步其他子进程。桌面安装需退出后重新启动整个应用。
 内核重建时的 epoch / 取消机制保证旧请求不跨配置提交，但不是跨进程配置分发。

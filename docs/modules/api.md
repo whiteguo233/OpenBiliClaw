@@ -1,5 +1,17 @@
 # 后端 API
 
+## Jev 草稿完整评估探测（2026-11-06）
+
+| 接口 / 能力 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/config/probe-service`，`kind="jev"` | ✅ | 对当前配置内存副本应用 `config.decision` / `config.discovery.jev_evaluation` 草稿，走真实 native provider 与完整 10 题评估；仅一次 HTTP 尝试，传输最长 15 秒、总计 20 秒 |
+| `api.jev_probe.probe_jev_config(config, update)` | ✅ | 固定合成画像与内容，不读取真实画像、不落候选、不写配置、不热重载；有效完整结果才返回 `ok=true` |
+| 三端草稿状态 | ✅ | 复用配置写鉴权；请求中禁止重复点击，编辑后旧成功状态失效；错误只返回安全原因码，不返回 Token 或远端正文 |
+| `GET /api/runtime-status` → `candidate_eval_invalid_evidence_blocked` | ✅ | 默认 0；单独统计时效证据矛盾的停放候选，不混入输入超限数；同上下文不重复付费，改变有效上下文后有界恢复 |
+
+本地装不下返回 `input_budget_exhausted` 且不发送请求。测试使用固定模型及双预算，
+不会切换到 LLM；按钮提示可能计费。合成测试成功不代表真实大画像或模型质量均通过。
+
 ## Jev 预算停放诊断（2026-10-27）
 
 | 接口 / 字段 | 状态 | 契约 |

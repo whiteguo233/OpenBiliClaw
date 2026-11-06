@@ -7826,6 +7826,25 @@ class Database:
         """
         if re.fullmatch(r"input_budget_exhausted:[0-9a-f]{64}", reason) is None:
             raise ValueError("invalid input budget failure identity")
+        return self.park_claimed_evaluation_refused_candidates(
+            candidate_ids, claim_token=claim_token, reason=reason
+        )
+
+    def park_claimed_evaluation_refused_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Lease-CAS park a local input refusal or contradictory remote evidence.
+
+        Neither is low-score admission or a transient response-missing retry.
+        Preserve earlier evidence and counters; remote billing belongs to usage.
+        """
+        if (
+            re.fullmatch(
+                r"(?:input_budget_exhausted|invalid_evaluation_evidence):[0-9a-f]{64}", reason
+            )
+            is None
+        ):
+            raise ValueError("invalid evaluation refusal identity")
         ids = sorted({str(int(value)) for value in candidate_ids})
         updated = 0
         for chunk in _chunks(ids, 450):
@@ -7855,6 +7874,28 @@ class Database:
         self, *, context_fingerprint: str, limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE
     ) -> int:
         """Requeue bounded input refusals only for a different effective context."""
+        return self.revive_evaluation_refused_candidates(
+            context_fingerprint=context_fingerprint, limit=limit, include_invalid_evidence=False
+        )
+
+    def count_invalid_evidence_blocked_candidates(self) -> int:
+        """Count contradictory evidence without conflating it with input overflow."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'invalid_evaluation_evidence:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_evaluation_refused_candidates(
+        self,
+        *,
+        context_fingerprint: str,
+        limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE,
+        include_invalid_evidence: bool = True,
+    ) -> int:
+        """Bounded recovery after a context change, never an unchanged restart."""
         if re.fullmatch(r"[0-9a-f]{64}", context_fingerprint) is None:
             raise ValueError("invalid evaluation context identity")
         cursor = self._execute_write(
@@ -7866,11 +7907,17 @@ class Database:
                WHERE id IN (
                    SELECT id FROM discovery_candidates
                    WHERE status = 'failed_eval'
-                     AND eval_error LIKE 'input_budget_exhausted:%'
-                     AND eval_error != ?
+                     AND (eval_error LIKE 'input_budget_exhausted:%'
+                          OR (? AND eval_error LIKE 'invalid_evaluation_evidence:%'))
+                     AND eval_error NOT IN (?, ?)
                    ORDER BY id ASC LIMIT ?
                )""",
-            (f"input_budget_exhausted:{context_fingerprint}", max(0, int(limit))),
+            (
+                include_invalid_evidence,
+                f"input_budget_exhausted:{context_fingerprint}",
+                f"invalid_evaluation_evidence:{context_fingerprint}",
+                max(0, int(limit)),
+            ),
         )
         return int(cursor.rowcount)
 
@@ -7921,6 +7968,7 @@ class Database:
                   AND eval_revive_count < ?
                   AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
                   AND COALESCE(eval_error, '') NOT LIKE 'input_budget_exhausted:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'invalid_evaluation_evidence:%'
                 ORDER BY id ASC
                 LIMIT ?
             )

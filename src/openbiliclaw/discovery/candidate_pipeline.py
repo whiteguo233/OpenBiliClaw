@@ -742,13 +742,18 @@ class DiscoveryCandidatePipeline:
         count = getattr(self.database, "count_input_budget_blocked_candidates", None)
         return int(count() or 0) if callable(count) else 0
 
+    def invalid_evidence_blocked_count(self) -> int:
+        """Read parked contradictory answers separately from local budget failures."""
+        count = getattr(self.database, "count_invalid_evidence_blocked_candidates", None)
+        return int(count() or 0) if callable(count) else 0
+
     def refresh_evaluation_context(self, profile: Any) -> int:
-        """Reconsider input refusals only when the effective context changed."""
-        refresh = getattr(self.database, "revive_input_budget_candidates", None)
+        """Reconsider parked refusals only when the effective context changed."""
+        refresh = getattr(self.database, "revive_evaluation_refused_candidates", None)
         fingerprint = getattr(self.discovery_engine, "evaluation_context_fingerprint", None)
         if not callable(refresh) or not callable(fingerprint):
             return 0
-        if self.input_budget_blocked_count() == 0:
+        if self.input_budget_blocked_count() + self.invalid_evidence_blocked_count() == 0:
             return 0
         return int(refresh(context_fingerprint=fingerprint(profile)) or 0)
 
@@ -1090,7 +1095,7 @@ class DiscoveryCandidatePipeline:
         if blocked and claim_token is not None:
             for reason, ids in blocked.items():
                 blocked_count += int(
-                    self.database.park_claimed_input_budget_candidates(
+                    self.database.park_claimed_evaluation_refused_candidates(
                         ids,
                         claim_token=claim_token,
                         reason=reason,
@@ -1099,7 +1104,7 @@ class DiscoveryCandidatePipeline:
         elif blocked:
             # Without lease ownership a legacy adapter cannot park candidates.
             # Do not turn a technical input refusal into a low-score rejection.
-            raise ValueError("input budget parking requires claim ownership")
+            raise ValueError("evaluation refusal parking requires claim ownership")
         if claim_token is not None and callable(persist_claimed):
             updated_ids = set(persist_claimed(evaluations, claim_token=claim_token))
             deferred_count = 0

@@ -15,6 +15,34 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_probe_uses_draft_and_discards_success_after_edit(chromium_page: Page) -> None:
+    page = chromium_page
+    page.set_content('<div id="connection"></div>')
+    page.add_script_tag(path=str(ROOT / "src/openbiliclaw/web/shared/jev-settings.js"))
+    page.evaluate("""() => {
+      window.form = OpenBiliClawJevSettings.mount(document.querySelector('#connection'), null, {
+        probe: config => {
+          window.sentDraft = config;
+          return new Promise(resolve => window.finishProbe = resolve);
+        }
+      });
+      form.load({enabled:true, api_key_configured:true, credential_source:'config',
+        base_url_supported:true, endpoint_url:'https://relay.example/v1/systemone',
+        model:'jev-1.14.0'});
+    }""")
+    button = page.get_by_role("button", name="测试连接与评估", exact=True)
+    assert button.count() == 1
+    page.get_by_label("Token", exact=True).fill("synthetic-draft-token")
+    button.click()
+    assert button.is_disabled()
+    assert page.evaluate("sentDraft.decision.providers.jev.api_key") == "synthetic-draft-token"
+    page.get_by_label("固定模型 ID", exact=True).fill("different-fixed")
+    page.evaluate("finishProbe({ok:true,message:'previous-result'})")
+    page.locator('[data-jev="probe-status"]').filter(has_text="配置已修改，请重新测试").wait_for()
+    assert "previous-result" not in page.locator("body").inner_text()
+    assert "synthetic-draft-token" not in page.locator("body").inner_text()
+
+
 @pytest.mark.parametrize("width", [375, 768, 1024, 1440])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_shared_form_preserves_equivalent_destination_and_gates_new_target(

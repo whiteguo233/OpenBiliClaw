@@ -54,7 +54,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 固定模型自适应预算 | 已实现 | 精确 ID 的双容量整数 → 双 UTF-8 字节上限，取消固定 25% 额外预留；不是精准 tokenizer，旧显式限制保留；模型不自动切换，完整评估与导演共用 |
 | 完整题组多候选合批 | 已实现；有界真实验收 | 原文只传一次，相同整画像字段共享；默认 64 候选搜索上限、first-fit 空位回填，实际受双容量约束。真实两视频 20 题共一次请求；长文仍整段摘录，不重评 |
 | 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
-| 图形界面设置与服务探测 | 设置已实现，探测未提供 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；Token 不回显，不提供付费探测 |
+| 图形界面设置与服务探测 | 已实现 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；显式测试草稿发送 1 条合成内容完整 10 题，仅一次 HTTP 尝试，不保存、不读真实画像 |
 | 兼容网关 | 已实现 | 配置页 Base / 完整 URL，不限制官方域名；已知网关元数据白名单、可证明的 2dp 舍入容差 |
 | 线上质量 / 中文效果 / 时延保证 | 未认证 | OpenRouter 固定 1.14 已通过有界真实链路与双预算测试，不等于语义质量或摘录无损认证 |
 
@@ -116,7 +116,10 @@ state 接受有限数值组成的 JSON 文本 / 对象 / 数组，不支持多�
 `/v1/systemone`，已有 `/v1` 只补 `/systemone`。Provider 仍只接收并使用明确的完整
 `endpoint_url`，不按域名自动选服务商或改模型；自定义原生路径保持原样。
 
-兼容 OpenRouter 的可选 `id`、`provider`、`usage.cost` 元数据（严格类型、费用有限且非负）；
+兼容 OpenRouter 的可选 `id`、`provider`、`usage.cost`、`usage.is_byok` 与
+`usage.cost_details` 元数据；后者只接受 `upstream_inference_cost`、
+`upstream_inference_prompt_cost`、`upstream_inference_completions_cost` 三项。
+布尔值严格校验，费用有限且非负；2026-11-06 真实请求发现新增计费字段后补齐白名单。
 不向 DecisionEvidence 混入网关字段，未知额外字段继续拒绝。协议依据为
 [OpenRouter TypeSafe SDK 文档](https://openrouter.ai/docs/guides/community/typesafe-sdk)。
 2026-10-27 真实 Jev 1.14 返回概率和 score 各自按两位小数舍入；严格 1e-6 等式会误拒。
@@ -169,7 +172,7 @@ URL 改动的配置 API 必须同时提交新 Token，不向另一个地址自�
 - 候选文本是不可信数据，不能因为 typed 输出就认为模型不受内容诱导；provider 本身没有工具或数据库写权限。
 - 不记录 API key、state 或远端错误响应正文；错误以类型和稳定原因码呈现。
 - CLI：`config-show` 展示开关、模型、凭据变量名和预算，不探测网络，也不读取或打印实际 key。
-- 插件 popup、桌面 Web、移动 Web：共用 Jev 连接表单与后端配置 API，可配置连接/容量并切换完整评估；不增加付费探测按钮。Token 不回显/不进浏览器存储，仅后端本机 TOML 保存，非加密密钥库。
+- 插件 popup、桌面 Web、移动 Web：共用 Jev 连接表单与后端配置 API，可配置连接/容量并切换完整评估；“测试连接与评估”显式提示少量费用，使用草稿、不保存。Token 不回显/不进浏览器存储，仅后端本机 TOML 保存，非加密密钥库。
 - Git / Docker / 桌面安装的依赖与启动流程不变；复用现有 `httpx`，未安装 Jev SDK，也没有自动下载模型。
 
 ## 后续接线的验收边界

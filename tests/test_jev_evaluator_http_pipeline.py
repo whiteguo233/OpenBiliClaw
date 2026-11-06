@@ -265,6 +265,58 @@ async def test_long_chinese_excerpts_are_evaluated_once_and_keep_original_source
             await runtime.aclose()
 
 
+async def test_contradictory_jev_evidence_is_parked_without_repeat_billing(
+    database: Database,
+) -> None:
+    calls = 0
+    contradictory = True
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = mock_success(request).json()
+        if contradictory:
+            # Individually valid independent choices, jointly impossible:
+            # evergreen content cannot have core event-state expiry.
+            answer = payload["answers"]["c0.validity"]
+            answer["choice"] = "event_expired_core"
+            answer["probabilities"] = {
+                key: float(key == answer["choice"]) for key in answer["probabilities"]
+            }
+        return httpx.Response(200, json=payload)
+
+    enqueue(database)
+    profile = _build_profile()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle), trust_env=False) as client:
+        pipeline, runtime, llm = build_pipeline(database, client)
+        try:
+            result = await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+            assert result.get("blocked") == 1
+            row = database.get_discovery_candidates_by_ids([1])[0]
+            assert row["status"] == "failed_eval"
+            assert row["eval_error"].startswith("invalid_evaluation_evidence:")
+            assert row["batch_eval_attempts"] == 0
+            assert pipeline.revive_failed_eval_candidates() == 0
+            for _ in range(3):
+                await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+            assert calls == 1 and llm.calls == 0
+            assert not pipeline.discovery_engine._eval_cache
+            from openbiliclaw.runtime.candidate_eval import CandidateEvalCoordinator
+
+            restarted = CandidateEvalCoordinator(
+                pipeline=pipeline, snapshot_provider=lambda: {}, profile_provider=lambda: profile
+            )
+            assert restarted.status_payload()["candidate_eval_invalid_evidence_blocked"] == 1
+            assert restarted.status_payload()["candidate_eval_input_budget_blocked"] == 0
+            contradictory = False
+            profile.preferences.disliked_topics.append("营销带货")
+            recovered = await pipeline.drain_pending(profile=profile, batch_size=1, flush=True)
+            assert recovered["cached"] == 1
+            assert calls == 2 and llm.calls == 0
+        finally:
+            await runtime.aclose()
+
+
 async def test_long_chinese_candidate_is_parked_without_any_http_request(
     database: Database, caplog: Any
 ) -> None:

@@ -260,8 +260,18 @@ class DecisionEvidence(_DecisionModel):
         return self
 
 
+class _JevWireCostDetails(_DecisionModel):
+    """Known gateway billing fields; never used to validate recommendation quality."""
+
+    upstream_inference_cost: Annotated[float, Field(ge=0)] | None = None
+    upstream_inference_prompt_cost: Annotated[float, Field(ge=0)] | None = None
+    upstream_inference_completions_cost: Annotated[float, Field(ge=0)] | None = None
+
+
 class _JevWireUsage(DecisionUsage):
     cost: Annotated[float, Field(ge=0)] | None = None
+    is_byok: bool | None = None
+    cost_details: _JevWireCostDetails | None = None
 
 
 class _JevResponse(_DecisionModel):

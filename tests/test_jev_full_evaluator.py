@@ -23,7 +23,7 @@ from openbiliclaw.decision.models import (
     ScoreQuestion,
 )
 from openbiliclaw.discovery import jev_evaluator as evaluator_module
-from openbiliclaw.discovery.eval_payload import InputBudgetFailure
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure, InvalidEvaluationEvidence
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 
 if TYPE_CHECKING:
@@ -569,7 +569,9 @@ async def test_inconsistent_or_ungrounded_temporal_claim_is_not_complete_unknown
     choices: dict[str, str],
 ) -> None:
     provider = NativeProvider(lambda request: native_evidence(request, choices=choices))
-    assert await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM]) == [None]
+    assert await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM]) == [
+        InvalidEvaluationEvidence()
+    ]
 
 
 async def test_valid_temporal_claim_uses_exact_candidate_excerpt_and_deadline() -> None:
@@ -623,7 +625,7 @@ async def test_qualified_future_state_is_not_evidence_of_expiry() -> None:
     )
     assert await evaluator(provider).evaluate(
         profile_summary={}, content_items=[{"title": "如果这个版本已被替代，重新核验支持状态"}]
-    ) == [None]
+    ) == [InvalidEvaluationEvidence()]
 
 
 async def test_many_excerpt_choices_use_an_explicit_partial_view_in_one_call() -> None:

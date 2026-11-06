@@ -9,6 +9,7 @@ import {
   fetchAuthStatus,
   fetchConfig,
   updateConfig,
+  probeJevConfig,
 } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
@@ -230,7 +231,9 @@ async function openMobileSettings(opener) {
   const languageSelect = card.querySelector("#mobile-language");
   const evaluator = card.querySelector("#mobile-eval-scorer");
   const jevStatus = card.querySelector("#mobile-jev-status");
-  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
+  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator, {
+    probe: probeJevConfig,
+  });
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");

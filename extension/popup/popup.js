@@ -11233,7 +11233,9 @@ function bindSettings() {
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
     setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm");
     const jevProvider = cfg.discovery?.jev_provider || {};
-    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"))
+    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"), {
+      probe: config => probeConfigService("jev", config),
+    })
       .load(jevProvider, cfg.discovery?.jev_evaluation || {});
     const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
     if (jevStatus) {
