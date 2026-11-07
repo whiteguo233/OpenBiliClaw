@@ -752,6 +752,7 @@ PY
     echo "  Transient setup timeouts retry automatically; no service restart is needed. Installation is bounded to 20 minutes; initialization/connection has a separate 5-minute budget."
     echo "  To retry after a terminal failure: run openbiliclaw sources prepare-ego using this installation's runtime and project root."
     echo "  Prepared Ego starts on demand; RSS/Atom/JSON Feed need no browser."
+    echo "  Managed Ego setup and collection run without local browser windows; open the in-app takeover page when login is needed."
     echo "  See: $INSTALL_DIR/docs/modules/browser-workflows.md"
     echo ""
     echo "Reference docs:"

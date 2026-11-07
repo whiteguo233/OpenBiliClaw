@@ -1855,6 +1855,7 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
   bottom: 0;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 4px 10px;
   padding-bottom: max(10px, var(--safe-bottom));
@@ -1865,6 +1866,16 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
     linear-gradient(180deg, rgba(242, 248, 255, 0), var(--bg-sky) 18px),
     var(--bg-sky);
 }
+
+.chat-source-guide { flex: 0 0 100%; min-width: 0; color: var(--text-secondary); font-size: 14px; }
+.chat-source-guide summary { min-height: 44px; padding: 12px; border-radius: 12px; color: var(--text-main); font-weight: 650; cursor: pointer; }
+.chat-source-guide summary:hover, .chat-source-guide[open] summary { background: var(--brand-soft); }
+.chat-source-guide summary::marker { color: var(--brand-strong); }
+.chat-source-guide summary:focus-visible, .chat-source-guide-body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.chat-source-guide-body { max-height: min(240px, 30dvh); padding: 0 12px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
+.chat-source-guide-body p { margin: 12px 0; }
+.chat-source-guide-example { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.chat-source-guide-example strong { display: block; margin-bottom: 4px; color: var(--text-main); }
 
 .chat-input {
   flex: 1;

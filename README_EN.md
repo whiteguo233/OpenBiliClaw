@@ -676,11 +676,19 @@ Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop G
 
 Dynamic websites and RSS / Atom / JSON Feed: `automatic deployment setup of Ego (macOS websites) / anonymous HTTP for feeds → original-message limits + chat draft and trial → actual-budget approval → independent source_id / share / interval → scheduled versioned workflows → ordinary candidate evaluation → recommendation pool`. Login runs on the human takeover page followed by `resume`; all three settings surfaces manage websites as peers of built-in sources. Content stays `source_platform=web`, with `source_name` as its visible label.
 
+Source attention: `login expiry / security verification → durable pause → Web/native inbox and source settings → human action → successful retrial before resuming`; source shares and strategies are preserved, and pending warnings survive restarts.
+
+Persistent collection failures: `3 consecutive worker failures / immediate manual action → SQLite transition history → API diagnostics.alert relay → existing anomaly feed + Web/native reminders`; success clears the current warning and retains recovery history.
+
 Human takeover: `owned iframe → content/login origin guards before resume → shared request and byte budget`; popups and workers remain blocked. Authoring receives common structure from repeated rows in the same container to avoid pinning one item ID, while retaining original filters, trials and approval.
+
+Verification consent: `blocked iframe on an affirmative challenge page → bounded origin choices → explicit web/native consent → interactive scope`. Ordinary advertisements do not prompt for consent; granting the origin does not prove that website verification succeeded.
 
 Explicit host routing: `GET/PUT executors/ego/network → private network.json → current manual system proxies + exact direct hosts at each cold start`. The default list is empty; live sessions prevent updates, and unsupported PAC/WPAD configurations fail explicitly.
 
 A failed Ego draft trial can follow `fixed DOM href evidence / a structural candidate within the original scope → one retrial → review actual samples for structural repairs → persist only after verification`. Entry, scope, budgets and approval stay unchanged; published collection never rewrites its strategy automatically.
+
+Public Web / Ego network preflight: `all system DNS answers are proxy fake-IP → fixed, verified DoH → public IPs only`. HTTP pins the verified addresses; Ego retains native socket routing and exact-host direct rules. Private or mixed answers and failed verification remain blocked.
 
 Authoring observation: `explicit empty-value link hints from the user → page-local path / query-presence booleans → redacted authoring evidence`; query values and other parameter names remain hidden. A managed Ego opening timeout follows `cleanup → idle-only managed host restart → one retry with the same task identity`, within the original total budget.
 
@@ -746,6 +754,8 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 Provide a URL and content goal in chat. `prepare_discovery_source/trial_discovery_source` create persistent drafts and trial them; `activate_discovery_source/manage_discovery_source` require approval cards before activation or changes. Sign in only on the dedicated human takeover page, without pasting passwords or cookies into chat or settings. Desktop, popup, and Mobile Web source cards support explicit edits, enable/disable, re-login, and run history; each website has a share alongside built-in sources, rather than a fraction of the legacy Web share.
 
 HTTP / Ego Lite availability, login requirements, and page structure constrain execution. Web discovery stays within approved origins. Feed request origins and article-link origins are approved separately; feeds do not automatically fetch linked article pages. Observed public static-resource origins can be allowed separately; cross-site login origins require an explicit choice on the takeover page and are allowed only during manual login, without expanding content discovery. Arbitrary-site success is not guaranteed.
+
+Managed Ego on macOS runs first-time setup and routine collection without local browser windows. Users open the in-app takeover page when login or verification is needed. The host starts on demand and shuts down after its idle grace period.
 
 Managed Ego setup and native execution currently support macOS only. Preparation now happens during deployment: after dependencies in source installs, on the desktop app's first launch after installation, and in the background of actual `start` / `serve-api` launches when setup is unfinished. Drag-install DMGs have no post-install hook, so copying the app alone does not run preparation. No first chat or new configuration switch is needed. API, desktop and CLI service-start checks neither download ready, installed environments again nor wake their offline hosts. Rerunning source installation still performs explicit preparation and handshake verification and may start the host. Transient download, safe-command and setup timeouts recover within the same preparation call, without a user restart. After exhausted or explicit failures, retry through **Prepare Ego Lite**, or with `openbiliclaw sources prepare-ego`; chat retains a recovery path. RSS needs no Ego. Setting any nonempty `OPENBILICLAW_EGO_BROWSER`, `OPENBILICLAW_EGO_SERVER_NAME` or `OPENBILICLAW_EGO_PROFILE` opts out of management and leaves the external host untouched. Linux/Docker and Windows do not yet support this native path, and no other browser is used as a fallback.
 

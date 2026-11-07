@@ -47,15 +47,19 @@ def is_public_address(value: str) -> bool:
     return True
 
 
-async def resolve_public_addresses(host: str, *, proxy: str | None = None) -> tuple[str, ...]:
+async def resolve_public_addresses(
+    host: str, *, proxy: str | None = None, use_public_dns: bool = False
+) -> tuple[str, ...]:
     """Resolve once; proxied CDNs use bounded, TLS-verified DoH via that proxy.
 
     Local DNS may return a proxy's fake-IP or a poisoned address. Never fall
     back to unvalidated remote hostname resolution: resolve the public CDN
     hostname (not its path/token) at the fixed Cloudflare 1.1.1.1 endpoint,
-    then pin the returned public addresses. Direct traffic stays on local DNS.
+    then pin the returned public addresses. Direct traffic stays on local DNS
+    unless a caller has positively identified a synthetic proxy DNS answer.
+    ``use_public_dns`` changes DNS preflight only, never the destination route.
     """
-    if proxy:
+    if proxy or use_public_dns:
         addresses = await _resolve_proxy_addresses(host, proxy)
     else:
         try:
@@ -74,7 +78,7 @@ async def resolve_public_addresses(host: str, *, proxy: str | None = None) -> tu
     return tuple(sorted(addresses, key=lambda address: ":" in address))[:4]
 
 
-async def _resolve_proxy_addresses(host: str, proxy: str) -> tuple[str, ...]:
+async def _resolve_proxy_addresses(host: str, proxy: str | None) -> tuple[str, ...]:
     """No redirects, cookies, URL tokens, local DNS or unbounded DNS responses."""
     addresses: list[str] = []
     try:

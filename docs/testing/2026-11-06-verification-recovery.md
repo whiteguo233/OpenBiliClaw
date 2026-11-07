@@ -1,5 +1,8 @@
 # Ego 验证恢复与重复采集验收（2026-11-06）
 
+后续用户已同意临时代理对照，结果和新发现的验证域授权修复见
+[哔哩轻小说最新记录](2026-11-06-bilinovel-proxy-verification.md)。下文“待确认”为当时状态。
+
 Integration level：**discovery-only repair**。承接[上一轮剩余站点修复](2026-11-06-remaining-sites-fixes.md)，
 继续处理 V2EX 验证与哔哩轻小说直连阻断。契约沿用
 [dynamic-web](../platform-source-contract.dynamic-web.toml)。这不是全部网站、真实账号登录或安装包的重新认证。

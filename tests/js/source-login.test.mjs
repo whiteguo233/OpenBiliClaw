@@ -59,6 +59,38 @@ test("observed login origin stays opt-in and authorizes only the clicked origin"
   assert.ok(h.calls.every((call) => call.options.credentials === "same-origin"));
 });
 
+test("verification frame consent uses server suggestions and removes stale choices", async () => {
+  const origin = "https://challenges.cloudflare.com";
+  let approved = false;
+  const h = await setup((path, body) => {
+    if (!path.endsWith("/takeover")) return null;
+    if (body.login_origin) { assert.equal(body.login_origin, origin); approved = true; }
+    return { ok: true, json: async () => ({
+      suggested_login_origins: approved ? [] : [origin],
+      blocked_navigation_origins: approved ? [origin] : [],
+      blocked_frame_origins: [origin], elements: [],
+    }) };
+  });
+  assert.equal(approved, false);
+  assert.equal(h.elements["login-origins"].children.length, 1);
+  h.elements["login-origins"].children[0].handlers.click();
+  await settle();
+  assert.equal(approved, true);
+  assert.equal(h.elements["login-origins"].children.length, 0);
+});
+
+test("explicit refresh can reveal a late verification scope without reopening the page", async () => {
+  let ready = false;
+  const h = await setup((path) => path.endsWith("/takeover") ? {
+    ok: true, json: async () => ({ suggested_login_origins: ready ? ["https://verify.example.com"] : [], elements: [] }),
+  } : null);
+  assert.equal(h.elements["login-origins"].children.length, 0);
+  ready = true;
+  h.elements.refresh.handlers.click(); await settle();
+  assert.equal(h.elements["login-origins"].children.length, 1);
+  assert.ok(h.calls.filter((call) => call.path.endsWith("/takeover")).every((call) => !call.body.login_origin));
+});
+
 test("manual fill clears the local secret before the request settles, including failure", async () => {
   let finish;
   const h = await setup((path) => path.endsWith("/action") ? new Promise((resolve) => { finish = resolve; }) : null);

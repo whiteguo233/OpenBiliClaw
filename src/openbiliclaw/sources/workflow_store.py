@@ -12,6 +12,9 @@ import uuid
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.sources.source_alerts import SCHEMA as ALERT_SCHEMA
+from openbiliclaw.sources.source_alerts import record_transition
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
@@ -21,7 +24,8 @@ class WorkflowStore:
 
     def __init__(self, database: Any) -> None:
         self.database = database
-        database.conn.executescript("""
+        database.conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS custom_workflow_drafts (
                 draft_id TEXT PRIMARY KEY, payload TEXT NOT NULL,
                 created_at REAL NOT NULL, updated_at REAL NOT NULL
@@ -57,7 +61,9 @@ class WorkflowStore:
                 workflow_id TEXT NOT NULL, item_key TEXT NOT NULL, seen_at REAL NOT NULL,
                 PRIMARY KEY(workflow_id, item_key)
             );
-        """)
+        """
+            + ALERT_SCHEMA
+        )
 
     @contextmanager
     def transaction(self) -> Iterator[Any]:
@@ -141,6 +147,7 @@ class WorkflowStore:
                 raise ValueError("workflow source identity cannot change")
             if current and int(draft.get("base_version", 0)) != current[1]:
                 raise ValueError("workflow changed while the draft was being trialled")
+            before = self.get_workflow(workflow_id) if current else {}
             version = int(current[1]) + 1 if current else 1
             now = time.time()
             conn.execute(
@@ -170,7 +177,22 @@ class WorkflowStore:
                 "UPDATE custom_workflow_drafts SET payload=?,updated_at=? WHERE draft_id=?",
                 (json.dumps(draft, ensure_ascii=False), now, draft_id),
             )
+            record_transition(
+                conn, before, self.get_workflow(workflow_id), cause=f"publish:{draft_id}", now=now
+            )
         return self.get_workflow(workflow_id)
+
+    def attention_drafts(self) -> list[dict[str, Any]]:
+        """Read only bounded new-source verification metadata, never saved plans."""
+        rows = self.database.conn.execute(
+            "SELECT draft_id,json_extract(payload,'$.name') AS name, "
+            "json_extract(payload,'$.attention_code') AS code FROM custom_workflow_drafts "
+            "WHERE json_extract(payload,'$.status')='needs_login' "
+            "AND COALESCE(json_extract(payload,'$.published_workflow_id'),'')='' "
+            "AND COALESCE(json_extract(payload,'$.workflow_id'),'')='' "
+            "ORDER BY updated_at DESC,draft_id DESC LIMIT 100"
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_workflow(self, workflow_id: str) -> dict[str, Any]:
         row = self.database.conn.execute(
@@ -372,7 +394,10 @@ class WorkflowStore:
                 ]
                 if len(accepted) < len(retained):
                     scope_complete = False
-                    status = "degraded"
+                    # A later-page challenge must still stop future collection,
+                    # even when earlier valid items could not enter the queue.
+                    if status != "login_required":
+                        status = "degraded"
                     error = error or "candidate_queue_full"
             # A candidate sink may commit its own short writes. Re-fence before
             # recording the frontier so a replaced worker cannot advance it.
@@ -427,6 +452,19 @@ class WorkflowStore:
                 "UPDATE custom_workflow_runs SET status=?,completed_at=?,discovered_count=?,"
                 "enqueued_count=?,error=? WHERE run_id=? AND status='running'",
                 (status, now, len(items), count, error[:500], run["run_id"]),
+            )
+            record_transition(
+                conn,
+                dict(run),
+                dict(
+                    run,
+                    status=status,
+                    last_error=error,
+                    consecutive_failures=0 if success else int(run["consecutive_failures"]) + 1,
+                    next_run_at=now + delay,
+                ),
+                cause=f"run:{run['run_id']}",
+                now=now,
             )
             return {"status": status, "discovered_count": len(items), "enqueued_count": count}
 

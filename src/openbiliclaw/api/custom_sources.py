@@ -17,7 +17,7 @@ from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionErro
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from openbiliclaw.sources.workflow_service import WorkflowService
 
@@ -68,6 +68,8 @@ def create_custom_sources_router(
     service_factory: Callable[[], WorkflowService],
     *,
     prepare_ego_on_startup: bool = False,
+    event_publisher: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
+    database_factory: Callable[[], Any] | None = None,
 ) -> APIRouter:
     """Share live runtime dependencies; takeover handles stay inside this API worker."""
     router = APIRouter(prefix="/api/custom-sources")
@@ -78,6 +80,29 @@ def create_custom_sources_router(
     install_task: asyncio.Task[None] | None = None
     ego_prepare_task: asyncio.Task[None] | None = None
     ego_prepare_error: dict[str, Any] = {}
+    alert_relay_task: asyncio.Task[None] | None = None
+    alert_relay_start_lock = asyncio.Lock()
+
+    @router.on_event("startup")
+    async def start_alert_relay() -> None:
+        nonlocal alert_relay_task
+        if event_publisher is None:
+            return
+        from openbiliclaw.sources.source_alerts import alert_events, relay_alerts
+
+        async with alert_relay_start_lock:
+            if alert_relay_task is not None and not alert_relay_task.done():
+                return
+            try:
+                read_database = database_factory or (lambda: service_factory().database)
+                rows = await asyncio.to_thread(alert_events, read_database(), limit=1)
+                cursor = rows[0]["source_event_id"] if rows else 0
+                alert_relay_task = asyncio.create_task(
+                    relay_alerts(read_database, event_publisher, after_id=cursor),
+                    name="source_alert_relay",
+                )
+            except Exception:
+                logger.debug("Discovery alert relay unavailable in this runtime", exc_info=True)
 
     def ego_setup_status() -> dict[str, Any]:
         status: dict[str, Any] = _ego_setup_manager(service()).status()
@@ -235,6 +260,11 @@ def create_custom_sources_router(
             executors.append(dict(status, id=name))
         return {"items": manager.list_sources(), "executors": executors}
 
+    @router.get("/attention")
+    def source_attention() -> dict[str, Any]:
+        """Durable active warnings; polling does not start a browser or emit alerts."""
+        return {"items": service().attention()}
+
     @router.post("/drafts")
     async def prepare(payload: DraftIn) -> dict[str, Any]:
         try:
@@ -317,7 +347,10 @@ def create_custom_sources_router(
         """Only the human-facing page invokes interactive control; no agent tool does."""
         async with admission:
             if draft_id in sessions and not (payload and payload.login_origin):
-                return await sessions[draft_id].snapshot()  # type: ignore[no-any-return]
+                manager = service()
+                return manager.record_login_observation(
+                    manager.store.get_draft(draft_id), await sessions[draft_id].snapshot()
+                )
             if draft_id not in sessions and len(sessions) >= 2:
                 raise HTTPException(409, "Two login windows are already open")
             try:
@@ -342,7 +375,7 @@ def create_custom_sources_router(
                 session, observation = await manager.observe_session(draft, interactive=True)
                 sessions[draft_id] = session
                 expiry[draft_id] = asyncio.create_task(expire(draft_id))
-                return observation
+                return manager.record_login_observation(draft, observation)
             except (ValueError, RuntimeError, OSError) as exc:
                 raise HTTPException(409, str(exc)) from exc
 
@@ -371,9 +404,7 @@ def create_custom_sources_router(
             observation: dict[str, Any] = await session.act(payload)
             manager = service()
             draft = manager.store.get_draft(draft_id)
-            draft["suggested_login_origins"] = observation.get("blocked_navigation_origins", [])
-            manager.store.save_draft(draft, draft_id=draft_id)
-            return observation
+            return manager.record_login_observation(draft, observation)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -394,6 +425,10 @@ def create_custom_sources_router(
 
     @router.on_event("shutdown")
     async def shutdown() -> None:
+        if alert_relay_task is not None:
+            alert_relay_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await alert_relay_task
         if ego_prepare_task is not None and not ego_prepare_task.done():
             ego_prepare_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -427,6 +462,7 @@ def public_draft(draft: dict[str, Any]) -> dict[str, Any]:
         "query_mode",
         "trial_success",
         "suggested_login_origins",
+        "attention_code",
     }
     from openbiliclaw.sources.workflow_service import workflow_presentation
 

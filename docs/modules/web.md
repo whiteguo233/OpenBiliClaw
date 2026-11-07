@@ -2,6 +2,10 @@
 
 ## 动态网站来源与兼容订阅
 
+桌面 Web 聊天输入框上方直接展示来源说明与网站／RSS 两个示例；移动 Web 与插件保留「添加来源 · 说明与示例」折叠入口。
+移动 Web 引导属于保留的输入行，历史刷新不会收起说明或打断草稿；纯说明不调用建源接口。
+频率、份额和启停在设置的「自定义来源」管理。移动 Web 来源卡展示问题，完整异常历史指向桌面网页「设置 → 日志 → 异常报警」。
+
 新增网站、RSS、Atom 或 JSON Feed 从「聊一聊」开始：用户说明网址与内容意图，Agent 建立草稿、试跑并展示样例；
 需要登录时引导到独立的浏览器接管页。确认启用后，每个网站有稳定 `source_id`，按自己的
 间隔运行发现任务，并以独立 `target_share` 参与候选池分配。一个网站可以包含多个
@@ -122,6 +126,7 @@ macOS 在部署阶段自动准备 Ego：本机源码安装在依赖完成后、`
 | 旧聊天审批兼容 | ✅ | 既有 `create_source` 审批仍可执行；新聊天网站 / Feed 统一走动态来源 prepare → activate，避免落入旧 Web 聚合份额。已有平台关键词订阅继续使用 create_source |
 | 粘贴 URL 自动探测 | ✅ | 桌面 Web、插件与 `probe-web` CLI 只读识别直接 Feed/Sitemap、HTML alternate Feed、同源 `/sitemap.xml` 和保守的重复静态列表；展示样例后由用户采用并再次显式保存，不自动创建或启用 recipe |
 | 匿名安全传输 | ✅ | 精确 origin allowlist、逐请求/逐跳公共 DNS 校验、socket DNS pin、robots fail-closed、遵循网络模式且无 Cookie |
+| 合成 DNS 兼容 | ✅ | 域名的系统答案全部为代理合成地址时重新查询并验证公共 IP；HTTP 固定已验证地址，私网、混合答案和字面 IP 不触发放行 |
 | 后台调度 | ✅ | `WebDiscoveryProducer` 原子领取到期 recipe，按 recipe cadence、权重和有界请求预算补充统一候选池 |
 | 状态与去重账本 | ✅ | 每个 recipe 独立保存 lease、健康、HTTP validators、sitemap cursor 和 seen provenance；候选身份仍按 canonical URL 全局去重 |
 | CLI 正式补池 | ✅ | `openbiliclaw discover --source web` 复用真实 adapter、producer 与 candidate pipeline，提交到期 recipe 的候选、seen 与完整 checkpoint |
@@ -372,7 +377,9 @@ CAPTCHA 或“需要启用 JavaScript/cookie”的页面分别记为 `login_requ
 - 代理路径复用 `runtime.image_network` 的有界公共 DNS 解析与固定 IP 隧道：通过同一代理向
   `https://1.1.1.1/dns-query` 查询公开域名，CONNECT / SOCKS5 只发送已校验数字 IP；
   Host、TLS SNI 与证书校验保留原网站。DoH 失败不回落未校验远程 DNS，代理凭据只用于隧道。
-  直连仍用本机 DNS。HTTP 80 与 HTTPS 443 均保留原请求、robots 和字节预算。
+  直连通常使用本机 DNS；仅域名答案全部落入已识别的 `198.18.0.0/15` 代理合成范围时，
+  复用固定 DoH 重新验证公共 IP。字面 IP、私网／混合答案及超限答案不走此兜底；
+  DoH 失败仍拒绝。HTTP 80 与 HTTPS 443 均保留原请求、robots 和字节预算。
 - 内容请求前读取同 origin 的 `/robots.txt`。404/410 表示没有声明限制；401/403 表示拒绝；
   网络错误、5xx、异常 MIME、redirect loop 或无法安全读取都返回 `robots_unavailable` 并
   fail closed。明确的 Disallow 返回 `robots_denied`。规则采用 longest-match、Allow 同长度优先
@@ -471,6 +478,7 @@ Web status 的 `state="no_auth"` / `logged_in=true` 是旧客户端的“无需�
 | `HTMLListingPlan` / `validate_html_listing_plan(plan)` | 表达并静态校验受限 listing selector DSL，不发网络请求 |
 | `canonicalize_web_url(url, *, allowed_origins=None)` / `web_content_id(url)` | 产生 Web canonical URL 与跨 recipe 稳定内容 ID；可选强制 exact-origin allowlist |
 | `SafeWebTransport(...).fetch(url, *, expected=..., ...)` | 按现有网络模式执行匿名有界读取并固定公共 IP，返回 `WebFetchArtifact`；安全失败统一为不含 body 的 `WebFetchError` |
+| `_system_resolver(host, port)`（内部共享） | 仅全合成域名答案触发有界公共 DoH 验证；HTTP pin 与 Ego 预检共用结果，不改变各执行器原有连接保证 |
 | `parse_web_feed_page(..., content_origins=..., observe_content_origins=False)` | 最多观察 128 个公共文章 origin；与请求权限独立，正式运行不自动扩域 |
 | `parse_web_feed(...)` / `parse_sitemap(...)` / `parse_html_listing(...)` / `parse_html_detail(...)` | 对已取得的有界 bytes 做确定性解析；解析或 schema 边界失败为 `WebParseError` |
 | `infer_html_listing_plan(...)` | 从已取得的 HTML 保守推断一个可由正式 listing parser 重放的 selector plan；导航 chrome 与不可靠单链接结构返回 `None` |

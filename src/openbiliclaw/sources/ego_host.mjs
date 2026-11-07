@@ -312,8 +312,9 @@ export async function start(config) {
     const tab=native(await ego.createTab('about:blank'));target=tab.targetId;
     session=(await rpc('Target.attachToTarget',{targetId:target,flatten:true},null)).sessionId;
     ownedSessions.set(session,null);
-    // Background discovery must never put a page on screen. Interactive login
-    // keeps its window because the user has to see and drive it.
+    // Managed Ego is headless, including login screenshots. Keep minimization
+    // for externally managed hosts; interactive screenshots need drawable
+    // logical bounds but must never activate the local application.
     if(!config.interactive) {
       try {
         const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);

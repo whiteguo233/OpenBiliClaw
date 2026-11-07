@@ -4,6 +4,9 @@
 
 ## 👤 我是用户
 
+- [原生动态来源与异常记录真实验收](testing/2026-11-07-real-native-source-e2e.md) — 全新 Ego 安装、冷启动竞争修复、真实网络故障与原生端到端复验
+- [来源持续故障与异常事件流](testing/2026-11-06-source-failure-alerts.md) — 提醒阈值、来源设置、原生异常记录、跨进程历史与恢复验证
+
 - [V2EX 验证与重复采集修复验收](testing/2026-11-06-verification-recovery.md) — 真实 Ego 验证恢复、原生聊天建源与重复列表选择器；哔哩轻小说直连阻断继续单独记录
 - [多站 Discovery 阻断修复验收](testing/2026-11-06-remaining-sites-fixes.md) — 上轮 BBC、Planet Python 真实接入与原生网站验证接管记录
 
@@ -131,3 +134,5 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [v0.3.229 发布与商店审核记录](testing/2026-10-16-release-0.3.229.md) — TikTok 新来源、远程访问安全收紧、B 站登录失效横幅死锁修复与各渠道回执。
 - [v0.3.228 发布与商店审核记录](testing/2026-10-13-release-0.3.228.md) — 画像门控降本、安装包信任修复与各渠道回执。
 - [v0.3.227 发布与商店审核记录](testing/2026-10-06-release-0.3.227.md) — macOS 签名公证、Instagram 实验性来源与各渠道回执。
+
+- [2026-11-08 动态来源真实环境复验](testing/2026-11-08-real-dynamic-sources-e2e.md)：Ego 后台、原生 App／PC 聊天、RSS、异常提醒及真实评估。

@@ -1,5 +1,7 @@
 """Managed browser setup is automatic at authoring, never at status/feed reads."""
 
+import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,6 +12,67 @@ from openbiliclaw.sources.ego_setup import EgoSetupManager
 from openbiliclaw.sources.workflow_service import WorkflowService
 from openbiliclaw.storage.database import Database
 from tests.test_ego_workflow_wiring import PLAN, URL
+
+
+@pytest.mark.usefixtures("managed_env")
+@pytest.mark.parametrize("outcome", ["ready", "failed", "cancelled_waiter"])
+async def test_chat_waits_for_deployment_preparation(tmp_path, monkeypatch, outcome):
+    from openbiliclaw.sources.ego_setup import EgoSetupError
+    from tests.test_ego_setup import fake_lifecycle
+
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.sys.platform", "darwin")
+    database = Database(tmp_path / "test.db")
+    database.initialize()
+    service = WorkflowService(database)
+    manager = EgoSetupManager(tmp_path)
+    calls = fake_lifecycle(manager, monkeypatch)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def install():
+        calls.append("install")
+        manager._phase("verify")
+        entered.set()
+        await release.wait()
+        if outcome == "failed":
+            raise EgoSetupError("ego_setup_signature_mismatch")
+
+    monkeypatch.setattr(manager, "_install", install)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.complete_onboarding", AsyncMock())
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup.EgoSetupManager", lambda _: manager)
+    observed = login_observation(service, monkeypatch)
+    owner = asyncio.create_task(manager.prepare())
+    await entered.wait()
+    author = asyncio.create_task(service.prepare(url=URL, intent="Books", executor="ego"))
+    try:
+        await asyncio.sleep(0.01)
+        assert not author.done(), "Chat must wait for the deployment owner, not fail its draft"
+        observed.assert_not_awaited()
+        if outcome == "cancelled_waiter":
+            author.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await author
+            assert not owner.done() and "stop" not in calls
+        release.set()
+        prepared = await owner
+        if outcome != "cancelled_waiter":
+            draft = await author
+            if outcome == "ready":
+                assert prepared["available"] and draft["status"] == "needs_login"
+                observed.assert_awaited_once()
+            else:
+                assert draft["status"] == "failed"
+                assert "ego_setup_signature_mismatch" in draft["detail"]
+                observed.assert_not_awaited()
+        assert calls.count("install") == 1
+        assert service.sources.list_sources() == []
+    finally:
+        release.set()
+        await owner
+        if not author.done():
+            author.cancel()
+        with suppress(asyncio.CancelledError):
+            await author
+        database.close()
 
 
 @pytest.fixture
@@ -31,7 +94,8 @@ async def test_first_website_prepares_browser_before_observation(tmp_path, monke
     service = WorkflowService(database)
     roots = []
 
-    async def prepare(manager):
+    async def prepare(manager, *, wait=False):
+        assert wait is True
         roots.append(manager.root)
         return {"available": True}
 

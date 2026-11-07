@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -179,6 +180,58 @@ async def test_offline_host_does_not_start_cli(plan, tmp_path, monkeypatch):
     with pytest.raises(BrowserWorkflowExecutionError, match="Open Ego Lite"):
         await EgoLiteWorkflowExecutor(tmp_path).open_session(plan, session_id="owned")
     spawn.assert_not_awaited()
+
+
+@pytest.mark.parametrize("ready_after", [40, 60])
+async def test_native_initialization_uses_but_does_not_exceed_workflow_budget(
+    plan, tmp_path, monkeypatch, ready_after
+):
+    from openbiliclaw.sources import ego_executor as module
+
+    executor = EgoLiteWorkflowExecutor(tmp_path)
+    monkeypatch.setattr(executor, "schedule_idle_stop", lambda **kwargs: None)
+    monkeypatch.setattr(module, "_host_pid", lambda _: None)
+    clock = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    process = SimpleNamespace(returncode=None)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    reader = asyncio.StreamReader()
+    writer = SimpleNamespace(close=lambda: None, wait_closed=AsyncMock())
+    monkeypatch.setattr(asyncio, "open_unix_connection", AsyncMock(return_value=(reader, writer)))
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = EgoLiteWorkflowSession(executor, plan, interactive=False, lock=lock)
+    monkeypatch.setattr(session, "_open_entry", AsyncMock())
+    monkeypatch.setattr(session, "command", AsyncMock(return_value=True))
+    state = {
+        "task_id": None,
+        "task_name": "OpenBiliClaw-slow-start",
+        "profile": "Default",
+        "host": executor.host_key,
+    }
+
+    async def progress(_delay):
+        clock[0] += 10
+        if clock[0] >= ready_after:
+            assert session._temporary is not None
+            (Path(session._temporary.name) / "ready.json").write_text(
+                json.dumps({"task_id": 7, "version": "test"})
+            )
+
+    monkeypatch.setattr(asyncio, "sleep", progress)
+    try:
+        if ready_after < plan.budgets.timeout_seconds:
+            await session.start(tmp_path / "owned.json", state)
+            assert session._started and state["task_id"] == 7
+            session._open_entry.assert_awaited_once()
+        else:
+            with pytest.raises(BrowserWorkflowExecutionError) as failure:
+                await session.start(tmp_path / "owned.json", state)
+            assert failure.value.code == "ego_connection_timeout"
+            session._open_entry.assert_not_awaited()
+    finally:
+        process.returncode = 0
+        await session.close()
 
 
 async def test_existing_session_keeps_first_profile_and_host_identity(plan, tmp_path, monkeypatch):
@@ -481,6 +534,7 @@ async def test_verification_page_pauses_scheduled_ego_without_collecting(
     session.command = AsyncMock(side_effect=AssertionError("must not collect verification text"))
     result = await session.execute(WorkflowParameters())
     assert result.status == "login_required" and not result.scope_complete and not result.items
+    assert result.error_code == "verification_required"
     session.command.assert_not_called()
 
 

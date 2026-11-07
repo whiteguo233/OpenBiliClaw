@@ -3819,6 +3819,16 @@
       padding-top: 8px;
     }
 
+    .chat-source-guide { color: var(--text-secondary); font-size: 13px; }
+    .chat-source-guide summary { min-height: 44px; padding: 12px; border-radius: 12px; color: var(--text-main); font-weight: 650; cursor: pointer; }
+    .chat-source-guide summary:hover, .chat-source-guide[open] summary { background: var(--brand-soft); }
+    .chat-source-guide summary::marker { color: var(--brand); }
+    .chat-source-guide summary:focus-visible, .chat-source-guide-body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    .chat-source-guide-body { max-height: min(240px, 30dvh); padding: 0 12px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
+    .chat-source-guide-body p { margin: 12px 0; }
+    .chat-source-guide-example { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+    .chat-source-guide-example strong { display: block; margin-bottom: 4px; color: var(--text-main); }
+
     .chat-input-shell {
       display: flex;
       flex-direction: column;
@@ -5287,6 +5297,11 @@
     .diag-alert-item[data-severity="warning"] .diag-alert-badge {
       background: var(--warning-soft);
       color: #9a6b1f;
+    }
+
+    .diag-alert-item[data-severity="info"] .diag-alert-badge {
+      background: var(--surface);
+      color: var(--text-secondary);
     }
 
     .diag-alert-source {
@@ -6833,6 +6848,16 @@
             </div>
             <div id="chatMessages" class="chat-messages" role="region" aria-label="口味对话记录" tabindex="0"></div>
             <form id="chatForm" class="chat-form">
+              <details class="chat-source-guide">
+                <summary>添加来源 · 说明与示例</summary>
+                <div class="chat-source-guide-body" role="region" aria-label="添加来源说明与示例" tabindex="0">
+                  <p>把网站或 RSS 地址发给阿B，说明想看什么。试跑确认后，就会定期采集，通过筛选的内容会进入推荐。</p>
+                  <p class="chat-source-guide-example"><strong>网站示例</strong>“帮我添加这个网站：[网址]，只看轻小说相关内容。”</p>
+                  <p class="chat-source-guide-example"><strong>RSS 示例</strong>“订阅这个 RSS：[订阅地址]，每天采集一次。”</p>
+                  <p>需要登录或验证时，阿B会引导你操作。频率、占比和启停在「设置 → 自定义来源」管理。</p>
+                  <p>采集问题会在来源卡提示，需要处理时也会提醒到消息铃铛；历史见「设置 → 日志 → 异常报警」。</p>
+                </div>
+              </details>
               <label class="chat-input-shell">
                 <span class="chat-input-label">写点你的想法和口味</span>
                 <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
@@ -8912,7 +8937,7 @@
           <span class="diag-alert-summary" id="cfgDiagAlertSummary" aria-live="polite"></span>
           <button id="cfgRefreshDiagAlerts" class="settings-secondary-btn diag-alerts-refresh" type="button">刷新</button>
         </div>
-        <p class="diag-alerts-empty" id="cfgDiagAlertsEmpty">暂无异常报警，LLM / Embedding 请求异常会显示在这里。</p>
+        <p class="diag-alerts-empty" id="cfgDiagAlertsEmpty">暂无异常记录，来源采集、LLM / Embedding 异常与来源恢复会显示在这里。</p>
         <ul class="diag-alert-list" id="cfgDiagAlertList" hidden></ul>
       </div>
       </div>

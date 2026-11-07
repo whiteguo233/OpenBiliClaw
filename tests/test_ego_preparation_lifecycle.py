@@ -37,7 +37,7 @@ def test_preparation_reclaims_host_without_opening_a_session(
             "available": state["live"],
         }
 
-    async def operate(manager, *, initialize):
+    async def operate(manager, *, initialize, wait_for_owner=False):
         assert initialize is True
         manager.root.mkdir(parents=True, exist_ok=True)
         state["prepare_count"] += 1

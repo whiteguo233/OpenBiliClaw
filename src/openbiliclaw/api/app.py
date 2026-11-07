@@ -11712,14 +11712,30 @@ def create_app(
         return JSONResponse(status_code=int(status_code), content=body)
 
     @app.get("/api/diagnostics/alerts")
-    async def diagnostics_alerts(since_id: int = 0, limit: int = 100) -> dict[str, Any]:
-        """Recent LLM / embedding anomaly alerts for the 异常报警 feed.
+    async def diagnostics_alerts(
+        since_id: int = 0, limit: int = 100, source_since_id: int = 0
+    ) -> dict[str, Any]:
+        """LLM/embedding anomalies plus persistent discovery failure/recovery events.
 
-        Backs the Web console and browser-extension settings「日志」tab.
-        Pass ``since_id`` to fetch only alerts newer than a previously seen
-        row; ``limit`` caps the page size (server max 500).
+        Backs Web/extension logs and native history. ``since_id`` filters the
+        legacy memory buffer; ``source_since_id`` filters durable source rows.
+        ``source_cursor`` advances that independent stream; limit is at most 500.
         """
-        return get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=limit)
+        from openbiliclaw.sources.source_alerts import diagnostics_snapshot
+
+        memory = get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=500)
+        try:
+            return await asyncio.to_thread(
+                diagnostics_snapshot,
+                ctx.database,
+                memory,
+                source_since_id=source_since_id,
+                limit=limit,
+            )
+        except Exception:
+            logger.warning("Source diagnostics history is unavailable", exc_info=True)
+            memory["alerts"] = memory["alerts"][: max(1, min(500, limit))]
+            return {**memory, "source_history_available": False}
 
     @app.get("/api/notifications/pending", response_model=PendingNotificationResponse)
     async def pending_notification() -> PendingNotificationResponse:
@@ -25380,6 +25396,8 @@ def create_app(
                 llm_service=getattr(ctx, "llm_service", None),
             ),
             prepare_ego_on_startup=prepare_ego_on_startup,
+            event_publisher=getattr(ctx.event_hub, "publish", None),
+            database_factory=lambda: ctx.database,
         )
     )
 

@@ -48,6 +48,10 @@ _RETRY_DELAYS = (1.0, 3.0)
 # the final native handshake; each phase still has a hard cancellation budget.
 _INSTALL_TIMEOUT = 1200
 _CONNECT_TIMEOUT = 300
+# A real cold native host stayed alive and became ready after about 70s.
+# Do not repeatedly kill that startup after 20s; the enclosing connection
+# deadline still bounds retries and lock waiting together.
+_HANDSHAKE_TIMEOUT = 120
 _IDLE_STOP_SECONDS = 120.0
 _IDLE_TASKS: dict[str, asyncio.Task[None]] = {}
 _EXIT_REAPERS: set[str] = set()
@@ -677,6 +681,7 @@ class EgoSetupManager:
             str(self.app / "Contents/MacOS/ego lite"),
             f"--ego-server-name={self.server_name}",
             f"--user-data-dir={self.profile_dir}",
+            "--headless=new",
             "--disable-background-networking",
             "--disable-component-update",
             "--disable-sync",
@@ -688,8 +693,9 @@ class EgoSetupManager:
                 listener.bind(("127.0.0.1", 0))
                 port = int(listener.getsockname()[1])
             args += ["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={port}"]
-        # Background work must not flash a browser window on screen. Onboarding
-        # still opens its debug UI, which the bounded automation drives.
+        # Use the signed Ego application's own headless mode for every managed
+        # launch. Minimizing after createTab is too late to prevent a flash.
+        # First-run UI and manual login remain operable through CDP/screenshots.
         args.append("about:blank" if debugging else "--no-startup-window")
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -816,7 +822,7 @@ class EgoSetupManager:
             "nodejs",
             "-e",
             expression,
-            timeout=20,
+            timeout=_HANDSHAKE_TIMEOUT,
         )
         records = [
             line.removeprefix("OBC_EGO_READY:")
@@ -884,7 +890,7 @@ class EgoSetupManager:
                 logger.info("Recovering a transient Ego initialization timeout")
                 await asyncio.sleep(_RETRY_DELAYS[attempt])
 
-    async def _operate(self, *, initialize: bool) -> dict[str, Any]:
+    async def _operate(self, *, initialize: bool, wait_for_owner: bool = False) -> dict[str, Any]:
         if _external() or sys.platform != "darwin":
             return self.status()
         if self.root.is_symlink() or self.profile_dir.is_symlink() or self.app.is_symlink():
@@ -900,15 +906,35 @@ class EgoSetupManager:
             raise EgoSetupError("ego_setup_invalid_directory")
         with lock_path.open("a") as lock:
             lock_path.chmod(0o600)
+            wait_budget = _CONNECT_TIMEOUT
+            if initialize and wait_for_owner:
+                wait_budget += _INSTALL_TIMEOUT
+            deadline = time.monotonic() + wait_budget
+            waited = False
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    # Status-oriented preparation returns progress immediately.
+                    # Authoring and actual work wait for the current owner.
+                    # Cancel only this waiter, never the process owning setup.
+                    if (initialize and not wait_for_owner) or time.monotonic() >= deadline:
+                        return self.status()
+                    waited = True
+                    await asyncio.sleep(0.1)
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return self.status()
-            try:
+                if not initialize or waited:
+                    status = self.status()
+                    if status["available"] or (waited and status["setup_state"] == "failed"):
+                        return status
                 if initialize:
                     async with asyncio.timeout(_INSTALL_TIMEOUT):
                         await self._install()
-                async with asyncio.timeout(_CONNECT_TIMEOUT):
+                connect_budget = (
+                    _CONNECT_TIMEOUT if initialize else max(0.0, deadline - time.monotonic())
+                )
+                async with asyncio.timeout(connect_budget):
                     await self._connect_host()
             except asyncio.CancelledError:
                 with suppress(Exception):
@@ -930,9 +956,14 @@ class EgoSetupManager:
                 fcntl.flock(lock, fcntl.LOCK_UN)
         return self.status()
 
-    async def prepare(self) -> dict[str, Any]:
-        """Explicitly install/initialize; repeated calls reuse this root's setup lock."""
-        result = await self._operate(initialize=True)
+    async def prepare(self, *, wait: bool = False) -> dict[str, Any]:
+        """Install/initialize; authoring may wait for an existing setup owner's result.
+
+        The default returns progress when busy. ``wait=True`` shares the result
+        within the installation plus connection budget, without duplicating work
+        or cancelling the owner when this caller is cancelled.
+        """
+        result = await self._operate(initialize=True, wait_for_owner=wait)
         if result.get("available") is True:
             self.schedule_idle_stop()
         return result
@@ -995,7 +1026,7 @@ class EgoSetupManager:
                 _IDLE_TASKS.pop(key, None)
 
     async def ensure_running(self) -> dict[str, Any]:
-        """At actual work time, restart only a previously initialized managed host."""
+        """Start an initialized host, waiting boundedly for another startup owner."""
         return await self._operate(initialize=False)
 
     async def stop(self, *, exit_budget: float = 6.0) -> dict[str, Any]:

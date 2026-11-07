@@ -192,11 +192,14 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 | `POST /api/custom-sources/executors/playwright/install` | 历史 Playwright 流程的显式维护入口，新来源 UI 不调用；接受后 HTTP `202`、`{status:"installing"}`，旧执行器状态通过 `installing/ready/failed` 表达 |
 | `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
 | `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
+| `GET /api/custom-sources/attention` | 只读返回 `{items}`；每项 `id,source_id,draft_id,name,code,title,message,action,action_label`。`action=source_login/draft_login/source_settings`；普通故障含 failure_count/next_retry_at。展示启用来源的暂停任务或连续失败达到 3 次的任务及未发布待登录草稿，同来源恢复草稿不重复。无需启动 Ego，可在重启后从数据库恢复 |
 | `GET /api/custom-sources/{source_id}/runs` | `{items}`；摘要包括 `run_id,workflow_id,version,executor,status,started_at,completed_at,discovered_count,enqueued_count,error` |
 | `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`；新来源 executor 为 `auto/http/ego`，普通网页使用 Ego，明确解析为 Feed 才自动选 HTTP；更新旧流程时 auto 保留原执行器；创建待试跑草稿，尚不启用定期发现 |
 | `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
 | `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
 | `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管；同一来源已有活跃的已批准流程登录窗口时复用其草稿，返回 `draft_id,takeover_url,…` |
+| `POST /api/custom-sources/drafts/{draft_id}/takeover` | 打开或刷新人工会话；返回的 `suggested_login_origins` 是当前有界授权选项，明确验证页可包含被拒 iframe 域。可提交其中一个 `login_origin` 显式授权；普通广告、静态资源与未观察域不自动取得权限 |
+| `POST /api/custom-sources/drafts/{draft_id}/action` | 人工点击／输入／按键后刷新同一授权选项；输入不写入草稿、不进入模型。空的 `suggested_login_origins` 应清除客户端旧按钮，不能回退到旧诊断列表 |
 | `GET /api/custom-sources/drafts/{draft_id}/screenshot` | 返回实际 PNG、`Cache-Control: no-store`；Ego 先恢复人工会话的最小化窗口并等待完成。已知浏览器执行异常返回 409 和安全原因，保留同一会话供重试，不再成为未处理的 500 |
 | `POST /api/custom-sources/drafts/{draft_id}/close` | 幂等释放人工登录窗口，返回 `{ok:true}`；保留网站凭据，不试跑、不发布、不改变来源启用状态；原生页面退出时调用，异常断连由 15 分钟会话超时兜底 |
 
@@ -213,7 +216,9 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 请求域是网络权限，Feed 的文章域仅为链接接收范围。
 按草稿状态可另含 `entry_url,takeover_url,query_mode,trial_success`，不回传内部 workflow 或会话凭据。
 `status` 为 `ready/needs_login/needs_details/failed`。`health` 提供
-`status,last_error,last_success_at,next_run_at`，workflow 摘要提供
+`status,last_error,last_success_at,next_run_at,attention_required,attention_count,attention_code,attention_action,message`；需要提醒时另含 title/action_label/failure_count/next_retry_at。前两次普通失败已有安全 message，尚不进入当前提醒。
+暂停流程不计入 `next_run_at`，没有可调度流程时为 0。草稿可带 `attention_code`，
+区别 `verification_required/login_required`；提醒不包含原始错误或凭据。workflow 摘要提供
 `workflow_id,version,executor,status,intent`；UI 根据实际健康与运行证据显示结果，
 不会把「已创建草稿」当成已启用或成功发现。
 
@@ -447,13 +452,34 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 
 抓取继续复用统一 SSRF 边界：域名白名单、每次 redirect 重验、`image/*`、10MB 上限，以及国内 CDN 直连 / 境外 CDN 继承代理。微博封面只允许域名边界匹配的 `sinaimg.cn` / `*.sinaimg.cn`，并归入国内直连；形如 `evilsinaimg.cn` 的后缀伪装仍被拒绝。真实新浪图床在共享浏览器 UA 下要求防盗链头，因此当前 redirect 目标属于 `sinaimg.cn` 时附 `Referer: https://weibo.com/`，跳到其它白名单 CDN 后立即移除。磁盘写入使用同目录临时文件 `flush + fsync + os.replace`，失败只保留旧文件或无文件，不暴露半写结果。日志只记录 host、cache hash 前缀和错误类别，不记录签名路径/query；`GET /api/runtime-status` 公开 `image_fetch_active/waiting/inflight_keys` 与 `upstream_started/singleflight_joins/peak_active/peak_background`，这些字段只含整数，不含 URL 或 token。协调器不随 `RuntimeContext` 热重载替换；新 controller 在后台任务恢复前重绑同一实例，shutdown 先停 refresh producer 再取消协调器持有的 active/queued upstream task。
 
-## 异常报警（LLM / Embedding 请求失败）
+## 异常报警与恢复历史
 
-| 方法与路径 | 状态 | 契约 |
-|---|---|---|
-| `GET /api/diagnostics/alerts?since_id=&limit=` | ✅ | 只读返回进程内异常报警环形缓冲的快照：`{"alerts":[...],"summary":{"total","errors","warnings"},"generated_at"}`。每条 alert 含 `id`（单调递增）、`category`（`llm\|embedding`）、`code`（LLM：`rate_limited/auth_failed/timeout/bad_response/provider_error/all_providers_failed`；embedding：`provider_error/breaker_open`）、`severity`（`warning\|error`）、`source`（实例名或 provider/model 标签）、`message`、`first_seen/last_seen`（epoch 秒）与 `count`（合并计数）。列表按最新在前排序；`since_id` 只返回更新行（供客户端增量拉取），`limit` 服务端上限 500。数据源是顶层模块 `openbiliclaw.diagnostics_alerts` 的进程内有界缓冲：同类别/来源/错误码在 60 秒窗口内合并为一条并累加 `count`，上限 100 条；`record()` 永不抛错、不阻塞 LLM/embedding 热路径，缓冲随进程重启清空、不落盘。 |
+| 方法与路径 | 契约 |
+| --- | --- |
+| `GET /api/diagnostics/alerts?since_id=&source_since_id=&limit=` | 合并 LLM／Embedding 进程内报警和来源持久历史，返回 `{alerts,summary,source_cursor,generated_at}`，最新在前，limit 最大 500；summary 含 total/errors/warnings/recovered |
 
-新告警在记录的同时经 event hub 以 `{"type":"diagnostics.alert",...alert 字段}` 发布到 `/api/runtime-stream`，桌面 Web 与插件设置页在日志面板可见时无需轮询即可实时刷新；拉取失败时两端都保持现状静默重试，不打扰用户。展示面为桌面 Web 与扩展 popup 两端：移动 Web 没有日志/设置面，CLI 没有运行时 feed 展示命令，均明确不在范围。
+共同字段为 `id,category,code,severity,source,message,first_seen,last_seen,count`。
+来源事件另含 `source_id,source_name,workflow_id,failure_count,source_event_id`；其 id 为
+`source:<递增数字>`，severity 为 warning 或恢复时的 info。`source_since_id` 只过滤来源历史，
+下一次传回 `source_cursor`；既有数值 `since_id` 继续只过滤内存缓冲，不混用两个游标。
+
+普通来源连续 3 次失败触发一个故障事件，登录／验证立即触发；同一故障期间的自动重试不刷屏。
+成功完成采集（包括合法 empty/not_modified）或试采成功后发布版本，会写 source_recovered。
+来源原因含 verification_required、login_required、source_timeout、source_network_error、
+source_rate_limited、source_parse_error、source_runtime_unavailable、source_access_denied、
+source_not_found、source_queue_error、source_fetch_failed；仅使用固定文案，不返回原始错误内容。
+多个 workflow 各自恢复，当前提醒由 attention 接口按来源合并，不能用某条恢复历史推断整站健康。
+
+`WorkflowStore` 在完成租约事务内保存 `custom_source_alert_events`，最多保留最近 500 条；
+来源归档和服务重启不会清空历史。API 启动一个每 2 秒读取已提交转移的任务，经既有
+`diagnostics.alert` 推到 `/api/runtime-stream`，重复启动幂等，退出取消；启动时不重放旧历史。
+因此独立采集 worker 也能进入事件流。LLM／Embedding 仍用原进程内 100 条缓冲、60 秒合并窗口，
+不落盘、不改变热路径和故障切换。
+
+Web／扩展沿用「设置 → 日志 → 异常报警」；原生 App 使用「设置 → 异常记录」及来源页历史入口。
+原生历史页前台每 15 秒刷新，打开对应来源或进入后台暂停；当前提醒前台每 30 秒及打开消息时同步。
+数据库暂不可读时响应 `source_history_available=false`，客户端保留原历史并显示刷新失败；
+这不是空历史。历史读取不启动浏览器，不新增系统推送或邮件。
 
 ## 降级配置恢复
 
@@ -659,3 +685,5 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 部署准备的一次调用内会有限恢复下载、幂等系统命令和宿主初始化超时；只有最终失败
 才落 `failed`。API 不再排队无限重试，已有 ready/installed 的环境仍跳过启动准备。
 安装预算 1200 秒，初始化与连接独立预算 300 秒，未放宽签名、监听归属和握手校验。
+
+托管 Ego 状态约定：`setup_state=ready`、`installed=true` 且 `connection_state=offline` 是环境已准备但宿主因空闲退出，`available=false` 不代表需要重新安装。来源组件显示按需后台启动；外部宿主、失败或未验证状态不适用。

@@ -9288,7 +9288,14 @@ function bindSettings() {
       breaker_open: "熔断触发",
       provider_error: "请求失败",
     };
-    const table = category === "embedding" ? embeddingCodes : llmCodes;
+    const discoveryCodes = {
+      verification_required: "需要安全验证", login_required: "需要登录",
+      source_timeout: "连接超时", source_network_error: "网络异常", source_rate_limited: "网站限流",
+      source_parse_error: "内容解析异常", source_runtime_unavailable: "执行环境不可用",
+      source_access_denied: "访问受限", source_not_found: "地址不存在",
+      source_queue_error: "入队异常", source_fetch_failed: "持续采集失败", source_recovered: "已恢复",
+    };
+    const table = category === "discovery" ? discoveryCodes : category === "embedding" ? embeddingCodes : llmCodes;
     return table[code] || code || "未知异常";
   }
 
@@ -9311,13 +9318,18 @@ function bindSettings() {
     const emptyEl = document.getElementById("cfgDiagAlertsEmpty");
     const summaryEl = document.getElementById("cfgDiagAlertSummary");
     if (!(listEl instanceof HTMLElement) || !(emptyEl instanceof HTMLElement)) return;
+    if (payload?.source_history_available === false) {
+      if (summaryEl instanceof HTMLElement) summaryEl.textContent = "来源异常记录暂时无法刷新，已显示的记录会保留。";
+      return;
+    }
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     if (summaryEl instanceof HTMLElement) {
       const errors = Number(payload?.summary?.errors || 0);
       const warnings = Number(payload?.summary?.warnings || 0);
+      const recovered = Number(payload?.summary?.recovered || 0);
       summaryEl.textContent =
-        errors + warnings > 0
-          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告`
+        alerts.length > 0
+          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告 / ${recovered} 恢复`
           : "";
     }
     if (!alerts.length) {
@@ -9330,9 +9342,9 @@ function bindSettings() {
     listEl.hidden = false;
     listEl.replaceChildren(
       ...alerts.map((alert) => {
-        const severity = alert?.severity === "error" ? "error" : "warning";
-        const categoryLabel = alert?.category === "embedding" ? "Embedding" : "LLM";
-        const source = String(alert?.source || "").trim();
+        const severity = alert?.severity === "info" ? "info" : alert?.severity === "error" ? "error" : "warning";
+        const categoryLabel = alert?.category === "discovery" ? "来源采集" : alert?.category === "embedding" ? "Embedding" : "LLM";
+        const source = String(alert?.source_name || alert?.source || "").trim();
         const count = Number(alert?.count || 1);
         const timeLabel = formatDiagAlertTime(alert?.last_seen);
         const item = document.createElement("li");
@@ -9343,7 +9355,7 @@ function bindSettings() {
         top.className = "diag-alert-item-top";
         const badge = document.createElement("span");
         badge.className = "diag-alert-badge";
-        badge.textContent = severity === "error" ? "错误" : "警告";
+        badge.textContent = severity === "info" ? "已恢复" : severity === "error" ? "错误" : "警告";
         const sourceSpan = document.createElement("span");
         sourceSpan.className = "diag-alert-source";
         sourceSpan.textContent = source ? `${categoryLabel} · ${source}` : categoryLabel;

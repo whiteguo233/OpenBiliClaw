@@ -2,6 +2,12 @@
 
 ## 概述
 
+自定义来源的 `WorkflowStore` 在主 SQLite 内创建 `custom_source_alert_events`。
+`source_alerts.record_transition()` 与租约完成／恢复版本发布共用事务：自增 `event_id`、唯一
+`cause` 和安全 JSON `payload`，最多保留最近 500 条失败与恢复事件。公开读取为
+`source_alerts.alert_events(database, after_id=0, limit=500)`；来源归档不删除历史，重启可读。
+这是 workflow 模块拥有的表，不改变通用 LLM／embedding 进程内缓冲的生命周期。
+
 `Database.has_current_recommendation_supply()` 提供首轮发现恢复判断所需的有界 `EXISTS` 证据：仅接纳达到入池分数、带展示文案、仍关联 fresh/shown 内容的推荐。`purged_by_reinit` 等退休历史即使保留在 recommendations 表，也不算当前画像已恢复供给。该方法不修改任何行。
 
 `src/openbiliclaw/storage/` 负责本地 SQLite 数据库、schema 初始化、候选池计数和高频读写路径。它不理解 runtime state 或用户画像，只提供确定性的持久化 API。

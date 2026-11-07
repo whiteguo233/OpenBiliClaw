@@ -150,11 +150,15 @@ class CustomWorkflowProducer:
                 logger.warning("Custom workflow handoff failed: %s", run["run_id"], exc_info=True)
                 outcome = service.store.complete(
                     run,
-                    status="failed",
+                    status="login_required" if result.status == "login_required" else "failed",
                     items=[],
                     enqueue=lambda _: 0,
                     interval_minutes=source["interval_minutes"],
-                    error="candidate_enqueue_error",
+                    error=(
+                        _run_error(result)
+                        if result.status == "login_required"
+                        else "candidate_enqueue_error"
+                    ),
                     scope_complete=False,
                 )
             payload["discovered"] += outcome["discovered_count"]

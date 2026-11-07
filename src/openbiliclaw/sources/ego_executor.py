@@ -208,6 +208,7 @@ class EgoLiteWorkflowSession:
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
         self._lease: Any | None = None
         self._started = False
+        self._login_code = "login_required"
 
     def _ensure_lease(self) -> None:
         """Hold a cross-process shared lease before any managed host is spawned."""
@@ -273,10 +274,11 @@ class EgoLiteWorkflowSession:
             stderr=asyncio.subprocess.DEVNULL,
             **no_window_kwargs(),
         )
-        # Initialization makes several native calls, each allowed 30 seconds by
-        # the host. A cold renderer can still be progressing after 15 seconds.
-        # The executor's enclosing workflow timeout continues to cap the run.
-        deadline = time.monotonic() + 30
+        # Initialization makes several native calls, each with its own 30-second
+        # limit. Do not cut a still-budgeted call short with a second 30-second
+        # cap on their combined duration. The enclosing workflow timeout also
+        # includes managed startup, navigation and collection.
+        deadline = time.monotonic() + self.plan.budgets.timeout_seconds
         ready_file = directory / "ready.json"
         identity_file = directory / "identity.json"
         identity_saved = False
@@ -428,7 +430,11 @@ class EgoLiteWorkflowSession:
 
     async def login_required(self) -> bool:
         observation = await self.snapshot()
-        if observation.get("login_wall") or browser_verification_required(observation):
+        self._login_code = "login_required"
+        if browser_verification_required(observation):
+            self._login_code = "verification_required"
+            return True
+        if observation.get("login_wall"):
             return True
         auth = self.plan.auth
         if auth.login_selector:
@@ -448,7 +454,7 @@ class EgoLiteWorkflowSession:
                 return BrowserWorkflowResult(
                     "login_required",
                     detail="Website login or security verification needs user attention",
-                    error_code="login_required",
+                    error_code=self._login_code,
                     scope_complete=False,
                 )
             action = step["action"]
@@ -508,7 +514,7 @@ class EgoLiteWorkflowSession:
                     "login_required",
                     tuple(items),
                     "Website login needs user attention",
-                    "login_required",
+                    self._login_code,
                     False,
                     self.pages_visited,
                 )

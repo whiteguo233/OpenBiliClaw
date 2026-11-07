@@ -359,8 +359,14 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      User link hints → page-local boolean query checks → redacted authoring evidence
                      Same-container repeated rows → bounded common structure → recurring selectors with original filters
                      → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
+                     public DNS preflight → all-fake-IP system answers → bounded verified DoH; unsafe answers fail closed
+                     HTTP pins public IPs; Ego keeps native socket routing and explicit direct-host rules
                      Independent new source → own task-space session; shared Ego profile cookies, explicit reuse preserved
-                     login required → human takeover → resume/trial → same draft/workflow
+                     login/verification → durable pause → attention API → Web/native inbox + settings
+                     3 ordinary failures / manual action → fenced SQLite transition → API diagnostics.alert relay
+                       → existing anomaly feed + native history; success clears current warning, preserves recovery history
+                       → human takeover → successful resume/trial → same draft/workflow
+                     Blocked verification iframe → bounded origin choices → web/native explicit consent → interactive scope only
                      Interactive owned iframe → document/login guard before resume → shared request/byte budget; popups/workers blocked
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
@@ -715,9 +721,12 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   用户链接模板 -> 页面内路径／参数布尔证据 -> 查询值仍脱敏               │ │
 │  │   同容器重复行 -> 有界共享结构证据 -> 避免固定单条内容编号，保留过滤条件 │ │
 │  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
+│  │   全合成 DNS -> 有界 DoH 验证；HTTP 固定公网 IP，Ego 仅预检、原出口不变 │ │
+│  │   失败阈值／人工处理 -> SQLite 转移记录 -> API 异常事件流；恢复保留历史 │ │
 │  │   独立新来源 -> 独立 task space 会话；profile Cookie 共享、显式会话可复用 │ │
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   自有交互 iframe -> 恢复前守卫 -> 共享请求/流量预算；弹窗/worker 拒绝 │ │
+│  │   被拒验证框 -> 有界域名选项 -> Web/原生逐域确认；普通广告不授权     │ │
 │  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
 │  │   显式域名路由 → 私有 network.json → 系统手动代理 + 精确域名直连 │ │
 │  │   准备完成 / 末个会话关闭 → 120 秒保温 → 租约保护回收；CLI 退出清理 │ │

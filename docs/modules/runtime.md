@@ -1,5 +1,19 @@
 # Runtime Module
 
+## 自定义来源暂停提醒（未发布）
+
+| 能力 | 行为 |
+| --- | --- |
+| 登录／验证暂停 | `CustomWorkflowProducer.produce_if_due()` 交由 `WorkflowStore.complete()` 在当前租约事务内记录 discovery 事件；重复 tick 和过期结果不重复报警 |
+| 普通采集故障 | 前两次失败显示来源状态；第 3 次触发当前提醒和历史事件，保留原退避。成功后写恢复事件；同一来源多个任务各自结算，当前提醒按来源合并 |
+| 恢复入口 | `WorkflowService.attention()` 从持久状态供 Web／原生 App 消息与设置读取；强制刷新不绕过 `login_required`，成功试采发布后才恢复 |
+
+诊断事件包含固定原因与来源名称，不包含网页原始错误或凭据。`source_alerts.record_transition()`
+把失败／恢复转移与 workflow 完成写入同一事务，最多保留 500 条。API 生命周期拥有一个幂等启动的
+`relay_alerts()`，每 2 秒读取已提交事件并转发现有 `diagnostics.alert`；重启后的历史由 REST 读取，
+不在启动时重放旧推送。当前提醒仍由 attention 接口从数据库实时投影。读取不会启动 Ego。
+
+
 Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界 producer → `drain_pending(flush=True)` → 推荐文案波次。它复用来源锁、任务准入、配额和日预算，不依赖 scheduler；失败使用安全的 Instagram 提示进入 `refresh.failed`，已有部分结果保留。CLI `discover --source instagram --force` 仍可独立使用。
 
 Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。
@@ -42,6 +56,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
 | 公开 HTTP 来源代理 | ✅ | Feed / 旧公开 recipe 遵循 `[network]`，复用公共 DNS 与数字 IP 隧道；robots 和 origin 限制保持，文章引用不产生额外请求。 |
+| 合成 DNS 验证 | ✅ | 公开 Web / Ego 识别全部为 `198.18.0.0/15` 的系统答案后复用固定 DoH，仍拒绝私网、混合答案和解析失败；不改变网站出口。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
@@ -148,6 +163,10 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+`resolve_public_addresses(host, *, proxy=None, use_public_dns=False)` 的新增开关仅供已识别
+合成 DNS 的调用方显式使用。它使 DNS 验证走固定 Cloudflare DoH；`proxy` 仍控制此查询
+的网络出口。默认行为及封面调用方不变。HTTP 将返回的公共 IP 固定到连接，Ego 仅作预检。
 
 `runtime.image_network.PinnedImageBackend(host, addresses, proxy, *, port=443)` 的隧道底座供封面和公开 Web 来源共用；只接受 80/443，端口及数字 IP 同时冻结。封面入口仍只使用 HTTPS 443，原白名单不变。
 
@@ -441,9 +460,9 @@ embedding_progress.reset()
 
 TikTok 的 curl_cffi 图片传输通过 `network.curl_cffi_proxy_kwargs()` 物化 OS/环境代理，并在 direct/custom 模式覆盖 libcurl 环境继承与 NO_PROXY；每跳仍保留 CONNECT_TO 公网地址固定、原始 Host/SNI 和 TLS 校验。Instagram 继续使用上述共享海外图片传输。
 
-`runtime.image_network.resolve_public_addresses(host, *, proxy=None)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
+`runtime.image_network.resolve_public_addresses(host, *, proxy=None, use_public_dns=False)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
 
-直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。仅发送公开 CDN 域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
+封面直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。公开 Web / Ego 另在域名的本机答案全部为 `198.18.0.0/15` 时显式启用相同公共 DNS 验证；不会将合成地址直接视为公网。仅发送域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。Ego 只使用预检结果，不固定其原生 socket。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
 
 实现依据：[HTTPCore network backends](https://www.encode.io/httpcore/network-backends/) 与 [Cloudflare DNS JSON](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。`httpcore>=1.0,<2` 从 HTTPX 的传递依赖提升为显式依赖，`httpx[socks]>=0.28` 支持 `socks5h`；git、Docker、桌面打包通过现有 Python 依赖安装，不增加本机守护进程或手工安装步骤。
 
@@ -829,3 +848,6 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 已实现：正式 `RuntimeContext` 的启动与配置热重载将 TikTok 加入 `SourceIncrementalSync.source_enabled`，修复配置已启用但实际调度永远跳过的遗漏。`build_runtime_context()` / `RuntimeContext.rebuild_from_config()` 的公开签名不变；来源映射集合与 `SOURCE_ORDER` 用实际 builder 回归校验。全局和逐源 incremental 开关仍默认关闭，未到期不入队，完成推进 cadence，关闭取消 pending 周期任务。
 
 共享 `enqueue_tiktok_bootstrap()` 改为喜欢、收藏、关注三个默认 scope；历史缺失不影响默认任务完整成功。新增正式 runtime→SQLite→终态对账测试，模拟时钟覆盖下一周期；该测试不代表浏览器非空账号 E2E。
+
+部分页面已取得内容、后续页面触发登录／验证时，即使候选队列容量不足或交接失败，
+也保留 `login_required` 和原验证原因，不能被一般队列异常覆盖为可自动重试的 degraded/failed。

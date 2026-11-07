@@ -8,6 +8,11 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 
 ## 模块范围
 
+| 能力 | 公开接口与行为 |
+| --- | --- |
+| 聊天来源引导 | 输入框上方「添加来源 · 说明与示例」可展开网站／RSS 示例、试跑确认、来源管理与异常历史位置。纯 HTML 折叠说明，无新增 API，不修改草稿或自动发送；说明区有高度上限并可滚动 |
+| 来源异常历史 | 设置 → 日志的异常报警复用 `GET /api/diagnostics/alerts` 与 `diagnostics.alert`。显示来源名称、失败分类和“已恢复”记录；暂时读不到持久历史时保留当前列表并提示。普通失败来源卡展示安全摘要，登录按钮仅适用于人工处理问题 |
+
 `extension/` 是浏览器插件子项目（Chrome / Edge / Brave 主构建，Firefox 与 Safari 独立构建），负责：
 
 - 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX 等支持站点采集行为事件或执行来源任务（平台无关内核 + 平台适配器）
@@ -61,7 +66,7 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 | 原生保存验证边界 | ✅（7/7 executor 注册；前六平台有真实账号验证，TikTok 授权 E2E 已运行，持久化未确认） | 本地 / CI / 默认 smoke 只验证默认关闭、local-first membership、列表与任务状态。七平台真实 favorite / watch-later 只能在 `allow_state_changing=true` 且 exact platform/action/public content ID/expected target 的精确命名授权同时存在时，经 production durable broker 执行。Task 10 为 trusted-local `/api/extension/e2e/run` 增加 dedicated 模式：exact envelope 与 generic actions 互斥，扩展仅提交一个 canonical item 到 `/api/saved/{action}/sync`、严格关联同一 task/item/resolved target，再用 six-field callback 回传。通用捕捉 E2E runner 即使收到有效 envelope 也固定拒绝 favorite/bookmark。Reddit / X / YouTube / 小红书 / 抖音 / 知乎 / TikTok 七个 executor 均已接入并完成 fixture；登录态只存在于已安装扩展，job 不含账号 ID、Cookie 或账号凭据，小红书仅可携带 saved membership 已有的公开笔记导航 `xsec_token/xsec_source`，授权与结果仍只有安全字段。一般 runner 只在 tab 创建/加载阶段占用共享 mutex；XHS 手动 native-save 使用 exact route + identity/control fence，可越过后台 discovery mutex并由 single-flight poll 防重复领取。YouTube duplicate exact `OpenBiliClaw` rows 优先 checked proof，否则稳定复用一个且不删除列表；知乎按 current `收藏 / 已收藏` aria 状态同步到 `知乎收藏`，不支持命名收藏夹且永不点击初始“已收藏”；小红书支持 current `noteContainer/collect-wrapper`。完整矩阵以 runbook 为准。 |
 | 原生保存不确定确认复核 | ✅ | 抖音 / 小红书 / YouTube / 知乎的 executor 在 mutation 后返回 `native_confirmation_not_observed` 时，runner 会先 abort 并 await 原 document sender，再重载 exact content URL；新 content document 必须通过 `NATIVE_SAVE_READY` 返回不同的 `document_instance_id`，随后才接收独立 `execution_id` 的 `verification_only`。平台 verifier 可只读打开必要弹窗并轮询 target 后置条件，但不创建容器、不点击目标项；知乎仅读取精确内容的全局 favorite 状态，任何复核路径都不点击“收藏”“已收藏”或“取消收藏”。明确命中后返回 `already_synced`，其它 verifier 终态或异常都保留原失败码。runner 在 `about:blank` 阶段先持久登记 task-tab owner，首次导航与 reload 都禁止普通 collector；callback 要求 2xx 并以同一 payload 有界重试，tab 删除不确定时保留 session 恢复记录。 |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常及来源登录／验证暂停（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
 | 海外网络模式设置 | ✅ | v0.3.165+ 通用 tab 与桌面 Web 对齐提供 `direct / system / custom` 三档和自定义代理地址；加载、保存及「测试网络」均提交同一 `network.mode + proxy` 草稿。默认直连明确忽略环境代理，只有 system 继承，custom 缺地址由后端 400 拒绝。 |
 | 封面图评估设置 | ✅ | side panel 高级功能 tab 的「多模态处理」section 补齐 `[discovery]` 多模态评估控制：可开关候选封面参与 LLM 评估，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存 payload 会保留已有 discovery 字段后覆盖 `multimodal_*` 参数，与桌面 Web 设置页保持同一配置面。图像 Embedding 能力是独立开关，P1/P3 依赖它而不依赖候选封面 LLM 评估。 |
 | 搜索词生成模式选择器 | ✅ | popup 高级功能 tab 的「搜索词生成」section（与桌面 Web `/web` 设置页一致）新增「搜索词生成模式」下拉 `#cfgKeywordGenerationMode`，三档 经典 / 混合 / 灵感（option value `legacy` / `hybrid` / `inspiration`，两端 option 值 / 顺序 / 文案一致），并附「混合最贵」成本提示。加载从 `cfg.discovery.keyword_generation_mode` 回填（缺省 `legacy`），保存把该键写进 discovery payload（**在 `...(state.runtimeConfig?.discovery \|\| {})` 展开之后**，避免加载快照覆盖用户选值）。它由后端 `inspiration_search_enabled` / `inspiration_replace_merged_keywords` 两布尔派生（`config.toml` 仍只存两布尔），`PUT /api/config` 把 mode 翻译回两布尔并规范化，非法值 → 422。详见 [config 模块的 `keyword_generation_mode` 映射表](config.md)。 |
@@ -899,11 +904,12 @@ popup 打开设置时，移动 Web 打开设置弹层时调用 `GET /api/custom-
 共享聊天组件显示中文工具进度与确认动作名称，保留服务端从草稿或来源生成的具体审批
 摘要；恢复待批准记录后仍显示网站、目标及配置，而不是仅显示 opaque draft ID。
 
-共享组件仅为不可用的 Playwright 显示「安装浏览器」。用户点击后 POST
-`/api/custom-sources/executors/playwright/install`，HTTP `202` 和 `{status:"installing"}`
-仅表示开始安装。安装中，每 3 秒读取来源列表里的 `executors`，仅更新执行器提示，
-不覆盖来源字段编辑；页面或设置区域不可见时不发送轮询，组件销毁后清理定时器。
-`status=ready/failed` 与 `available/detail` 用于显示结果，Ego 不提供此安装按钮。
+共享组件根据后端能力显示 Ego 状态。托管环境通常在安装或部署时自动准备，未准备完成
+时可点击「准备 Ego Lite」补救，通过 `POST /api/custom-sources/executors/ego/prepare`
+触发。准备中每 3 秒读取来源列表的 `executors`，仅更新执行器提示，不覆盖来源字段
+编辑；页面或设置区域不可见时不发送轮询，组件销毁后清理定时器。`setup_state`、
+`connection_state` 和 `detail` 用于显示结果，已准备且空闲退出时说明会按需后台启动。
+组件不从客户端操作系统推断后端能力，也不为网页来源切换执行器。
 
 「去聊一聊添加网站」复用当前对话入口；登录失效的来源可点「重新登录」，先 POST
 `/{source_id}/login`，再进入同后端 origin 的 `takeover_url`。popup 在新标签打开；
@@ -1007,3 +1013,5 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新
 `language` 再切一次。`bg` / 通知里的用户可见文案随 `/i18n/ui` 目录一起覆盖。完整契约见
 [多语言模块](i18n.md)。
+
+2026-11-08：共享来源管理组件区分托管 Ego 的已准备空闲状态与故障，前者显示「已准备，按需启动」，不提供重复安装／手动打开建议；公开 Feed 仍无需 Ego。扩展回归 1833 项通过，包含 Chrome 构建和模块加载检查；共享组件另有 DOM 单元测试及真实 PC 页面验证。本轮没有重新加载已安装的扩展包。

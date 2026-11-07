@@ -70,6 +70,34 @@ function setup(handler = async () => ({}), initialExecutors = []) {
 }
 async function settle() { for (let i = 0; i < 4; i++) await new Promise(setImmediate); }
 
+test("collection failure shows safe cause and retry time without suggesting verification", async () => {
+  const h = setup();
+  h.setRows([{ ...source, health: { status: "failed", attention_required: true,
+    attention_action: "source_settings", message: "已连续失败 3 次。网站响应超时，系统会稍后重试。",
+    next_run_at: 1793976000, last_error: "private-secret-token" } }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /已连续失败 3 次/);
+  assert.match(h.root.textContent, /下次发现/);
+  assert.doesNotMatch(h.root.textContent, /private-secret|处理登录或验证/);
+});
+
+test("paused verification is actionable without leaking raw browser errors or a next-run time", async () => {
+  const h = setup(async () => ({ takeover_url: "/web/source-login.html?draft_id=verification" }));
+  h.setRows([{ ...source, health: {
+    status: "login_required", attention_required: true, attention_code: "verification_required",
+    message: "网站要求人工安全验证。请完成验证并成功试采后继续。",
+    last_error: "challenge?private_token=secret", next_run_at: 0,
+  } }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /网站要求人工安全验证/);
+  assert.doesNotMatch(h.root.textContent, /private_token|下次采集/);
+  assert.ok(descendants(h.root).some((node) => node.attributes.role === "alert"));
+  h.button("处理登录或验证").handlers.click();
+  await settle();
+  assert.equal(h.calls.at(-1).path, "/custom-sources/source%2Fa/login");
+  assert.deepEqual(h.opened, ["https://local.example/web/source-login.html?draft_id=verification"]);
+});
+
 test("a malformed post-save refresh preserves source cards, edits, shares and executor readiness", async () => {
   for (const invalid of [null, "<html>error</html>", {}, { items: null, executors: [] }, { items: [] }]) {
     const h = setup(async (_path, options, setRows) => {
@@ -317,6 +345,28 @@ test("installed Ego preserves its real connection error and refreshes status wit
   assert.equal(h.inputs()[1].value, "8");
   assert.equal(h.changes.length, 1, "connection refresh must not replace source cards");
   assert.ok(h.calls.every(call => call.options.method === "GET"));
+});
+
+test("managed idle Ego stays prepared without asking the user to install or start it", async () => {
+  const h = setup(undefined, [{ id: "ego", managed: true, installed: true,
+    available: false, setup_state: "ready", connection_state: "offline" }]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /Ego Lite 已准备，按需启动/);
+  assert.match(h.root.textContent, /浏览器已退出以节省资源/);
+  assert.match(h.root.textContent, /后台自动启动/);
+  assert.doesNotMatch(h.root.textContent, /尚未就绪|请确认.*已打开/);
+  assert.equal(h.button("准备 Ego Lite"), undefined);
+  assert.equal(h.timers.size, 0);
+  assert.ok(h.calls.every(call => call.options.method === "GET"));
+  for (const state of [
+    { managed: false, setup_state: "ready" },
+    { managed: true, setup_state: "failed" },
+    { managed: true, setup_state: "ready", platform_supported: false },
+  ]) {
+    h.setExecutors([{ id: "ego", installed: true, available: false, connection_state: "offline", ...state }]);
+    await h.manager.load();
+    assert.doesNotMatch(h.root.textContent, /已准备，按需启动|后台自动启动/);
+  }
 });
 
 test("ready Ego is shown even when Playwright is missing and never starts browser installation", async () => {

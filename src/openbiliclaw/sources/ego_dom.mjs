@@ -103,8 +103,19 @@ export const SNAPSHOT_JS = String.raw`(context = null) => {
   // Repeated result rows can follow a long header or pinned section. Sample
   // across the list instead of letting the first hundred links hide its tail.
   const containers=[...document.querySelectorAll('tr,[role=row],article')].filter(visible).slice(0,500);
-  const head=containers.slice(0,4), rest=containers.slice(4), count=Math.min(12,rest.length);
-  const samples=[...head,...Array.from({length:count},(_,i)=>rest[Math.round(i*(rest.length-1)/Math.max(1,count-1))])];
+  const sample=(nodes,limit)=>{
+    const head=nodes.slice(0,Math.min(4,limit)),rest=nodes.slice(head.length);
+    const count=Math.min(limit-head.length,rest.length);
+    return [...head,...Array.from({length:count},(_,i)=>rest[Math.round(i*(rest.length-1)/Math.max(1,count-1))])];
+  };
+  // Older div-based news pages put their entire sidebar before the stories.
+  // Linked headings provide a second structural signal without site selectors
+  // or guessing which links are articles. Share the same 16-row / 100-node cap.
+  const headings=[...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+    .filter(e=>/^H[1-6]$/.test(e.tagName) && visible(e)
+      && [...e.querySelectorAll('a[href]')].some(visible)).slice(0,500);
+  const headingSamples=sample(headings,containers.length?8:16);
+  const samples=[...sample(containers,16-headingSamples.length),...headingSamples];
   const structured=samples.flatMap(e=>{
     const links=[...e.querySelectorAll('a[href]')].filter(visible);
     return [e,...links.slice(0,2),...links.slice(-2)];

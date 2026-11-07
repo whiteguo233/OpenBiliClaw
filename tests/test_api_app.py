@@ -22938,6 +22938,44 @@ async def test_activity_feed_diagnostics_yield_http_loop_and_coalesce(monkeypatc
     assert calls == 1
 
 
+def test_diagnostics_api_merges_durable_source_events_after_restart(tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    from openbiliclaw.diagnostics_alerts import (
+        DiagnosticsAlertBuffer,
+        reset_diagnostics_alert_buffer,
+    )
+    from openbiliclaw.sources.workflow_service import WorkflowService
+    from openbiliclaw.storage.database import Database
+    from tests.test_source_failure_alerts import activate, run_once
+
+    database = Database(tmp_path / "diagnostics.db")
+    database.initialize()
+    service = WorkflowService(database)
+    _, workflow = activate(service)
+    for _ in range(3):
+        run_once(service, workflow["workflow_id"])
+    reset_diagnostics_alert_buffer(DiagnosticsAlertBuffer())
+    try:
+        # New API state cannot rely on the producer process's in-memory buffer.
+        app = create_app(database=database, memory_manager=object(), soul_engine=object())
+        client = TestClient(app)
+        payload = client.get("/api/diagnostics/alerts?limit=1").json()
+        assert payload["alerts"][0]["code"] == "source_timeout"
+        assert payload["alerts"][0]["id"].startswith("source:")
+        cursor = payload["source_cursor"]
+        assert (
+            client.get(f"/api/diagnostics/alerts?source_since_id={cursor}").json()["alerts"] == []
+        )
+        run_once(service, workflow["workflow_id"], "ok", "")
+        recovered = client.get(f"/api/diagnostics/alerts?source_since_id={cursor}").json()
+        assert recovered["alerts"][0]["severity"] == "info"
+        assert recovered["summary"]["recovered"] == 1
+    finally:
+        reset_diagnostics_alert_buffer()
+        database.close()
+
+
 @pytest.mark.parametrize("blocked_stage", ["threshold", "candidates"])
 async def test_delight_pending_batch_does_not_block_other_requests(blocked_stage) -> None:
     import threading

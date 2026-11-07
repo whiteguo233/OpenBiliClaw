@@ -928,6 +928,10 @@ Managed Ego routing defaults to native system proxy discovery. An explicit `GET/
 
 New dynamic websites use the official Ego Lite host through its native Node/CDP API.
 On macOS, deployment prepares Ego automatically, without waiting for the first chat.
+When concurrent work wakes an already initialized idle host, tasks wait within the
+connection budget for the startup owner and reuse its readiness result. Cancelling
+a waiter does not stop the owner, and a busy startup is not treated as an unavailable
+executor. The explicit preparation endpoint remains nonblocking when setup is busy.
 Local source bootstrap runs preparation with the installed runtime after dependency
 installation and before returning for `--skip-start`. The desktop app prepares on its
 first launch after installation: a drag-installed DMG has no post-install script to run
@@ -938,12 +942,20 @@ Preparation downloads and verifies the official app, installs it in
 `<active database directory>/ego-managed`, initializes a private profile and named host,
 and verifies its native connection. It uses the effective runtime data directory after
 migration and configuration resolution. No separate user onboarding is required.
+All managed launches use the official Ego application's own headless mode, including
+first-run setup, collection and manual-takeover screenshots. They do not display a local
+browser window. Users open the existing in-app takeover page when login or verification
+needs attention; detection alone does not open it. No extra browser, dependency or user
+setting is required. An already-running older host adopts this mode at its next normal
+cold start, without interrupting active sessions. Explicit external hosts remain unmanaged.
 API, desktop and CLI service-start checks skip a ready, installed environment even when
 its host is offline: those checks do not redownload or wake it. Rerunning local source
 installation still invokes explicit `sources prepare-ego` and verifies the native handshake,
 starting the host if needed. Transient download failures and safe command timeouts recover
 inside the same preparation call (up to three attempts, 1/3-second backoff; command budgets
 scale to 1/2/3 times their initial values). Installation has a 1200-second deadline; initialization and the native connection have a separate 300-second deadline.
+Within that connection deadline, the native readiness CLI can wait up to 120 seconds. A measured cold host remained alive and completed its handshake after about 70 seconds; the previous 20-second cap repeatedly interrupted that valid startup. Readiness still requires the actual version and Default profile marker, and cancellation or the overall deadline still cleans up the owned host.
+If chat authoring begins while deployment preparation is still running, it waits for that owner's result within the installation plus connection budget (1500 seconds), then continues the real website observation. It does not mark progress as a failed draft or start a duplicate installation. Cancelling this waiting chat leaves the preparation owner running; the settings preparation endpoint still returns progress immediately.
 A timed-out setup action is not replayed: the owned host is stopped, then a fresh connection
 observes the actual page and resumes. Explicit signature/trust refusals and unknown screens
 remain failures. Exhausted failures can retry explicitly or at the next service start.
@@ -952,6 +964,9 @@ workflow was opened. Reusing an online host also schedules reclamation. The sour
 CLI reclaims an unused managed host when it exits; the printed success describes the
 completed handshake, not a permanently running browser. Active session leases prevent cleanup.
 The API owns and cancels its preparation task on shutdown.
+Once a host is prepared, opening a workflow session uses that plan's existing time budget
+for the combined native initialization steps. Individual native commands keep their
+30-second limit; startup, page navigation and collection remain capped by the whole run.
 
 The settings action **Prepare Ego Lite** and the command below remain explicit retry paths.
 Chat, `sources prepare`, and the source-draft API can still complete an unfinished setup;

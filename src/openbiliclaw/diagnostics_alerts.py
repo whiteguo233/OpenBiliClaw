@@ -1,4 +1,4 @@
-"""Diagnostics alert buffer for LLM / embedding request failures.
+"""Diagnostics alert buffer for provider failures and paused discovery sources.
 
 Collects abnormal runtime events — LLM provider failures (HTTP 429 rate
 limits, auth errors, timeouts, malformed responses, fallback exhaustion)
@@ -47,10 +47,10 @@ class DiagnosticsAlert:
     """One coalesced anomaly report shown in the 异常报警 list."""
 
     id: int
-    category: str  # "llm" | "embedding"
+    category: str  # "llm" | "embedding" | "discovery"
     code: str  # e.g. "rate_limited", "auth_failed", "timeout"
     severity: str  # "warning" | "error"
-    source: str  # provider instance id / endpoint label
+    source: str  # provider instance id / endpoint label / custom source id
     message: str
     first_seen: float  # epoch seconds
     last_seen: float  # epoch seconds

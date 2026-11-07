@@ -70,6 +70,10 @@ WEB_MAX_ROBOTS_RULE_OCTETS = 256_000
 WEB_MAX_ROBOTS_WILDCARDS = 4_096
 WEB_MAX_ROBOTS_WILDCARDS_PER_RULE = 64
 WEB_MAX_DNS_ADDRESSES = 16
+# Real macOS proxy/TUN DNS returned this RFC 2544 benchmarking range for every
+# public website. It is only a trigger to verify public DNS, never an allowed
+# destination range. Private, mixed, oversized and literal-IP answers stay denied.
+_PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 _XML_CONTENT_TYPES = frozenset(
     {
@@ -521,7 +525,36 @@ async def _system_resolver(host: str, port: int) -> Sequence[str]:
                 addresses.append(address)
         return addresses
 
-    return await asyncio.to_thread(resolve)
+    addresses = await asyncio.to_thread(resolve)
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return addresses
+    if not addresses or len(addresses) > WEB_MAX_DNS_ADDRESSES:
+        return addresses
+    try:
+        synthetic = all(
+            ipaddress.ip_address(address) in _PROXY_FAKE_IP_NETWORK for address in addresses
+        )
+    except ValueError:
+        synthetic = False
+    if not synthetic:
+        return addresses
+    from openbiliclaw.runtime.image_network import (
+        image_proxy_for_host,
+        resolve_public_addresses,
+    )
+
+    try:
+        return await resolve_public_addresses(
+            host, proxy=image_proxy_for_host(host, direct=False), use_public_dns=True
+        )
+    except httpx.HTTPError as exc:
+        # Preserve a bounded DNS failure at both the HTTP and native Ego seams;
+        # never fall back to accepting the unverified synthetic destination.
+        raise OSError("Public Web DNS verification failed") from exc
 
 
 def _is_public_ipv4(address: ipaddress.IPv4Address) -> bool:

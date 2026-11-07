@@ -23,7 +23,7 @@ test("settings logging panel mounts the diagnostics alerts section", () => {
   }
 
   // 空态文案与实时区域语义。
-  assert.match(popupHtml, /暂无异常报警/);
+  assert.match(popupHtml, /暂无异常记录/);
   assert.match(
     popupHtml,
     /id="cfgDiagAlertSummary"[^>]*aria-live="polite"/,

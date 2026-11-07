@@ -14,12 +14,14 @@ from urllib.parse import urljoin, urlsplit
 from openbiliclaw.llm.json_utils import extract_llm_json_object
 from openbiliclaw.sources.browser_workflow import (
     WorkflowParameters,
+    browser_login_origins,
     browser_verification_required,
     compile_browser_workflow,
     workflow_url,
 )
 from openbiliclaw.sources.custom_sources import CustomSourceStore
 from openbiliclaw.sources.protocol import SourceFetchResult, SourceRecipe
+from openbiliclaw.sources.source_attention import attention_reason, workflow_attention
 from openbiliclaw.sources.web_adapter import WebSourceAdapter
 from openbiliclaw.sources.web_probe import probe_public_web_url
 from openbiliclaw.sources.web_recipe import build_web_recipe
@@ -510,7 +512,7 @@ class WorkflowService:
         for source in self.sources.list_sources():
             workflows = self.store.list_workflows(source["source_id"])
             status = "disabled" if not source["enabled"] else "ready"
-            for candidate in ("login_required", "failed", "degraded", "running"):
+            for candidate in ("login_required", "failed", "degraded", "rate_limited", "running"):
                 if source["enabled"] and any(w["status"] == candidate for w in workflows):
                     status = candidate
                     break
@@ -518,7 +520,15 @@ class WorkflowService:
                 "status": status,
                 "last_error": next((w["last_error"] for w in workflows if w["last_error"]), ""),
                 "last_success_at": max((w["last_success_at"] for w in workflows), default=0),
-                "next_run_at": min((w["next_run_at"] for w in workflows), default=0),
+                "next_run_at": min(
+                    (
+                        w["next_run_at"]
+                        for w in workflows
+                        if w["status"] != "login_required" and w.get("enabled", True)
+                    ),
+                    default=0,
+                ),
+                **workflow_attention(workflows if source["enabled"] else []),
             }
             source["workflows"] = [
                 {k: w[k] for k in ("workflow_id", "version", "executor", "status", "intent")}
@@ -527,6 +537,42 @@ class WorkflowService:
             ]
             result.append(source)
         return result
+
+    def attention(self) -> list[dict[str, Any]]:
+        """Current actionable notices; one per source, independent of event history."""
+        items = []
+        for source in self.list_sources():
+            health = source["health"]
+            if health["attention_required"]:
+                items.append(
+                    {
+                        "code": health["attention_code"],
+                        "title": health["title"],
+                        "action_label": health["action_label"],
+                        "failure_count": health["failure_count"],
+                        "next_retry_at": health["next_retry_at"],
+                        "id": f"source:{source['source_id']}",
+                        "source_id": source["source_id"],
+                        "draft_id": "",
+                        "name": source["name"],
+                        "message": health["message"],
+                        "action": health["attention_action"],
+                    }
+                )
+        for draft in self.store.attention_drafts():
+            reason = attention_reason(str(draft["code"] or ""))
+            items.append(
+                {
+                    **reason,
+                    "id": f"draft:{draft['draft_id']}",
+                    "source_id": "",
+                    "draft_id": draft["draft_id"],
+                    "name": str(draft["name"] or "未命名来源")[:200],
+                    "message": f"新增来源尚未启用。{reason['message']}",
+                    "action": "draft_login",
+                }
+            )
+        return items
 
     async def _json_task(
         self, instruction: str, data: Mapping[str, Any], *, background: bool = False
@@ -723,6 +769,19 @@ class WorkflowService:
         self.store.save_draft(draft, draft_id=draft["draft_id"])
         return await self.author_browser(draft)
 
+    def record_login_observation(
+        self, draft: dict[str, Any], observation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Refresh bounded consent choices without persisting page text or granting scope."""
+        approved = {draft["origin"], *draft.get("login_origins", [])}
+        suggested = [
+            origin for origin in browser_login_origins(observation) if origin not in approved
+        ]
+        if draft.get("suggested_login_origins") != suggested:
+            draft["suggested_login_origins"] = suggested
+            self.store.save_draft(draft, draft_id=draft["draft_id"])
+        return {**observation, "suggested_login_origins": suggested}
+
     async def observe_session(
         self, draft: dict[str, Any], *, interactive: bool = False
     ) -> tuple[Any, dict[str, Any]]:
@@ -762,11 +821,8 @@ class WorkflowService:
                 added = sorted(observed - resources)[: max(0, 8 - len(resources))]
                 if not added or attempt == 2:
                     draft["resource_origins"] = sorted(resources)
-                    draft["suggested_login_origins"] = observation.get(
-                        "blocked_navigation_origins", []
-                    )
                     self.store.save_draft(draft, draft_id=draft["draft_id"])
-                    return session, observation
+                    return session, self.record_login_observation(draft, observation)
                 resources.update(added)
             except BaseException:
                 await session.close()
@@ -788,7 +844,7 @@ class WorkflowService:
                 if status["managed"] and status["setup_state"] != "ready":
                     # First authoring and a resumed failed draft both prepare the
                     # browser outside page budgets. Background repair never installs.
-                    status = await setup.prepare()
+                    status = await setup.prepare(wait=True)
                     if not status["available"]:
                         draft.update(
                             status="failed",
@@ -808,6 +864,7 @@ class WorkflowService:
             ):
                 draft.update(
                     status="needs_login",
+                    attention_code="verification_required" if challenge else "login_required",
                     requires_login=bool(draft.get("requires_login")) if challenge else True,
                     detail=(
                         "网站要求人工安全验证，请打开网站窗口完成验证后继续试跑。"
@@ -1138,6 +1195,11 @@ class WorkflowService:
                 for i in result.items[:5]
             ]
             draft["detail"] = result.detail or result.error_code
+            draft["attention_code"] = (
+                attention_reason(result.error_code)["code"]
+                if result.status == "login_required"
+                else ""
+            )
             if draft["status"] == "needs_login":
                 draft["takeover_url"] = f"/web/source-login.html?draft_id={draft_id}"
         except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
@@ -1225,7 +1287,12 @@ class WorkflowService:
                 "query",
             )
         }
-        draft.update(base_version=current["version"], status="needs_login", trial_success=False)
+        draft.update(
+            base_version=current["version"],
+            status="needs_login",
+            trial_success=False,
+            attention_code=attention_reason(str(current.get("last_error", "")))["code"],
+        )
         for key in ("resource_origins", "login_origins", "requires_login", "scope_limits"):
             if key in current:
                 draft[key] = current[key]

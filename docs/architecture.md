@@ -122,8 +122,15 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
         → custom source_id + independent share/cadence → same-site versioned workflows
           independent new source → own task-space session; same Ego profile cookies, explicit reuse preserved
         → CustomWorkflowProducer → HTTP feed or native Ego Lite executor → ordinary pending_eval → evaluated pool
+          public DNS preflight → all system answers are proxy fake-IP → bounded verified DoH → public addresses only
+          HTTP pins verified IPs; Ego keeps native socket routing and exact-host direct rules
         → source_id/source_name attribution; source_platform remains web
-        login / affirmative security verification → human /web/source-login.html takeover → resume + trial → same draft/workflow
+        login / affirmative security verification → persisted pause → source_attention projection
+        3 consecutive ordinary failures / immediate manual action → WorkflowStore fenced transition → SQLite custom_source_alert_events (last 500)
+          → API-owned 2s relay → diagnostics.alert / diagnostics REST → Web/extension anomaly feed + native history
+          → successful run or published recovery → current reminder cleared, recovery history retained
+          → Web/native inbox + source settings → human takeover → successful resume/trial → same draft/workflow
+          blocked verification iframe → bounded suggested_login_origins → web/native exact-origin consent → interactive scope only
           interactive owned iframe → exact document/login origin guard before resume → shared request/byte budget; no popup/worker permission
         source settings cards (desktop / popup / mobile) → explicit management API actions
         macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces; no Playwright fallback

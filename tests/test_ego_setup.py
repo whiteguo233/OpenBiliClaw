@@ -84,7 +84,9 @@ async def test_launch_retries_temporary_listener_probe_timeout(manager, monkeypa
     "debugging,expected",
     [(False, "--no-startup-window"), (True, "about:blank")],
 )
-async def test_launch_keeps_background_work_windowless(manager, monkeypatch, debugging, expected):
+async def test_launch_keeps_setup_and_collection_headless(
+    manager, monkeypatch, debugging, expected
+):
     from types import SimpleNamespace
 
     manager.root.mkdir(parents=True)
@@ -105,6 +107,9 @@ async def test_launch_keeps_background_work_windowless(manager, monkeypatch, deb
     monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
     monkeypatch.setattr("openbiliclaw.sources.ego_setup.asyncio.sleep", AsyncMock())
     await manager._launch(debugging=debugging)
+    # A real 0.6.2.9 run flashed native windows with --no-startup-window alone.
+    # Both first-run setup and later cold starts must use Ego's own headless app.
+    assert "--headless=new" in captured["args"]
     assert expected in captured["args"]
     assert ("about:blank" in captured["args"]) is debugging
 
@@ -322,6 +327,76 @@ async def test_concurrent_prepare_reuses_single_install_and_host(manager, monkey
     assert calls.count("debug") == 1 and calls.count("install") == 1
 
 
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+async def test_concurrent_work_waits_for_start_without_restarting_owner(
+    manager, monkeypatch, cancel_waiter
+):
+    calls = fake_lifecycle(manager, monkeypatch)
+    manager._write(initialized=True, setup_state="ready")
+    entered, release = asyncio.Event(), asyncio.Event()
+    handshake = manager._handshake
+
+    async def blocked_handshake():
+        entered.set()
+        await release.wait()
+        await handshake()
+
+    monkeypatch.setattr(manager, "_handshake", blocked_handshake)
+    owner = asyncio.create_task(manager.ensure_running())
+    await entered.wait()
+    waiter = asyncio.create_task(manager.ensure_running())
+    try:
+        await asyncio.sleep(0)
+        assert not waiter.done(), "A busy startup is not an unavailable executor"
+        if cancel_waiter:
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            assert not owner.done() and "stop" not in calls
+        release.set()
+        assert (await owner)["available"]
+        if not cancel_waiter:
+            assert (await waiter)["available"]
+        assert calls == ["normal", "handshake"]
+    finally:
+        release.set()
+        await owner
+        if not waiter.done():
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+
+
+async def test_startup_wait_budget_does_not_mark_the_owner_failed(manager, monkeypatch):
+    import fcntl
+
+    calls = fake_lifecycle(manager, monkeypatch)
+    manager._write(initialized=True, setup_state="preparing", phase="handshake")
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._CONNECT_TIMEOUT", 0.01)
+    with (manager.root / "setup.lock").open("a") as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = await asyncio.wait_for(manager.ensure_running(), timeout=1)
+        assert result["setup_state"] == "preparing" and not result["available"]
+        assert calls == []
+    assert (await manager.ensure_running())["available"]
+    assert calls == ["normal", "handshake"]
+
+
+async def test_authoring_setup_wait_is_bounded_without_stopping_owner(manager, monkeypatch):
+    import fcntl
+
+    calls = fake_lifecycle(manager, monkeypatch)
+    manager._phase("verify")
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._INSTALL_TIMEOUT", 0.01)
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._CONNECT_TIMEOUT", 0.01)
+    with (manager.root / "setup.lock").open("a") as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = await asyncio.wait_for(manager.prepare(wait=True), timeout=1)
+        assert result["setup_state"] == "preparing" and not result["available"]
+        assert calls == []
+        assert manager._state()["setup_state"] == "preparing"
+
+
 async def test_cancelled_setup_closes_temporary_host(manager, monkeypatch):
     calls = fake_lifecycle(manager, monkeypatch)
     entered = asyncio.Event()
@@ -354,6 +429,23 @@ async def test_handshake_requires_actual_marker_and_default_profile(manager, mon
     assert manager._state()["ready_pid"] == 100
     assert command.call_args.args[0] == str(manager.executable)
     assert "--ego-server-name=" + manager.server_name in command.call_args.args
+
+
+async def test_handshake_allows_a_slow_but_live_native_start(manager, monkeypatch):
+    """A live cold host took about 70s; a 20s CLI cap must not restart it."""
+    manager.root.mkdir()
+    manager._write(pid=100, debug_port=0)
+    monkeypatch.setattr(manager, "_pid", lambda: 100)
+
+    async def command(*args, timeout):
+        if timeout < 70:
+            raise TimeoutError
+        return 'OBC_EGO_READY:{"version":"0.6.2.9","profile":true}'
+
+    monkeypatch.setattr("openbiliclaw.sources.ego_setup._command", command)
+    await manager._handshake()
+    assert manager._state()["ready_pid"] == 100
+    assert manager._state()["setup_state"] == "ready"
 
 
 async def test_os_signature_rejection_is_not_bypassed(manager, monkeypatch):

@@ -372,3 +372,27 @@ def browser_verification_required(observation: Mapping[str, Any]) -> bool:
         and any(marker in str(row.get("text", ""))[:500].casefold() for marker in markers)
         for row in elements[:100]
     )
+
+
+def browser_login_origins(observation: Mapping[str, Any]) -> list[str]:
+    """Suggest observed login/verification origins; never grant them authority."""
+    keys = ["blocked_navigation_origins"]
+    # Ordinary embedded advertisements are not evidence of a login destination.
+    if browser_verification_required(observation):
+        keys.append("blocked_frame_origins")
+    origins: list[str] = []
+    for key in keys:
+        values = observation.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values[:100]:
+            try:
+                origin = workflow_origin(workflow_url(value))
+            except BrowserWorkflowValidationError:
+                continue
+            if origin != value or origin in origins:
+                continue
+            origins.append(origin)
+            if len(origins) == 8:
+                return origins
+    return origins

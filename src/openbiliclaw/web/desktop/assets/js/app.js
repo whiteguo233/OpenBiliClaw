@@ -6412,6 +6412,7 @@ ${cardFeedbackBarHtml()}`;
 
     function messageKey(msg) {
       const type = messageType(msg);
+      if (type === "source_attention") return `source_attention:${msg.id}`;
       if (type === "interest.probe" || type === "avoidance.probe") {
         return probeKey(type, msg?.domain || msg?.title);
       }
@@ -6421,6 +6422,10 @@ ${cardFeedbackBarHtml()}`;
     function normalizeMessageItem(item) {
       if (!item) return null;
       const type = messageType(item);
+      if (type === "source_attention") {
+        if (!item.id || !["source_login", "draft_login", "source_settings"].includes(item.action)) return null;
+        return { ...item, type, title: String(item.name || "自定义来源"), reason: String(item.message || "来源需要处理") };
+      }
       if (type === "delight") {
         return null;
       }
@@ -6463,6 +6468,51 @@ ${cardFeedbackBarHtml()}`;
       const mobileCount = $("#mobileMessageCount");
       if (mobileCount) mobileCount.textContent = String(count);
       return count;
+    }
+
+    let sourceAttentionLoading = false;
+    async function refreshSourceAttention() {
+      if (sourceAttentionLoading) return;
+      sourceAttentionLoading = true;
+      try {
+        const result = await requestJson("/custom-sources/attention");
+        if (!Array.isArray(result?.items)) return;
+        const items = result.items.map((item) => normalizeMessageItem({ ...item, type: "source_attention" })).filter(Boolean);
+        const replace = (rows) => rows.filter((row) => messageType(row) !== "source_attention").concat(items);
+        state.messages = replace(state.messages);
+        if (state.messageListSnapshot) state.messageListSnapshot = replace(state.messageListSnapshot);
+        renderMessages();
+      } catch {
+        // Keep unresolved warnings visible when the backend is temporarily unavailable.
+      } finally { sourceAttentionLoading = false; }
+    }
+
+    async function openSourceAttention(item, button) {
+      button.disabled = true;
+      try {
+        if (item.action === "source_settings") {
+          await openSourceSettings(item.source_id);
+          return;
+        }
+        const result = item.action === "source_login"
+          ? await requestJsonStrict(`/custom-sources/${encodeURIComponent(item.source_id)}/login`, { method: "POST", timeoutMs: 45000 })
+          : await requestJsonStrict(`/custom-sources/drafts/${encodeURIComponent(item.draft_id)}`, { timeoutMs: 15000 });
+        if (result.status !== "needs_login") { await refreshSourceAttention(); return; }
+        const url = window.OpenBiliClawCustomSources.takeoverUrl(result.takeover_url, new URL(getApiBase(), window.location.href).href);
+        window.location.assign(url);
+      } catch { showToast("暂时无法打开来源，请到来源设置重试。"); }
+      finally { button.disabled = false; }
+    }
+
+    async function openSourceSettings(sourceId) {
+      openSettingsPage("sources");
+      await customSourceManager?.load();
+      const card = [...document.querySelectorAll("#customSourceManager [data-source-id]")]
+        .find((item) => item.dataset.sourceId === sourceId);
+      if (!card) { showToast("该来源已归档或暂时不可用。"); return; }
+      card.setAttribute("tabindex", "-1");
+      card.scrollIntoView({ block: "center" });
+      card.focus({ preventScroll: true });
     }
 
     function getRenderableMessages(source = state.messages) {
@@ -6539,6 +6589,13 @@ ${cardFeedbackBarHtml()}`;
         const resolvedResult = state.resolvedMessageResults.get(key);
         el.className = "message-item";
         el.dataset.messageKey = key;
+        if (messageType(msg) === "source_attention") {
+          el.setAttribute("role", "alert");
+          el.innerHTML = `<p class="eyebrow">来源需要处理</p><h3>${escapeHtml(msg.title)}</h3><p class="message-note">${escapeHtml(msg.reason)}</p><button class="small-btn" type="button">${escapeHtml(msg.action_label || "处理来源")}</button>`;
+          const button = el.querySelector("button");
+          button.addEventListener("click", () => void openSourceAttention(msg, button));
+          return el;
+        }
         if (messageType(msg) === "notification") {
           el.classList.add("is-notification");
           const viewAction = msg.content_url
@@ -10535,7 +10592,7 @@ ${cardFeedbackBarHtml()}`;
       baseUrl: () => new URL(getApiBase(), window.location.href).href,
       openUrl: (url) => window.open(url, "_blank", "noopener,noreferrer"),
       onChat: () => openChatPage(),
-      onChange(items) { customSourceItems = items; renderShareOverview(); },
+      onChange(items) { customSourceItems = items; renderShareOverview(); void refreshSourceAttention(); },
     });
 
     function renderShareOverview() {
@@ -10635,6 +10692,7 @@ ${cardFeedbackBarHtml()}`;
     setInterval(() => {
       if (document.hidden) return;
       void renderSourcesStatus();
+      void refreshSourceAttention();
     }, 30000);
 
     // LAN password-gate control. The web UI is served from 127.0.0.1, so it is a
@@ -12423,6 +12481,7 @@ ${cardFeedbackBarHtml()}`;
         // 异常报警实时推送：仅当日志设置面板可见时才刷新，避免无谓请求。
         const loggingPanel = document.querySelector('[data-settings-panel="logging"]');
         if (loggingPanel && !loggingPanel.hidden) void refreshDiagnosticsAlerts();
+        if (event.category === "discovery") void refreshSourceAttention();
       }
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
       if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
@@ -12771,6 +12830,7 @@ ${cardFeedbackBarHtml()}`;
         requestJson(ENDPOINTS.profile).then(applyProfileSnapshot),
         requestJson(ENDPOINTS.delightBatch).then(applyDelightSnapshot),
         requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
+        refreshSourceAttention(),
         requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
         requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
         loadConfigSnapshot(),
@@ -13672,7 +13732,14 @@ ${cardFeedbackBarHtml()}`;
         breaker_open: "熔断触发",
         provider_error: "请求失败",
       };
-      const table = category === "embedding" ? embeddingCodes : llmCodes;
+      const table = category === "discovery" ? {
+        verification_required: "需要安全验证", login_required: "需要登录",
+        source_timeout: "连接超时", source_network_error: "网络异常", source_rate_limited: "网站限流",
+        source_parse_error: "内容解析异常", source_runtime_unavailable: "执行环境不可用",
+        source_access_denied: "访问受限", source_not_found: "地址不存在",
+        source_queue_error: "入队异常", source_fetch_failed: "持续采集失败", source_recovered: "已恢复",
+      }
+        : category === "embedding" ? embeddingCodes : llmCodes;
       return table[code] || code || "未知异常";
     }
 
@@ -13681,12 +13748,17 @@ ${cardFeedbackBarHtml()}`;
       const emptyEl = $("#diagnosticsAlertsEmpty");
       const summaryEl = $("#diagnosticsAlertsSummary");
       if (!listEl || !emptyEl) return;
+      if (payload?.source_history_available === false) {
+        if (summaryEl) summaryEl.textContent = "来源异常记录暂时无法刷新，已显示的记录会保留。";
+        return;
+      }
       const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
       if (summaryEl) {
         const errors = Number(payload?.summary?.errors || 0);
         const warnings = Number(payload?.summary?.warnings || 0);
-        summaryEl.textContent = errors + warnings > 0
-          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告`
+        const recovered = Number(payload?.summary?.recovered || 0);
+        summaryEl.textContent = alerts.length > 0
+          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告 / ${recovered} 恢复`
           : "";
       }
       if (!alerts.length) {
@@ -13698,19 +13770,23 @@ ${cardFeedbackBarHtml()}`;
       emptyEl.hidden = true;
       listEl.hidden = false;
       listEl.innerHTML = alerts.map((alert) => {
-        const severity = alert.severity === "error" ? "error" : "warning";
-        const categoryLabel = alert.category === "embedding" ? "Embedding" : "LLM";
+        const severity = alert.severity === "info" ? "info" : alert.severity === "error" ? "error" : "warning";
+        const categoryLabel = alert.category === "discovery" ? "来源采集" : alert.category === "embedding" ? "Embedding" : "LLM";
         const codeLabel = describeDiagnosticsAlertCode(alert.code, alert.category);
         const count = Number(alert.count || 1);
         const timeLabel = formatDiagnosticsAlertTime(alert.last_seen);
-        const source = String(alert.source || "").trim();
+        const source = String(alert.source_name || alert.source || "").trim();
         return `<li class="diag-alert-item" data-severity="${severity}">`
-          + `<span class="diag-alert-badge">${severity === "error" ? "错误" : "警告"}</span>`
+          + `<span class="diag-alert-badge">${severity === "info" ? "已恢复" : severity === "error" ? "错误" : "警告"}</span>`
           + `<span class="diag-alert-source">${escapeHtml(categoryLabel)}${source ? ` · ${escapeHtml(source)}` : ""}</span>`
           + `<span class="diag-alert-message">${escapeHtml(String(alert.message || ""))}</span>`
           + `<span class="diag-alert-meta">${escapeHtml(codeLabel)}${count > 1 ? ` ×${count}` : ""}${timeLabel ? ` · ${escapeHtml(timeLabel)}` : ""}</span>`
+          + (alert.category === "discovery" && alert.source_id ? `<button class="small-btn" type="button" data-diagnostic-source="${escapeHtml(String(alert.source_id))}">查看来源</button>` : "")
           + "</li>";
       }).join("");
+      listEl.querySelectorAll("[data-diagnostic-source]").forEach((button) => {
+        button.addEventListener("click", () => void openSourceSettings(button.dataset.diagnosticSource));
+      });
     }
 
     async function refreshDiagnosticsAlerts() {
@@ -13917,6 +13993,7 @@ ${cardFeedbackBarHtml()}`;
       returnToMessages();
       renderMessages();
       void refreshProfile().catch(() => {});
+      void refreshSourceAttention();
     });
     safeBind("#activityBtn", "click", () => { closeSideDrawer(); renderActivityHistory(); openPanel("activityDrawer"); });
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
@@ -14062,6 +14139,11 @@ ${cardFeedbackBarHtml()}`;
     safeBind("#chatSideToggle", "click", () => {
       state.agentChat.sidebarOpen = !state.agentChat.sidebarOpen;
       applyAgentChatChrome();
+    });
+    safeBind("#chatSideClose", "click", () => {
+      state.agentChat.sidebarOpen = false;
+      applyAgentChatChrome();
+      $("#chatSideToggle")?.focus();
     });
     safeBind("#chatSkillChip", "click", () => toggleChatSkillPicker());
     safeBind("#chatPersonaChip", "click", () => toggleChatPersonaPicker());

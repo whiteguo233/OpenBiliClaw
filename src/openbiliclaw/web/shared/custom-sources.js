@@ -4,7 +4,7 @@
   const STATUS_LABELS = {
     ready: "正常", ok: "正常", active: "正常", idle: "等待下次发现",
     never_run: "等待首次发现", pending: "等待运行", running: "正在发现",
-    needs_login: "需要重新登录", login_required: "需要重新登录",
+    needs_login: "需要登录或验证", login_required: "需要登录或验证",
     needs_details: "需要补充说明", failed: "运行失败", error: "运行失败",
     rate_limited: "暂时限流", unavailable: "执行环境不可用", disabled: "已停用",
     empty: "本轮暂无新内容", not_modified: "内容未变化", archived: "已归档", interrupted: "运行中断",
@@ -164,18 +164,23 @@
       const notice = node("section", "custom-source-executor-notice");
       const unsupported = ego?.platform_supported === false || ego?.setup_state === "unsupported";
       const preparing = ego?.setup_state === "preparing" || prepareRequest;
-      const ready = !unsupported && ego?.available === true;
+      const standby = !unsupported && !preparing && ego?.managed === true
+        && ego?.setup_state === "ready" && ego?.installed === true
+        && ego?.connection_state === "offline";
+      const ready = !unsupported && (ego?.available === true || standby);
       const missing = !unsupported && !ready && ego?.installed === false;
       const unverified = !unsupported && !ready && ego?.installed === true
         && ego?.connection_state === "unverified";
       const label = !ego ? "尚未获取 Ego Lite 状态"
         : unsupported ? "此运行环境暂不支持 Ego Lite"
           : preparing ? "正在准备 Ego Lite…"
+            : standby ? "Ego Lite 已准备，按需启动"
             : ready ? "Ego Lite 已就绪" : missing ? "Ego Lite 未安装"
             : unverified ? "Ego Lite 已安装，待试跑验证" : "Ego Lite 尚未就绪";
       notice.append(node("strong", "", label));
       notice.append(node("p", "custom-source-note", "网页通过 Ego Lite 发现；公开 RSS、Atom、JSON Feed 订阅无需 Ego Lite。"));
-      if (text(ego?.detail)) notice.append(node("p", "custom-source-note", text(ego.detail)));
+      if (standby) notice.append(node("p", "custom-source-note", "当前没有网页任务，浏览器已退出以节省资源；采集时会在后台自动启动。"));
+      else if (text(ego?.detail)) notice.append(node("p", "custom-source-note", text(ego.detail)));
       if (!ready && !unsupported) notice.append(node("p", "custom-source-note", ego?.managed === true
         ? "准备会安装 Ego Lite 并初始化专用浏览器环境；网站登录仍在接管页完成。"
         : missing ? "请在运行 OpenBiliClaw 的电脑上安装 Ego Lite，完成首次设置并打开应用，然后刷新状态。"
@@ -249,7 +254,11 @@
         card.append(title, node("p", "custom-source-url", text(source.entry_url) || text(source.origin)),
           node("p", "custom-source-note", text(source.intent)));
         const health = source.health || {};
-        if (health.last_error) card.append(node("p", "custom-source-error", text(health.last_error)));
+        if (health.message) {
+          const alert = node("p", "custom-source-error", text(health.message));
+          alert.setAttribute("role", "alert");
+          card.append(alert);
+        } else if (health.last_error) card.append(node("p", "custom-source-error", text(health.last_error)));
         const timing = [];
         if (health.last_success_at) timing.push(`最近成功：${formatTime(health.last_success_at)}`);
         if (source.enabled !== false && health.next_run_at) timing.push(`下次发现：${formatTime(health.next_run_at)}`);
@@ -338,7 +347,7 @@
         const toggle = button(source.enabled === false ? "启用" : "停用", () => void perform(async () => {
           await update({ enabled: source.enabled === false }); await reloadAfterMutation("来源状态已更新。");
         }, "已更新。"));
-        const login = button("重新登录", () => void perform(async () => {
+        const login = button(health.attention_required && health.attention_action !== "source_settings" ? "处理登录或验证" : "重新登录", () => void perform(async () => {
           const result = await request(`${path}/login`, { method: "POST" });
           const base = typeof baseUrl === "function" ? await baseUrl() : baseUrl || global.location?.href;
           const url = takeoverUrl(result?.takeover_url, base);

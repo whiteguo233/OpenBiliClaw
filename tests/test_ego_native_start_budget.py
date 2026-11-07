@@ -14,7 +14,7 @@ from openbiliclaw.sources.ego_executor import EgoLiteWorkflowExecutor, EgoLiteWo
 from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
 
 
-@pytest.mark.parametrize("ready_after", [20.0, None])
+@pytest.mark.parametrize("ready_after", [20.0, 40.0, None])
 async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
     tmp_path, monkeypatch, ready_after
 ):
@@ -90,7 +90,8 @@ async def test_native_ready_waits_for_delayed_host_and_still_bounds_failure(
         if ready_after is None:
             with pytest.raises(BrowserWorkflowExecutionError, match="native connection"):
                 await session.start(tmp_path / "state.json", state)
-            assert clock["now"] <= 30.1
+            budget = plan.budgets.timeout_seconds
+            assert budget <= clock["now"] <= budget + 0.1
             session._open_entry.assert_not_awaited()
             assert json.loads((tmp_path / "state.json").read_text())["task_id"] == 42
         else:
