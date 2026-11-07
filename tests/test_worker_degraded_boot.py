@@ -54,13 +54,15 @@ def test_run_full_worker_keeps_heartbeat_while_waiting_for_llm(tmp_path, monkeyp
     monkeypatch.setattr(worker_main, "DEFAULT_LLM_PROBE_RETRY_SECONDS", 0.05)
 
     started = asyncio.Event()
+    ownership: dict[str, object] = {}
 
     class FakeContext:
         soul_engine = None
         database = None
         task_registry = None
 
-        async def restart_background_tasks(self, app: object) -> None:
+        async def restart_background_tasks(self, app: object, **kwargs: object) -> None:
+            ownership.update(kwargs)
             started.set()
 
     class FakeFeedbackScheduler:
@@ -98,6 +100,12 @@ def test_run_full_worker_keeps_heartbeat_while_waiting_for_llm(tmp_path, monkeyp
             buildable = True
             await asyncio.wait_for(started.wait(), timeout=5.0)
             assert len(probe_calls) >= 2
+            # The full worker carries OPENBILICLAW_FULL_WORKER=1 itself, so it
+            # must state its ownership instead of letting the flag decide.
+            assert ownership == {
+                "start_refresh_controller": False,
+                "start_account_sync": True,
+            }
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

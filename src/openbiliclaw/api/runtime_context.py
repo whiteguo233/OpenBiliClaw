@@ -57,6 +57,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASK_CANCEL_TIMEOUT_SECONDS = 1.5
+# How long a delegated loop owner may go without a heartbeat before this
+# process treats it as dead and takes the loop back. The discovery worker
+# publishes every 10s and the full worker every 15s, so 180s is ~12 missed
+# beats: generous against a stalled Windows box, short enough that a dead
+# worker cannot keep the pool frozen for days. Calibration provenance: the
+# 2026-10-15 desktop stall (pool frozen 23 days, heartbeat last written 65.8h
+# before it was noticed) is the failure this bound exists to break.
+_DELEGATED_OWNER_HEARTBEAT_MAX_AGE_SECONDS = 180.0
+
 # Dialogue learning may legitimately spend up to the configured 20-minute LLM
 # timeout in one worker job.  Give it the same 25-minute no-progress envelope
 # as guided preference analysis instead of rolling config.toml back after 30s.
@@ -1129,6 +1138,46 @@ class RuntimeContext:
             logger.debug("Unable to read full worker heartbeat", exc_info=True)
             return {}
 
+    def _delegated_owner_heartbeat_fresh(self, filename: str) -> bool | None:
+        """Whether a delegated owner published a fresh heartbeat.
+
+        ``None`` means the check is impossible (no data path / unreadable
+        store), and callers must not treat that as "dead".
+        """
+        data_path = getattr(getattr(self, "config", None), "data_path", None)
+        if data_path is None:
+            return None
+        try:
+            from openbiliclaw.runtime.worker_status import WorkerStatusStore
+
+            store = WorkerStatusStore(
+                data_path / "runtime" / filename,
+                max_age_seconds=_DELEGATED_OWNER_HEARTBEAT_MAX_AGE_SECONDS,
+            )
+            return store.read_if_fresh() is not None
+        except Exception:
+            logger.debug("Unable to read delegated owner heartbeat %s", filename, exc_info=True)
+            return None
+
+    def delegated_owner_health(self) -> dict[str, bool]:
+        """Report whether each delegated loop currently has a live owner.
+
+        ``refresh`` is owned by ``openbiliclaw.discovery_worker`` (it is the
+        only process that calls ``ContinuousRefreshController.run_forever``);
+        ``account_sync`` is owned by ``openbiliclaw.worker``. Both write their
+        own status file, so a missing/stale file is the only signal that the
+        loop is running nowhere.
+
+        An unknown check reports ``True`` so an unreadable status directory can
+        never provoke a double-run.
+        """
+        refresh = self._delegated_owner_heartbeat_fresh("discovery_worker_status.json")
+        account_sync = self._delegated_owner_heartbeat_fresh("worker_status.json")
+        return {
+            "refresh": True if refresh is None else refresh,
+            "account_sync": True if account_sync is None else account_sync,
+        }
+
     def warn_if_full_worker_heartbeat_stale(self) -> None:
         """Warn when delegated background loops have no live worker behind them.
 
@@ -1136,8 +1185,12 @@ class RuntimeContext:
         alone. A crashed ``worker`` used to stay invisible until every
         background endpoint returned 503; this warning plus ``worker_running``
         in ``/api/runtime-status`` makes the delegation outage diagnosable.
-        The desktop parent respawns crashed children, so a stale heartbeat
-        normally self-heals shortly after the warning.
+
+        A stale heartbeat is not proof that the desktop parent will respawn the
+        child: deployments without a supervising parent (and Windows
+        ``pythonw`` children that die before they can log) keep the loops
+        delegated forever. The takeover watchdog is what actually recovers;
+        this warning is the paper trail.
         """
         if not self.full_worker_expected():
             return
@@ -1156,6 +1209,13 @@ class RuntimeContext:
             payload.get("worker_pid"),
             payload.get("worker_mode"),
         )
+        health = self.delegated_owner_health()
+        if not health["refresh"]:
+            logger.error(
+                "No live discovery worker heartbeat either; nothing is running the "
+                "discovery/pool refresh loop (pool cannot refill until the takeover "
+                "watchdog assumes ownership)"
+            )
 
     def try_apply_sponsored_config(self, new_config: Config) -> bool:
         """Publish free-model routing choices without draining mutation owners.
@@ -2659,8 +2719,22 @@ class RuntimeContext:
         app: _BackgroundTaskHost,
         *,
         run_post_reload_llm_work: bool = True,
+        start_refresh_controller: bool | None = None,
+        start_account_sync: bool | None = None,
     ) -> None:
-        """Cancel old background tasks and start new ones from current components."""
+        """Cancel old background tasks and start new ones from current components.
+
+        ``start_refresh_controller`` / ``start_account_sync`` name the owner of
+        each loop explicitly. ``None`` keeps the single-process default (this
+        process owns both unless ``OPENBILICLAW_FULL_WORKER=1`` delegates them).
+
+        Delegation must not be inferred from the flag inside the delegatee: the
+        full worker is spawned *with* ``OPENBILICLAW_FULL_WORKER=1``, so reading
+        the flag to decide whether to start its own loops made
+        ``run_full_worker`` start none of them — the discovery/pool refresh
+        loops then ran nowhere while the deadline-immune API claimed they were
+        delegated (2026-10-15 → 2026-11-07 silent stall).
+        """
         # Cancel existing tasks. A third-party/provider coroutine may swallow
         # cancellation; never let a config hot-reload (which precedes guided
         # init reservation) wait forever and look like a dead POST /api/init.
@@ -2718,6 +2792,13 @@ class RuntimeContext:
         if full_worker_active:
             self.warn_if_full_worker_heartbeat_stale()
 
+        # Ownership is explicit: only the process that is *not* delegating may
+        # infer "I run it" from the flag. A delegatee passes its own ownership.
+        if start_refresh_controller is None:
+            start_refresh_controller = not full_worker_active
+        if start_account_sync is None:
+            start_account_sync = not full_worker_active
+
         # Start new tasks from the freshly-built components.
         # v0.3.63+: route through ``self.task_registry.track`` so the
         # next hot-reload's ``cancel_all`` cleanly stops them too.
@@ -2725,27 +2806,27 @@ class RuntimeContext:
         # controller here would start every discovery loop, not only the
         # extension-account scheduler. The normal post-init restart owns the
         # one replacement controller and its independent source loop.
-        if run_post_reload_llm_work and not full_worker_active:
-            run_forever = getattr(self.runtime_controller, "run_forever", None)
+        run_forever = getattr(self.runtime_controller, "run_forever", None)
+        if run_post_reload_llm_work and start_refresh_controller:
             if "refresh_task" not in stuck_tasks:
                 app.state.refresh_task = (
                     self.task_registry.track("refresh_loop", run_forever())
                     if callable(run_forever)
                     else None
                 )
+        elif "refresh_task" not in stuck_tasks:
+            app.state.refresh_task = None
 
-            sync_forever = getattr(self.account_sync_service, "run_forever", None)
+        sync_forever = getattr(self.account_sync_service, "run_forever", None)
+        if run_post_reload_llm_work and start_account_sync:
             if "account_sync_task" not in stuck_tasks:
                 app.state.account_sync_task = (
                     self.task_registry.track("account_sync_loop", sync_forever())
                     if callable(sync_forever)
                     else None
                 )
-        else:
-            if "refresh_task" not in stuck_tasks:
-                app.state.refresh_task = None
-            if "account_sync_task" not in stuck_tasks:
-                app.state.account_sync_task = None
+        elif "account_sync_task" not in stuck_tasks:
+            app.state.account_sync_task = None
 
         update_forever = getattr(self.auto_update_service, "run_forever", None)
         if "auto_update_task" not in stuck_tasks:

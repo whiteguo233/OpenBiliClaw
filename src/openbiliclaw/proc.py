@@ -200,11 +200,13 @@ class ChildProcessSupervisor:
                 child.restart_at = now + delay
                 child.exit_handled = True
                 logger.error(
-                    "Backend child %s exited (code=%s) after %.1fs; restarting in %.1fs",
+                    "Backend child %s exited (code=%s) after %.1fs; restarting in %.1fs "
+                    "(its own stdout/stderr is in logs/child-%s.log)",
                     child.name,
                     process.returncode,
                     lifetime,
                     delay,
+                    child.name,
                 )
             for child in self._children:
                 if child.restart_requested:

@@ -4,6 +4,7 @@
 
 ## v0.3.234：免费模型交付、认证与元信息修复（2026-11-06）
 
+- 修复后台循环归属缺陷：full worker 自身带 `OPENBILICLAW_FULL_WORKER=1`，旧实现据此认为循环已委派而不启动任何循环，API 同时放弃启动，导致刷新循环在任何进程都没有运行（某 Windows 桌面端内容池因此自 2026-10-15 冻结 23 天）。现由调用方显式声明 `start_refresh_controller` / `start_account_sync` 归属；API 侧新增 watchdog，在 600s 宽限后按心跳接管无持有者的循环，只接管死者、不覆盖存活 worker。同时放宽 temporal 解析：`none` 对已分类候选合法，不再把 2402 条已分类内容降级为 `unknown`；子进程退出日志补上 `logs/child-<name>.log` 位置。
 - Safari发行切换macOS15 runner：旧macOS14调度被GitHub拒绝，保留失败记录后通过 `release_tag` 从新工作流补发同版本；插件功能与现有版本标签不变。
 - 发布前验收完成：后端12,485通过/162跳过，浏览器72通过、插件1,884通过；Mac双架构签名公证整包自检通过，实际Intel包两模型流式+向量请求成功。最终安装包、容器与完整性证据汇入v0.3.234发行记录。
 
