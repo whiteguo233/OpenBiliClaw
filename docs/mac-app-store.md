@@ -1,12 +1,12 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 已完成 Xcode 上传并选入 App Store Connect 版本草稿；**尚未上架或提交审核**。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 已于 **2026-11-08 02:55（北京时间）提交 Apple 审核，当前状态为「等待审核」**，尚未上架。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
-本次按发行方要求仅供应中国大陆，已重新打开后台核验：1 个供应地区，中国大陆为「App 发布时供应」，法国、美国及其余地区均为「未供应」，不自动加入未来地区。build 3 的加密问卷按标准算法（包内 TLS / WireGuard）及不在法国分发填写，出口合规缺项已消除。点击「添加以供审核」后，Apple 当前只提示必须设置内容版权信息；这一发行方事实仍待确认。未改动手机 App 的地区设置或账号级欧盟 DSA 声明。
+本次按发行方要求仅供应中国大陆，已重新打开后台核验：1 个供应地区，中国大陆为「App 发布时供应」，法国、美国及其余地区均为「未供应」，不自动加入未来地区。build 3 的加密问卷按标准算法（包内 TLS / WireGuard）及不在法国分发填写，出口合规缺项已消除。发行方确认具备第三方内容所需使用权后，内容版权选择「是」并保存、重新载入核验；随后完成「添加以供审核」和最终「提交以供审核」。手机 App 的地区设置和账号级欧盟 DSA 声明保持原有配置。
 
-2026-11-08 已上传并重新载入核验 6 张 2880×1800 RGB 真实使用截图，顺序为推荐、收藏、稍后再看、模型配置、平台源、手机连接二维码。图片来自 build 3 独立 QA 实例及其原版 Web 资源，已逐张检查；旧低分辨率二维码已从当前版本移除，原件仍在素材库。新二维码图片识别得到实际局域网地址，同机访问手机网页返回 HTTP 200。Apple 最新提审预检查仍仅提示内容版权字段缺项，等待发行方确认使用权事实，尚未提审。素材与清单位于 build 3 evidence 的 `store-screenshots/selected/`，详细边界见[发行验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-真实使用截图)。
+2026-11-08 已上传并重新载入核验 6 张 2880×1800 RGB 真实使用截图，顺序为推荐、收藏、稍后再看、模型配置、平台源、手机连接二维码，随 build 3 一并提交。图片来自 build 3 独立 QA 实例及其原版 Web 资源，已逐张检查；旧低分辨率二维码已从当前版本移除，原件仍在素材库。新二维码图片识别得到实际局域网地址，同机访问手机网页返回 HTTP 200。素材与清单位于 build 3 evidence 的 `store-screenshots/selected/`，提审结果见[发行验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-内容版权确认与正式提审)。
 
 ## 运行与数据
 

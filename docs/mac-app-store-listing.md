@@ -1,13 +1,13 @@
-# Mac App Store 文案草稿
+# Mac App Store 商店资料
 
-此文件记录商店文案与实际填写进度；名称、中文版本资料、截图、免费价格、年龄分级和隐私标签已保存，build 3 已选入草稿；尚未提交审核。年龄分级和隐私声明以后台实际保存结果为准。
+此文件记录商店文案与实际填写进度；名称、中文版本资料、截图、免费价格、年龄分级和隐私标签已保存。`1.0.0 (3)` 已于 2026-11-08 02:55（北京时间）完成最终提交，后台显示「等待审核」，尚未上架。年龄分级和隐私声明以后台实际保存结果为准。
 
-截图进度（2026-11-08）：后台现保存 6 张新上传的 2880×1800 RGB 真实界面图，已重新载入确认数量、文件名、缩略图加载及顺序。内容依次为推荐、收藏、稍后再看、模型配置、平台源、手机二维码；旧低分辨率二维码已从当前版本移除，素材库原件保留。Apple 最新提审预检查仅提示内容版权缺项，等待发行方确认使用权事实；尚未提交审核。详见[验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-真实使用截图)。
+截图进度（2026-11-08）：后台现保存 6 张新上传的 2880×1800 RGB 真实界面图，已重新载入确认数量、文件名、缩略图加载及顺序。内容依次为推荐、收藏、稍后再看、模型配置、平台源、手机二维码，随版本一起提交；旧低分辨率二维码已从当前版本移除，素材库原件保留。内容版权已按发行方的使用权确认填写并保存。详见[验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-内容版权确认与正式提审)。
 
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
 - App Store Connect 记录：`6831698888`
 - 商店名称：OpenBiliClaw Hub（已通过后台名称校验并保存）；安装后的 App 仍为 OpenBiliClaw。
-- 初版：1.0.0，当前候选 build 3（已上传并选入版本草稿，替代 build 2）；类别：Productivity
+- 初版：1.0.0，已提交 build 3（替代 build 2），当前等待审核；类别：Productivity
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 发行地区：仅中国大陆，已保存并重新打开核验；不自动加入未来地区。此设置只针对独立 macOS 记录。
 - 出口合规：build 3 已按标准加密算法、不在法国分发保存，缺项已消除。
@@ -47,6 +47,6 @@ This is a local backend application, not a hosted account service. Launch it and
 
 The signed Python backend and native tools inherit the host's App Sandbox. The backend listens for incoming connections so the user's phone and extension can connect. The application does not install a system VPN or privileged daemon. Login startup is off by default and uses SMAppService only on user action. Closing the window keeps the visible menu-bar app running; choosing Quit stops its managed services.
 
-## 后台仍需确认
+## 提审状态与剩余边界
 
-上述 URL 沿用项目既有公开入口。名称、免费价格、版权行、中国大陆供应范围、年龄分级、App Privacy、截图和审核联系人均已保存；此次上传为 Intel 发行包，Apple Silicon 仅完成独立 QA。2026-11-07 点击「添加以供审核」后，Apple 当前唯一提示为未设置内容版权信息；尚待发行方确认第三方内容使用权，未代填。账号级欧盟 DSA 身份未改动，本次中国大陆范围未触发该项提交缺项。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式尚待核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。
+上述 URL 沿用项目既有公开入口。名称、免费价格、版权行、中国大陆供应范围、年龄分级、App Privacy、六张截图和审核联系人均已保存，build 3 已最终提交并显示「等待审核」。内容版权字段依据发行方的明确使用权确认填写。此次上传为 Intel 发行包，Apple Silicon 仅完成独立 QA。账号级欧盟 DSA 身份保持原有配置，本次中国大陆范围未触发该项提交缺项。实际 GPL/LGPL 依赖的商店分发条件和源码提供方式仍待独立核对，见[许可记录](mac-app-store.md#第三方许可待核对)。已有隐私政策：[`docs/privacy.md`](privacy.md)。不要把本地优先等同于所有配置下的数据都不会离开设备。

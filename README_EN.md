@@ -907,4 +907,4 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 
 </details>
 
-A separate sandboxed Mac App Store backend build is available as a candidate; it is not published. See [build, limitations and submission](docs/mac-app-store.md).
+The separate sandboxed Mac App Store app, `OpenBiliClaw Hub 1.0.0 (3)`, has been submitted and is waiting for review; it is not published yet. See [build, limitations and submission records](docs/mac-app-store.md).
