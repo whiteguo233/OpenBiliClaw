@@ -24,9 +24,43 @@ from openbiliclaw.soul.profile import (
 from openbiliclaw.soul.profile_views import (
     PROFILE_CATALOG_VERSION,
     build_profile_catalog,
+    build_shared_evaluation_profiles,
     resize_profile_context,
     select_profile_context,
 )
+
+
+def test_identical_optional_profile_fields_are_shared_without_borrowing_peer_preferences() -> None:
+    contexts = {
+        "c0": {
+            "schema_version": "on-demand-profile-context.v1",
+            "interests": [{"name": "算法", "category": "编程", "weight": 0.9}],
+            "core_traits": ["喜欢明确边界、不要夸大结论"],
+            "current_phase": "学习基础原理",
+            "disliked_topics": ["不看带货，但允许批判分析"],
+        },
+        "c1": {
+            "schema_version": "on-demand-profile-context.v1",
+            "interests": [{"name": "算法", "category": "编程", "weight": 0.9}],
+            "core_traits": ["喜欢明确边界、不要夸大结论"],
+            "current_phase": "动手实践",
+            "disliked_topics": ["不看带货，但允许批判分析"],
+        },
+        "c2": {
+            "schema_version": "on-demand-profile-context.v1",
+            "interests": [{"name": "算法", "category": "编程", "weight": 0.9}],
+            "core_traits": ["喜欢明确边界、不要夸大结论"],
+            "disliked_topics": ["不看带货，但允许批判分析"],
+        },
+    }
+    original = copy.deepcopy(contexts)
+    shared, specific = build_shared_evaluation_profiles(contexts)
+    assert shared["interests"] == original["c0"]["interests"]
+    assert shared["core_traits"] == original["c0"]["core_traits"]
+    assert "current_phase" not in shared
+    assert all("interests" not in value for value in specific.values())
+    assert {key: {**shared, **value} for key, value in specific.items()} == original
+    assert contexts == original
 
 
 def _bytes(value: object) -> int:

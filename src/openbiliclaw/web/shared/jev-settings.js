@@ -3,20 +3,25 @@
   "use strict";
   const mounted = new WeakMap();
   const DEFAULT_URL = "https://api.typesafe.ai/v1/systemone";
-  function mount(root, evaluator) {
+  function mount(root, evaluator, options = {}) {
     if (mounted.has(root)) return mounted.get(root);
     root.classList.add("jev-settings");
     root.innerHTML = `
       <h4>Jev 连接配置</h4>
-      <label class="jev-toggle"><input data-jev="enabled" type="checkbox">启用 Jev 服务连接</label>
+      <label class="jev-toggle"><input data-jev="enabled" type="checkbox">启用 Jev 服务连接（不切换评估器）</label>
       <div class="jev-grid">
-        <label class="jev-wide">API URL（完整接口地址）<input data-jev="endpoint_url" type="url" spellcheck="false" autocomplete="off"></label>
+        <label>接口地址类型<select data-jev="address_mode" aria-label="接口地址类型"><option value="base">Base URL</option><option value="endpoint">完整接口地址</option></select></label>
+        <label class="jev-wide"><span data-jev="url-label">API URL（完整接口地址）</span><input data-jev="endpoint_url" type="url" spellcheck="false" autocomplete="off"></label>
         <label>固定模型 ID<input data-jev="model" type="text" spellcheck="false" autocomplete="off"></label>
         <label>Token<input data-jev="api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已保存的 Token"></label>
       </div>
       <label class="jev-toggle"><input data-jev="clear_api_key" type="checkbox">清除本机保存的 Token</label>
       <p class="jev-hint" data-jev="credential-status"></p>
-      <p class="jev-hint">URL 必须使用 Jev 原生协议，不是 Chat Completions；更换 URL 须重新填写 Token。Token 仅保存在后端本机 config.toml，页面不回显、不存浏览器。服务会收到画像和候选内容，请确认目标可信。</p>
+      <p class="jev-hint">仅支持 Jev 原生协议；画像和候选内容会发送至所填服务。</p>
+      <details><summary>地址与 Token 说明</summary>
+        <p class="jev-hint">URL 必须使用 Jev 原生协议，不是 Chat Completions；更换 URL 须重新填写 Token。Token 仅保存在后端本机 config.toml，页面不回显、不存浏览器。服务会收到画像和候选内容，请确认目标可信。</p>
+        <p class="jev-hint">Base URL 自动追加 /v1/systemone，已有 /v1 则只追加 /systemone。例如 OpenRouter 填 https://openrouter.ai/api；自定义路径请选择完整接口地址。不限制服务商，不自动换模型。</p>
+      </details>
       <details><summary>上下文与请求预算</summary>
         <label class="jev-toggle"><input data-jev="custom_capacity" type="checkbox">手动设置所选模型的上下文上限</label>
         <p class="jev-hint">已知模型使用登记容量；其它模型需填写服务商确认的双 token 上限，不自动换模型。运行时采用保守字节护栏，并非精确 tokenizer。</p>
@@ -27,20 +32,31 @@
           <label>请求超时（秒）<input data-jev="timeout_seconds" type="number" min="0.1" step="0.1"></label>
           <label>传输最大尝试次数<input data-jev="max_attempts" type="number" min="1" step="1"></label>
         </div>
-        <p class="jev-hint">每条候选的完整 10 题不会拆开；超限先减少合批候选，再本地摘录。传输重试仍可能计费，不是额外摘要或分段评估。</p>
+        <p class="jev-hint">每条候选的完整 8 题不会拆开；超限先减少合批候选，再本地摘录。传输重试仍可能计费，不是额外摘要或分段评估。</p>
       </details>
-      <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>`;
+      <p class="jev-hint" data-jev="edit-status" role="status" aria-live="polite"></p>
+      <button type="button" data-jev="probe">测试连接与评估</button>
+      <p class="jev-hint">测试当前填写的配置（完整 8 题），可能产生少量费用，不会保存。</p>
+      <p class="jev-hint" data-jev="probe-status" role="status" aria-live="polite"></p>`;
     const field = name => root.querySelector(`[data-jev="${name}"]`);
-    for (const input of root.querySelectorAll("input")) input.id = `${root.id}-${input.dataset.jev}`;
+    for (const input of root.querySelectorAll("input, select")) input.id = `${root.id}-${input.dataset.jev}`;
     let provider = {};
     let writable = false;
     let initial = "";
-    let initialCandidates = 4;
+    let initialCandidates = 64;
+    let addressMode = "endpoint";
+    let probing = false;
+    let revision = 0;
+    const endpoint = () => {
+      const value = field("endpoint_url").value.trim().replace(/\/+$/, "");
+      return field("address_mode").value === "base"
+        ? value + (value.endsWith("/v1") ? "/systemone" : "/v1/systemone") : field("endpoint_url").value.trim();
+    };
     const modelLimits = model => Object.prototype.hasOwnProperty.call(provider.context_limits || {}, model)
       ? provider.context_limits[model] : undefined;
     const values = () => ({
       enabled: field("enabled").checked,
-      endpoint_url: field("endpoint_url").value.trim(),
+      [field("address_mode").value === "base" ? "base_url" : "endpoint_url"]: field("endpoint_url").value.trim(),
       model: field("model").value.trim(),
       timeout_seconds: Number(field("timeout_seconds").value),
       max_attempts: Number(field("max_attempts").value),
@@ -53,15 +69,21 @@
       field("max_request_tokens").disabled = !custom;
       field("max_state_question_tokens").disabled = !custom;
       field("api_key").disabled = field("clear_api_key").checked;
-      const sameURL = field("endpoint_url").value.trim() === (provider.endpoint_url || DEFAULT_URL);
+      field("url-label").textContent = field("address_mode").value === "base" ? "API Base URL" : "API URL（完整接口地址）";
+      field("address_mode").disabled = provider.base_url_supported !== true;
+      const sameURL = endpoint() === (provider.endpoint_url || DEFAULT_URL);
       const hasToken = Boolean(field("api_key").value) || (sameURL && (
         provider.credential_source === "environment" || (!field("clear_api_key").checked && (provider.api_key_configured || provider.ready))
       ));
       const option = evaluator?.querySelector('option[value="jev"]');
       if (option) option.disabled = !(field("enabled").checked && hasToken && field("model").value.trim());
-      if (!writable) for (const input of root.querySelectorAll("input")) input.disabled = true;
+      field("probe").disabled = probing || !writable || typeof options.probe !== "function"
+        || !field("enabled").checked || !hasToken || !field("model").value.trim();
+      if (!writable) for (const input of root.querySelectorAll("input, select")) input.disabled = true;
     }
     root.addEventListener("input", event => {
+      revision += 1;
+      field("probe-status").textContent = "";
       if (event.target === field("model")) {
         // Never carry another model's manual capacity to a newly typed ID.
         const limits = modelLimits(field("model").value.trim());
@@ -73,28 +95,44 @@
       field("edit-status").textContent = "连接信息已修改，保存后生效；配置就绪不等于已联网验证。";
     });
     root.addEventListener("change", () => {
+      revision += 1;
+      field("probe-status").textContent = "";
+      const nextMode = field("address_mode").value;
+      if (nextMode !== addressMode) {
+        const value = field("endpoint_url").value.trim().replace(/\/+$/, "");
+        field("endpoint_url").value = nextMode === "base"
+          ? (value.endsWith("/v1/systemone") ? value.slice(0, -13) : "")
+          : value + (value.endsWith("/v1") ? "/systemone" : "/v1/systemone");
+        addressMode = nextMode;
+      }
       if (field("clear_api_key").checked) field("api_key").value = "";
       sync();
       field("edit-status").textContent = "配置已修改，请保存。启用连接不会自动切换候选评估器。";
     });
     const api = {
       load(nextProvider = {}, evaluation = {}) {
+        revision += 1;
+        field("probe-status").textContent = "";
         provider = nextProvider;
         // Older backends silently ignore unknown write sections. Do not offer
         // secret editing until they advertise the new safe credential status.
         writable = typeof provider.api_key_configured === "boolean";
-        for (const input of root.querySelectorAll("input")) input.disabled = false;
+        for (const input of root.querySelectorAll("input, select")) input.disabled = false;
         field("enabled").checked = provider.enabled === true;
         for (const [key, fallback] of Object.entries({
           endpoint_url: DEFAULT_URL, model: "jev-1.13.0", timeout_seconds: 2, max_attempts: 2,
         })) field(key).value = provider[key] ?? fallback;
+        const url = provider.endpoint_url || DEFAULT_URL;
+        addressMode = provider.base_url_supported === true && url.endsWith("/v1/systemone") ? "base" : "endpoint";
+        field("address_mode").value = addressMode;
+        field("endpoint_url").value = addressMode === "base" ? url.slice(0, -13) : url;
         field("api_key").value = "";
         field("clear_api_key").checked = false;
         const limits = modelLimits(provider.model);
         field("custom_capacity").checked = Boolean(limits);
         field("max_request_tokens").value = limits?.max_request_tokens ?? provider.context_budget?.max_request_tokens ?? "";
         field("max_state_question_tokens").value = limits?.max_state_question_tokens ?? provider.context_budget?.max_state_question_tokens ?? "";
-        initialCandidates = evaluation.max_candidates_per_request ?? 4;
+        initialCandidates = evaluation.max_candidates_per_request ?? 64;
         field("max_candidates_per_request").value = initialCandidates;
         field("credential-status").textContent = provider.api_key_configured
           ? "本机已保存 Token。留空保留，重新填写替换；勾选清除后保存才会删除。"
@@ -127,6 +165,26 @@
         return result;
       },
     };
+    field("probe").addEventListener("click", async () => {
+      if (field("probe").disabled) return;
+      const startedRevision = revision;
+      probing = true;
+      sync();
+      field("probe-status").textContent = "正在测试 Jev 连接与完整评估…";
+      try {
+        const result = await options.probe(api.collect());
+        field("probe-status").textContent = revision === startedRevision
+          ? `${result?.ok ? "测试通过" : "测试失败"}：${result?.message || "未取得有效评估结果。"}`
+          : "配置已修改，请重新测试。";
+      } catch {
+        field("probe-status").textContent = revision === startedRevision
+          ? "测试请求失败，请检查后端连接或登录状态后重试。"
+          : "配置已修改，请重新测试。";
+      } finally {
+        probing = false;
+        sync();
+      }
+    });
     mounted.set(root, api);
     return api;
   }

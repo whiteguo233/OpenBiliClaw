@@ -8425,8 +8425,12 @@
             <option value="learned">Learned（仅相关性，实验性）</option>
           </select>
         </div>
-        <p class="settings-hint" id="cfgEvalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
-        <p class="settings-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+        <p class="settings-hint" id="cfgEvalScorerHint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+        <details class="settings-hint">
+          <summary>评估模式说明</summary>
+          <p>Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+          <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+        </details>
         <p class="settings-hint" id="cfgJevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
         <div id="cfgJevConnectionSettings"></div>
       </div>

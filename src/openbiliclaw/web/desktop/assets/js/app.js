@@ -10996,11 +10996,13 @@ ${cardFeedbackBarHtml()}`;
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
       const jevProvider = discovery.jev_provider || {};
-      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"), {
+        probe: config => probeConfigService("jev", config),
+      })
         .load(jevProvider, discovery.jev_evaluation || {});
       const jevStatus = $("#jevEvaluatorStatus");
       if (jevStatus) {
-        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+        jevStatus.textContent = jevProvider.reason || "请在下方配置连接。";
       }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");

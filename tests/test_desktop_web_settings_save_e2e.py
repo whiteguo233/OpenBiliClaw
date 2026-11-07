@@ -455,7 +455,10 @@ def test_jev_evaluator_selection_saves_and_survives_reload(
     page.get_by_role("button", name="设置", exact=True).click()
     page.get_by_role("tab", name="高级功能").click()
     expect(page.get_by_role("combobox", name="候选评估器", exact=True)).to_have_value("jev")
-    expect(page.get_by_text("仅文本，不支持封面图片。", exact=False)).to_be_visible()
+    limitation = page.get_by_text("仅文本，不支持封面图片。", exact=False)
+    expect(limitation).not_to_be_visible()
+    page.get_by_text("评估模式说明", exact=True).click()
+    expect(limitation).to_be_visible()
 
 
 def test_jev_evaluator_option_disabled_without_provider_readiness(
@@ -482,7 +485,11 @@ def test_jev_connection_form_enables_unsaved_mode_and_submits_native_settings(
     page.get_by_role("button", name="设置", exact=True).click()
     page.get_by_role("tab", name="高级功能").click()
     form = page.locator("#jevConnectionSettings")
-    form.get_by_label("启用 Jev 服务连接", exact=True).check()
+    assert page.locator("#evalScorerHint").inner_text() == (
+        "选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。"
+    )
+    assert not page.get_by_text("Agent 沿用完整 AI 评估与缓存", exact=False).is_visible()
+    form.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
     form.get_by_label("API URL（完整接口地址）", exact=True).fill(
         "https://jev.example.test/v1/systemone"
     )

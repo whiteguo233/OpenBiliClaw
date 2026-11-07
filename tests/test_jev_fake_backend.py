@@ -37,11 +37,9 @@ FIELDS = {
     "topic",
     "franchise",
     "style",
-    "temporal_class",
+    "temporal",
     "temporal_confidence",
-    "validity",
     "evidence",
-    "deadline",
 }
 NEGATIVE = "只屏蔽承诺保证收益的广告；风险分析和批判不属于此项"
 
@@ -231,7 +229,7 @@ async def test_full_pipeline_adapts_to_configured_capacity_without_repeated_cand
             assert record["max_state_question_bytes"] <= cap
             assert record["request_bytes"] <= 48_000
             assert request["model"] == model
-            assert len(request["questions"]) % 10 == 0
+            assert len(request["questions"]) % 8 == 0
             assert request["state"]["profile"]
             assert request["state"]["profile"]["disliked_topics"] == [NEGATIVE]
             assert request["state"]["candidate_profiles"]
@@ -270,7 +268,7 @@ async def test_full_pipeline_adapts_to_configured_capacity_without_repeated_cand
         "extra_answer",
     ],
 )
-async def test_invalid_or_failed_backend_leaves_the_whole_batch_pending(
+async def test_invalid_backend_is_parked_and_transient_failure_stays_pending(
     database: Database,
     mode: str,
 ) -> None:
@@ -281,8 +279,13 @@ async def test_invalid_or_failed_backend_leaves_the_whole_batch_pending(
         assert llm.calls == 0
         assert len(backend.requests) == 1
         assert len(rows) == 2
-        assert all(row["status"] == "pending_eval" for row in rows)
-        assert all(row["eval_error"] == "evaluation_response_missing" for row in rows)
+        if mode == "server_error":
+            assert all(row["status"] == "pending_eval" for row in rows)
+            assert all(row["eval_error"] == "evaluation_response_missing" for row in rows)
+        else:
+            assert receipt["blocked"] == 2
+            assert all(row["status"] == "failed_eval" for row in rows)
+            assert all(row["eval_error"].startswith("invalid_evaluation_evidence:") for row in rows)
         assert all(row["temporal_evidence_complete"] == 0 for row in rows)
         assert not database.get_cached_content()
 
@@ -319,7 +322,10 @@ async def test_local_overflow_does_not_reach_the_real_socket(
         assert not backend.requests and not backend.records
         assert llm.calls == 0
         row = rows[0]
-        assert row["status"] == "pending_eval" and row["body_text"] == original
+        assert receipt["blocked"] == 1
+        assert row["status"] == "failed_eval" and row["body_text"] == original
+        assert row["eval_error"].startswith("input_budget_exhausted:")
+        assert row["eval_attempts"] == row["batch_eval_attempts"] == 0
 
 
 async def test_bridge_rejects_non_native_destinations_and_real_credentials() -> None:
@@ -352,7 +358,8 @@ async def test_fake_runner_reports_two_successful_cohorts_with_no_real_key(
     assert all(case["pipeline"]["cached"] == 3 for case in report["cases"])
     assert all(case["pending"] == 0 and case["original_preserved"] for case in report["cases"])
     planned = [request for case in report["cases"] for request in case["requests"]]
-    assert len(planned) == len(report["local_http"]) == 4
+    assert len(planned) == len(report["local_http"])
+    assert sum(row["questions"] for row in report["local_http"]) == 48
     assert all(row["status"] == 200 for row in report["local_http"])
     assert [row["request_bytes"] for row in planned] == [
         row["request_bytes"] for row in report["local_http"]

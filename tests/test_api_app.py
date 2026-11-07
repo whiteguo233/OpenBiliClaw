@@ -6417,6 +6417,8 @@ class TestBackendAPI:
             "candidate_eval_in_flight": 0,
             "candidate_eval_pending": 0,
             "candidate_eval_backoff_until": 0.0,
+            "candidate_eval_input_budget_blocked": 0,
+            "candidate_eval_invalid_evidence_blocked": 0,
             "candidate_eval_last_error": "",
             "candidate_eval_last_batch_seconds": 0.0,
             "candidate_eval_last_cached": 0,

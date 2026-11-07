@@ -26,6 +26,29 @@ Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提
 
 公开API与调用约定：`stage_runtime_bundle` 成功返回 `True`，不能用 `False` 表示漏包后继续构建。`installed_runtime_command()` 保持签名验证；旧组件仅作为不匹配当前pin时的可用候选。Docker和桌面构建强制成功，源码安装的显式 `--if-available` 兼容选项保留。
 
+## Jev 矛盾答案不重复收费（2026-11-06）
+
+已实现：`CandidateEvalCoordinator.status_payload()` 新增
+`candidate_eval_invalid_evidence_blocked`，读取 durable 停放数；与
+`candidate_eval_input_budget_blocked` 分开。两类 refusal 均通过 pipeline 在上下文变更后
+有界恢复；同配置的启动、手动刷新和保存不触发重评。已付费返回的矛盾时效证据不再
+折叠为 missing response，不修改评分或准入规则；暂态服务错误继续原有退避。
+2026-11-07 起 native INVALID 也走该路径。`status_payload()` 提示无效／矛盾答案；
+正式 runtime 将配置端点传入 evaluator 的证据身份，修正网关可恢复，单换 Token 不复活。
+后台 Jev 候选的纯本地打包改在线程执行，避免与配置／候选入队共用的事件循环被长文
+试装占住。数据先快照，provider 仍在原协程中按顺序调用；取消打包等待不会触发远端请求。
+
+## Jev 输入预算失败恢复（2026-10-27）
+
+| 能力 / 公共接口 | 合同 |
+|---|---|
+| `CandidateEvalCoordinator` 唤醒/安全扫描 | 在 work-allowed 门控后、claim 前交由 pipeline 检查有效上下文；画像/负例/所选模型容量或 scorer 改变后有界恢复预算停放项 |
+| `status_payload().candidate_eval_input_budget_blocked` | 从 durable `failed_eval` 预算原因读取数量，coordinator 重建/重启后仍可观察 |
+| `status_payload().candidate_eval_last_error` | 预算停放显示 `input_budget_exhausted` 及扩大容量/减少必需输入建议；不是远端故障熔断 |
+
+相同设置的 startup/manual/config 唤醒不复活预算失败，不增加 batch/provider attempts；
+模型身份保持用户选择，不自动换模型或偷偷转 LLM。混合批次其它有效项继续入池。
+暂态远端故障仍沿用既有重试/退避；停放不是内容不相关，也不代表已完成评估。
 
 ## 封面显示副本缓存（2026-10-23）
 

@@ -34,8 +34,8 @@ def test_published_budget_is_conservative_bytes_not_a_tokenizer() -> None:
     budget = resolve_jev_context("jev-1.13.0")
     assert budget.max_request_tokens == 64_000
     assert budget.max_state_question_tokens == 32_000
-    assert budget.max_request_bytes == 48_000
-    assert budget.max_state_question_bytes == 24_000
+    assert budget.max_request_bytes == 64_000
+    assert budget.max_state_question_bytes == 32_000
     assert budget.source == "published_model_registry"
     with pytest.raises(FrozenInstanceError):
         budget.model = "another"  # type: ignore[misc]
@@ -44,7 +44,7 @@ def test_published_budget_is_conservative_bytes_not_a_tokenizer() -> None:
 def test_exact_model_override_does_not_leak_on_model_switch() -> None:
     overrides = {"custom-fixed": JevContextLimits(128_000, 96_000)}
     budget = resolve_jev_context("custom-fixed", overrides)
-    assert (budget.max_request_bytes, budget.max_state_question_bytes) == (96_000, 72_000)
+    assert (budget.max_request_bytes, budget.max_state_question_bytes) == (128_000, 96_000)
     assert budget.source == "operator_confirmed"
     assert resolve_jev_context("jev-1.13.0", overrides) == resolve_jev_context("jev-1.13.0")
     with pytest.raises(JevContextError, match="unknown"):
@@ -136,9 +136,9 @@ def test_optional_manual_guards_only_tighten_model_budget() -> None:
     assert budget.with_byte_guards(max_request_bytes=1000).max_state_question_bytes == 1000
     assert budget.with_byte_guards(max_request_bytes=1000).fingerprint != budget.fingerprint
     with pytest.raises(JevContextError):
-        budget.with_byte_guards(max_request_bytes=48_001)
+        budget.with_byte_guards(max_request_bytes=64_001)
     with pytest.raises(JevContextError):
-        budget.with_byte_guards(max_state_question_bytes=24_001)
+        budget.with_byte_guards(max_state_question_bytes=32_001)
     with pytest.raises(JevContextError):
         budget.with_byte_guards(max_request_bytes=1000, max_state_question_bytes=2000)
 

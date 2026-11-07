@@ -584,10 +584,12 @@ class JevEvaluationConfig:
     # operator-owned stricter guards; they never redefine model capacity.
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
-    # Initial engineering exposure bound, not a calibrated accuracy claim.
+    # Bounded packing search, not a native question cap or quality calibration.
+    # Dual model budgets choose the actual batch; do not stop at four when a
+    # larger operator-confirmed window can fit more complete candidates.
     # Native Jev has no independent question-count cap; zero leaves that guard
-    # to the dual context budgets. A complete candidate currently needs 10 questions.
-    max_candidates_per_request: int = 4
+    # to the dual context budgets. A complete candidate currently needs 8 questions.
+    max_candidates_per_request: int = 64
     max_questions_per_request: int = 0
     max_question_bytes: int = 0
     max_calls: int = 32
@@ -3576,6 +3578,15 @@ def update_decision_config(current: DecisionConfig, update: object) -> DecisionC
     if not isinstance(values, dict):
         raise ConfigError("decision.providers.jev 必须是对象。")
     values = dict(values)
+    if "base_url" in values:
+        from openbiliclaw.decision.jev_provider import jev_endpoint_from_base_url
+
+        if "endpoint_url" in values:
+            raise ConfigError("Jev Base URL 与完整接口地址不能同时设置。")
+        try:
+            values["endpoint_url"] = jev_endpoint_from_base_url(values.pop("base_url"))
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
     clear = values.pop("clear_api_key", False)
     if type(clear) is not bool:
         raise ConfigError("clear_api_key 必须是布尔值。")
@@ -3663,8 +3674,8 @@ def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[Confi
         if type(value) is not int or not low <= value <= high:
             add(name, f"必须为 {low}..{high} 的整数。")
     questions = evaluation.max_questions_per_request
-    if type(questions) is not int or (questions != 0 and not 10 <= questions <= 640):
-        add("max_questions_per_request", "必须为 0（仅受容量限制）或 10..640；完整候选不可拆题。")
+    if type(questions) is not int or (questions != 0 and not 8 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 8..640；完整候选不可拆题。")
     if (
         type(evaluation.max_request_bytes) is int
         and type(evaluation.max_state_question_bytes) is int

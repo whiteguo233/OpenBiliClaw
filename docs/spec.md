@@ -344,6 +344,14 @@ config save → safe API handoff → committed generation (wait for settings que
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
 
+Jev settings test (Web / actual MV3 / mobile Web)
+  → authenticated draft probe → synthetic profile + one candidate → full evaluator (8 questions)
+  → one native HTTP attempt → safe result; no config/DB write or real-profile read
+full Jev evaluation → joint temporal outcome + representative excerpt (8 questions / item)
+                    → hard-state claims bound to exact source and deadline → atomic validation
+                    → native INVALID / contradiction → typed refusal → lease-CAS parking
+                    → no same-context retry; recovery after endpoint/evidence context change
+
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
@@ -369,11 +377,19 @@ candidate full evaluator (settings switch; LLM default):
   Web / popup / mobile shared Jev connection form → config API → validated local settings
     → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
+    mandatory baseline + optional positive facts (borrow room before excerpting)
     + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
-    → jev_context whole source spans / coverage → complete-question-group batch packing
+    → detached snapshot → worker-thread source spans / coverage + profile projection
+    → service-loop complete-question-group batch packing (cancellation dispatches nothing)
+    → identical selected profile fields shared once → first-fit open-batch backfill
+    dual byte ceilings use configured capacity integers (no extra 25%); not exact tokenizer
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
-    Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
+    Jev: 8 questions / candidate; joint temporal outcome + independent representative excerpt
+      hard-state options bind class/scope/state/source/deadline before one native request
+      controlled taxonomy / IP + exact source spans + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery
+  local input overflow → typed InputBudgetFailure → lease-CAS failed_eval (no retry)
+    → profile / negative evidence / evaluator context changed → bounded requeue
 
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter

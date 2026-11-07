@@ -45,6 +45,30 @@
 
 端点继续公开、降级模式可用，响应 `Cache-Control: no-store`；应用内节点仅在功能开启且状态为 `ready` 时公布。只返回地址，不返回入网凭据、登录 URL 或会话。新旧前端 / 后端兼容；详见[连接协议](../mobile-connection.md)。
 
+## Jev 草稿完整评估探测（2026-11-06）
+
+| 接口 / 能力 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/config/probe-service`，`kind="jev"` | ✅ | 对当前配置内存副本应用 `config.decision` / `config.discovery.jev_evaluation` 草稿，走真实 native provider 与完整 8 题评估；仅一次 HTTP 尝试，传输最长 15 秒、总计 20 秒 |
+| `api.jev_probe.probe_jev_config(config, update)` | ✅ | 固定合成画像与内容，不读取真实画像、不落候选、不写配置、不热重载；有效完整结果才返回 `ok=true` |
+| 三端草稿状态 | ✅ | 复用配置写鉴权；请求中禁止重复点击，编辑后旧成功状态失效；错误只返回安全原因码，不返回 Token 或远端正文 |
+| `GET /api/runtime-status` → `candidate_eval_invalid_evidence_blocked` | ✅ | 默认 0；统计时效矛盾及 native INVALID 的停放候选，不混入输入超限数；同上下文不重复付费，修正端点或有效上下文后有界恢复 |
+
+本地装不下返回 `input_budget_exhausted` 且不发送请求。测试使用固定模型及双预算，
+不会切换到 LLM；按钮提示可能计费。合成测试成功不代表真实大画像或模型质量均通过。
+后台 Jev 的候选本地打包不再同步占住 API 事件循环；接口、返回格式、请求次数和
+生产评估预算不变，取消等待不会继续派发模型请求。
+
+## Jev 预算停放诊断（2026-10-27）
+
+| 接口 / 字段 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/runtime-status` → `candidate_eval_input_budget_blocked` | ✅ | 新增整数，默认 0；表示持久化的输入预算停放数，读取不触发模型请求 |
+| `candidate_eval_last_error` | ✅ | 沿用已有字段，预算停放提供 `input_budget_exhausted` 原因及扩大容量/减少必需输入建议；不暴露画像、正文或 Token |
+
+现有 `PUT /api/config` / apply-status 仍是三端共用配置入口；保存不同容量后下一次有效唤醒重新检查停放项，
+保存相同设置不会重复付费评估。未新增配置字段、CLI 命令、安装依赖或付费探测开关。
+
 ## 抖音发现冷却与失败回传（issue #332）
 
 | 行为 | 状态 | 说明 |
@@ -107,6 +131,9 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
 完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
 改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+自动预算现在使用容量整数作为字节上限（标准 64,000/32,000 bytes），不再额外扣 25%；
+`JevEvaluationConfigOut.max_candidates_per_request` 默认 64，实际合批取决于双容量。
+三端读取同一合同并保留旧手动小上限，readiness 仍只说明配置就绪，不等于已联网测试。
 
 `PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
 （完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
@@ -121,6 +148,13 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 `reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
 TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
 202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
+
+`decision.providers.jev.base_url` 是设置更新的可选输入别名，与 `endpoint_url` 互斥；
+解析为完整原生 endpoint 后持久化，读取仍返回 `endpoint_url`。服务根或代理前缀追加
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。完整 endpoint 不允许误填进 Base 模式；
+自定义原生路径走 `endpoint_url`。相同解析目标可沿用 Token，新目标必须同时提供新 Token。
+只读 `discovery.jev_provider.base_url_supported=true` 声明此写入能力；旧后端未声明时
+共享表单保留完整地址模式，不发送可能被旧后端忽略的 Base 字段。协议、HTTPS 和凭据规则不变。
 
 ## 概述
 
