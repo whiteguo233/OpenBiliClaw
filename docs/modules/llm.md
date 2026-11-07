@@ -5,7 +5,7 @@
 | 已实现能力 / 公开接口 | 行为 |
 | --- | --- |
 | `siliconflow_free` 目录 | 两个固定 LLM 实例参与原有默认 / 模块链；`LLMRegistry.configure_chain()` 只切换顺序，不修改 adapter 模型或共享凭据。 |
-| BGE-M3 Embedding | 独立固定文本模型与 1024 维；可切换 Provider，模型、地址、凭据与图片能力不可改。相似度阈值、缓存和备用选择属于业务策略，不是模型配置。 |
+| BGE-M3 Embedding | 独立固定文本模型与 1024 维；可切换 Provider，模型、地址、凭据与图片能力不可改。相似度阈值、缓存和备用选择属于业务策略，不是模型配置。当前备选只用于构建服务时选择，不是请求失败后逐项切换的实例调用链。 |
 | 工具示例与执行分离 | `complete_with_tools()` / `stream_complete_with_tools()` 使用 Qwen 的 `<tool_call>` / `<tool_response>` 提示词格式；说明文字后、代码围栏外的完整标记帧解析为操作，普通文字、JSON 和代码直接作为正文。 |
 | 工具结果续接 | `sponsored_tools.tool_messages()` 保留工具名、调用 ID 和结果；结果后不再重复原始“先调用”指令，空画像作为有效已完成结果；JSON 对象/数组直接呈现字段，避免对内容二次转义。 |
 

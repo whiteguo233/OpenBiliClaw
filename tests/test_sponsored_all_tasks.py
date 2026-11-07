@@ -336,7 +336,11 @@ async def test_sponsored_is_the_ready_default_while_user_chain_remains_the_fallb
     )
     registry = build_llm_registry(cfg, provider_overrides={"openai": user})
     assert registry.default_provider == "siliconflow-free"
-    assert registry._fallback_order() == ["siliconflow-free", "siliconflow-free-backup", "openai"]
+    assert registry._fallback_order() == [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b",
+        "openai",
+    ]
     monkeypatch.setattr(
         "openbiliclaw.llm.sponsored_adapter.shared_sponsored_provider",
         lambda **_kw: Unavailable(),
@@ -376,7 +380,9 @@ async def test_current_main_native_tool_interface_keeps_schema_and_multihop_resu
     class NativeSponsor(RecordingSponsored):
         async def execute_task(self, **kwargs: Any) -> LLMResponse:
             response = await super().execute_task(**kwargs)
-            response.content = '{"tool_call":{"name":"lookup","arguments":{"query":"topic"}}}'
+            response.content = (
+                '<tool_call>{"name":"lookup","arguments":{"query":"topic"}}</tool_call>'
+            )
             return response
 
     provider = NativeSponsor()

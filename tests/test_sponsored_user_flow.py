@@ -144,7 +144,7 @@ async def test_free_agent_reply_streams_real_ipc_deltas_before_terminal() -> Non
 
 
 async def test_free_agent_stream_keeps_tool_json_out_of_visible_text() -> None:
-    content = '{"tool_call":{"name":"get_profile","arguments":{}}}'
+    content = '<tool_call>{"name":"get_profile","arguments":{}}</tool_call>'
     tools = [
         {
             "type": "function",
@@ -299,7 +299,7 @@ async def test_default_free_scheme_cannot_charge_a_registered_user_provider(
     cfg = Config()
     cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=shlex.join(COMMAND))
     registry = build_llm_registry(cfg, provider_overrides={"openai": Paid()})
-    assert registry._fallback_order() == ["siliconflow-free", "siliconflow-free-backup"]
+    assert registry._fallback_order() == ["siliconflow-free", "siliconflow-free-qwen35-4b"]
     monkeypatch.setattr(sponsored_adapter, "shared_sponsored_provider", lambda **kwargs: Down())
     with pytest.raises(LLMFallbackError):
         await registry.complete(MESSAGES)

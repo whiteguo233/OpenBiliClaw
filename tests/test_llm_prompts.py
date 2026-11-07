@@ -1490,6 +1490,25 @@ def test_preference_analysis_system_prompt_contains_full_vocab() -> None:
     assert "category 必须" in system
 
 
+def test_preference_analysis_prompt_keeps_negative_evidence_item_scoped() -> None:
+    """Negative evidence must not be coerced into a topic-level verdict.
+
+    The old rule told the analyzer that a negative event could *only* be used
+    for ``disliked_topics``, and that negatives outrank everything.  One
+    disliked item then became a permanent category ban ("科普" / "崩坏").
+    The contract is now evidence scope, not a prescribed output bucket.
+    """
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+
+    messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    system = messages[0]["content"]
+
+    assert "只能用于 disliked_topics" not in system
+    assert "优先级最高，不能被 signal_strength 抵消" not in system
+    assert "它说明的是「这一次」，不是「这个题材」" in system
+    assert "即使它本身看起来就是一个类别词" in system
+
+
 def test_prompt_builders_strip_the_interest_decay_cursor() -> None:
     """``last_decay_at`` is storage bookkeeping, not prompt input.
 

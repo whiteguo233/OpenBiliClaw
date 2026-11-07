@@ -1,5 +1,7 @@
 # 📖 OpenBiliClaw 文档导航
 
+- [免费 Provider 合并验收（2026-11-07）](testing/2026-11-07-unified-providers-merge.md)：main 集成检查、Embedding 现有边界与安装包发布状态。
+
 - [固定免费 Provider 实例验收（2026-11-07）](testing/2026-11-07-fixed-providers.md)：两 LLM 固定实例、独立 BGE-M3、只读保护与原有调用链切换。
 
 Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/2026-11-06-unified-providers.md)。
