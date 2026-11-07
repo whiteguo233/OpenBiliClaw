@@ -1,5 +1,35 @@
 # LLM 多模型支持
 
+## 固定免费实例（2026-11-07）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `siliconflow_free` 目录 | 两个固定 LLM 实例参与原有默认 / 模块链；`LLMRegistry.configure_chain()` 只切换顺序，不修改 adapter 模型或共享凭据。 |
+| BGE-M3 Embedding | 独立固定文本模型与 1024 维；可切换 Provider，模型、地址、凭据与图片能力不可改。相似度阈值、缓存和备用选择属于业务策略，不是模型配置。当前备选只用于构建服务时选择，不是请求失败后逐项切换的实例调用链。 |
+| 工具示例与执行分离 | `complete_with_tools()` / `stream_complete_with_tools()` 使用 Qwen 的 `<tool_call>` / `<tool_response>` 提示词格式；说明文字后、代码围栏外的完整标记帧解析为操作，普通文字、JSON 和代码直接作为正文。 |
+| 工具结果续接 | `sponsored_tools.tool_messages()` 保留工具名、调用 ID 和结果；结果后不再重复原始“先调用”指令，空画像作为有效已完成结果；JSON 对象/数组直接呈现字段，避免对内容二次转义。 |
+
+`sponsored_tools.py` 封装签名文本 SDK 上的工具桥接，不宣称使用上游 HTTP 原生 function
+calling。`parse_tool_calls(content, names)` 接受正文前缀之后、行首且位于代码围栏外的完整 `<tool_call>` 后缀，
+每帧只能包含已提供工具的 `name` 和对象类型 `arguments`；重复键、未知工具及歧义字段
+直接拒绝。语法错误最多纠正一次，仍须通过原注册表的参数校验与审批。无工具收尾时
+也拒绝返回操作帧。说明前缀交回 AgentLoop 作为中间进展；普通 JSON、行内引用和代码块不解析为动作，也不再使用或解封 `reply` 字段。
+
+`ToolStreamPrefix` 按行追踪代码围栏，只暂存可能的工具标记；此前正文、代码和 JSON 继续增量输出。`split_tool_content()` 使流式与终态解析共享相同的围栏边界。
+`tool_messages()` 将实际结果编码在 `<tool_response>` 中并转义结果内的标记字符，保持
+SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容若为完整 JSON 对象/数组，
+保留结构和原始字符串字段；普通文本、标量、重复键或不完整 JSON 保留原文。实际工具结果、
+数据库内容及 CAS/审批参数校验均不改变。该改动不修改 Rust 签名任务、
+凭据或配额。后续 [Agent 正文及执行记录检查](agent.md#agentloop) 处理旧协议泄漏和
+明确点名工具却未调用的问题。A/B 证据、真实请求及尚存限制见
+[Qwen 工具协议验收](../testing/2026-11-07-qwen-tool-protocol.md)。
+
+`sponsored_errors.find_sponsored_error(error)` 沿 `__cause__` / `__context__` 找回有类型的
+运行时错误，循环链安全结束，无对应原因时返回 `None`。普通实例 adapter 的错误翻译
+不改变 SDK 原因；API 用该接口识别恢复和终止条件，避免通用包装使有限重试失效或变成
+后台无限重试。不通过错误文本猜测类型。
+
+
 ## 评估输入字段（2026-11-06）
 
 | 已实现能力 | 契约 |
@@ -849,25 +879,23 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 `to_policy_task()` 输出 canonical system_prompt 与 hash，policy 生成仍无需任何 Key。新增请求类型必须补齐公共注册/结构、私有 renderer 与共享测试，不能只改签名 Policy 白名单。
 
 
-### 全项目赞助 SDK 接口
+### 普通实例中的受保护 SDK
 
-2026-11-05 补测：`_stream_operation` 保留整次交互首段30秒上限，并按剩余候选数分配等待时间（默认两候选首个约15秒）；同模型重试共用这份预算，超时后及时释放进程、给另一个模型机会。只有未发出任何内容时，`UPSTREAM_ERROR/UNAVAILABLE/RATE_LIMITED` 最多重试一次，退避0.25秒且不延长截止时间。显式思考请求仍采用请求级时限。该阈值是小样本延迟取舍，不保证服务SLA。
+| 已实现能力 | 公共 API / 边界 |
+| --- | --- |
+| 普通 LLM 适配 | `SponsoredChatAdapter(model, settings)` 实现 `LLMProvider`，类型为 `siliconflow_free`；`build_llm_registry()` 与其他类型一起构造。响应带普通 `instance_id`、实际模型及零费用 Provider 类型。 |
+| 唯一路由 | `LLMService` / `LLMRegistry` 不再全局拦截免费方案；默认链、模块链、精确实例探测与流式备用规则一致。未列入链的自有实例不会被调用。 |
+| 固定任务与工具 | `sponsored_call(caller, task=...)` 用请求级 ContextVar 传递签名任务，`stream_in_sponsored_call()` 仅在向上游取下一帧时绑定上下文、取消时关闭流，普通路由选中免费实例后才执行 SDK。工具仍使用项目模拟协议；文本和工具响应经过真实 Rust SSE。 |
+| 独立向量 | `build_embedding_service()` 通过普通 dedicated provider 分支构造 `SponsoredEmbeddingAdapter(settings)`；固定 BGE-M3/1024，保留旧云端缓存 provenance，和本地空间隔离。无需启用免费 LLM。 |
+| 实际路由预算 | `uses_sponsored_route(service, caller)` 按模块有效链判断小模型批量/证据约束；自有模块链不受全局免费状态影响。 |
 
-`is_free_model_fallback_allowed(error)` 区分免费互备和显式自有渠道回退：共享Key失效、策略过期、额度/余额耗尽、账本异常不能通过换免费模型恢复；原有 `is_fallback_allowed` 仍供显式BYOK策略使用。非流式网络错误与429/5xx由Rust最多3次处理；BGE真实断线恢复发生在同一个IPC请求中。详见[故障注入与恢复验收](../testing/2026-11-05-sponsored-resilience.md)。
+`shared_sponsored_provider(model=..., settings=...)` 固定每个实例一个获批模型，并关闭内部跨模型互备；备用模型须显式作为另一个实例加入普通链。池仍按事件循环、命令、模型和设置隔离，1前台＋2后台工作位共享安装账本。相同模型配置复用池，不同实例的模型选择不会串用。
 
-`approved_registry()` 是生产路由与发行策略共用的十项固定契约。`SponsoredProvider(..., model=..., fallback_to_other_free_model=True)` 仅接受获批的8B/4B；选择更改后新调用使用相应签名 task ID。`stream_complete()` 转发 Rust 的真实内容 delta 和 terminal response，`raw.requested_model/free_model_fallback` 保留实际回退信息；流开始后不重试。旧 Runtime 未声明 streaming 时保留兼容的缓冲路径。
+SDK 保留原同模型有界重试、输入预算、签名/额度/凭据校验。可用性错误保留 cause 并映射到普通 Provider 异常，429 进入现有 cooldown；契约错误不被付费备用吞掉。已经输出的流不跨实例重放，取消时关闭 upstream iterator。上下文 8B/4B 分别为128K/256K，UTF-8 字节护栏是保守估计，不静默截断；BGE 输入上界8192字节。
 
-`complete_with_tools()` 使用项目模拟工具协议，工具执行仍由 Core 决定。`stream_complete_with_tools()` 同样走 Rust SSE，普通 Agent 回复增量显示；可能属于工具调用的 JSON/数组/代码围栏先缓冲，终帧解析为工具请求后交给 Core，普通 JSON 答案则补发正文。流已开始后不回放，主动关闭或取消时回收子进程并释放请求锁。`embedding(value)` 固定 BGE-M3/1024维，`build_sponsored_embedding_service()` 标记 `supports_image=False` 并隔离向量 provenance；换聊天模型不换向量空间。已有图片向量缓存不会作为 BGE 空间读出。
+`approved_registry()`、固定 task ID 与签名 Prompt 字节不变；本次不发布新 SDK。无显式思考的文本/工具调用默认关闭思考；8B 结构化请求输出预算至少2048时沿用 low。模型的事实忠实性和工具选择能力仍需业务校验，路由统一不等于能力全面提升。
 
-免费模型的通用 SDK 操作有明确隐式思考预算：8B 的 `llm.structured` 在输出额度至少2048时默认 `low`（Rust 映射为最多1024思考 tokens）；更短的请求、4B 以及普通文本/工具回复默认关闭思考，避免隐式思考占满短回答额度或触发 SDK 最小预算限制。调用方显式传入空字符串、high/max等仍原样保留；免费互备按实际签名模型重新选择默认值。真实完整建像曾在未指定思考时超时。固定结构的 `soul.consolidation` 请求也进入总并发gate；已发行11月4日SDK仍沿用旧思考默认值，私有PR5给该路径补齐同样的预算，需新组件发行后才生效。全系统实测及尚存限制见[业务验收](../testing/2026-11-04-sponsored-system-acceptance.md)。
-
-`shared_sponsored_provider()` 按事件循环、组件命令、模型及免费回退设置复用 `SponsoredProviderPool`；池内1个前台与2个后台串行Rust子进程共用同一签名策略和安装账本。握手串行、网络请求并行，上层总并发gate继续有效。旧组件启动时若明确报告安装账本短锁竞争，仅握手最多重试两次；其它策略/契约/启动错误仍报错。取消流会回收对应子进程并归还工作位。模型选择更改后旧请求保留原Provider，新请求使用新选择。`build_llm_registry()` 支持没有自有 Key 的安装；只有显式 `fallback_to_user_provider=true` 才添加用户回退链。超时/限流/上下文超限等允许尝试另一免费模型，契约错误禁止回退。上下文限额采用128K/256K，保守 UTF-8 字节估计不是精确 tokenizer；不静默截断。BGE 输入上界为8192字节，超过时明确拒绝。
-
-真实并发验证表明工作池两类槽不互借，只有聊天时峰值1，只有后台/向量时最多2；修改 `llm.concurrency` 不会扩容固定3子进程的池。向量可在后台长评估后排队；30秒首段限制和180秒请求限制均不等同于含排队的总延迟。多个应用进程拥有独立池/gate，共用签名账本的短事务锁不覆盖网络请求；本地RPM策略不是账户全局并发上限。`DialogueExecutionCoordinator` 还串行保护应用内聊天写入，SSE忙状态可能由durable worker继续完成，需核对最终turn状态。参见[真实并发验收及复验入口](../testing/2026-11-05-sponsored-concurrency.md)。
-
-JSON 业务保持 Prompt JSON 指令与 Core 解析校验，签名 structured/vision 契约的上游 `response_format` 为 text，允许根数组；强制 `json_object` 会把30条文案变成1条，已通过真实复测修正。显式用户 provider/embedding 草稿探测保留 `bypass_sponsored()`；免费草稿探测直接验证所选模型和所选向量来源，禁用免费互备以免误报。`select_local_embedding(config)` 保留已有Ollama端点/模型，否则设置安全本地默认值；`build_embedding_service()` 仅在 `uses_cloud_embedding` 时覆盖为免费BGE。不同来源沿用独立provenance缓存空间。
-
-`SponsoredProvider` 在每次实际完成/流式/向量任务后记录稳定错误码或成功恢复；AUTH_FAILED 与 POLICY_INVALID 提示更新安装包或配置自有Key。旧Rust在hello前输出的稳定 `POLICY_INVALID` 也归一化为授权失效。流取消、网络错误和429不会清除先前撤销证据。见[状态接口与轮换步骤](runtime.md#免费凭据状态与轮换)。
+旧 `build_sponsored_embedding_service()`、显式注入 SDK 的 harness 入口保留兼容；生产工厂使用普通实例和独立 Embedding。状态由 `sponsored_status()` 按实际启用的聊天/向量能力聚合，单次聊天成功不会清除向量故障。真实请求与回归见 [本次验收](../testing/2026-11-06-unified-providers.md)。
 
 ### 已申请模型的独立实测配置
 

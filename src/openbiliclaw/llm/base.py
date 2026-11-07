@@ -891,27 +891,14 @@ class LLMRegistry:
         reasoning_effort: str | None = None,
     ) -> LLMResponse:
         """Execute a completion request with sequential provider fallback."""
-        from .sponsored_router import bypass_sponsored, try_sponsored_completion
-
-        response = await try_sponsored_completion(
+        return await self.complete_chain(
+            self._fallback_order(),
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=json_mode,
             reasoning_effort=reasoning_effort,
-            caller="registry.direct",
         )
-        if response is not None:
-            return response
-        with bypass_sponsored():
-            return await self.complete_chain(
-                self._fallback_order(),
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=json_mode,
-                reasoning_effort=reasoning_effort,
-            )
 
     async def complete_chain(
         self,
@@ -1072,27 +1059,14 @@ class LLMRegistry:
         reasoning_effort: str | None = None,
     ) -> LLMResponse:
         """Native function-calling completion over the fallback chain."""
-        from .sponsored_router import bypass_sponsored, try_sponsored_completion
-
-        response = await try_sponsored_completion(
+        return await self.complete_with_tools_chain(
+            self._fallback_order(),
             messages,
-            tools=tools,
+            tools,
             temperature=temperature,
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
-            caller="registry.tools",
         )
-        if response is not None:
-            return response
-        with bypass_sponsored():
-            return await self.complete_with_tools_chain(
-                self._fallback_order(),
-                messages,
-                tools,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort,
-            )
 
     async def complete_with_tools_chain(
         self,
@@ -1257,23 +1231,13 @@ class LLMRegistry:
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMStreamChunk]:
         """Stream a completion request with sequential provider fallback."""
-        from .sponsored_router import stream_project_completion
-
-        async for chunk in stream_project_completion(
+        async for chunk in self.stream_chain(
+            self._fallback_order(),
             messages,
-            fallback=lambda: self.stream_chain(
-                self._fallback_order(),
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                json_mode=json_mode,
-                reasoning_effort=reasoning_effort,
-            ),
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=json_mode,
             reasoning_effort=reasoning_effort,
-            caller="registry.stream",
         ):
             yield chunk
 
@@ -1371,23 +1335,13 @@ class LLMRegistry:
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMStreamChunk]:
         """Stream a native function-calling completion over the fallback chain."""
-        from .sponsored_router import stream_project_completion
-
-        async for chunk in stream_project_completion(
+        async for chunk in self.stream_with_tools_chain(
+            self._fallback_order(),
             messages,
-            fallback=lambda: self.stream_with_tools_chain(
-                self._fallback_order(),
-                messages,
-                tools,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort,
-            ),
+            tools,
             temperature=temperature,
             max_tokens=max_tokens,
-            tools=tools,
             reasoning_effort=reasoning_effort,
-            caller="registry.tools.stream",
         ):
             yield chunk
 

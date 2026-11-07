@@ -1,15 +1,6 @@
-.sponsored-settings{grid-column:1 / -1;border:1px solid var(--border-color,#788493);border-radius:12px;padding:16px;margin-bottom:20px;color:inherit;background:var(--surface,transparent)}
-.sponsored-settings h3{font-size:1rem;margin:0 0 12px}.sponsored-settings label{display:block;margin:10px 0;font-size:14px}
-.sponsored-settings .sponsored-provider-badge{display:inline-block;margin:0 0 8px;padding:3px 8px;border:1px solid currentColor;border-radius:6px;font-size:12px;line-height:1.4}
-.sponsored-settings .sponsored-toggle{display:flex;align-items:flex-start;gap:8px;line-height:1.5}
-.sponsored-settings input[type=checkbox]{appearance:auto;-webkit-appearance:checkbox;accent-color:var(--accent,#3876df);flex:0 0 auto;width:18px;height:18px;margin:2px 0;cursor:pointer}
-.sponsored-settings select{display:block;width:100%;max-width:100%;min-height:40px;margin-top:6px;padding:7px;border:1px solid #788493;border-radius:6px;color:inherit;background:var(--input-bg,transparent)}
-.sponsored-settings .sponsored-hint,.sponsored-settings .sponsored-status{font-size:13px;line-height:1.6;overflow-wrap:anywhere;margin:10px 0}
-.sponsored-settings summary{cursor:pointer;padding:8px 0}.sponsored-settings [hidden]{display:none!important}
 .sponsored-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .sponsored-actions button{min-height:40px;padding:8px 12px;cursor:pointer;border:1px solid #788493;border-radius:7px;color:inherit;background:var(--input-bg,transparent)}
 .sponsored-actions button:hover{border-color:var(--accent,#3876df)}.sponsored-actions button:disabled{cursor:default;opacity:.55}
-.sponsored-settings :is(button,select,input,summary):focus-visible{outline:2px solid var(--accent,#3876df);outline-offset:3px}
 .sponsored-notice{border:1px solid #b9812d;border-radius:8px;padding:12px;margin:12px 0;font-size:14px;line-height:1.6;overflow-wrap:anywhere;color:inherit}
 .sponsored-notice[hidden]{display:none!important}.sponsored-notice p{margin:6px 0 12px}
 .sponsored-notice .sponsored-actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 12px;box-sizing:border-box;border:1px solid currentColor;border-radius:7px;color:inherit;text-decoration:underline;text-underline-offset:3px}

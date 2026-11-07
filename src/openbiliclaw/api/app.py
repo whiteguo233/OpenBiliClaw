@@ -571,7 +571,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
-    allow_sponsored_live_apply: bool = False
+    allow_llm_instance_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -3677,9 +3677,9 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
-        if item.allow_sponsored_live_apply and not item.restart_required:
+        if item.allow_llm_instance_live_apply and not item.restart_required:
             async with config_runtime_reload_lock:
-                if ctx.try_apply_sponsored_config(item.config):
+                if ctx.try_apply_llm_instance_config(item.config):
                     if ctx.full_worker_expected():
                         # Separate workers own startup config snapshots. Let
                         # the existing supervisor reload them after the apply
@@ -3801,9 +3801,9 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
-                            config_apply_pending.allow_sponsored_live_apply = (
-                                config_apply_pending.allow_sponsored_live_apply
-                                and item.allow_sponsored_live_apply
+                            config_apply_pending.allow_llm_instance_live_apply = (
+                                config_apply_pending.allow_llm_instance_live_apply
+                                and item.allow_llm_instance_live_apply
                             )
                             _set_config_apply_status(
                                 "queued",
@@ -3906,8 +3906,9 @@ def create_app(
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
             )
-            item.allow_sponsored_live_apply = (
-                item.allow_sponsored_live_apply and config_apply_pending.allow_sponsored_live_apply
+            item.allow_llm_instance_live_apply = (
+                item.allow_llm_instance_live_apply
+                and config_apply_pending.allow_llm_instance_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -5398,11 +5399,12 @@ def create_app(
 
     def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
         """Persist a bounded recovery count; never replay output or tool work."""
-        from openbiliclaw.llm.sponsored_errors import SponsoredError
+        from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
-        if not isinstance(exc, SponsoredError) or _agent_turn_started(turn_id):
+        sponsored_error = find_sponsored_error(exc)
+        if sponsored_error is None or _agent_turn_started(turn_id):
             return False
-        if exc.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+        if sponsored_error.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
             return False
         row = _get_chat_turn_row(turn_id)
         events = (row or {}).get("payload", {}).get("agent_events", [])
@@ -5411,7 +5413,9 @@ def create_app(
         # permanently unavailable service at the head of the dialogue lane.
         if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
             return False
-        return _append_chat_turn_agent_event(turn_id, {"type": "sponsored_retry", "code": exc.code})
+        return _append_chat_turn_agent_event(
+            turn_id, {"type": "sponsored_retry", "code": sponsored_error.code}
+        )
 
     def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
         # Persist the first delta boundary without storing token fragments.
@@ -14375,15 +14379,14 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
-                from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
                 if isinstance(exc, TerminalChatReplyError):
                     raise
-                if isinstance(exc, SponsoredError) and not _retry_silent_sponsored_turn(
-                    turn_id, exc
-                ):
+                sponsored_error = find_sponsored_error(exc)
+                if sponsored_error is not None and not _retry_silent_sponsored_turn(turn_id, exc):
                     raise TerminalChatReplyError(
-                        safe_llm_failure_message(exc), code=exc.code
+                        safe_llm_failure_message(exc), code=sponsored_error.code
                     ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
@@ -21358,6 +21361,7 @@ def create_app(
                 name=str(getattr(instance, "name", "") or ""),
                 provider_type=str(getattr(instance, "provider_type", "") or ""),
                 enabled=bool(getattr(instance, "enabled", True)),
+                read_only=getattr(instance, "provider_type", "") == "siliconflow_free",
             )
 
         def _legacy_provider_projection(provider_type: str) -> Any:
@@ -22452,6 +22456,8 @@ def create_app(
             current_routes = effective_llm_routes(cfg.llm)
             was_native = bool(getattr(cfg.llm, "instance_routing", False))
             cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 2
+            cfg.llm.instances = current_instances
             if not was_native:
                 for module_name, route in current_routes.items():
                     setattr(cfg.llm, module_name, route)
@@ -22541,7 +22547,25 @@ def create_app(
                         # supported. New clients send this field; old clients
                         # must retain the historical omit-on-wire behavior.
                         target.reasoning_effort = ""
+                    if existing is not None and existing.provider_type == "siliconflow_free":
+                        if target != existing:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="内置免费实例不可修改，请在调用链中选择需要的模型实例。",
+                            )
+                    elif target.provider_type == "siliconflow_free":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="请使用已有的两个内置免费实例，无需新建或复制。",
+                        )
                     replacement[instance_id] = target
+                # A whole-library replacement from an older client cannot delete
+                # built-ins. Removing them from chains is the supported opt-out.
+                replacement.update(
+                    (key, instance)
+                    for key, instance in current_instances.items()
+                    if instance.provider_type == "siliconflow_free"
+                )
                 cfg.llm.instances = replacement
             if "default_chain" in llm_data:
                 raw_chain = llm_data["default_chain"]
@@ -22747,6 +22771,14 @@ def create_app(
         if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
             emb = llm_data["embedding"]
             if "provider" in emb:
+                if str(emb["provider"]) != cfg.llm.embedding.provider:
+                    # Credentials never follow a provider switch to a new endpoint.
+                    cfg.llm.embedding.api_key = ""
+                    cfg.llm.embedding.base_url = ""
+                    if emb["provider"] == "siliconflow_free":
+                        cfg.llm.embedding.model = "BAAI/bge-m3"
+                        cfg.llm.embedding.output_dimensionality = 1024
+                        cfg.llm.embedding.multimodal_enabled = False
                 cfg.llm.embedding.provider = str(emb["provider"])
             if "model" in emb:
                 new_model = str(emb["model"])
@@ -22781,6 +22813,21 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        if cfg.llm.embedding.provider == "siliconflow_free":
+            emb_cfg = cfg.llm.embedding
+            if (
+                emb_cfg.model != "BAAI/bge-m3"
+                or emb_cfg.api_key
+                or emb_cfg.base_url
+                or emb_cfg.output_dimensionality != 1024
+                or emb_cfg.multimodal_enabled
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "免费 Embedding 仅支持 BAAI/bge-m3、1024 维文本向量，无需填写 Key 或地址。"
+                    ),
+                )
         # The shared form submits this explicit choice on all four surfaces.
         # Preserve an existing Ollama model/private port; never reuse cloud credentials.
         sponsored_update = llm_data.get("sponsored", {})
@@ -22817,6 +22864,20 @@ def create_app(
                     )
                     if instance is None:
                         continue
+                    if provider_type == "siliconflow_free" and model:
+                        selected = next(
+                            (
+                                (key, item)
+                                for key, item in cfg.llm.instances.items()
+                                if item.provider_type == "siliconflow_free" and item.model == model
+                            ),
+                            None,
+                        )
+                        if selected is None:
+                            raise HTTPException(
+                                status_code=400, detail="请选择已有的内置模型实例。"
+                            )
+                        instance_id, instance = selected
                     if model and str(getattr(instance, "model", "") or "").strip() != model:
                         derived_id = f"legacy-{module_name}"
                         instance = LLMInstanceConfig(
@@ -22914,6 +22975,17 @@ def create_app(
         effort_source: Literal["local_advisory", "not_available"] = (
             "local_advisory" if efforts else "not_available"
         )
+        if provider == "siliconflow_free":
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            return ConfigModelDiscoveryResponse(
+                ok=True,
+                instance_id=target_instance_id,
+                provider=provider,
+                models=list(CHAT_MODELS),
+                message="内置免费模型目录，按实例选择。",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
         if provider not in {
             "openai",
             "deepseek",
@@ -23051,7 +23123,11 @@ def create_app(
         provider = ""
         model = ""
         try:
-            registry = build_llm_registry(cfg)
+            registry = (
+                build_llm_registry(cfg, fallback_order=[target_instance])
+                if is_instance and target_instance
+                else build_llm_registry(cfg)
+            )
             if not is_chain and not is_instance and not is_fallback and not target_instance:
                 target_instance = str(getattr(registry, "default_provider", "") or "")
             if is_instance and not target_instance:
@@ -25534,8 +25610,11 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
-                allow_sponsored_live_apply=(
-                    not pending_credential_writes and "tailnet" not in update
+                allow_llm_instance_live_apply=(
+                    # Both settings UIs echo Tailnet even when it is unchanged.
+                    # Actual settings/credential changes still require restart;
+                    # mere presence must not turn a chain switch into a drain.
+                    not pending_credential_writes and not tailnet_restart_required
                 ),
             )
 

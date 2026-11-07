@@ -1045,14 +1045,17 @@ class ProfileConsolidator:
 
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
-    @staticmethod
-    def _judge_batch_size() -> int:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+    def _judge_batch_size(self) -> int:
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
         # Nov 5 live SDK: 16 clusters took 78s/125s on 8B/4B. Keep individual
         # free requests away from the 180s deadline without dropping clusters;
         # this provisional size needs remeasurement after a provider swap.
-        return min(_JUDGE_CLUSTER_BATCH, 8) if sponsored_enabled() else _JUDGE_CLUSTER_BATCH
+        return (
+            min(_JUDGE_CLUSTER_BATCH, 8)
+            if uses_sponsored_route(self._llm_service, "soul.consolidation")
+            else _JUDGE_CLUSTER_BATCH
+        )
 
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.

@@ -287,36 +287,28 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
-免费模型方案通过共享配置接入全部日常文本任务；图片理解是可选增量能力，BGE-M3 仅生成文本向量。组件发行前仍保留明确的不可用状态，详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+免费服务预置为普通 LLM 实例与独立 Embedding Provider，使用现有调用链与选择入口。图片能力可选，BGE-M3 仅生成文本向量；受保护传输封装在 adapter 内。
 
 ```text
 trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
 source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
 
-Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
-  → LLMService / Registry / eval → selected signed 8B or 4B task
-  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
-  → optional HTTPS relay: device proof + short session + replay/central quota → server Rust pool
-  → local compatibility mode: bounded Rust workers (1 interactive + 2 background; shared quota ledger)
-  → SiliconFlow SSE / embeddings
-  → Core schema / evidence validation
-      ├ passive portrait: source-backed information preferences
-      ├ invalid temporal fields: one narrow LLM correction → source validation
-      └ awareness batch vs lookback → reject foreign citations → one corrective retry
-  → normal profile, discovery, recommendation, agent flows
-Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
-Auth failure / signed-policy expiry → durable capability status → settings + message notices
-  → update application / installer OR configure a user-owned API key
-Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
-  → shared 30s first-output budget; no replay after output
-Silent transient chat failure → persisted retry count (max 2) → durable worker
-Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
-Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
-  → required pinned SDK staging → offline self-check → versioned bundle / atomic activation
-  → prefer current Core pin over stale active SDK after application update
-Agent exact memory lookup → JSON Pointer → bounded original value (no bulk-context guessing)
-Free director → ordered refs → deterministic pairing → unchanged horizon validation
-Optional image understanding: 4B; image embeddings: unavailable in the free profile
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
 ```text
@@ -485,6 +477,9 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint re-dispatch → config_update_hook → settings apply queue / last-good + ledger audit

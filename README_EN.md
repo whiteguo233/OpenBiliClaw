@@ -657,26 +657,28 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
-Free model integration (implemented on this branch; SDK bundles published, application release pending): setup, extension, desktop and mobile settings share the same model selection. Qwen3-8B is recommended, Qwen3.5-4B is selectable, and text embeddings default to cloud BGE-M3 with local Ollama available as an independent choice. [Implementation and acceptance limits](docs/plans/2026-11-04-sponsored-user-flow.md).
+SiliconFlow is a preconfigured LLM instance in the existing instance list. Choose 8B or 4B and route it through ordinary default/module chains; select cloud BGE-M3 or local Ollama independently for embeddings. This unified configuration change is awaiting an application release. [Design and verification](docs/testing/2026-11-06-unified-providers.md).
 
 ```text
-Built-in SiliconFlow provider: setup / extension / desktop / mobile / CLI → local config → shared sponsored router
-  Text / JSON / tools → Qwen3-8B (128K) ⇄ Qwen3.5-4B (256K)
-  Cloud text embeddings → BGE-M3 (1024 dimensions, default); optional image understanding → 4B
-  → signed task IPC → Rust workers (1 interactive + 2 background, shared quota ledger) → SiliconFlow
-  Silent transient failure → bounded retry / free fallback → durable queue; started work is not replayed
-  Explicit GitHub/Instagram setup → selected producer → evaluation/copy → first usable inventory
-  Generic web extraction → canonical full-URL identity → deduplication; native platform IDs remain
-  Results → source-evidence validation → profile / memory; one bounded temporal correction
-  Local vector choice → Ollama (independent cache/endpoint, no sponsored key)
-  Credential / policy failure → durable status → settings + inbox → update app or configure own key
-  HTTPS relay (configured) → device proof / 5-minute session / replay protection → server quota → Rust
-  Packaging → local mode: pinned SDK; verified official relay mode: omit key-bearing SDK
-  Installer / updater → verify → prefer current Core pin → atomic activation
-  Exact memory → JSON Pointer values; free director → ordered refs → validated pairing
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
-Text/JSON calls forward real streaming deltas; tools use the project's existing simulation protocol. Automatic fallback stays within the two free models unless the user explicitly enables their own provider. BGE-M3 has no image embeddings.
+Text/JSON calls forward real streaming deltas. Free tools use a Qwen-tagged prompt bridge with identified results; ordinary JSON remains data. Fallback follows only the explicitly configured instance chain. BGE-M3 has no image embeddings.
 
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
@@ -712,9 +714,9 @@ Local embedding: `requests / diagnostics → Ollama automatic acceleration → v
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
-Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
+Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → tool-protocol text guard → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
 
-Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
+Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings, reorder the registry for default-chain changes; drain and rebuild for other changes`. Local updates preserve active conversations and learning tasks.
 
 Background configuration: `successful full apply → queue settles → parent confirms old children exited → workers / recommendation / images read new settings`. The active data directory and durable candidates survive; model repairs can resume pool filling.
 

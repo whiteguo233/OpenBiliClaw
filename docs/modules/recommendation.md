@@ -1,5 +1,13 @@
 # 推荐引擎
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 推荐/导演遵循实例路由 | 导演规划通过 `uses_sponsored_route()` 选择已有免费模型的顺序引用输出约束；自有模型路由保留原格式。推荐与导演公开方法签名不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 可切换完整评估器的旧池补评
 
 `RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下

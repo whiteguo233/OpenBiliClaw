@@ -212,27 +212,26 @@ class AwarenessAnalyzer:
         ]
         return notes, confusions_payload
 
-    @staticmethod
     def _prompt_events(
-        events: list[dict[str, object]], evidence_ids: list[int]
+        self, events: list[dict[str, object]], evidence_ids: list[int]
     ) -> list[dict[str, object]]:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
-        if not sponsored_enabled():
+        if not uses_sponsored_route(self.registry, "soul.awareness"):
             return events
         allowed = set(evidence_ids)
         return [event for event in events if set(_coerce_event_ids([event.get("id")])) & allowed]
 
-    @staticmethod
     def _add_sponsored_citation_boundary(
+        self,
         messages: list[dict[str, str]],
         evidence_ids: list[int],
         events: list[dict[str, object]],
         validation_feedback: str = "",
     ) -> None:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
-        if sponsored_enabled():
+        if uses_sponsored_route(self.registry, "soul.awareness"):
             from openbiliclaw.soul.event_provenance import prepare_cognition_events
             from openbiliclaw.sources.event_format import render_retraction_marked_events
 

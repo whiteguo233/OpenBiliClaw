@@ -1,5 +1,20 @@
 # Runtime Module
 
+## 固定实例切换（2026-11-07）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `RuntimeContext.try_apply_llm_instance_config(config)` | 仅默认链顺序改变时通过已有 registry 原地发布，新请求使用新链，API 进程已开始的请求和后台任务对象保留；独立 worker 仍按配置代际重载并恢复持久任务。实例配置或模块链改变时返回 false，走完整重建。 |
+
+
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 路由决定本地依赖与通知 | `ollama_required()` / `effective_ollama_endpoint()` 只考虑有效默认/模块链和独立 Embedding；未使用的旧 Ollama 表不会覆盖向量端口。`sponsored_status()` 只展示实际选中能力的故障；各能力独立恢复。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提示先在容器设置密码、生成/启用设备密钥并重启配对；公开命令参数与状态结构不变。容器映射端口按远程访问处理，见[首次认证步骤](../docker-deployment.md#远程认证变更2026-11-06)。
 
 ## 免费组件随包强制集成（2026-11-06）
@@ -857,7 +872,7 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 ## Sponsored SDK 子进程（组件已发布，应用接线待发布）
 
-`ollama_required(config)` 按实际可达路由判断：默认免费云端向量不触发本地启动；选择 `embedding_mode="local"` 后走Ollama模型准备/下载/播种。`effective_ollama_endpoint()` 忽略被免费模式屏蔽的旧Ollama聊天配置，避免错误覆盖本地向量端点；显式开启用户聊天回退时仍按现有规则预备它。
+`ollama_required(config)` 按默认/模块实际链与独立 `llm.embedding` 判断本地需求。云端 BGE 不启动 Ollama；选择 `embedding.provider="ollama"` 后走本地准备/下载/播种。`effective_ollama_endpoint()` 不使用未被链引用的旧 Ollama 聊天表覆盖向量端点。
 
 同一事件循环内的 LLMService、Registry 和 EmbeddingService 复用子进程；既有应用并发 gate 不变。不同工作进程各自建 Runtime，私有安装账本只对记账事务加锁，网络期间不独占锁；预留与结算重读 HMAC 状态，不丢并发额度。`LLMService.aclose()` 等待请求结束后关闭子进程。覆盖和发行约束见[全项目 SDK](../plans/2026-10-27-sponsored-all-tasks.md)。
 
@@ -883,7 +898,7 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 | 已实现能力 | 行为 |
 | --- | --- |
 | 撤销/授权到期识别 | Rust稳定错误码进入Core状态；有效签名策略已到期时，无需运行旧组件即可提示更新。未知网络/限流故障不推断Key过期。 |
-| 持久通知与恢复 | `<data_dir>/runtime/sponsored-status/{chat,embedding}.json` 原子保存错误码、时间、组件身份哈希，无Key/Prompt/上游正文；同错误去重，重启/独立worker可读。成功只清除对应能力，更新组件后旧证据失效；关闭免费方案隐藏通知，本地向量模式忽略旧云端向量故障。 |
+| 持久通知与恢复 | `<data_dir>/runtime/sponsored-status/{chat,embedding}.json` 原子保存错误码、时间、组件身份哈希，无Key/Prompt/上游正文；同错误去重，重启/独立worker可读。成功只清除对应能力，更新组件后旧证据失效；没有使用免费 LLM 时忽略旧聊天故障，未选择免费 Embedding 时忽略旧云端向量故障。 |
 
 公开API：`sponsored_status.configure_status_directory(data_path)` 由配置加载/registry绑定；`record_sponsored_outcome(command, capability, code="")` 观察实际请求；`sponsored_status(config)` 仅读本地状态，不探测上游。`BundleExpiredError` 区分已验签但到期的策略；`bundle_status()` 新增稳定 `code`，损坏/未签名文件不被当成可靠过期证据。
 

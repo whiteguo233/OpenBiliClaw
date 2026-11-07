@@ -42,13 +42,22 @@ def sponsored_enabled() -> bool:
     ).lower() in {"true", "1", "yes", "on"}
 
 
-def shared_sponsored_provider() -> SponsoredProvider | None:
+def shared_sponsored_provider(
+    *,
+    model: str | None = None,
+    settings: Any = None,
+) -> SponsoredProvider | None:
+    from dataclasses import replace
+
     from .sponsored_pool import SponsoredProviderPool
     from .sponsored_profiles import approved_registry
 
-    settings = current_sponsored_settings()
-    if not sponsored_enabled():
+    settings = settings or current_sponsored_settings()
+    if model is None and not settings.enabled and not sponsored_enabled():
         return None
+    if model is not None:
+        # An instance is one model. All cross-model fallback belongs to its chain.
+        settings = replace(settings, model=model, fallback_to_other_free_model=False)
     if settings.relay_url:
         from openbiliclaw.sponsored_runtime_state import relay_device_path
 
@@ -71,11 +80,7 @@ def shared_sponsored_provider() -> SponsoredProvider | None:
                 fallback_to_other_free_model=settings.fallback_to_other_free_model,
             )
         return cast("SponsoredProvider", cache[relay_key])
-    command = (
-        settings.runtime_path
-        if settings.enabled
-        else os.environ.get("OPENBILICLAW_SPONSORED_RUNTIME", "")
-    )
+    command = settings.runtime_path or os.environ.get("OPENBILICLAW_SPONSORED_RUNTIME", "")
     if not command.strip():
         from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
 

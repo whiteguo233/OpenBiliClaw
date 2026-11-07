@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,11 @@ from openbiliclaw.soul.profile import (
 @pytest.fixture(autouse=True)
 def _restore_cli_process_state() -> Iterator[None]:
     """Keep CLI-owned process globals from leaking into later tests."""
+    # Load the lazy public LLM exports before CLI tests replace LLMService.
+    # Otherwise a first import can retain the test double in SoulEngine.
+    from importlib import import_module
+
+    import_module("openbiliclaw.soul.engine")
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level
@@ -43,6 +49,7 @@ def _restore_cli_process_state() -> Iterator[None]:
     original_noisy_levels = {name: logging.getLogger(name).level for name in noisy_loggers}
     runtime_components = cli_module._RUNTIME_COMPONENTS
     original_runtime_components = dict(runtime_components)
+    image_service_url = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_URL")
     runtime_components.clear()
     try:
         yield
@@ -58,6 +65,10 @@ def _restore_cli_process_state() -> Iterator[None]:
             logging.getLogger(name).setLevel(level)
         cli_module._RUNTIME_COMPONENTS.clear()
         cli_module._RUNTIME_COMPONENTS.update(original_runtime_components)
+        if image_service_url is None:
+            os.environ.pop("OPENBILICLAW_IMAGE_SERVICE_URL", None)
+        else:
+            os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = image_service_url
 
 
 def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -> None:

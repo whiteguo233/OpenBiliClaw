@@ -9466,7 +9466,7 @@ ${cardFeedbackBarHtml()}`;
     function applyRuntimeStatus(payload) {
       if (!payload) return;
       state.runtimeStatus = normalizeRuntimeStatus(payload);
-      window.OpenBiliClawSponsoredSettings?.updateStatus($("#sponsoredSettings"), state.runtimeStatus.sponsored_status);
+      window.OpenBiliClawSponsoredSettings?.updateStatus($("#llmProviderNotice"), state.runtimeStatus.sponsored_status);
       const messageList = $("#messageList");
       if (messageList) {
         let notice = $("#sponsoredMessageNotice");
@@ -10289,6 +10289,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     const LLM_PROVIDER_LABELS = {
+      siliconflow_free: "硅基流动（免费）",
       openai: "OpenAI",
       claude: "Claude",
       gemini: "Gemini",
@@ -10302,6 +10303,7 @@ ${cardFeedbackBarHtml()}`;
       openai_compatible: "OpenAI-compatible"
     };
     const LLM_PROVIDER_DEFAULTS = {
+      siliconflow_free: { model: "Qwen/Qwen3-8B", base_url: "" },
       openai: { model: "gpt-5-nano", base_url: "" },
       claude: { model: "claude-sonnet-4-20250514", base_url: "" },
       gemini: { model: "gemini-2.5-flash", base_url: "" },
@@ -10384,6 +10386,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function llmEndpointSummary(instance) {
+      if (instance.provider_type === "siliconflow_free") return "内置服务 · 无需 Key";
       const raw = String(instance?.base_url || "").trim();
       if (!raw) return "官方默认地址";
       try {
@@ -10511,6 +10514,7 @@ ${cardFeedbackBarHtml()}`;
         return;
       }
       container.innerHTML = entries.map(([instanceId, instance]) => {
+        const fixed = instance.provider_type === "siliconflow_free";
         const references = llmInstanceReferences(instanceId);
         const probe = state.llmProbeResults.get(instanceId);
         const probeText = probe?.pending
@@ -10522,15 +10526,15 @@ ${cardFeedbackBarHtml()}`;
         return `<article class="llm-instance-card" data-enabled="${instance.enabled !== false}" data-instance-card="${escapeHtml(instanceId)}">
           <div class="llm-instance-card-head">
             <div class="llm-instance-card-title"><strong>${escapeHtml(instance.name || instanceId)}</strong><code>${escapeHtml(instanceId)}</code></div>
-            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${instance.enabled !== false ? "已启用" : "已停用"}</span>
+            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用"}</span>
           </div>
           <div class="llm-instance-badges"><span class="llm-instance-badge">${escapeHtml(LLM_PROVIDER_LABELS[instance.provider_type] || instance.provider_type)}</span>${references.map((reference) => `<span class="llm-instance-badge" data-tone="muted">${escapeHtml(reference)}</span>`).join("")}</div>
           <p class="llm-instance-meta"><span>模型：${escapeHtml(instance.model || "未填写")}</span><span>地址：${escapeHtml(llmEndpointSummary(instance))}</span></p>
           <p class="llm-instance-probe" data-tone="${probeTone}" aria-live="polite">${escapeHtml(probeText)}</p>
           <div class="llm-instance-actions">
             <button class="pill-btn" type="button" data-instance-action="probe" data-instance-id="${escapeHtml(instanceId)}">测试</button>
-            <button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
-            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>
+            ${fixed ? '<span class="llm-instance-meta">在调用链中选择或切换</span>' : `<button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
+            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>`}
           </div>
         </article>`;
       }).join("");
@@ -10632,7 +10636,7 @@ ${cardFeedbackBarHtml()}`;
         name: getInput("llmInstanceName").trim() || current.name || instanceId,
         provider_type: providerType,
         enabled: true,
-        api_key: apiKey,
+        api_key: providerType === "siliconflow_free" ? "" : apiKey,
         model: getInput("llmInstanceModel").trim(),
         base_url: getInput("llmInstanceBaseUrl").trim(),
         auth_mode: providerType === "openai"
@@ -10729,12 +10733,19 @@ ${cardFeedbackBarHtml()}`;
         field.hidden = !visible;
       });
       resetLlmModelDiscovery();
+      window.OpenBiliClawSponsoredSettings.syncInstance({
+        provider: providerType, model: document.getElementById("llmInstanceModel"),
+        key: document.getElementById("llmInstanceApiKey"), base: document.getElementById("llmInstanceBaseUrl"),
+        status: document.getElementById("llmInstanceModelDiscoveryStatus"),
+        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+      });
     }
 
     function openLlmInstanceDialog(instanceId = "") {
       if (!state.llmDraft) return;
       const dialog = $("#llmInstanceDialog");
       const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+      if (instance?.provider_type === "siliconflow_free") return;
       state.llmEditingInstanceId = instanceId;
       llmDialogReturnFocus = document.activeElement;
       dialog.dataset.providerType = instance?.provider_type || "";
@@ -10820,7 +10831,7 @@ ${cardFeedbackBarHtml()}`;
       const effectiveKey = $("#llmInstanceClearApiKey")?.checked
         ? ""
         : typedKey || current.api_key || "";
-      if (enabled && !["ollama", "gemini"].includes(providerType) && !(providerType === "openai" && authMode === "codex_oauth") && !effectiveKey) {
+      if (enabled && !["ollama", "gemini", "siliconflow_free"].includes(providerType) && !(providerType === "openai" && authMode === "codex_oauth") && !effectiveKey) {
         error.textContent = "启用的远端实例需要 API Key。";
         $("#llmInstanceApiKey")?.focus();
         return;
@@ -10833,7 +10844,7 @@ ${cardFeedbackBarHtml()}`;
         name,
         provider_type: providerType,
         enabled,
-        api_key: effectiveKey,
+        api_key: providerType === "siliconflow_free" ? "" : effectiveKey,
         model,
         base_url: baseUrl,
         auth_mode: authMode,
@@ -10849,7 +10860,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function deleteLlmInstance(instanceId) {
-      if (!state.llmDraft?.instances[instanceId]) return;
+      if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
       const references = llmInstanceReferences(instanceId);
       if (references.length) {
         showToast(`无法删除：仍被 ${references.join("、")} 引用`);
@@ -11062,10 +11073,12 @@ ${cardFeedbackBarHtml()}`;
       }
 
       const llm = config.llm || {};
-      window.OpenBiliClawSponsoredSettings.mount($("#sponsoredSettings"), {
-        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
-        probe: sponsored => probeConfigService("sponsored", { llm: { sponsored } }),
-      }).load(llm.sponsored);
+      window.OpenBiliClawSponsoredSettings.renderNotice(document.getElementById("llmProviderNotice"), llm.sponsored?.service_status, (notices) => {
+        if (notices.every(item => !item.capabilities?.includes("chat"))) {
+          const field = document.getElementById("embeddingProvider");
+          field.scrollIntoView({ block: "center" }); field.focus();
+        } else openLlmInstanceDialog();
+      });
       setInput("llmConcurrency", llm.concurrency ?? 3);
       setInput("llmTimeout", llm.timeout);
       state.llmDraft = normalizeLlmDraft(llm);
@@ -11081,6 +11094,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("embeddingSimilarity", llm.embedding?.similarity_threshold);
       const embeddingMultimodal = $("#embeddingMultimodalEnabled");
       if (embeddingMultimodal) embeddingMultimodal.checked = llm.embedding?.multimodal_enabled === true;
+      syncEmbeddingFields();
       setSelect("biliAuth", config.bilibili?.auth_method || "cookie");
       setCookieOverrideInput("biliCookie", config.bilibili?.cookie, " B 站");
       setInput("biliBrowserExecutable", config.bilibili?.browser_executable);
@@ -12418,6 +12432,17 @@ ${cardFeedbackBarHtml()}`;
       markSettingsDirty();
     });
 
+
+    function syncEmbeddingFields(event) {
+      window.OpenBiliClawSponsoredSettings.syncEmbedding({
+        reset: event?.type === "change",
+        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+        provider: document.getElementById("embeddingProvider").value,
+        model: document.getElementById("embeddingModel"), key: document.getElementById("embeddingApiKey"),
+        base: document.getElementById("embeddingBaseUrl"), dimension: document.getElementById("embeddingOutputDimensionality"),
+        multimodal: document.getElementById("embeddingMultimodalEnabled"),
+      });
+    }
     function buildConfigUpdate() {
       const jevUpdate = window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer")).collect();
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
@@ -12431,6 +12456,9 @@ ${cardFeedbackBarHtml()}`;
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82),
         multimodal_enabled: $("#embeddingMultimodalEnabled")?.checked === true
       };
+      if (embedding.provider === "siliconflow_free") Object.assign(embedding, {
+        model: "BAAI/bge-m3", api_key: "", base_url: "", output_dimensionality: 1024, multimodal_enabled: false,
+      });
       if (getInput("embeddingApiKey")) embedding.api_key = getInput("embeddingApiKey");
       if (getInput("embeddingBaseUrl")) embedding.base_url = getInput("embeddingBaseUrl");
       const cookie = getInput("biliCookie");
@@ -12444,7 +12472,6 @@ ${cardFeedbackBarHtml()}`;
       else if (bilibiliDateMode === "custom") bilibiliDateWeight = getFloatInput("biliDateWeight", 0.5);
       const llmDraft = state.llmDraft || normalizeLlmDraft(state.config?.llm || {});
       const llm = {
-        sponsored: window.OpenBiliClawSponsoredSettings.mount($("#sponsoredSettings")).collect(),
         routing_version: 2,
         instances: clonePlain(llmDraft.instances),
         default_chain: [...llmDraft.default_chain],
@@ -13094,6 +13121,10 @@ ${cardFeedbackBarHtml()}`;
       state.llmProbeResults.set(instanceId, { pending: true });
       renderLlmInstances();
       try {
+        if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+          const prepared = await requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 });
+          if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+        }
         const result = await probeConfigService("llm_instance", buildConfigUpdate(), instanceId);
         state.llmProbeResults.set(instanceId, result);
       } catch (error) {
@@ -13674,6 +13705,7 @@ ${cardFeedbackBarHtml()}`;
     safeBind("#cancelLlmInstance", "click", closeLlmInstanceDialog);
     safeBind("[data-close-llm-instance-dialog]", "click", closeLlmInstanceDialog);
     safeBind("#saveLlmInstance", "click", saveLlmInstanceDraft);
+    safeBind("#embeddingProvider", "change", syncEmbeddingFields);
     safeBind("#llmInstanceProviderType", "change", applyLlmProviderDefaults);
     safeBind("#refreshLlmInstanceModels", "click", () => { void discoverLlmInstanceModels(); });
     safeBind("#llmInstanceBaseUrl", "input", resetLlmModelDiscovery);

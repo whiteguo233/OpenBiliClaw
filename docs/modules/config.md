@@ -657,7 +657,7 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 | `output_dimensionality` | int | `1024` | embedding 目标向量维度。默认 1024，与本地 Ollama `bge-m3` 对齐；Gemini 会传 `output_dimensionality`，`provider = "openai"` 且模型为 `text-embedding-3-*` 时会传 `dimensions`。Ollama / OpenRouter / 泛 OpenAI-compatible 等未确认支持的后端不传参数，也不会把 cache 标成伪维度。设为 `0` 表示使用 provider 原生默认维度 |
 | `similarity_threshold` | float | `0.82` | 余弦相似度阈值，超过即视为"同主题" |
 | `fallback_enabled` | bool | `false` | 旧兼容开关；允许备选类型借用第一个同类型、已启用聊天实例的凭据 |
-| `fallback_provider` | string | `""` | 第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`，不会再自动走 `ollama → gemini → openai` 链 |
+| `fallback_provider` | string | `""` | 构建服务时的第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`。当前不是实例调用链，请求失败后不会自动切换到备选，也不会自动走 `ollama → gemini → openai` 链 |
 | `multimodal_enabled` | bool | `false` | 是否启用**封面图单独** embedding（image-only 向量，与文本同一模型空间），供 recommendation `precompute_delight_scores` 的封面视觉加成消费。默认关闭。开启后仍需当前 `model` 支持图像（如 `gemini-embedding-2`，或 `dashscope` + `qwen3-vl-embedding`）；本地 `ollama` + `bge-m3` 等纯文本模型会自动跳过，不报错。与 `[discovery].multimodal_evaluation_enabled`（vision LLM 评估）相互独立。**插件设置页与桌面 Web 设置的 Embedding 段均可直接勾选**（`dashscope` 也已加入 provider 下拉），无需手改 TOML |
 | `cache_max_bytes` | int | `0` | L2 持久化缓存（`data/embedding_cache.db`）磁盘预算，单位字节；`0` = 不设上限（默认）。向量本身已按紧凑 float32 二进制存储（4096 维约 16 KiB/行），此上限进一步约束长跑 discovery/warmup 的磁盘增长：占用超过 `cache_max_bytes × cache_high_watermark` 时开始淘汰（先删失效 namespace / 旧 legacy 行，再按最近访问时间淘汰 active namespace 最旧行），直到降到 `cache_max_bytes × cache_low_watermark`。缓存可重建，淘汰只影响冷数据。建议值 `536870912`（512 MiB） |
 | `cache_high_watermark` | float | `0.9` | 容量淘汰触发水位（占用 / 预算 的比例，0..1），需 `>= cache_low_watermark` |
@@ -1741,43 +1741,41 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 也不会清空。它与失败冷却的 6 小时上限是两项独立规则，没有新增配置项或更改成功间隔。
 
 
-### `[llm.sponsored]`
+### 硅基流动作为普通 Provider
 
-免费方案由配套私有 Rust 组件执行。新用户在初始化推荐项中选择后启用；原有用户配置不自动改写。无需用户填写共享 Key 或安装 Rust。浏览器只能设置下表的用户字段，不能指定可执行文件、URL、Key 或额外模型。
-
-| 键 | 默认值 | 说明 |
-| --- | --- | --- |
-| `enabled` | `false` | 免费方案开关；启用后允许无自有模型 Key（兼容 legacy 与 v2 路由），必须有可验证组件。 |
-| `embedding_mode` | `cloud` | `cloud` 使用硅基流动BGE-M3；`local` 使用 `[llm.embedding]` 的Ollama。保存本地选择时保留已有本地模型/地址，否则设置 `bge-m3` 和默认本机地址；禁用隐式向量回退。 |
-| `model` | `Qwen/Qwen3-8B` | 仅8B或 `Qwen/Qwen3.5-4B`；文本任务随选择切换。 |
-| `fallback_to_other_free_model` | `true` | 可用性失败时尝试另一个获批免费模型；已输出内容的流不重放。 |
-| `fallback_to_user_provider` | `false` | 高级选项，显式允许回退已有自有渠道。 |
-| `notify_on_fallback` | `true` | 保留回退诊断提示。 |
-| `request_timeout_seconds` | `180.0` | 请求超时；Web API 接受10..1200秒，TOML兼容1..3600秒。 |
-| `runtime_path` | `""` | 仅本机高级覆盖；空时自动定位已验签的安装/内置组件，Web不可修改。 |
+| 已实现配置 | 语义 |
+| --- | --- |
+| `llm.instances.<id>.provider_type="siliconflow_free"` | 与其他实例同层，固定两个模型实例 `Qwen/Qwen3-8B`、`Qwen/Qwen3.5-4B`；名称、启用状态、模型及所有端点字段不可修改，不允许复制或删除。 |
+| `llm.default_chain` / `llm.routes.*.chain` | 唯一聊天选择与备用顺序。可选择两个固定免费实例，也可显式把自有实例加入链；模块自定义链不会被免费服务截获。 |
+| `llm.embedding.provider="siliconflow_free"` | 独立选择云端 `BAAI/bge-m3`，1024维、文本；可与任何 LLM 组合，也可改用原有 Ollama / 其他 Embedding Provider。 |
+| `llm.builtin_providers_version=2` | 固定保留两个模型实例。旧版本按模型归并重复项并重写链引用，保留已有首个 ID / 模型与自有凭据；缺少的模型自动补入但不加入链。 |
+| `[llm.sponsored]` | 仅承载受保护传输的超时、通知、本机 runtime 路径和可选 HTTPS 中继地址；不是第二套模型路由。旧启用/模型/互备/向量模式字段仅供迁移。 |
 
 ```toml
-[llm.sponsored]
+[llm]
+routing_version = 2
+builtin_providers_version = 2
+default_chain = ["siliconflow-free"]
+
+[llm.instances.siliconflow-free]
+name = "硅基流动 · Qwen3-8B（免费）"
+provider_type = "siliconflow_free"
 enabled = true
 model = "Qwen/Qwen3-8B"
-embedding_mode = "cloud" # 或 local；local 同时需要 llm.embedding.provider="ollama"
-fallback_to_other_free_model = true
-fallback_to_user_provider = false
-request_timeout_seconds = 180.0
+
+[llm.embedding]
+provider = "siliconflow_free"
+model = "BAAI/bge-m3"
+output_dimensionality = 1024
 ```
 
-默认云端文本向量固定 `BAAI/bge-m3`/1024维，暂时覆盖但保留 `[llm.embedding]`。选择本地模式后使用该表的Ollama模型和地址，默认 `bge-m3`；已用桌面私有11435端口或Docker `ollama:11434` 时继续保留。切换向量模式走常规运行时重建和既有provenance隔离，不走仅聊天模型切换的快速路径。关闭免费方案后使用当前 `[llm.embedding]` 配置。图片理解可选并由4B承担；BGE-M3不支持图片向量，即使原 `multimodal_enabled` 开启也不会伪装成支持。
+公开 API：`builtin_siliconflow_instance(model)` 构造固定目录项（供内部使用）；`migrate_sponsored_provider_config(llm, seed_preset=False)` 将旧全局开关转换为明确的主实例和可选备用实例，保留自有凭据及模块链，不隐式追加付费渠道；`uses_siliconflow_free(llm, include_embedding=True)` 按实际路由判断组件需求与通知。`load_config_with_diagnostics()` 读取时归一化，`save_config()` 在序列化前完成迁移。
 
-`load_config_with_diagnostics()` 安装进程级设置。常规保存/运行时应用、子进程重建和重启恢复共用现有事务；模型选择进入共享 SDK 缓存键。无效模型或旧模块链引用仍报配置问题。默认付费回退关闭时不把空自有 Key 误判成免费方案缺失凭据。 `validate_runtime_config()` 在免费独占路由下不要求未参与调用的自有渠道凭据、端点或本地聊天模型；保存重载后的 legacy / v2 配置与云端 / 本地向量均遵循此规则。显式开启 `fallback_to_user_provider` 后仍校验自有渠道，免费组件、向量与非模型运行时校验继续生效。
+旧 `embedding_mode=cloud` 迁移为上述独立配置；旧 `local` 保留已有 Ollama 模型和地址。云端/本地采用不同缓存 provenance，聊天切换不改变向量空间。旧免费独占时未使用且缺少凭据的模板保留为停用草稿。新客户端通过普通实例/Embedding API 修改，避免继续写旧全局开关。
 
-`runtime/sponsored_release.json` 固定公钥、归档摘要与平台目录；目录尚未配置正式产物时，安装入口明确提示版本不可用。组件验签及原子更新详见[Runtime](runtime.md#免费模型组件安装与更新)。
+仅改变默认调用链时，`RuntimeContext.try_apply_llm_instance_config()` 切换已有实例的顺序，已开始请求保留选定对象，新请求用新顺序；任何实例字段或模块链变更仍走既有修订队列与完整安全重建。SDK 每个模型保留交互首段预算和有界同模型重试，跨实例备用由正常链控制。
 
-### 免费模型路由即时应用（2026-11-05）
-
-无显式思考的交互流在输出首段前最多等待 `min(request_timeout_seconds, 30)` 秒，同一逻辑请求的重试/退避/免费互备共用此预算；有输出后按正常请求时限执行。画像与后台评估不受此交互专用首段限制，超时仍会明确报错。
-
-无新增字段。方案已启用时，仅修改 `llm.sponsored.model`、免费互备开关、`notify_on_fallback`或`request_timeout_seconds`可即时应用，无需等待学习任务排空。配置API仍发布applied修订状态；API进程内旧请求持有原模型，新请求读取新选择；独立worker模式会递增配置generation，由现有supervisor重启后台进程并按原持久化规则恢复任务。切换自有provider回退开关（需要重建registry链）、方案启用状态、runtime_path或其它配置继续走完整运行时交接。
-
+组件固定信任根与打包方式不变；`runtime_path` 不允许通过 Web 修改，`relay_url` 仅接受 HTTPS origin。见 [Runtime](runtime.md#免费模型组件安装与更新)。
 
 ## 免费中继与元信息交付（v0.3.234）
 

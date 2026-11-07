@@ -403,7 +403,7 @@ def test_degraded_mode_allows_draft_llm_recovery_probes_and_model_discovery(
 
     import openbiliclaw.llm.registry as registry_module
 
-    monkeypatch.setattr(registry_module, "build_llm_registry", lambda cfg: FakeRegistry())
+    monkeypatch.setattr(registry_module, "build_llm_registry", lambda cfg, **_kw: FakeRegistry())
     monkeypatch.setattr(
         registry_module,
         "_build_instance_provider",

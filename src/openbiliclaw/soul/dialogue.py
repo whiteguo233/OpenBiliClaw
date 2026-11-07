@@ -500,7 +500,8 @@ class SocraticDialogue:
         Token streaming: when the loop's LLM service streams, ``delta``
         events (incremental reply fragments) pass through between hops and
         the ``final`` event; the recorded history reply still comes from
-        ``final`` only.
+        ``final`` only. Pass the unadorned user request separately so locale
+        rules and reference data cannot disable the loop's tool-text guard.
         """
         if self._learning_mode is DialogueLearningMode.QUEUED and self._settlement_queue is None:
             raise DialogueLearningConfigurationError(
@@ -585,6 +586,7 @@ class SocraticDialogue:
                 async for event in agent_loop.run(
                     system_instruction=system,
                     user_message=localized_user_message,
+                    original_user_message=user_message,
                     history=prompt_history,
                     tools=tools,
                     approval_context={

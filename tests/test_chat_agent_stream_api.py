@@ -124,18 +124,28 @@ def _app(tmp_path: Path, dialogue: FakeAgentDialogue) -> Any:
 
 
 @pytest.mark.parametrize("recover", [True, False])
+@pytest.mark.parametrize("wrapped", [False, True])
 async def test_silent_sponsored_failure_retries_durably_with_a_bound(
-    tmp_path: Path, recover: bool
+    tmp_path: Path, recover: bool, wrapped: bool
 ) -> None:
     from openbiliclaw.api.app import ChatTurnIn
+    from openbiliclaw.llm.base import LLMProviderError
+    from openbiliclaw.llm.service import LLMProviderExecutionError
     from openbiliclaw.llm.sponsored_errors import SponsoredUnavailableError
+
+    failure: Exception = SponsoredUnavailableError("sponsored first output timed out")
+    if wrapped:
+        adapter_error = LLMProviderError("free provider unavailable")
+        adapter_error.__cause__ = failure
+        failure = LLMProviderExecutionError("All providers failed")
+        failure.__cause__ = adapter_error
 
     class FlakyDialogue(FakeAgentDialogue):
         async def stream_agent_reply(self, *args: Any, **kwargs: Any) -> Any:
             self._script = (
                 [AgentEvent(type="final", step=1, text="已恢复")]
                 if recover and self.agent_calls
-                else [SponsoredUnavailableError("sponsored first output timed out")]
+                else [failure]
             )
             async for event in super().stream_agent_reply(*args, **kwargs):
                 yield event
@@ -164,8 +174,13 @@ async def test_silent_sponsored_failure_retries_durably_with_a_bound(
 
 
 @pytest.mark.parametrize("case", ["auth", "partial", "tool", "restart"])
-async def test_durable_free_failure_never_replays_started_work(tmp_path: Path, case: str) -> None:
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_durable_free_failure_never_replays_started_work(
+    tmp_path: Path, case: str, wrapped: bool
+) -> None:
     from openbiliclaw.api.app import ChatTurnIn
+    from openbiliclaw.llm.base import LLMProviderError
+    from openbiliclaw.llm.service import LLMProviderExecutionError
     from openbiliclaw.llm.sponsored_errors import SponsoredAuthError, SponsoredUnavailableError
 
     script: list[AgentEvent | Exception] = []
@@ -173,7 +188,15 @@ async def test_durable_free_failure_never_replays_started_work(tmp_path: Path, c
         script.append(AgentEvent(type="delta", step=1, text="已经输出"))
     if case == "tool":
         script.append(AgentEvent(type="tool_call", step=1, tool_name="set_preference"))
-    script.append(SponsoredAuthError("expired") if case == "auth" else SponsoredUnavailableError())
+    failure: Exception = (
+        SponsoredAuthError("expired") if case == "auth" else SponsoredUnavailableError()
+    )
+    if wrapped:
+        adapter_error = LLMProviderError("free provider unavailable")
+        adapter_error.__cause__ = failure
+        failure = LLMProviderExecutionError("All providers failed")
+        failure.__cause__ = adapter_error
+    script.append(failure)
     dialogue = FakeAgentDialogue(script)
     app = _app(tmp_path, dialogue)
     scheduler = app.state.chat_reply_scheduler

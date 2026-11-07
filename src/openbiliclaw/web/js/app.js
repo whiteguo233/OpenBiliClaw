@@ -212,7 +212,13 @@ async function openMobileSettings(opener) {
       <span>保存时自动同步到对应平台</span>
     </label>
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
-    <div id="mobileSponsoredSettings"></div>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-llm-instance"><span>默认 LLM 实例</span>
+      <select id="mobile-llm-instance"></select></label>
+    <p id="mobile-llm-model-field" class="mobile-settings-hint">内置模型的配置固定，可通过上方实例选项切换。</p>
+    <div id="mobileLlmProviderNotice" hidden></div>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-embedding"><span>Embedding Provider</span>
+      <select id="mobile-embedding"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="ollama">本地 Ollama（bge-m3）</option><option value="">暂不启用</option></select></label>
+    <p class="mobile-settings-hint">更换默认实例会将默认链设为该实例；模块独立链保留。<a href="../web/?settings=models">管理全部实例与备用链</a></p>
     <label class="mobile-settings-field" for="mobile-eval-scorer">候选评估器</label>
     <select id="mobile-eval-scorer" aria-describedby="mobile-eval-scorer-hint">
       <option value="llm">Agent（默认）</option>
@@ -240,12 +246,14 @@ async function openMobileSettings(opener) {
   const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator, {
     probe: probeJevConfig,
   });
-  const sponsoredForm = window.OpenBiliClawSponsoredSettings.mount(card.querySelector("#mobileSponsoredSettings"), {
-    useOwn: () => { window.location.href = "/web/?settings=models"; },
-    prepare: () => requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
-    probe: sponsored => requestJson("/config/probe-service", { method: "POST", timeoutMs: 370000,
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "sponsored", config: { llm: { sponsored } } }) }),
-  });
+  let modelConfig = {};
+  const llmSelect = card.querySelector("#mobile-llm-instance");
+  const embeddingSelect = card.querySelector("#mobile-embedding");
+  const syncModel = () => {
+    const instance = modelConfig.instances?.[llmSelect.value];
+    card.querySelector("#mobile-llm-model-field").hidden = instance?.provider_type !== "siliconflow_free";
+  };
+  llmSelect.addEventListener("change", syncModel);
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
@@ -277,7 +285,24 @@ async function openMobileSettings(opener) {
     status.textContent = "正在加载设置…";
     try {
       const config = await fetchConfig();
-      sponsoredForm.load(config.llm?.sponsored);
+      modelConfig = config.llm || {};
+      window.OpenBiliClawSponsoredSettings?.renderNotice(card.querySelector("#mobileLlmProviderNotice"), modelConfig.sponsored?.service_status, () => { location.href = new URL("../web/?settings=models", location.href).href; });
+      llmSelect.replaceChildren();
+      for (const [id, instance] of Object.entries(modelConfig.instances || {})) {
+        if (instance.enabled === false) continue;
+        const option = document.createElement("option"); option.value = id;
+        option.textContent = instance.provider_type === "siliconflow_free"
+          ? instance.name || instance.model : `${instance.name || id} · ${instance.model}`;
+        llmSelect.append(option);
+      }
+      llmSelect.value = modelConfig.default_chain?.[0] || "";
+      syncModel();
+      const provider = modelConfig.embedding?.provider || "";
+      if (![...embeddingSelect.options].some(option => option.value === provider)) {
+        const option = document.createElement("option"); option.value = provider;
+        option.textContent = `已配置：${provider}`; embeddingSelect.append(option);
+      }
+      embeddingSelect.value = provider;
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
       const runtime = globalThis.OpenBiliClawI18n;
@@ -323,7 +348,27 @@ async function openMobileSettings(opener) {
     try {
       const selectedLanguage = languageSelect.value;
       const payload = { ...jevForm.collect(), language: selectedLanguage, saved_sync: { auto_sync_enabled: toggle.checked } };
-      payload.llm = { sponsored: sponsoredForm.collect() };
+      const id = llmSelect.value;
+      const instances = structuredClone(modelConfig.instances || {});
+      const llmChanged = id !== (modelConfig.default_chain?.[0] || "");
+      const provider = embeddingSelect.value;
+      const embeddingChanged = provider !== (modelConfig.embedding?.provider || "");
+      const embedding = provider === (modelConfig.embedding?.provider || "") ? modelConfig.embedding : {
+        provider, model: provider === "siliconflow_free" ? "BAAI/bge-m3" : provider === "ollama" ? "bge-m3" : "",
+        api_key: "", base_url: provider === "ollama" ? "http://127.0.0.1:11434/v1" : "",
+        output_dimensionality: 1024, fallback_enabled: false, fallback_provider: "", multimodal_enabled: false,
+      };
+      if (llmChanged) {
+        payload.llm = { routing_version: 2, instances,
+          default_chain: id === modelConfig.default_chain?.[0] ? modelConfig.default_chain : id ? [id] : [],
+        };
+      }
+      if (embeddingChanged) payload.llm = { ...(payload.llm || {}), embedding };
+      if (((llmChanged && instances[id]?.provider_type === "siliconflow_free")
+        || (embeddingChanged && provider === "siliconflow_free")) && !modelConfig.sponsored?.runtime_available) {
+        const prepared = await requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 });
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       if (evaluator.value !== storedEvaluator) payload.discovery = {...(payload.discovery || {}), eval_scorer: evaluator.value};
       await updateConfig(payload);
       await loadConfig();
@@ -489,7 +534,7 @@ const stream = createStreamClient({
 // ── State subscription — re-render shell on relevant changes ─
 subscribe((_state, changed) => {
   if ("runtimeStatus" in changed) {
-    window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("mobileSponsoredSettings"), _state.runtimeStatus?.sponsored_status);
+    window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("mobileLlmProviderNotice"), _state.runtimeStatus?.sponsored_status);
   }
   if ("online" in changed || "degraded" in changed || "degradedReason" in changed || "messages" in changed || "runtimeStatus" in changed) {
     renderStatusBar();

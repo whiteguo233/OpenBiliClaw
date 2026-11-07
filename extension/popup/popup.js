@@ -2808,7 +2808,7 @@ async function handleStartInitClick() {
 }
 
 function renderPoolStatus(runtimeStatus) {
-  window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgSponsoredSettings"), runtimeStatus?.sponsored_status);
+  window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgLlmProviderNotice"), runtimeStatus?.sponsored_status);
   const messageList = elements.messagesList;
   if (messageList) {
     let notice = document.getElementById("sponsoredMessageNotice");
@@ -9616,7 +9616,7 @@ function bindSettings() {
     dashscope: "留空 = https://dashscope.aliyuncs.com（国际站 dashscope-intl.aliyuncs.com）",
   };
 
-  function applyEmbeddingProviderUI() {
+  function applyEmbeddingProviderUI(event) {
     const select = document.getElementById("cfgEmbeddingProvider");
     if (!select) return;
     const provider = select.value;
@@ -9643,6 +9643,17 @@ function bindSettings() {
       }
       el.style.display = visible ? "" : "none";
     }
+
+    window.OpenBiliClawSponsoredSettings.syncEmbedding({
+      reset: event?.type === "change",
+      prepare: prepareSponsoredRuntime,
+      provider: document.getElementById("cfgEmbeddingProvider").value,
+      model: document.getElementById("cfgEmbeddingModel"),
+      key: document.getElementById("cfgEmbeddingApiKey"),
+      base: document.getElementById("cfgEmbeddingBaseUrl"),
+      dimension: document.getElementById("cfgEmbeddingOutputDimensionality"),
+      multimodal: document.getElementById("cfgEmbeddingMultimodalEnabled"),
+    });
   }
 
   const embeddingProviderSelect = document.getElementById("cfgEmbeddingProvider");
@@ -10073,6 +10084,7 @@ function bindSettings() {
   }, 30000);
 
   const LLM_PROVIDER_LABELS = {
+    siliconflow_free: "硅基流动（免费）",
     openai: "OpenAI",
     claude: "Claude",
     gemini: "Gemini",
@@ -10086,6 +10098,7 @@ function bindSettings() {
     openai_compatible: "OpenAI-compatible",
   };
   const LLM_PROVIDER_DEFAULTS = {
+    siliconflow_free: { model: "Qwen/Qwen3-8B", base_url: "" },
     openai: { model: "gpt-5-nano", base_url: "" },
     claude: { model: "claude-sonnet-4-6", base_url: "" },
     gemini: { model: "gemini-2.5-flash", base_url: "" },
@@ -10179,6 +10192,7 @@ function bindSettings() {
   }
 
   function llmEndpointSummary(instance) {
+    if (instance.provider_type === "siliconflow_free") return "内置服务 · 无需 Key";
     const raw = String(instance?.base_url || "").trim();
     if (!raw) return "官方默认地址";
     try {
@@ -10226,6 +10240,7 @@ function bindSettings() {
       return;
     }
     for (const [instanceId, instance] of entries) {
+      const fixed = instance.provider_type === "siliconflow_free";
       const references = llmInstanceReferences(instanceId);
       const probe = state.llmProbeResults.get(instanceId);
       const card = document.createElement("article");
@@ -10244,7 +10259,7 @@ function bindSettings() {
       title.append(name, id);
       head.append(
         title,
-        createLlmBadge(instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
+        createLlmBadge(fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
       );
 
       const badges = document.createElement("div");
@@ -10275,7 +10290,7 @@ function bindSettings() {
 
       const actions = document.createElement("div");
       actions.className = "settings-llm-instance-actions";
-      for (const [action, label] of [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]]) {
+      for (const [action, label] of (fixed ? [["probe", "测试"]] : [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]])) {
         const button = document.createElement("button");
         button.className = "settings-secondary-btn";
         button.type = "button";
@@ -10483,7 +10498,7 @@ function bindSettings() {
       name: getVal("cfgLlmInstanceName").trim() || current.name || instanceId,
       provider_type: providerType,
       enabled: true,
-      api_key: apiKey,
+      api_key: providerType === "siliconflow_free" ? "" : apiKey,
       model: getVal("cfgLlmInstanceModel").trim(),
       base_url: getVal("cfgLlmInstanceBaseUrl").trim(),
       auth_mode: providerType === "openai"
@@ -10578,6 +10593,14 @@ function bindSettings() {
       field.hidden = !visible;
     });
     resetLlmModelDiscovery();
+    window.OpenBiliClawSponsoredSettings.syncInstance({
+      provider: providerType,
+      model: document.getElementById("cfgLlmInstanceModel"),
+      key: document.getElementById("cfgLlmInstanceApiKey"),
+      base: document.getElementById("cfgLlmInstanceBaseUrl"),
+      status: document.getElementById("cfgLlmInstanceModelDiscoveryStatus"),
+      prepare: prepareSponsoredRuntime,
+    });
   }
 
   function applyLlmProviderDefaults() {
@@ -10619,6 +10642,7 @@ function bindSettings() {
     const dialog = document.getElementById("cfgLlmInstanceDialog");
     if (!(dialog instanceof HTMLElement)) return;
     const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+    if (instance?.provider_type === "siliconflow_free") return;
     state.llmEditingInstanceId = instanceId;
     llmDialogReturnFocus = document.activeElement;
     dialog.dataset.providerType = instance?.provider_type || "";
@@ -10714,7 +10738,7 @@ function bindSettings() {
     const effectiveKey = checked("cfgLlmInstanceClearApiKey")
       ? ""
       : typedKey || current.api_key || "";
-    const keyOptional = ["ollama", "gemini"].includes(providerType)
+    const keyOptional = ["ollama", "gemini", "siliconflow_free"].includes(providerType)
       || (providerType === "openai" && authMode === "codex_oauth");
     if (enabled && !keyOptional && !effectiveKey) {
       fail("启用的远端实例需要 API Key。", "cfgLlmInstanceApiKey");
@@ -10729,7 +10753,7 @@ function bindSettings() {
       name,
       provider_type: providerType,
       enabled,
-      api_key: effectiveKey,
+      api_key: providerType === "siliconflow_free" ? "" : effectiveKey,
       model,
       base_url: baseUrl,
       auth_mode: authMode,
@@ -10754,7 +10778,7 @@ function bindSettings() {
   }
 
   function deleteLlmInstance(instanceId) {
-    if (!state.llmDraft?.instances[instanceId]) return;
+    if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
     const references = llmInstanceReferences(instanceId);
     if (references.length) {
       showToast(`无法删除：仍被 ${references.join("、")} 引用。`, "error");
@@ -10774,6 +10798,10 @@ function bindSettings() {
     state.llmProbeResults.set(instanceId, { pending: true });
     renderLlmInstances();
     try {
+      if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+        const prepared = await prepareSponsoredRuntime();
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       const result = await probeConfigService("llm_instance", collectForm(), instanceId);
       state.llmProbeResults.set(instanceId, result);
     } catch (err) {
@@ -10861,10 +10889,17 @@ function bindSettings() {
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
-    window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings"), {
-      prepare: prepareSponsoredRuntime,
-      probe: sponsored => probeConfigService("sponsored", { llm: { sponsored } }),
-    }).load(cfg.llm?.sponsored);
+    window.OpenBiliClawSponsoredSettings.renderNotice(
+      document.getElementById("cfgLlmProviderNotice"),
+      cfg.llm?.sponsored?.service_status,
+      (notices) => {
+        if (notices.every(item => !item.capabilities?.includes("chat"))) {
+          const field = document.getElementById("cfgEmbeddingProvider");
+          field.scrollIntoView({ block: "center" });
+          field.focus();
+        } else openLlmInstanceDialog();
+      },
+    );
     ensurePopupSourceDateFields();
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
@@ -11325,7 +11360,6 @@ function bindSettings() {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
-        sponsored: window.OpenBiliClawSponsoredSettings.mount(document.getElementById("cfgSponsoredSettings")).collect(),
         routing_version: 2,
         instances: clonePlain(llmDraft.instances),
         default_chain: [...llmDraft.default_chain],
@@ -11342,6 +11376,7 @@ function bindSettings() {
         timeout: getInt("cfgLlmTimeoutV2", 1200),
         embedding: {
           ...(state.runtimeConfig?.llm?.embedding || {}),
+          output_dimensionality: getVal("cfgEmbeddingProvider") === "siliconflow_free" ? 1024 : state.runtimeConfig?.llm?.embedding?.output_dimensionality || 1024,
           provider: getVal("cfgEmbeddingProvider"),
           api_key: getVal("cfgEmbeddingApiKey"),
           base_url: getVal("cfgEmbeddingBaseUrl"),

@@ -1908,13 +1908,16 @@ class ContentDiscoveryEngine:
         contents: list[DiscoveredContent],
         requested_batch_size: int,
     ) -> int:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
         batch_size = max(1, int(requested_batch_size))
         # Real free-model runs timed out at 30 items while smaller batches
         # completed. Preserve every item and its identity, but bound one IPC
         # request so a slow batch cannot monopolize the background channel.
-        if sponsored_enabled() and getattr(self, "_eval_scorer", "llm") != "jev":
+        if (
+            uses_sponsored_route(self._llm_service, "discovery.evaluate_batch")
+            and getattr(self, "_eval_scorer", "llm") != "jev"
+        ):
             batch_size = min(batch_size, 8)
         self.multimodal_unavailable_reason = ""
         if not bool(getattr(self, "multimodal_evaluation_enabled", False)):

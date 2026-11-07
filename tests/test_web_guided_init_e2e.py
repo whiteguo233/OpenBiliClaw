@@ -1875,12 +1875,13 @@ def test_setup_completion_reports_selected_embedding_mode(
     state.config_override = {
         "config": {
             "llm": {
+                "embedding": {
+                    "provider": "siliconflow_free" if mode == "cloud" else "ollama",
+                    "model": "BAAI/bge-m3" if mode == "cloud" else "bge-m3",
+                },
                 "sponsored": {
-                    "enabled": True,
-                    "model": "Qwen/Qwen3.5-4B",
-                    "embedding_mode": mode,
                     "runtime_available": True,
-                }
+                },
             }
         }
     }

@@ -27,10 +27,12 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
 ) -> None:
     base_url, _ = mobile_web_server
     client = _client(monkeypatch, tmp_path, _configured())
+    saved_payloads = []
 
     def config_api(route: Route) -> None:
         request = route.request
         if request.method == "PUT":
+            saved_payloads.append(request.post_data_json)
             response = client.put("/api/config", json=request.post_data_json)
         else:
             response = client.get("/api/config")
@@ -55,6 +57,7 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
     page.locator("#mobile-eval-scorer").select_option("jev")
     page.get_by_role("button", name="保存设置", exact=True).click()
     page.locator(".mobile-settings-status").filter(has_text="设置已保存").wait_for()
+    assert saved_payloads and "llm" not in saved_payloads[-1]
     assert root.get_by_label("Token", exact=True).input_value() == ""
     assert "synthetic-mobile-token" not in page.locator("body").inner_text()
     page.get_by_role("button", name="关闭设置", exact=True).click()

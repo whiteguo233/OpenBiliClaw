@@ -1,5 +1,13 @@
 # Evaluation 模块
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 评估 harness 遵循模块链 | `evaluation_uses_sponsored()` 读取有效 evaluation 链；`sponsored_agent_text()` 通过普通 LLMService 执行，保留原 Read/Grep/Glob 白名单与只读边界。自有 evaluation 模块链不被免费默认实例截获。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 | 功能 | 状态 | 接口与说明 |
 | --- | --- | --- |
 | 裸 provider/Registry 模拟与评分 | 已实现 | PersonaGenerator、EventSimulator、PromptOptimizer 的 complete 调用通过 complete_project_task；保持其消息与解析流程 |

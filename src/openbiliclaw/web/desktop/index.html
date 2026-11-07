@@ -400,7 +400,7 @@
         </div>
 
         <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
-          <div id="sponsoredSettings"></div>
+
           <section class="llm-routing-section" aria-labelledby="llmInstancesHeading">
             <div class="llm-section-head">
               <div>
@@ -413,6 +413,7 @@
                 新建实例
               </button>
             </div>
+            <div id="llmProviderNotice" hidden></div>
             <div class="llm-instance-grid" id="llmInstanceList" aria-live="polite"></div>
           </section>
 
@@ -484,7 +485,7 @@
           </div>
 
           <div class="settings-subpanel is-active" data-model-settings-group="embedding" data-model-settings-panel="default">
-            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
+            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
             <label class="settings-field"><span>Embedding 模型</span><input id="embeddingModel" value="bge-m3"></label>
             <label class="settings-field"><span>Embedding API Key</span><input id="embeddingApiKey" autocomplete="off"></label>
             <label class="settings-field"><span>Embedding Base URL</span><input id="embeddingBaseUrl"></label>

@@ -127,8 +127,10 @@ budget_seconds = 30.0
 [llm]
 # v2：每个实例都是完整可调用端点（类型 + Base URL + 凭据 + 模型）。
 # default_chain 从左到右依次尝试；失败、超时或限流时降级到下一实例。
-# 可复制任意 [llm.instances.<id>] 表并换一个稳定 ID，从而配置同类型的多个账号/网关。
+# 可复制自有渠道的 [llm.instances.<id>] 表并换稳定 ID；内置免费实例不可复制或修改。
 routing_version = 2
+# 两个内置免费实例固定存在；不使用时从调用链移除，不能编辑或删除。
+builtin_providers_version = 2
 default_chain = ["deepseek"]
 # Shared max concurrency for LLM requests. Higher values replenish faster but
 # may hit provider/local-proxy rate limits sooner.
@@ -193,6 +195,21 @@ timeout = 1200
 #
 # default_chain = ["deepseek", "cheaperinference"]
 
+# 两个固定免费实例共用普通路由：将所需 ID 加入 default_chain / 模块链。
+# 下列配置由程序管理，不可编辑；可同时加入两个实例并调整顺序。
+[llm.instances.siliconflow-free]
+name = "硅基流动 · Qwen3-8B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3-8B"
+# 无需 API Key / Base URL；凭据与端点由安全组件管理。
+
+[llm.instances.siliconflow-free-qwen35-4b]
+name = "硅基流动 · Qwen3.5-4B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3.5-4B"
+
 [llm.instances.deepseek]
 name = "DeepSeek 官方"
 provider_type = "deepseek"
@@ -213,6 +230,7 @@ base_url = "https://api.deepseek.com"
 reasoning_effort = "medium"
 
 [llm.embedding]
+# 也可独立选 provider="siliconflow_free", model="BAAI/bge-m3", 1024 维；Key/URL 留空。
 # Embedding model for semantic similarity (topic dedup, fatigue, feedback)
 #
 # v0.3.32+ note: this section now owns its own ``api_key`` / ``base_url``.
@@ -287,24 +305,14 @@ cache_high_watermark = 0.9
 # 淘汰停止水位（占用 / 预算 的比例，0..1，需 <= cache_high_watermark）
 cache_low_watermark = 0.7
 
-# 硅基流动免费方案：初始化与设置页可选；需要匹配的已签名 Rust 运行组件。
-# 共享 Key 仅由私有 Rust 组件持有。普通用户无需填写 Key 或可执行文件路径。
-# 默认覆盖文本、JSON、工具调用及 BGE-M3 文本向量；图片理解是独立可选增强。
+# 内置 Provider 的底层传输参数；实例选择和回退统一由 llm.instances / default_chain 管理。
+# 普通用户无需修改此段。旧 enabled/model/embedding_mode/回退字段只供升级兼容。
 [llm.sponsored]
-enabled = false
-# 留空自动寻找已验证的安装包。仅本机开发/诊断可写命令；网页不能修改。
+# 留空自动发现已验证的 Rust 组件。网页不能指定本机可执行文件。
 runtime_path = ""
-# 部署验证后的 HTTPS 中继地址；留空沿用发行版默认。中继模式不向客户端提供供应商 Key。
+# 可选的已验证 HTTPS 中继；留空沿用发行版默认。
 relay_url = ""
-model = "Qwen/Qwen3-8B" # 另一个选项：Qwen/Qwen3.5-4B
-# cloud（默认）：内置凭据调用硅基流动 BGE-M3；local：独立使用 [llm.embedding] Ollama。
-embedding_mode = "cloud"
-fallback_to_other_free_model = true
-# 仅显式开启才会调用自费服务；关闭时免费组件缺失或额度用尽会报告错误。
-fallback_to_user_provider = false
-# 回退时是否在日志/UI 提示用户，避免误以为免费额度仍可用。
 notify_on_fallback = true
-# 单次 Sponsored 请求超时（秒），范围 1..3600。
 request_timeout_seconds = 180.0
 
 # Per-module routes. inherit=true 表示完整继承 [llm].default_chain；

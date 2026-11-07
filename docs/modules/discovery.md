@@ -1,5 +1,13 @@
 # 内容发现引擎
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 按评估模块链选择预算 | `ContentDiscoveryEngine` 的免费小批量和超长拆分判定使用实际 evaluation 调用链；自定义评估实例不会被免费全局开关替代。候选 schema、缓存版本和来源信息不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
 
 

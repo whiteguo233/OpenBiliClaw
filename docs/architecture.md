@@ -214,6 +214,9 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint queues background execution + config_update_hook → settings apply queue / last-good + ledger audit
@@ -274,8 +277,8 @@ candidate evaluation → effective profile view + exact tail-recall pool + negat
 1. **用户交互层** — Chrome / Firefox 插件负责受支持站点的普通行为采集、登录态只读任务与侧边栏；Linux.do / V2EX / 微博 / Instagram 使用隔离任务 tab，微博与 Instagram 普通页面不做行为采集。插件与移动 Web（`/m`）、桌面 Web（`/web`）共用本地 API；`OpenBiliClaw-mobile` 的 Android / iOS 原生 App 可通过两端各自内嵌的 tsnet 从同一 tailnet 访问电脑后端，其 Web / Linux / macOS / Windows Flutter 构建不在该路径支持面。可选密码门禁保护局域网 / 远程访问。
 2. **外部集成层** — OpenClaw adapter / skill wrappers / 本地 API / Codex CLI 凭据导入等对外接入边界
 3. **Agent 核心层** — 自研编排器 + Soul Engine + Discovery Engine + Recommendation Engine + Skill System；抖音手动 discovery 与 daemon 共用正式 producer、统一关键词生命周期和待评估候选链，debug-only `discover-douyin` 才直接调用源服务
-4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
-   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext 局部应用或 rebuild -> apply-status/config_reloaded`；完整候选仅改变已知五项 agent 设置时替换 loop，在途回合与学习 owner 不动，其他变更保留安全排空后 rebuild。失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
+4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在；`siliconflow_free` 使用相同实例结构，固定提供 Qwen3-8B / Qwen3.5-4B 两个只读实例；凭据与地址由受保护 adapter 内部管理。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
+   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext 局部应用或 rebuild -> apply-status/config_reloaded`；完整候选仅改变已知五项 agent 设置时替换 loop；仅改变默认实例链时原地更新 registry 顺序，在途回合与学习 owner 不动，其他变更保留安全排空后 rebuild。失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
    发布日期偏好按来源配置（`[sources.<name>].recommendation_date_*`），默认 `all`。发现策略在 LLM 评估前硬过滤范围外候选；`RuntimeContext -> Database effective inventory -> PoolCurator -> RecommendationEngine` 继续保留 `weight` 语义（软降分或推荐出口严格忽略）。严格模式还把 UTC 边界下推到 B 站 API / 扩展网页搜索。
    跨机器迁移走第三条、与热重载隔离的控制流：`本机桌面设置 -> export .obcbackup -> 新机器 import(request_id) -> processing(uploading|validating) -> pending -> status 对账 / cancel -> 重启`。导出数据固定来自本进程已锁住的 active data dir；导入端点从不替换 live `Database` / `MemoryManager` 或 UI 偏好。断连后的桌面端保留 request ID，最多强制查 3 次并对 `idle/cancelled` 间隔 500ms 再确认；每次打开「通用」也强制查询。只有下一进程先同时取得项目与 canonical data-dir runtime lock，才通过 journaled replace 激活配置和数据；成功回执用配置 SHA-256 + 严格递增 DB epoch 绑定活动代际，使断电后复活的旧 marker 只能被验证、清理而不能重放。status 报告 `applied` 后，桌面端按 `migration_id` 在每个浏览器只应用一次白名单偏好，避免旧 status 覆盖用户后续修改。来源包会移除整段 `[api.auth]`，机器专属路径 / 网络字段和目标机整段 `api.auth` 继续作为基线；应用时再轮换文件 session secret、把数据库 auth epoch 严格提升到来源 / 目标当前值之上，并关闭 / 清空扩展设备访问。
 5. **多源适配层（v0.3.0+）** — `sources.platforms` 统一注册 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Instagram 的平台别名、strategy 与 URL 身份。Linux.do 通过同源只读插件任务接入公开 discovery 与个人信号；Bangumi 使用官方匿名 API 与可选令牌；V2EX 使用官方匿名 API / Feed、可选 PAT 与四类账号分区 bootstrap；微博公开 discovery 由后端匿名直连，个人初始化由同源扩展任务读取收藏、关注和 mentions；GitHub 使用官方 REST API，公开 repository 以匿名/可选 PAT 方式进入 search/ranked/latest，公开 starred repositories 仅在 init/on-demand 形成画像信号，私有仓库和站内写操作始终拒绝。Instagram 的 topic/creator discovery 与 liked/saved/following 初始化由隔离浏览器任务执行，后端不接收 Cookie 或原始响应。所有来源统一归一化后进入候选评估链，不执行站内写操作。 GitHub 与 Instagram 显式初始化在暂停后台期间自行完成来源 producer、评估和推荐文案，不调用未选择的 B站发现。通用网页抽取以规范化完整 HTTP(S) URL 生成稳定身份，避免模型简称 ID 合并不同网页；原生平台 ID 不变。
@@ -352,6 +355,7 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - 任务调度和策略决策
 - 多步推理和自省优化
 - Skill 注册、发现和调度
+- `tool_text.py` 检查流式及最终正文中的完整工具封套，并隔离其后无执行依据的完成声明；用户原文与自动拼接的模型上下文分开传递，代码/原样数据请求保留。纯协议空答复最多纠正一次，文本不进入工具执行或审批路径。
 - 「聊一聊」chat agent loop（2026-09-23）：`loop.py` 多跳工具调用循环（`[agent] loop_max_steps` 默认 64 跳，事件流 thinking/tool_call/tool_result/approval_request/final）；`tools/` JSON Schema 工具注册表 + read / soft_write / hard_write 三级权限与 v1 标准工具集；`skill.py` SKILL.md 目录加载（`skills_builtin/` 内置 4 个 + `{data_dir}/skills/` 用户覆盖）；`tasks.py` durable 后台任务中心（只读 loop + `propose_suggestion` 建议清单 + 完成后 `agent_task_summary` 汇总 turn 回写来源会话）；`approvals.py` L2 hard_write 审批门（`chat_approvals.json` 单文件状态机 pending → approved → executing → executed / failed，另有 rejected / expired，决策写 `profile_update_ledger` 审计；approve 端点异步化——立即返回，`chat_approval_execute` 后台任务执行并回写终态，2026-09-25）
 
 ### Blue Fish Lab (`fish/`)
@@ -785,40 +789,32 @@ query inspiration → configured provider chain
 ```
 
 
-## 免费模型路由与运行组件（正式发行待完成）
+## 免费模型路由与运行组件（实例统一改动待发布）
 
 ```text
-Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
-  → LLMService / Registry / eval → selected signed 8B or 4B task
-  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
-  → optional HTTPS relay: device proof + short session + replay/central quota → server Rust pool
-  → local compatibility mode: bounded Rust workers (1 interactive + 2 background; shared quota ledger)
-  → SiliconFlow SSE / embeddings
-  → Core schema / evidence validation
-      ├ passive portrait: source-backed information preferences
-      ├ invalid temporal fields: one narrow LLM correction → source validation
-      └ awareness batch vs lookback → reject foreign citations → one corrective retry
-  → normal profile, discovery, recommendation, agent flows
-Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
-Auth failure / signed-policy expiry → durable capability status → settings + message notices
-  → update application / installer OR configure a user-owned API key
-Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
-  → shared 30s first-output budget; no replay after output
-Silent transient chat failure → persisted retry count (max 2) → durable worker
-Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
-Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
-  → required pinned SDK staging → offline self-check → versioned bundle / atomic activation
-  → prefer current Core pin over stale active SDK after application update
-Agent exact memory lookup → JSON Pointer → bounded original value (no bulk-context guessing)
-Free director → ordered refs → deterministic pairing → unchanged horizon validation
-Optional image understanding: 4B; image embeddings: unavailable in the free profile
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
 `llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
 
 `sponsored_status.py` 将真实IPC失败与成功恢复映射为按聊天/向量独立的本地状态；API和后台worker共享通知文件，页面轮询只读状态。向量选择经配置重建进入云端签名任务或本地Ollama，已存在的向量provenance边界防止跨源混用。
 
-`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；五平台SDK已公开发行，主程序分支仍待发布。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；五平台SDK已公开发行，本次实例统一改动尚未发布。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
 
 
 中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。

@@ -658,26 +658,28 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
-免费模型方案（v0.3.234 应用交付）：初始化、插件、PC 与手机设置共用模型选择；8B 为推荐默认，4B 可随时切换，文本向量默认云端 BGE-M3，也可选择本地 Ollama。[实现与验收边界](docs/plans/2026-11-04-sponsored-user-flow.md)。
+硅基流动作为预置 LLM 实例：在现有实例列表选择8B/4B，默认链和模块链决定调用顺序；Embedding 独立选择云端 BGE-M3 或本地 Ollama。本次统一入口改动待随应用发布。[结构与验收](docs/testing/2026-11-06-unified-providers.md)。
 
 ```text
-常驻硅基流动 Provider：初始化 / 插件 / PC / 手机 / CLI → 本机配置 → 共享 Sponsored 路由
-  文本 / JSON / 工具 → Qwen3-8B（128K）⇄ Qwen3.5-4B（256K）
-  云端文本向量 → BGE-M3（1024维，默认）；可选图片理解 → 4B
-  配置 HTTPS 中继 → 设备签名 / 5分钟会话 / 防重放 → 服务端统一限额 → 服务端 Rust
-  本地兼容模式 → 签名任务 IPC → Rust 进程池（1前台＋2后台，共用额度账本）→ SiliconFlow
-  无输出的临时故障 → 有限重试/免费互备 → 持久队列；已输出或执行工具则停止重跑
-  GitHub/Instagram 显式初始化 → 所选来源 producer → 同步评估/文案 → 首轮可用库存
-  通用网页抽取 → 完整 URL 规范化身份 → 候选去重；站内原生 ID 保留
-  返回结果 → 来源证据校验 → 画像/记忆；时间字段失败最多单独纠错一次
-  本地向量选择 → Ollama（独立缓存与地址，不使用免费Key）
-  凭据失效 / 授权到期 → 持久状态 → 设置/消息通知 → 更新安装包或配置自有Key
-  后端打包 / Docker → 本地模式固定签名 SDK；已验证的官方中继发行模式不携带 Key SDK
-  安装器 / 更新器 → 验签 → 优先当前 Core 固定版本 → 原子切换组件
-  长记忆精确查询 → JSON Pointer 原值；免费导演 → 顺序引用 → 后端分组校验
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
-文本/JSON 接口转发真实增量流；工具沿用项目模拟协议。默认只在两个免费模型间回退，使用自有渠道须明确开启。BGE-M3 不提供图片向量。
+文本/JSON 接口转发真实增量流；免费工具适配采用 Qwen 标记格式的提示词桥接，保留结果身份，普通 JSON 作为数据。备用服务只按用户配置的实例链使用。BGE-M3 不提供图片向量。
 
 ```text
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
@@ -713,9 +715,9 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
-聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
+聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 正文工具协议检查 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
 
-配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
+配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，默认调用链仅调整 registry 顺序，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
 
 后台配置：`完整配置应用成功 → 队列结束 → 父进程确认旧子进程退出 → worker / 推荐 / 图片服务读取新配置`；保留当前数据目录与持久化候选，修正模型后补池可继续。
 
