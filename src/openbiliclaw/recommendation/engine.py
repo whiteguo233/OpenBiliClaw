@@ -39,6 +39,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.recommendation.exclusion import phrase_dislike_terms
 from openbiliclaw.saved_sync.identity import content_storage_key
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 from openbiliclaw.sources.platforms import normalize_source_platform, source_family
@@ -5827,7 +5828,10 @@ class RecommendationEngine:
             cls._normalize_dislike_match_text((item.body_text or "")[:800]),
             *[cls._normalize_dislike_match_text(tag) for tag in item.tags],
         ]
-        for term in disliked_terms:
+        # Scope parity with recommendation.exclusion: only phrase terms may
+        # substring-match prose; a bare category label ("科普" / "崩坏") is a
+        # structured-topic exclusion, never a site-wide title filter.
+        for term in phrase_dislike_terms(disliked_terms):
             if any(term in field for field in search_fields if field):
                 return True
         return False
