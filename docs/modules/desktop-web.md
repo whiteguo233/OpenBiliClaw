@@ -76,15 +76,31 @@
 
 ## 完整候选评估器选项
 
+设置主说明收敛为一句：“选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。”
+服务连接开关直接标注“不切换评估器”；评估模式和地址 / Token 技术说明默认折叠，数据发送与测试计费提醒仍可见。
+桌面、移动 Web 和插件保持一致；仅调整文案与信息层级，公开 API、配置字段、调用路由及 CLI 均不变。
+回归入口：`tests/test_jev_connection_form.py` 检查只启用连接仍保留原评估器、技术说明默认折叠且可键盘展开；
+`test_desktop_web_settings_save_e2e.py`、`test_jev_settings_popup.py`、`test_jev_settings_mobile.py`
+检查三端一句话说明及配置保存。手工复核路径为“设置 → 高级功能 → 候选评分模式”，展开两类说明后仍可查看完整限制。
+测试修正、间歇性通用刷新失败及原分支对照见[本轮验证记录](../verification/2026-11-07-jev-settings-copy.md)。
+该提交的真实 OpenRouter 复验已覆盖桌面 / 实际插件保存和候选评估、默认 LLM 路由保持及容量缩小；移动 Web 后续草稿探测出现 `invalid_response`，整体未全通过，调大恢复 / 重启本轮未执行，见同一记录的真实请求章节。
+
+三端共用 Jev 表单增加“测试连接与评估”，以当前草稿调用 `POST /api/config/probe-service`
+的 `kind="jev"`。1 条合成内容完整 8 题、单次 HTTP 尝试；不加载真实画像、不写配置，
+费用提示在按钮旁。请求中禁用重复点击，编辑后旧结果失效；具体合同见 [API](api.md#jev-草稿完整评估探测2026-11-06)。
+
 高级设置新增 `eval_scorer=jev`（纯文本 / 受控分类实验模式），显示独立 provider readiness
 及与封面评估不兼容的说明；保存由后端统一校验。
 未知主题 / IP 不由 LLM 补全。插件高级设置和移动设置提供相同模式入口，CLI 展示同一配置。
-Jev 连接区可配置服务开关、完整 API URL、Token、固定模型、双上下文上限、每批候选数、
+Jev 连接区可配置服务开关、Base URL / 完整 API URL、Token、固定模型、双上下文上限、每批候选数、
 超时及传输重试。与评估模式可一次保存；Token 密码输入、留空保留、明确清除，保存后清空，
 只在后端本机 TOML 保存，不进入浏览器存储/读取响应。共享
-`web/shared/jev-settings.js` 的 `mount(root, evaluator).load(provider, evaluation)` / `collect()`
+`web/shared/jev-settings.js` 的 `mount(root, evaluator, {probe}).load(provider, evaluation)` / `collect()`
 也供插件与移动 Web 使用。更换 URL 必须重填 Token，换模型不继承旧容量；同样支持原有 env。
-readiness 与配置后台应用状态均不等于官方联网/质量验收；当前不提供付费探测按钮。
+readiness 与配置后台应用状态均不等于联网/质量验收；显式探测只认证本次合成评估，不认证推荐质量。
+地址类型明确区分 SDK Base URL 与完整原生接口。Base 自动补 `/v1/systemone`，已有 `/v1`
+不重复；例如 OpenRouter Base 为 `https://openrouter.ai/api`。保存后从 canonical endpoint
+恢复表示；旧自定义路径仍显示完整地址，不改写为官方服务。三端均由后端发送 Bearer Token。
 
 ## 概述
 

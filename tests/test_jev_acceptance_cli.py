@@ -25,7 +25,11 @@ def run_cli(*args: str, env: dict[str, str] | None = None) -> subprocess.Complet
         env=variables,
         capture_output=True,
         text=True,
-        timeout=30,
+        # Two isolated cohorts can each budget up to 60s in the runner;
+        # allow 30s for cold imports/schema setup as well. This outer test
+        # watchdog must not truncate a correctly bounded child. It changes
+        # neither provider timeouts/attempts nor the runner's success checks.
+        timeout=150,
         check=False,
     )
 
@@ -45,7 +49,7 @@ def configured(path: Path, endpoint: str, model: str) -> None:
 def test_live_cli_uses_saved_endpoint_token_exact_model_and_capacity(tmp_path: Path) -> None:
     model = "synthetic-jev-small-v1"
     with FakeJevBackend(
-        model=model, max_request_bytes=30_000, max_state_question_bytes=15_000
+        model=model, max_request_bytes=40_000, max_state_question_bytes=20_000
     ) as backend:
         path = tmp_path / "connection.toml"
         configured(path, backend.url, model)
@@ -62,7 +66,7 @@ def test_live_cli_uses_saved_endpoint_token_exact_model_and_capacity(tmp_path: P
         assert all(case["pipeline"]["cached"] == 3 for case in report["cases"])
         assert 0 < len(backend.requests) <= 6
         assert all(request["model"] == model for request in backend.requests)
-        assert all(row["max_state_question_bytes"] <= 15_000 for row in backend.records)
+        assert all(row["max_state_question_bytes"] <= 20_000 for row in backend.records)
         assert "synthetic-test-key" not in result.stdout + result.stderr
         assert "wrong-environment-token" not in result.stdout + result.stderr
         assert path.read_bytes() == original
@@ -116,7 +120,7 @@ def test_preview_reads_model_capacity_but_never_contacts_saved_endpoint(tmp_path
         report = json.loads(result.stdout)
         assert report["status"] == "preview" and report["live"] is False
         assert report["model"] == backend.model
-        assert report["context_budget"]["max_state_question_bytes"] == 15_000
+        assert report["context_budget"]["max_state_question_bytes"] == 20_000
         assert backend.requests == []
 
 

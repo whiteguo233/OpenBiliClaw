@@ -30,8 +30,10 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 作为必需语义保留，未知 schema 拒绝。最小必需块装不下仍返回 fits=false。
 
 `build_shared_evaluation_profiles(contexts)` 为完整 Jev 评估拆出相同的负偏好、风格和场景，
-在共享 `profile` 只发送一次；候选相关的正偏好仍保留在各自 `candidate_profiles.cN`。
-该纯函数复制输入，不修改已选事实、源画像或导演视图。
+多候选时还可共享每条候选都已选中且完全相同的整字段（含兴趣/核心特质）。
+共享 `profile` 叠加目标 `candidate_profiles.cN` 必须精确还原它的原选择；
+字段缺失或不同则不共享，不能借用同行的兴趣。单条仍保留原布局，预算探针稳定。
+该纯函数复制输入，不改事实、源画像、画像选择顺序或导演视图，不做字符串摘要。
 
 `soul/` 包实现了用户理解的核心逻辑，包括：
 

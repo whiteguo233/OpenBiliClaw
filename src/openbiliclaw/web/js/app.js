@@ -10,6 +10,7 @@ import {
   fetchConfig,
   updateConfig,
   requestJson,
+  probeJevConfig,
 } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
@@ -219,7 +220,11 @@ async function openMobileSettings(opener) {
       <option value="shadow">Shadow（校准观察）</option>
       <option value="learned">Learned（仅相关性，实验性）</option>
     </select>
-    <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
+    <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+    <details class="mobile-settings-hint">
+      <summary>评估模式说明</summary>
+      <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
+    </details>
     <p class="mobile-settings-hint" id="mobile-jev-status" role="status" aria-live="polite"></p>
     <div id="mobileJevConnectionSettings"></div>
     <p class="mobile-settings-status" aria-live="polite"></p>
@@ -232,7 +237,9 @@ async function openMobileSettings(opener) {
   const languageSelect = card.querySelector("#mobile-language");
   const evaluator = card.querySelector("#mobile-eval-scorer");
   const jevStatus = card.querySelector("#mobile-jev-status");
-  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
+  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator, {
+    probe: probeJevConfig,
+  });
   const sponsoredForm = window.OpenBiliClawSponsoredSettings.mount(card.querySelector("#mobileSponsoredSettings"), {
     useOwn: () => { window.location.href = "/web/?settings=models"; },
     prepare: () => requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
@@ -284,7 +291,7 @@ async function openMobileSettings(opener) {
       const visionEnabled = config.discovery?.multimodal_evaluation_enabled === true;
       jevStatus.textContent = visionEnabled
         ? "Jev 仅支持文本。请先在桌面或扩展设置关闭“候选封面参与 LLM 评估”，再刷新此页。"
-        : `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+        : jevProvider.reason || "请在下方配置连接。";
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;

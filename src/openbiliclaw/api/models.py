@@ -484,6 +484,8 @@ class RuntimeStatusResponse(BaseModel):
     candidate_eval_pending: int = 0
     candidate_eval_backoff_until: float = 0.0
     candidate_eval_last_error: str = ""
+    candidate_eval_input_budget_blocked: int = 0
+    candidate_eval_invalid_evidence_blocked: int = 0
     candidate_eval_last_batch_seconds: float = 0.0
     candidate_eval_last_cached: int = 0
     candidate_eval_last_rejected: int = 0
@@ -2744,7 +2746,7 @@ class JevEvaluationConfigOut(BaseModel):
     franchise_labels: list[str] = Field(default_factory=list)
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
-    max_candidates_per_request: int = 4
+    max_candidates_per_request: int = 64
     max_questions_per_request: int = 0
     max_question_bytes: int = 0
     max_calls: int = 32
@@ -2758,6 +2760,7 @@ class JevProviderReadinessOut(BaseModel):
     model: str = "jev-1.13.0"
     api_key_env: str = "TYPESAFE_API_KEY"
     endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    base_url_supported: bool = True
     api_key_configured: bool = False
     credential_source: str = "missing"
     timeout_seconds: float = 2.0
@@ -2970,7 +2973,7 @@ class ConfigUpdateIn(BaseModel):
 
 
 class ConfigServiceProbeIn(BaseModel):
-    """No-write request to probe the submitted LLM or embedding config.
+    """No-write request to probe submitted LLM, Jev or embedding settings.
 
     ``llm_instance`` probes one exact endpoint instance. ``llm_chain``
     exercises the submitted global route, including sequential fallback.
@@ -2986,6 +2989,7 @@ class ConfigServiceProbeIn(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     check_embedding: bool = True
     instance_id: str = ""
@@ -3005,6 +3009,7 @@ class ConfigServiceProbeResponse(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     instance_id: str = ""
     provider: str = ""

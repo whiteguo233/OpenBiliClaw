@@ -51,11 +51,12 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
 | 完整候选评估 | 已实现，实验性 | purpose=`EVALUATE`，纯文本受控分类；不隐式调用 LLM，详见 discovery |
-| 固定模型自适应预算 | 已实现 | 精确 ID 的双 token 容量 → 双 UTF-8 工程护栏；模型不自动切换，未知容量必须显式登记；完整评估与导演共用 |
-| 完整题组多候选合批 | 已实现，待实测 | 原文片段只传一次，公共规则/相同必需画像共享；配置题数、候选数、单题字节护栏。长内容本地摘录，不增加业务评估轮次 |
+| 固定模型自适应预算 | 已实现 | 精确 ID 的双容量整数 → 双 UTF-8 字节上限，取消固定 25% 额外预留；不是精准 tokenizer，旧显式限制保留；模型不自动切换，完整评估与导演共用 |
+| 完整题组多候选合批 | 已实现；有界真实验收 | 原文只传一次，相同整画像字段共享；默认 64 候选搜索上限、first-fit 空位回填，实际受双容量约束。真实两视频 20 题共一次请求；长文仍整段摘录，不重评 |
 | 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
-| 图形界面设置与服务探测 | 设置已实现，探测未提供 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；Token 不回显，不提供付费探测 |
-| 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
+| 图形界面设置与服务探测 | 已实现 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；显式测试草稿发送 1 条合成内容完整 8 题，仅一次 HTTP 尝试，不保存、不读真实画像 |
+| 兼容网关 | 已实现 | 配置页 Base / 完整 URL，不限制官方域名；已知网关元数据白名单、可证明的 2dp 舍入容差 |
+| 线上质量 / 中文效果 / 时延保证 | 未认证 | OpenRouter 固定 1.14 已通过有界真实链路与双预算测试，不等于语义质量或摘录无损认证 |
 
 ## 公共 API
 
@@ -66,6 +67,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `resolve_jev_context(model, overrides=None)` | 返回不可变 `JevContextBudget`；仅解析所选模型，未登记抛 `JevContextError`；不发网络请求 |
 | `JevContextBudget.measure(state, questions)` / `fits_request(request)` | 包含原生 JSON 包装的总字节与最长单题字节；不是 tokenizer；`fingerprint` 用于缓存/运行时身份 |
 | `JevContextBudget.with_byte_guards(...)` | 0=自动，非零只允许更严的人工护栏；不得超过模型护栏；`JevContextLimits` 为精确模型的两项 token 容量 |
+| `JevContextBudget.fingerprint` | `jev-wire-bytes-ceiling-v2` 标识新预算合同，标准 64k/32k 容量映射 64,000/32,000 bytes，不与旧 3/4 字节合同缓存混用 |
 | `DecisionRequest` | `request_id`、`purpose`、`question_schema_version`、JSON `state`、具名 `questions` 和可选 `deadline_monotonic` |
 | `DecisionPurpose` | `FILTER` / `CHOOSE_PAIR` / `AUDIT_DRAFT` / `REPAIR_PAIR`，仅用于归因，不自动实现对应业务流程或阈值 |
 | 导演 `DecisionRequest.state.screen_policy` | 带 brief、证据强度、已选／剩余角色和可用主题摘要；是调用方的软编排合同，不授予 provider 修改准入、计划或数据库的权限 |
@@ -82,7 +84,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `ScriptedDecisionProvider(payloads, *, model="jev-fixture")` | 依次消费离线 fixture，复用真实响应校验器；`requests` 保存请求快照供状态传递断言，不请求网络 |
 
 开发测试接口 `scripts.jev_fake_backend.FakeJevBackend(model=..., mode="ok",
-max_request_bytes=48000, max_state_question_bytes=24000)` 是 context manager，
+max_request_bytes=64000, max_state_question_bytes=32000)` 是 context manager，
 只绑定 `127.0.0.1` 临时端口；`client()` 返回由调用方关闭的 `httpx.AsyncClient`。
 其测试 transport 只允许官方原生 URL + `synthetic-test-key`，然后通过真正的
 `AsyncHTTPTransport` 连接回环服务，禁用环境代理，不提供外网转发或真实密钥入口。
@@ -108,6 +110,33 @@ state 接受有限数值组成的 JSON 文本 / 对象 / 数组，不支持多�
 
 ## 配置与调用生命周期
 
+### 兼容地址与返回精度
+
+`jev_endpoint_from_base_url(value)` 为设置层解析 SDK base，服务根/代理前缀补
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。Provider 仍只接收并使用明确的完整
+`endpoint_url`，不按域名自动选服务商或改模型；自定义原生路径保持原样。
+
+兼容 OpenRouter 的可选 `id`、`provider`、`usage.cost`、`usage.is_byok` 与
+`usage.cost_details` 元数据；后者只接受 `upstream_inference_cost`、
+`upstream_inference_prompt_cost`、`upstream_inference_completions_cost` 三项。
+布尔值严格校验，费用有限且非负；2026-11-06 真实请求发现新增计费字段后补齐白名单。
+不向 DecisionEvidence 混入网关字段，未知额外字段继续拒绝。协议依据为
+[OpenRouter TypeSafe SDK 文档](https://openrouter.ai/docs/guides/community/typesafe-sdk)。
+2026-10-27 真实 Jev 1.14 返回概率和 score 各自按两位小数舍入；严格 1e-6 等式会误拒。
+现在只对全部处于 0.01 网格的返回，按每值 ±0.005（端点 clamp 到 0..1）的量化区间验证
+存在总和为 1 且期望落在 score 舍入区间内的分布。保留原值、不归一化、不重算 score；
+高精度返回仍用严格等式。该容差是实测 wire 精度边界，不是经验置信度或质量阈值。
+超界/非有限、错题、错类型、错选项、错 rubric、错模型仍拒绝。`JEV_WIRE_VERSION`
+进入完整评估缓存命名空间，避免重用不同校验合同的缓存。分数本身仍须业务标定。
+
+真实验证与局限见 [2026-10-27 验收](../verification/2026-10-27-jev-compatible-endpoint.md)。
+同日追加正式进程＋真实画像/视频只读副本验收：正常 24KB 与收紧 18KB 护栏均完成真实评估，
+但 18KB 时软预算把可容纳的正向兴趣排空；12KB 装不下时原因折叠成响应缺失，空重试 50 次后
+失败。后续修复将画像额度改为必需基线之外分配可选兴趣，并将本地预算失败以 typed
+`InputBudgetFailure` 交给管线按租约停放；同上下文不重试，画像/容量等身份变化后才恢复。
+不扩大 provider 的提交权限，不新增模型调用或自动模型切换；远端失败仍沿用原合同。
+日常配置仍关闭 Jev，本分支未部署；历史失败与修复验证分别保存在同一验收记录中。
+
 ```toml
 [decision.providers.jev]
 enabled = false
@@ -126,6 +155,10 @@ max_attempts = 2
 实际模型 / 用量归因但不放出答案；`jev-latest` / `jev-preview` 两个已知 alias 允许
 解析到实际版本。离线 fake 的模型名是 fixture 标签，不施加远端固定版本匹配规则。
 
+完整候选 evaluator 将 native `INVALID` 转为 typed 证据停放，避免外层候选 worker
+重新付费；不影响导演的既有失败策略。8 题采用有限联合时效结论、独立代表原句和
+source-bound 硬状态，不能依赖同请求另一题的新答案。详见[发现合同](discovery.md)。
+
 `max_attempts` 包括第一次请求。重试只用于可重试的 HTTP 限流 / 服务错误
 （429、529、5xx），受同一个总 deadline 约束，等待时间和所有尝试都计入预算；
 认证、非法请求和无效响应不会自动变成无限重试。调用方提供的更早 deadline 可以
@@ -143,7 +176,7 @@ URL 改动的配置 API 必须同时提交新 Token，不向另一个地址自�
 - 候选文本是不可信数据，不能因为 typed 输出就认为模型不受内容诱导；provider 本身没有工具或数据库写权限。
 - 不记录 API key、state 或远端错误响应正文；错误以类型和稳定原因码呈现。
 - CLI：`config-show` 展示开关、模型、凭据变量名和预算，不探测网络，也不读取或打印实际 key。
-- 插件 popup、桌面 Web、移动 Web：共用 Jev 连接表单与后端配置 API，可配置连接/容量并切换完整评估；不增加付费探测按钮。Token 不回显/不进浏览器存储，仅后端本机 TOML 保存，非加密密钥库。
+- 插件 popup、桌面 Web、移动 Web：共用 Jev 连接表单与后端配置 API，可配置连接/容量并切换完整评估；“测试连接与评估”显式提示少量费用，使用草稿、不保存。Token 不回显/不进浏览器存储，仅后端本机 TOML 保存，非加密密钥库。
 - Git / Docker / 桌面安装的依赖与启动流程不变；复用现有 `httpx`，未安装 Jev SDK，也没有自动下载模型。
 
 ## 后续接线的验收边界

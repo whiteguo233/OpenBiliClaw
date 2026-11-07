@@ -73,6 +73,39 @@ async def test_native_wire_attribution_borrowed_auth_and_lifecycle() -> None:
         assert closed.reason_code == "provider_closed" and closed.attempts == 0
 
 
+@pytest.mark.parametrize("invalid", [None, "boolean", "negative_cost", "unknown_cost"])
+async def test_gateway_billing_metadata_does_not_invalidate_native_answers(
+    invalid: str | None,
+) -> None:
+    # Shape captured from a real OpenRouter Jev response on 2026-11-06.
+    payload = _payload()
+    payload["usage"].update(
+        is_byok=False,
+        cost=0.000167916,
+        cost_details={
+            "upstream_inference_cost": 0.000167916,
+            "upstream_inference_prompt_cost": 0.000167916,
+            "upstream_inference_completions_cost": 0,
+        },
+    )
+    if invalid == "boolean":
+        payload["usage"]["is_byok"] = "false"
+    elif invalid == "negative_cost":
+        payload["usage"]["cost_details"]["upstream_inference_cost"] = -1
+    elif invalid == "unknown_cost":
+        payload["usage"]["cost_details"]["unexpected"] = 1
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as client:
+        result = await JevDecisionProvider(api_key="synthetic", client=client).evaluate(_request())
+    assert result.status == ("OK" if invalid is None else "INVALID")
+    assert result.attempts == 1
+    if invalid is None:
+        assert result.usage is not None
+        assert result.usage.model_dump() == {"input_tokens": 10, "output_tokens": 2}
+        assert result.answers["fit"].model_dump() == {"type": "noul", "noul": 0.8}
+
+
 async def test_canonical_digest_matches_canonical_wire_for_reordered_maps() -> None:
     bodies: list[bytes] = []
 

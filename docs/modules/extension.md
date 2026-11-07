@@ -56,16 +56,27 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 
 ## 完整候选评估器选项
 
+与 Web 统一用一句话说明 Jev 仅替换候选内容评估、聊天和画像等仍沿用原有 LLM 配置。
+连接开关直接注明“不切换评估器”，长篇模式与协议说明按需展开；保持数据发送、测试费用与失败状态可见。
+此为文案 / 折叠展示调整，不改变配置接口、默认 provider、评估路由或 CLI 行为。
+当前提交的实际 MV3 真实请求复验通过配置探测、保存、24K 容量候选评估及 Token 不落浏览器存储；同轮移动 Web 探测有协议校验失败，不能概括为三端全部通过，见[本轮记录](../verification/2026-11-07-jev-settings-copy.md#当前提交真实请求复验部分通过保留失败)。
+
 高级设置的候选评分下拉新增 canonical `jev`：纯文本完整评估、受控主题 / IP，未知
 不偷偷交给 LLM。插件与桌面显示 provider readiness 和多模态不兼容提示，后端验证
 缺少凭据或冲突配置；不把 Jev 塞进聊天模型列表。移动 Web 设置与 CLI 使用同一配置。
 
 Jev 连接配置区与 Web 共用 `web/shared/jev-settings.js/.css`，构建时按现有机制复制到
-`popup/shared/`：服务开关、完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
+`popup/shared/`：服务开关、Base URL / 完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
 超时/重试。`collectForm()` 合并公共表单的严格部分更新到 `decision.providers.jev`，
 后端原子校验/持久化/排队应用，可同次切换完整评估器。空 Token 保留，清除需明确勾选，
 更换 URL 必须重填，保存后输入框清空，缓存配置只有安全状态不含 Token。没有新 host permission
 或后台直连 Jev：请求仍从后端发出。Chrome API stub 的 Chromium 测试不是实际 MV3 安装验收。
+共用表单现提供“测试连接与评估”：经 `POST /api/config/probe-service` 测试当前草稿，
+仅一次 native HTTP 尝试、1 条合成内容完整 8 题。提示少量费用，不自动保存；测试期间禁用按钮，
+编辑配置使旧结果失效。实际 MV3 安装验收与手机实机范围见[复验记录](../verification/2026-11-06-jev-all-surfaces-real-e2e.md)。
+Base 模式允许任何兼容原生协议的可信网关，自动补 `/v1/systemone`（已有 `/v1` 不重复）；
+完整模式保留自定义路径。后端返回 `base_url_supported` 才开放 Base 编辑；其它凭据、安全
+和模型容量规则不变。桌面 Web 与移动 Web 使用同一表单，不单独维护服务商白名单。
 
 > popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
 

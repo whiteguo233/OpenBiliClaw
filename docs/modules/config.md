@@ -259,8 +259,10 @@ max_attempts = 2
 `config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
 不请求 `/models` 或付费接口，不下载 tokenizer，不自动升级模型。
 
-共享预算采用 token 限制 × 3/4 的 UTF-8 字节工程护栏，逐请求计算 native JSON 包装、state
-及全部问题和最长单题；这不是字符/token 比率估计或保证，服务端仍可能拒绝。
+共享预算以所配 token 容量整数作为 UTF-8 字节上限，不再额外扣除 25%：标准窗口对应
+64,000 / 32,000 bytes。逐请求计算 native JSON 包装、state 及全部问题和最长单题；
+这仍是工程字节上限，不是精确 tokenizer、等比例 token 估算或保证，服务端仍可能拒绝。
+旧的显式 48,000 / 24,000（或更小）字节设置仍保留；设为 0 才采用新自动预算。
 不将所有 422/429 都误认作上下文溢出。官方依据：[模型文档](https://docs.typesafe.ai/models)、
 [OpenAPI](https://api.typesafe.ai/openapi.json)（2026-10-04 核实）。
 
@@ -277,6 +279,15 @@ CLI `config-show` 展示开关、URL、模型、变量名、是否保存 Token �
 明确清除，不能同时替换；URL 变化必须重新填写 Token，避免旧凭据误发。
 `context_limits` 是完整替换表，空对象恢复自动容量；三端共享表单保留其它模型条目，
 切换模型 ID 不继承上一模型的手动容量。配置校验不做付费探测，启用路由后的正常评估可能计费。
+
+设置页可选择 **Base URL / 完整接口地址**，不限制官方域名。Base URL 经
+`jev_endpoint_from_base_url()` 解析：服务根或代理前缀追加 `/v1/systemone`，以 `/v1`
+结尾只追加 `/systemone`，忽略末尾斜杠；OpenRouter 示例为 `https://openrouter.ai/api`。
+API 部分更新接受 `base_url` 作为 `endpoint_url` 的互斥输入别名；TOML 仍只保存完整
+`endpoint_url`，不是新增第二个持久字段。自定义 `/api/alpha/decisions` 等原生接口选择完整地址，
+不自动猜路径、不使用 Chat Completions。旧自定义路径保持原样。地址变化仍须重新填写 Token；
+仅切换等价 Base/完整表示不需要换 Token。未知网关模型仍须登记精确模型 ID 的双上下文容量，
+返回的实际模型必须与所选固定版本一致，不自动改模型或追随浮动别名。
 
 一个 runtime 的完整评估、发现过滤与逐对编排共享有界 client：默认最多 2 个 adapter 调用并发、
 32 个已接纳请求（包含运行和等待），排队计入请求的绝对 deadline；连续 5 次真实
@@ -299,16 +310,21 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 | `franchise_labels` | `[]` | 受控 IP / 系列 / 品牌名称；未配词表时无法识别新 IP |
 | `max_state_question_bytes` | `0` | 0=按选定模型自动；非零是 state 加最长题的额外 UTF-8 护栏，不得超过该模型工程预算 |
 | `max_request_bytes` | `0` | 0=按选定模型自动；非零是完整原生请求的额外 UTF-8 护栏，不得超过该模型工程预算 |
-| `max_candidates_per_request` | `4` | 每批完整候选上限，1–64；初始工程上限，需中文实测校准 |
-| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 10–640。原生无独立题数上限，不能把候选的 10 题拆开 |
+| `max_candidates_per_request` | `64` | 有界打包搜索上限，1–64；实际批量由双预算决定，不再默认停在 4 条；原有手动小上限保留 |
+| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 8–640。原生无独立题数上限，不能把候选的 8 题拆开 |
 | `max_question_bytes` | `0` | 0=仅受组合窗口限制；非零为单题 canonical JSON 字节护栏，至少 256 |
 | `max_calls` | `32` | 一次 evaluator 调用的子批调用数上限 |
 | `budget_seconds` | `30.0` | 一次 evaluator 共用的总预算，不是每个子批各一份 |
 
+8 题使用联合时效结论，硬过期字段不再独立组合。已有非零题数上限保持原值；
+端点进入证据缓存／停放恢复身份，Token 不进入。
+
 预算与词表严格验证；词表预留 unknown 选项，不能静默截断。固定模型版本进入缓存
 身份；旧配置显式 24000/48000 会保留为更严的人工护栏，想随更大模型扩大需改为 0。
-按需画像保留必需约束，再加载相关事实；批次超限先减少候选数。单条仍超限时使用带
-源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则待评估，不切模型或隐式调 LLM。
+按需画像保留必需约束，再加载相关事实；所有已开批次可接受后续能装下的完整候选，
+不因一条大候选关闭前批空位；到达 max_calls 后仍可填已有空位，不增加 HTTP 调用。
+单条仍超限时使用带
+源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则预算停放，不切模型或隐式调 LLM。
 三个新增打包字段可由 TOML 或配置 API 更新，API 重建 evaluator 后的新任务生效，
 在飞任务使用旧快照。官方标准容量只可收紧，不能通过配置扩大；实验扩窗 header 默认不发送。
 模型容量、选择策略也进入缓存
@@ -318,13 +334,18 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 同时开启会报错。它原生仅文本，未识别类别如实保留；不会隐式改成混合 LLM 模式。
 沿用的入池阈值尚未做 Jev 中文标定。该切换影响后续评估，不批量迁移历史结果。
 
+三端连接区的“测试连接与评估”使用当前填写草稿（不是必须先保存），向当前固定模型发送
+1 条合成内容完整 8 题；一次 HTTP 尝试，可能少量计费。不读取真实画像、不写配置，
+成功仅代表本次完整探测通过。修改配置后旧提示失效，保存仍是独立操作。
+
 ### `[director]`
 
 推荐导演的业务路由，类型为 `Config.director → DirectorConfig`。`mode` 是灰度开关，
 `strategy` 才是用户选择的三种编排方式，两者不能混用。默认关闭，保留既有推荐路径。
 
-`[director]`、`[discovery.semantic_filter]` 和 `[decision.providers.jev]` 当前是
-TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口。修改后必须完整停止并
+`[director]` 和 `[discovery.semantic_filter]` 当前是
+TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口；`[decision.providers.jev]`
+已可由共用连接表单配置。手动修改 TOML 后必须完整停止并
 重新启动后端，使 API、推荐与发现子进程一起读取新配置；仅刷新页面或重建 API
 进程内 runtime 不会同步其他子进程。桌面安装需退出后重新启动整个应用。
 内核重建时的 epoch / 取消机制保证旧请求不跨配置提交，但不是跨进程配置分发。

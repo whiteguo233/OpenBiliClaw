@@ -28,7 +28,7 @@ Instagram discovery 使用 optional-credential：保留匿名 topic/creator 路�
 只替换相关性。`JevContentEvaluator.evaluate()` 用原生 Score / Choice 生成相关性、
 受控主题 / IP / 风格及完整时效证据组，统一经过现有验证、grounding、配额和准入。
 `ContentDiscoveryEngine` 的单条、批量与 `evaluate_cached_content_batch()` 旧池补评
-均走同一选择；API、CLI、OpenClaw 共用路由。失败返回 missing，留在待评估状态，
+均走同一选择；API、CLI、OpenClaw 共用路由。远端/暂态失败返回 missing，留在待评估状态，
 不缓存失败、不伪造零分标签、不隐式调用 LLM。推荐表达、搜索词生成仍是独立 LLM 任务。
 
 主题来自配置中的粗分类，IP 仅从配置词表选择；未识别保留空分类和受控诊断，
@@ -48,23 +48,77 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 再按每条候选文本选择相关兴趣、少量全局偏好与近期事实，不调摘要 LLM、不改源画像。
 完整兴趣目录不再受旧 top-48/256 限制；当前相关性是确定性词法检索，不承诺语义同义召回。
 选中的单条事实不截字；没有加载某兴趣不等于用户不喜欢。请求中 `candidate_profiles.cN`
-只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景
-移到共享 `profile` 一次。正偏好选择独立于批次同行；原有 LLM 评估视图和召回不变。
+只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景，
+以及本批每条候选都已选中且完全相同的可选字段移到共享 `profile` 一次。
+以共享块叠加目标 `candidate_profiles.cN` 精确还原原选择；缺失/不同的兴趣不会共享给同行。
+正偏好选择仍独立于批次同行；原有 LLM 评估视图和召回不变。
+
+2026-10-27 修复：必需画像先作为基线，剩余窗口的三分之一作为可选画像软额度，
+不再让大块避雷信息挤掉仍能放下的兴趣。软额度不足时可借用实际剩余空间加载完整兴趣事实；
+若源画像有正向兴趣但连一条都放不下，先减少可选原文片段，不发送“仅剩避雷”的误导性画像。
+这仍是工程分配，不是语义质量或任意长输入无损保证；缓存身份包含分配策略版本。
 
 共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
-已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
+已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 32,000（state＋最长题）/64,000（完整请求）UTF-8 字节护栏，
 含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
-保守工程策略，不是精确 token 数。每条候选的 10 题是不可拆单元，多候选多题共用请求；
-整批装不下先移走完整候选，默认最多 4 条为待校准的工程上限，题数/单题字节护栏可配置。
+保守工程策略，不是精确 token 数。每条候选的 8 题是不可拆单元，多候选多题共用请求；
+默认候选上限 64 是有界打包搜索保护，不是官方题数上限；实际批量由双容量与用户更严上限决定。
+首次适配的候选视图不因同行缩短；first-fit 回填已开批次，后面短候选可利用前批空位。
+max_calls 用尽也继续检查可填的既有批次，不重评候选、不增加业务调用轮次。
+自动预算取消旧 25% 额外预留，保留旧显式字节/候选数限制；这不是精确 token 满载。
 单条超限时本地选择完整片段，保留开头/结尾、显式否定/条件/时间线索及邻句；不截字、
 不调用摘要模型。`text_coverage` 标记局部视图、源摘要、原始/已选片段数，片段附源字段
 和字符位置，日志只记源摘要、计数及选中字符范围。这些词法锚点不是语义完整性证明；不能保证任意
-长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则 missing；远端拒绝也按失败
+长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则返回 typed `InputBudgetFailure`；远端拒绝也按失败
 处理，不缩短后二次发送。
 每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
 问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
+本轮输入合同升为 `jev-full-evaluation-v5-joint-outcomes`，预算身份为 `jev-wire-bytes-ceiling-v2`，
+新增 `first-fit-open-batches-v1` 打包身份，旧缓存不会跨合同复用。
 成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
 字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
+
+| 公共接口 / 能力 | 合同 |
+|---|---|
+| `JevContentEvaluator.evaluate()` | 按输入对齐返回有效结果、`InputBudgetFailure`、`InvalidEvaluationEvidence` 或暂态 `None`；两类 typed 失败不伪造评分、不调用 LLM |
+| `ContentDiscoveryEngine.evaluation_context_fingerprint(profile)` | 对完整有效画像目录、负例、精确模型/容量/打包策略及 scorer 做 SHA-256，不含凭据或时钟 |
+| `DiscoveryCandidatePipeline.refresh_evaluation_context(profile)` | 仅上下文身份改变时有界重新入队预算/矛盾证据停放项；同配置手动刷新/重启不会重复请求 |
+| `DiscoveryCandidatePipeline.input_budget_blocked_count()` | 读取持久化停放数；claim 提交另报 `blocked`，不冒充 evaluated/rejected/stale |
+| `DiscoveryCandidatePipeline.invalid_evidence_blocked_count()` | 单独读取时效证据矛盾的停放数，不把它误称为超限或低相关性 |
+
+预算失败经程序内类型传递，按 claim token CAS 写为 `failed_eval` +
+`input_budget_exhausted:<context fingerprint>`；不增加模型/批次重试次数、不写有效评分或成功缓存。
+混合批次中的其它有效候选正常处理。画像、负例、容量、打包契约或显式 scorer 改变后才重新检查；
+不是定时重试，单独换 Token 或重复保存相同设置不算容量修复。详见[实测记录](../verification/2026-10-27-jev-compatible-endpoint.md)。
+
+2026-11-06 真请求发现独立题目的时效选择可能互相矛盾：HTTP 200 和题目齐全并不代表
+语义证据完整。此类结果仍严格拒绝，但改为 `InvalidEvaluationEvidence` →
+`invalid_evaluation_evidence:<context fingerprint>` 单独停放，不进入 missing-response
+自动重评，不改成“有效未知”，其它有效候选照常处理。源文本与先前证据保留，
+同上下文不再次收费；测试按钮同样返回明确失败。详见[本轮验收](../verification/2026-11-06-jev-all-surfaces-real-e2e.md)。
+
+2026-11-07 将时效合同改为 **联合结论 + 独立原文摘录**：8 题分别是相关性、理由、
+主题、IP、风格、时效结论、代表原句、时效置信度。普通结论只有 6 类和 2 个耐久内容
+的 hook 变体，不再把同一类别乘以原文句数。breaking/current/versioned 按定义携带
+freshness_only，不需要凭空提供截止时间；代表原句从当前可见原文中独立选取，
+不产生过期结论，none 模式不使用该句。硬状态选项将类别、范围、状态、原句与时间
+联合绑定，发送前通过现有 grounding，落库前再完整原子校验；条件／未来句不能
+冒充已经过期或被替代，缺少时钟／时区的日期不能成为 deadline。
+超过原生 255 选项时重新预算显式源视图；必需内容仍放不下则本地停放，不静默
+截断备选后保留“完整覆盖”。没有新增评分阈值，不补评、不强改模型选择的 unknown。
+native provider 的 INVALID（未知选项、缺题、错模型等）也进入证据停放，不作为
+暂态缺失反复计费；503 等暂态故障仍沿用原路径。
+`JevContentEvaluator(..., provider_identity=...)` 的可选身份由正式 CLI / runtime / probe
+传入已校验端点：修正网关可恢复停放项，Token 轮换和重启不改变证据身份。
+新合同为 `jev-full-evaluation-v5-joint-outcomes`，旧缓存不复用。
+`candidate_text_view()` 的预算选择改用 canonical JSON 条目字节累加，避免每加入一段
+都序列化整个视图；逗号、计数位宽和 partial 布尔长度均精确计入，完成后仍做一次
+实际序列化兜底校验。4 档 golden 和 24 组原样本比较逐字节相同，source-spans-v1
+政策、源摘要和条件邻句规则不变，不用延长生产评估预算。
+候选纯本地准备在线程中顺序执行，避免长文反复试装阻塞共享 HTTP 事件循环。
+首次 await 前仍完整快照调用方输入；线程不访问 provider／数据库，并沿用同一截止时间。
+取消等待不会继续派发模型请求；线程内已开始的本地计算可在既有截止检查处结束。
+真实复验和未认证边界见[修复验收](../verification/2026-11-07-jev-temporal-joint-evidence.md)。
 
 配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
 [Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与
@@ -771,7 +825,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 5.3 相关推荐链策略 | ✅ | 事件种子 + 偏好/策略兜底种子 + 2 层相关推荐链 + LLM 评分过滤 |
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
-| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批，超限 / 失败不缓存并保留候选待评估；中文质量与真实服务尚未验收。 |
+| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批；超限和矛盾证据分别停放、不缓存。已有有界真实链路验收，中文质量仍未认证。 |
 | 独立 Jev 语义过滤 | ✅ 默认 off | 注入 `JevSemanticFilter`，使用独立 provider 与导演共享预算；窄范围稳定避雷判断、探索保留、完整校准 cohort、隐私安全审计、失败放行。校准 enforce 只在本 wave 延期，下一 claim 强制完整评估，不永久拉黑，不替代 LLM 元数据。 |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |

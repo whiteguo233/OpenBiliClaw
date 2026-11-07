@@ -19,6 +19,59 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.mark.parametrize("suffix", ["", "/", "/v1", "/v1/"])
+def test_base_url_save_resolves_native_path_and_preserves_token_on_reload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str
+) -> None:
+    client = _client(monkeypatch, tmp_path, _configured())
+    response = client.put(
+        "/api/config",
+        json={
+            "decision": {
+                "providers": {
+                    "jev": {
+                        "enabled": True,
+                        "base_url": "https://gateway.example.test/api" + suffix,
+                        "api_key": "synthetic-base-token",
+                    }
+                }
+            },
+            "discovery": {"eval_scorer": "jev"},
+        },
+    )
+    assert response.status_code == 202, response.text
+    cfg = load_config(tmp_path / "config.toml", consult_environment=False)
+    assert (
+        cfg.decision.providers.jev.endpoint_url == "https://gateway.example.test/api/v1/systemone"
+    )
+    assert cfg.decision.providers.jev.api_key == "synthetic-base-token"
+    assert "synthetic-base-token" not in client.get("/api/config?reveal_keys=true").text
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"base_url": "https://other.test/api"},
+        {"base_url": "https://other.test/api?token=secret", "api_key": "synthetic-new-key"},
+        {"base_url": "https://other.test/v1/systemone", "api_key": "synthetic-new-key"},
+        {
+            "base_url": "https://other.test",
+            "endpoint_url": "https://other.test/custom",
+            "api_key": "synthetic-new-key",
+        },
+    ],
+)
+def test_ambiguous_or_unsafe_base_url_update_is_atomic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, values: dict[str, object]
+) -> None:
+    client = _client(monkeypatch, tmp_path, _configured())
+    before = (tmp_path / "config.toml").read_bytes()
+    response = client.put("/api/config", json={"decision": {"providers": {"jev": values}}})
+    assert response.status_code == 400
+    assert (tmp_path / "config.toml").read_bytes() == before
+    assert "synthetic-new-key" not in response.text
+
+
 def test_can_save_jev_connection_and_switch_full_evaluation_in_one_update(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -223,4 +276,4 @@ def test_saved_connection_drives_real_native_http_without_proxy_or_env_key_overr
         asyncio.run(evaluate())
         assert len(backend.requests) == 1
         assert backend.requests[0]["model"] == "jev-1.14.0"
-        assert len(backend.requests[0]["questions"]) == 10
+        assert len(backend.requests[0]["questions"]) == 8

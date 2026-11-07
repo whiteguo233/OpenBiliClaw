@@ -1,5 +1,30 @@
 # 存储层
 
+## Jev 矛盾证据停放（2026-11-06）
+
+| 已实现能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_evaluation_refused_candidates(ids, claim_token=..., reason=...)` | 将预算失败或矛盾时效证据按当前租约 CAS 停放；只接受两种已知原因和 64 位摘要，不修改已有评分或增加重试数 |
+| `count_invalid_evidence_blocked_candidates()` | 单独统计 `invalid_evaluation_evidence:`，不误报为输入超限 |
+| `revive_evaluation_refused_candidates(context_fingerprint=..., limit=500)` | 上下文变更后有界重入队；重复保存/重启不恢复，旧预算专用方法保留兼容 |
+
+仍使用既有 `status/eval_error`，无 schema migration。通用暂态恢复同时排除这两类停放，
+禁止把已收到但不可信的答案再次作为缺失响应付费重评。远端用量与重试计数不是同一指标。
+2026-11-07 起该原因也承载 native INVALID（缺题、未知选项、错模型等），不新增 schema；
+调用方的恢复指纹包含已校验端点，网关修正可以重新入队，凭据轮换不改变指纹。
+
+## Jev 输入预算停放（2026-10-27）
+
+| 能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_input_budget_candidates(ids, claim_token=..., reason=...)` | 仅当前 `evaluating` 租约所有者可 CAS 停放为 `failed_eval`；reason 为预算原因与 64 位上下文摘要，清租约但保留已有证据，不增加 attempts |
+| `count_input_budget_blocked_candidates()` | 只读统计带预算原因的停放行，不返回画像或正文 |
+| `revive_input_budget_candidates(context_fingerprint=..., limit=500)` | 只重新入队上下文摘要不同的停放项；有界、清错误/租约/attempts，不消耗 transient 复活次数 |
+
+复用既有 `discovery_candidates.status/eval_error`，无 schema migration。
+通用 `revive_failed_eval_candidates()` 排除预算原因，避免同配置 startup/manual 唤醒反复空跑；
+旧租约迟到回写不能停放新 owner 的行。预算失败不写成功评分、时效证据或 `evaluated_at`。
+
 ## 概述
 
 `Database.has_current_recommendation_supply()` 提供首轮发现恢复判断所需的有界 `EXISTS` 证据：仅接纳达到入池分数、带展示文案、仍关联 fresh/shown 内容的推荐。`purged_by_reinit` 等退休历史即使保留在 recommendations 表，也不算当前画像已恢复供给。该方法不修改任何行。

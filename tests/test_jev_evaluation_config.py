@@ -31,6 +31,22 @@ def _configured() -> Config:
     return cfg
 
 
+def test_endpoint_fix_changes_evidence_identity_but_token_rotation_does_not() -> None:
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
+
+    cfg = _configured()
+    cfg.discovery.eval_scorer = "jev"
+    cfg.decision.providers.jev.api_key = "synthetic-first-key"
+    first = build_cli_jev_evaluator(cfg)
+    assert first is not None
+    cfg.decision.providers.jev.api_key = "synthetic-rotated-key"
+    rotated = build_cli_jev_evaluator(cfg)
+    assert rotated is not None and rotated.cache_namespace == first.cache_namespace
+    cfg.decision.providers.jev.endpoint_url = "https://relay.example/v1/systemone"
+    repaired = build_cli_jev_evaluator(cfg)
+    assert repaired is not None and repaired.cache_namespace != first.cache_namespace
+
+
 def test_jev_evaluation_roundtrip_and_route_enablement(tmp_path: Path) -> None:
     cfg = _configured()
     cfg.discovery.eval_scorer = "jev"
@@ -79,13 +95,13 @@ def test_config_cannot_enlarge_an_official_models_standard_window(tmp_path: Path
         ("topic_labels", ["中" * 27]),
         ("topic_labels", list(map(str, range(255)))),
         ("franchise_labels", [1]),
-        ("max_state_question_bytes", 24001),
-        ("max_request_bytes", 48001),
+        ("max_state_question_bytes", 32001),
+        ("max_request_bytes", 64001),
         ("max_request_bytes", 255),
         ("max_calls", True),
         ("max_candidates_per_request", 0),
         ("max_candidates_per_request", True),
-        ("max_questions_per_request", 9),
+        ("max_questions_per_request", 7),
         ("max_questions_per_request", True),
         ("max_question_bytes", 255),
         ("budget_seconds", float("nan")),
@@ -151,7 +167,7 @@ def test_jev_api_roundtrip_ready_and_no_secret(monkeypatch, tmp_path: Path) -> N
     context = response.json()["discovery"]["jev_provider"]["context_budget"]
     assert context["max_request_tokens"] == 64_000
     assert context["max_state_question_tokens"] == 32_000
-    assert context["max_request_bytes"] == 48_000
+    assert context["max_request_bytes"] == 64_000
     response = client.put(
         "/api/config",
         json={
@@ -197,7 +213,7 @@ def test_jev_api_readiness_requires_exact_model_capacity(monkeypatch, tmp_path, 
     readiness = response.json()["discovery"]["jev_provider"]
     assert readiness["ready"] is registered
     if registered:
-        assert readiness["context_budget"]["max_request_bytes"] == 96_000
+        assert readiness["context_budget"]["max_request_bytes"] == 128_000
         assert readiness["context_budget"]["source"] == "operator_confirmed"
     else:
         assert readiness["context_budget"] is None
@@ -236,6 +252,8 @@ def test_jev_api_rejects_without_persisting(monkeypatch, tmp_path: Path, conflic
 
 
 def test_jev_evaluator_three_ui_surfaces_have_honest_choice_and_readiness() -> None:
+    shared_form = (ROOT / "src/openbiliclaw/web/shared/jev-settings.js").read_text()
+    assert "api_key_env" in shared_form
     for html_path, js_path in (
         (
             "src/openbiliclaw/web/desktop/index.html",
@@ -250,5 +268,6 @@ def test_jev_evaluator_three_ui_surfaces_have_honest_choice_and_readiness() -> N
         for phrase in ("不隐式调用 LLM", "新 IP 保留未知", "不支持封面图片", "字节预算"):
             assert phrase in html
         assert "jev_provider" in js
-        assert "api_key_env" in js
+        assert "jevProvider.reason" in js
+        assert "OpenBiliClawJevSettings.mount" in js
         assert "eval_scorer:" in js
