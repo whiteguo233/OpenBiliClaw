@@ -171,6 +171,7 @@ def test_availability_never_executes_cli_or_claims_installed_means_ready(tmp_pat
 
 
 async def test_offline_host_does_not_start_cli(plan, tmp_path, monkeypatch):
+    monkeypatch.setattr("openbiliclaw.sources.ego_executor.sys.platform", "darwin")
     binary = tmp_path / "ego-browser"
     binary.touch()
     monkeypatch.setenv("OPENBILICLAW_EGO_BROWSER", str(binary))

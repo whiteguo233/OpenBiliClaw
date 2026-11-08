@@ -35,7 +35,7 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 ## OpenBiliClaw in 10 Seconds
 
@@ -66,7 +66,7 @@ Phone connections: Desktop Web / extension **Mobile** offers LAN, Tailscale and 
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
 trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
@@ -238,11 +238,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.234 (2026-11-06)**
+📌 Latest: **v0.3.235 (2026-11-08)**
 
-- **Selectable free models**: setup and settings share Qwen3-8B / Qwen3.5-4B, with cloud BGE-M3 or local Ollama embeddings.
-- **Authentication before remote access**: disabling the password permits trusted local access only; remote devices receive setup guidance.
-- **Source facts reach evaluation**: native engagement, GitHub repository attributes and available Xiaohongshu text survive the pipeline; oversized batches split within bounded limits.
+- **Free models join existing chains**: select and reorder two read-only Qwen instances, and choose BGE-M3 in the existing embedding settings.
+- **Add websites and RSS through chat**: trial before confirmation, with shared controls for frequency, allocation and failure notices.
+- **On-demand website collection**: macOS prepares Ego automatically, runs collection without visible windows and releases idle resources.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -326,7 +326,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)

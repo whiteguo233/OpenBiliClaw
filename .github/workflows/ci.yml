@@ -84,6 +84,9 @@ jobs:
       - name: Verify i18n catalogs
         run: python scripts/build_i18n_catalogs.py --check
 
+      - name: Install Chromium for backend browser tests
+        run: python -m playwright install --with-deps chromium
+
       - name: Run pytest
         run: python -m pytest -q
 

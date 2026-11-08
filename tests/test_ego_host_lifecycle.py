@@ -43,6 +43,7 @@ def test_shared_lease_blocks_exclusive_reclamation(tmp_path):
 
 
 async def test_last_session_close_schedules_idle_stop(plan, tmp_path, monkeypatch):
+    monkeypatch.setattr(ego_setup.sys, "platform", "darwin")
     monkeypatch.setenv("OPENBILICLAW_EGO_IDLE_STOP_SECONDS", "0.05")
     executor = EgoLiteWorkflowExecutor(tmp_path)
     _fake_app(executor._setup)
@@ -54,7 +55,7 @@ async def test_last_session_close_schedules_idle_stop(plan, tmp_path, monkeypatc
     session._ensure_lease()
     session._started = True
     await session.close()
-    await asyncio.sleep(0.2)
+    await asyncio.wait_for(ego_setup._IDLE_TASKS[str(executor._setup.root)], timeout=2.0)
     stop.assert_awaited_once()
     assert str(executor._setup.root) not in ego_setup._IDLE_TASKS
 
