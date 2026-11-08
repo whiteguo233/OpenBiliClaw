@@ -321,9 +321,9 @@ jobs:
           SAFARI_PACKAGED: ${{ needs.safari.outputs.safari_packaged }}
         run: |
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --latest=false
           else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           fi
           expected="${RELEASE_TAG#extension-v}"
           assets=(
@@ -355,4 +355,10 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           CHANNEL: extension
           ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip release-artifacts/openbiliclaw-extension-v*.xpi release-artifacts/openbiliclaw-extension-v*-safari.dmg
-        run: bash .github/scripts/sync-aggregate-release.sh
+        run: |
+          backend_version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$RELEASE_TAG" = "extension-v${backend_version}" ]; then
+            bash .github/scripts/sync-aggregate-release.sh
+          else
+            echo "Standalone extension release $RELEASE_TAG"
+          fi

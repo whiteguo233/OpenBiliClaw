@@ -66,8 +66,8 @@
 
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
-1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载 zip 手动安装（最新功能先到，商店版可能滞后几天）。
-2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。Apple Silicon 与 Windows 提供**精简版**和 **`-with-embedding` 版**（预置本地 BGE-M3，约 1.1GB）；Intel Mac 提供精简版。免费云端向量无需下载本地模型，选择本地向量时再按需下载，或使用预置模型的安装包。**Gitee 源码已同步至 v0.3.235，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
+1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [插件 v0.3.236 发行页](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236) 下载最新版手动安装包。
+2. **装后端** —— 从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。Apple Silicon 与 Windows 提供**精简版**和 **`-with-embedding` 版**（预置本地 BGE-M3，约 1.1GB）；Intel Mac 提供精简版。免费云端向量无需下载本地模型，选择本地向量时再按需下载，或使用预置模型的安装包。**Gitee 源码已同步至 v0.3.235，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
 
    ```text
 trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS

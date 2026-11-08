@@ -1,12 +1,14 @@
 # 浏览器插件模块
 
-## 初始化平台选项（2026-11-09，待发布）
+## 初始化平台选项（v0.3.236）
 
 | 已实现功能 | 行为 |
 | --- | --- |
 | 额外账号信息按需展开 | 插件初始化只在勾选 Bangumi / GitHub 时展示该平台的用户名、令牌与说明；取消勾选收起，再次勾选保留输入。 |
 
 公开接口：`POST /api/init` 请求不变，未勾选来源不提交 `source_options`，不清除已保存账号。
+
+向量连接测试等待 190 秒，覆盖后端 180 秒预算内的限流恢复。独立插件发版使用 `extension-v*`，只在版本号与后端相同时更新聚合下载页。[插件发行](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236)
 
 Safari发行环境（2026-11-06）：`release-extension.yml` 使用macOS15 runner。macOS14曾在调度阶段返回不支持的配置，未执行编译；可使用 `workflow_dispatch.release_tag` 指向已有版本标签，从修复后的工作流补齐资产，不移动已有标签或改动插件功能。最终构建/公证结果以对应发行工作流为准。
 
